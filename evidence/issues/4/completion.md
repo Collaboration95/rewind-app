@@ -2,7 +2,7 @@
 
 Status: implementation evidence prepared.
 
-Commit: [4ee8242446389146ec13cbcf91d3b09a7b5a4817](https://github.com/Collaboration95/rewind-app/commit/4ee8242446389146ec13cbcf91d3b09a7b5a4817)
+Commit: [a16cadb2ff2725dcaeb54bdad90e45dde78f7dfa](https://github.com/Collaboration95/rewind-app/commit/a16cadb2ff2725dcaeb54bdad90e45dde78f7dfa)
 PR: [#13](https://github.com/Collaboration95/rewind-app/pull/13)
 
 ## Acceptance evidence
