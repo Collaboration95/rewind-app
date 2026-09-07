@@ -1,0 +1,10 @@
+Clean-start startup probe
+
+Command: npm run web -- --non-interactive
+Observed: Expo reported Web: http://localhost:8081
+Probe: curl --fail --silent --show-error http://localhost:8081
+Observed: HTTP HTML shell returned with <title>Rewind</title>
+Result: PASS on the implementation machine
+
+This is synthetic local startup evidence; it contains no account, credential,
+or private media data.
