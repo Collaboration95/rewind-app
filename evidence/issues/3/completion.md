@@ -3,6 +3,9 @@
 Status: local verification passed; independent second-machine and CI checks
 remain pending until review.
 
+Commit: [4ee8242446389146ec13cbcf91d3b09a7b5a4817](https://github.com/Collaboration95/rewind-app/commit/4ee8242446389146ec13cbcf91d3b09a7b5a4817)
+PR: [#13](https://github.com/Collaboration95/rewind-app/pull/13)
+
 ## Acceptance evidence
 
 - [x] A clean local install completed with `npm install` and generated a
@@ -28,6 +31,18 @@ remain pending until review.
 
 The pending checks require another environment or GitHub's hosted runner and
 are left visible rather than represented as local proof.
+
+## Checks run
+
+- `npm ci` — passed; lockfile installation completed.
+- `npm run check` — passed; formatting, lint, strict TypeScript, scaffold
+  tests, and component tests are green.
+- `npm run build:web` — passed; Expo web export completed.
+- `npx expo-doctor` — passed; 21/21 checks reported no issues.
+- `git diff --check` — passed on the committed change-set.
+- `npm audit --omit=dev --audit-level=moderate` — failed with ten moderate
+  transitive `uuid` findings through Expo tooling; forced remediation would
+  downgrade Expo and was not applied.
 
 ## Dependency audit note
 

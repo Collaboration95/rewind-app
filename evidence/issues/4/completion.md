@@ -2,6 +2,9 @@
 
 Status: implementation evidence prepared.
 
+Commit: [4ee8242446389146ec13cbcf91d3b09a7b5a4817](https://github.com/Collaboration95/rewind-app/commit/4ee8242446389146ec13cbcf91d3b09a7b5a4817)
+PR: [#13](https://github.com/Collaboration95/rewind-app/pull/13)
+
 ## Acceptance evidence
 
 - [x] Evidence location and naming rules are documented in
@@ -21,3 +24,11 @@ Status: implementation evidence prepared.
 
 The repository baseline checks are recorded in issue #3 evidence and the PR
 verification section.
+
+## Checks run
+
+- `npm run check` — passed; formatting, lint, strict TypeScript, scaffold
+  tests, and component tests are green.
+- Browser accessibility tree probe — passed; Rewind heading and Local demo
+  shell status were exposed.
+- `git diff --check` — passed on the committed change-set.

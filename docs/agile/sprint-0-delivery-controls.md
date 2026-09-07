@@ -33,6 +33,15 @@ These are the planned Sprint 0 capacities from the sprint plan, not a claim
 about actual attendance. Real names and availability are a team decision and
 must be added to the planning record before the sprint review if required.
 
+## Open planning blocker
+
+- Decision needed: confirm the real team-member mapping to A–E and each
+  member's available Sprint 0 hours.
+- Owner: team planning lead
+- Target: before Sprint 0 review and before issue #1 is moved to `Done`
+- Current state: the repository records the approved planning labels and
+  capacity only; issue #1 remains partial until the team confirms this input.
+
 ## Working agreement
 
 - Work is pulled toward the Sprint Goal; the two-story In Progress limit is

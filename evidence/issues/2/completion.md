@@ -2,6 +2,9 @@
 
 Status: implementation evidence prepared.
 
+Commit: [4ee8242446389146ec13cbcf91d3b09a7b5a4817](https://github.com/Collaboration95/rewind-app/commit/4ee8242446389146ec13cbcf91d3b09a7b5a4817)
+PR: [#13](https://github.com/Collaboration95/rewind-app/pull/13)
+
 ## Acceptance evidence
 
 - [x] The local-first boundary and explicit cloud/authentication exclusions are
@@ -19,3 +22,10 @@ Status: implementation evidence prepared.
 
 The contracts intentionally describe the later local repository boundary; this
 issue does not implement persistence or feature UI.
+
+## Checks run
+
+- `npm run check` — passed; formatting, lint, strict TypeScript, scaffold
+  tests, and component tests are green.
+- `npx expo-doctor` — passed; 21/21 checks reported no issues.
+- `git diff --check` — passed on the committed change-set.
