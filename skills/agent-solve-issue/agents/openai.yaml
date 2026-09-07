@@ -1,0 +1,7 @@
+interface:
+  display_name: "Agent Solve Issue"
+  short_description: "Guided issue solving with decision records"
+  default_prompt: "Use $agent-solve-issue to inspect this GitHub issue, ask the needed decisions one at a time, implement the agreed change, test it, and prepare the linked PR."
+
+policy:
+  allow_implicit_invocation: false

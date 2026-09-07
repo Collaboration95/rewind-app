@@ -1,0 +1,13 @@
+# Canonical shared skills live in /skills/. The vendor directories below are
+# local discovery/runtime locations; only their skills symlink is versioned.
+.claude/*
+!.claude/skills
+.codex/*
+!.codex/skills
+.opencode/*
+!.opencode/skills
+
+# Local agent state and machine-specific files.
+.claude/settings.local.json
+.codex/settings.local.json
+.DS_Store
