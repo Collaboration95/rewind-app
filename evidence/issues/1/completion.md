@@ -2,7 +2,7 @@
 
 Status: implementation complete pending PR review and merge.
 
-Commit: [a16cadb2ff2725dcaeb54bdad90e45dde78f7dfa](https://github.com/Collaboration95/rewind-app/commit/a16cadb2ff2725dcaeb54bdad90e45dde78f7dfa)
+Commit: [872209d8cdfd9c26b5379bfa16717ad0f74777f3](https://github.com/Collaboration95/rewind-app/commit/872209d8cdfd9c26b5379bfa16717ad0f74777f3)
 PR: [#13](https://github.com/Collaboration95/rewind-app/pull/13)
 
 ## Acceptance evidence
