@@ -39,7 +39,7 @@ GitHub Actions runs `npm run check` on pushes to `main` and pull requests.
 
 ## Repository map
 
-- `App.tsx` — low-fidelity Home screen and reachable main navigation.
+- `App.tsx` — low-fidelity Home screen, main navigation, and explicit unavailable states.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
 

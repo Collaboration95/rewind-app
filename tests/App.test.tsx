@@ -29,6 +29,39 @@ describe('Rewind Home start screen', () => {
     }
   });
 
+  it('provides named tabs with a visible and accessible selected state', async () => {
+    const result = await render(<App />);
+
+    expect(result.getByRole('tab', { name: 'Home', selected: true })).toBeTruthy();
+    expect(result.getByText('SELECTED')).toBeTruthy();
+
+    await fireEvent.press(result.getByRole('tab', { name: 'Chat' }));
+
+    expect(result.getByRole('tab', { name: 'Chat', selected: true })).toBeTruthy();
+    expect(result.getAllByText('SELECTED')).toHaveLength(1);
+  });
+
+  it('uses honest unavailable states for unfinished areas', async () => {
+    const result = await render(<App />);
+
+    await fireEvent.press(result.getByRole('tab', { name: 'Camera' }));
+    expect(
+      result.getByText('Camera capture and permissions are not implemented in this Sprint 0 demo.'),
+    ).toBeTruthy();
+
+    await fireEvent.press(result.getByRole('tab', { name: 'Chat' }));
+    expect(
+      result.getByText('Chat is not implemented. No messages are being sent or stored.'),
+    ).toBeTruthy();
+
+    await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
+    expect(
+      result.getByText(
+        'Archive playback is not implemented. Locked moments remain unavailable until reveal.',
+      ),
+    ).toBeTruthy();
+  });
+
   it('keeps sample moments sealed and does not claim Camera is available', async () => {
     const result = await render(<App />);
 

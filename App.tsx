@@ -23,12 +23,22 @@ const ROUTES = [
 ] as const;
 
 type RouteKey = (typeof ROUTES)[number]['key'];
-type SecondaryRouteKey = Exclude<RouteKey, 'home'>;
+type UnavailableRouteKey = Exclude<RouteKey, 'home'>;
 
-const secondaryScreens: Record<SecondaryRouteKey, string> = {
-  archive: 'Archive',
-  camera: 'Camera',
-  chat: 'Chat',
+const unavailableScreens: Record<UnavailableRouteKey, { description: string; title: string }> = {
+  archive: {
+    description:
+      'Archive playback is not implemented. Locked moments remain unavailable until reveal.',
+    title: 'Archive',
+  },
+  camera: {
+    description: 'Camera capture and permissions are not implemented in this Sprint 0 demo.',
+    title: 'Camera',
+  },
+  chat: {
+    description: 'Chat is not implemented. No messages are being sent or stored.',
+    title: 'Chat',
+  },
 };
 
 export default function App() {
@@ -39,7 +49,7 @@ export default function App() {
       <StatusBar style="dark" />
 
       <View style={styles.screen}>
-        {activeRoute === 'home' ? <HomeScreen /> : <SecondaryScreen route={activeRoute} />}
+        {activeRoute === 'home' ? <HomeScreen /> : <UnavailableScreen route={activeRoute} />}
         <MainNavigation activeRoute={activeRoute} onNavigate={setActiveRoute} />
       </View>
     </View>
@@ -128,17 +138,25 @@ function HomeScreen() {
   );
 }
 
-function SecondaryScreen({ route }: { route: SecondaryRouteKey }) {
-  const title = secondaryScreens[route];
+function UnavailableScreen({ route }: { route: UnavailableRouteKey }) {
+  const screen = unavailableScreens[route];
 
   return (
     <View style={styles.unavailableScreen}>
       <AppHeader />
       <View>
-        <Text style={styles.label}>{title.toUpperCase()}</Text>
+        <Text style={styles.label}>{screen.title.toUpperCase()}</Text>
         <Text accessibilityRole="header" style={styles.title}>
-          {title}
+          {screen.title}
         </Text>
+      </View>
+      <View
+        accessible
+        accessibilityLabel={`${screen.title} unavailable status`}
+        style={styles.unavailablePanel}
+      >
+        <Text style={styles.panelTitle}>Not available yet</Text>
+        <Text style={styles.bodyText}>{screen.description}</Text>
       </View>
     </View>
   );
@@ -152,12 +170,16 @@ function MainNavigation({
   onNavigate: (route: RouteKey) => void;
 }) {
   return (
-    <View style={styles.navigation}>
+    <View accessibilityRole="tablist" style={styles.navigation}>
       {ROUTES.map((route) => {
         const isSelected = route.key === activeRoute;
 
         return (
           <Pressable
+            accessibilityHint={`Shows the ${route.label} area`}
+            accessibilityLabel={route.label}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isSelected }}
             key={route.key}
             onPress={() => onNavigate(route.key)}
             style={[styles.tab, isSelected && styles.selectedTab]}
@@ -166,6 +188,7 @@ function MainNavigation({
             <Text style={[styles.tabLabel, isSelected && styles.selectedTabLabel]}>
               {route.label}
             </Text>
+            <Text style={styles.tabState}>{isSelected ? 'SELECTED' : ' '}</Text>
           </Pressable>
         );
       })}
@@ -313,6 +336,14 @@ const styles = StyleSheet.create({
     gap: 24,
     padding: 24,
   },
+  unavailablePanel: {
+    backgroundColor: COLORS.paper,
+    borderColor: COLORS.line,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 10,
+    padding: 20,
+  },
   navigation: {
     borderTopColor: COLORS.line,
     borderTopWidth: 1,
@@ -338,5 +369,11 @@ const styles = StyleSheet.create({
   },
   selectedTabLabel: {
     color: COLORS.ink,
+  },
+  tabState: {
+    color: COLORS.accent,
+    fontSize: 8,
+    fontWeight: '700',
+    marginTop: 4,
   },
 });
