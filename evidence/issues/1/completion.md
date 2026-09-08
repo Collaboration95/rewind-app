@@ -1,7 +1,6 @@
 # Issue #1 evidence — Sprint 0 delivery controls
 
-Status: partial; implementation evidence prepared, with the team-member input
-blocker still open.
+Status: implementation complete pending PR review and merge.
 
 Commit: [a16cadb2ff2725dcaeb54bdad90e45dde78f7dfa](https://github.com/Collaboration95/rewind-app/commit/a16cadb2ff2725dcaeb54bdad90e45dde78f7dfa)
 PR: [#13](https://github.com/Collaboration95/rewind-app/pull/13)
@@ -14,6 +13,9 @@ PR: [#13](https://github.com/Collaboration95/rewind-app/pull/13)
 - [x] The two-story In Progress WIP limit, working agreement, planning member
       labels/capacity, reviewer map, and exception-state rule are recorded in
       [`docs/agile/sprint-0-delivery-controls.md`](../../../docs/agile/sprint-0-delivery-controls.md).
+- [x] The submitted project proposal confirms the real A–E member mapping and
+      role ownership; planned Sprint 0 availability is recorded as committed
+      capacity rather than an attendance log.
 - [x] The primary issue record and secondary traceability comments link this
       grouped change-set.
 
@@ -25,10 +27,9 @@ PR: [#13](https://github.com/Collaboration95/rewind-app/pull/13)
   the Sprint 0 issue set is present with milestone and workflow fields.
 - `git diff --check` — passed on the committed change-set.
 
-## Limitation
+## Boundary
 
-Member labels A–E and planned hours are recorded from the sprint plan. The team
-has not yet supplied real names or attendance availability, so no personal
-identity data is invented in the repository. The team planning lead owns this
-decision, targeted before Sprint 0 review; issue #1 must remain partial until
-it is confirmed.
+The proposal does not define daily attendance or absence records. The repository
+records the confirmed member names, role mapping, reviewer pairings, and
+planned Sprint 0 capacity, but does not invent an attendance history or copy
+member email addresses into this public repository.

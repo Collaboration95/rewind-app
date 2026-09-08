@@ -4,8 +4,9 @@ Status: active planning record
 Source: `SWEE5006-Project-Planning-docs/planning/sprints/sprint-0-plan.md`
 
 This record makes the controls used by the `Rewind — Sprint 0` GitHub Project
-visible alongside the repository. It uses planning labels rather than personal
-identity data until the team confirms real member names.
+visible alongside the repository. The member names and ownership mapping below
+come from the submitted Rewind project proposal. Planned Sprint 0 capacity is
+recorded as planning availability; it is not an attendance log.
 
 ## Board and milestone
 
@@ -21,26 +22,28 @@ rules and the repository provides the auditable change history.
 
 ## Planning member map
 
-| Member label | Sprint 0 role                                           | Planned hours | Review pairing |
-| ------------ | ------------------------------------------------------- | ------------: | -------------- |
-| A            | Product Owner proxy; backlog and seeded-membership lead |            15 | C              |
-| B            | Acceptance lead; home/quota slice lead                  |            15 | E              |
-| C            | Technical/integration lead; architecture and scaffold   |            15 | A              |
-| D            | Scrum facilitator; CI, quality and reporting            |            13 | E              |
-| E            | UX/accessibility and evidence lead; app shell           |            12 | B              |
+| Member label | Member name       | Sprint 0 role                                           | Planned hours | Review pairing |
+| ------------ | ----------------- | ------------------------------------------------------- | ------------: | -------------- |
+| A            | Gopal Guruprasath | Product Owner proxy; backlog and seeded-membership lead |            15 | C              |
+| B            | Nguyen Kim Long   | Acceptance lead; home/quota slice lead                  |            15 | E              |
+| C            | Sang Haoxiang     | Technical/integration lead; architecture and scaffold   |            15 | A              |
+| D            | Phan Mai Tan Loi  | Scrum facilitator; CI, quality and reporting            |            13 | E              |
+| E            | Jiang Jiayu       | UX/accessibility and evidence lead; app shell           |            12 | B              |
 
-These are the planned Sprint 0 capacities from the sprint plan, not a claim
-about actual attendance. Real names and availability are a team decision and
-must be added to the planning record before the sprint review if required.
+These are the planned Sprint 0 capacities from the sprint plan and proposal
+ownership map. The proposal does not define daily attendance or absence
+records, so this repository deliberately records planned capacity rather than
+inventing an attendance history.
 
-## Open planning blocker
+## Planning record status
 
-- Decision needed: confirm the real team-member mapping to A–E and each
-  member's available Sprint 0 hours.
-- Owner: team planning lead
-- Target: before Sprint 0 review and before issue #1 is moved to `Done`
-- Current state: the repository records the approved planning labels and
-  capacity only; issue #1 remains partial until the team confirms this input.
+- The real team-member mapping to A–E is recorded above from the submitted
+  proposal.
+- Planned Sprint 0 availability is recorded as committed capacity: A 15 h,
+  B 15 h, C 15 h, D 13 h, and E 12 h.
+- Daily attendance and absences are not part of this repository record; they
+  remain team administration rather than an invented project fact.
+- Owner: team planning lead.
 
 ## Working agreement
 
