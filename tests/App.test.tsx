@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react-native';
+import { fireEvent, render } from '@testing-library/react-native';
 
 import App from '../App';
 
@@ -11,6 +11,22 @@ describe('Rewind Home start screen', () => {
     expect(
       result.getByLabelText('Current capsule. Reveal in 2 days. 4 of 5 members added a moment.'),
     ).toBeTruthy();
+  });
+
+  it('starts on Home and makes every main area reachable', async () => {
+    const result = await render(<App />);
+
+    expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
+
+    for (const area of [
+      { key: 'camera', label: 'Camera' },
+      { key: 'chat', label: 'Chat' },
+      { key: 'archive', label: 'Archive' },
+    ]) {
+      await fireEvent.press(result.getByTestId(`nav-${area.key}`));
+
+      expect(result.getByRole('header', { name: area.label })).toBeTruthy();
+    }
   });
 
   it('keeps sample moments sealed and does not claim Camera is available', async () => {

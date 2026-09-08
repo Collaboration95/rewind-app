@@ -39,10 +39,10 @@ GitHub Actions runs `npm run check` on pushes to `main` and pull requests.
 
 ## Repository map
 
-- `App.tsx` — minimal low-fidelity Home/start screen using local demo data.
+- `App.tsx` — low-fidelity Home screen and reachable main navigation.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
-scope. Navigation, profile selection, group capsule state, camera, chat,
-archive, persistence, authentication, and cloud services are follow-up work.
+scope. Profile selection, group capsule state, camera capture, chat, archive
+playback, persistence, authentication, and cloud services are follow-up work.
