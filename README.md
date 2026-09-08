@@ -3,7 +3,7 @@
 Rewind is a local-first SWE5006 prototype for collecting short shared moments
 for a group cycle and experiencing them together through a delayed reveal.
 
-This repository currently contains the Sprint 0 foundation. The app shell is
+This repository contains the Sprint 0 foundation and local demo profile selection. The app is
 deliberately honest about what is not implemented yet; local demo data is not
 authentication, a secure account, or a cloud service.
 
@@ -37,12 +37,27 @@ future implementation scope.
 
 GitHub Actions runs `npm run check` on pushes to `main` and pull requests.
 
+## Local demo profiles
+
+Choose one of five synthetic members in the profile picker. The current member
+changes immediately, and the last selection is saved on this device using
+AsyncStorage. A new installation or missing/invalid selection starts with Amber.
+Storage failures display a message and allow retrying the save.
+
+For a clean demo reset, clear this app's local storage (site data on web or app
+data on Android) and relaunch. This restores the default selection and the same
+five profiles and one group. Selection is local to this device; it is not sign-in
+or multi-device membership.
+
 ## Repository map
 
 - `App.tsx` — minimal runnable Expo start shell.
+- `src/profiles/` — reusable profile picker and shared current-member provider.
+- `src/data/` — synthetic repositories and local selection storage.
+- `src/domain/` — framework-independent profile, group, and storage interfaces.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
-scope. Navigation, profile selection, group capsule state, camera, chat,
+scope. Navigation, group capsule state, camera, chat,
 archive, persistence, authentication, and cloud services are follow-up work.
