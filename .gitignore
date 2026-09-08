@@ -11,3 +11,9 @@
 .claude/settings.local.json
 .codex/settings.local.json
 .DS_Store
+
+# Dependencies and generated local output.
+node_modules/
+.expo/
+coverage/
+dist/

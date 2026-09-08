@@ -1,0 +1,9 @@
+{
+  "expo": {
+    "name": "Rewind",
+    "slug": "rewind-app",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic"
+  }
+}
