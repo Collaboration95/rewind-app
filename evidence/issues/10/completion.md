@@ -1,46 +1,43 @@
 # Issue #10 acceptance evidence
 
-Status: implemented and verified locally on `feat/us-01-home-start-screen-issue-10`; remote push and pull request are intentionally pending.
+Status: implemented and verified on `feat/us-01-home-start-screen-issue-10`; pull request and human review remain pending.
 
 ## Scope
 
-- Initial Rewind Home/start screen.
-- Original Darkroom visual hierarchy created with React Native styles and no external assets.
-- Accessible screen title and explicit `Local demo` status.
-- A continuously moving decorative film strip based on the team's earlier Home direction, with a static fallback when reduced motion is enabled.
-- Minimal wording and no claim that an account, cloud connection, upload, navigation, or later capability exists.
+- Darkroom Home/start screen recreated from the approved `rewind-home-iphone-preview.html` reference.
+- Matching 390 px layout, darkroom palette, countdown, angled 35 mm film strip, weekly prompt, member progress, quota, and primary action.
+- Three bundled blurred demo images used only inside sealed film frames.
+- Explicit `LOCAL DEMO` status so static sample names, counts, and moments cannot be mistaken for real account data.
+- The primary action opens the Camera route; Home, Camera, Chat, and Archive remain reachable from the bottom navigation.
 
-Excluded from this change: navigation, group/profile/contribution state, camera, chat, archive, authentication, cloud services, and final visual polish.
+Excluded from this change: real accounts, private media, persistence, camera capture, chat behaviour, archive data, cloud services, and backend integration.
 
 ## Acceptance criteria
 
-- [x] A clean app launch renders the Home/start screen from `App.tsx`.
-- [x] `Moments worth waiting for.` is exposed with the `header` accessibility role.
-- [x] The entry state is labelled `HOME` and `LOCAL DEMO`.
-- [x] The visual treatment is original, code-native, and uses no copied assets or product text.
-- [x] The screen contains no account, cloud, upload, navigation, or later-capability success claim.
-- [x] Decorative film frames do not expose media, counts, group state, or interactive controls.
-- [x] The film strip moves continuously when motion is allowed and stays static when reduced motion is enabled.
+- [x] A clean app launch renders the Darkroom Home/start screen from `App.tsx`.
+- [x] The visual hierarchy and palette follow the approved iPhone reference.
+- [x] `Weekend People` is exposed with the `header` accessibility role.
+- [x] The countdown is labelled `Reveal in 2 days 14 hours`.
+- [x] The film strip clearly presents three locked, blurred demo moments.
+- [x] The weekly prompt, member progress, quota, and `Add to the roll` action are visible.
+- [x] Static sample content is explicitly labelled as a local demo.
+- [x] The four main navigation entries remain available, with exactly one selected entry.
 
 ## Verification
 
-- `npm ci` — passed; npm reported the 10 known moderate transitive Expo-toolchain findings already tracked by the foundation work.
-- `npm run check` — passed: Prettier, ESLint, strict TypeScript, two Node scaffold tests, and two focused Home screen tests.
-- `npm run build:web` — passed; Expo exported the web bundle to `dist/`.
-- Expo web startup at `http://localhost:8081` — passed.
-- Browser accessibility inspection — passed: `Moments worth waiting for.` is exposed as a level-one heading, `Local demo` is labelled, and the decorative film is absent from the accessibility tree.
-- Browser boundary check — passed in an isolated Playwright browser: zero buttons, no account/cloud/upload claims, no horizontal overflow, and zero app console or page errors.
-- Motion check — passed: the film transform changed during an 800 ms observation; with the browser reduced-motion preference enabled, it remained unchanged.
-- Responsive visual inspection — passed in Chrome on Windows at 1280×900 and 390×844; both evidence screenshots were reviewed after capture.
+- `npm run check` — passed: Prettier, ESLint, strict TypeScript, two scaffold tests, and four focused app tests.
+- `npm run build:web` — passed; Expo exported the web bundle and all three bundled WebP assets.
+- Accessibility inspection — passed: the Home heading, countdown, film description, progress labels, primary action, and selected tab are exposed.
+- Navigation checks — passed: each bottom tab opens its matching route, and the Home primary action opens Camera.
+- Responsive visual inspection — passed at 390×844 and 1280×900 after the demo images finished rendering.
 
 ## Synthetic screenshots
 
-- `home-start-screen-desktop.png` — 1280×900 desktop viewport.
-- `home-start-screen-mobile.png` — 390×844 mobile viewport.
+- `home-start-screen-mobile.png` — exact 390×844 app frame.
+- `home-start-screen-desktop.png` — centered 390 px app frame in a 1280×900 viewport.
 
 ## Traceability
 
 - Issue: https://github.com/Collaboration95/rewind-app/issues/10
 - Parent story: https://github.com/Collaboration95/rewind-app/issues/5
-- Foundation dependency: https://github.com/Collaboration95/rewind-app/pull/13
-- Pull request: pending until foundation PR #13 is merged and repository push access is available.
+- Navigation task: https://github.com/Collaboration95/rewind-app/issues/8

@@ -1,30 +1,44 @@
-import { render } from '@testing-library/react-native';
-import { AccessibilityInfo } from 'react-native';
+import { fireEvent, render } from '@testing-library/react-native';
 
 import App from '../App';
 
-describe('Rewind Home start screen', () => {
-  beforeEach(() => {
-    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  it('opens with a clear accessible title and local-demo entry state', async () => {
+describe('Rewind US-01', () => {
+  it('opens on the Darkroom Home design with explicit demo data', async () => {
     const result = await render(<App />);
 
-    expect(result.getByRole('header', { name: 'Moments worth waiting for.' })).toBeTruthy();
-    expect(result.getByText('HOME')).toBeTruthy();
-    expect(result.getByLabelText('Local demo')).toBeTruthy();
+    expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
+    expect(result.getByLabelText('Developing local demo')).toBeTruthy();
+    expect(result.getByLabelText('Reveal in 2 days 14 hours')).toBeTruthy();
+    expect(result.getByText('What made you pause\nand smile?')).toBeTruthy();
   });
 
-  it('uses a decorative film strip without simulating later capabilities', async () => {
+  it('shows the sealed film, group progress, quota, and weekly action', async () => {
     const result = await render(<App />);
 
-    expect(result.getByTestId('ambient-film-strip', { includeHiddenElements: true })).toBeTruthy();
-    expect(result.queryAllByRole('button')).toHaveLength(0);
-    expect(result.queryByText(/account|cloud|upload/i)).toBeNull();
+    expect(result.getByTestId('sealed-film-strip')).toBeTruthy();
+    expect(result.getByText('4 of 5 friends added moments')).toBeTruthy();
+    expect(result.getByLabelText('2 of 5 photos used')).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Add to the roll' })).toBeTruthy();
+  });
+
+  it('makes all four main areas reachable and marks the selected tab', async () => {
+    const result = await render(<App />);
+
+    expect(result.getAllByRole('tab')).toHaveLength(4);
+    expect(result.getByRole('tab', { name: 'Home', selected: true })).toBeTruthy();
+
+    for (const route of ['Camera', 'Chat', 'Archive']) {
+      await fireEvent.press(result.getByRole('tab', { name: route }));
+      expect(result.getByRole('header', { name: route })).toBeTruthy();
+      expect(result.getByRole('tab', { name: route, selected: true })).toBeTruthy();
+    }
+  });
+
+  it('opens Camera from the weekly action', async () => {
+    const result = await render(<App />);
+
+    await fireEvent.press(result.getByRole('button', { name: 'Add to the roll' }));
+    expect(result.getByRole('header', { name: 'Camera' })).toBeTruthy();
+    expect(result.getByRole('tab', { name: 'Camera', selected: true })).toBeTruthy();
   });
 });
