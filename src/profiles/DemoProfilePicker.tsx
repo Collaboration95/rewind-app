@@ -32,7 +32,7 @@ export function DemoProfilePicker() {
                 <Pressable
                   key={profile.id}
                   accessibilityRole="button"
-                  accessibilityLabel={`Choose ${profile.displayName}, sample member`}
+                  accessibilityLabel={`Choose ${profile.displayName}, sample member${selected ? ', selected' : ''}`}
                   accessibilityState={{ selected }}
                   onPress={() => selectMember(profile.id)}
                   onFocus={() => setFocusedId(profile.id)}

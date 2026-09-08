@@ -33,7 +33,7 @@ describe('Local demo profile flow', () => {
     await fireEvent.press(result.getByRole('button', { name: 'Choose Clover, sample member' }));
     expect(result.getByText('Current member: Clover')).toBeTruthy();
     expect(
-      result.getByRole('button', { name: 'Choose Clover, sample member', selected: true }),
+      result.getByRole('button', { name: 'Choose Clover, sample member, selected' }),
     ).toBeTruthy();
     await waitFor(async () => expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-3'));
     await result.unmount();
