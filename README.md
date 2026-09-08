@@ -39,7 +39,7 @@ GitHub Actions runs `npm run check` on pushes to `main` and pull requests.
 
 ## Repository map
 
-- `App.tsx` — minimal runnable Expo start shell.
+- `App.tsx` — minimal low-fidelity Home/start screen using local demo data.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
 - `docs/agile/` — Sprint 0 controls and lightweight reporting/demo templates.
