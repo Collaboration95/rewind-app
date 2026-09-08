@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 const COLORS = {
   accent: '#FFA572',
@@ -69,7 +69,12 @@ function AppHeader() {
 
 function HomeScreen() {
   return (
-    <View style={styles.content}>
+    <ScrollView
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+      style={styles.homeScroll}
+      testID="home-scroll"
+    >
       <AppHeader />
 
       <View>
@@ -133,8 +138,10 @@ function HomeScreen() {
       >
         <Text style={styles.disabledButtonText}>Add a moment</Text>
       </Pressable>
-      <Text style={styles.helperText}>Camera is not available in this task.</Text>
-    </View>
+      <Text style={styles.helperText} testID="home-content-end">
+        Camera is not available in this task.
+      </Text>
+    </ScrollView>
   );
 }
 
@@ -170,7 +177,7 @@ function MainNavigation({
   onNavigate: (route: RouteKey) => void;
 }) {
   return (
-    <View accessibilityRole="tablist" style={styles.navigation}>
+    <View accessibilityRole="tablist" style={styles.navigation} testID="main-navigation">
       {ROUTES.map((route) => {
         const isSelected = route.key === activeRoute;
 
@@ -211,9 +218,13 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
     gap: 18,
     padding: 24,
+    paddingBottom: 32,
+  },
+  homeScroll: {
+    flex: 1,
   },
   topBar: {
     alignItems: 'center',
