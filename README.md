@@ -42,9 +42,6 @@ GitHub Actions runs `npm run check` on pushes to `main` and pull requests.
 - `App.tsx` — minimal low-fidelity Home/start screen using local demo data.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
-- `docs/agile/` — Sprint 0 controls and lightweight reporting/demo templates.
-- `docs/quality/` — accessibility verification checklist.
-- `evidence/` — synthetic issue evidence and naming convention.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
 scope. Navigation, profile selection, group capsule state, camera, chat,
