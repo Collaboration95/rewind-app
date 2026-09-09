@@ -24,4 +24,5 @@ test('scaffold identifies the Rewind app and exposes baseline quality commands',
 test('quality workflow runs the same baseline check as local development', () => {
   assert.match(workflow, /npm ci/);
   assert.match(workflow, /npm run check/);
+  assert.match(workflow, /pull_request:\n    branches: \[main\]/);
 });
