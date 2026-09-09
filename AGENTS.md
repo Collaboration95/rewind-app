@@ -61,6 +61,10 @@ implementation status, deployment approach, GitHub workflow, or backlog.
 npm start -- --ios --lan --clear
 ```
 
+For repeatable local sessions, prefer `scripts/rewind-dev.sh ios-up` and
+`scripts/rewind-dev.sh ios-down`; use `web-up`/`web-down` for the Expo web
+preview. The script enforces the supported device policy and owns teardown.
+
 Use `--lan`, not `--localhost`. On this machine, Metro may bind to the IPv6
 loopback interface while Expo Go is given an IPv4 `127.0.0.1` URL. That produces
 the misleading Expo Go error “Could not connect to the server.” The LAN launch

@@ -24,6 +24,24 @@ The clean-start path does not require AWS credentials, an account, private
 media, or a deployed service. Native Android and device permission work are
 future implementation scope.
 
+## iOS and web development sessions
+
+On macOS, `scripts/rewind-dev.sh` manages a repeatable Expo Go iOS session and
+the Expo web preview. It defaults to the iPhone 15 Pro and rejects iPhone SE or
+older simulators.
+
+```sh
+scripts/rewind-dev.sh ios-up   # boot iPhone 15 Pro, start Metro, open Expo Go
+scripts/rewind-dev.sh web-up   # start the browser preview on port 8082
+scripts/rewind-dev.sh status
+scripts/rewind-dev.sh down     # stop both servers and shut down the simulator
+```
+
+Use `ios-down` or `web-down` when stopping only one session. The script uses
+the local Expo Go bundle when available; set `EXPO_GO_APP_PATH` to provide a
+specific `.app` bundle. `IOS_DEVICE_NAME`, `IOS_DEVICE_UDID`, `IOS_PORT`, and
+`WEB_PORT` can be overridden for a supported setup.
+
 ## Quality commands
 
 | Command                   | Purpose                                   |
