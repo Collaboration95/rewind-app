@@ -3,6 +3,9 @@ import { StatusBar } from 'expo-status-bar';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
+import { DemoProfilePicker } from './src/profiles/DemoProfilePicker';
+import { DemoProfileProvider } from './src/profiles/DemoProfileProvider';
+
 const COLORS = {
   accent: '#FFA572',
   background: '#252326',
@@ -47,18 +50,20 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
+      <DemoProfileProvider>
+        <StatusBar style="light" />
 
-      <SafeAreaView
-        edges={['top', 'right', 'bottom', 'left']}
-        style={styles.page}
-        testID="application-safe-area"
-      >
-        <View style={styles.screen}>
-          {activeRoute === 'home' ? <HomeScreen /> : <UnavailableScreen route={activeRoute} />}
-          <MainNavigation activeRoute={activeRoute} onNavigate={setActiveRoute} />
-        </View>
-      </SafeAreaView>
+        <SafeAreaView
+          edges={['top', 'right', 'bottom', 'left']}
+          style={styles.page}
+          testID="application-safe-area"
+        >
+          <View style={styles.screen}>
+            {activeRoute === 'home' ? <HomeScreen /> : <UnavailableScreen route={activeRoute} />}
+            <MainNavigation activeRoute={activeRoute} onNavigate={setActiveRoute} />
+          </View>
+        </SafeAreaView>
+      </DemoProfileProvider>
     </SafeAreaProvider>
   );
 }
@@ -83,6 +88,8 @@ function HomeScreen() {
       testID="home-scroll"
     >
       <AppHeader />
+
+      <DemoProfilePicker />
 
       <View>
         <Text style={styles.label}>HOME</Text>
