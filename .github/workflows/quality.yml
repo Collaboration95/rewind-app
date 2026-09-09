@@ -28,3 +28,9 @@ jobs:
 
       - name: Run baseline checks
         run: npm run check
+
+      - name: Install Chromium for responsive checks
+        run: npx playwright install --with-deps chromium
+
+      - name: Run responsive browser checks
+        run: npm run test:responsive

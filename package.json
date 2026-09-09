@@ -17,6 +17,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/scaffold.test.mjs && jest --runInBand",
+    "test:responsive": "npm run build:web && playwright test",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test"
   },
   "dependencies": {
@@ -26,9 +27,11 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
     "react-native-web": "~0.21.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29.5.14",
     "@types/react": "~19.2.2",

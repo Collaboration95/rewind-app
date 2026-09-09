@@ -26,16 +26,18 @@ future implementation scope.
 
 ## Quality commands
 
-| Command                | Purpose                          |
-| ---------------------- | -------------------------------- |
-| `npm run format:check` | Verify repository formatting     |
-| `npm run lint`         | Run ESLint                       |
-| `npm run typecheck`    | Run strict TypeScript checking   |
-| `npm test`             | Run scaffold and component tests |
-| `npm run check`        | Run all baseline checks          |
-| `npm run build:web`    | Export the Expo web bundle       |
+| Command                   | Purpose                                   |
+| ------------------------- | ----------------------------------------- |
+| `npm run format:check`    | Verify repository formatting              |
+| `npm run lint`            | Run ESLint                                |
+| `npm run typecheck`       | Run strict TypeScript checking            |
+| `npm test`                | Run scaffold and component tests          |
+| `npm run check`           | Run all baseline checks                   |
+| `npm run build:web`       | Export the Expo web bundle                |
+| `npm run test:responsive` | Check layouts at supported viewport sizes |
 
-GitHub Actions runs `npm run check` on pushes to `main` and pull requests.
+GitHub Actions runs the baseline and responsive browser checks on pushes to
+`main` and pull requests.
 
 ## Local demo profiles
 
@@ -51,7 +53,7 @@ or multi-device membership.
 
 ## Repository map
 
-- `App.tsx` — minimal runnable Expo start shell.
+- `App.tsx` — low-fidelity Home screen, profile picker, main navigation, and explicit unavailable states.
 - `src/profiles/` — reusable profile picker and shared current-member provider.
 - `src/data/` — synthetic repositories and local selection storage.
 - `src/domain/` — framework-independent profile, group, and storage interfaces.
@@ -59,5 +61,5 @@ or multi-device membership.
 - `docs/domain/` — glossary and framework-independent contracts.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
-scope. Navigation, group capsule state, camera, chat,
-archive, persistence, authentication, and cloud services are follow-up work.
+scope. Group capsule state, camera capture, chat, archive playback,
+authentication, and cloud services are follow-up work.
