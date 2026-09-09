@@ -37,3 +37,23 @@ scope or delivery status.
 to inspect possible feature ideas, local paths, application structure, or
 technical approaches. It must not be used to determine actual project scope,
 implementation status, deployment approach, GitHub workflow, or backlog.
+
+## Native iOS simulator verification
+
+For native verification, use an iPhone 14 or newer simulator and Expo Go rather
+than relying only on browser viewport emulation. Prefer a notched or Dynamic
+Island device (for example, iPhone 14 Pro or iPhone 15 Pro) so safe-area
+behavior is exercised. Do not use iPhone SE as the native-review baseline.
+
+```sh
+npm start -- --ios --lan --clear
+```
+
+Use `--lan`, not `--localhost`. On this machine, Metro may bind to the IPv6
+loopback interface while Expo Go is given an IPv4 `127.0.0.1` URL. That produces
+the misleading Expo Go error “Could not connect to the server.” The LAN launch
+advertises the Mac's reachable address and has been verified to start the app
+on an iPhone simulator.
+
+Before native review, run `npm run check`; use `npm run test:responsive` for
+the browser layout regression suite as complementary—not substitute—evidence.
