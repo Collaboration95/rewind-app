@@ -3,6 +3,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
+import type { Cycle, CycleRepository } from '../src/domain/cycles';
 import { SELECTION_KEY } from '../src/data/selection-store';
 import type { SelectionStore } from '../src/domain/profiles';
 import { DemoProfilePicker } from '../src/profiles/DemoProfilePicker';
@@ -33,6 +34,31 @@ function picker(store: SelectionStore) {
   );
 }
 
+const TEST_NOW = Date.parse('2026-01-01T00:00:00.000Z');
+
+function cycleFixture(overrides: Partial<Cycle> = {}): Cycle {
+  return {
+    id: 'demo-cycle',
+    groupId: 'demo-group',
+    prompt: 'What made you pause and smile?',
+    startsAt: new Date(TEST_NOW - 60_000).toISOString(),
+    endsAt: new Date(TEST_NOW + 2 * 60 * 60 * 1000).toISOString(),
+    status: 'collecting',
+    lockState: 'locked',
+    quota: { maxCount: 5, maxSeconds: 30 },
+    contributionUsage: { countUsed: 0, secondsUsed: 0 },
+    ...overrides,
+  };
+}
+
+function cycleRepository(
+  result: Cycle | { kind: 'NotFound' | 'RecoverableFailure' },
+): CycleRepository {
+  return {
+    getCurrentCycle: jest.fn().mockResolvedValue(result),
+  };
+}
+
 describe('Rewind Home start screen', () => {
   it('keeps the application inside the device safe area', async () => {
     const result = await render(<App />);
@@ -52,9 +78,9 @@ describe('Rewind Home start screen', () => {
     expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
     expect(result.getByLabelText('Local demo data')).toBeTruthy();
     expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
-    expect(
-      result.getByLabelText('Current capsule. Reveal in 2 days. 4 of 5 members added a moment.'),
-    ).toBeTruthy();
+    expect(result.getByLabelText('Current capsule. 2 days remaining.')).toBeTruthy();
+    expect(result.getByLabelText('Current prompt: What made you pause and smile?')).toBeTruthy();
+    expect(result.getByLabelText(/0 of 5 contributions used/)).toBeTruthy();
     await result.findByText('Current member: Amber');
   });
 
@@ -117,11 +143,76 @@ describe('Rewind Home start screen', () => {
     expect(result.getByText('Camera is not available in this task.')).toBeTruthy();
   });
 
-  it('shows the weekly prompt and quota', async () => {
+  it('shows the repository-backed prompt, countdown, quota, and locked-safe state', async () => {
     const result = await render(<App />);
 
-    expect(result.getByLabelText('Weekly prompt: What made you pause and smile?')).toBeTruthy();
-    expect(result.getByLabelText('Weekly quota. 2 of 5 moments used.')).toBeTruthy();
+    expect(result.getByTestId('cycle-countdown')).toBeTruthy();
+    expect(result.getByText('0 of 5 contributions')).toBeTruthy();
+    expect(result.getByText(/0 of 30 seconds used/)).toBeTruthy();
+    expect(result.getByLabelText(/Contributions are collecting and locked/)).toBeTruthy();
+    expect(result.queryAllByRole('image')).toHaveLength(0);
+    expect(result.queryByRole('button', { name: /share/i })).toBeNull();
+  });
+
+  it('uses changed seeded quota metadata from the cycle repository', async () => {
+    const result = await render(
+      <App
+        clock={() => TEST_NOW}
+        cycleRepository={cycleRepository(
+          cycleFixture({
+            quota: { maxCount: 9, maxSeconds: 45 },
+            contributionUsage: { countUsed: 2, secondsUsed: 11 },
+          }),
+        )}
+      />,
+    );
+
+    await result.findByText('2 of 9 contributions');
+    expect(result.getByText(/11 of 45 seconds used/)).toBeTruthy();
+    expect(result.getByLabelText(/2 of 9 contributions used/)).toBeTruthy();
+  });
+
+  it('reads the capsule for the selected synthetic member', async () => {
+    const getCurrentCycle = jest.fn().mockResolvedValue(cycleFixture());
+    const result = await render(<App cycleRepository={{ getCurrentCycle }} />);
+
+    await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('button', { name: 'Choose Clover, sample member' }));
+    await waitFor(() => expect(getCurrentCycle).toHaveBeenLastCalledWith('demo-group', 'demo-3'));
+  });
+
+  it('shows an understandable loading state while the capsule is fetched', async () => {
+    let resolveCycle!: (cycle: Cycle) => void;
+    const repository: CycleRepository = {
+      getCurrentCycle: jest.fn(
+        () =>
+          new Promise<Cycle>((resolve) => {
+            resolveCycle = resolve;
+          }),
+      ),
+    };
+    const result = await render(<App cycleRepository={repository} />);
+
+    expect(result.getByTestId('capsule-loading')).toBeTruthy();
+    await act(async () => resolveCycle(cycleFixture()));
+    await result.findByTestId('capsule-ready');
+  });
+
+  it('distinguishes an empty capsule from a recoverable failure and supports retry', async () => {
+    const empty = await render(<App cycleRepository={cycleRepository({ kind: 'NotFound' })} />);
+    await empty.findByTestId('capsule-empty');
+    expect(empty.getByText('No active capsule')).toBeTruthy();
+    await empty.unmount();
+
+    const getCurrentCycle = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'RecoverableFailure' as const })
+      .mockResolvedValueOnce(cycleFixture());
+    const retryResult = await render(<App cycleRepository={{ getCurrentCycle }} />);
+    await retryResult.findByTestId('capsule-error');
+    await fireEvent.press(retryResult.getByRole('button', { name: 'Retry loading capsule' }));
+    await retryResult.findByTestId('capsule-ready');
+    expect(getCurrentCycle).toHaveBeenCalledTimes(2);
   });
 });
 

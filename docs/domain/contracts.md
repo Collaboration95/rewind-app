@@ -16,6 +16,11 @@ ContributionQuota = {
   maxSeconds: positive integer
 }
 
+ContributionUsage = {
+  countUsed: non-negative integer,
+  secondsUsed: non-negative integer
+}
+
 CycleStatus = collecting | revealing | archived
 LockState = locked | unlocked
 ```
@@ -60,14 +65,17 @@ Cycle = {
   endsAt: ISO-8601 instant,
   status: CycleStatus,
   lockState: LockState,
-  quota: ContributionQuota
+  quota: ContributionQuota,
+  contributionUsage: ContributionUsage
 }
 ```
 
 The Sprint 0 seed uses `status = collecting`, `lockState = locked`,
-`quota.maxCount = 5`, and `quota.maxSeconds = 30`. Countdown presentation is a
-view concern derived from the cycle instants; the UI must not own a second set
-of quota values.
+`quota.maxCount = 5`, `quota.maxSeconds = 30`, and zero used contributions for
+the selected demo member. `contributionUsage` is scoped to the acting member
+passed to the repository read. Countdown presentation is a view concern
+derived from the cycle instants; the UI must not own a second set of quota
+values.
 
 ## Repository ports
 

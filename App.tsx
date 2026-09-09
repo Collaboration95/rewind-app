@@ -5,17 +5,11 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { DemoProfilePicker } from './src/profiles/DemoProfilePicker';
 import { DemoProfileProvider } from './src/profiles/DemoProfileProvider';
-
-const COLORS = {
-  accent: '#FFA572',
-  background: '#252326',
-  deep: '#1D1B1E',
-  edge: '#BBA270',
-  ink: '#F9EBD5',
-  line: '#51474A',
-  muted: '#B9ABA0',
-  paper: '#302D30',
-};
+import { CapsuleProvider } from './src/capsule/CapsuleProvider';
+import { CapsuleSummary } from './src/capsule/CapsuleSummary';
+import type { CycleRepository } from './src/domain/cycles';
+import type { GroupRepository } from './src/domain/profiles';
+import { COLORS } from './src/theme';
 
 const lockedMoments = [1, 2, 3];
 
@@ -45,24 +39,36 @@ const unavailableScreens: Record<UnavailableRouteKey, { description: string; tit
   },
 };
 
-export default function App() {
+export interface AppProps {
+  clock?: () => number;
+  cycleRepository?: CycleRepository;
+  groupRepository?: GroupRepository;
+}
+
+export default function App({ clock = Date.now, cycleRepository, groupRepository }: AppProps = {}) {
   const [activeRoute, setActiveRoute] = useState<RouteKey>('home');
 
   return (
     <SafeAreaProvider>
       <DemoProfileProvider>
-        <StatusBar style="light" />
+        <CapsuleProvider groupRepository={groupRepository} cycleRepository={cycleRepository}>
+          <StatusBar style="light" />
 
-        <SafeAreaView
-          edges={['top', 'right', 'bottom', 'left']}
-          style={styles.page}
-          testID="application-safe-area"
-        >
-          <View style={styles.screen}>
-            {activeRoute === 'home' ? <HomeScreen /> : <UnavailableScreen route={activeRoute} />}
-            <MainNavigation activeRoute={activeRoute} onNavigate={setActiveRoute} />
-          </View>
-        </SafeAreaView>
+          <SafeAreaView
+            edges={['top', 'right', 'bottom', 'left']}
+            style={styles.page}
+            testID="application-safe-area"
+          >
+            <View style={styles.screen}>
+              {activeRoute === 'home' ? (
+                <HomeScreen clock={clock} />
+              ) : (
+                <UnavailableScreen route={activeRoute} />
+              )}
+              <MainNavigation activeRoute={activeRoute} onNavigate={setActiveRoute} />
+            </View>
+          </SafeAreaView>
+        </CapsuleProvider>
       </DemoProfileProvider>
     </SafeAreaProvider>
   );
@@ -79,7 +85,7 @@ function AppHeader() {
   );
 }
 
-function HomeScreen() {
+function HomeScreen({ clock }: { clock: () => number }) {
   return (
     <ScrollView
       contentContainerStyle={styles.content}
@@ -91,23 +97,7 @@ function HomeScreen() {
 
       <DemoProfilePicker />
 
-      <View>
-        <Text style={styles.label}>HOME</Text>
-        <Text accessibilityRole="header" style={styles.title}>
-          Weekend People
-        </Text>
-        <Text style={styles.mutedText}>Shared capsule · Sample group</Text>
-      </View>
-
-      <View
-        accessible
-        accessibilityLabel="Current capsule. Reveal in 2 days. 4 of 5 members added a moment."
-        style={styles.panel}
-      >
-        <Text style={styles.label}>CURRENT CAPSULE</Text>
-        <Text style={styles.panelTitle}>Reveal in 2 days</Text>
-        <Text style={styles.bodyText}>4 of 5 members added a moment</Text>
-      </View>
+      <CapsuleSummary clock={clock} />
 
       <View style={styles.section}>
         <Text style={styles.label}>SEALED MOMENTS</Text>
@@ -123,24 +113,6 @@ function HomeScreen() {
             </View>
           ))}
         </View>
-      </View>
-
-      <View
-        accessible
-        accessibilityLabel="Weekly prompt: What made you pause and smile?"
-        style={styles.panel}
-      >
-        <Text style={styles.label}>THIS WEEK</Text>
-        <Text style={styles.prompt}>What made you pause and smile?</Text>
-      </View>
-
-      <View
-        accessible
-        accessibilityLabel="Weekly quota. 2 of 5 moments used."
-        style={styles.quotaRow}
-      >
-        <Text style={styles.label}>WEEKLY QUOTA</Text>
-        <Text style={styles.bodyText}>2 / 5 moments</Text>
       </View>
 
       <Pressable
@@ -281,14 +253,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 4,
   },
-  panel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 8,
-    padding: 16,
-  },
   panelTitle: {
     color: COLORS.ink,
     fontSize: 22,
@@ -320,22 +284,6 @@ const styles = StyleSheet.create({
     color: COLORS.edge,
     fontSize: 10,
     fontWeight: '700',
-  },
-  prompt: {
-    color: COLORS.ink,
-    fontSize: 18,
-    fontWeight: '600',
-    lineHeight: 24,
-  },
-  quotaRow: {
-    alignItems: 'center',
-    borderBottomColor: COLORS.line,
-    borderBottomWidth: 1,
-    borderTopColor: COLORS.line,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
   },
   disabledButton: {
     alignItems: 'center',

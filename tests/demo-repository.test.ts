@@ -21,6 +21,38 @@ describe('Synthetic demo repository', () => {
     expect(demoRepository.getGroupForMember('')).toEqual({ kind: 'MembershipDenied' });
   });
 
+  it('seeds a collecting locked cycle with a zero contribution allowance used', async () => {
+    const group = demoRepository.getGroupForMember(DEFAULT_MEMBER_ID);
+    if ('kind' in group) throw new Error('Default member must belong to group');
+
+    const cycle = await demoRepository.getCurrentCycle(group.id, DEFAULT_MEMBER_ID);
+    if ('kind' in cycle) throw new Error('Default member must be able to read the cycle');
+    expect(cycle).toMatchObject({
+      groupId: group.id,
+      prompt: 'What made you pause and smile?',
+      status: 'collecting',
+      lockState: 'locked',
+      quota: { maxCount: 5, maxSeconds: 30 },
+      contributionUsage: { countUsed: 0, secondsUsed: 0 },
+    });
+    expect(Date.parse(cycle.endsAt)).toBeGreaterThan(Date.parse(cycle.startsAt));
+  });
+
+  it('guards cycle reads and returns copied quota metadata', async () => {
+    const denied = await demoRepository.getCurrentCycle('demo-group', 'demo-outsider');
+    expect(denied).toEqual({ kind: 'MembershipDenied' });
+
+    const first = await demoRepository.getCurrentCycle('demo-group', DEFAULT_MEMBER_ID);
+    if ('kind' in first) throw new Error('Default member must belong to group');
+    first.quota.maxCount = 99;
+    first.contributionUsage.countUsed = 99;
+
+    const second = await demoRepository.getCurrentCycle('demo-group', DEFAULT_MEMBER_ID);
+    if ('kind' in second) throw new Error('Default member must belong to group');
+    expect(second.quota.maxCount).toBe(5);
+    expect(second.contributionUsage.countUsed).toBe(0);
+  });
+
   it('returns fresh fixtures so callers cannot change seeded membership', () => {
     const profiles = demoRepository.listProfiles();
     profiles[0].displayName = 'Changed';

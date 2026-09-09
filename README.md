@@ -3,9 +3,10 @@
 Rewind is a local-first SWE5006 prototype for collecting short shared moments
 for a group cycle and experiencing them together through a delayed reveal.
 
-This repository contains the Sprint 0 foundation and local demo profile selection. The app is
-deliberately honest about what is not implemented yet; local demo data is not
-authentication, a secure account, or a cloud service.
+This repository contains the Sprint 0 foundation, local demo profile selection,
+and a read-only group capsule summary. The app is deliberately honest about
+what is not implemented yet; local demo data is not authentication, a secure
+account, or a cloud service.
 
 ## Clean start
 
@@ -51,15 +52,26 @@ data on Android) and relaunch. This restores the default selection and the same
 five profiles and one group. Selection is local to this device; it is not sign-in
 or multi-device membership.
 
+## Group capsule
+
+The Home screen reads the selected member's current synthetic group and cycle
+through the local repository boundary. It shows the group name, current prompt,
+locally derived countdown, and member-scoped contribution allowance. Sprint 0
+seeds a collecting cycle with a five-contribution/30-second limit and zero
+usage. While the cycle is locked, the app shows only sealed placeholders and
+text; it does not load or expose media, playback, or sharing actions.
+
 ## Repository map
 
 - `App.tsx` — low-fidelity Home screen, profile picker, main navigation, and explicit unavailable states.
+- `src/capsule/` — capsule loading states, countdown formatting, and Home summary.
 - `src/profiles/` — reusable profile picker and shared current-member provider.
 - `src/data/` — synthetic repositories and local selection storage.
-- `src/domain/` — framework-independent profile, group, and storage interfaces.
+- `src/domain/` — framework-independent profile, group, cycle, and storage interfaces.
+- `src/theme.ts` — shared React Native color tokens mirrored by `DESIGN.md`.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
-scope. Group capsule state, camera capture, chat, archive playback,
-authentication, and cloud services are follow-up work.
+scope. Camera capture, chat, archive playback, authentication, and cloud
+services remain follow-up work.
