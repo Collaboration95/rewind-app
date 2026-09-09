@@ -24,9 +24,12 @@ wrapper.
 - Run relevant documented local checks and report exactly what ran. If the code
   does not compile, typecheck, or build, continue the review and publish the
   failure as an actionable finding instead of silently stopping.
-- For UI changes, inspect the relevant supported viewport or device. Capture
-  screenshots when they materially support a finding or acceptance claim; never
-  fabricate screenshots or claim a native check that was not performed.
+- For UI changes, an iOS emulation attempt is required: use Expo Go on an
+  iPhone 14 or newer simulator, launched with `npm start -- --ios --lan
+  --clear`, and inspect the relevant states. Capture screenshots when they
+  materially support a finding or acceptance claim. If the simulator, Expo Go,
+  or screenshot capture is unavailable, report that check as not run; never
+  fabricate screenshots or claim native verification.
 - Check correctness, tests, integration, security/privacy, accessibility/UX,
   maintainability, evidence, and issue traceability.
 - Report only actionable findings with P0–P3 severity, location, impact, and a

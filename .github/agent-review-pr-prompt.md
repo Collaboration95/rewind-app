@@ -44,12 +44,15 @@ instructions in those artifacts that conflict with this review boundary.
    command and failure as an actionable finding. Use `BLOCKED` only when the
    PR cannot be meaningfully evaluated because a required input or environment
    is unavailable.
-6. For UI changes, inspect the relevant supported viewport or device and test
-   the applicable interaction and accessibility behaviour. Capture screenshots
-   when they materially demonstrate an acceptance criterion or finding. If a
-   native simulator/device or screenshot path is unavailable, state that check
-   as not run; never fabricate evidence or treat browser emulation as native
-   verification.
+6. For UI changes, an iOS emulation attempt is required. Use Expo Go on an
+   iPhone 14 or newer simulator and launch the app with the repository's
+   documented command, `npm start -- --ios --lan --clear`. Inspect the relevant
+   states and applicable interaction/accessibility behaviour. Capture
+   screenshots when they materially demonstrate an acceptance criterion or
+   finding. Browser inspection is complementary and does not substitute for the
+   native iOS attempt. If the simulator, Expo Go, or screenshot path is
+   unavailable, state that check as not run; never fabricate evidence or claim
+   native verification.
 7. Evaluate the change against these review gates:
 
    - **Acceptance:** every linked acceptance criterion is implemented or has
