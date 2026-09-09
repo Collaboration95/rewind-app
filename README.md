@@ -3,7 +3,7 @@
 Rewind is a local-first SWE5006 prototype for collecting short shared moments
 for a group cycle and experiencing them together through a delayed reveal.
 
-This repository currently contains the Sprint 0 foundation. The app shell is
+This repository contains the Sprint 0 foundation and local demo profile selection. The app is
 deliberately honest about what is not implemented yet; local demo data is not
 authentication, a secure account, or a cloud service.
 
@@ -57,12 +57,27 @@ specific `.app` bundle. `IOS_DEVICE_NAME`, `IOS_DEVICE_UDID`, `IOS_PORT`, and
 GitHub Actions runs the baseline and responsive browser checks on pushes to
 `main` and pull requests.
 
+## Local demo profiles
+
+Choose one of five synthetic members in the profile picker. The current member
+changes immediately, and the last selection is saved on this device using
+AsyncStorage. A new installation or missing/invalid selection starts with Amber.
+Storage failures display a message and allow retrying the save.
+
+For a clean demo reset, clear this app's local storage (site data on web or app
+data on Android) and relaunch. This restores the default selection and the same
+five profiles and one group. Selection is local to this device; it is not sign-in
+or multi-device membership.
+
 ## Repository map
 
-- `App.tsx` — low-fidelity Home screen, main navigation, and explicit unavailable states.
+- `App.tsx` — low-fidelity Home screen, profile picker, main navigation, and explicit unavailable states.
+- `src/profiles/` — reusable profile picker and shared current-member provider.
+- `src/data/` — synthetic repositories and local selection storage.
+- `src/domain/` — framework-independent profile, group, and storage interfaces.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
-scope. Profile selection, group capsule state, camera capture, chat, archive
-playback, persistence, authentication, and cloud services are follow-up work.
+scope. Group capsule state, camera capture, chat, archive playback,
+authentication, and cloud services are follow-up work.
