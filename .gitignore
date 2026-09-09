@@ -17,3 +17,5 @@ node_modules/
 .expo/
 coverage/
 dist/
+playwright-report/
+test-results/

@@ -26,23 +26,25 @@ future implementation scope.
 
 ## Quality commands
 
-| Command                | Purpose                          |
-| ---------------------- | -------------------------------- |
-| `npm run format:check` | Verify repository formatting     |
-| `npm run lint`         | Run ESLint                       |
-| `npm run typecheck`    | Run strict TypeScript checking   |
-| `npm test`             | Run scaffold and component tests |
-| `npm run check`        | Run all baseline checks          |
-| `npm run build:web`    | Export the Expo web bundle       |
+| Command                   | Purpose                                   |
+| ------------------------- | ----------------------------------------- |
+| `npm run format:check`    | Verify repository formatting              |
+| `npm run lint`            | Run ESLint                                |
+| `npm run typecheck`       | Run strict TypeScript checking            |
+| `npm test`                | Run scaffold and component tests          |
+| `npm run check`           | Run all baseline checks                   |
+| `npm run build:web`       | Export the Expo web bundle                |
+| `npm run test:responsive` | Check layouts at supported viewport sizes |
 
-GitHub Actions runs `npm run check` on pushes to `main` and pull requests.
+GitHub Actions runs the baseline and responsive browser checks on pushes to
+`main` and pull requests.
 
 ## Repository map
 
-- `App.tsx` — minimal runnable Expo start shell.
+- `App.tsx` — low-fidelity Home screen, main navigation, and explicit unavailable states.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
-scope. Navigation, profile selection, group capsule state, camera, chat,
-archive, persistence, authentication, and cloud services are follow-up work.
+scope. Profile selection, group capsule state, camera capture, chat, archive
+playback, persistence, authentication, and cloud services are follow-up work.
