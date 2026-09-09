@@ -19,6 +19,15 @@ scope or delivery status.
   `.claude/skills`, `.codex/skills`, and `.opencode/skills` links point to the
   same canonical `skills/` directory.
 
+## Shared PR review
+
+- The portable review contract is `.github/agent-review-pr-prompt.md`.
+- Invoke the wrapper explicitly as `/agent-review-pr-link <PR_URL>` when an
+  independent standardized review is wanted; it is not mandatory for every PR.
+- A review may inspect the PR, run safe checks, capture relevant screenshots,
+  and publish one top-level review comment. It must not edit files, push
+  branches, approve or merge the PR, or change Issue/Project state.
+
 ## Scrum
 
 - Each Sprint has a Sprint Goal and a visible Sprint Backlog. Use the Project
