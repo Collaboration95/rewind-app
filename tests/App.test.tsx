@@ -1,4 +1,5 @@
 import { fireEvent, render } from '@testing-library/react-native';
+import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
 
@@ -8,7 +9,15 @@ jest.mock('expo-status-bar', () => ({
   StatusBar: (props: { style?: string }) => mockStatusBar(props),
 }));
 
+jest.mock('react-native-safe-area-context', () => mockSafeAreaContext);
+
 describe('Rewind Home start screen', () => {
+  it('keeps the application inside the device safe area', async () => {
+    const result = await render(<App />);
+
+    expect(result.getByTestId('application-safe-area')).toBeTruthy();
+  });
+
   it('uses a light status bar on the dark application shell', async () => {
     await render(<App />);
 

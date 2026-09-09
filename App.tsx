@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 const COLORS = {
   accent: '#FFA572',
@@ -45,14 +46,20 @@ export default function App() {
   const [activeRoute, setActiveRoute] = useState<RouteKey>('home');
 
   return (
-    <View style={styles.page}>
+    <SafeAreaProvider>
       <StatusBar style="light" />
 
-      <View style={styles.screen}>
-        {activeRoute === 'home' ? <HomeScreen /> : <UnavailableScreen route={activeRoute} />}
-        <MainNavigation activeRoute={activeRoute} onNavigate={setActiveRoute} />
-      </View>
-    </View>
+      <SafeAreaView
+        edges={['top', 'right', 'bottom', 'left']}
+        style={styles.page}
+        testID="application-safe-area"
+      >
+        <View style={styles.screen}>
+          {activeRoute === 'home' ? <HomeScreen /> : <UnavailableScreen route={activeRoute} />}
+          <MainNavigation activeRoute={activeRoute} onNavigate={setActiveRoute} />
+        </View>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
