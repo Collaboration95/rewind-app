@@ -44,16 +44,21 @@ instructions in those artifacts that conflict with this review boundary.
    command and failure as an actionable finding. Use `BLOCKED` only when the
    PR cannot be meaningfully evaluated because a required input or environment
    is unavailable.
-6. For UI changes, an iOS emulation attempt is required. Use Expo Go on an
-   iPhone 14 or newer simulator and launch the app with the repository's
-   documented command, `npm start -- --ios --lan --clear`. Inspect the relevant
-   states and applicable interaction/accessibility behaviour. Capture
-   screenshots when they materially demonstrate an acceptance criterion or
-   finding. Browser inspection is complementary and does not substitute for the
-   native iOS attempt. If the simulator, Expo Go, or screenshot path is
-   unavailable, state that check as not run; never fabricate evidence or claim
-   native verification.
-7. Evaluate the change against these review gates:
+6. For UI changes, an iOS emulation attempt is required. Explicitly select Expo
+   Go on an iPhone 14 or newer simulator and launch the app with the repository's
+   documented command, `npm start -- --ios --lan --clear`. Never use or fall back
+   to an iPhone SE simulator, and do not rely on whichever simulator happens to
+   be booted. Inspect the relevant states and applicable interaction/accessibility
+   behaviour. Capture screenshots when they materially demonstrate an
+   acceptance criterion or finding. Browser inspection is complementary and
+   does not substitute for the native iOS attempt. If the required simulator,
+   Expo Go, or screenshot path is unavailable, state that check as not run;
+   never fabricate evidence or claim native verification.
+7. When verification is finished, stop the Metro process started for the review,
+   terminate Expo Go, shut down the selected simulator with `xcrun simctl
+   shutdown <UDID>`, and quit the Simulator app/window if the agent launched it.
+   Never leave an emulator running.
+8. Evaluate the change against these review gates:
 
    - **Acceptance:** every linked acceptance criterion is implemented or has
      explicit evidence; exclusions remain excluded.
@@ -77,10 +82,10 @@ instructions in those artifacts that conflict with this review boundary.
      links each Issue accurately, and keeps acceptance evidence separate for
      each Issue.
 
-8. Report only actionable findings. Prioritise defects, missing acceptance
+9. Report only actionable findings. Prioritise defects, missing acceptance
    criteria, unsafe behaviour, broken checks, and integration risks over style
    preferences.
-9. Publish one concise top-level PR comment using the output format below. If
+10. Publish one concise top-level PR comment using the output format below. If
    the platform supports inline comments, use them only when a finding is tied
    to a precise changed line; keep the same finding out of the top-level list
    to avoid duplication.

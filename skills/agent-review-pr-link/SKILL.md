@@ -24,12 +24,17 @@ wrapper.
 - Run relevant documented local checks and report exactly what ran. If the code
   does not compile, typecheck, or build, continue the review and publish the
   failure as an actionable finding instead of silently stopping.
-- For UI changes, an iOS emulation attempt is required: use Expo Go on an
-  iPhone 14 or newer simulator, launched with `npm start -- --ios --lan
-  --clear`, and inspect the relevant states. Capture screenshots when they
-  materially support a finding or acceptance claim. If the simulator, Expo Go,
-  or screenshot capture is unavailable, report that check as not run; never
+- For UI changes, an iOS emulation attempt is required: explicitly select Expo
+  Go on an iPhone 14 or newer simulator and launch with `npm start -- --ios
+  --lan --clear`. Never use or fall back to an iPhone SE simulator. Inspect the
+  relevant states and capture screenshots when they materially support a
+  finding or acceptance claim. If the required simulator, Expo Go, or
+  screenshot capture is unavailable, report that check as not run; never
   fabricate screenshots or claim native verification.
+- When the review ends, stop the Metro process started for the review, terminate
+  Expo Go, shut down the selected simulator with `xcrun simctl shutdown <UDID>`,
+  and quit the Simulator app/window if the agent launched it. Never leave an
+  emulator running.
 - Check correctness, tests, integration, security/privacy, accessibility/UX,
   maintainability, evidence, and issue traceability.
 - Report only actionable findings with P0–P3 severity, location, impact, and a

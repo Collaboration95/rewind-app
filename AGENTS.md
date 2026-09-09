@@ -47,12 +47,15 @@ to inspect possible feature ideas, local paths, application structure, or
 technical approaches. It must not be used to determine actual project scope,
 implementation status, deployment approach, GitHub workflow, or backlog.
 
-## Native iOS simulator verification
+## Native iOS simulator verification (mandatory for UI/native review)
 
-For native verification, use an iPhone 14 or newer simulator and Expo Go rather
-than relying only on browser viewport emulation. Prefer a notched or Dynamic
-Island device (for example, iPhone 14 Pro or iPhone 15 Pro) so safe-area
-behavior is exercised. Do not use iPhone SE as the native-review baseline.
+- Use Expo Go on an explicitly selected iPhone 14 or newer simulator (prefer a
+  notched or Dynamic Island device such as iPhone 14 Pro or iPhone 15 Pro).
+- Never launch, select, or fall back to any iPhone SE simulator, including the
+  iPhone SE (3rd generation). Do not rely on whichever simulator happens to be
+  booted; verify the selected device name and UDID first.
+- If no iPhone 14+ simulator is available, report native verification as not
+  run rather than using an older device.
 
 ```sh
 npm start -- --ios --lan --clear
@@ -66,3 +69,8 @@ on an iPhone simulator.
 
 Before native review, run `npm run check`; use `npm run test:responsive` for
 the browser layout regression suite as complementary—not substitute—evidence.
+
+When verification is finished, always clean up the session: stop the Metro
+process started for the review, terminate Expo Go on the selected simulator,
+shut that simulator down with `xcrun simctl shutdown <UDID>`, and quit the
+Simulator app/window if the agent launched it. Never leave an emulator running.
