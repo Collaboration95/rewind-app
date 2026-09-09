@@ -2,7 +2,19 @@ import { fireEvent, render } from '@testing-library/react-native';
 
 import App from '../App';
 
+const mockStatusBar = jest.fn((_props: { style?: string }) => null);
+
+jest.mock('expo-status-bar', () => ({
+  StatusBar: (props: { style?: string }) => mockStatusBar(props),
+}));
+
 describe('Rewind Home start screen', () => {
+  it('uses a light status bar on the dark application shell', async () => {
+    await render(<App />);
+
+    expect(mockStatusBar).toHaveBeenCalledWith({ style: 'light' });
+  });
+
   it('shows the sample group and local-demo capsule summary', async () => {
     const result = await render(<App />);
 

@@ -46,7 +46,7 @@ export default function App() {
 
   return (
     <View style={styles.page}>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
 
       <View style={styles.screen}>
         {activeRoute === 'home' ? <HomeScreen /> : <UnavailableScreen route={activeRoute} />}
