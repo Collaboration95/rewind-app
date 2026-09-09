@@ -1,15 +1,9 @@
 {
   "expo": {
     "name": "Rewind",
-    "slug": "rewind",
+    "slug": "rewind-app",
     "version": "0.1.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic",
-    "extra": {
-      "eas": {
-        "projectId": "f99e255b-5a25-498e-b7d4-a92efbdcf670"
-      }
-    },
-    "owner": "rewind-app"
+    "userInterfaceStyle": "automatic"
   }
 }
