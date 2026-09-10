@@ -71,6 +71,7 @@ text; it does not load or expose media, playback, or sharing actions.
 - `src/theme.ts` — shared React Native color tokens mirrored by `DESIGN.md`.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
+- `planning/sprints/` — Sprint 1 extension, runtime gate, and fallback agreement.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
 scope. Camera capture, chat, archive playback, authentication, and cloud
