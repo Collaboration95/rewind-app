@@ -10,7 +10,7 @@ import {
 
 import { demoRepository } from '../data/demo-repository';
 import type { Cycle, CycleRepository } from '../domain/cycles';
-import type { Group, GroupRepository } from '../domain/profiles';
+import type { AsyncGroupRepository, Group, GroupRepository } from '../domain/profiles';
 import { useDemoProfile } from '../profiles/DemoProfileProvider';
 
 export type CapsuleState =
@@ -33,7 +33,7 @@ export function CapsuleProvider({
   cycleRepository = demoRepository,
 }: {
   children: ReactNode;
-  groupRepository?: GroupRepository;
+  groupRepository?: GroupRepository | AsyncGroupRepository;
   cycleRepository?: CycleRepository;
 }) {
   const { currentMember } = useDemoProfile();

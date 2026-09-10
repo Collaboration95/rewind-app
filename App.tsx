@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -10,6 +10,10 @@ import { CapsuleSummary } from './src/capsule/CapsuleSummary';
 import type { CycleRepository } from './src/domain/cycles';
 import type { GroupRepository } from './src/domain/profiles';
 import { COLORS } from './src/theme';
+import { createConfiguredRuntime } from './src/runtime/config';
+import type { RuntimeClient } from './src/runtime/local-runtime-client';
+import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
+import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
 
 const lockedMoments = [1, 2, 3];
 
@@ -43,15 +47,37 @@ export interface AppProps {
   clock?: () => number;
   cycleRepository?: CycleRepository;
   groupRepository?: GroupRepository;
+  runtimeClient?: RuntimeClient | null;
 }
 
-export default function App({ clock = Date.now, cycleRepository, groupRepository }: AppProps = {}) {
+export default function App({
+  clock = Date.now,
+  cycleRepository,
+  groupRepository,
+  runtimeClient,
+}: AppProps = {}) {
   const [activeRoute, setActiveRoute] = useState<RouteKey>('home');
+  const configuredRuntime = useMemo(
+    () =>
+      runtimeClient === undefined
+        ? createConfiguredRuntime()
+        : runtimeClient
+          ? { baseUrl: runtimeClient.baseUrl, client: runtimeClient }
+          : null,
+    [runtimeClient],
+  );
+  const runtimeRepositories = useMemo(
+    () => (configuredRuntime ? createRuntimeRepositories(configuredRuntime.client) : null),
+    [configuredRuntime],
+  );
 
   return (
     <SafeAreaProvider>
       <DemoProfileProvider>
-        <CapsuleProvider groupRepository={groupRepository} cycleRepository={cycleRepository}>
+        <CapsuleProvider
+          groupRepository={groupRepository ?? runtimeRepositories?.groupRepository}
+          cycleRepository={cycleRepository ?? runtimeRepositories?.cycleRepository}
+        >
           <StatusBar style="light" />
 
           <SafeAreaView
@@ -61,7 +87,7 @@ export default function App({ clock = Date.now, cycleRepository, groupRepository
           >
             <View style={styles.screen}>
               {activeRoute === 'home' ? (
-                <HomeScreen clock={clock} />
+                <HomeScreen clock={clock} runtimeClient={configuredRuntime?.client ?? null} />
               ) : (
                 <UnavailableScreen route={activeRoute} />
               )}
@@ -85,7 +111,13 @@ function AppHeader() {
   );
 }
 
-function HomeScreen({ clock }: { clock: () => number }) {
+function HomeScreen({
+  clock,
+  runtimeClient,
+}: {
+  clock: () => number;
+  runtimeClient: RuntimeClient | null;
+}) {
   return (
     <ScrollView
       contentContainerStyle={styles.content}
@@ -94,6 +126,8 @@ function HomeScreen({ clock }: { clock: () => number }) {
       testID="home-scroll"
     >
       <AppHeader />
+
+      <RuntimeStatusCard client={runtimeClient} />
 
       <DemoProfilePicker />
 

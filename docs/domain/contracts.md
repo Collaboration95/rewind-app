@@ -92,6 +92,9 @@ CycleRepository.getCurrentCycle(
 ) -> Cycle | MembershipDenied | NotFound | RecoverableFailure
 ```
 
+The local HTTP adapter implements the same group contract asynchronously; the
+UI boundary awaits either the synchronous offline fixture or the async adapter.
+
 `MembershipDenied` is a distinct negative result. `NotFound` and
 `RecoverableFailure` support honest empty and retry states in later UI work.
 No contract returns media URIs, thumbnails, or player data while a cycle is

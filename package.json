@@ -4,19 +4,25 @@
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "engines": {
-    "node": ">=20.19.4",
+    "node": ">=22.13.0",
     "npm": ">=10"
   },
   "scripts": {
     "start": "expo start",
     "web": "expo start --web",
     "build:web": "expo export --platform web --output-dir dist",
+    "server:build": "tsc -p tsconfig.server.json",
+    "server:start": "npm run server:build && node server/dist/cli.js start",
+    "server:preflight": "npm run server:build && node server/dist/cli.js preflight",
+    "server:migrate": "npm run server:build && node server/dist/cli.js migrate",
+    "server:reset": "npm run server:build && node server/dist/cli.js reset",
+    "server:test": "npm run server:build && node --test server/tests/*.test.mjs",
     "lint": "eslint .",
     "format": "npm run format:write",
     "format:write": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/scaffold.test.mjs && jest --runInBand",
+    "test": "node --test tests/scaffold.test.mjs && npm run server:test && jest --runInBand",
     "test:responsive": "npm run build:web && playwright test",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test"
   },

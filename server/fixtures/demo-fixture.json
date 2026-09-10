@@ -1,0 +1,37 @@
+{
+  "seedVersion": 1,
+  "profiles": [
+    { "id": "demo-1", "displayName": "Amber", "avatarLabel": "Amber, sample member" },
+    { "id": "demo-2", "displayName": "Birch", "avatarLabel": "Birch, sample member" },
+    { "id": "demo-3", "displayName": "Clover", "avatarLabel": "Clover, sample member" },
+    { "id": "demo-4", "displayName": "Dune", "avatarLabel": "Dune, sample member" },
+    { "id": "demo-5", "displayName": "Echo", "avatarLabel": "Echo, sample member" }
+  ],
+  "group": { "id": "demo-group", "name": "Weekend People", "currentCycleId": "demo-cycle" },
+  "cycle": {
+    "id": "demo-cycle",
+    "prompt": "What made you pause and smile?",
+    "startsAt": "2026-09-01T00:00:00.000Z",
+    "endsAt": "2026-09-12T00:00:00.000Z",
+    "status": "collecting",
+    "lockState": "locked",
+    "maxCount": 5,
+    "maxSeconds": 30,
+    "countUsed": 0,
+    "secondsUsed": 0
+  },
+  "acceptedAt": "2026-09-01T00:00:00.000Z",
+  "message": {
+    "id": "demo-message",
+    "body": "A synthetic message for policy checks."
+  },
+  "contribution": {
+    "id": "demo-contribution",
+    "durationSeconds": 3
+  },
+  "mediaJobs": [
+    { "id": "demo-clip", "kind": "clip" },
+    { "id": "demo-film", "kind": "film" },
+    { "id": "demo-download", "kind": "download" }
+  ]
+}

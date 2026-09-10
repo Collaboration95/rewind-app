@@ -19,3 +19,4 @@ coverage/
 dist/
 playwright-report/
 test-results/
+.local-data/
