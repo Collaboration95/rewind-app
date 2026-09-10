@@ -73,12 +73,20 @@ a retry action, and the capsule repositories use the typed local API adapter.
 Protected group, message, contribution/clip, film, and download routes all
 return the same safe `403` denial to non-members.
 
+The owner-only local demo control is available to integration callers as
+`POST /cycles/demo/advance?groupId=...&memberId=...&advanceSeconds=...`. It
+shifts the persisted cycle boundaries, records the old/new instants in local
+SQLite, and returns the updated cycle. Only a membership row with the
+persisted `owner` role can use it; non-owners receive the same safe denial and
+no cycle or event data.
+
 ## Quality commands
 
 | Command                      | Purpose                                                    |
 | ---------------------------- | ---------------------------------------------------------- |
 | `npm run format:check`       | Verify repository formatting                               |
 | `npm run lint`               | Run ESLint                                                 |
+| `npm run architecture:check` | Verify framework/device import boundaries                  |
 | `npm run typecheck`          | Run strict TypeScript checking                             |
 | `npm test`                   | Run scaffold and component tests                           |
 | `npm run check`              | Run all baseline checks                                    |
@@ -142,11 +150,13 @@ text; it does not load or expose media, playback, or sharing actions.
 - `src/domain/` — framework-independent profile, group, cycle, and storage interfaces.
 - `server/src/` — typed local HTTP service, configuration, SQLite access, FFmpeg probe, and policy.
 - `server/src/session/` — explicit local Demo access lifecycle and SQLite session boundary.
+- `server/src/cycles/` — injected-clock timing engine and owner-only demo control.
 - `server/src/audit/` and `server/src/jobs/` — redacted local diagnostics and audited job helpers.
 - `server/migrations/` and `server/fixtures/` — versioned schema and deterministic synthetic seed.
 - `src/theme.ts` — shared React Native color tokens mirrored by `DESIGN.md`.
 - `docs/architecture/` — local-first boundary decision.
 - `docs/domain/` — glossary and framework-independent contracts.
+- `scripts/check-architecture.mjs` — baseline framework/device boundary guard.
 - `planning/sprints/` — Sprint 1 extension, runtime gate, and fallback agreement.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product

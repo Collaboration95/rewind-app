@@ -79,7 +79,7 @@ test('fresh migration, restart, and reset preserve or restore deterministic stat
       database
         .prepare('SELECT role FROM memberships WHERE group_id = ? AND member_id = ?')
         .get('demo-group', 'demo-1').role,
-      'member',
+      'owner',
     );
     database.close();
   } finally {
