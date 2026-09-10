@@ -1,4 +1,8 @@
-import type { CurrentCycleResult, Cycle } from '../domain/cycles';
+import type {
+  CurrentCycleResult,
+  Cycle,
+  CycleAdvanceResult,
+} from '../domain/cycles';
 import type {
   CreateGroupInput,
   CreateGroupResult,
@@ -29,6 +33,12 @@ export interface RuntimeClient {
     actingMemberId: MemberId,
     sessionId?: string,
   ): Promise<CurrentCycleResult>;
+  advanceDemoCycle(
+    groupId: string,
+    actingMemberId: MemberId,
+    advanceSeconds: number,
+    sessionId?: string,
+  ): Promise<CycleAdvanceResult>;
   getDemoSession?(sessionId: string): Promise<DemoSession>;
   createDemoSession?(memberId: MemberId, groupId?: string): Promise<DemoSession>;
   invalidateDemoSession?(sessionId: string): Promise<DemoSession>;
@@ -110,6 +120,28 @@ export class LocalRuntimeClient implements RuntimeClient {
       if (!(error instanceof LocalRuntimeError)) throw error;
       if (error.status === 403) return { kind: 'MembershipDenied' };
       if (error.status === 404) return { kind: 'NotFound' };
+      return { kind: 'RecoverableFailure' };
+    }
+  }
+
+  async advanceDemoCycle(
+    groupId: string,
+    actingMemberId: MemberId,
+    advanceSeconds: number,
+    sessionId?: string,
+  ): Promise<CycleAdvanceResult> {
+    try {
+      const sessionQuery = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
+      const body = await this.request<{ cycle: Cycle }>(
+        `/cycles/demo/advance?groupId=${encodeURIComponent(groupId)}&memberId=${encodeURIComponent(actingMemberId)}&advanceSeconds=${encodeURIComponent(String(advanceSeconds))}${sessionQuery}`,
+        { method: 'POST' },
+      );
+      return body.cycle;
+    } catch (error) {
+      if (!(error instanceof LocalRuntimeError)) throw error;
+      if (error.status === 403) return { kind: 'OwnerControlDenied' };
+      if (error.status === 404) return { kind: 'NotFound' };
+      if (error.status === 400) return { kind: 'InvalidRequest' };
       return { kind: 'RecoverableFailure' };
     }
   }

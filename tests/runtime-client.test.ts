@@ -72,6 +72,7 @@ describe('LocalRuntimeClient', () => {
         currentCycleId: 'demo-cycle',
       }),
       getCurrentCycle: jest.fn().mockResolvedValue({ kind: 'NotFound' as const }),
+      advanceDemoCycle: jest.fn(),
     };
     const repositories = createRuntimeRepositories(client);
     await expect(repositories.groupRepository.getGroupForMember('demo-1')).resolves.toMatchObject({
@@ -118,5 +119,43 @@ describe('LocalRuntimeClient', () => {
       ['http://localhost:8787/sessions/demo-session-2', 'DELETE'],
       ['http://localhost:8787/demo/reset?sessionId=demo-session-2', 'POST'],
     ]);
+  });
+
+  it('exposes owner demo cycle advance through a typed control port', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      response(200, {
+        cycle: {
+          id: 'demo-cycle',
+          groupId: 'demo-group',
+          prompt: 'Prompt',
+          startsAt: '2026-09-01T00:00:00.000Z',
+          endsAt: '2026-09-11T23:00:00.000Z',
+          status: 'collecting',
+          lockState: 'locked',
+          quota: { maxCount: 5, maxSeconds: 30 },
+          contributionUsage: { countUsed: 0, secondsUsed: 0 },
+        },
+        advanceSeconds: 3600,
+        eventId: 'cycle-control-event',
+      }),
+    );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.advanceDemoCycle('demo-group', 'demo-1', 3600)).resolves.toMatchObject({
+      id: 'demo-cycle',
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://localhost:8787/cycles/demo/advance?groupId=demo-group&memberId=demo-1&advanceSeconds=3600',
+      { method: 'POST', headers: { Accept: 'application/json' } },
+    );
+  });
+
+  it('maps owner-control access denial without exposing server details', async () => {
+    const client = new LocalRuntimeClient(
+      'http://localhost:8787',
+      jest.fn().mockResolvedValue(response(403, { error: 'forbidden', message: 'hidden' })),
+    );
+    await expect(client.advanceDemoCycle('demo-group', 'demo-2', 3600)).resolves.toEqual({
+      kind: 'OwnerControlDenied',
+    });
   });
 });
