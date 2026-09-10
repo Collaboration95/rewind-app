@@ -198,6 +198,34 @@ export function resetDatabase(config: RuntimeConfig): void {
   }
 }
 
+/** Restore only the SQLite-backed local fixture. Source files and migrations
+ * are never touched. This form is used by the in-process reset endpoint. */
+export function restoreFixture(database: RewindDatabase): void {
+  database.exec('BEGIN');
+  try {
+    for (const table of [
+      'reactions',
+      'messages',
+      'media_jobs',
+      'contributions',
+      'sessions',
+      'audit_events',
+      'invites',
+      'cycles',
+      'memberships',
+      'groups',
+      'profiles',
+    ]) {
+      database.exec(`DELETE FROM ${table}`);
+    }
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+  seedDatabase(database);
+}
+
 export function fixtureSummary(database: RewindDatabase): Record<string, number> {
   const tables = [
     'profiles',
@@ -238,7 +266,7 @@ export function listProfiles(database: RewindDatabase) {
     });
 }
 
-export function getGroup(database: RewindDatabase, groupId: string) {
+export function getGroup(database: RewindDatabase, groupId: string, actingMemberId?: string) {
   const group = database
     .prepare('SELECT id, name, current_cycle_id AS currentCycleId FROM groups WHERE id = ?')
     .get(groupId) as Record<string, unknown> | undefined;
@@ -247,11 +275,19 @@ export function getGroup(database: RewindDatabase, groupId: string) {
     .prepare('SELECT member_id AS memberId FROM memberships WHERE group_id = ? ORDER BY member_id')
     .all(groupId)
     .map((row) => String((row as { memberId: string }).memberId));
+  const actingMemberRole = actingMemberId
+    ? (
+        database
+          .prepare('SELECT role FROM memberships WHERE group_id = ? AND member_id = ?')
+          .get(groupId, actingMemberId) as { role?: string } | undefined
+      )?.role
+    : undefined;
   return {
     id: String(group.id),
     name: String(group.name),
     currentCycleId: String(group.currentCycleId),
     memberIds: members,
+    ...(actingMemberRole === 'owner' || actingMemberRole === 'member' ? { actingMemberRole } : {}),
   };
 }
 

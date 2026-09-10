@@ -7,13 +7,18 @@ export interface RuntimeRepositories {
   cycleRepository: CycleRepository;
 }
 
-export function createRuntimeRepositories(client: RuntimeClient): RuntimeRepositories {
+export function createRuntimeRepositories(
+  client: RuntimeClient,
+  sessionId?: string,
+): RuntimeRepositories {
   return {
     groupRepository: {
-      getGroupForMember: (actingMemberId: string) => client.getGroupForMember(actingMemberId),
+      getGroupForMember: (actingMemberId: string) =>
+        client.getGroupForMember(actingMemberId, sessionId),
     },
     cycleRepository: {
-      getCurrentCycle: (groupId, actingMemberId) => client.getCurrentCycle(groupId, actingMemberId),
+      getCurrentCycle: (groupId, actingMemberId) =>
+        client.getCurrentCycle(groupId, actingMemberId, sessionId),
     },
   };
 }

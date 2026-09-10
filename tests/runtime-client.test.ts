@@ -81,4 +81,42 @@ describe('LocalRuntimeClient', () => {
       repositories.cycleRepository.getCurrentCycle('demo-group', 'demo-1'),
     ).resolves.toEqual({ kind: 'NotFound' });
   });
+
+  it('creates, restores, invalidates, and resets a local Demo session through typed mutations', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(
+        response(201, {
+          session: {
+            id: 'demo-session-2',
+            accessKind: 'demo',
+            actor: { memberId: 'demo-2', displayName: 'Birch', isSynthetic: true },
+            groupId: 'demo-group',
+            startedAt: '2026-09-10T12:00:00.000Z',
+            expiresAt: '2026-09-10T20:00:00.000Z',
+            invalidatedAt: null,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(response(200, { session: { id: 'demo-session-2' } }))
+      .mockResolvedValueOnce(response(200, { session: { id: 'demo-session-2' } }))
+      .mockResolvedValueOnce(response(200, { reset: true }));
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.createDemoSession('demo-2')).resolves.toMatchObject({
+      id: 'demo-session-2',
+    });
+    await expect(client.getDemoSession('demo-session-2')).resolves.toMatchObject({
+      id: 'demo-session-2',
+    });
+    await expect(client.invalidateDemoSession('demo-session-2')).resolves.toMatchObject({
+      id: 'demo-session-2',
+    });
+    await expect(client.resetDemoData('demo-session-2')).resolves.toBeUndefined();
+    expect(fetchImpl.mock.calls.map(([url, init]) => [url, init?.method ?? 'GET'])).toEqual([
+      ['http://localhost:8787/sessions/demo', 'POST'],
+      ['http://localhost:8787/sessions/demo-session-2', 'GET'],
+      ['http://localhost:8787/sessions/demo-session-2', 'DELETE'],
+      ['http://localhost:8787/demo/reset?sessionId=demo-session-2', 'POST'],
+    ]);
+  });
 });

@@ -2,10 +2,12 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useDemoProfile } from './DemoProfileProvider';
+import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 
 export function DemoProfilePicker() {
   const { profiles, currentMember, saveStatus, loadWarning, selectMember, retrySave } =
     useDemoProfile();
+  const demoSession = useOptionalDemoSession();
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
   return (
@@ -34,7 +36,10 @@ export function DemoProfilePicker() {
                   accessibilityRole="button"
                   accessibilityLabel={`Choose ${profile.displayName}, sample member${selected ? ', selected' : ''}`}
                   accessibilityState={{ selected }}
-                  onPress={() => selectMember(profile.id)}
+                  onPress={() => {
+                    selectMember(profile.id);
+                    if (demoSession?.status === 'active') void demoSession.chooseMember(profile.id);
+                  }}
                   onFocus={() => setFocusedId(profile.id)}
                   onBlur={() => setFocusedId(null)}
                   style={[
