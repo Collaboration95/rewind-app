@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import type { RewindDatabase } from '../db';
 import { getGroup, getCurrentCycle } from '../db';
+import { createCycleWindow } from '../cycles/engine';
 
 export const GROUP_NAME_MAX_LENGTH = 80;
 export const PROMPT_MAX_LENGTH = 160;
-export const DEMO_CYCLE_DURATION_MS = 24 * 60 * 60 * 1000;
 
 export interface CreateGroupInput {
   name: string;
@@ -41,7 +41,7 @@ export function createGroup(
   const startedAt = (input.now ?? new Date()).toISOString();
   const groupId = `local-group-${randomUUID()}`;
   const cycleId = `local-cycle-${randomUUID()}`;
-  const endsAt = new Date(Date.parse(startedAt) + DEMO_CYCLE_DURATION_MS).toISOString();
+  const { endsAt } = createCycleWindow({ preset: 'one-day', startsAt: startedAt });
 
   database.exec('BEGIN');
   try {

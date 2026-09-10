@@ -1,7 +1,7 @@
 {
   "findings": [],
   "mode": "strict",
-  "projectRoot": "/private/tmp/rewind-identity",
+  "projectRoot": "/private/tmp/rewind-release",
   "schemaVersion": 1,
   "summary": {
     "errors": 0,

@@ -25,6 +25,7 @@ import {
 import type { MemberProfile } from '../domain/profiles';
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { createOfflineDemoSession, demoSessionStore } from './session-store';
+import { resetCaptureData } from '../capture';
 
 export type DemoAccessStatus = 'loading' | 'entry' | 'active' | 'error';
 
@@ -71,6 +72,16 @@ export function DemoSessionProvider({
     setStatus('loading');
     setError(null);
     try {
+      const entryMode =
+        typeof process !== 'undefined' && process.env.EXPO_PUBLIC_DEMO_ACCESS === 'entry';
+      if (entryMode) {
+        await store.clear();
+        if (mounted.current) {
+          setSession(null);
+          setStatus('entry');
+        }
+        return;
+      }
       hydrateLocalDemoData(await localGroupStore.load());
       const stored = await store.load();
       if (!stored) {
@@ -200,6 +211,7 @@ export function DemoSessionProvider({
       if (session && runtimeClient?.resetDemoData) {
         await runtimeClient.resetDemoData(session.id);
       }
+      await resetCaptureData();
       await resetLocalDemoData();
       await localGroupStore.clear();
       await selectionStore.clear?.();

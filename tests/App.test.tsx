@@ -96,7 +96,11 @@ describe('Rewind Home start screen', () => {
     ]) {
       await fireEvent.press(result.getByTestId(`nav-${area.key}`));
 
-      expect(result.getByRole('header', { name: area.label })).toBeTruthy();
+      if (area.key === 'camera') {
+        expect(await result.findByRole('header', { name: 'Add a still moment' })).toBeTruthy();
+      } else {
+        expect(result.getByRole('header', { name: area.label })).toBeTruthy();
+      }
     }
   });
 
@@ -112,13 +116,11 @@ describe('Rewind Home start screen', () => {
     expect(result.getAllByText('SELECTED')).toHaveLength(1);
   });
 
-  it('uses honest unavailable states for unfinished areas', async () => {
+  it('uses an honest permission state for Camera and unavailable states elsewhere', async () => {
     const result = await render(<App />);
 
     await fireEvent.press(result.getByRole('tab', { name: 'Camera' }));
-    expect(
-      result.getByText('Camera capture and permissions are not implemented in this Sprint 0 demo.'),
-    ).toBeTruthy();
+    expect(await result.findByTestId('camera-capability-undecided')).toBeTruthy();
 
     await fireEvent.press(result.getByRole('tab', { name: 'Chat' }));
     expect(
@@ -140,7 +142,9 @@ describe('Rewind Home start screen', () => {
     expect(result.getByLabelText('Locked demo moment 2 of 3')).toBeTruthy();
     expect(result.getByLabelText('Locked demo moment 3 of 3')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Add a moment', disabled: true })).toBeTruthy();
-    expect(result.getByText('Camera is not available in this task.')).toBeTruthy();
+    expect(
+      result.getByText('Camera capture stays local and starts from the Camera tab.'),
+    ).toBeTruthy();
   });
 
   it('shows the repository-backed prompt, countdown, quota, and locked-safe state', async () => {

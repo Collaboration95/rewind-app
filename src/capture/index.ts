@@ -29,3 +29,4 @@ export {
 } from './metadata-store';
 export { DemoCameraPlatform, ExpoCameraPlatform, permissionState } from './platform';
 export { StillImageCaptureSession } from './still-image-session';
+export { resetCaptureData } from './reset';

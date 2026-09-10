@@ -19,6 +19,7 @@ import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
 import { DemoSessionProvider, useDemoSession } from './src/session/DemoSessionProvider';
+import { CameraCaptureScreen, DemoCameraPlatform, type CameraPlatform } from './src/capture';
 import {
   demoRepository,
   hydrateLocalDemoData,
@@ -44,17 +45,13 @@ const ROUTES = [
 ] as const;
 
 type RouteKey = (typeof ROUTES)[number]['key'];
-type UnavailableRouteKey = Exclude<RouteKey, 'home' | 'settings'>;
+type UnavailableRouteKey = Exclude<RouteKey, 'home' | 'settings' | 'camera'>;
 
 const unavailableScreens: Record<UnavailableRouteKey, { description: string; title: string }> = {
   archive: {
     description:
       'Archive playback is not implemented. Locked moments remain unavailable until reveal.',
     title: 'Archive',
-  },
-  camera: {
-    description: 'Camera capture and permissions are not implemented in this Sprint 0 demo.',
-    title: 'Camera',
   },
   chat: {
     description: 'Chat is not implemented. No messages are being sent or stored.',
@@ -67,6 +64,8 @@ export interface AppProps {
   cycleRepository?: CycleRepository;
   groupRepository?: GroupRepository | AsyncGroupRepository;
   runtimeClient?: RuntimeClient | null;
+  /** Inject a deterministic fixture platform for simulator evidence/tests. */
+  cameraPlatform?: CameraPlatform;
 }
 
 export default function App({
@@ -74,6 +73,7 @@ export default function App({
   cycleRepository,
   groupRepository,
   runtimeClient,
+  cameraPlatform,
 }: AppProps = {}) {
   const configuredRuntime = useMemo(
     () =>
@@ -93,6 +93,7 @@ export default function App({
             cycleRepository={cycleRepository}
             groupRepository={groupRepository}
             runtimeClient={configuredRuntime?.client ?? null}
+            cameraPlatform={cameraPlatform}
           />
         </DemoProfileProvider>
       </DemoSessionProvider>
@@ -105,11 +106,13 @@ function SessionGate({
   cycleRepository,
   groupRepository,
   runtimeClient,
+  cameraPlatform,
 }: {
   clock: () => number;
   cycleRepository?: CycleRepository;
   groupRepository?: GroupRepository | AsyncGroupRepository;
   runtimeClient: RuntimeClient | null;
+  cameraPlatform?: CameraPlatform;
 }) {
   const { status, session } = useDemoSession();
   if (status === 'loading') return <SessionLoadingScreen />;
@@ -121,7 +124,7 @@ function SessionGate({
       groupRepository={groupRepository ?? sessionRepositories?.groupRepository}
       cycleRepository={cycleRepository ?? sessionRepositories?.cycleRepository}
     >
-      <ActiveAppShell clock={clock} runtimeClient={runtimeClient} />
+      <ActiveAppShell cameraPlatform={cameraPlatform} clock={clock} runtimeClient={runtimeClient} />
     </CapsuleProvider>
   );
 }
@@ -161,11 +164,26 @@ function SafeAreaFrame({ children }: { children: ReactNode }) {
 function ActiveAppShell({
   clock,
   runtimeClient,
+  cameraPlatform,
 }: {
   clock: () => number;
   runtimeClient: RuntimeClient | null;
+  cameraPlatform?: CameraPlatform;
 }) {
   const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group'>('home');
+  const resolvedCameraPlatform = useMemo(() => {
+    if (cameraPlatform) return cameraPlatform;
+    if (typeof process !== 'undefined') {
+      const cameraMode = process.env.EXPO_PUBLIC_CAMERA_MODE;
+      if (cameraMode === 'demo') return new DemoCameraPlatform();
+      if (cameraMode === 'demo-denied') {
+        return new DemoCameraPlatform({
+          permissions: { camera: 'denied', microphone: 'granted' },
+        });
+      }
+    }
+    return undefined;
+  }, [cameraPlatform]);
 
   return (
     <SafeAreaFrame>
@@ -180,6 +198,8 @@ function ActiveAppShell({
             onCreated={() => setActiveRoute('home')}
             runtimeClient={runtimeClient}
           />
+        ) : activeRoute === 'camera' ? (
+          <CameraCaptureScreen platform={resolvedCameraPlatform} />
         ) : (
           <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
         )}
@@ -313,7 +333,7 @@ function SettingsScreen({ onCreateGroup }: { onCreateGroup: () => void }) {
         <Text style={styles.dangerButtonText}>Reset local Demo data</Text>
       </Pressable>
       <Text style={styles.helperText}>
-        Reset removes local Demo access and locally created groups on this device, then restores the
+        Reset removes local Demo access, groups, and camera files on this device, then restores the
         deterministic fixture.
       </Text>
       <Modal
@@ -334,9 +354,9 @@ function SettingsScreen({ onCreateGroup }: { onCreateGroup: () => void }) {
               Reset local Demo data?
             </Text>
             <Text style={styles.bodyText}>
-              This removes the saved Demo session and locally created groups on this device. It
-              restores the deterministic five-member fixture. Nothing remote or source-controlled is
-              changed.
+              This removes the saved Demo session, locally created groups, accepted still metadata,
+              and app-owned cached camera files on this device. It restores the deterministic
+              five-member fixture. Nothing remote or source-controlled is changed.
             </Text>
             {error ? (
               <Text accessibilityRole="alert" style={styles.errorText}>
@@ -504,7 +524,7 @@ function GroupCreateScreen({
               }}
               style={[styles.promptChoice, selected && styles.promptChoiceSelected]}
             >
-              <Text style={styles.bodyText}>{builtIn}</Text>
+              <Text style={[styles.bodyText, styles.promptChoiceText]}>{builtIn}</Text>
               <Text style={styles.radioState}>{selected ? 'Selected' : 'Choose'}</Text>
             </Pressable>
           );
@@ -516,7 +536,7 @@ function GroupCreateScreen({
           onPress={() => setUseCustomPrompt(true)}
           style={[styles.promptChoice, useCustomPrompt && styles.promptChoiceSelected]}
         >
-          <Text style={styles.bodyText}>Write a custom prompt</Text>
+          <Text style={[styles.bodyText, styles.promptChoiceText]}>Write a custom prompt</Text>
           <Text style={styles.radioState}>{useCustomPrompt ? 'Selected' : 'Choose'}</Text>
         </Pressable>
         {useCustomPrompt ? (
@@ -618,7 +638,7 @@ function HomeScreen({
         <Text style={styles.disabledButtonText}>Add a moment</Text>
       </Pressable>
       <Text style={styles.helperText} testID="home-content-end">
-        Camera is not available in this task.
+        Camera capture stays local and starts from the Camera tab.
       </Text>
     </ScrollView>
   );
@@ -977,6 +997,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  promptChoiceText: { flex: 1, flexShrink: 1 },
   promptChoiceSelected: { backgroundColor: COLORS.deep, borderColor: COLORS.accent },
   radioState: { color: COLORS.accent, fontSize: 12, fontWeight: '700' },
 });

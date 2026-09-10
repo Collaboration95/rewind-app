@@ -1,8 +1,4 @@
-import type {
-  CurrentCycleResult,
-  Cycle,
-  CycleAdvanceResult,
-} from '../domain/cycles';
+import type { CurrentCycleResult, Cycle, CycleAdvanceResult } from '../domain/cycles';
 import type {
   CreateGroupInput,
   CreateGroupResult,

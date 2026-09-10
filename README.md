@@ -28,6 +28,16 @@ media, or a deployed service. The camera route now has an SDK-compatible native
 permission/capture boundary; cloud media, recording, and upload remain future
 scope.
 
+For simulator review, set `EXPO_PUBLIC_CAMERA_MODE=demo` to use the explicit,
+labelled fixture camera. This path never claims a physical image was captured.
+Set it to `demo-denied` to exercise the denied-permission and retry UI. Leaving
+the variable unset uses the native `ExpoCameraPlatform`; a physical device is
+required for a real camera preview and still capture.
+
+Set `EXPO_PUBLIC_DEMO_ACCESS=entry` when a deterministic screenshot or manual
+review needs to start at the Demo access chooser; the normal clean-start path
+restores the synthetic Amber session for continuity.
+
 ## Local runtime
 
 The companion service is a local-only Node process. It binds to
@@ -122,8 +132,9 @@ one day with the demo contribution allowance.
 
 Settings also provides a confirmed **Reset local Demo data** action. Reset
 removes the saved local Demo session, locally created groups, and local
-selection, then restores the deterministic fixture. It does not touch source
-files, migrations, or remote data.
+selection, accepted still-image metadata, and app-owned cached still files,
+then restores the deterministic fixture. It does not touch source files,
+migrations, or remote data.
 
 If the app cannot be opened far enough to reach Settings, clearing this app's
 local storage (site data on web or app data on Android) and relaunching restores

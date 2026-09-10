@@ -100,7 +100,11 @@ export const demoRepository: ProfileRepository &
     if (!group.memberIds.includes(actingMemberId)) {
       return { kind: 'MembershipDenied' };
     }
-    return { ...group, memberIds: [...group.memberIds] };
+    return {
+      ...group,
+      memberIds: [...group.memberIds],
+      actingMemberRole: actingMemberId === DEFAULT_MEMBER_ID ? 'owner' : 'member',
+    };
   },
   async getCurrentCycle(groupId, actingMemberId) {
     const local = localGroups.get(groupId);
