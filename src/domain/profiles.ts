@@ -26,6 +26,10 @@ export interface GroupRepository {
   getGroupForMember(actingMemberId: MemberId): Group | MembershipDenied;
 }
 
+export interface AsyncGroupRepository {
+  getGroupForMember(actingMemberId: MemberId): Promise<Group | MembershipDenied>;
+}
+
 export interface SelectionStore {
   load(): Promise<MemberId | null>;
   save(memberId: MemberId): Promise<void>;

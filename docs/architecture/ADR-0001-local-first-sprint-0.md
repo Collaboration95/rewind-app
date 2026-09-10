@@ -23,13 +23,18 @@ Expo/React Native client
 framework-independent domain contracts
         |
         v
-local fixtures/repository adapters (later Sprint 0 work)
+local fixtures/repository adapters
+        |
+        v
+typed local Node service + SQLite (Sprint 0 runtime foundation)
 ```
 
 The app shell and future feature screens consume domain-shaped data through
 repository ports. The domain contracts do not import React Native, Expo,
-SQLite, AWS, Cognito, or a network client. A later adapter may implement the
-same ports with a local store or API without changing the product model.
+SQLite, AWS, Cognito, or a network client. Sprint 0 now supplies a typed local
+HTTP adapter backed by SQLite; the offline fixture remains the fallback when
+`EXPO_PUBLIC_LOCAL_BASE_URL` is not set. A later adapter may implement the same
+ports with another local store or API without changing the product model.
 
 The clean-start path is Expo web in a current Chromium-based browser. The same
 client code remains capable of being run through Expo's Android tooling; native
@@ -43,7 +48,9 @@ Inside the Sprint 0 boundary:
 - group membership checks before group-scoped data is returned;
 - the current cycle, prompt, contribution quota, and locked state as typed
   domain concepts;
-- deterministic fixtures and tests that contain no personal media or identity.
+- deterministic fixtures and tests that contain no personal media or identity;
+- a local service with explicit localhost/LAN configuration, a versioned
+  SQLite schema, and a shared membership policy for group-scoped routes.
 
 Outside the Sprint 0 boundary:
 
