@@ -14,11 +14,13 @@ test('scaffold identifies the Rewind app and exposes baseline quality commands',
   assert.equal(appJson.expo.name, 'Rewind');
   assert.equal(packageJson.scripts.lint, 'eslint .');
   assert.equal(packageJson.scripts.typecheck, 'tsc --noEmit');
+  assert.equal(packageJson.scripts['architecture:check'], 'node scripts/check-architecture.mjs');
   assert.equal(packageJson.engines.node, '>=22.13.0');
   assert.match(packageJson.scripts['server:preflight'], /server\/dist\/cli\.js preflight/);
   assert.match(packageJson.scripts.test, /jest --runInBand/);
   assert.match(packageJson.scripts.check, /format:check/);
   assert.match(packageJson.scripts.check, /lint/);
+  assert.match(packageJson.scripts.check, /architecture:check/);
   assert.match(packageJson.scripts.check, /typecheck/);
   assert.match(packageJson.scripts.check, /test/);
 });

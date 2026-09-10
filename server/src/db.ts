@@ -5,15 +5,14 @@ import { resolve } from 'node:path';
 import type { RuntimeConfig } from './config';
 import { DEMO_SESSION_LIFETIME_MS } from './session/contract';
 
-const MIGRATIONS = [1, 2].map((version) => ({
-  version,
-  sql: readFileSync(
-    resolve(
-      process.cwd(),
-      `server/migrations/${String(version).padStart(3, '0')}-${version === 1 ? 'initial' : 'session-audit'}.sql`,
-    ),
-    'utf8',
-  ),
+const MIGRATION_FILES = [
+  '001-initial.sql',
+  '002-session-audit.sql',
+  '003-cycle-controls.sql',
+] as const;
+const MIGRATIONS = MIGRATION_FILES.map((fileName, index) => ({
+  version: index + 1,
+  sql: readFileSync(resolve(process.cwd(), 'server/migrations', fileName), 'utf8'),
 }));
 const FIXTURE = JSON.parse(
   readFileSync(resolve(process.cwd(), 'server/fixtures/demo-fixture.json'), 'utf8'),
@@ -121,8 +120,8 @@ export function seedDatabase(database: RewindDatabase): void {
     const membershipInsert = database.prepare(
       'INSERT INTO memberships (group_id, member_id, role, accepted_at) VALUES (?, ?, ?, ?)',
     );
-    for (const profile of FIXTURE.profiles) {
-      membershipInsert.run(FIXTURE.group.id, profile.id, 'member', now);
+    for (const [index, profile] of FIXTURE.profiles.entries()) {
+      membershipInsert.run(FIXTURE.group.id, profile.id, index === 0 ? 'owner' : 'member', now);
     }
 
     database
@@ -322,6 +321,16 @@ export function isMember(database: RewindDatabase, groupId: string, memberId: st
     .prepare('SELECT 1 AS member FROM memberships WHERE group_id = ? AND member_id = ?')
     .get(groupId, memberId) as { member?: number } | undefined;
   return row?.member === 1;
+}
+
+export function isOwner(database: RewindDatabase, groupId: string, memberId: string): boolean {
+  const row = database
+    .prepare(
+      `SELECT 1 AS owner FROM memberships
+       WHERE group_id = ? AND member_id = ? AND role = 'owner' LIMIT 1`,
+    )
+    .get(groupId, memberId) as { owner?: number } | undefined;
+  return row?.owner === 1;
 }
 
 export function getMessage(database: RewindDatabase, groupId: string, messageId: string) {

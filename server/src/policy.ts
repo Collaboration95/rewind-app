@@ -1,5 +1,5 @@
 import type { RewindDatabase } from './db';
-import { isMember } from './db';
+import { isMember, isOwner } from './db';
 
 export type ProtectedResource = 'group' | 'message' | 'contribution' | 'clip' | 'film' | 'download';
 
@@ -30,5 +30,14 @@ export function authorizeMember(
   _resource: ProtectedResource,
 ): MembershipDecision {
   if (!actingMemberId || !isMember(database, groupId, actingMemberId)) return SAFE_DENIAL;
+  return { allowed: true };
+}
+
+export function authorizeOwner(
+  database: RewindDatabase,
+  groupId: string,
+  actingMemberId: string | null | undefined,
+): MembershipDecision {
+  if (!actingMemberId || !isOwner(database, groupId, actingMemberId)) return SAFE_DENIAL;
   return { allowed: true };
 }

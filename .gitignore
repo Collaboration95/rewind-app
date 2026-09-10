@@ -17,6 +17,7 @@ node_modules/
 .expo/
 coverage/
 dist/
+server/dist/
 playwright-report/
 test-results/
 .local-data/
