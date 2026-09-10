@@ -3,8 +3,18 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type { RuntimeConfig } from './config';
+import { DEMO_SESSION_LIFETIME_MS } from './session/contract';
 
-const MIGRATION = readFileSync(resolve(process.cwd(), 'server/migrations/001-initial.sql'), 'utf8');
+const MIGRATIONS = [1, 2].map((version) => ({
+  version,
+  sql: readFileSync(
+    resolve(
+      process.cwd(),
+      `server/migrations/${String(version).padStart(3, '0')}-${version === 1 ? 'initial' : 'session-audit'}.sql`,
+    ),
+    'utf8',
+  ),
+}));
 const FIXTURE = JSON.parse(
   readFileSync(resolve(process.cwd(), 'server/fixtures/demo-fixture.json'), 'utf8'),
 ) as DemoFixture;
@@ -56,14 +66,16 @@ export function migrateDatabase(database: RewindDatabase): void {
   database.exec(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);',
   );
-  const migration = database
-    .prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = ?')
-    .get(1) as { applied?: number } | undefined;
-  if (!migration?.applied) {
-    database.exec(MIGRATION);
-    database
-      .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-      .run(1, new Date().toISOString());
+  for (const migration of MIGRATIONS) {
+    const applied = database
+      .prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = ?')
+      .get(migration.version) as { applied?: number } | undefined;
+    if (!applied?.applied) {
+      database.exec(migration.sql);
+      database
+        .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+        .run(migration.version, new Date().toISOString());
+    }
   }
 }
 
@@ -115,9 +127,18 @@ export function seedDatabase(database: RewindDatabase): void {
 
     database
       .prepare(
-        'INSERT INTO sessions (id, member_id, group_id, started_at, last_seen_at) VALUES (?, ?, ?, ?, ?)',
+        `INSERT INTO sessions
+          (id, member_id, group_id, started_at, last_seen_at, access_kind, expires_at)
+         VALUES (?, ?, ?, ?, ?, 'demo', ?)`,
       )
-      .run('demo-session', FIXTURE.profiles[0].id, FIXTURE.group.id, now, now);
+      .run(
+        'demo-session',
+        FIXTURE.profiles[0].id,
+        FIXTURE.group.id,
+        now,
+        now,
+        new Date(Date.parse(now) + DEMO_SESSION_LIFETIME_MS).toISOString(),
+      );
     database
       .prepare(
         'INSERT INTO invites (id, group_id, invitee_member_id, status, created_at) VALUES (?, ?, ?, ?, ?)',

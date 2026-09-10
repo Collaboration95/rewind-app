@@ -39,6 +39,7 @@ npm run server:preflight   # service + SQLite + LAN + FFmpeg gate
 npm run server:start       # build and run the local service
 npm run server:migrate     # create/migrate and seed .local-data/rewind.sqlite
 npm run server:reset       # restore the deterministic five-member fixture
+npm run server:diagnostics  # print safe local session/job events
 ```
 
 The preflight creates a short synthetic MP4, scales it successfully, and then
@@ -74,17 +75,18 @@ return the same safe `403` denial to non-members.
 
 ## Quality commands
 
-| Command                    | Purpose                                                    |
-| -------------------------- | ---------------------------------------------------------- |
-| `npm run format:check`     | Verify repository formatting                               |
-| `npm run lint`             | Run ESLint                                                 |
-| `npm run typecheck`        | Run strict TypeScript checking                             |
-| `npm test`                 | Run scaffold and component tests                           |
-| `npm run check`            | Run all baseline checks                                    |
-| `npm run build:web`        | Export the Expo web bundle                                 |
-| `npm run test:responsive`  | Check layouts at supported viewport sizes                  |
-| `npm run server:preflight` | Verify the local service, SQLite, LAN, and FFmpeg gate     |
-| `npm run server:test`      | Run local service, migration, and policy integration tests |
+| Command                      | Purpose                                                    |
+| ---------------------------- | ---------------------------------------------------------- |
+| `npm run format:check`       | Verify repository formatting                               |
+| `npm run lint`               | Run ESLint                                                 |
+| `npm run typecheck`          | Run strict TypeScript checking                             |
+| `npm test`                   | Run scaffold and component tests                           |
+| `npm run check`              | Run all baseline checks                                    |
+| `npm run build:web`          | Export the Expo web bundle                                 |
+| `npm run test:responsive`    | Check layouts at supported viewport sizes                  |
+| `npm run server:preflight`   | Verify the local service, SQLite, LAN, and FFmpeg gate     |
+| `npm run server:test`        | Run local service, migration, and policy integration tests |
+| `npm run server:diagnostics` | Print allowlisted local audit events                       |
 
 GitHub Actions runs the baseline and responsive browser checks on pushes to
 `main` and pull requests.
@@ -119,6 +121,8 @@ text; it does not load or expose media, playback, or sharing actions.
 - `src/runtime/` — typed local API client, repository adapters, and connection state UI.
 - `src/domain/` — framework-independent profile, group, cycle, and storage interfaces.
 - `server/src/` — typed local HTTP service, configuration, SQLite access, FFmpeg probe, and policy.
+- `server/src/session/` — explicit local Demo access lifecycle and SQLite session boundary.
+- `server/src/audit/` and `server/src/jobs/` — redacted local diagnostics and audited job helpers.
 - `server/migrations/` and `server/fixtures/` — versioned schema and deterministic synthetic seed.
 - `src/theme.ts` — shared React Native color tokens mirrored by `DESIGN.md`.
 - `docs/architecture/` — local-first boundary decision.

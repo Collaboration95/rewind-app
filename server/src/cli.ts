@@ -1,4 +1,5 @@
 import { once } from 'node:events';
+import { listAuditEvents, type AuditEvent } from './audit';
 import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from './config';
 import { openDatabase, resetDatabase, fixtureSummary } from './db';
 import { runFfmpegProbe } from './ffmpeg';
@@ -114,6 +115,39 @@ function printPreflight(report: PreflightReport, json: boolean): void {
   );
 }
 
+function parseDiagnosticsLimit(argv: string[]): number {
+  const index = argv.indexOf('--limit');
+  if (index === -1) return 100;
+  const value = argv[index + 1];
+  const limit = Number(value);
+  if (!value || !Number.isInteger(limit) || limit < 1 || limit > 500) {
+    throw new ConfigError(
+      `--limit must be an integer from 1 to 500 (received ${JSON.stringify(value)}).`,
+      'Use --limit 100 or omit it to show the latest 100 events.',
+    );
+  }
+  return limit;
+}
+
+function printDiagnostics(events: AuditEvent[], json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ version: SERVICE_VERSION, events }, null, 2));
+    return;
+  }
+  console.log(`Rewind local diagnostics (${events.length} event${events.length === 1 ? '' : 's'})`);
+  if (events.length === 0) {
+    console.log('No session or job events recorded.');
+    return;
+  }
+  for (const event of events) {
+    const actor = event.actorMemberId ? ` actor=${event.actorMemberId}` : '';
+    const resource = event.resourceId ? ` resource=${event.resourceId}` : '';
+    console.log(
+      `${event.timestamp} ${event.result.toUpperCase()} ${event.eventType}${actor}${resource}`,
+    );
+  }
+}
+
 async function start(config: RuntimeConfig): Promise<void> {
   const database = openDatabase(config);
   const server = createRuntimeServer(config, database);
@@ -169,6 +203,15 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         `Local database reset to the deterministic five-member fixture at ${config.databasePath}.`,
       );
       database.close();
+      return;
+    }
+    if (command === 'diagnostics') {
+      const database = openDatabase(config);
+      try {
+        printDiagnostics(listAuditEvents(database, parseDiagnosticsLimit(argv)), json);
+      } finally {
+        database.close();
+      }
       return;
     }
     if (command !== 'start') {

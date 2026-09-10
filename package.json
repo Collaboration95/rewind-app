@@ -16,6 +16,7 @@
     "server:preflight": "npm run server:build && node server/dist/cli.js preflight",
     "server:migrate": "npm run server:build && node server/dist/cli.js migrate",
     "server:reset": "npm run server:build && node server/dist/cli.js reset",
+    "server:diagnostics": "npm run server:build && node server/dist/cli.js diagnostics",
     "server:test": "npm run server:build && node --test server/tests/*.test.mjs",
     "lint": "eslint .",
     "format": "npm run format:write",
