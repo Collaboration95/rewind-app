@@ -13,6 +13,7 @@ import {
   restoreFixture,
   type RewindDatabase,
 } from './db';
+import { advanceDemoCycle } from './cycles';
 import { authorizeMember, SAFE_DENIAL, type ProtectedResource } from './policy';
 import {
   createDemoSession,
@@ -66,6 +67,13 @@ function sendNotFound(response: ServerResponse, config: RuntimeConfig): void {
 
 function sendDenied(response: ServerResponse, config: RuntimeConfig): void {
   sendJson(response, config, SAFE_DENIAL.status, SAFE_DENIAL);
+}
+
+function sendBadRequest(response: ServerResponse, config: RuntimeConfig): void {
+  sendJson(response, config, 400, {
+    error: 'invalid_request',
+    message: 'The cycle advance must be a positive whole number of seconds.',
+  });
 }
 
 function actingMember(url: URL): string | null {
@@ -316,6 +324,39 @@ export async function handleRequest(
     sendJson(response, config, 200, { profiles: listProfiles(database) });
     return;
   }
+
+  if (request.method === 'POST' && url.pathname === '/cycles/demo/advance') {
+    const groupId = url.searchParams.get('groupId');
+    const sessionId = url.searchParams.get('sessionId');
+    const memberId = sessionId ? sessionMember(database, url) : actingMember(url);
+    const advanceSecondsValue = url.searchParams.get('advanceSeconds');
+    const advanceSeconds = advanceSecondsValue ? Number(advanceSecondsValue) : Number.NaN;
+    if (!groupId) {
+      sendDenied(response, config);
+      return;
+    }
+    const result = advanceDemoCycle(database, {
+      groupId,
+      actingMemberId: memberId,
+      advanceSeconds,
+    });
+    if ('allowed' in result) {
+      sendDenied(response, config);
+      return;
+    }
+    if (!result.ok) {
+      if (result.reason === 'not_found') return sendNotFound(response, config);
+      sendBadRequest(response, config);
+      return;
+    }
+    sendJson(response, config, 200, {
+      cycle: result.cycle,
+      advanceSeconds: result.advanceSeconds,
+      eventId: result.eventId,
+    });
+    return;
+  }
+
   if (url.pathname === '/groups/current') {
     const scope = sessionScope(database, url);
     const memberId = scope.memberId;

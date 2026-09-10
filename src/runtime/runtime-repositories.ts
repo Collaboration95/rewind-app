@@ -23,7 +23,7 @@ export function createRuntimeRepositories(
     },
     cycleControlRepository: {
       advanceDemoCycle: (groupId, actingMemberId, advanceSeconds) =>
-        client.advanceDemoCycle(groupId, actingMemberId, advanceSeconds),
+        client.advanceDemoCycle(groupId, actingMemberId, advanceSeconds, sessionId),
     },
   };
 }
