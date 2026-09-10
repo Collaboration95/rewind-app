@@ -4,6 +4,16 @@
     "slug": "rewind-app",
     "version": "0.1.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic"
+    "userInterfaceStyle": "automatic",
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Rewind to use your camera for a still moment.",
+          "microphonePermission": "Allow Rewind to use your microphone for capture readiness.",
+          "recordAudioAndroid": true
+        }
+      ]
+    ]
   }
 }

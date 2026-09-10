@@ -24,8 +24,9 @@ npm run web
 Open the local URL printed by Expo, normally `http://localhost:8081`.
 
 The clean-start path does not require AWS credentials, an account, private
-media, or a deployed service. Native Android and device permission work are
-future implementation scope.
+media, or a deployed service. The camera route now has an SDK-compatible native
+permission/capture boundary; cloud media, recording, and upload remain future
+scope.
 
 ## Local runtime
 
@@ -147,6 +148,7 @@ text; it does not load or expose media, playback, or sharing actions.
 - `src/domain/groups.ts` — group/prompt validation and one-day cycle constants.
 - `src/data/` — synthetic repositories plus local group/session persistence adapters.
 - `src/runtime/` — typed local API client, repository adapters, and connection state UI.
+- `src/capture/` — capability/permission ports, Expo SDK 57 camera and file adapters, simulator fixture, still preview, and metadata-only lifecycle.
 - `src/domain/` — framework-independent profile, group, cycle, and storage interfaces.
 - `server/src/` — typed local HTTP service, configuration, SQLite access, FFmpeg probe, and policy.
 - `server/src/session/` — explicit local Demo access lifecycle and SQLite session boundary.
@@ -154,11 +156,11 @@ text; it does not load or expose media, playback, or sharing actions.
 - `server/src/audit/` and `server/src/jobs/` — redacted local diagnostics and audited job helpers.
 - `server/migrations/` and `server/fixtures/` — versioned schema and deterministic synthetic seed.
 - `src/theme.ts` — shared React Native color tokens mirrored by `DESIGN.md`.
-- `docs/architecture/` — local-first boundary decision.
+- `docs/architecture/` — local-first and camera capture boundary decisions.
 - `docs/domain/` — glossary and framework-independent contracts.
 - `scripts/check-architecture.mjs` — baseline framework/device boundary guard.
 - `planning/sprints/` — Sprint 1 extension, runtime gate, and fallback agreement.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
-scope. Camera capture, chat, archive playback, authentication, and cloud
-services remain follow-up work.
+scope. Chat, archive playback, authentication, and cloud services remain
+follow-up work; the camera directory is a local still-capture boundary only.
