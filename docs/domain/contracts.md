@@ -99,3 +99,7 @@ UI boundary awaits either the synchronous offline fixture or the async adapter.
 `RecoverableFailure` support honest empty and retry states in later UI work.
 No contract returns media URIs, thumbnails, or player data while a cycle is
 locked.
+
+The explicit local Demo access lifecycle is defined in
+[`session-contract.md`](./session-contract.md), and safe operational events
+are defined in [`audit-contract.md`](./audit-contract.md).
