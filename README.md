@@ -3,11 +3,11 @@
 Rewind is a local-first SWE5006 prototype for collecting short shared moments
 for a group cycle and experiencing them together through a delayed reveal.
 
-This repository contains the Sprint 0 foundation, local demo profile selection,
-a read-only group capsule summary, and the local runtime boundary needed by the
-next feature increment. The app is deliberately honest about what is not
-implemented yet; synthetic local data is not authentication, a secure account,
-or a cloud service.
+This repository contains the Sprint 0 foundation, explicit local Demo access,
+local group creation, a read-only group capsule summary, and the local runtime
+boundary needed by the next feature increment. The app is deliberately honest
+about what is not implemented yet; synthetic local data is not authentication,
+a secure account, or a cloud service.
 
 ## Clean start
 
@@ -91,22 +91,40 @@ return the same safe `403` denial to non-members.
 GitHub Actions runs the baseline and responsive browser checks on pushes to
 `main` and pull requests.
 
-## Local demo profiles
+## Local Demo access
 
-Choose one of five synthetic members in the profile picker. The current member
-changes immediately, and the last selection is saved on this device using
-AsyncStorage. A new installation or missing/invalid selection starts with Amber.
-Storage failures display a message and allow retrying the save.
+The app maintains an explicit local Demo session for one of five synthetic
+members. The session record is saved on this device using AsyncStorage and has
+an eight-hour bounded lifetime; it contains no credential or secure identity
+claim. The clean-start fixture uses Amber for continuity. Settings can end the
+session and return to the Demo access entry, where another sample member can be
+chosen. Runtime-connected sessions are revalidated by the local SQLite service.
 
-For a clean demo reset, clear this app's local storage (site data on web or app
-data on Android) and relaunch. This restores the default selection and the same
-five profiles and one group. Selection is local to this device; it is not sign-in
-or multi-device membership.
+Storage/runtime failures remain in the app with an actionable retry path.
+
+## Local groups and settings
+
+Settings shows the current synthetic actor, group, and owner/member role. An
+owner can create a local group with a required name (80 characters maximum) and
+either a built-in prompt or a short custom prompt (160 characters maximum).
+Creation validates before persistence and commits the owner membership, group,
+and collecting cycle atomically. The cycle starts at creation and lasts exactly
+one day with the demo contribution allowance.
+
+Settings also provides a confirmed **Reset local Demo data** action. Reset
+removes the saved local Demo session, locally created groups, and local
+selection, then restores the deterministic fixture. It does not touch source
+files, migrations, or remote data.
+
+If the app cannot be opened far enough to reach Settings, clearing this app's
+local storage (site data on web or app data on Android) and relaunching restores
+the same fallback fixture. Selection is local to this device; it is not
+multi-device membership.
 
 ## Group capsule
 
-The Home screen reads the selected member's current synthetic group and cycle
-through the local repository boundary. It shows the group name, current prompt,
+The Home screen reads the active Demo session actor's current synthetic group
+and cycle through the local repository boundary. It shows the group name, current prompt,
 locally derived countdown, and member-scoped contribution allowance. Sprint 0
 seeds a collecting cycle with a five-contribution/30-second limit and zero
 usage. While the cycle is locked, the app shows only sealed placeholders and
@@ -114,10 +132,12 @@ text; it does not load or expose media, playback, or sharing actions.
 
 ## Repository map
 
-- `App.tsx` — low-fidelity Home screen, profile picker, main navigation, and explicit unavailable states.
+- `App.tsx` — local Demo access entry, Home/settings/group-create screens, main navigation, and explicit unavailable states.
 - `src/capsule/` — capsule loading states, countdown formatting, and Home summary.
-- `src/profiles/` — reusable profile picker and shared current-member provider.
-- `src/data/` — synthetic repositories and local selection storage.
+- `src/profiles/` — reusable synthetic-member picker and compatibility current-member provider.
+- `src/session/` — persisted Demo access lifecycle and local session storage.
+- `src/domain/groups.ts` — group/prompt validation and one-day cycle constants.
+- `src/data/` — synthetic repositories plus local group/session persistence adapters.
 - `src/runtime/` — typed local API client, repository adapters, and connection state UI.
 - `src/domain/` — framework-independent profile, group, cycle, and storage interfaces.
 - `server/src/` — typed local HTTP service, configuration, SQLite access, FFmpeg probe, and policy.

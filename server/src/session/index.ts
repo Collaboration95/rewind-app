@@ -31,6 +31,10 @@ export type InvalidateDemoSessionResult =
   | { ok: true; session: DemoSession }
   | { ok: false; reason: 'missing' | 'already_invalidated'; session?: DemoSession };
 
+export type UpdateDemoSessionGroupResult =
+  | { ok: true; session: DemoSession }
+  | { ok: false; reason: 'missing' | 'inactive' | 'membership_denied' };
+
 type SessionRow = Record<string, unknown>;
 
 function sessionResourceId(sessionId: string): string {
@@ -192,4 +196,27 @@ export function invalidateDemoSession(
     result: 'success',
   });
   return { ok: true, session: invalidated };
+}
+
+export function updateDemoSessionGroup(
+  database: RewindDatabase,
+  sessionId: string,
+  groupId: string,
+): UpdateDemoSessionGroupResult {
+  const session = getDemoSession(database, sessionId);
+  if (!session) return { ok: false, reason: 'missing' };
+  if (session.invalidatedAt || classifyDemoSession(session.expiresAt, null) !== 'valid') {
+    return { ok: false, reason: 'inactive' };
+  }
+  if (
+    !database
+      .prepare('SELECT 1 FROM memberships WHERE group_id = ? AND member_id = ?')
+      .get(groupId, session.actor.memberId)
+  ) {
+    return { ok: false, reason: 'membership_denied' };
+  }
+  database.prepare('UPDATE sessions SET group_id = ? WHERE id = ?').run(groupId, sessionId);
+  const updated = getDemoSession(database, sessionId);
+  if (!updated) throw new Error('The updated demo session could not be loaded.');
+  return { ok: true, session: updated };
 }

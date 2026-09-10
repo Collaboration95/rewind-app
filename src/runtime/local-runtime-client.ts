@@ -1,5 +1,12 @@
 import type { CurrentCycleResult, Cycle } from '../domain/cycles';
-import type { Group, MemberId, MembershipDenied } from '../domain/profiles';
+import type {
+  CreateGroupInput,
+  CreateGroupResult,
+  Group,
+  MemberId,
+  MembershipDenied,
+} from '../domain/profiles';
+import type { DemoSession } from '../domain/session';
 
 export interface RuntimeHealth {
   ok: true;
@@ -13,15 +20,29 @@ export interface RuntimeHealth {
 export interface RuntimeClient {
   readonly baseUrl: string;
   getHealth(): Promise<RuntimeHealth>;
-  getGroupForMember(actingMemberId: MemberId): Promise<Group | MembershipDenied>;
-  getCurrentCycle(groupId: string, actingMemberId: MemberId): Promise<CurrentCycleResult>;
+  getGroupForMember(
+    actingMemberId: MemberId,
+    sessionId?: string,
+  ): Promise<Group | MembershipDenied>;
+  getCurrentCycle(
+    groupId: string,
+    actingMemberId: MemberId,
+    sessionId?: string,
+  ): Promise<CurrentCycleResult>;
+  getDemoSession?(sessionId: string): Promise<DemoSession>;
+  createDemoSession?(memberId: MemberId, groupId?: string): Promise<DemoSession>;
+  invalidateDemoSession?(sessionId: string): Promise<DemoSession>;
+  resetDemoData?(sessionId: string): Promise<void>;
+  createGroup?(sessionId: string, input: CreateGroupInput): Promise<CreateGroupResult>;
 }
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 interface ErrorPayload {
   error?: string;
+  field?: string;
   message?: string;
+  reason?: string;
 }
 
 export class LocalRuntimeError extends Error {
@@ -29,6 +50,7 @@ export class LocalRuntimeError extends Error {
     message: string,
     readonly status?: number,
     readonly code?: string,
+    readonly details?: { field?: string; reason?: string },
   ) {
     super(message);
     this.name = 'LocalRuntimeError';
@@ -56,10 +78,14 @@ export class LocalRuntimeClient implements RuntimeClient {
     return this.request<RuntimeHealth>('/health');
   }
 
-  async getGroupForMember(actingMemberId: MemberId): Promise<Group | MembershipDenied> {
+  async getGroupForMember(
+    actingMemberId: MemberId,
+    sessionId?: string,
+  ): Promise<Group | MembershipDenied> {
     try {
+      const sessionQuery = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
       const body = await this.request<{ group: Group }>(
-        `/groups/current?memberId=${encodeURIComponent(actingMemberId)}`,
+        `/groups/current?memberId=${encodeURIComponent(actingMemberId)}${sessionQuery}`,
       );
       return body.group;
     } catch (error) {
@@ -69,10 +95,15 @@ export class LocalRuntimeClient implements RuntimeClient {
     }
   }
 
-  async getCurrentCycle(groupId: string, actingMemberId: MemberId): Promise<CurrentCycleResult> {
+  async getCurrentCycle(
+    groupId: string,
+    actingMemberId: MemberId,
+    sessionId?: string,
+  ): Promise<CurrentCycleResult> {
     try {
+      const sessionQuery = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
       const body = await this.request<{ cycle: Cycle }>(
-        `/cycles/current?groupId=${encodeURIComponent(groupId)}&memberId=${encodeURIComponent(actingMemberId)}`,
+        `/cycles/current?groupId=${encodeURIComponent(groupId)}&memberId=${encodeURIComponent(actingMemberId)}${sessionQuery}`,
       );
       return body.cycle;
     } catch (error) {
@@ -83,11 +114,72 @@ export class LocalRuntimeClient implements RuntimeClient {
     }
   }
 
-  private async request<T>(path: string): Promise<T> {
+  async getDemoSession(sessionId: string): Promise<DemoSession> {
+    const body = await this.request<{ session: DemoSession }>(
+      `/sessions/${encodeURIComponent(sessionId)}`,
+    );
+    return body.session;
+  }
+
+  async createDemoSession(memberId: MemberId, groupId?: string): Promise<DemoSession> {
+    const body = await this.request<{ session: DemoSession }>('/sessions/demo', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId, ...(groupId ? { groupId } : {}) }),
+    });
+    return body.session;
+  }
+
+  async invalidateDemoSession(sessionId: string): Promise<DemoSession> {
+    const body = await this.request<{ session: DemoSession }>(
+      `/sessions/${encodeURIComponent(sessionId)}`,
+      { method: 'DELETE' },
+    );
+    return body.session;
+  }
+
+  async resetDemoData(sessionId: string): Promise<void> {
+    await this.request<{ reset: true }>(`/demo/reset?sessionId=${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+    });
+  }
+
+  async createGroup(sessionId: string, input: CreateGroupInput): Promise<CreateGroupResult> {
+    try {
+      const body = await this.request<{ group: Group }>(
+        '/groups?' + `sessionId=${encodeURIComponent(sessionId)}`,
+        {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        },
+      );
+      return { ok: true, group: body.group };
+    } catch (error) {
+      if (!(error instanceof LocalRuntimeError) || error.status !== 400) throw error;
+      if (error.code !== 'invalid_group') throw error;
+      const field = error.details?.field;
+      const reason = error.details?.reason;
+      if (
+        (field === 'name' || field === 'prompt' || field === 'owner') &&
+        (reason === 'required' || reason === 'too_long' || reason === 'invalid')
+      ) {
+        return {
+          ok: false,
+          field,
+          reason: field === 'owner' ? 'invalid_member' : reason,
+        };
+      }
+      return { ok: false, field: 'prompt', reason: 'required' };
+    }
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        headers: { Accept: 'application/json' },
+        ...init,
+        headers: { Accept: 'application/json', ...(init.headers ?? {}) },
       });
     } catch {
       throw new LocalRuntimeError(
@@ -106,6 +198,10 @@ export class LocalRuntimeClient implements RuntimeClient {
         errorPayload.message || `Local runtime returned HTTP ${response.status}.`,
         response.status,
         errorPayload.error,
+        {
+          field: typeof errorPayload.field === 'string' ? errorPayload.field : undefined,
+          reason: typeof errorPayload.reason === 'string' ? errorPayload.reason : undefined,
+        },
       );
     }
     return payload as T;

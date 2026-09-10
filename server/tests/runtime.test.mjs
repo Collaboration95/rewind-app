@@ -7,6 +7,7 @@ import test from 'node:test';
 const { parseConfig } = await import('../dist/config.js');
 const { fixtureSummary, openDatabase, resetDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
+const { createGroup } = await import('../dist/groups/index.js');
 
 async function withRuntime(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-runtime-test-`);
@@ -136,5 +137,127 @@ test('every protected endpoint category returns the same safe denial to a non-me
 
     const allowed = await fetch(`${baseUrl}/films/demo-film?groupId=demo-group&memberId=demo-1`);
     assert.equal(allowed.status, 200);
+  });
+});
+
+test('local group creation validates before writing and creates an owner one-day cycle atomically', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-group-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  try {
+    const baseline = fixtureSummary(database);
+    const invalid = createGroup(database, 'demo-1', {
+      name: '   ',
+      prompt: 'A valid prompt',
+      now: new Date('2026-09-10T12:00:00.000Z'),
+    });
+    assert.deepEqual(invalid, { ok: false, field: 'name', reason: 'required' });
+    assert.deepEqual(fixtureSummary(database), baseline);
+
+    const tooLong = createGroup(database, 'demo-1', {
+      name: 'A valid group',
+      prompt: 'x'.repeat(161),
+      now: new Date('2026-09-10T12:00:00.000Z'),
+    });
+    assert.deepEqual(tooLong, { ok: false, field: 'prompt', reason: 'too_long' });
+    assert.deepEqual(fixtureSummary(database), baseline);
+
+    const created = createGroup(database, 'demo-1', {
+      name: '  Saturday table  ',
+      prompt: '  What is worth keeping?  ',
+      now: new Date('2026-09-10T12:00:00.000Z'),
+    });
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    assert.equal(created.group.name, 'Saturday table');
+    assert.equal(created.group.actingMemberRole, 'owner');
+    assert.equal(created.cycle.prompt, 'What is worth keeping?');
+    assert.equal(created.cycle.status, 'collecting');
+    assert.equal(created.cycle.lockState, 'locked');
+    assert.equal(
+      Date.parse(created.cycle.endsAt) - Date.parse(created.cycle.startsAt),
+      24 * 60 * 60 * 1000,
+    );
+    assert.equal(
+      database
+        .prepare('SELECT role FROM memberships WHERE group_id = ? AND member_id = ?')
+        .get(created.group.id, 'demo-1').role,
+      'owner',
+    );
+  } finally {
+    database.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('Demo session and group HTTP mutations preserve the selected group context', async () => {
+  await withRuntime(async ({ baseUrl }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-2' }),
+    });
+    assert.equal(sessionResponse.status, 201);
+    const { session } = await sessionResponse.json();
+
+    const groupResponse = await fetch(
+      `${baseUrl}/groups?sessionId=${encodeURIComponent(session.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Walk home', prompt: 'What did you notice?' }),
+      },
+    );
+    assert.equal(groupResponse.status, 201);
+    const created = await groupResponse.json();
+    assert.equal(created.group.actingMemberRole, 'owner');
+    assert.equal(
+      Date.parse(created.cycle.endsAt) - Date.parse(created.cycle.startsAt),
+      24 * 60 * 60 * 1000,
+    );
+
+    const current = await fetch(
+      `${baseUrl}/groups/current?sessionId=${encodeURIComponent(session.id)}`,
+    );
+    assert.equal(current.status, 200);
+    assert.equal((await current.json()).group.id, created.group.id);
+  });
+});
+
+test('local Demo reset endpoint restores the deterministic fixture and removes created groups', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const groupResponse = await fetch(
+      `${baseUrl}/groups?sessionId=${encodeURIComponent(session.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Temporary group', prompt: 'Temporary prompt' }),
+      },
+    );
+    assert.equal(groupResponse.status, 201);
+    assert.equal(fixtureSummary(database).groups, 2);
+
+    const reset = await fetch(`${baseUrl}/demo/reset?sessionId=${encodeURIComponent(session.id)}`, {
+      method: 'POST',
+    });
+    assert.equal(reset.status, 200);
+    assert.deepEqual(fixtureSummary(database), {
+      profiles: 5,
+      groups: 1,
+      memberships: 5,
+      invites: 1,
+      cycles: 1,
+      sessions: 1,
+      contributions: 1,
+      media_jobs: 3,
+      messages: 1,
+      reactions: 1,
+    });
   });
 });
