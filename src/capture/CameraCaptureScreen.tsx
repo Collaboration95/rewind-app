@@ -440,7 +440,7 @@ function PreviewPanel({
       {demo ? (
         <View
           accessibilityLabel="Simulator fixture still preview"
-          style={styles.fixturePreview}
+          style={[styles.fixturePreview, styles.previewFixture]}
           testID="camera-demo-preview"
         >
           <Text style={styles.fixturePreviewText}>FIXTURE STILL</Text>
@@ -450,7 +450,7 @@ function PreviewPanel({
         <Image
           accessibilityLabel="Captured still preview"
           source={{ uri: previewUri }}
-          style={styles.stillPreview}
+          style={[styles.stillPreview, styles.previewImage]}
         />
       )}
       <Text style={styles.previewMeta}>
@@ -583,7 +583,15 @@ const styles = StyleSheet.create({
   shutterText: { color: COLORS.deep, fontSize: 15, fontWeight: '800' },
   disabledControl: { opacity: 0.48 },
   errorText: { color: COLORS.edge, fontSize: 13, textAlign: 'center' },
-  previewArea: { flex: 1, gap: 12, minHeight: 420 },
+  previewArea: { flex: 1, flexShrink: 1, gap: 12, minHeight: 0 },
+  previewFixture: {
+    flex: 0,
+    flexGrow: 0,
+    flexShrink: 1,
+    height: 360,
+    maxHeight: 360,
+    minHeight: 0,
+  },
   stillPreview: {
     backgroundColor: COLORS.deep,
     borderRadius: 10,
@@ -591,6 +599,7 @@ const styles = StyleSheet.create({
     minHeight: 300,
     width: '100%',
   },
+  previewImage: { flex: 0, flexGrow: 0, flexShrink: 1, height: 360, maxHeight: 360, minHeight: 0 },
   previewMeta: { color: COLORS.muted, fontSize: 12, textAlign: 'center' },
   previewActions: { gap: 10 },
   savedText: { color: COLORS.accent, fontSize: 13, textAlign: 'center' },

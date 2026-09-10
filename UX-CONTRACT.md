@@ -46,10 +46,23 @@ providers, or remote deletion actions in this increment.
 ## Reset and local data scope
 
 Reset explicitly names its scope: the saved Demo session, locally created
-groups, and saved local selection. It restores the deterministic five-member
-fixture. It never changes source-controlled files, migrations, or remote/user
-data. Reset is confirmed with an app-owned modal; browser/native confirmation
-dialogs are not used.
+groups, saved local selection, accepted still-image metadata, and app-owned
+cached still files. It restores the deterministic five-member fixture. It
+never changes source-controlled files, migrations, or remote/user data. Reset
+is confirmed with an app-owned modal; browser/native confirmation dialogs are
+not used.
+
+## Still capture
+
+- Camera and microphone capability and permission states are checked before a
+  capture control is enabled. Denied or blocked access remains actionable with
+  retry and Settings guidance.
+- Native capture uses `ExpoCameraPlatform`; simulator evidence uses the
+  explicitly labelled `DemoCameraPlatform` fixture and never claims a physical
+  image. The preview supports retake, discard, and local acceptance.
+- Accepted durable records contain dimensions, format, capture time, byte
+  length, and source only. Native file URIs remain in the active session and
+  app-owned cache; they are not persisted as metadata or uploaded.
 
 ## Accessibility and responsive behavior
 

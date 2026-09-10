@@ -39,6 +39,20 @@ describe('local Demo access lifecycle', () => {
     await result.findByRole('header', { name: 'Weekend People' });
     expect(result.getByText('Birch')).toBeTruthy();
   });
+
+  it('supports an explicit entry mode for deterministic review', async () => {
+    const previous = process.env.EXPO_PUBLIC_DEMO_ACCESS;
+    process.env.EXPO_PUBLIC_DEMO_ACCESS = 'entry';
+    try {
+      const result = await render(<App />);
+      await result.findByRole('header', { name: 'Choose who you are showing' });
+      expect(result.getByText(/Pick a synthetic member to enter the local Demo/)).toBeTruthy();
+      result.unmount();
+    } finally {
+      if (previous === undefined) delete process.env.EXPO_PUBLIC_DEMO_ACCESS;
+      else process.env.EXPO_PUBLIC_DEMO_ACCESS = previous;
+    }
+  });
 });
 
 describe('local group creation', () => {
