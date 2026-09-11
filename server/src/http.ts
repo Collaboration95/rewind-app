@@ -76,6 +76,13 @@ function sendBadRequest(response: ServerResponse, config: RuntimeConfig): void {
   });
 }
 
+function sendSessionRequired(response: ServerResponse, config: RuntimeConfig): void {
+  sendJson(response, config, 401, {
+    error: 'session_required',
+    message: 'Choose Demo access before changing local Demo data.',
+  });
+}
+
 function actingMember(url: URL): string | null {
   return url.searchParams.get('memberId');
 }
@@ -328,7 +335,16 @@ export async function handleRequest(
   if (request.method === 'POST' && url.pathname === '/cycles/demo/advance') {
     const groupId = url.searchParams.get('groupId');
     const sessionId = url.searchParams.get('sessionId');
-    const memberId = sessionId ? sessionMember(database, url) : actingMember(url);
+    if (!sessionId) {
+      sendSessionRequired(response, config);
+      return;
+    }
+    const session = validateDemoSession(database, sessionId);
+    if (session.status !== 'valid') {
+      sendSessionRequired(response, config);
+      return;
+    }
+    const memberId = session.session.actor.memberId;
     const advanceSecondsValue = url.searchParams.get('advanceSeconds');
     const advanceSeconds = advanceSecondsValue ? Number(advanceSecondsValue) : Number.NaN;
     if (!groupId) {
