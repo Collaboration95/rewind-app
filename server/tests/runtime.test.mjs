@@ -167,6 +167,46 @@ test('malformed percent-encoded path segments return a client error for every ro
   });
 });
 
+test('invitation routes require a session and expose an owner-generated code state', async () => {
+  await withRuntime(async ({ baseUrl }) => {
+    const missingSession = await fetch(`${baseUrl}/invites?groupId=demo-group`, {
+      method: 'POST',
+    });
+    assert.equal(missingSession.status, 401);
+
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const generated = await fetch(
+      `${baseUrl}/invites?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresInSeconds: 600 }),
+      },
+    );
+    assert.equal(generated.status, 201);
+    const { invite } = await generated.json();
+    assert.match(invite.code, /^[A-Z0-9]{8}$/);
+    assert.equal(invite.groupId, 'demo-group');
+    assert.equal(invite.status, 'active');
+
+    const malformed = await fetch(
+      `${baseUrl}/invites/accept?sessionId=${encodeURIComponent(session.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: 'bad' }),
+      },
+    );
+    assert.equal(malformed.status, 400);
+    assert.equal((await malformed.json()).error, 'invite_malformed');
+  });
+});
+
 test('local group creation validates before writing and creates an owner one-day cycle atomically', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-group-test-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });

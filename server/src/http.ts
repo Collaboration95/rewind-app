@@ -22,6 +22,7 @@ import {
   validateDemoSession,
 } from './session';
 import { createGroup } from './groups';
+import { acceptInvite, createInvite } from './invites';
 
 export interface HealthPayload {
   ok: true;
@@ -342,6 +343,83 @@ export async function handleRequest(
     sendJson(response, config, 201, {
       group: result.group,
       cycle: result.cycle,
+      session: moved.session,
+    });
+    return;
+  }
+
+  if (url.pathname === '/invites' && request.method === 'POST') {
+    const sessionId = url.searchParams.get('sessionId');
+    const groupId = url.searchParams.get('groupId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId);
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (!groupId) return sendDenied(response, config);
+    const body = await requestBody(request);
+    const ttlSeconds =
+      typeof body?.expiresInSeconds === 'number'
+        ? body.expiresInSeconds
+        : typeof body?.expiresInSeconds === 'string'
+          ? Number(body.expiresInSeconds)
+          : undefined;
+    const result = createInvite(
+      database,
+      session.session.actor.memberId,
+      groupId,
+      ttlSeconds,
+    );
+    if (!result.ok) {
+      if (result.reason === 'forbidden') return sendDenied(response, config);
+      sendJson(response, config, 400, {
+        error: 'invalid_invite',
+        message: 'Choose an expiry between five minutes and seven days.',
+      });
+      return;
+    }
+    sendJson(response, config, 201, { invite: result.invite });
+    return;
+  }
+
+  if (url.pathname === '/invites/accept' && request.method === 'POST') {
+    const sessionId = url.searchParams.get('sessionId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId);
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    const body = await requestBody(request);
+    const code =
+      typeof body?.code === 'string' ? body.code : (url.searchParams.get('code') ?? '');
+    const result = acceptInvite(
+      database,
+      session.session.actor.memberId,
+      code,
+      url.searchParams.get('groupId') ?? undefined,
+    );
+    if (!result.ok) {
+      const messages = {
+        malformed: 'Enter the eight-character invite code.',
+        not_found: 'That invite code is not recognized.',
+        expired: 'That invite code has expired. Ask the owner for a new code.',
+        used: 'That invite code has already been used.',
+        cross_group: 'That invite code belongs to a different group.',
+        already_member: 'This Demo member is already in that group.',
+      } as const;
+      sendJson(response, config, 400, {
+        error: `invite_${result.reason}`,
+        message: messages[result.reason],
+      });
+      return;
+    }
+    const moved = updateDemoSessionGroup(database, sessionId, result.group.id);
+    if (!moved.ok) {
+      sendJson(response, config, 500, {
+        error: 'invite_context_error',
+        message: 'The membership was created but Demo context could not be updated.',
+      });
+      return;
+    }
+    sendJson(response, config, 200, {
+      invite: result.invite,
+      group: result.group,
       session: moved.session,
     });
     return;
