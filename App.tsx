@@ -115,10 +115,13 @@ function SessionGate({
   cameraPlatform?: CameraPlatform;
 }) {
   const { status, session } = useDemoSession();
+  const sessionRepositories = useMemo(
+    () =>
+      runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null,
+    [runtimeClient, session?.id],
+  );
   if (status === 'loading') return <SessionLoadingScreen />;
   if (status === 'entry' || status === 'error') return <DemoAccessEntry />;
-  const sessionRepositories =
-    runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null;
   return (
     <CapsuleProvider
       groupRepository={groupRepository ?? sessionRepositories?.groupRepository}
