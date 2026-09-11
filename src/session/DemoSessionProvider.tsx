@@ -172,6 +172,13 @@ export function DemoSessionProvider({
           ? await runtimeClient.createDemoSession(member.id)
           : createOfflineDemoSession(member.id, member.displayName, 'demo-group', clock());
         await store.save(next);
+        // Keep the profile store aligned with the session when entry is used;
+        // the active session remains the authoritative acting identity.
+        try {
+          await selectionStore.save(member.id);
+        } catch {
+          // A selection persistence failure must not prevent Demo access.
+        }
         if (mounted.current) {
           setSession(next);
           setStatus('active');

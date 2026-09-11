@@ -1,6 +1,14 @@
-import { DEFAULT_MEMBER_ID, demoRepository } from '../src/data/demo-repository';
+import {
+  DEFAULT_MEMBER_ID,
+  demoRepository,
+  resetLocalDemoData,
+} from '../src/data/demo-repository';
 
 describe('Synthetic demo repository', () => {
+  afterEach(async () => {
+    await resetLocalDemoData();
+  });
+
   it('seeds five distinct synthetic members belonging to exactly one group', () => {
     const profiles = demoRepository.listProfiles();
     expect(profiles).toHaveLength(5);
@@ -63,5 +71,29 @@ describe('Synthetic demo repository', () => {
     expect(demoRepository.listProfiles()).toHaveLength(5);
     expect(demoRepository.listProfiles()[0].displayName).toBe('Amber');
     expect(demoRepository.getGroupForMember('demo-outsider')).toEqual({ kind: 'MembershipDenied' });
+  });
+
+  it('resolves the active session group before scanning other local memberships', async () => {
+    const first = await demoRepository.createGroup(
+      DEFAULT_MEMBER_ID,
+      { name: 'First local group', prompt: 'First prompt' },
+      new Date('2026-09-10T00:00:00.000Z'),
+    );
+    const second = await demoRepository.createGroup(
+      DEFAULT_MEMBER_ID,
+      { name: 'Second local group', prompt: 'Second prompt' },
+      new Date('2026-09-10T00:00:01.000Z'),
+    );
+    if (!first.ok || !second.ok) throw new Error('Expected local groups to be created');
+
+    expect(demoRepository.getGroupForMember(DEFAULT_MEMBER_ID, second.group.id)).toMatchObject({
+      id: second.group.id,
+      name: 'Second local group',
+      actingMemberRole: 'owner',
+    });
+    expect(demoRepository.getGroupForMember('demo-2', 'demo-group')).toMatchObject({
+      id: 'demo-group',
+      actingMemberRole: 'member',
+    });
   });
 });

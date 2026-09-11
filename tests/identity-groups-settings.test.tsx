@@ -77,7 +77,8 @@ describe('local Demo access lifecycle', () => {
 
     await fireEvent.press(result.getByTestId('demo-entry-demo-2'));
     await result.findByRole('header', { name: 'Weekend People' });
-    expect(result.getByText('Birch')).toBeTruthy();
+    expect(result.getByText('Current member: Birch')).toBeTruthy();
+    expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-2');
   });
 
   it('supports an explicit entry mode for deterministic review', async () => {
