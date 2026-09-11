@@ -45,7 +45,9 @@ describe('local clip upload lifecycle', () => {
     expect(validateClipUploadInput({ ...input, durationSeconds: 16 })).toContain('15 seconds');
     const session = new ClipUploadSession(transport);
     const progress: string[] = [];
-    await expect(session.upload(input, (state) => progress.push(state.status))).resolves.toEqual(upload);
+    await expect(session.upload(input, (state) => progress.push(state.status))).resolves.toEqual(
+      upload,
+    );
     expect(progress).toEqual(['validating', 'uploading', 'complete']);
     expect(session.getProgress()).toMatchObject({ status: 'complete', percent: 100 });
     await expect(session.retry()).resolves.toEqual(upload);

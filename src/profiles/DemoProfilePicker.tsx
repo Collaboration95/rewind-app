@@ -11,7 +11,7 @@ export function DemoProfilePicker() {
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const sessionMember =
     demoSession?.status === 'active' && demoSession.session
-      ? profiles.find((profile) => profile.id === demoSession.session?.actor.memberId) ?? null
+      ? (profiles.find((profile) => profile.id === demoSession.session?.actor.memberId) ?? null)
       : null;
   const resolvedCurrentMember = sessionMember ?? currentMember;
 

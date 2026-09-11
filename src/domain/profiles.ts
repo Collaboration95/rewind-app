@@ -38,10 +38,7 @@ export interface ProfileRepository {
 }
 
 export interface GroupRepository {
-  getGroupForMember(
-    actingMemberId: MemberId,
-    preferredGroupId?: string,
-  ): Group | MembershipDenied;
+  getGroupForMember(actingMemberId: MemberId, preferredGroupId?: string): Group | MembershipDenied;
 }
 
 export interface AsyncGroupRepository {

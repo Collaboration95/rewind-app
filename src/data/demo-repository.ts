@@ -92,14 +92,13 @@ export const demoRepository: ProfileRepository &
   listProfiles: () => profiles.map((profile) => ({ ...profile })),
   getGroupForMember(actingMemberId, preferredGroupId) {
     const resolved = preferredGroupId
-      ? localGroups.get(preferredGroupId)?.group ??
-        (preferredGroupId === group.id ? group : undefined)
+      ? (localGroups.get(preferredGroupId)?.group ??
+        (preferredGroupId === group.id ? group : undefined))
       : undefined;
     const membership = resolved?.memberIds.includes(actingMemberId)
       ? resolved
-      : [...localGroups.values()].find((local) =>
-          local.group.memberIds.includes(actingMemberId),
-        )?.group ?? (group.memberIds.includes(actingMemberId) ? group : undefined);
+      : ([...localGroups.values()].find((local) => local.group.memberIds.includes(actingMemberId))
+          ?.group ?? (group.memberIds.includes(actingMemberId) ? group : undefined));
     if (!membership) {
       return { kind: 'MembershipDenied' };
     }

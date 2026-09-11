@@ -58,7 +58,10 @@ function safeError(error: unknown, fallback: string): string {
 function canClearAfterRuntimeFailure(error: unknown): boolean {
   return (
     error instanceof LocalRuntimeError &&
-    (error.status === undefined || error.status === 401 || error.status === 404 || error.status === 409)
+    (error.status === undefined ||
+      error.status === 401 ||
+      error.status === 404 ||
+      error.status === 409)
   );
 }
 

@@ -136,11 +136,11 @@ export class WebCaptureFileStore implements CaptureFileStore {
       const binary =
         typeof atob === 'function'
           ? atob(payload)
-          : (
+          : ((
               globalThis as typeof globalThis & {
                 Buffer?: { from(value: string, encoding: string): { toString(): string } };
               }
-            ).Buffer?.from(payload, 'base64').toString() ?? '';
+            ).Buffer?.from(payload, 'base64').toString() ?? '');
       if (!binary) throw new Error('The browser returned an invalid image encoding.');
       const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
       return new Blob([bytes], { type: mimeType });

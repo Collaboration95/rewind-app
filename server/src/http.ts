@@ -363,12 +363,7 @@ export async function handleRequest(
         : typeof body?.expiresInSeconds === 'string'
           ? Number(body.expiresInSeconds)
           : undefined;
-    const result = createInvite(
-      database,
-      session.session.actor.memberId,
-      groupId,
-      ttlSeconds,
-    );
+    const result = createInvite(database, session.session.actor.memberId, groupId, ttlSeconds);
     if (!result.ok) {
       if (result.reason === 'forbidden') return sendDenied(response, config);
       sendJson(response, config, 400, {
@@ -387,8 +382,7 @@ export async function handleRequest(
     const session = validateDemoSession(database, sessionId);
     if (session.status !== 'valid') return sendSessionRequired(response, config);
     const body = await requestBody(request);
-    const code =
-      typeof body?.code === 'string' ? body.code : (url.searchParams.get('code') ?? '');
+    const code = typeof body?.code === 'string' ? body.code : (url.searchParams.get('code') ?? '');
     const result = acceptInvite(
       database,
       session.session.actor.memberId,
@@ -445,12 +439,7 @@ export async function handleRequest(
       height: typeof body?.height === 'number' ? body.height : Number.NaN,
       hasAudio: body?.hasAudio === true,
     };
-    const result = createClipUpload(
-      database,
-      groupId,
-      session.session.actor.memberId,
-      input,
-    );
+    const result = createClipUpload(database, groupId, session.session.actor.memberId, input);
     if (!result.ok) {
       if (result.reason === 'not_found') return sendNotFound(response, config);
       sendJson(response, config, result.reason === 'quota_exceeded' ? 409 : 400, {
@@ -480,14 +469,18 @@ export async function handleRequest(
     const session = validateDemoSession(database, sessionId);
     if (session.status !== 'valid') return sendSessionRequired(response, config);
     if (!groupId) return sendDenied(response, config);
-    if (!authorize(database, response, config, groupId, session.session.actor.memberId, 'contribution'))
+    if (
+      !authorize(
+        database,
+        response,
+        config,
+        groupId,
+        session.session.actor.memberId,
+        'contribution',
+      )
+    )
       return;
-    const result = cancelClipUpload(
-      database,
-      groupId,
-      session.session.actor.memberId,
-      jobId,
-    );
+    const result = cancelClipUpload(database, groupId, session.session.actor.memberId, jobId);
     if (!result.ok) return sendNotFound(response, config);
     sendJson(response, config, 200, { cancelled: true, ...result });
     return;
@@ -612,11 +605,7 @@ export async function handleRequest(
       !authorize(database, response, config, groupId, sessionMember(database, url), 'contribution')
     )
       return;
-    const contribution = getContribution(
-      database,
-      groupId,
-      contributionId,
-    );
+    const contribution = getContribution(database, groupId, contributionId);
     if (!contribution) return sendNotFound(response, config);
     sendJson(response, config, 200, { contribution });
     return;

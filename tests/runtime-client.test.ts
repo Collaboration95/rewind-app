@@ -237,10 +237,15 @@ describe('LocalRuntimeClient', () => {
     await expect(client.uploadClip('session-1', 'demo-group', input)).resolves.toMatchObject({
       job: { id: 'job-1' },
     });
-    await expect(client.cancelClipUpload('session-1', 'demo-group', 'job-1')).resolves.toBeUndefined();
+    await expect(
+      client.cancelClipUpload('session-1', 'demo-group', 'job-1'),
+    ).resolves.toBeUndefined();
     expect(fetchImpl.mock.calls.map(([url, init]) => [url, init?.method ?? 'GET'])).toEqual([
       ['http://localhost:8787/contributions/upload?sessionId=session-1&groupId=demo-group', 'POST'],
-      ['http://localhost:8787/contributions/upload/job-1?sessionId=session-1&groupId=demo-group', 'DELETE'],
+      [
+        'http://localhost:8787/contributions/upload/job-1?sessionId=session-1&groupId=demo-group',
+        'DELETE',
+      ],
     ]);
   });
 });

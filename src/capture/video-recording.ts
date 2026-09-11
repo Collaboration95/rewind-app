@@ -42,7 +42,9 @@ export class BoundedVideoRecordingSession {
   constructor(private readonly platform: VideoRecordingPlatform) {}
 
   getState(): VideoRecordingState {
-    return this.state.status === 'complete' ? { status: 'complete', clip: { ...this.state.clip } } : { ...this.state };
+    return this.state.status === 'complete'
+      ? { status: 'complete', clip: { ...this.state.clip } }
+      : { ...this.state };
   }
 
   async start(): Promise<RecordedClip> {

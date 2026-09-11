@@ -125,7 +125,11 @@ export class ExpoCameraPlatform implements CameraPlatform {
     const camera = this.options.getCameraRef();
     if (!camera?.recordAsync) throw new Error('The camera recorder is not ready. Try again.');
     const startedAt = Date.now();
-    const video = await camera.recordAsync({ maxDuration: maxDurationSeconds, mute: false, quality: '480p' });
+    const video = await camera.recordAsync({
+      maxDuration: maxDurationSeconds,
+      mute: false,
+      quality: '480p',
+    });
     if (!video) throw new Error('The recording was cancelled before a clip was saved.');
     const info = await FileSystem.getInfoAsync(video.uri);
     const measuredDuration = (Date.now() - startedAt) / 1000;

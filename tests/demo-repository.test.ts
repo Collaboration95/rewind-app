@@ -1,8 +1,4 @@
-import {
-  DEFAULT_MEMBER_ID,
-  demoRepository,
-  resetLocalDemoData,
-} from '../src/data/demo-repository';
+import { DEFAULT_MEMBER_ID, demoRepository, resetLocalDemoData } from '../src/data/demo-repository';
 
 describe('Synthetic demo repository', () => {
   afterEach(async () => {

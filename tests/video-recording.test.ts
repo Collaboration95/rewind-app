@@ -42,9 +42,11 @@ describe('bounded video recording', () => {
     let resolveRecording: (value: RecordedClip) => void = () => undefined;
     const platform = {
       cancelRecording: jest.fn(),
-      recordClip: jest.fn().mockImplementation(
-        () => new Promise<RecordedClip>((resolve) => (resolveRecording = resolve)),
-      ),
+      recordClip: jest
+        .fn()
+        .mockImplementation(
+          () => new Promise<RecordedClip>((resolve) => (resolveRecording = resolve)),
+        ),
       stopRecording: jest.fn(),
     };
     const session = new BoundedVideoRecordingSession(platform);

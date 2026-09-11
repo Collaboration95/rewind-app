@@ -41,17 +41,11 @@ export type ClipUploadResult =
   | { ok: true; upload: PendingClipUpload }
   | {
       ok: false;
-      reason:
-        | 'invalid_media'
-        | 'invalid_key'
-        | 'not_found'
-        | 'quota_exceeded'
-        | 'already_member';
+      reason: 'invalid_media' | 'invalid_key' | 'not_found' | 'quota_exceeded' | 'already_member';
     };
 
 export type CancelClipUploadResult =
-  | { ok: true; contributionId: string; jobId: string }
-  | { ok: false; reason: 'not_found' };
+  { ok: true; contributionId: string; jobId: string } | { ok: false; reason: 'not_found' };
 
 interface UploadRow {
   contributionId: string;
@@ -234,8 +228,7 @@ export function cancelClipUpload(
          AND j.status = 'pending'`,
     )
     .get(jobId, groupId, memberId) as
-    | { jobId: string; contributionId: string; cycleId: string; durationSeconds: number }
-    | undefined;
+    { jobId: string; contributionId: string; cycleId: string; durationSeconds: number } | undefined;
   if (!row) return { ok: false, reason: 'not_found' };
   database.exec('BEGIN');
   try {

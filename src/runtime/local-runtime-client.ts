@@ -42,9 +42,17 @@ export interface RuntimeClient {
   invalidateDemoSession?(sessionId: string): Promise<DemoSession>;
   resetDemoData?(sessionId: string): Promise<void>;
   createGroup?(sessionId: string, input: CreateGroupInput): Promise<CreateGroupResult>;
-  createInvite?(sessionId: string, groupId: string, expiresInSeconds?: number): Promise<LocalInvite>;
+  createInvite?(
+    sessionId: string,
+    groupId: string,
+    expiresInSeconds?: number,
+  ): Promise<LocalInvite>;
   acceptInvite?(sessionId: string, code: string, groupId?: string): Promise<InviteAcceptance>;
-  uploadClip?(sessionId: string, groupId: string, input: ClipUploadInput): Promise<PendingClipUpload>;
+  uploadClip?(
+    sessionId: string,
+    groupId: string,
+    input: ClipUploadInput,
+  ): Promise<PendingClipUpload>;
   cancelClipUpload?(sessionId: string, groupId: string, jobId: string): Promise<void>;
 }
 
@@ -224,11 +232,7 @@ export class LocalRuntimeClient implements RuntimeClient {
     return body.invite;
   }
 
-  async acceptInvite(
-    sessionId: string,
-    code: string,
-    groupId?: string,
-  ): Promise<InviteAcceptance> {
+  async acceptInvite(sessionId: string, code: string, groupId?: string): Promise<InviteAcceptance> {
     const groupQuery = groupId ? `&groupId=${encodeURIComponent(groupId)}` : '';
     return this.request<InviteAcceptance>(
       `/invites/accept?sessionId=${encodeURIComponent(sessionId)}${groupQuery}`,

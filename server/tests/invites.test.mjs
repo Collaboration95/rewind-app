@@ -5,7 +5,8 @@ import test from 'node:test';
 
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
-const { acceptInvite, createInvite, INVITE_CODE_PATTERN } = await import('../dist/invites/index.js');
+const { acceptInvite, createInvite, INVITE_CODE_PATTERN } =
+  await import('../dist/invites/index.js');
 const { createDemoSession } = await import('../dist/session/index.js');
 
 async function withDatabase(run) {
@@ -48,7 +49,13 @@ test('owners create bounded expiring invite codes bound to their group', async (
     assert.equal(created.invite.status, 'active');
     assert.equal(created.invite.expiresAt, '2026-09-10T12:10:00.000Z');
     assert.deepEqual(
-      { ...database.prepare('SELECT group_id AS groupId, status, expires_at AS expiresAt FROM invites WHERE id = ?').get(created.invite.id) },
+      {
+        ...database
+          .prepare(
+            'SELECT group_id AS groupId, status, expires_at AS expiresAt FROM invites WHERE id = ?',
+          )
+          .get(created.invite.id),
+      },
       { groupId: 'demo-group', status: 'active', expiresAt: created.invite.expiresAt },
     );
     assert.deepEqual(createInvite(database, 'demo-2', 'demo-group'), {
@@ -89,10 +96,17 @@ test('valid invite acceptance persists one member, moves the session group, and 
     assert.equal(accepted.group.id, 'demo-group');
     assert.equal(accepted.group.actingMemberRole, 'member');
     assert.deepEqual(
-      { ...database.prepare('SELECT role FROM memberships WHERE group_id = ? AND member_id = ?').get('demo-group', 'demo-6') },
+      {
+        ...database
+          .prepare('SELECT role FROM memberships WHERE group_id = ? AND member_id = ?')
+          .get('demo-group', 'demo-6'),
+      },
       { role: 'member' },
     );
-    assert.equal(database.prepare('SELECT status FROM invites WHERE id = ?').get(created.invite.id).status, 'used');
+    assert.equal(
+      database.prepare('SELECT status FROM invites WHERE id = ?').get(created.invite.id).status,
+      'used',
+    );
     assert.deepEqual(acceptInvite(database, 'demo-6', created.invite.code), {
       ok: false,
       reason: 'used',

@@ -1,10 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import {
-  CAPTURE_MODES,
-  type CaptureMode,
-  type RecordedClip,
-} from '../domain/video';
+import { CAPTURE_MODES, type CaptureMode, type RecordedClip } from '../domain/video';
 
 export interface TrimBounds {
   startSeconds: number;
@@ -125,11 +121,7 @@ export class ClipReviewSession {
   private bounds: TrimBounds;
   private mode: CaptureMode = 'soft-focus';
 
-  constructor(
-    clip: RecordedClip,
-    metadataStore: PendingClipMetadataStore,
-    now = () => new Date(),
-  ) {
+  constructor(clip: RecordedClip, metadataStore: PendingClipMetadataStore, now = () => new Date()) {
     this.clip = { ...clip };
     this.metadataStore = metadataStore;
     this.now = now;

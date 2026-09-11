@@ -40,7 +40,9 @@ interface InviteRow {
 }
 
 function mapInvite(row: InviteRow, now = new Date()): LocalInvite {
-  const expiresAt = row.expiresAt ?? new Date(Date.parse(row.createdAt) + DEFAULT_INVITE_TTL_SECONDS * 1000).toISOString();
+  const expiresAt =
+    row.expiresAt ??
+    new Date(Date.parse(row.createdAt) + DEFAULT_INVITE_TTL_SECONDS * 1000).toISOString();
   const status =
     row.status === 'used' || row.usedAt
       ? 'used'
@@ -60,7 +62,11 @@ function mapInvite(row: InviteRow, now = new Date()): LocalInvite {
 
 function nextCode(database: RewindDatabase): string {
   for (;;) {
-    const code = randomBytes(6).toString('base64url').replace(/[^A-Z0-9]/gi, '').slice(0, 8).toUpperCase();
+    const code = randomBytes(6)
+      .toString('base64url')
+      .replace(/[^A-Z0-9]/gi, '')
+      .slice(0, 8)
+      .toUpperCase();
     if (code.length === 8 && !database.prepare('SELECT 1 FROM invites WHERE code = ?').get(code)) {
       return code;
     }
@@ -154,7 +160,9 @@ export function acceptInvite(
       )
       .run(invite.groupId, actorMemberId, now.toISOString());
     database
-      .prepare("UPDATE invites SET status = 'used', invitee_member_id = ?, used_at = ? WHERE id = ?")
+      .prepare(
+        "UPDATE invites SET status = 'used', invitee_member_id = ?, used_at = ? WHERE id = ?",
+      )
       .run(actorMemberId, now.toISOString(), invite.id);
     database.exec('COMMIT');
   } catch (error) {

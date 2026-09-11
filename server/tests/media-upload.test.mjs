@@ -64,7 +64,11 @@ test('clip upload validates media before creating a job and retries idempotently
     assert.equal(retried.upload.existing, true);
     assert.equal(retried.upload.contribution.id, created.upload.contribution.id);
     assert.equal(
-      database.prepare('SELECT count_used AS countUsed, seconds_used AS secondsUsed FROM cycles WHERE id = ?').get('demo-cycle').secondsUsed,
+      database
+        .prepare(
+          'SELECT count_used AS countUsed, seconds_used AS secondsUsed FROM cycles WHERE id = ?',
+        )
+        .get('demo-cycle').secondsUsed,
       8,
     );
   });
@@ -110,7 +114,10 @@ test('HTTP clip upload requires a session and cancellation releases quota for re
         { method: 'DELETE' },
       );
       assert.equal(cancelled.status, 200);
-      assert.equal(database.prepare('SELECT count_used FROM cycles WHERE id = ?').get('demo-cycle').count_used, 0);
+      assert.equal(
+        database.prepare('SELECT count_used FROM cycles WHERE id = ?').get('demo-cycle').count_used,
+        0,
+      );
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }

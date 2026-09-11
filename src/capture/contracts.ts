@@ -84,16 +84,15 @@ export interface CameraViewHandle {
     format: 'jpg' | 'png';
     base64?: string;
   }>;
-  recordAsync?(options?: {
-    maxDuration?: number;
-    mute?: boolean;
-    quality?: string;
-  }): Promise<{
-    uri: string;
-    width?: number;
-    height?: number;
-    duration?: number;
-  } | undefined>;
+  recordAsync?(options?: { maxDuration?: number; mute?: boolean; quality?: string }): Promise<
+    | {
+        uri: string;
+        width?: number;
+        height?: number;
+        duration?: number;
+      }
+    | undefined
+  >;
   stopRecording?(): void;
 }
 

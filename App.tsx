@@ -122,9 +122,8 @@ function SessionGate({
 }) {
   const { status, session } = useDemoSession();
   const sessionRepositories = useMemo(
-    () =>
-      runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null,
-    [runtimeClient, session?.id],
+    () => (runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null),
+    [runtimeClient, session],
   );
   if (status === 'loading') return <SessionLoadingScreen />;
   if (status === 'entry' || status === 'error') return <DemoAccessEntry />;
@@ -433,7 +432,9 @@ function InvitePanel({
 }) {
   const { session, updateGroup } = useDemoSession();
   const { state, retry } = useCapsule();
-  const [invite, setInvite] = useState<Awaited<ReturnType<NonNullable<RuntimeClient['createInvite']>>> | null>(null);
+  const [invite, setInvite] = useState<Awaited<
+    ReturnType<NonNullable<RuntimeClient['createInvite']>>
+  > | null>(null);
   const [code, setCode] = useState('');
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -449,7 +450,9 @@ function InvitePanel({
     try {
       setInvite(await runtimeClient.createInvite(session.id, groupId));
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'The invitation code could not be created.');
+      setFeedback(
+        error instanceof Error ? error.message : 'The invitation code could not be created.',
+      );
     } finally {
       setPending(false);
     }
@@ -479,7 +482,9 @@ function InvitePanel({
       setCode('');
       setFeedback(`Joined ${result.group.name}. The code is now used.`);
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'The invitation code could not be accepted.');
+      setFeedback(
+        error instanceof Error ? error.message : 'The invitation code could not be accepted.',
+      );
     } finally {
       setPending(false);
     }
@@ -490,7 +495,9 @@ function InvitePanel({
       <Text style={styles.label}>LOCAL INVITATIONS</Text>
       {owner ? (
         <>
-          <Text style={styles.bodyText}>Generate one bounded code for this group. It expires in 24 hours or after one use.</Text>
+          <Text style={styles.bodyText}>
+            Generate one bounded code for this group. It expires in 24 hours or after one use.
+          </Text>
           <Pressable
             accessibilityRole="button"
             disabled={pending}
@@ -498,15 +505,23 @@ function InvitePanel({
             style={styles.primaryButton}
             testID="generate-invite"
           >
-            <Text style={styles.primaryButtonText}>{pending ? 'Generating…' : 'Generate invite code'}</Text>
+            <Text style={styles.primaryButtonText}>
+              {pending ? 'Generating…' : 'Generate invite code'}
+            </Text>
           </Pressable>
           {invite ? (
             <>
               <Text accessibilityLabel={`Invite code ${invite.code}`} style={styles.inviteCode}>
                 {invite.code}
               </Text>
-              <Text style={styles.bodyText}>Expires {new Date(invite.expiresAt).toLocaleString()} · Active</Text>
-              <Pressable accessibilityRole="button" onPress={() => void copy()} style={styles.outlineButton}>
+              <Text style={styles.bodyText}>
+                Expires {new Date(invite.expiresAt).toLocaleString()} · Active
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void copy()}
+                style={styles.outlineButton}
+              >
                 <Text style={styles.outlineButtonText}>Copy invite code</Text>
               </Pressable>
             </>

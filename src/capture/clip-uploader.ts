@@ -1,4 +1,8 @@
-import { MAX_CLIP_DURATION_SECONDS, type ClipUploadInput, type PendingClipUpload } from '../domain/video';
+import {
+  MAX_CLIP_DURATION_SECONDS,
+  type ClipUploadInput,
+  type PendingClipUpload,
+} from '../domain/video';
 
 export const MAX_CLIP_BYTES = 50 * 1024 * 1024;
 
@@ -23,7 +27,8 @@ export class ClipUploadError extends Error {
 }
 
 export function validateClipUploadInput(input: ClipUploadInput): string | null {
-  if (!/^[A-Za-z0-9_-]{8,100}$/.test(input.idempotencyKey)) return 'Provide a retryable upload key.';
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(input.idempotencyKey))
+    return 'Provide a retryable upload key.';
   if (
     !input.sourceUri ||
     input.mimeType !== 'video/mp4' ||
@@ -84,7 +89,9 @@ export class ClipUploadSession {
       if (generation !== this.generation) {
         this.progress = { status: 'cancelled', percent: 0 };
         onProgress?.(this.getProgress());
-        throw error instanceof ClipUploadError ? error : new ClipUploadError('The upload was cancelled.');
+        throw error instanceof ClipUploadError
+          ? error
+          : new ClipUploadError('The upload was cancelled.');
       }
       const message = error instanceof Error ? error.message : 'The clip could not be uploaded.';
       this.progress = { status: 'failed', percent: 10, message };
