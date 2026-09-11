@@ -9,6 +9,11 @@ export function DemoProfilePicker() {
     useDemoProfile();
   const demoSession = useOptionalDemoSession();
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const sessionMember =
+    demoSession?.status === 'active' && demoSession.session
+      ? (profiles.find((profile) => profile.id === demoSession.session?.actor.memberId) ?? null)
+      : null;
+  const resolvedCurrentMember = sessionMember ?? currentMember;
 
   return (
     <View style={styles.card}>
@@ -18,18 +23,18 @@ export function DemoProfilePicker() {
       <Text style={styles.body}>
         Choose a sample member. These profiles are synthetic and do not sign you in.
       </Text>
-      {!currentMember ? (
+      {!resolvedCurrentMember ? (
         <Text accessibilityLiveRegion="polite" style={styles.body}>
           Loading your demo profile…
         </Text>
       ) : (
         <>
           <Text accessibilityLiveRegion="polite" style={styles.current}>
-            Current member: {currentMember.displayName}
+            Current member: {resolvedCurrentMember.displayName}
           </Text>
           <View style={styles.choices}>
             {profiles.map((profile) => {
-              const selected = profile.id === currentMember.id;
+              const selected = profile.id === resolvedCurrentMember.id;
               return (
                 <Pressable
                   key={profile.id}

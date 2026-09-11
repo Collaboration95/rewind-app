@@ -141,7 +141,7 @@ test('owner controls reject invalid or excessive advances without changing the c
   });
 });
 
-test('HTTP owner control keeps the denial shape and returns the updated cycle to the owner', async () => {
+test('HTTP owner control requires a valid session and derives the actor from it', async () => {
   await withDatabase(async ({ config, database }) => {
     const server = createRuntimeServer(config, database);
     server.listen(0, '127.0.0.1');
@@ -153,16 +153,49 @@ test('HTTP owner control keeps the denial shape and returns the updated cycle to
         `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-2&advanceSeconds=60`,
         { method: 'POST' },
       );
-      assert.equal(denied.status, 403);
+      assert.equal(denied.status, 401);
       assert.deepEqual(await denied.json(), {
-        allowed: false,
-        status: 403,
-        error: 'forbidden',
-        message: 'You do not have access to this resource.',
+        error: 'session_required',
+        message: 'Choose Demo access before changing local Demo data.',
       });
 
+      for (const sessionId of ['', 'missing-session']) {
+        const missing = await fetch(
+          `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-1&sessionId=${sessionId}&advanceSeconds=60`,
+          { method: 'POST' },
+        );
+        assert.equal(missing.status, 401);
+        assert.equal((await missing.json()).error, 'session_required');
+      }
+
+      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-1' }),
+      });
+      assert.equal(sessionResponse.status, 201);
+      const { session } = await sessionResponse.json();
+
+      const memberIdIsIgnored = await fetch(
+        `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-2&sessionId=${encodeURIComponent(session.id)}&advanceSeconds=60`,
+        { method: 'POST' },
+      );
+      assert.equal(memberIdIsIgnored.status, 200);
+
+      const nonOwnerSessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-2' }),
+      });
+      const { session: nonOwnerSession } = await nonOwnerSessionResponse.json();
+      const nonOwner = await fetch(
+        `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-1&sessionId=${encodeURIComponent(nonOwnerSession.id)}&advanceSeconds=60`,
+        { method: 'POST' },
+      );
+      assert.equal(nonOwner.status, 403);
+
       const allowed = await fetch(
-        `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-1&advanceSeconds=60`,
+        `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-2&sessionId=${encodeURIComponent(session.id)}&advanceSeconds=60`,
         { method: 'POST' },
       );
       assert.equal(allowed.status, 200);

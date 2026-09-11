@@ -49,6 +49,22 @@ function safeError(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+/**
+ * Ending access and resetting local data are recovery operations. If the
+ * runtime no longer knows the session, has already handled the request, or
+ * cannot be reached, local state must still be cleared so the user can enter
+ * again. Other runtime failures remain visible and preserve the active state.
+ */
+function canClearAfterRuntimeFailure(error: unknown): boolean {
+  return (
+    error instanceof LocalRuntimeError &&
+    (error.status === undefined ||
+      error.status === 401 ||
+      error.status === 404 ||
+      error.status === 409)
+  );
+}
+
 export function DemoSessionProvider({
   children,
   runtimeClient = null,
@@ -159,6 +175,13 @@ export function DemoSessionProvider({
           ? await runtimeClient.createDemoSession(member.id)
           : createOfflineDemoSession(member.id, member.displayName, 'demo-group', clock());
         await store.save(next);
+        // Keep the profile store aligned with the session when entry is used;
+        // the active session remains the authoritative acting identity.
+        try {
+          await selectionStore.save(member.id);
+        } catch {
+          // A selection persistence failure must not prevent Demo access.
+        }
         if (mounted.current) {
           setSession(next);
           setStatus('active');
@@ -188,15 +211,25 @@ export function DemoSessionProvider({
       if (session && runtimeClient?.invalidateDemoSession) {
         await runtimeClient.invalidateDemoSession(session.id);
       }
+    } catch (signOutError) {
+      if (!canClearAfterRuntimeFailure(signOutError)) {
+        if (mounted.current) {
+          setStatus('active');
+          setError(safeError(signOutError, 'Demo access could not be ended. Retry sign out.'));
+        }
+        return;
+      }
+    }
+    try {
       await store.clear();
       if (mounted.current) {
         setSession(null);
         setStatus('entry');
       }
-    } catch (signOutError) {
+    } catch (clearError) {
       if (mounted.current) {
         setStatus('active');
-        setError(safeError(signOutError, 'Demo access could not be ended. Retry sign out.'));
+        setError(safeError(clearError, 'Demo access could not be ended. Retry sign out.'));
       }
     } finally {
       if (mounted.current) setPending(false);
@@ -211,6 +244,16 @@ export function DemoSessionProvider({
       if (session && runtimeClient?.resetDemoData) {
         await runtimeClient.resetDemoData(session.id);
       }
+    } catch (resetError) {
+      if (!canClearAfterRuntimeFailure(resetError)) {
+        if (mounted.current) {
+          setStatus('active');
+          setError(safeError(resetError, 'Local Demo data could not be reset. Retry the reset.'));
+        }
+        return false;
+      }
+    }
+    try {
       await resetCaptureData();
       await resetLocalDemoData();
       await localGroupStore.clear();
@@ -236,7 +279,16 @@ export function DemoSessionProvider({
     async (groupId: string) => {
       if (!session) return;
       const next = { ...session, groupId };
-      await store.save(next);
+      try {
+        await store.save(next);
+      } catch (error) {
+        // The runtime/group mutation may already be committed. Keep the
+        // in-memory session pointer reconciled so a retry cannot create a
+        // duplicate group, while still letting callers report persistence
+        // degradation when they need to.
+        if (mounted.current) setSession(next);
+        throw error;
+      }
       if (mounted.current) setSession(next);
     },
     [session, store],

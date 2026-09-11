@@ -24,9 +24,9 @@ npm run web
 Open the local URL printed by Expo, normally `http://localhost:8081`.
 
 The clean-start path does not require AWS credentials, an account, private
-media, or a deployed service. The camera route now has an SDK-compatible native
-permission/capture boundary; cloud media, recording, and upload remain future
-scope.
+media, or a deployed service. The camera route has SDK-compatible native
+permission/capture boundaries; real clip recording and upload require a
+physical device and the optional local runtime.
 
 For simulator review, set `EXPO_PUBLIC_CAMERA_MODE=demo` to use the explicit,
 labelled fixture camera. This path never claims a physical image was captured.
@@ -136,6 +136,11 @@ selection, accepted still-image metadata, and app-owned cached still files,
 then restores the deterministic fixture. It does not touch source files,
 migrations, or remote data.
 
+Settings also lets an owner generate a one-use local invitation code with a
+bounded expiry, copy it, and lets another active Demo member enter the code.
+Codes are bound to their group and rejected when malformed, expired, used, or
+cross-group.
+
 If the app cannot be opened far enough to reach Settings, clearing this app's
 local storage (site data on web or app data on Android) and relaunching restores
 the same fallback fixture. Selection is local to this device; it is not
@@ -159,7 +164,7 @@ text; it does not load or expose media, playback, or sharing actions.
 - `src/domain/groups.ts` — group/prompt validation and one-day cycle constants.
 - `src/data/` — synthetic repositories plus local group/session persistence adapters.
 - `src/runtime/` — typed local API client, repository adapters, and connection state UI.
-- `src/capture/` — capability/permission ports, Expo SDK 57 camera and file adapters, simulator fixture, still preview, and metadata-only lifecycle.
+- `src/capture/` — capability/permission ports, Expo SDK 57 camera and file adapters, simulator fixture, still preview/metadata lifecycle, bounded portrait clip recording, review/trim/modes, and upload progress.
 - `src/domain/` — framework-independent profile, group, cycle, and storage interfaces.
 - `server/src/` — typed local HTTP service, configuration, SQLite access, FFmpeg probe, and policy.
 - `server/src/session/` — explicit local Demo access lifecycle and SQLite session boundary.
@@ -174,4 +179,5 @@ text; it does not load or expose media, playback, or sharing actions.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
 scope. Chat, archive playback, authentication, and cloud services remain
-follow-up work; the camera directory is a local still-capture boundary only.
+follow-up work; media remains local and the runtime stores only pending local
+clip jobs rather than cloud objects.

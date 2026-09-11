@@ -14,7 +14,7 @@ export function createRuntimeRepositories(
 ): RuntimeRepositories {
   return {
     groupRepository: {
-      getGroupForMember: (actingMemberId: string) =>
+      getGroupForMember: (actingMemberId: string, _preferredGroupId?: string) =>
         client.getGroupForMember(actingMemberId, sessionId),
     },
     cycleRepository: {

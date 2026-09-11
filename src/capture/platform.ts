@@ -1,6 +1,7 @@
 import { Platform, Linking } from 'react-native';
 import { Camera, CameraView, type CameraCapturedPicture } from 'expo-camera';
 import * as Device from 'expo-device';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import type {
   CameraPlatform,
@@ -10,6 +11,7 @@ import type {
   PermissionState,
   PlatformStillImage,
 } from './contracts';
+import type { RecordedClip } from '../domain/video';
 
 export function permissionState(response: {
   status: string;
@@ -38,7 +40,21 @@ export class ExpoCameraPlatform implements CameraPlatform {
     if (this.options.capabilityProbe) return this.options.capabilityProbe();
 
     try {
-      const cameraAvailable = await CameraView.isAvailableAsync();
+      // `isAvailableAsync` is currently only registered by Expo Camera on
+      // web. Some native SDK builds therefore expose no probe at all. A
+      // missing probe is not evidence that a physical device is unusable;
+      // permissions plus the native device boundary establish availability.
+      const cameraAvailabilityProbe = (
+        CameraView as typeof CameraView & {
+          isAvailableAsync?: () => Promise<boolean>;
+        }
+      ).isAvailableAsync;
+      const cameraAvailable =
+        typeof cameraAvailabilityProbe === 'function'
+          ? await cameraAvailabilityProbe()
+          : Platform.OS === 'web'
+            ? typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
+            : Device.isDevice;
       // Expo does not expose a microphone-capability probe. On native, a real
       // device is the supported recording target; simulator capture stays an
       // explicit unsupported state. On web, ask the browser capability API.
@@ -103,6 +119,38 @@ export class ExpoCameraPlatform implements CameraPlatform {
       source: 'camera',
       width: picture.width,
     };
+  }
+
+  async recordClip(maxDurationSeconds = 15): Promise<RecordedClip> {
+    const camera = this.options.getCameraRef();
+    if (!camera?.recordAsync) throw new Error('The camera recorder is not ready. Try again.');
+    const startedAt = Date.now();
+    const video = await camera.recordAsync({
+      maxDuration: maxDurationSeconds,
+      mute: false,
+      quality: '480p',
+    });
+    if (!video) throw new Error('The recording was cancelled before a clip was saved.');
+    const info = await FileSystem.getInfoAsync(video.uri);
+    const measuredDuration = (Date.now() - startedAt) / 1000;
+    return {
+      sourceUri: video.uri,
+      format: 'mp4',
+      width: video.width ?? 720,
+      height: video.height ?? 1280,
+      durationSeconds: Math.min(maxDurationSeconds, video.duration ?? measuredDuration),
+      hasAudio: true,
+      byteLength: info.exists && !info.isDirectory ? info.size : undefined,
+      source: 'camera',
+    };
+  }
+
+  stopRecording(): void {
+    this.options.getCameraRef()?.stopRecording?.();
+  }
+
+  cancelRecording(): void {
+    this.options.getCameraRef()?.stopRecording?.();
   }
 }
 

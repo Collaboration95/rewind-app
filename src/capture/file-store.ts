@@ -74,6 +74,92 @@ export class ExpoCaptureFileStore implements CaptureFileStore {
   }
 }
 
+/**
+ * Browser-local file store. Expo FileSystem's legacy web shim has no cache
+ * directory, so browser captures use Blob URLs owned by this store instead.
+ * The URL is transient (like the native cache copy); durable metadata never
+ * contains it.
+ */
+export class WebCaptureFileStore implements CaptureFileStore {
+  private static readonly instances = new Set<WebCaptureFileStore>();
+  private readonly files = new Map<string, Blob>();
+
+  constructor() {
+    WebCaptureFileStore.instances.add(this);
+  }
+
+  static resetAll(): void {
+    for (const instance of WebCaptureFileStore.instances) instance.clear();
+  }
+
+  async copyToManagedCache(image: PlatformStillImage, imageId: string): Promise<ManagedImageFile> {
+    if (!/^[a-z0-9_-]+$/i.test(imageId)) {
+      throw new CaptureFileLifecycleError('The capture identifier is invalid.');
+    }
+
+    try {
+      const mimeType = image.format === 'jpg' ? 'image/jpeg' : 'image/png';
+      const blob = await this.toBlob(image, mimeType);
+      if (blob.size <= 0) throw new Error('The browser returned an empty image.');
+      let uri = `webblob://rewind-stills/${imageId}.${image.format}`;
+      try {
+        if (typeof URL.createObjectURL === 'function') uri = URL.createObjectURL(blob);
+      } catch {
+        // Some test/webview runtimes expose URL but not Blob URL support.
+        // The in-store fallback remains a real, verifiable browser blob.
+      }
+      this.files.set(uri, blob);
+      return { uri, byteLength: blob.size };
+    } catch (error) {
+      if (error instanceof CaptureFileLifecycleError) throw error;
+      throw new CaptureFileLifecycleError(
+        'The captured image could not be saved in browser storage. Try taking it again.',
+      );
+    }
+  }
+
+  async exists(uri: string): Promise<boolean> {
+    return this.files.has(uri) && (this.files.get(uri)?.size ?? 0) > 0;
+  }
+
+  async remove(uri: string): Promise<void> {
+    if (!this.files.delete(uri)) return;
+    if (uri.startsWith('blob:') && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(uri);
+    }
+  }
+
+  private async toBlob(image: PlatformStillImage, mimeType: string): Promise<Blob> {
+    const encoded = image.base64 ?? image.sourceUri;
+    if (image.base64 || encoded.startsWith('data:')) {
+      const payload = encoded.includes(',') ? encoded.slice(encoded.indexOf(',') + 1) : encoded;
+      const binary =
+        typeof atob === 'function'
+          ? atob(payload)
+          : ((
+              globalThis as typeof globalThis & {
+                Buffer?: { from(value: string, encoding: string): { toString(): string } };
+              }
+            ).Buffer?.from(payload, 'base64').toString() ?? '');
+      if (!binary) throw new Error('The browser returned an invalid image encoding.');
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      return new Blob([bytes], { type: mimeType });
+    }
+    const response = await fetch(image.sourceUri);
+    if (!response.ok) throw new Error('The browser capture URL could not be read.');
+    return response.blob();
+  }
+
+  private clear(): void {
+    for (const uri of this.files.keys()) {
+      if (uri.startsWith('blob:') && typeof URL.revokeObjectURL === 'function') {
+        URL.revokeObjectURL(uri);
+      }
+    }
+    this.files.clear();
+  }
+}
+
 /** A deterministic file port for tests and the honest simulator demo. */
 export class InMemoryCaptureFileStore implements CaptureFileStore {
   private readonly files = new Map<string, number>();

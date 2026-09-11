@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { COLORS } from '../theme';
 import {
@@ -15,7 +15,7 @@ import {
   isCaptureReady,
   type CaptureState,
 } from './capture-state';
-import { ExpoCaptureFileStore, InMemoryCaptureFileStore } from './file-store';
+import { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } from './file-store';
 import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './metadata-store';
 import { ExpoCameraPlatform } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
@@ -29,6 +29,7 @@ export interface CameraCaptureScreenProps {
   onAccepted?: (
     metadata: Awaited<ReturnType<StillImageCaptureSession['accept']>>['metadata'],
   ) => void;
+  onRecordClip?: () => void;
 }
 
 /**
@@ -41,6 +42,7 @@ export function CameraCaptureScreen({
   metadataStore,
   now,
   onAccepted,
+  onRecordClip,
   platform: platformProp,
 }: CameraCaptureScreenProps = {}) {
   const cameraRef = useRef<CameraView>(null);
@@ -55,7 +57,11 @@ export function CameraCaptureScreen({
   const resolvedFileStore = useMemo(
     () =>
       fileStore ??
-      (platform.kind === 'demo' ? new InMemoryCaptureFileStore() : new ExpoCaptureFileStore()),
+      (platform.kind === 'demo'
+        ? new InMemoryCaptureFileStore()
+        : Platform.OS === 'web'
+          ? new WebCaptureFileStore()
+          : new ExpoCaptureFileStore()),
     [fileStore, platform.kind],
   );
   const resolvedMetadataStore = useMemo(
@@ -240,6 +246,16 @@ export function CameraCaptureScreen({
           Camera and microphone access stay on this device. Nothing is uploaded from this screen.
         </Text>
       </View>
+      {onRecordClip ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onRecordClip}
+          style={styles.videoButton}
+          testID="camera-record-clip"
+        >
+          <Text style={styles.videoButtonText}>Record a 15-second clip</Text>
+        </Pressable>
+      ) : null}
 
       {platform.kind === 'demo' ? (
         <View
@@ -500,6 +516,17 @@ const styles = StyleSheet.create({
     gap: 4,
     padding: 12,
   },
+  videoButton: {
+    alignItems: 'center',
+    borderColor: COLORS.edge,
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  videoButtonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
   demoNoticeTitle: { color: COLORS.edge, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   demoNoticeText: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
   statusPanel: {

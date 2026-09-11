@@ -1,4 +1,6 @@
 import type { CurrentCycleResult, Cycle, CycleAdvanceResult } from '../domain/cycles';
+import type { InviteAcceptance, LocalInvite } from '../domain/invites';
+import type { ClipUploadInput, PendingClipUpload } from '../domain/video';
 import type {
   CreateGroupInput,
   CreateGroupResult,
@@ -40,6 +42,18 @@ export interface RuntimeClient {
   invalidateDemoSession?(sessionId: string): Promise<DemoSession>;
   resetDemoData?(sessionId: string): Promise<void>;
   createGroup?(sessionId: string, input: CreateGroupInput): Promise<CreateGroupResult>;
+  createInvite?(
+    sessionId: string,
+    groupId: string,
+    expiresInSeconds?: number,
+  ): Promise<LocalInvite>;
+  acceptInvite?(sessionId: string, code: string, groupId?: string): Promise<InviteAcceptance>;
+  uploadClip?(
+    sessionId: string,
+    groupId: string,
+    input: ClipUploadInput,
+  ): Promise<PendingClipUpload>;
+  cancelClipUpload?(sessionId: string, groupId: string, jobId: string): Promise<void>;
 }
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -200,6 +214,57 @@ export class LocalRuntimeClient implements RuntimeClient {
       }
       return { ok: false, field: 'prompt', reason: 'required' };
     }
+  }
+
+  async createInvite(
+    sessionId: string,
+    groupId: string,
+    expiresInSeconds?: number,
+  ): Promise<LocalInvite> {
+    const body = await this.request<{ invite: LocalInvite }>(
+      `/invites?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...(expiresInSeconds ? { expiresInSeconds } : {}) }),
+      },
+    );
+    return body.invite;
+  }
+
+  async acceptInvite(sessionId: string, code: string, groupId?: string): Promise<InviteAcceptance> {
+    const groupQuery = groupId ? `&groupId=${encodeURIComponent(groupId)}` : '';
+    return this.request<InviteAcceptance>(
+      `/invites/accept?sessionId=${encodeURIComponent(sessionId)}${groupQuery}`,
+      {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      },
+    );
+  }
+
+  async uploadClip(
+    sessionId: string,
+    groupId: string,
+    input: ClipUploadInput,
+  ): Promise<PendingClipUpload> {
+    const body = await this.request<{ upload: PendingClipUpload }>(
+      `/contributions/upload?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+    );
+    return body.upload;
+  }
+
+  async cancelClipUpload(sessionId: string, groupId: string, jobId: string): Promise<void> {
+    await this.request<{ cancelled: true }>(
+      `/contributions/upload/${encodeURIComponent(jobId)}?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      { method: 'DELETE' },
+    );
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {

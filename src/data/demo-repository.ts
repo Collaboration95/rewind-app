@@ -33,6 +33,9 @@ const group: Group = {
   name: 'Weekend People',
   memberIds: profiles.map((profile) => profile.id),
   currentCycleId: 'demo-cycle',
+  memberRoles: Object.fromEntries(
+    profiles.map((profile) => [profile.id, profile.id === DEFAULT_MEMBER_ID ? 'owner' : 'member']),
+  ),
 };
 
 const cycle: Cycle = {
@@ -87,23 +90,26 @@ export const demoRepository: ProfileRepository &
   CycleRepository &
   GroupCreationRepository = {
   listProfiles: () => profiles.map((profile) => ({ ...profile })),
-  getGroupForMember(actingMemberId) {
-    for (const local of localGroups.values()) {
-      if (local.group.memberIds.includes(actingMemberId)) {
-        return {
-          ...local.group,
-          memberIds: [...local.group.memberIds],
-          actingMemberRole: 'owner',
-        };
-      }
-    }
-    if (!group.memberIds.includes(actingMemberId)) {
+  getGroupForMember(actingMemberId, preferredGroupId) {
+    const resolved = preferredGroupId
+      ? (localGroups.get(preferredGroupId)?.group ??
+        (preferredGroupId === group.id ? group : undefined))
+      : undefined;
+    const membership = resolved?.memberIds.includes(actingMemberId)
+      ? resolved
+      : ([...localGroups.values()].find((local) => local.group.memberIds.includes(actingMemberId))
+          ?.group ?? (group.memberIds.includes(actingMemberId) ? group : undefined));
+    if (!membership) {
       return { kind: 'MembershipDenied' };
     }
+    const actingMemberRole =
+      membership.memberRoles?.[actingMemberId] ??
+      (membership.memberIds[0] === actingMemberId ? 'owner' : 'member');
     return {
-      ...group,
-      memberIds: [...group.memberIds],
-      actingMemberRole: actingMemberId === DEFAULT_MEMBER_ID ? 'owner' : 'member',
+      ...membership,
+      memberIds: [...membership.memberIds],
+      memberRoles: membership.memberRoles ? { ...membership.memberRoles } : undefined,
+      actingMemberRole,
     };
   },
   async getCurrentCycle(groupId, actingMemberId) {
@@ -142,6 +148,7 @@ export const demoRepository: ProfileRepository &
       name: normalized.name,
       memberIds: [owner.id],
       currentCycleId: `local-cycle-${suffix}`,
+      memberRoles: { [owner.id]: 'owner' },
       actingMemberRole: 'owner',
     };
     const createdCycle: Cycle = {

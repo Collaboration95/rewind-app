@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { StatusBar } from 'expo-status-bar';
+import * as Clipboard from 'expo-clipboard';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -19,7 +20,12 @@ import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
 import { DemoSessionProvider, useDemoSession } from './src/session/DemoSessionProvider';
-import { CameraCaptureScreen, DemoCameraPlatform, type CameraPlatform } from './src/capture';
+import {
+  CameraCaptureScreen,
+  DemoCameraPlatform,
+  VideoCaptureScreen,
+  type CameraPlatform,
+} from './src/capture';
 import {
   demoRepository,
   hydrateLocalDemoData,
@@ -115,10 +121,12 @@ function SessionGate({
   cameraPlatform?: CameraPlatform;
 }) {
   const { status, session } = useDemoSession();
+  const sessionRepositories = useMemo(
+    () => (runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null),
+    [runtimeClient, session],
+  );
   if (status === 'loading') return <SessionLoadingScreen />;
   if (status === 'entry' || status === 'error') return <DemoAccessEntry />;
-  const sessionRepositories =
-    runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null;
   return (
     <CapsuleProvider
       groupRepository={groupRepository ?? sessionRepositories?.groupRepository}
@@ -170,7 +178,7 @@ function ActiveAppShell({
   runtimeClient: RuntimeClient | null;
   cameraPlatform?: CameraPlatform;
 }) {
-  const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group'>('home');
+  const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group' | 'video'>('home');
   const resolvedCameraPlatform = useMemo(() => {
     if (cameraPlatform) return cameraPlatform;
     if (typeof process !== 'undefined') {
@@ -191,7 +199,10 @@ function ActiveAppShell({
         {activeRoute === 'home' ? (
           <HomeScreen clock={clock} runtimeClient={runtimeClient} />
         ) : activeRoute === 'settings' ? (
-          <SettingsScreen onCreateGroup={() => setActiveRoute('create-group')} />
+          <SettingsScreen
+            onCreateGroup={() => setActiveRoute('create-group')}
+            runtimeClient={runtimeClient}
+          />
         ) : activeRoute === 'create-group' ? (
           <GroupCreateScreen
             onCancel={() => setActiveRoute('settings')}
@@ -199,12 +210,23 @@ function ActiveAppShell({
             runtimeClient={runtimeClient}
           />
         ) : activeRoute === 'camera' ? (
-          <CameraCaptureScreen platform={resolvedCameraPlatform} />
+          <CameraCaptureScreen
+            onRecordClip={() => setActiveRoute('video')}
+            platform={resolvedCameraPlatform}
+          />
+        ) : activeRoute === 'video' ? (
+          <VideoCaptureScreen
+            onBack={() => setActiveRoute('camera')}
+            platform={resolvedCameraPlatform}
+            runtimeClient={runtimeClient}
+          />
         ) : (
           <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
         )}
         <MainNavigation
-          activeRoute={activeRoute === 'create-group' ? 'settings' : activeRoute}
+          activeRoute={
+            activeRoute === 'create-group' || activeRoute === 'video' ? 'camera' : activeRoute
+          }
           onNavigate={setActiveRoute}
         />
       </View>
@@ -277,7 +299,13 @@ function DemoAccessEntry() {
   );
 }
 
-function SettingsScreen({ onCreateGroup }: { onCreateGroup: () => void }) {
+function SettingsScreen({
+  onCreateGroup,
+  runtimeClient,
+}: {
+  onCreateGroup: () => void;
+  runtimeClient: RuntimeClient | null;
+}) {
   const { session, signOut, resetDemoData, pending, error } = useDemoSession();
   const { state } = useCapsule();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -304,6 +332,7 @@ function SettingsScreen({ onCreateGroup }: { onCreateGroup: () => void }) {
         <Text style={styles.panelTitle}>{groupName}</Text>
         <Text style={styles.bodyText}>{role === 'owner' ? 'Owner' : 'Member'} · local group</Text>
       </View>
+      <InvitePanel groupId={session.groupId} runtimeClient={runtimeClient} />
       {error ? (
         <Text accessibilityRole="alert" style={styles.errorText}>
           {error}
@@ -394,6 +423,141 @@ function SettingsScreen({ onCreateGroup }: { onCreateGroup: () => void }) {
   );
 }
 
+function InvitePanel({
+  groupId,
+  runtimeClient,
+}: {
+  groupId: string;
+  runtimeClient: RuntimeClient | null;
+}) {
+  const { session, updateGroup } = useDemoSession();
+  const { state, retry } = useCapsule();
+  const [invite, setInvite] = useState<Awaited<
+    ReturnType<NonNullable<RuntimeClient['createInvite']>>
+  > | null>(null);
+  const [code, setCode] = useState('');
+  const [pending, setPending] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const owner = state.group?.actingMemberRole === 'owner';
+
+  const generate = async () => {
+    if (!runtimeClient?.createInvite || !session) {
+      setFeedback('Connect the local runtime to generate an invitation code.');
+      return;
+    }
+    setPending(true);
+    setFeedback(null);
+    try {
+      setInvite(await runtimeClient.createInvite(session.id, groupId));
+    } catch (error) {
+      setFeedback(
+        error instanceof Error ? error.message : 'The invitation code could not be created.',
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const copy = async () => {
+    if (!invite) return;
+    try {
+      await Clipboard.setStringAsync(invite.code);
+      setFeedback('Invitation code copied.');
+    } catch {
+      setFeedback('Copy is unavailable here; select the code to share it locally.');
+    }
+  };
+
+  const accept = async () => {
+    if (!runtimeClient?.acceptInvite || !session) {
+      setFeedback('Connect the local runtime to accept an invitation code.');
+      return;
+    }
+    setPending(true);
+    setFeedback(null);
+    try {
+      const result = await runtimeClient.acceptInvite(session.id, code, groupId);
+      await updateGroup(result.session.groupId);
+      retry();
+      setCode('');
+      setFeedback(`Joined ${result.group.name}. The code is now used.`);
+    } catch (error) {
+      setFeedback(
+        error instanceof Error ? error.message : 'The invitation code could not be accepted.',
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <View accessible style={styles.settingsPanel} testID="settings-invites">
+      <Text style={styles.label}>LOCAL INVITATIONS</Text>
+      {owner ? (
+        <>
+          <Text style={styles.bodyText}>
+            Generate one bounded code for this group. It expires in 24 hours or after one use.
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={pending}
+            onPress={() => void generate()}
+            style={styles.primaryButton}
+            testID="generate-invite"
+          >
+            <Text style={styles.primaryButtonText}>
+              {pending ? 'Generating…' : 'Generate invite code'}
+            </Text>
+          </Pressable>
+          {invite ? (
+            <>
+              <Text accessibilityLabel={`Invite code ${invite.code}`} style={styles.inviteCode}>
+                {invite.code}
+              </Text>
+              <Text style={styles.bodyText}>
+                Expires {new Date(invite.expiresAt).toLocaleString()} · Active
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void copy()}
+                style={styles.outlineButton}
+              >
+                <Text style={styles.outlineButtonText}>Copy invite code</Text>
+              </Pressable>
+            </>
+          ) : null}
+        </>
+      ) : null}
+      <Text style={styles.fieldLabel}>Have an invite?</Text>
+      <TextInput
+        accessibilityLabel="Invite code"
+        autoCapitalize="characters"
+        maxLength={8}
+        onChangeText={setCode}
+        placeholder="8-character code"
+        placeholderTextColor={COLORS.muted}
+        style={styles.textInput}
+        testID="invite-code-input"
+        value={code}
+      />
+      <Pressable
+        accessibilityRole="button"
+        disabled={pending || code.trim().length === 0}
+        onPress={() => void accept()}
+        style={styles.outlineButton}
+        testID="accept-invite"
+      >
+        <Text style={styles.outlineButtonText}>Accept invitation</Text>
+      </Pressable>
+      {feedback ? (
+        <Text accessibilityRole="alert" style={styles.bodyText}>
+          {feedback}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function GroupCreateScreen({
   onCancel,
   onCreated,
@@ -452,7 +616,13 @@ function GroupCreateScreen({
           throw storageError;
         }
       }
-      await updateGroup(result.group.id);
+      try {
+        await updateGroup(result.group.id);
+      } catch {
+        // Runtime creation is already committed. The provider keeps the
+        // in-memory pointer reconciled even if its local persistence fails,
+        // so this must not be presented as a failed/duplicable creation.
+      }
       retry();
       onCreated();
     } catch (error) {
@@ -920,6 +1090,13 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   primaryButtonText: { color: COLORS.deep, fontSize: 15, fontWeight: '800' },
+  inviteCode: {
+    color: COLORS.ink,
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: 4,
+    paddingVertical: 8,
+  },
   outlineButton: {
     alignItems: 'center',
     backgroundColor: COLORS.paper,

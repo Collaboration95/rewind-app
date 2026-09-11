@@ -46,6 +46,7 @@ export function CapsuleProvider({
   });
   const requestId = useRef(0);
   const memberId = demoSession?.session?.actor.memberId ?? currentMember?.id ?? null;
+  const preferredGroupId = demoSession?.session?.groupId;
 
   const load = useCallback(() => {
     const request = ++requestId.current;
@@ -58,7 +59,7 @@ export function CapsuleProvider({
     setState({ status: 'loading', group: null, cycle: null });
 
     Promise.resolve()
-      .then(() => groupRepository.getGroupForMember(memberId))
+      .then(() => groupRepository.getGroupForMember(memberId, preferredGroupId))
       .then((groupResult) => {
         if (request !== requestId.current) return;
 
@@ -97,7 +98,7 @@ export function CapsuleProvider({
           setState({ status: 'error', group: null, cycle: null });
         }
       });
-  }, [cycleRepository, groupRepository, memberId]);
+  }, [cycleRepository, groupRepository, memberId, preferredGroupId]);
 
   useEffect(() => {
     void Promise.resolve().then(load);

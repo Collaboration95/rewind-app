@@ -12,6 +12,8 @@ export interface Group {
   name: string;
   memberIds: MemberId[];
   currentCycleId: string;
+  /** Optional offline membership roles persisted with locally-created groups. */
+  memberRoles?: Partial<Record<MemberId, 'owner' | 'member'>>;
   /** Present when the server can resolve the acting member's membership. */
   actingMemberRole?: 'owner' | 'member';
 }
@@ -36,11 +38,14 @@ export interface ProfileRepository {
 }
 
 export interface GroupRepository {
-  getGroupForMember(actingMemberId: MemberId): Group | MembershipDenied;
+  getGroupForMember(actingMemberId: MemberId, preferredGroupId?: string): Group | MembershipDenied;
 }
 
 export interface AsyncGroupRepository {
-  getGroupForMember(actingMemberId: MemberId): Promise<Group | MembershipDenied>;
+  getGroupForMember(
+    actingMemberId: MemberId,
+    preferredGroupId?: string,
+  ): Promise<Group | MembershipDenied>;
 }
 
 export interface GroupCreationRepository {

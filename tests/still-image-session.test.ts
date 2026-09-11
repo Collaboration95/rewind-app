@@ -55,9 +55,13 @@ describe('still image session lifecycle', () => {
     expect(await metadata.list()).toEqual([persisted.metadata]);
   });
 
-  it.each(['retake', 'discard', 'reset'] as const)(
-    'cleans files and metadata on %s',
-    async (operation) => {
+  it.each([
+    ['retake', 1],
+    ['discard', 0],
+    ['reset', 0],
+  ] as const)(
+    'cleans files and applies metadata semantics on %s',
+    async (operation, expectedMetadataCount) => {
       const files = new InMemoryCaptureFileStore();
       const metadata = new InMemoryImageMetadataStore();
       const session = new StillImageCaptureSession({
@@ -71,7 +75,7 @@ describe('still image session lifecycle', () => {
       await session[operation]();
 
       expect(files.size).toBe(0);
-      expect(await metadata.list()).toEqual([]);
+      expect(await metadata.list()).toHaveLength(expectedMetadataCount);
       expect(session.getActivePreview()).toBeNull();
       expect(preview.metadata.id).toBe('capture-cleanup');
     },

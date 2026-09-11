@@ -121,8 +121,15 @@ test('each protected category remains readable for the member of its own group',
 
 test('a member of another group cannot use the owner-only cycle control', async () => {
   await withSecondGroup(async ({ baseUrl, database }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-6', groupId: 'other-group' }),
+    });
+    assert.equal(sessionResponse.status, 201);
+    const { session } = await sessionResponse.json();
     const response = await fetch(
-      `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-6&advanceSeconds=60`,
+      `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-1&sessionId=${encodeURIComponent(session.id)}&advanceSeconds=60`,
       { method: 'POST' },
     );
     assert.equal(response.status, 403);

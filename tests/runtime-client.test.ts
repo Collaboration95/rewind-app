@@ -158,4 +158,94 @@ describe('LocalRuntimeClient', () => {
       kind: 'OwnerControlDenied',
     });
   });
+
+  it('creates and accepts session-bound local invites', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(
+        response(201, {
+          invite: {
+            id: 'invite-ab12cd34',
+            code: 'AB12CD34',
+            groupId: 'demo-group',
+            status: 'active',
+            createdAt: '2026-09-10T12:00:00.000Z',
+            expiresAt: '2026-09-10T12:10:00.000Z',
+            usedAt: null,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        response(200, {
+          invite: {
+            id: 'invite-ab12cd34',
+            code: 'AB12CD34',
+            groupId: 'demo-group',
+            status: 'used',
+            createdAt: '2026-09-10T12:00:00.000Z',
+            expiresAt: '2026-09-10T12:10:00.000Z',
+            usedAt: '2026-09-10T12:01:00.000Z',
+          },
+          group: {
+            id: 'demo-group',
+            name: 'Weekend People',
+            memberIds: ['demo-1', 'demo-2'],
+            currentCycleId: 'demo-cycle',
+            actingMemberRole: 'member',
+          },
+          session: { id: 'session-2', groupId: 'demo-group' },
+        }),
+      );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.createInvite('session-1', 'demo-group', 600)).resolves.toMatchObject({
+      code: 'AB12CD34',
+    });
+    await expect(client.acceptInvite('session-2', 'AB12CD34')).resolves.toMatchObject({
+      invite: { status: 'used' },
+      session: { groupId: 'demo-group' },
+    });
+    expect(fetchImpl.mock.calls.map(([url, init]) => [url, init?.method ?? 'GET'])).toEqual([
+      ['http://localhost:8787/invites?sessionId=session-1&groupId=demo-group', 'POST'],
+      ['http://localhost:8787/invites/accept?sessionId=session-2', 'POST'],
+    ]);
+  });
+
+  it('uploads and cancels a clip through the session-bound media route', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(
+        response(201, {
+          upload: {
+            existing: false,
+            contribution: { id: 'contribution-1', durationSeconds: 8 },
+            job: { id: 'job-1', status: 'pending' },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(response(200, { cancelled: true }));
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    const input = {
+      byteLength: 1024,
+      durationSeconds: 8,
+      hasAudio: true as const,
+      height: 1280,
+      idempotencyKey: 'retryable-1',
+      mimeType: 'video/mp4' as const,
+      sourceUri: 'file://clip.mp4',
+      width: 720,
+    };
+    await expect(client.uploadClip('session-1', 'demo-group', input)).resolves.toMatchObject({
+      job: { id: 'job-1' },
+    });
+    await expect(
+      client.cancelClipUpload('session-1', 'demo-group', 'job-1'),
+    ).resolves.toBeUndefined();
+    expect(fetchImpl.mock.calls.map(([url, init]) => [url, init?.method ?? 'GET'])).toEqual([
+      ['http://localhost:8787/contributions/upload?sessionId=session-1&groupId=demo-group', 'POST'],
+      [
+        'http://localhost:8787/contributions/upload/job-1?sessionId=session-1&groupId=demo-group',
+        'DELETE',
+      ],
+    ]);
+  });
 });
