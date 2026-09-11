@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { IMAGE_METADATA_KEY } from './metadata-store';
+import { WebCaptureFileStore } from './file-store';
 
 const CAPTURE_CACHE_FOLDER = 'rewind-stills';
 
@@ -11,6 +12,7 @@ const CAPTURE_CACHE_FOLDER = 'rewind-stills';
  * directly instead of trying to recover paths from metadata.
  */
 export async function resetCaptureData(): Promise<void> {
+  WebCaptureFileStore.resetAll();
   const operations: Promise<void>[] = [AsyncStorage.removeItem(IMAGE_METADATA_KEY)];
   const cacheDirectory = FileSystem.cacheDirectory;
   if (cacheDirectory) {

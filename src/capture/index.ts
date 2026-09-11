@@ -21,7 +21,7 @@ export {
   initialCaptureState,
   isCaptureReady,
 } from './capture-state';
-export { ExpoCaptureFileStore, InMemoryCaptureFileStore } from './file-store';
+export { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } from './file-store';
 export {
   AsyncStorageImageMetadataStore,
   IMAGE_METADATA_KEY,

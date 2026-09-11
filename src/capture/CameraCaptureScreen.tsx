@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { COLORS } from '../theme';
 import {
@@ -15,7 +15,7 @@ import {
   isCaptureReady,
   type CaptureState,
 } from './capture-state';
-import { ExpoCaptureFileStore, InMemoryCaptureFileStore } from './file-store';
+import { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } from './file-store';
 import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './metadata-store';
 import { ExpoCameraPlatform } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
@@ -55,7 +55,11 @@ export function CameraCaptureScreen({
   const resolvedFileStore = useMemo(
     () =>
       fileStore ??
-      (platform.kind === 'demo' ? new InMemoryCaptureFileStore() : new ExpoCaptureFileStore()),
+      (platform.kind === 'demo'
+        ? new InMemoryCaptureFileStore()
+        : Platform.OS === 'web'
+          ? new WebCaptureFileStore()
+          : new ExpoCaptureFileStore()),
     [fileStore, platform.kind],
   );
   const resolvedMetadataStore = useMemo(
