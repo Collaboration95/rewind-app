@@ -29,4 +29,11 @@ export {
 } from './metadata-store';
 export { DemoCameraPlatform, ExpoCameraPlatform, permissionState } from './platform';
 export { StillImageCaptureSession } from './still-image-session';
+export {
+  BoundedVideoRecordingSession,
+  VideoRecordingError,
+  validateRecordedClip,
+  type VideoRecordingPlatform,
+  type VideoRecordingState,
+} from './video-recording';
 export { resetCaptureData } from './reset';

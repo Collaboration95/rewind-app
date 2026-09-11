@@ -10,6 +10,7 @@ import type {
   PermissionState,
   PlatformStillImage,
 } from './contracts';
+import type { RecordedClip } from '../domain/video';
 
 export function permissionState(response: {
   status: string;
@@ -117,6 +118,32 @@ export class ExpoCameraPlatform implements CameraPlatform {
       source: 'camera',
       width: picture.width,
     };
+  }
+
+  async recordClip(maxDurationSeconds = 15): Promise<RecordedClip> {
+    const camera = this.options.getCameraRef();
+    if (!camera?.recordAsync) throw new Error('The camera recorder is not ready. Try again.');
+    const startedAt = Date.now();
+    const video = await camera.recordAsync({ maxDuration: maxDurationSeconds, mute: false, quality: '480p' });
+    if (!video) throw new Error('The recording was cancelled before a clip was saved.');
+    const measuredDuration = (Date.now() - startedAt) / 1000;
+    return {
+      sourceUri: video.uri,
+      format: 'mp4',
+      width: video.width ?? 720,
+      height: video.height ?? 1280,
+      durationSeconds: Math.min(maxDurationSeconds, video.duration ?? measuredDuration),
+      hasAudio: true,
+      source: 'camera',
+    };
+  }
+
+  stopRecording(): void {
+    this.options.getCameraRef()?.stopRecording?.();
+  }
+
+  cancelRecording(): void {
+    this.options.getCameraRef()?.stopRecording?.();
   }
 }
 
