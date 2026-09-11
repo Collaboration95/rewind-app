@@ -33,6 +33,7 @@ export interface ExpoCameraPlatformOptions {
 export class ExpoCameraPlatform implements CameraPlatform {
   readonly kind = 'expo' as const;
   readonly supportsLivePreview = true;
+  readonly supportsVideoRecording = Platform.OS !== 'web';
 
   constructor(private readonly options: ExpoCameraPlatformOptions) {}
 
@@ -122,6 +123,9 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async recordClip(maxDurationSeconds = 15): Promise<RecordedClip> {
+    if (!this.supportsVideoRecording) {
+      throw new Error('Video recording is not supported on the web platform.');
+    }
     const camera = this.options.getCameraRef();
     if (!camera?.recordAsync) throw new Error('The camera recorder is not ready. Try again.');
     const startedAt = Date.now();
@@ -167,6 +171,7 @@ export interface DemoCameraPlatformOptions {
 export class DemoCameraPlatform implements CameraPlatform {
   readonly kind = 'demo' as const;
   readonly supportsLivePreview = false;
+  readonly supportsVideoRecording = false;
   private readonly capabilities: CapabilitySnapshot;
   private readonly permissions: PermissionSnapshot;
   private readonly fixture: PlatformStillImage;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
@@ -12,7 +12,8 @@ import { ClipReviewSession, InMemoryPendingClipMetadataStore } from './video-rev
 import { ExpoCameraPlatform } from './platform';
 import type { CameraPlatform } from './contracts';
 
-type AccessStatus = 'checking' | 'ready' | 'unsupported' | 'permission' | 'error';
+type AccessStatus =
+  'checking' | 'ready' | 'unsupported' | 'permission' | 'permission-blocked' | 'error';
 
 export interface VideoCaptureScreenProps {
   platform?: CameraPlatform;
@@ -77,10 +78,45 @@ export function VideoCaptureScreen({
     });
   }, [demoSession, runtimeClient]);
 
+  // Keep the latest sessions available to the one lifecycle cleanup effect
+  // below. The upload session can be created after the first render while the
+  // Demo session is being restored, so putting it directly in a mount-only
+  // cleanup closure would miss an in-flight upload.
+  const recorderRef = useRef(recorder);
+  const uploadSessionRef = useRef(uploadSession);
+  const activeUploadRef = useRef(false);
+  const mountedRef = useRef(true);
+  const captureLeftRef = useRef(false);
+  useEffect(() => {
+    recorderRef.current = recorder;
+  }, [recorder]);
+  useEffect(() => {
+    uploadSessionRef.current = uploadSession;
+  }, [uploadSession]);
+
+  const isCaptureActive = useCallback(() => mountedRef.current && !captureLeftRef.current, []);
+  const cancelActiveWork = useCallback(() => {
+    if (captureLeftRef.current) return;
+    captureLeftRef.current = true;
+    recorderRef.current?.cancel();
+    if (activeUploadRef.current) {
+      const cancellation = uploadSessionRef.current?.cancel();
+      if (cancellation) void cancellation.catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      cancelActiveWork();
+    };
+  }, [cancelActiveWork]);
+
   const refresh = useCallback(async () => {
+    if (!isCaptureActive()) return;
     setAccess('checking');
     setError(null);
-    if (platform.kind === 'demo' || !recorder) {
+    if (platform.kind === 'demo' || platform.supportsVideoRecording === false || !recorder) {
       setAccess('unsupported');
       return;
     }
@@ -89,22 +125,64 @@ export function VideoCaptureScreen({
         platform.getCapabilities(),
         platform.getPermissions(),
       ]);
+      if (!isCaptureActive()) return;
       if (capabilities.camera !== 'supported' || capabilities.microphone !== 'supported') {
         setAccess('unsupported');
+      } else if (permissions.camera === 'blocked' || permissions.microphone === 'blocked') {
+        setAccess('permission-blocked');
       } else if (permissions.camera !== 'granted' || permissions.microphone !== 'granted') {
         setAccess('permission');
       } else {
         setAccess('ready');
       }
     } catch {
+      if (!isCaptureActive()) return;
       setAccess('error');
       setError('We could not check recording access. Try again.');
     }
-  }, [platform, recorder]);
+  }, [isCaptureActive, platform, recorder]);
 
   useEffect(() => {
     void Promise.resolve().then(refresh);
   }, [refresh]);
+
+  // Native Settings does not tell the route when the user changes a
+  // permission. Re-check when the app becomes active again so a blocked
+  // screen can transition directly to the live preview after returning.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') void refresh();
+    });
+    return () => subscription.remove();
+  }, [refresh]);
+
+  const requestAccess = useCallback(async () => {
+    if (!isCaptureActive()) return;
+    setError(null);
+    try {
+      await platform.requestPermissions();
+      if (isCaptureActive()) await refresh();
+    } catch {
+      if (!isCaptureActive()) return;
+      setError('Camera access could not be requested. Open Settings and try again.');
+    }
+  }, [isCaptureActive, platform, refresh]);
+
+  const openSettings = useCallback(async () => {
+    if (!isCaptureActive()) return;
+    setError(null);
+    try {
+      await platform.openSettings();
+      if (isCaptureActive()) await refresh();
+    } catch (settingsError) {
+      if (!isCaptureActive()) return;
+      setError(
+        settingsError instanceof Error
+          ? settingsError.message
+          : 'Open this app settings to allow camera and microphone access.',
+      );
+    }
+  }, [isCaptureActive, platform, refresh]);
 
   useEffect(() => {
     if (!recording || recordingStartedAt === null || !recorder) return undefined;
@@ -117,13 +195,14 @@ export function VideoCaptureScreen({
   }, [recording, recordingStartedAt, recorder]);
 
   const startRecording = async () => {
-    if (!recorder || access !== 'ready') return;
+    if (!isCaptureActive() || !recorder || access !== 'ready') return;
     setError(null);
     setRecording(true);
     setRecordingStartedAt(Date.now());
     setElapsedSeconds(0);
     try {
       const recorded = await recorder.start();
+      if (!isCaptureActive()) return;
       const nextReview = new ClipReviewSession(recorded, reviewStore);
       setClip(recorded);
       setReview(nextReview);
@@ -133,6 +212,7 @@ export function VideoCaptureScreen({
       setRecording(false);
       setRecordingStartedAt(null);
     } catch (recordingError) {
+      if (!isCaptureActive() || recorder.getState().status === 'cancelled') return;
       setRecording(false);
       setRecordingStartedAt(null);
       setError(
@@ -153,6 +233,7 @@ export function VideoCaptureScreen({
 
   const retake = async () => {
     await review?.retake();
+    if (!isCaptureActive()) return;
     recorder?.reset();
     setClip(null);
     setReview(null);
@@ -176,6 +257,7 @@ export function VideoCaptureScreen({
   };
 
   const upload = async () => {
+    if (!isCaptureActive()) return;
     if (!review || !clip || !uploadSession) {
       setError('Connect the local runtime and an active Demo session before uploading.');
       return;
@@ -191,30 +273,69 @@ export function VideoCaptureScreen({
       width: clip.width,
     };
     try {
+      activeUploadRef.current = true;
       await review.savePending(input.idempotencyKey);
-      await uploadSession.upload(input, setUploadProgress);
+      if (!isCaptureActive()) return;
+      await uploadSession.upload(input, (progress) => {
+        if (isCaptureActive() && activeUploadRef.current) setUploadProgress(progress);
+      });
     } catch (uploadError) {
+      if (!isCaptureActive()) return;
       setError(
         uploadError instanceof Error ? uploadError.message : 'The clip could not be uploaded.',
       );
+    } finally {
+      activeUploadRef.current = false;
     }
   };
 
   const retryUpload = async () => {
+    if (!isCaptureActive()) return;
     try {
-      await uploadSession?.retry(setUploadProgress);
+      activeUploadRef.current = true;
+      await uploadSession?.retry((progress) => {
+        if (isCaptureActive() && activeUploadRef.current) setUploadProgress(progress);
+      });
     } catch (uploadError) {
+      if (!isCaptureActive()) return;
       setError(
         uploadError instanceof Error ? uploadError.message : 'The clip could not be uploaded.',
       );
+    } finally {
+      activeUploadRef.current = false;
     }
   };
+
+  const cancelUpload = useCallback(async () => {
+    if (!isCaptureActive() || !uploadSession || uploadProgress.status !== 'uploading') {
+      return;
+    }
+    // Update the route synchronously. The transport may never settle (for
+    // example, after a dropped runtime connection), but the user must still
+    // leave the uploading state and be able to retry.
+    setUploadProgress({ status: 'cancelled', percent: 0 });
+    activeUploadRef.current = false;
+    try {
+      await uploadSession.cancel();
+    } catch (cancelError) {
+      if (!isCaptureActive()) return;
+      const message =
+        cancelError instanceof Error && cancelError.message ? cancelError.message : 'Try again.';
+      setUploadProgress({ status: 'failed', percent: 10, message });
+      setError(`The upload could not be cancelled. ${message}`);
+    }
+  }, [isCaptureActive, uploadProgress.status, uploadSession]);
+
+  const leaveCapture = useCallback(() => {
+    cancelActiveWork();
+    onBack?.();
+  }, [cancelActiveWork, onBack]);
 
   return (
     <View style={styles.screen} testID="video-capture-screen">
       <View style={styles.header}>
         {onBack ? (
-          <Pressable accessibilityRole="button" onPress={onBack} style={styles.backButton}>
+          <Pressable accessibilityRole="button" onPress={leaveCapture} style={styles.backButton}>
             <Text style={styles.backText}>Back to stills</Text>
           </Pressable>
         ) : null}
@@ -239,17 +360,19 @@ export function VideoCaptureScreen({
       {access === 'permission' ? (
         <Panel
           actionLabel="Allow camera and microphone"
-          onAction={async () => {
-            try {
-              await platform.requestPermissions();
-              await refresh();
-            } catch {
-              setError('Camera access could not be requested. Open Settings and try again.');
-            }
-          }}
+          onAction={requestAccess}
           testID="video-permission"
           title="Allow access to record"
           body="Both camera and microphone permissions are required before recording."
+        />
+      ) : null}
+      {access === 'permission-blocked' ? (
+        <Panel
+          actionLabel="Open Settings"
+          onAction={openSettings}
+          testID="video-permission-blocked"
+          title="Permission is blocked"
+          body="Camera or microphone access is blocked. Open Settings, allow both permissions, then return to Rewind and try again."
         />
       ) : null}
       {access === 'error' ? (
@@ -372,7 +495,7 @@ export function VideoCaptureScreen({
           {uploadProgress.status === 'uploading' ? (
             <Pressable
               accessibilityRole="button"
-              onPress={() => void uploadSession?.cancel()}
+              onPress={() => void cancelUpload()}
               style={styles.outlineButton}
             >
               <Text style={styles.outlineText}>Cancel upload</Text>

@@ -123,9 +123,9 @@ written in text.
 
 ### Buttons and actions
 
-The current Sprint 0 shell uses outlined controls and a disabled `Add a moment`
-placeholder. No capsule action exposes media or sharing. Retry is a neutral,
-text-labelled button with a stable size.
+The current shell uses outlined controls and an enabled `Add a moment` action
+that opens the Camera screen. No capsule action exposes media or sharing. Retry
+is a neutral, text-labelled button with a stable size.
 
 ### Navigation and data display
 

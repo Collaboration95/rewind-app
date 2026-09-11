@@ -108,6 +108,21 @@ describe('local Demo access lifecycle', () => {
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
   });
 
+  it('re-enables sign out after a reachable runtime failure', async () => {
+    const runtime = rejectingRuntime(
+      'invalidateDemoSession',
+      new LocalRuntimeError('The local runtime failed to end Demo access.', 500),
+    );
+    const result = await render(<App runtimeClient={runtime} />);
+    await result.findByRole('header', { name: 'Weekend People' });
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await fireEvent.press(result.getByTestId('sign-out'));
+
+    expect(result.getByText('The local runtime failed to end Demo access.')).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Sign out of Demo' })).toBeTruthy();
+    expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).not.toBeNull();
+  });
+
   it('resets every local store when the runtime already handled the reset', async () => {
     await AsyncStorage.setItem(LOCAL_GROUPS_STORAGE_KEY, '[]');
     await AsyncStorage.setItem(SELECTION_KEY, 'demo-1');
@@ -126,6 +141,24 @@ describe('local Demo access lifecycle', () => {
     expect(await AsyncStorage.getItem(LOCAL_GROUPS_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(IMAGE_METADATA_KEY)).toBeNull();
+  });
+
+  it('re-enables reset after a reachable runtime failure', async () => {
+    const runtime = rejectingRuntime(
+      'resetDemoData',
+      new LocalRuntimeError('The local runtime failed to reset Demo data.', 500),
+    );
+    const result = await render(<App runtimeClient={runtime} />);
+    await result.findByRole('header', { name: 'Weekend People' });
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await fireEvent.press(result.getByTestId('reset-demo-data'));
+    await fireEvent.press(result.getByTestId('reset-confirm-action'));
+
+    expect(
+      result.getAllByText('The local runtime failed to reset Demo data.').length,
+    ).toBeGreaterThan(0);
+    expect(result.getByRole('button', { name: 'Reset local Demo data' })).toBeTruthy();
+    expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).not.toBeNull();
   });
 });
 

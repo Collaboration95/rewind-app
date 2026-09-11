@@ -62,6 +62,15 @@ export class BoundedVideoRecordingSession {
       this.state = { status: 'complete', clip: { ...clip } };
       return { ...clip };
     } catch (error) {
+      // A stop/cancel/reset can invalidate the promise while the platform
+      // still resolves it. Preserve the newer lifecycle state rather than
+      // allowing that stale completion to turn a cancelled session into a
+      // failure (or overwrite a newer recording).
+      if (generation !== this.generation) {
+        throw error instanceof VideoRecordingError
+          ? error
+          : new VideoRecordingError('The recording was cancelled.');
+      }
       const message = error instanceof Error ? error.message : 'The clip could not be recorded.';
       this.state = { status: 'failed', message };
       throw error instanceof VideoRecordingError ? error : new VideoRecordingError(message);

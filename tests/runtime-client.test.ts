@@ -24,9 +24,10 @@ describe('LocalRuntimeClient', () => {
     const client = new LocalRuntimeClient('http://127.0.0.1:8787/', fetchImpl);
     expect(client.baseUrl).toBe('http://127.0.0.1:8787');
     await expect(client.getHealth()).resolves.toMatchObject({ version: '0.1.0', ready: true });
-    expect(fetchImpl).toHaveBeenCalledWith('http://127.0.0.1:8787/health', {
-      headers: { Accept: 'application/json' },
-    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:8787/health',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    );
   });
 
   it('maps a safe membership denial and not-found cycle without exposing transport details', async () => {
@@ -55,6 +56,34 @@ describe('LocalRuntimeClient', () => {
     await expect(client.getHealth()).rejects.toThrow(
       'Could not reach the local runtime at http://localhost:8787',
     );
+  });
+
+  it('bounds an unresponsive request and aborts the underlying fetch', async () => {
+    jest.useFakeTimers();
+    try {
+      const fetchImpl = jest.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          }),
+      );
+      const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl, {
+        requestTimeoutMs: 25,
+      });
+      const request = client.getHealth();
+      const rejection = expect(request).rejects.toMatchObject({
+        code: 'runtime_timeout',
+        message: expect.stringContaining('did not respond within 25 ms'),
+      });
+      await jest.advanceTimersByTimeAsync(25);
+      await rejection;
+      expect(fetchImpl).toHaveBeenCalledWith(
+        'http://localhost:8787/health',
+        expect.objectContaining({ signal: expect.anything() }),
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('rejects non-http runtime URLs before a request is made', () => {
@@ -145,7 +174,7 @@ describe('LocalRuntimeClient', () => {
     });
     expect(fetchImpl).toHaveBeenCalledWith(
       'http://localhost:8787/cycles/demo/advance?groupId=demo-group&memberId=demo-1&advanceSeconds=3600',
-      { method: 'POST', headers: { Accept: 'application/json' } },
+      expect.objectContaining({ method: 'POST', headers: { Accept: 'application/json' } }),
     );
   });
 

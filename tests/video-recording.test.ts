@@ -63,6 +63,7 @@ describe('bounded video recording', () => {
     expect(session.getState()).toEqual({ status: 'cancelled' });
     resolveRecording(clip);
     await expect(pending).rejects.toThrow('cancelled');
+    expect(session.getState()).toEqual({ status: 'cancelled' });
   });
 
   it('rejects a second start while a recording is active', async () => {

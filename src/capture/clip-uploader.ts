@@ -107,11 +107,14 @@ export class ClipUploadSession {
 
   async cancel(): Promise<void> {
     this.generation += 1;
-    if (this.activeJobId) {
-      const jobId = this.activeJobId;
-      this.activeJobId = null;
+    const jobId = this.activeJobId;
+    this.activeJobId = null;
+    // Invalidate the local state before waiting on the runtime. A network
+    // cancellation can hang or fail, but the route must not remain stuck in
+    // an uploading state while that request is unresolved.
+    this.progress = { status: 'cancelled', percent: 0 };
+    if (jobId) {
       await this.transport.cancelClipUpload(jobId);
     }
-    this.progress = { status: 'cancelled', percent: 0 };
   }
 }

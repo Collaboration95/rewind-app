@@ -70,4 +70,21 @@ describe('local clip upload lifecycle', () => {
     expect(transport.cancelClipUpload).toHaveBeenCalledWith('job-1');
     expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
   });
+
+  it('marks cancellation locally before a runtime cancellation settles', async () => {
+    let resolveCancellation: () => void = () => undefined;
+    const transport = {
+      cancelClipUpload: jest.fn(
+        () => new Promise<void>((resolve) => (resolveCancellation = resolve)),
+      ),
+      uploadClip: jest.fn().mockResolvedValue(upload),
+    };
+    const session = new ClipUploadSession(transport);
+    await session.upload(input);
+
+    const cancellation = session.cancel();
+    expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
+    resolveCancellation();
+    await cancellation;
+  });
 });

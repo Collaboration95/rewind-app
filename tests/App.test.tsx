@@ -135,16 +135,16 @@ describe('Rewind Home start screen', () => {
     ).toBeTruthy();
   });
 
-  it('keeps sample moments sealed and does not claim Camera is available', async () => {
+  it('keeps sample moments sealed and routes Add a moment to Camera', async () => {
     const result = await render(<App />);
 
     expect(result.getByLabelText('Locked demo moment 1 of 3')).toBeTruthy();
     expect(result.getByLabelText('Locked demo moment 2 of 3')).toBeTruthy();
     expect(result.getByLabelText('Locked demo moment 3 of 3')).toBeTruthy();
-    expect(result.getByRole('button', { name: 'Add a moment', disabled: true })).toBeTruthy();
-    expect(
-      result.getByText('Camera capture stays local and starts from the Camera tab.'),
-    ).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Add a moment' })).toBeTruthy();
+
+    await fireEvent.press(result.getByRole('button', { name: 'Add a moment' }));
+    expect(await result.findByRole('header', { name: 'Add a still moment' })).toBeTruthy();
   });
 
   it('shows the repository-backed prompt, countdown, quota, and locked-safe state', async () => {

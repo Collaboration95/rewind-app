@@ -39,6 +39,7 @@ import {
   groupInputErrorMessage,
   validateGroupInput,
 } from './src/domain/groups';
+import { isValidInviteCode, normalizeInviteCode } from './src/domain/invites';
 
 const lockedMoments = [1, 2, 3];
 
@@ -197,7 +198,11 @@ function ActiveAppShell({
     <SafeAreaFrame>
       <View style={styles.activeShell}>
         {activeRoute === 'home' ? (
-          <HomeScreen clock={clock} runtimeClient={runtimeClient} />
+          <HomeScreen
+            clock={clock}
+            onAddMoment={() => setActiveRoute('camera')}
+            runtimeClient={runtimeClient}
+          />
         ) : activeRoute === 'settings' ? (
           <SettingsScreen
             onCreateGroup={() => setActiveRoute('create-group')}
@@ -263,7 +268,12 @@ function DemoAccessEntry() {
           </Text>
         </View>
         {error ? (
-          <View accessible accessibilityLabel="Demo access error" style={styles.errorPanel}>
+          <View
+            accessible={false}
+            accessibilityLabel="Demo access error"
+            style={styles.errorPanel}
+            testID="demo-access-error"
+          >
             <Text accessibilityRole="alert" style={styles.errorText}>
               {error}
             </Text>
@@ -438,6 +448,7 @@ function InvitePanel({
   const [code, setCode] = useState('');
   const [pending, setPending] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [codeError, setCodeError] = useState<string | null>(null);
   const owner = state.group?.actingMemberRole === 'owner';
 
   const generate = async () => {
@@ -469,14 +480,23 @@ function InvitePanel({
   };
 
   const accept = async () => {
+    const normalizedCode = normalizeInviteCode(code);
+    if (!isValidInviteCode(normalizedCode)) {
+      setCodeError('Enter the eight-character invite code using letters and numbers.');
+      setFeedback(null);
+      return;
+    }
     if (!runtimeClient?.acceptInvite || !session) {
       setFeedback('Connect the local runtime to accept an invitation code.');
       return;
     }
     setPending(true);
+    setCodeError(null);
     setFeedback(null);
     try {
-      const result = await runtimeClient.acceptInvite(session.id, code, groupId);
+      // The invite determines its destination group. Passing the current
+      // group here would reject a valid invite from another group.
+      const result = await runtimeClient.acceptInvite(session.id, normalizedCode);
       await updateGroup(result.session.groupId);
       retry();
       setCode('');
@@ -491,7 +511,7 @@ function InvitePanel({
   };
 
   return (
-    <View accessible style={styles.settingsPanel} testID="settings-invites">
+    <View accessible={false} style={styles.settingsPanel} testID="settings-invites">
       <Text style={styles.label}>LOCAL INVITATIONS</Text>
       {owner ? (
         <>
@@ -532,8 +552,14 @@ function InvitePanel({
       <TextInput
         accessibilityLabel="Invite code"
         autoCapitalize="characters"
-        maxLength={8}
-        onChangeText={setCode}
+        aria-describedby={codeError ? 'invite-code-error' : undefined}
+        aria-invalid={Boolean(codeError)}
+        maxLength={32}
+        onChangeText={(value) => {
+          setCode(normalizeInviteCode(value));
+          setCodeError(null);
+          setFeedback(null);
+        }}
         placeholder="8-character code"
         placeholderTextColor={COLORS.muted}
         style={styles.textInput}
@@ -542,15 +568,26 @@ function InvitePanel({
       />
       <Pressable
         accessibilityRole="button"
-        disabled={pending || code.trim().length === 0}
+        disabled={pending || code.length === 0}
         onPress={() => void accept()}
         style={styles.outlineButton}
         testID="accept-invite"
       >
         <Text style={styles.outlineButtonText}>Accept invitation</Text>
       </Pressable>
+      {codeError ? (
+        <Text
+          accessibilityLiveRegion="assertive"
+          accessibilityRole="alert"
+          nativeID="invite-code-error"
+          style={styles.fieldError}
+          testID="invite-code-error"
+        >
+          {codeError}
+        </Text>
+      ) : null}
       {feedback ? (
-        <Text accessibilityRole="alert" style={styles.bodyText}>
+        <Text accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.bodyText}>
           {feedback}
         </Text>
       ) : null}
@@ -762,9 +799,11 @@ function GroupCreateScreen({
 
 function HomeScreen({
   clock,
+  onAddMoment,
   runtimeClient,
 }: {
   clock: () => number;
+  onAddMoment: () => void;
   runtimeClient: RuntimeClient | null;
 }) {
   return (
@@ -801,14 +840,13 @@ function HomeScreen({
       <Pressable
         accessibilityLabel="Add a moment"
         accessibilityRole="button"
-        accessibilityState={{ disabled: true }}
-        disabled
-        style={styles.disabledButton}
+        onPress={onAddMoment}
+        style={styles.primaryButton}
       >
-        <Text style={styles.disabledButtonText}>Add a moment</Text>
+        <Text style={styles.primaryButtonText}>Add a moment</Text>
       </Pressable>
       <Text style={styles.helperText} testID="home-content-end">
-        Camera capture stays local and starts from the Camera tab.
+        Camera capture stays local. Choose a capture type on the Camera screen.
       </Text>
     </ScrollView>
   );
