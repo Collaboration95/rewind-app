@@ -38,7 +38,21 @@ export class ExpoCameraPlatform implements CameraPlatform {
     if (this.options.capabilityProbe) return this.options.capabilityProbe();
 
     try {
-      const cameraAvailable = await CameraView.isAvailableAsync();
+      // `isAvailableAsync` is currently only registered by Expo Camera on
+      // web. Some native SDK builds therefore expose no probe at all. A
+      // missing probe is not evidence that a physical device is unusable;
+      // permissions plus the native device boundary establish availability.
+      const cameraAvailabilityProbe = (
+        CameraView as typeof CameraView & {
+          isAvailableAsync?: () => Promise<boolean>;
+        }
+      ).isAvailableAsync;
+      const cameraAvailable =
+        typeof cameraAvailabilityProbe === 'function'
+          ? await cameraAvailabilityProbe()
+          : Platform.OS === 'web'
+            ? typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
+            : Device.isDevice;
       // Expo does not expose a microphone-capability probe. On native, a real
       // device is the supported recording target; simulator capture stays an
       // explicit unsupported state. On web, ask the browser capability API.
