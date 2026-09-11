@@ -3,11 +3,11 @@
 Rewind is a local-first SWE5006 prototype for collecting short shared moments
 for a group cycle and experiencing them together through a delayed reveal.
 
-This repository contains the Sprint 0 foundation, local demo profile selection,
-a read-only group capsule summary, and the local runtime boundary needed by the
-next feature increment. The app is deliberately honest about what is not
-implemented yet; synthetic local data is not authentication, a secure account,
-or a cloud service.
+This repository contains the Sprint 0 foundation, explicit local Demo access,
+local group creation, a read-only group capsule summary, and the local runtime
+boundary needed by the next feature increment. The app is deliberately honest
+about what is not implemented yet; synthetic local data is not authentication,
+a secure account, or a cloud service.
 
 ## Clean start
 
@@ -24,8 +24,19 @@ npm run web
 Open the local URL printed by Expo, normally `http://localhost:8081`.
 
 The clean-start path does not require AWS credentials, an account, private
-media, or a deployed service. Native Android and device permission work are
-future implementation scope.
+media, or a deployed service. The camera route has SDK-compatible native
+permission/capture boundaries; real clip recording and upload require a
+physical device and the optional local runtime.
+
+For simulator review, set `EXPO_PUBLIC_CAMERA_MODE=demo` to use the explicit,
+labelled fixture camera. This path never claims a physical image was captured.
+Set it to `demo-denied` to exercise the denied-permission and retry UI. Leaving
+the variable unset uses the native `ExpoCameraPlatform`; a physical device is
+required for a real camera preview and still capture.
+
+Set `EXPO_PUBLIC_DEMO_ACCESS=entry` when a deterministic screenshot or manual
+review needs to start at the Demo access chooser; the normal clean-start path
+restores the synthetic Amber session for continuity.
 
 ## Local runtime
 
@@ -73,12 +84,20 @@ a retry action, and the capsule repositories use the typed local API adapter.
 Protected group, message, contribution/clip, film, and download routes all
 return the same safe `403` denial to non-members.
 
+The owner-only local demo control is available to integration callers as
+`POST /cycles/demo/advance?groupId=...&memberId=...&advanceSeconds=...`. It
+shifts the persisted cycle boundaries, records the old/new instants in local
+SQLite, and returns the updated cycle. Only a membership row with the
+persisted `owner` role can use it; non-owners receive the same safe denial and
+no cycle or event data.
+
 ## Quality commands
 
 | Command                      | Purpose                                                    |
 | ---------------------------- | ---------------------------------------------------------- |
 | `npm run format:check`       | Verify repository formatting                               |
 | `npm run lint`               | Run ESLint                                                 |
+| `npm run architecture:check` | Verify framework/device import boundaries                  |
 | `npm run typecheck`          | Run strict TypeScript checking                             |
 | `npm test`                   | Run scaffold and component tests                           |
 | `npm run check`              | Run all baseline checks                                    |
@@ -91,22 +110,46 @@ return the same safe `403` denial to non-members.
 GitHub Actions runs the baseline and responsive browser checks on pushes to
 `main` and pull requests.
 
-## Local demo profiles
+## Local Demo access
 
-Choose one of five synthetic members in the profile picker. The current member
-changes immediately, and the last selection is saved on this device using
-AsyncStorage. A new installation or missing/invalid selection starts with Amber.
-Storage failures display a message and allow retrying the save.
+The app maintains an explicit local Demo session for one of five synthetic
+members. The session record is saved on this device using AsyncStorage and has
+an eight-hour bounded lifetime; it contains no credential or secure identity
+claim. The clean-start fixture uses Amber for continuity. Settings can end the
+session and return to the Demo access entry, where another sample member can be
+chosen. Runtime-connected sessions are revalidated by the local SQLite service.
 
-For a clean demo reset, clear this app's local storage (site data on web or app
-data on Android) and relaunch. This restores the default selection and the same
-five profiles and one group. Selection is local to this device; it is not sign-in
-or multi-device membership.
+Storage/runtime failures remain in the app with an actionable retry path.
+
+## Local groups and settings
+
+Settings shows the current synthetic actor, group, and owner/member role. An
+owner can create a local group with a required name (80 characters maximum) and
+either a built-in prompt or a short custom prompt (160 characters maximum).
+Creation validates before persistence and commits the owner membership, group,
+and collecting cycle atomically. The cycle starts at creation and lasts exactly
+one day with the demo contribution allowance.
+
+Settings also provides a confirmed **Reset local Demo data** action. Reset
+removes the saved local Demo session, locally created groups, and local
+selection, accepted still-image metadata, and app-owned cached still files,
+then restores the deterministic fixture. It does not touch source files,
+migrations, or remote data.
+
+Settings also lets an owner generate a one-use local invitation code with a
+bounded expiry, copy it, and lets another active Demo member enter the code.
+Codes are bound to their group and rejected when malformed, expired, used, or
+cross-group.
+
+If the app cannot be opened far enough to reach Settings, clearing this app's
+local storage (site data on web or app data on Android) and relaunching restores
+the same fallback fixture. Selection is local to this device; it is not
+multi-device membership.
 
 ## Group capsule
 
-The Home screen reads the selected member's current synthetic group and cycle
-through the local repository boundary. It shows the group name, current prompt,
+The Home screen reads the active Demo session actor's current synthetic group
+and cycle through the local repository boundary. It shows the group name, current prompt,
 locally derived countdown, and member-scoped contribution allowance. Sprint 0
 seeds a collecting cycle with a five-contribution/30-second limit and zero
 usage. While the cycle is locked, the app shows only sealed placeholders and
@@ -114,21 +157,27 @@ text; it does not load or expose media, playback, or sharing actions.
 
 ## Repository map
 
-- `App.tsx` — low-fidelity Home screen, profile picker, main navigation, and explicit unavailable states.
+- `App.tsx` — local Demo access entry, Home/settings/group-create screens, main navigation, and explicit unavailable states.
 - `src/capsule/` — capsule loading states, countdown formatting, and Home summary.
-- `src/profiles/` — reusable profile picker and shared current-member provider.
-- `src/data/` — synthetic repositories and local selection storage.
+- `src/profiles/` — reusable synthetic-member picker and compatibility current-member provider.
+- `src/session/` — persisted Demo access lifecycle and local session storage.
+- `src/domain/groups.ts` — group/prompt validation and one-day cycle constants.
+- `src/data/` — synthetic repositories plus local group/session persistence adapters.
 - `src/runtime/` — typed local API client, repository adapters, and connection state UI.
+- `src/capture/` — capability/permission ports, Expo SDK 57 camera and file adapters, simulator fixture, still preview/metadata lifecycle, bounded portrait clip recording, review/trim/modes, and upload progress.
 - `src/domain/` — framework-independent profile, group, cycle, and storage interfaces.
 - `server/src/` — typed local HTTP service, configuration, SQLite access, FFmpeg probe, and policy.
 - `server/src/session/` — explicit local Demo access lifecycle and SQLite session boundary.
+- `server/src/cycles/` — injected-clock timing engine and owner-only demo control.
 - `server/src/audit/` and `server/src/jobs/` — redacted local diagnostics and audited job helpers.
 - `server/migrations/` and `server/fixtures/` — versioned schema and deterministic synthetic seed.
 - `src/theme.ts` — shared React Native color tokens mirrored by `DESIGN.md`.
-- `docs/architecture/` — local-first boundary decision.
+- `docs/architecture/` — local-first and camera capture boundary decisions.
 - `docs/domain/` — glossary and framework-independent contracts.
+- `scripts/check-architecture.mjs` — baseline framework/device boundary guard.
 - `planning/sprints/` — Sprint 1 extension, runtime gate, and fallback agreement.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
-scope. Camera capture, chat, archive playback, authentication, and cloud
-services remain follow-up work.
+scope. Chat, archive playback, authentication, and cloud services remain
+follow-up work; media remains local and the runtime stores only pending local
+clip jobs rather than cloud objects.

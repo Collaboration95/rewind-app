@@ -135,8 +135,13 @@ state. Values wrap on narrow screens and remain available to assistive tech.
 
 ### Forms and overlays
 
-No forms or overlays are part of this increment. Future capture and permission
-flows must establish their own contract before they are added.
+The local group form uses the same quiet paper panels as capsule data, with
+apricot focus/error edges and readable counters for bounded name/prompt input.
+Prompt choices are outlined native pressable rows; a custom prompt expands
+inside the panel without changing the page frame. The reset confirmation is an
+app-owned compact modal: warm paper surface, deep backdrop, benign cancel
+action first, and an explicit local-demo-data scope. Future capture and
+permission flows must establish their own contract before they are added.
 
 ### Iconography
 

@@ -12,6 +12,7 @@ import { demoRepository } from '../data/demo-repository';
 import type { Cycle, CycleRepository } from '../domain/cycles';
 import type { AsyncGroupRepository, Group, GroupRepository } from '../domain/profiles';
 import { useDemoProfile } from '../profiles/DemoProfileProvider';
+import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 
 export type CapsuleState =
   | { status: 'loading'; group: Group | null; cycle: null }
@@ -37,13 +38,15 @@ export function CapsuleProvider({
   cycleRepository?: CycleRepository;
 }) {
   const { currentMember } = useDemoProfile();
+  const demoSession = useOptionalDemoSession();
   const [state, setState] = useState<CapsuleState>({
     status: 'loading',
     group: null,
     cycle: null,
   });
   const requestId = useRef(0);
-  const memberId = currentMember?.id ?? null;
+  const memberId = demoSession?.session?.actor.memberId ?? currentMember?.id ?? null;
+  const preferredGroupId = demoSession?.session?.groupId;
 
   const load = useCallback(() => {
     const request = ++requestId.current;
@@ -56,7 +59,7 @@ export function CapsuleProvider({
     setState({ status: 'loading', group: null, cycle: null });
 
     Promise.resolve()
-      .then(() => groupRepository.getGroupForMember(memberId))
+      .then(() => groupRepository.getGroupForMember(memberId, preferredGroupId))
       .then((groupResult) => {
         if (request !== requestId.current) return;
 
@@ -95,7 +98,7 @@ export function CapsuleProvider({
           setState({ status: 'error', group: null, cycle: null });
         }
       });
-  }, [cycleRepository, groupRepository, memberId]);
+  }, [cycleRepository, groupRepository, memberId, preferredGroupId]);
 
   useEffect(() => {
     void Promise.resolve().then(load);

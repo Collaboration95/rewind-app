@@ -18,6 +18,7 @@ function clientWithHealth(getHealth: RuntimeClient['getHealth']): RuntimeClient 
     getHealth,
     getGroupForMember: jest.fn(),
     getCurrentCycle: jest.fn(),
+    advanceDemoCycle: jest.fn(),
   };
 }
 

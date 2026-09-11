@@ -5,15 +5,16 @@ import { resolve } from 'node:path';
 import type { RuntimeConfig } from './config';
 import { DEMO_SESSION_LIFETIME_MS } from './session/contract';
 
-const MIGRATIONS = [1, 2].map((version) => ({
-  version,
-  sql: readFileSync(
-    resolve(
-      process.cwd(),
-      `server/migrations/${String(version).padStart(3, '0')}-${version === 1 ? 'initial' : 'session-audit'}.sql`,
-    ),
-    'utf8',
-  ),
+const MIGRATION_FILES = [
+  '001-initial.sql',
+  '002-session-audit.sql',
+  '003-cycle-controls.sql',
+  '004-invites.sql',
+  '005-media-idempotency.sql',
+] as const;
+const MIGRATIONS = MIGRATION_FILES.map((fileName, index) => ({
+  version: index + 1,
+  sql: readFileSync(resolve(process.cwd(), 'server/migrations', fileName), 'utf8'),
 }));
 const FIXTURE = JSON.parse(
   readFileSync(resolve(process.cwd(), 'server/fixtures/demo-fixture.json'), 'utf8'),
@@ -121,8 +122,8 @@ export function seedDatabase(database: RewindDatabase): void {
     const membershipInsert = database.prepare(
       'INSERT INTO memberships (group_id, member_id, role, accepted_at) VALUES (?, ?, ?, ?)',
     );
-    for (const profile of FIXTURE.profiles) {
-      membershipInsert.run(FIXTURE.group.id, profile.id, 'member', now);
+    for (const [index, profile] of FIXTURE.profiles.entries()) {
+      membershipInsert.run(FIXTURE.group.id, profile.id, index === 0 ? 'owner' : 'member', now);
     }
 
     database
@@ -198,6 +199,34 @@ export function resetDatabase(config: RuntimeConfig): void {
   }
 }
 
+/** Restore only the SQLite-backed local fixture. Source files and migrations
+ * are never touched. This form is used by the in-process reset endpoint. */
+export function restoreFixture(database: RewindDatabase): void {
+  database.exec('BEGIN');
+  try {
+    for (const table of [
+      'reactions',
+      'messages',
+      'media_jobs',
+      'contributions',
+      'sessions',
+      'audit_events',
+      'invites',
+      'cycles',
+      'memberships',
+      'groups',
+      'profiles',
+    ]) {
+      database.exec(`DELETE FROM ${table}`);
+    }
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+  seedDatabase(database);
+}
+
 export function fixtureSummary(database: RewindDatabase): Record<string, number> {
   const tables = [
     'profiles',
@@ -238,7 +267,7 @@ export function listProfiles(database: RewindDatabase) {
     });
 }
 
-export function getGroup(database: RewindDatabase, groupId: string) {
+export function getGroup(database: RewindDatabase, groupId: string, actingMemberId?: string) {
   const group = database
     .prepare('SELECT id, name, current_cycle_id AS currentCycleId FROM groups WHERE id = ?')
     .get(groupId) as Record<string, unknown> | undefined;
@@ -247,11 +276,19 @@ export function getGroup(database: RewindDatabase, groupId: string) {
     .prepare('SELECT member_id AS memberId FROM memberships WHERE group_id = ? ORDER BY member_id')
     .all(groupId)
     .map((row) => String((row as { memberId: string }).memberId));
+  const actingMemberRole = actingMemberId
+    ? (
+        database
+          .prepare('SELECT role FROM memberships WHERE group_id = ? AND member_id = ?')
+          .get(groupId, actingMemberId) as { role?: string } | undefined
+      )?.role
+    : undefined;
   return {
     id: String(group.id),
     name: String(group.name),
     currentCycleId: String(group.currentCycleId),
     memberIds: members,
+    ...(actingMemberRole === 'owner' || actingMemberRole === 'member' ? { actingMemberRole } : {}),
   };
 }
 
@@ -286,6 +323,16 @@ export function isMember(database: RewindDatabase, groupId: string, memberId: st
     .prepare('SELECT 1 AS member FROM memberships WHERE group_id = ? AND member_id = ?')
     .get(groupId, memberId) as { member?: number } | undefined;
   return row?.member === 1;
+}
+
+export function isOwner(database: RewindDatabase, groupId: string, memberId: string): boolean {
+  const row = database
+    .prepare(
+      `SELECT 1 AS owner FROM memberships
+       WHERE group_id = ? AND member_id = ? AND role = 'owner' LIMIT 1`,
+    )
+    .get(groupId, memberId) as { owner?: number } | undefined;
+  return row?.owner === 1;
 }
 
 export function getMessage(database: RewindDatabase, groupId: string, messageId: string) {
