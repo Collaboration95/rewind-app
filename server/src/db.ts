@@ -9,6 +9,7 @@ const MIGRATION_FILES = [
   '001-initial.sql',
   '002-session-audit.sql',
   '003-cycle-controls.sql',
+  '004-invites.sql',
 ] as const;
 const MIGRATIONS = MIGRATION_FILES.map((fileName, index) => ({
   version: index + 1,
