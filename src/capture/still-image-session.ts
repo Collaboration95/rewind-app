@@ -92,7 +92,9 @@ export class StillImageCaptureSession {
   }
 
   async retake(): Promise<void> {
-    await this.cleanupActive();
+    // A saved still is durable. Retaking only releases the transient preview
+    // file; it must not remove the accepted metadata record.
+    await this.cleanupActive(!this.accepted);
   }
 
   async discard(): Promise<void> {
