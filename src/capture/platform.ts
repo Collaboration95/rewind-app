@@ -1,6 +1,7 @@
 import { Platform, Linking } from 'react-native';
 import { Camera, CameraView, type CameraCapturedPicture } from 'expo-camera';
 import * as Device from 'expo-device';
+import * as FileSystem from 'expo-file-system/legacy';
 
 import type {
   CameraPlatform,
@@ -126,6 +127,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
     const startedAt = Date.now();
     const video = await camera.recordAsync({ maxDuration: maxDurationSeconds, mute: false, quality: '480p' });
     if (!video) throw new Error('The recording was cancelled before a clip was saved.');
+    const info = await FileSystem.getInfoAsync(video.uri);
     const measuredDuration = (Date.now() - startedAt) / 1000;
     return {
       sourceUri: video.uri,
@@ -134,6 +136,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
       height: video.height ?? 1280,
       durationSeconds: Math.min(maxDurationSeconds, video.duration ?? measuredDuration),
       hasAudio: true,
+      byteLength: info.exists && !info.isDirectory ? info.size : undefined,
       source: 'camera',
     };
   }

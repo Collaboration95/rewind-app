@@ -23,6 +23,7 @@ import {
 } from './session';
 import { createGroup } from './groups';
 import { acceptInvite, createInvite } from './invites';
+import { cancelClipUpload, createClipUpload, type ClipUploadInput } from './media';
 
 export interface HealthPayload {
   ok: true;
@@ -422,6 +423,73 @@ export async function handleRequest(
       group: result.group,
       session: moved.session,
     });
+    return;
+  }
+
+  if (url.pathname === '/contributions/upload' && request.method === 'POST') {
+    const sessionId = url.searchParams.get('sessionId');
+    const groupId = url.searchParams.get('groupId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId);
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (!groupId) return sendDenied(response, config);
+    const body = await requestBody(request);
+    const input: ClipUploadInput = {
+      idempotencyKey: typeof body?.idempotencyKey === 'string' ? body.idempotencyKey : '',
+      sourceUri: typeof body?.sourceUri === 'string' ? body.sourceUri : '',
+      mimeType: typeof body?.mimeType === 'string' ? body.mimeType : '',
+      byteLength: typeof body?.byteLength === 'number' ? body.byteLength : Number.NaN,
+      durationSeconds:
+        typeof body?.durationSeconds === 'number' ? body.durationSeconds : Number.NaN,
+      width: typeof body?.width === 'number' ? body.width : Number.NaN,
+      height: typeof body?.height === 'number' ? body.height : Number.NaN,
+      hasAudio: body?.hasAudio === true,
+    };
+    const result = createClipUpload(
+      database,
+      groupId,
+      session.session.actor.memberId,
+      input,
+    );
+    if (!result.ok) {
+      if (result.reason === 'not_found') return sendNotFound(response, config);
+      sendJson(response, config, result.reason === 'quota_exceeded' ? 409 : 400, {
+        error: `upload_${result.reason}`,
+        message:
+          result.reason === 'quota_exceeded'
+            ? 'This cycle has no remaining contribution allowance.'
+            : result.reason === 'invalid_key'
+              ? 'Provide a retryable upload key.'
+              : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
+      });
+      return;
+    }
+    sendJson(response, config, result.upload.existing ? 200 : 201, {
+      upload: result.upload,
+    });
+    return;
+  }
+
+  const uploadCancelMatch = url.pathname.match(/^\/contributions\/upload\/([^/]+)$/);
+  if (uploadCancelMatch && request.method === 'DELETE') {
+    const jobId = decodePathSegment(uploadCancelMatch[1], response, config);
+    if (jobId === null) return;
+    const sessionId = url.searchParams.get('sessionId');
+    const groupId = url.searchParams.get('groupId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId);
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (!groupId) return sendDenied(response, config);
+    if (!authorize(database, response, config, groupId, session.session.actor.memberId, 'contribution'))
+      return;
+    const result = cancelClipUpload(
+      database,
+      groupId,
+      session.session.actor.memberId,
+      jobId,
+    );
+    if (!result.ok) return sendNotFound(response, config);
+    sendJson(response, config, 200, { cancelled: true, ...result });
     return;
   }
 

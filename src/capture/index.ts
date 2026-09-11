@@ -1,4 +1,5 @@
 export { CameraCaptureScreen } from './CameraCaptureScreen';
+export { VideoCaptureScreen } from './VideoCaptureScreen';
 export {
   CaptureCapabilityError,
   CaptureFileLifecycleError,
@@ -47,4 +48,12 @@ export {
   type TrimBounds,
   type TrimValidation,
 } from './video-review';
+export {
+  ClipUploadError,
+  ClipUploadSession,
+  MAX_CLIP_BYTES,
+  validateClipUploadInput,
+  type ClipUploadProgress,
+  type ClipUploadTransport,
+} from './clip-uploader';
 export { resetCaptureData } from './reset';

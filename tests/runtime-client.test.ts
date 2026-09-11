@@ -209,4 +209,38 @@ describe('LocalRuntimeClient', () => {
       ['http://localhost:8787/invites/accept?sessionId=session-2', 'POST'],
     ]);
   });
+
+  it('uploads and cancels a clip through the session-bound media route', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(
+        response(201, {
+          upload: {
+            existing: false,
+            contribution: { id: 'contribution-1', durationSeconds: 8 },
+            job: { id: 'job-1', status: 'pending' },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(response(200, { cancelled: true }));
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    const input = {
+      byteLength: 1024,
+      durationSeconds: 8,
+      hasAudio: true as const,
+      height: 1280,
+      idempotencyKey: 'retryable-1',
+      mimeType: 'video/mp4' as const,
+      sourceUri: 'file://clip.mp4',
+      width: 720,
+    };
+    await expect(client.uploadClip('session-1', 'demo-group', input)).resolves.toMatchObject({
+      job: { id: 'job-1' },
+    });
+    await expect(client.cancelClipUpload('session-1', 'demo-group', 'job-1')).resolves.toBeUndefined();
+    expect(fetchImpl.mock.calls.map(([url, init]) => [url, init?.method ?? 'GET'])).toEqual([
+      ['http://localhost:8787/contributions/upload?sessionId=session-1&groupId=demo-group', 'POST'],
+      ['http://localhost:8787/contributions/upload/job-1?sessionId=session-1&groupId=demo-group', 'DELETE'],
+    ]);
+  });
 });

@@ -20,7 +20,12 @@ import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
 import { DemoSessionProvider, useDemoSession } from './src/session/DemoSessionProvider';
-import { CameraCaptureScreen, DemoCameraPlatform, type CameraPlatform } from './src/capture';
+import {
+  CameraCaptureScreen,
+  DemoCameraPlatform,
+  VideoCaptureScreen,
+  type CameraPlatform,
+} from './src/capture';
 import {
   demoRepository,
   hydrateLocalDemoData,
@@ -174,7 +179,7 @@ function ActiveAppShell({
   runtimeClient: RuntimeClient | null;
   cameraPlatform?: CameraPlatform;
 }) {
-  const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group'>('home');
+  const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group' | 'video'>('home');
   const resolvedCameraPlatform = useMemo(() => {
     if (cameraPlatform) return cameraPlatform;
     if (typeof process !== 'undefined') {
@@ -206,12 +211,23 @@ function ActiveAppShell({
             runtimeClient={runtimeClient}
           />
         ) : activeRoute === 'camera' ? (
-          <CameraCaptureScreen platform={resolvedCameraPlatform} />
+          <CameraCaptureScreen
+            onRecordClip={() => setActiveRoute('video')}
+            platform={resolvedCameraPlatform}
+          />
+        ) : activeRoute === 'video' ? (
+          <VideoCaptureScreen
+            onBack={() => setActiveRoute('camera')}
+            platform={resolvedCameraPlatform}
+            runtimeClient={runtimeClient}
+          />
         ) : (
           <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
         )}
         <MainNavigation
-          activeRoute={activeRoute === 'create-group' ? 'settings' : activeRoute}
+          activeRoute={
+            activeRoute === 'create-group' || activeRoute === 'video' ? 'camera' : activeRoute
+          }
           onNavigate={setActiveRoute}
         />
       </View>
