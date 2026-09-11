@@ -276,7 +276,16 @@ export function DemoSessionProvider({
     async (groupId: string) => {
       if (!session) return;
       const next = { ...session, groupId };
-      await store.save(next);
+      try {
+        await store.save(next);
+      } catch (error) {
+        // The runtime/group mutation may already be committed. Keep the
+        // in-memory session pointer reconciled so a retry cannot create a
+        // duplicate group, while still letting callers report persistence
+        // degradation when they need to.
+        if (mounted.current) setSession(next);
+        throw error;
+      }
       if (mounted.current) setSession(next);
     },
     [session, store],

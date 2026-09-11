@@ -452,7 +452,13 @@ function GroupCreateScreen({
           throw storageError;
         }
       }
-      await updateGroup(result.group.id);
+      try {
+        await updateGroup(result.group.id);
+      } catch {
+        // Runtime creation is already committed. The provider keeps the
+        // in-memory pointer reconciled even if its local persistence fails,
+        // so this must not be presented as a failed/duplicable creation.
+      }
       retry();
       onCreated();
     } catch (error) {
