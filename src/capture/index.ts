@@ -36,4 +36,15 @@ export {
   type VideoRecordingPlatform,
   type VideoRecordingState,
 } from './video-recording';
+export {
+  AsyncStoragePendingClipMetadataStore,
+  CAPTURE_MODE_LABELS,
+  ClipReviewSession,
+  InMemoryPendingClipMetadataStore,
+  validateTrimBounds,
+  type PendingClipMetadata,
+  type PendingClipMetadataStore,
+  type TrimBounds,
+  type TrimValidation,
+} from './video-review';
 export { resetCaptureData } from './reset';

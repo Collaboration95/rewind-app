@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 import { IMAGE_METADATA_KEY } from './metadata-store';
 import { WebCaptureFileStore } from './file-store';
+import { PENDING_CLIP_METADATA_KEY } from './video-review';
 
 const CAPTURE_CACHE_FOLDER = 'rewind-stills';
 
@@ -13,7 +14,10 @@ const CAPTURE_CACHE_FOLDER = 'rewind-stills';
  */
 export async function resetCaptureData(): Promise<void> {
   WebCaptureFileStore.resetAll();
-  const operations: Promise<void>[] = [AsyncStorage.removeItem(IMAGE_METADATA_KEY)];
+  const operations: Promise<void>[] = [
+    AsyncStorage.removeItem(IMAGE_METADATA_KEY),
+    AsyncStorage.removeItem(PENDING_CLIP_METADATA_KEY),
+  ];
   const cacheDirectory = FileSystem.cacheDirectory;
   if (cacheDirectory) {
     operations.push(
