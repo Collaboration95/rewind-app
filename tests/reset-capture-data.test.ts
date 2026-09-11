@@ -26,5 +26,8 @@ describe('resetCaptureData', () => {
     expect(mockDeleteAsync).toHaveBeenCalledWith('file:///rewind-cache/rewind-stills/', {
       idempotent: true,
     });
+    expect(mockDeleteAsync).toHaveBeenCalledWith('file:///rewind-cache/rewind-clips/', {
+      idempotent: true,
+    });
   });
 });

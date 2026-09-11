@@ -132,7 +132,7 @@ one day with the demo contribution allowance.
 
 Settings also provides a confirmed **Reset local Demo data** action. Reset
 removes the saved local Demo session, locally created groups, and local
-selection, accepted still-image metadata, and app-owned cached still files,
+selection, accepted still-image metadata, and app-owned cached still and clip files,
 then restores the deterministic fixture. It does not touch source files,
 migrations, or remote data.
 

@@ -250,6 +250,19 @@ describe('VideoCaptureScreen', () => {
     expect(uploadClip).toHaveBeenCalledTimes(2);
   });
 
+  it('cancels a queued server job before retaking an uploaded clip', async () => {
+    const cancelClipUpload = jest.fn().mockResolvedValue(undefined);
+    const client = runtimeClient({ cancelClipUpload });
+    const result = await renderReviewWithRuntime(videoPlatformForReview(), client);
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByText('Upload queued as one pending contribution.');
+    await fireEvent.press(result.getByRole('button', { name: 'Retake' }));
+
+    await result.findByTestId('video-live-preview');
+    expect(cancelClipUpload).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
+  });
+
   it('cancels an active recording and ignores a late recorder completion', async () => {
     const platform = videoPlatformForReview();
     let resolveRecording!: (value: RecordedClip) => void;

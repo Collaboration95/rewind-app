@@ -38,8 +38,10 @@ export function validateClipUploadInput(input: ClipUploadInput): string | null {
     !Number.isFinite(input.durationSeconds) ||
     input.durationSeconds <= 0 ||
     input.durationSeconds > MAX_CLIP_DURATION_SECONDS ||
-    !Number.isFinite(input.width) ||
-    !Number.isFinite(input.height) ||
+    !Number.isInteger(input.width) ||
+    input.width <= 0 ||
+    !Number.isInteger(input.height) ||
+    input.height <= 0 ||
     input.width >= input.height ||
     input.hasAudio !== true
   ) {

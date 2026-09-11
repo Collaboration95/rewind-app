@@ -11,4 +11,5 @@ duration, orientation, and audio before creating a contribution and pending
 clip job. Upload requests carry an idempotency key. A retry returns the same
 pending job without consuming quota twice; cancellation removes the temporary
 job/contribution and releases its quota. Raw media paths are not durable
-metadata or cloud objects.
+metadata or cloud objects. App-owned native clip cache files are removed on
+retake, route exit, successful queueing, or local-data reset.

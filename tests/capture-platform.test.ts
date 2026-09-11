@@ -2,7 +2,12 @@ import { Platform } from 'react-native';
 import { Camera, CameraView } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import { PermissionStatus } from 'expo-modules-core';
-import { ExpoCameraPlatform, permissionState } from '../src/capture/platform';
+import {
+  ExpoCameraPlatform,
+  permissionState,
+  removeManagedRecordedClip,
+  VIDEO_CACHE_FOLDER,
+} from '../src/capture/platform';
 import type { CameraViewHandle } from '../src/capture/contracts';
 import { MAX_CLIP_DURATION_SECONDS } from '../src/domain/video';
 
@@ -21,7 +26,10 @@ jest.mock('expo-camera', () => ({
 jest.mock('expo-device', () => ({ isDevice: true }));
 
 jest.mock('expo-file-system/legacy', () => ({
+  copyAsync: jest.fn(),
+  deleteAsync: jest.fn(),
   getInfoAsync: jest.fn(),
+  makeDirectoryAsync: jest.fn(),
 }));
 
 function cameraHandle(overrides: Partial<CameraViewHandle> = {}): CameraViewHandle {
@@ -252,6 +260,40 @@ describe('Expo camera adapter contract', () => {
       width: 720,
     });
     expect(recordAsync).toHaveBeenCalledWith({ maxDuration: 10, mute: false, quality: '480p' });
+  });
+
+  it('moves native video into the app-owned cache and can remove it', async () => {
+    Object.defineProperty(FileSystem, 'cacheDirectory', {
+      configurable: true,
+      value: 'file:///rewind-cache/',
+    });
+    const copyAsync = jest.mocked(FileSystem.copyAsync);
+    const deleteAsync = jest.mocked(FileSystem.deleteAsync);
+    const makeDirectoryAsync = jest.mocked(FileSystem.makeDirectoryAsync);
+    const getInfoAsync = jest.mocked(FileSystem.getInfoAsync);
+    const recordAsync = jest.fn().mockResolvedValue({
+      duration: 4,
+      uri: 'file://temporary.mp4',
+    });
+    copyAsync.mockResolvedValue(undefined);
+    makeDirectoryAsync.mockResolvedValue(undefined);
+    getInfoAsync.mockResolvedValue({
+      exists: true,
+      isDirectory: false,
+      modificationTime: 1,
+      size: 42_000,
+      uri: 'file:///rewind-cache/rewind-clips/clip.mp4',
+    });
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => cameraHandle({ recordAsync }) });
+
+    const clip = await platform.recordClip();
+    expect(clip.sourceUri).toMatch(new RegExp(`/rewind-cache/${VIDEO_CACHE_FOLDER}/clip-`));
+    expect(copyAsync).toHaveBeenCalledWith({ from: 'file://temporary.mp4', to: clip.sourceUri });
+    expect(deleteAsync).toHaveBeenCalledWith('file://temporary.mp4', { idempotent: true });
+
+    await removeManagedRecordedClip(clip.sourceUri);
+    expect(deleteAsync).toHaveBeenCalledWith(clip.sourceUri, { idempotent: true });
+    Object.defineProperty(FileSystem, 'cacheDirectory', { configurable: true, value: undefined });
   });
 
   it('marks Expo video recording unsupported on web and never calls recordAsync', async () => {

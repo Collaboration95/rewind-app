@@ -9,7 +9,7 @@ import type { CaptureMode, ClipUploadInput, RecordedClip } from '../domain/video
 import { ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
 import { BoundedVideoRecordingSession, type VideoRecordingPlatform } from './video-recording';
 import { ClipReviewSession, InMemoryPendingClipMetadataStore } from './video-review';
-import { ExpoCameraPlatform } from './platform';
+import { ExpoCameraPlatform, removeManagedRecordedClip } from './platform';
 import type { CameraPlatform } from './contracts';
 
 type AccessStatus =
@@ -84,6 +84,7 @@ export function VideoCaptureScreen({
   // cleanup closure would miss an in-flight upload.
   const recorderRef = useRef(recorder);
   const uploadSessionRef = useRef(uploadSession);
+  const clipRef = useRef<RecordedClip | null>(clip);
   const activeUploadRef = useRef(false);
   const mountedRef = useRef(true);
   const captureLeftRef = useRef(false);
@@ -93,22 +94,29 @@ export function VideoCaptureScreen({
   useEffect(() => {
     uploadSessionRef.current = uploadSession;
   }, [uploadSession]);
+  useEffect(() => {
+    clipRef.current = clip;
+  }, [clip]);
 
   const isCaptureActive = useCallback(() => mountedRef.current && !captureLeftRef.current, []);
-  const cancelActiveWork = useCallback(() => {
-    if (captureLeftRef.current) return;
+  const cancelActiveWork = useCallback((): Promise<void> => {
+    if (captureLeftRef.current) return Promise.resolve();
     captureLeftRef.current = true;
     recorderRef.current?.cancel();
     if (activeUploadRef.current) {
       const cancellation = uploadSessionRef.current?.cancel();
-      if (cancellation) void cancellation.catch(() => undefined);
+      return cancellation?.catch(() => undefined) ?? Promise.resolve();
     }
+    return Promise.resolve();
   }, []);
 
   useEffect(() => {
     return () => {
       mountedRef.current = false;
-      cancelActiveWork();
+      void cancelActiveWork().finally(() => {
+        const sourceUri = clipRef.current?.sourceUri;
+        if (sourceUri) void removeManagedRecordedClip(sourceUri).catch(() => undefined);
+      });
     };
   }, [cancelActiveWork]);
 
@@ -232,8 +240,32 @@ export function VideoCaptureScreen({
   };
 
   const retake = async () => {
+    const currentClip = clip;
+    if (
+      uploadSession &&
+      uploadProgress.status !== 'idle' &&
+      uploadProgress.status !== 'cancelled'
+    ) {
+      activeUploadRef.current = false;
+      try {
+        await uploadSession.cancel();
+      } catch (cancelError) {
+        setError(
+          cancelError instanceof Error
+            ? `The queued clip could not be cancelled. ${cancelError.message}`
+            : 'The queued clip could not be cancelled. Try again.',
+        );
+        return;
+      }
+    }
     await review?.retake();
     if (!isCaptureActive()) return;
+    try {
+      if (currentClip) await removeManagedRecordedClip(currentClip.sourceUri);
+    } catch {
+      setError('The clip could not be removed from local storage. Try again.');
+      return;
+    }
     recorder?.reset();
     setClip(null);
     setReview(null);
@@ -279,6 +311,11 @@ export function VideoCaptureScreen({
       await uploadSession.upload(input, (progress) => {
         if (isCaptureActive() && activeUploadRef.current) setUploadProgress(progress);
       });
+      try {
+        await removeManagedRecordedClip(clip.sourceUri);
+      } catch {
+        setError('The queued clip is ready, but its local cache file could not be removed.');
+      }
     } catch (uploadError) {
       if (!isCaptureActive()) return;
       setError(
@@ -327,7 +364,10 @@ export function VideoCaptureScreen({
   }, [isCaptureActive, uploadProgress.status, uploadSession]);
 
   const leaveCapture = useCallback(() => {
-    cancelActiveWork();
+    const currentClip = clipRef.current;
+    void cancelActiveWork().finally(() => {
+      if (currentClip) void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
+    });
     onBack?.();
   }, [cancelActiveWork, onBack]);
 

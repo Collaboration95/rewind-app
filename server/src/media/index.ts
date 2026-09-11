@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { cyclePhase } from '../cycles/engine';
 import { getCurrentCycle, isMember } from '../db';
 import type { RewindDatabase } from '../db';
 
@@ -102,8 +103,10 @@ export function validateClipUpload(input: ClipUploadInput): ClipUploadResult | n
     !Number.isFinite(input.durationSeconds) ||
     input.durationSeconds <= 0 ||
     input.durationSeconds > MAX_CLIP_DURATION_SECONDS ||
-    !Number.isFinite(input.width) ||
-    !Number.isFinite(input.height) ||
+    !Number.isInteger(input.width) ||
+    input.width <= 0 ||
+    !Number.isInteger(input.height) ||
+    input.height <= 0 ||
     input.width >= input.height ||
     input.hasAudio !== true
   ) {
@@ -147,7 +150,17 @@ export function createClipUpload(
   const existing = existingUpload(database, input.idempotencyKey, groupId, memberId);
   if (existing) return { ok: true, upload: existing };
   const cycle = getCurrentCycle(database, groupId);
-  if (!cycle || cycle.status !== 'collecting') return { ok: false, reason: 'not_found' };
+  const phase = cycle
+    ? cyclePhase(
+        {
+          startsAt: cycle.startsAt,
+          endsAt: cycle.endsAt,
+          status: cycle.status as 'collecting' | 'revealing' | 'archived',
+        },
+        now,
+      )
+    : null;
+  if (!cycle || phase !== 'collecting') return { ok: false, reason: 'not_found' };
   if (
     cycle.contributionUsage.countUsed + 1 > cycle.quota.maxCount ||
     cycle.contributionUsage.secondsUsed + input.durationSeconds > cycle.quota.maxSeconds

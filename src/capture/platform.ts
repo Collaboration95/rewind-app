@@ -13,6 +13,53 @@ import type {
 } from './contracts';
 import type { RecordedClip } from '../domain/video';
 
+export const VIDEO_CACHE_FOLDER = 'rewind-clips';
+
+function managedVideoId(): string {
+  return `clip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function moveVideoToManagedCache(sourceUri: string): Promise<{
+  uri: string;
+  byteLength?: number;
+}> {
+  const cacheDirectory = FileSystem.cacheDirectory;
+  if (!cacheDirectory) {
+    const info = await FileSystem.getInfoAsync(sourceUri);
+    return {
+      uri: sourceUri,
+      byteLength: info.exists && !info.isDirectory ? info.size : undefined,
+    };
+  }
+
+  const folder = `${cacheDirectory}${VIDEO_CACHE_FOLDER}/`;
+  const destination = `${folder}${managedVideoId()}.mp4`;
+  try {
+    await FileSystem.makeDirectoryAsync(folder, { intermediates: true });
+    await FileSystem.copyAsync({ from: sourceUri, to: destination });
+    const info = await FileSystem.getInfoAsync(destination);
+    if (!info.exists || info.isDirectory || info.size <= 0) {
+      throw new Error('The recorded video is empty.');
+    }
+    if (sourceUri !== destination) {
+      await FileSystem.deleteAsync(sourceUri, { idempotent: true });
+    }
+    return { uri: destination, byteLength: info.size };
+  } catch (error) {
+    await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
+    if (error instanceof Error && error.message === 'The recorded video is empty.') throw error;
+    throw new Error(
+      'The recorded video could not be saved in app storage. Try recording it again.',
+    );
+  }
+}
+
+export async function removeManagedRecordedClip(uri: string): Promise<void> {
+  const cacheDirectory = FileSystem.cacheDirectory;
+  if (!cacheDirectory || !uri.startsWith(`${cacheDirectory}${VIDEO_CACHE_FOLDER}/`)) return;
+  await FileSystem.deleteAsync(uri, { idempotent: true });
+}
+
 export function permissionState(response: {
   status: string;
   canAskAgain?: boolean;
@@ -135,16 +182,16 @@ export class ExpoCameraPlatform implements CameraPlatform {
       quality: '480p',
     });
     if (!video) throw new Error('The recording was cancelled before a clip was saved.');
-    const info = await FileSystem.getInfoAsync(video.uri);
+    const managed = await moveVideoToManagedCache(video.uri);
     const measuredDuration = (Date.now() - startedAt) / 1000;
     return {
-      sourceUri: video.uri,
+      sourceUri: managed.uri,
       format: 'mp4',
       width: video.width ?? 720,
       height: video.height ?? 1280,
       durationSeconds: Math.min(maxDurationSeconds, video.duration ?? measuredDuration),
       hasAudio: true,
-      byteLength: info.exists && !info.isDirectory ? info.size : undefined,
+      byteLength: managed.byteLength,
       source: 'camera',
     };
   }
