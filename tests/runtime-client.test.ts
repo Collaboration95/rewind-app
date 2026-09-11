@@ -158,4 +158,55 @@ describe('LocalRuntimeClient', () => {
       kind: 'OwnerControlDenied',
     });
   });
+
+  it('creates and accepts session-bound local invites', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(
+        response(201, {
+          invite: {
+            id: 'invite-ab12cd34',
+            code: 'AB12CD34',
+            groupId: 'demo-group',
+            status: 'active',
+            createdAt: '2026-09-10T12:00:00.000Z',
+            expiresAt: '2026-09-10T12:10:00.000Z',
+            usedAt: null,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        response(200, {
+          invite: {
+            id: 'invite-ab12cd34',
+            code: 'AB12CD34',
+            groupId: 'demo-group',
+            status: 'used',
+            createdAt: '2026-09-10T12:00:00.000Z',
+            expiresAt: '2026-09-10T12:10:00.000Z',
+            usedAt: '2026-09-10T12:01:00.000Z',
+          },
+          group: {
+            id: 'demo-group',
+            name: 'Weekend People',
+            memberIds: ['demo-1', 'demo-2'],
+            currentCycleId: 'demo-cycle',
+            actingMemberRole: 'member',
+          },
+          session: { id: 'session-2', groupId: 'demo-group' },
+        }),
+      );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.createInvite('session-1', 'demo-group', 600)).resolves.toMatchObject({
+      code: 'AB12CD34',
+    });
+    await expect(client.acceptInvite('session-2', 'AB12CD34')).resolves.toMatchObject({
+      invite: { status: 'used' },
+      session: { groupId: 'demo-group' },
+    });
+    expect(fetchImpl.mock.calls.map(([url, init]) => [url, init?.method ?? 'GET'])).toEqual([
+      ['http://localhost:8787/invites?sessionId=session-1&groupId=demo-group', 'POST'],
+      ['http://localhost:8787/invites/accept?sessionId=session-2', 'POST'],
+    ]);
+  });
 });
