@@ -49,6 +49,19 @@ function safeError(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+/**
+ * Ending access and resetting local data are recovery operations. If the
+ * runtime no longer knows the session, has already handled the request, or
+ * cannot be reached, local state must still be cleared so the user can enter
+ * again. Other runtime failures remain visible and preserve the active state.
+ */
+function canClearAfterRuntimeFailure(error: unknown): boolean {
+  return (
+    error instanceof LocalRuntimeError &&
+    (error.status === undefined || error.status === 401 || error.status === 404 || error.status === 409)
+  );
+}
+
 export function DemoSessionProvider({
   children,
   runtimeClient = null,
@@ -188,15 +201,25 @@ export function DemoSessionProvider({
       if (session && runtimeClient?.invalidateDemoSession) {
         await runtimeClient.invalidateDemoSession(session.id);
       }
+    } catch (signOutError) {
+      if (!canClearAfterRuntimeFailure(signOutError)) {
+        if (mounted.current) {
+          setStatus('active');
+          setError(safeError(signOutError, 'Demo access could not be ended. Retry sign out.'));
+        }
+        return;
+      }
+    }
+    try {
       await store.clear();
       if (mounted.current) {
         setSession(null);
         setStatus('entry');
       }
-    } catch (signOutError) {
+    } catch (clearError) {
       if (mounted.current) {
         setStatus('active');
-        setError(safeError(signOutError, 'Demo access could not be ended. Retry sign out.'));
+        setError(safeError(clearError, 'Demo access could not be ended. Retry sign out.'));
       }
     } finally {
       if (mounted.current) setPending(false);
@@ -211,6 +234,16 @@ export function DemoSessionProvider({
       if (session && runtimeClient?.resetDemoData) {
         await runtimeClient.resetDemoData(session.id);
       }
+    } catch (resetError) {
+      if (!canClearAfterRuntimeFailure(resetError)) {
+        if (mounted.current) {
+          setStatus('active');
+          setError(safeError(resetError, 'Local Demo data could not be reset. Retry the reset.'));
+        }
+        return false;
+      }
+    }
+    try {
       await resetCaptureData();
       await resetLocalDemoData();
       await localGroupStore.clear();
