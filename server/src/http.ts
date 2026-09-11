@@ -76,6 +76,25 @@ function sendBadRequest(response: ServerResponse, config: RuntimeConfig): void {
   });
 }
 
+function decodePathSegment(
+  encodedSegment: string,
+  response: ServerResponse,
+  config: RuntimeConfig,
+): string | null {
+  try {
+    return decodeURIComponent(encodedSegment);
+  } catch (error) {
+    if (error instanceof URIError) {
+      sendJson(response, config, 400, {
+        error: 'invalid_request',
+        message: 'The request contains a malformed path segment.',
+      });
+      return null;
+    }
+    throw error;
+  }
+}
+
 function sendSessionRequired(response: ServerResponse, config: RuntimeConfig): void {
   sendJson(response, config, 401, {
     error: 'session_required',
@@ -221,7 +240,8 @@ export async function handleRequest(
 
   const sessionMatch = url.pathname.match(/^\/sessions\/([^/]+)$/);
   if (sessionMatch) {
-    const sessionId = decodeURIComponent(sessionMatch[1]);
+    const sessionId = decodePathSegment(sessionMatch[1], response, config);
+    if (sessionId === null) return;
     if (request.method === 'GET') {
       const result = validateDemoSession(database, sessionId);
       if (result.status === 'valid') {
@@ -392,7 +412,8 @@ export async function handleRequest(
 
   const groupMatch = url.pathname.match(/^\/groups\/([^/]+)$/);
   if (groupMatch) {
-    const groupId = decodeURIComponent(groupMatch[1]);
+    const groupId = decodePathSegment(groupMatch[1], response, config);
+    if (groupId === null) return;
     const memberId = sessionMember(database, url);
     if (!authorize(database, response, config, groupId, memberId, 'group')) return;
     const group = getGroup(database, groupId, memberId ?? undefined);
@@ -417,6 +438,8 @@ export async function handleRequest(
 
   const messageMatch = url.pathname.match(/^\/messages\/([^/]+)$/);
   if (messageMatch) {
+    const messageId = decodePathSegment(messageMatch[1], response, config);
+    if (messageId === null) return;
     const groupId = url.searchParams.get('groupId');
     if (!groupId) {
       sendDenied(response, config);
@@ -424,7 +447,7 @@ export async function handleRequest(
     }
     if (!authorize(database, response, config, groupId, sessionMember(database, url), 'message'))
       return;
-    const message = getMessage(database, groupId, decodeURIComponent(messageMatch[1]));
+    const message = getMessage(database, groupId, messageId);
     if (!message) return sendNotFound(response, config);
     sendJson(response, config, 200, { message });
     return;
@@ -432,6 +455,8 @@ export async function handleRequest(
 
   const contributionMatch = url.pathname.match(/^\/contributions\/([^/]+)$/);
   if (contributionMatch) {
+    const contributionId = decodePathSegment(contributionMatch[1], response, config);
+    if (contributionId === null) return;
     const groupId = url.searchParams.get('groupId');
     if (!groupId) {
       sendDenied(response, config);
@@ -444,7 +469,7 @@ export async function handleRequest(
     const contribution = getContribution(
       database,
       groupId,
-      decodeURIComponent(contributionMatch[1]),
+      contributionId,
     );
     if (!contribution) return sendNotFound(response, config);
     sendJson(response, config, 200, { contribution });
@@ -454,6 +479,8 @@ export async function handleRequest(
   for (const resource of ['clip', 'film', 'download'] as const) {
     const match = url.pathname.match(new RegExp(`^\\/${resource}s\\/([^/]+)$`));
     if (match) {
+      const resourceId = decodePathSegment(match[1], response, config);
+      if (resourceId === null) return;
       const groupId = url.searchParams.get('groupId');
       if (!groupId) {
         sendDenied(response, config);
@@ -461,7 +488,7 @@ export async function handleRequest(
       }
       if (!authorize(database, response, config, groupId, sessionMember(database, url), resource))
         return;
-      const job = getMediaJob(database, groupId, decodeURIComponent(match[1]), resource);
+      const job = getMediaJob(database, groupId, resourceId, resource);
       if (!job) return sendNotFound(response, config);
       sendJson(response, config, 200, { [resource]: job });
       return;

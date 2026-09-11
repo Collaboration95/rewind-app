@@ -140,6 +140,33 @@ test('every protected endpoint category returns the same safe denial to a non-me
   });
 });
 
+test('malformed percent-encoded path segments return a client error for every route family', async () => {
+  await withRuntime(async ({ baseUrl }) => {
+    const malformed = '%E0%A4%A';
+    const paths = [
+      `/sessions/${malformed}`,
+      `/groups/${malformed}?memberId=demo-1`,
+      `/messages/${malformed}?groupId=demo-group&memberId=demo-1`,
+      `/contributions/${malformed}?groupId=demo-group&memberId=demo-1`,
+      `/clips/${malformed}?groupId=demo-group&memberId=demo-1`,
+      `/films/${malformed}?groupId=demo-group&memberId=demo-1`,
+      `/downloads/${malformed}?groupId=demo-group&memberId=demo-1`,
+    ];
+    for (const path of paths) {
+      const response = await fetch(`${baseUrl}${path}`);
+      assert.equal(response.status, 400, path);
+      assert.deepEqual(await response.json(), {
+        error: 'invalid_request',
+        message: 'The request contains a malformed path segment.',
+      });
+    }
+
+    const encodedValid = await fetch(`${baseUrl}/groups/%64emo-group?memberId=demo-1`);
+    assert.equal(encodedValid.status, 200);
+    assert.equal((await encodedValid.json()).group.id, 'demo-group');
+  });
+});
+
 test('local group creation validates before writing and creates an owner one-day cycle atomically', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-group-test-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
