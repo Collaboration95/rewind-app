@@ -126,7 +126,11 @@ function videoPlatformForReview(): TestVideoPlatform {
 
 async function renderReviewWithRuntime(videoPlatform: TestVideoPlatform, client: RuntimeClient) {
   const result = await render(
-    <DemoSessionProvider runtimeClient={client} store={demoSessionStore()}>
+    <DemoSessionProvider
+      clock={() => new Date('2026-09-11T12:00:00.000Z')}
+      runtimeClient={client}
+      store={demoSessionStore()}
+    >
       <SessionReadyMarker />
       <VideoCaptureScreen platform={videoPlatform} runtimeClient={client} />
     </DemoSessionProvider>,

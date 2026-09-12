@@ -105,7 +105,9 @@ test('clip upload rejects ended cycles and malformed dimensions before writing',
 
 test('HTTP clip upload requires a session and cancellation releases quota for retry', async () => {
   await withDatabase(async ({ config, database }) => {
-    const server = createRuntimeServer(config, database);
+    const server = createRuntimeServer(config, database, {
+      now: () => new Date('2026-09-10T12:00:00.000Z'),
+    });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address();

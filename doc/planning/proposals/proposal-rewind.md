@@ -16,14 +16,14 @@
 
 ## 2. Sponsor and project members
 
-| Role | Name/contact | Responsibility |
-|---|---|---|
-| Sponsor | To be confirmed / no company sponsor assumed | Target-user feedback, if available |
-| Member A | To be confirmed | OIDC, groups, invitations, and access-policy design |
-| Member B | To be confirmed | Camera capture, contribution lifecycle, and budget rules |
-| Member C | To be confirmed | Media processing, compilation, archive, and job workflow |
-| Member D | To be confirmed | Chat, prompts, reminders, and notification policy |
-| Member E | To be confirmed | Mobile/PWA experience, archive states, and accessibility |
+| Role     | Name/contact                                 | Responsibility                                           |
+| -------- | -------------------------------------------- | -------------------------------------------------------- |
+| Sponsor  | To be confirmed / no company sponsor assumed | Target-user feedback, if available                       |
+| Member A | To be confirmed                              | OIDC, groups, invitations, and access-policy design      |
+| Member B | To be confirmed                              | Camera capture, contribution lifecycle, and budget rules |
+| Member C | To be confirmed                              | Media processing, compilation, archive, and job workflow |
+| Member D | To be confirmed                              | Chat, prompts, reminders, and notification policy        |
+| Member E | To be confirmed                              | Mobile/PWA experience, archive states, and accessibility |
 
 ## 3. Overview
 
@@ -71,13 +71,13 @@ source code, or exact filter recipes.
 
 ### 3.3 Stakeholders
 
-| Stakeholder | Need/interest | Involvement |
-|---|---|---|
-| Young adult friend group | Maintain low-pressure, genuine connection across distance | Primary user and pilot-test persona |
-| Group owner | Create private group, invite users, name group, and choose prompts | Defines ownership/invitation scenarios |
-| Group member | Capture a moment, receive a reminder, and view released group memories | Defines core acceptance flows |
-| Platform operator | Deploy and recover service without viewing private media | Uses health checks, safe logs, and job metrics |
-| Lecturer/reviewer | Assess scope, engineering design, implementation, and evidence | Reviews proposal, demo, report, and presentation |
+| Stakeholder              | Need/interest                                                          | Involvement                                      |
+| ------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------ |
+| Young adult friend group | Maintain low-pressure, genuine connection across distance              | Primary user and pilot-test persona              |
+| Group owner              | Create private group, invite users, name group, and choose prompts     | Defines ownership/invitation scenarios           |
+| Group member             | Capture a moment, receive a reminder, and view released group memories | Defines core acceptance flows                    |
+| Platform operator        | Deploy and recover service without viewing private media               | Uses health checks, safe logs, and job metrics   |
+| Lecturer/reviewer        | Assess scope, engineering design, implementation, and evidence         | Reviews proposal, demo, report, and presentation |
 
 ### 3.4 Constraints and assumptions
 
@@ -124,16 +124,16 @@ the worker handles slow or failure-prone media and scheduling work.
       -> cycle-end compilation job: order clips, add labelled archive filler,
          normalise audio, compile/publish film, or report safe delayed status
 
-| Area | Candidate | Rationale |
-|---|---|---|
-| Client | React Native, Expo, TypeScript | One codebase for the Android native app and installable web/PWA; future native iOS path |
-| API and worker | TypeScript service with FFmpeg media worker | Shared types and explicit control of domain/media rules |
-| Identity | Amazon Cognito User Pools through OIDC | Managed standard identity without building password storage |
-| Database | PostgreSQL | Groups, memberships, clips, jobs, prompts, chat, and audit metadata |
-| Media | Private Amazon S3 object storage | Controlled temporary uploads and private processed clips/films |
-| Scheduler/queue | Amazon EventBridge Scheduler and Amazon SQS | Isolates retries, reminders, and media jobs |
-| Notifications | Expo/FCM for Android; standards-based Web Push for installed PWA | Provider adapters keep platform-specific delivery behind a common notification policy |
-| Delivery | Docker, Terraform, Git-based CI/CD | Repeatable infrastructure and delivery evidence |
+| Area            | Candidate                                                        | Rationale                                                                               |
+| --------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Client          | React Native, Expo, TypeScript                                   | One codebase for the Android native app and installable web/PWA; future native iOS path |
+| API and worker  | TypeScript service with FFmpeg media worker                      | Shared types and explicit control of domain/media rules                                 |
+| Identity        | Amazon Cognito User Pools through OIDC                           | Managed standard identity without building password storage                             |
+| Database        | PostgreSQL                                                       | Groups, memberships, clips, jobs, prompts, chat, and audit metadata                     |
+| Media           | Private Amazon S3 object storage                                 | Controlled temporary uploads and private processed clips/films                          |
+| Scheduler/queue | Amazon EventBridge Scheduler and Amazon SQS                      | Isolates retries, reminders, and media jobs                                             |
+| Notifications   | Expo/FCM for Android; standards-based Web Push for installed PWA | Provider adapters keep platform-specific delivery behind a common notification policy   |
+| Delivery        | Docker, Terraform, Git-based CI/CD                               | Repeatable infrastructure and delivery evidence                                         |
 
 Clips are vertical 720p, up to 15 seconds, and may be trimmed before submission.
 The client uploads a temporary source after capture; the FFmpeg worker applies
@@ -144,28 +144,28 @@ Live filter previews are stretch scope.
 
 ### 5.1 Finished core scope
 
-| ID | Requirement | Demonstrable acceptance outcome |
-|---|---|---|
-| FR-01 | Identity and private groups | A user signs in through OIDC and cannot access another group's data, chat, media, or downloads. |
-| FR-02 | Create group and invite | The creator is one owner, can name the group/select prompts, and issues an expiring invitation link. |
-| FR-03 | In-app capture | A member selects an original retro mode, records and trims a vertical clip, and uploads the temporary source using a short-lived upload URL. The asynchronous media worker applies the selected retro treatment, validates/transcodes the result, retains the processed clip, and removes the temporary unfiltered source after successful processing. Gallery import is fixture support only. |
-| FR-04 | Contribution lifecycle | The system enforces weekly clip/time limits, permits one delete-and-recapture, and locks media before release. |
-| FR-05 | Prompts and reminders | Owner selects a library or short custom prompt; members receive a Sunday 7pm local-time reminder and can snooze/disable it. Android app notifications use the native provider; installed PWA clients use standards-based Web Push where supported. On iOS, Web Push requires Rewind to be installed as a Home Screen web app. |
-| FR-06 | Group chat | Authorised members exchange text messages, reactions, and replies. |
-| FR-07 | Automatic film | At cycle end, the worker orders clips, normalises audio, compiles/releases the group film, and starts the next cycle. |
-| FR-08 | Recovery and filler | Compilation jobs retry; bounded failures show a delayed-release status. Short films may use clearly labelled From the archive clips. |
-| FR-09 | Archive and download | Members view released films and download the group film or their own processed clips. |
-| FR-10 | Safe operations | Operators inspect health, jobs, latency, and notification outcomes without viewing private media or secrets. |
+| ID    | Requirement                 | Demonstrable acceptance outcome                                                                                                                                                                                                                                                                                                                                                                |
+| ----- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR-01 | Identity and private groups | A user signs in through OIDC and cannot access another group's data, chat, media, or downloads.                                                                                                                                                                                                                                                                                                |
+| FR-02 | Create group and invite     | The creator is one owner, can name the group/select prompts, and issues an expiring invitation link.                                                                                                                                                                                                                                                                                           |
+| FR-03 | In-app capture              | A member selects an original retro mode, records and trims a vertical clip, and uploads the temporary source using a short-lived upload URL. The asynchronous media worker applies the selected retro treatment, validates/transcodes the result, retains the processed clip, and removes the temporary unfiltered source after successful processing. Gallery import is fixture support only. |
+| FR-04 | Contribution lifecycle      | The system enforces weekly clip/time limits, permits one delete-and-recapture, and locks media before release.                                                                                                                                                                                                                                                                                 |
+| FR-05 | Prompts and reminders       | Owner selects a library or short custom prompt; members receive a Sunday 7pm local-time reminder and can snooze/disable it. Android app notifications use the native provider; installed PWA clients use standards-based Web Push where supported. On iOS, Web Push requires Rewind to be installed as a Home Screen web app.                                                                  |
+| FR-06 | Group chat                  | Authorised members exchange text messages, reactions, and replies.                                                                                                                                                                                                                                                                                                                             |
+| FR-07 | Automatic film              | At cycle end, the worker orders clips, normalises audio, compiles/releases the group film, and starts the next cycle.                                                                                                                                                                                                                                                                          |
+| FR-08 | Recovery and filler         | Compilation jobs retry; bounded failures show a delayed-release status. Short films may use clearly labelled From the archive clips.                                                                                                                                                                                                                                                           |
+| FR-09 | Archive and download        | Members view released films and download the group film or their own processed clips.                                                                                                                                                                                                                                                                                                          |
+| FR-10 | Safe operations             | Operators inspect health, jobs, latency, and notification outcomes without viewing private media or secrets.                                                                                                                                                                                                                                                                                   |
 
 ### 5.2 Primary use cases and ownership
 
-| Use case | Primary actor | Main flow | Owner |
-|---|---|---|---|
-| UC-01 Sign in, create group, invite member | Group owner | Authenticate, create private group, issue and accept valid invite | Member A |
-| UC-02 Capture and lock contribution | Member | Select mode, record/trim/upload/process, enforce budget, show locked metadata | Member B |
-| UC-03 Compile and publish time capsule | Worker/operator | Validate inputs, process/retry compilation, publish or safely delay film | Member C |
-| UC-04 Choose prompt and deliver reminder | Owner/member | Select prompt, schedule/send/retry notification, respect settings | Member D |
-| UC-05 Chat and view/download archive | Member | Send/reply/react, render archive state, obtain authorised download | Member E |
+| Use case                                   | Primary actor   | Main flow                                                                     | Owner    |
+| ------------------------------------------ | --------------- | ----------------------------------------------------------------------------- | -------- |
+| UC-01 Sign in, create group, invite member | Group owner     | Authenticate, create private group, issue and accept valid invite             | Member A |
+| UC-02 Capture and lock contribution        | Member          | Select mode, record/trim/upload/process, enforce budget, show locked metadata | Member B |
+| UC-03 Compile and publish time capsule     | Worker/operator | Validate inputs, process/retry compilation, publish or safely delay film      | Member C |
+| UC-04 Choose prompt and deliver reminder   | Owner/member    | Select prompt, schedule/send/retry notification, respect settings             | Member D |
+| UC-05 Chat and view/download archive       | Member          | Send/reply/react, render archive state, obtain authorised download            | Member E |
 
 Important exceptional flows include invalid/cross-group invites, cross-group access,
 oversize or interrupted upload, exceeded budget, second deletion, no archive
@@ -222,36 +222,36 @@ a clean cloud deployment can demonstrate:
 
 ## 6. Quality attributes and acceptance targets
 
-| Quality attribute | Target/test |
-|---|---|
-| Privacy and access control | Automated negative tests prove non-members cannot access another group's chat, clip, signed URL, archive, or download. |
-| Reliability | Contribution/compilation work is idempotent and retryable; no failed or partial result is released. |
-| Performance | On five-user fixtures, metadata/chat APIs target p95 below 2 seconds; the one-day test-cycle film completes in a documented bounded window. |
+| Quality attribute            | Target/test                                                                                                                                                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Privacy and access control   | Automated negative tests prove non-members cannot access another group's chat, clip, signed URL, archive, or download.                                                                                                                               |
+| Reliability                  | Contribution/compilation work is idempotent and retryable; no failed or partial result is released.                                                                                                                                                  |
+| Performance                  | On five-user fixtures, metadata/chat APIs target p95 below 2 seconds; the one-day test-cycle film completes in a documented bounded window.                                                                                                          |
 | Cross-platform compatibility | The complete capture → upload → lock → reveal → playback flow passes on the Android APK and an installed iPhone PWA using physical devices. Platform-specific capabilities such as notifications are exercised through their corresponding adapters. |
-| Usability | Pilot users can join, capture, understand locked status, and find a released film without command-line help. |
-| Maintainability | Typed contracts, modular boundaries, tests for each use case, at least 70% application-code coverage, and stronger coverage for state/policy/worker logic. |
-| Observability | Correlation IDs, safe logs, health, job state, processing duration, notification receipts, and actionable safe errors. |
-| Repeatable delivery | Versioned infrastructure deploys a tested artifact and runs authenticated synthetic smoke tests. |
+| Usability                    | Pilot users can join, capture, understand locked status, and find a released film without command-line help.                                                                                                                                         |
+| Maintainability              | Typed contracts, modular boundaries, tests for each use case, at least 70% application-code coverage, and stronger coverage for state/policy/worker logic.                                                                                           |
+| Observability                | Correlation IDs, safe logs, health, job state, processing duration, notification receipts, and actionable safe errors.                                                                                                                               |
+| Repeatable delivery          | Versioned infrastructure deploys a tested artifact and runs authenticated synthetic smoke tests.                                                                                                                                                     |
 
 ## 7. Course alignment and evidence
 
-| Course area | Planned evidence |
-|---|---|
-| Agile Practices | Backlog, user stories/acceptance criteria, short sprints, estimates, burndown, reviews, retrospectives, working increments, CI history, TDD/pair-review/refactoring evidence. |
+| Course area                  | Planned evidence                                                                                                                                                               |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Agile Practices              | Backlog, user stories/acceptance criteria, short sprints, estimates, burndown, reviews, retrospectives, working increments, CI history, TDD/pair-review/refactoring evidence.  |
 | Software Analysis and Design | Stakeholders, use-case diagram/descriptions, domain/database model, architecture, transition strategies, and analysis/design class/sequence diagrams for every owned use case. |
-| Software Design Patterns | Five design problems with alternatives, rationale, before/after diagrams, and running implementation. |
-| DevSecOps | Git/PR strategy, tests, lint/type checks, SCA, secret scanning, SAST, image scan, SBOM, Terraform, cloud deployment, smoke tests, rollback notes, and safe monitoring. |
-| AI disclosure | Clear course-required declaration of assistance and human review/testing responsibility. |
+| Software Design Patterns     | Five design problems with alternatives, rationale, before/after diagrams, and running implementation.                                                                          |
+| DevSecOps                    | Git/PR strategy, tests, lint/type checks, SCA, secret scanning, SAST, image scan, SBOM, Terraform, cloud deployment, smoke tests, rollback notes, and safe monitoring.         |
+| AI disclosure                | Clear course-required declaration of assistance and human review/testing responsibility.                                                                                       |
 
 ## 8. Design problems and patterns
 
-| Member | Design problem | Candidate patterns | Implementation evidence |
-|---|---|---|---|
-| A | Apply group/media policy consistently across API, chat, storage URLs, and jobs | Policy/Strategy, Chain of Responsibility, Decorator | Central policy decision and negative authorisation tests |
-| B | Model recording, processing, locked, deleted, failed, and released clip behaviour | State, Specification | Clip state machine and reusable budget checks |
-| C | Run validation, processing, retry, filler, and publish steps safely | Command, Chain of Responsibility, Template Method | Ordered idempotent compilation workflow |
-| D | Keep schedule/provider/retry policy replaceable | Strategy, Adapter, Observer | Notification policy and provider adapter |
-| E | Render capture, locked, pending, delayed, premiere, and archive UI states | State, Factory, Strategy | Typed view-model/renderer registry and UI tests |
+| Member | Design problem                                                                    | Candidate patterns                                  | Implementation evidence                                  |
+| ------ | --------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------- |
+| A      | Apply group/media policy consistently across API, chat, storage URLs, and jobs    | Policy/Strategy, Chain of Responsibility, Decorator | Central policy decision and negative authorisation tests |
+| B      | Model recording, processing, locked, deleted, failed, and released clip behaviour | State, Specification                                | Clip state machine and reusable budget checks            |
+| C      | Run validation, processing, retry, filler, and publish steps safely               | Command, Chain of Responsibility, Template Method   | Ordered idempotent compilation workflow                  |
+| D      | Keep schedule/provider/retry policy replaceable                                   | Strategy, Adapter, Observer                         | Notification policy and provider adapter                 |
+| E      | Render capture, locked, pending, delayed, premiere, and archive UI states         | State, Factory, Strategy                            | Typed view-model/renderer registry and UI tests          |
 
 ## 9. DevSecOps and lifecycle plan
 
@@ -269,29 +269,29 @@ a clean cloud deployment can demonstrate:
 
 ## 10. Implementation effort estimate — 400 person-hours
 
-| Work package | Lead | Hours |
-|---|---|---:|
-| OIDC, groups, invitations, and authorisation | Member A | 58 |
-| Camera capture, trim, upload, and clip lifecycle | Member B | 68 |
-| Retro media processing, FFmpeg worker, audio normalisation, compilation, archive, and retries | Member C | 74 |
-| Chat, prompts, reminders, and notification adapter | Member D | 58 |
-| Android/PWA user experience, cross-platform validation, archive/download, and accessibility | Member E | 52 |
-| Automated tests, fixtures, resilience evidence, and pilot fixes | All | 44 |
-| CI/CD, Terraform, security checks, observability, and smoke verification | A/D/E | 32 |
-| Integration hardening and release rehearsal | All | 14 |
-| **Total implementation effort** |  | **400** |
+| Work package                                                                                  | Lead     |   Hours |
+| --------------------------------------------------------------------------------------------- | -------- | ------: |
+| OIDC, groups, invitations, and authorisation                                                  | Member A |      58 |
+| Camera capture, trim, upload, and clip lifecycle                                              | Member B |      68 |
+| Retro media processing, FFmpeg worker, audio normalisation, compilation, archive, and retries | Member C |      74 |
+| Chat, prompts, reminders, and notification adapter                                            | Member D |      58 |
+| Android/PWA user experience, cross-platform validation, archive/download, and accessibility   | Member E |      52 |
+| Automated tests, fixtures, resilience evidence, and pilot fixes                               | All      |      44 |
+| CI/CD, Terraform, security checks, observability, and smoke verification                      | A/D/E    |      32 |
+| Integration hardening and release rehearsal                                                   | All      |      14 |
+| **Total implementation effort**                                                               |          | **400** |
 
 ## 11. Risks, assumptions, and mitigations
 
-| Risk/assumption | Impact | Mitigation |
-|---|---|---|
-| Camera effects take longer than expected | Core scope can slip | Start with four bounded post-capture presets; make live preview stretch. |
-| Media format/cost/failure variability | Delayed films or excess spend | Enforce 720p/duration/upload limits, use fixtures, lifecycle cleanup, retries, and cost monitoring. |
-| One-day demo masks four-week scheduling faults | False confidence | Use one cycle-state engine with automated tests for both durations. |
-| Push notifications are not guaranteed | Reminder missed | Platform provider adapters, preferences, receipts, invalid-token removal, retry, and visible in-app cycle status. |
-| Mobile PWA platform differences | Camera, notification, or upload behaviour may differ on iOS/WebKit | Physically test the complete PWA workflow on iPhone early; require HTTPS; use capability detection; keep uploads foreground-visible; provide safe in-app status when push is unavailable. |
-| Scope expands into full social network/chat | Core may not finish | Enforce exclusions and start stretch only after definition of done passes. |
-| Private media appears in URL/log | Privacy failure | Private bucket, short-lived URLs, central policy, safe logs, secret scanning, negative tests. |
+| Risk/assumption                                | Impact                                                             | Mitigation                                                                                                                                                                                |
+| ---------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Camera effects take longer than expected       | Core scope can slip                                                | Start with four bounded post-capture presets; make live preview stretch.                                                                                                                  |
+| Media format/cost/failure variability          | Delayed films or excess spend                                      | Enforce 720p/duration/upload limits, use fixtures, lifecycle cleanup, retries, and cost monitoring.                                                                                       |
+| One-day demo masks four-week scheduling faults | False confidence                                                   | Use one cycle-state engine with automated tests for both durations.                                                                                                                       |
+| Push notifications are not guaranteed          | Reminder missed                                                    | Platform provider adapters, preferences, receipts, invalid-token removal, retry, and visible in-app cycle status.                                                                         |
+| Mobile PWA platform differences                | Camera, notification, or upload behaviour may differ on iOS/WebKit | Physically test the complete PWA workflow on iPhone early; require HTTPS; use capability detection; keep uploads foreground-visible; provide safe in-app status when push is unavailable. |
+| Scope expands into full social network/chat    | Core may not finish                                                | Enforce exclusions and start stretch only after definition of done passes.                                                                                                                |
+| Private media appears in URL/log               | Privacy failure                                                    | Private bucket, short-lived URLs, central policy, safe logs, secret scanning, negative tests.                                                                                             |
 
 ## 12. Open decisions for lecturer/team confirmation
 

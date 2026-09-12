@@ -56,12 +56,12 @@ complete.
 The course expectation is approximately 10 person-days for each of five
 members over the complete project:
 
-| Calculation | Amount |
-|---|---:|
-| 5 members × 10 days | 50 person-days |
-| 50 days × 8 hours | 400 total project hours |
-| Four 2-week sprints, if distributed evenly | 100 hours per sprint |
-| Average per member per sprint | 20 hours / 2.5 days |
+| Calculation                                |                  Amount |
+| ------------------------------------------ | ----------------------: |
+| 5 members × 10 days                        |          50 person-days |
+| 50 days × 8 hours                          | 400 total project hours |
+| Four 2-week sprints, if distributed evenly |    100 hours per sprint |
+| Average per member per sprint              |     20 hours / 2.5 days |
 
 The 400 hours must include planning, analysis/design, implementation, tests,
 DevSecOps, reviews, evidence, reports and presentation work. It should not be
@@ -74,24 +74,24 @@ is limited to 70 hours. The remaining 30 hours provide contingency for setup
 problems, learning, integration and unexpected college workload. Stretch work
 is not selected to fill spare capacity.
 
-| Sprint 0 effort area | Hours | % of committed 70 h | % of 100 h ceiling |
-|---|---:|---:|---:|
-| Requirements, backlog and Agile setup | 11 | 15.7% | 11% |
-| Analysis, architecture and design decisions | 10 | 14.3% | 10% |
-| Repository, app scaffold and CI foundation | 16 | 22.9% | 16% |
-| Working seeded group/home slice | 20 | 28.6% | 20% |
-| Tests, accessibility, evidence, review and report | 13 | 18.5% | 13% |
-| **Committed work** | **70** | **100%** | **70%** |
-| Contingency / learning reserve | 30 | — | 30% |
+| Sprint 0 effort area                              |  Hours | % of committed 70 h | % of 100 h ceiling |
+| ------------------------------------------------- | -----: | ------------------: | -----------------: |
+| Requirements, backlog and Agile setup             |     11 |               15.7% |                11% |
+| Analysis, architecture and design decisions       |     10 |               14.3% |                10% |
+| Repository, app scaffold and CI foundation        |     16 |               22.9% |                16% |
+| Working seeded group/home slice                   |     20 |               28.6% |                20% |
+| Tests, accessibility, evidence, review and report |     13 |               18.5% |                13% |
+| **Committed work**                                | **70** |            **100%** |            **70%** |
+| Contingency / learning reserve                    |     30 |                   — |                30% |
 
 ### Two-week loading
 
 Week 1 is deliberately light and decision-oriented:
 
-| Period | Planned committed effort | Purpose |
-|---|---:|---|
-| Week 1 | 20 team-hours (28.6%) | Story agreement, architecture recording and the first runnable navigation slice; about 4 h per member |
-| Week 2 | 50 team-hours (71.4%) | Integrate the working slice, test it, fix it and demonstrate it; about 10 h per member |
+| Period | Planned committed effort | Purpose                                                                                               |
+| ------ | -----------------------: | ----------------------------------------------------------------------------------------------------- |
+| Week 1 |    20 team-hours (28.6%) | Story agreement, architecture recording and the first runnable navigation slice; about 4 h per member |
+| Week 2 |    50 team-hours (71.4%) | Integrate the working slice, test it, fix it and demonstrate it; about 10 h per member                |
 
 These figures represent team effort rather than elapsed office time. Capacity
 is adjusted for declared absences during Sprint Planning.
@@ -102,17 +102,17 @@ The product backlog follows the user's journey rather than a list of
 technologies. The broad story groups derive from FR-01–FR-10 and UC-01–UC-05
 in the approved proposal:
 
-| Journey step | User outcome | Proposal trace | Planned order |
-|---:|---|---|---|
-| 1 | Enter Rewind and join the correct private group | FR-01, FR-02 / UC-01 | Start locally in S0; real OIDC/invites later |
-| 2 | Understand the current prompt, cycle, quota and locked state | FR-04, FR-05 / UC-02, UC-04 | S0 foundation |
-| 3 | Capture, review and submit a short retro-treated clip | FR-03 / UC-02 | S1 |
-| 4 | See the contribution process and remain locked until reveal | FR-04 / UC-02 | S1 |
-| 5 | Receive and control reminders | FR-05 / UC-04 | S2 |
-| 6 | Exchange group messages, replies and reactions | FR-06 / UC-05 | S2 |
-| 7 | Reveal a chronological capsule or see a safe delay | FR-07, FR-08 / UC-03 | S2–S3 |
-| 8 | View and download authorised archive items | FR-09 / UC-05 | S3 |
-| 9 | Operate and deliver the system safely | FR-10 | Built into every sprint |
+| Journey step | User outcome                                                 | Proposal trace              | Planned order                                |
+| -----------: | ------------------------------------------------------------ | --------------------------- | -------------------------------------------- |
+|            1 | Enter Rewind and join the correct private group              | FR-01, FR-02 / UC-01        | Start locally in S0; real OIDC/invites later |
+|            2 | Understand the current prompt, cycle, quota and locked state | FR-04, FR-05 / UC-02, UC-04 | S0 foundation                                |
+|            3 | Capture, review and submit a short retro-treated clip        | FR-03 / UC-02               | S1                                           |
+|            4 | See the contribution process and remain locked until reveal  | FR-04 / UC-02               | S1                                           |
+|            5 | Receive and control reminders                                | FR-05 / UC-04               | S2                                           |
+|            6 | Exchange group messages, replies and reactions               | FR-06 / UC-05               | S2                                           |
+|            7 | Reveal a chronological capsule or see a safe delay           | FR-07, FR-08 / UC-03        | S2–S3                                        |
+|            8 | View and download authorised archive items                   | FR-09 / UC-05               | S3                                           |
+|            9 | Operate and deliver the system safely                        | FR-10                       | Built into every sprint                      |
 
 The first thin part of this map plus the local runtime foundation is selected
 for Sprint 0. Capture, chat, reveal, archive, and cloud rows remain in the
@@ -245,26 +245,26 @@ the sprint to final visual polish or design work for later feature screens.
 
 ### Story commitment summary
 
-| Story | Points | Team-hours budget | Lead | Reviewer | Dependency |
-|---|---:|---:|---|---|---|
-| US-01 Launch and navigate | 3 | 10 h | E | B | Foundation enablers |
-| US-02 Select demo profile | 5 | 16 h | A | C | US-01, local data contract |
-| US-03 Understand group capsule | 8 | 20 h | B | E | US-01, US-02 |
-| **User-story total** | **16** | **46 h** |  |  |  |
+| Story                          | Points | Team-hours budget | Lead | Reviewer | Dependency                 |
+| ------------------------------ | -----: | ----------------: | ---- | -------- | -------------------------- |
+| US-01 Launch and navigate      |      3 |              10 h | E    | B        | Foundation enablers        |
+| US-02 Select demo profile      |      5 |              16 h | A    | C        | US-01, local data contract |
+| US-03 Understand group capsule |      8 |              20 h | B    | E        | US-01, US-02               |
+| **User-story total**           | **16** |          **46 h** |      |          |                            |
 
 ### Supporting enablers
 
 Enablers are necessary work but are not presented as user value. They exist to
 make the three stories testable, maintainable and repeatable.
 
-| Enabler | Outcome | Budget | Lead | Supports |
-|---|---|---:|---|---|
-| EN-01 Agile/Kanban setup | Working agreement, story board, availability and evidence location | 4 h | D | All stories |
-| EN-02 Architecture/data baseline | Local-first ADR, context, glossary and minimal profile/group/cycle contracts | 6 h | C | US-02, US-03 |
-| EN-03 Delivery foundation | Repository/app scaffold, clean-start instructions and baseline CI checks | 8 h | C/D | US-01–US-03 |
-| EN-04 Quality and review evidence | Focused tests, accessibility check, demo script, review, retrospective and fortnightly report | 6 h | D/E | US-01–US-03 |
-| **Enabler total** |  | **24 h** |  |  |
-| **Sprint commitment** | 16 story points | **70 h** |  |  |
+| Enabler                           | Outcome                                                                                       |   Budget | Lead | Supports     |
+| --------------------------------- | --------------------------------------------------------------------------------------------- | -------: | ---- | ------------ |
+| EN-01 Agile/Kanban setup          | Working agreement, story board, availability and evidence location                            |      4 h | D    | All stories  |
+| EN-02 Architecture/data baseline  | Local-first ADR, context, glossary and minimal profile/group/cycle contracts                  |      6 h | C    | US-02, US-03 |
+| EN-03 Delivery foundation         | Repository/app scaffold, clean-start instructions and baseline CI checks                      |      8 h | C/D  | US-01–US-03  |
+| EN-04 Quality and review evidence | Focused tests, accessibility check, demo script, review, retrospective and fortnightly report |      6 h | D/E  | US-01–US-03  |
+| **Enabler total**                 |                                                                                               | **24 h** |      |              |
+| **Sprint commitment**             | 16 story points                                                                               | **70 h** |      |              |
 
 Enablers do not earn story points. Sprint velocity is measured from Done user
 stories rather than setup activity.
@@ -290,13 +290,13 @@ Product Backlog → Ready → In progress → Review/Test → Done
                               └── Blocked (flag + reason, not a hiding place)
 ```
 
-| Column | Meaning | Entry/exit rule | WIP limit |
-|---|---|---|---:|
-| Product Backlog | Valuable future stories not selected now | Ordered by value/risk | No limit |
-| Ready | Refined and small enough to start | Meets Definition of Ready | 3 Sprint 0 stories |
-| In progress | Team is actively implementing and testing the story | Named lead; next action visible | **2 stories** |
-| Review/Test | Acceptance scenarios are being checked by another member | PR/change available; evidence draft exists | **2 stories** |
-| Done | All acceptance scenarios and Definition of Done pass | Merged, demonstrated and documented | No limit |
+| Column          | Meaning                                                  | Entry/exit rule                            |          WIP limit |
+| --------------- | -------------------------------------------------------- | ------------------------------------------ | -----------------: |
+| Product Backlog | Valuable future stories not selected now                 | Ordered by value/risk                      |           No limit |
+| Ready           | Refined and small enough to start                        | Meets Definition of Ready                  | 3 Sprint 0 stories |
+| In progress     | Team is actively implementing and testing the story      | Named lead; next action visible            |      **2 stories** |
+| Review/Test     | Acceptance scenarios are being checked by another member | PR/change available; evidence draft exists |      **2 stories** |
+| Done            | All acceptance scenarios and Definition of Done pass     | Merged, demonstrated and documented        |           No limit |
 
 US-01 starts first. US-02 enters implementation once the navigation skeleton
 is usable. US-03 enters implementation only when US-01 is in Review/Test or
@@ -347,14 +347,14 @@ domain, data and test boundaries.
 These are primary responsibilities rather than silos. Every lead has an assigned
 reviewer, and Sprint Goal completion takes priority over optional work.
 
-| Member | Full-project use-case ownership | Sprint 0 role | Committed hours | Secondary responsibility |
-|---|---|---|---:|---|
-| A | UC-01 identity, groups and invitations | Product Owner proxy; backlog and seeded membership lead | 15 h | Review architecture and keep scope/exclusions clear |
-| B | UC-02 capture and contribution lifecycle | User-story/acceptance lead; home/quota slice lead | 15 h | Review UX and prepare later camera stories |
-| C | UC-03 compile and publish capsule | Technical/integration lead; architecture and scaffold | 15 h | Keep cycle/worker seams replaceable and pair on setup |
-| D | UC-04 prompts and reminders | Scrum facilitator; CI/quality and reporting lead | 13 h | Maintain board/burndown and unblock reviews |
-| E | UC-05 chat and archive/download | UX/accessibility and evidence lead; app shell | 12 h | Own demo flow and cross-screen consistency |
-| **Total** |  |  | **70 h** |  |
+| Member    | Full-project use-case ownership          | Sprint 0 role                                           | Committed hours | Secondary responsibility                              |
+| --------- | ---------------------------------------- | ------------------------------------------------------- | --------------: | ----------------------------------------------------- |
+| A         | UC-01 identity, groups and invitations   | Product Owner proxy; backlog and seeded membership lead |            15 h | Review architecture and keep scope/exclusions clear   |
+| B         | UC-02 capture and contribution lifecycle | User-story/acceptance lead; home/quota slice lead       |            15 h | Review UX and prepare later camera stories            |
+| C         | UC-03 compile and publish capsule        | Technical/integration lead; architecture and scaffold   |            15 h | Keep cycle/worker seams replaceable and pair on setup |
+| D         | UC-04 prompts and reminders              | Scrum facilitator; CI/quality and reporting lead        |            13 h | Maintain board/burndown and unblock reviews           |
+| E         | UC-05 chat and archive/download          | UX/accessibility and evidence lead; app shell           |            12 h | Own demo flow and cross-screen consistency            |
+| **Total** |                                          |                                                         |        **70 h** |                                                       |
 
 The uncommitted reserve is A: 5 h, B: 5 h, C: 5 h, D: 7 h and E: 8 h, for a
 30-hour team reserve. It is used for integration, review or blockers; it is not
@@ -373,18 +373,18 @@ not the sole requirements author. Both roles rotate in Sprint 1.
 
 ## 8. Day-by-day plan
 
-| Day | Team outcome | Main activities | Exit check |
-|---:|---|---|---|
-| 1 | Shared goal and capacity | 90-minute planning; availability; roles; working agreement; agree US-01–US-03 | Everyone can explain the Sprint Goal and exclusions |
-| 2 | Ready backlog | Refine stories/criteria; map FRs/UCs; identify decisions and risks | US-01–US-03 meet Definition of Ready |
-| 3 | Agreed skeleton | Architecture workshop; glossary; ADR; repository boundary | Team accepts one thin architecture, with open questions logged |
-| 4 | Runnable scaffold and start UI | Pair on setup; README; Home/start screen begins | Two different machines can run the app and open Rewind's start screen |
-| 5 | Navigation checkpoint | CI baseline; main-navigation review; backlog refinement | First small PRs merged; CI is green; all four areas are reachable |
-| 6 | Seeded state works | Local fixtures/repository/profile session integrated | Five synthetic members and group reset reliably |
-| 7 | Home slice works | Prompt/countdown/quota view; negative membership test | Main happy path is demonstrable |
-| 8 | Quality pass | Error/empty states; accessibility; tests; cross-machine setup | Must acceptance gaps are listed and owned |
-| 9 | Release candidate | Fix only goal-threatening defects; clean-run rehearsal; evidence/report draft | Demo script passes twice from a clean state |
-| 10 | Inspect and adapt | Sprint Review, retrospective, report completion, re-order Sprint 1 backlog | Done work accepted; incomplete work returned to backlog |
+| Day | Team outcome                   | Main activities                                                               | Exit check                                                            |
+| --: | ------------------------------ | ----------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+|   1 | Shared goal and capacity       | 90-minute planning; availability; roles; working agreement; agree US-01–US-03 | Everyone can explain the Sprint Goal and exclusions                   |
+|   2 | Ready backlog                  | Refine stories/criteria; map FRs/UCs; identify decisions and risks            | US-01–US-03 meet Definition of Ready                                  |
+|   3 | Agreed skeleton                | Architecture workshop; glossary; ADR; repository boundary                     | Team accepts one thin architecture, with open questions logged        |
+|   4 | Runnable scaffold and start UI | Pair on setup; README; Home/start screen begins                               | Two different machines can run the app and open Rewind's start screen |
+|   5 | Navigation checkpoint          | CI baseline; main-navigation review; backlog refinement                       | First small PRs merged; CI is green; all four areas are reachable     |
+|   6 | Seeded state works             | Local fixtures/repository/profile session integrated                          | Five synthetic members and group reset reliably                       |
+|   7 | Home slice works               | Prompt/countdown/quota view; negative membership test                         | Main happy path is demonstrable                                       |
+|   8 | Quality pass                   | Error/empty states; accessibility; tests; cross-machine setup                 | Must acceptance gaps are listed and owned                             |
+|   9 | Release candidate              | Fix only goal-threatening defects; clean-run rehearsal; evidence/report draft | Demo script passes twice from a clean state                           |
+|  10 | Inspect and adapt              | Sprint Review, retrospective, report completion, re-order Sprint 1 backlog    | Done work accepted; incomplete work returned to backlog               |
 
 Large Day 9 merges are avoided. Integration begins on Day 4 and continues daily.
 
@@ -416,14 +416,14 @@ main
 
 ### Lightweight events
 
-| Event | Timebox | Purpose/output |
-|---|---:|---|
-| Sprint Planning | 90 min on Day 1 | Goal, capacity, committed backlog, owners and risks |
-| Stand-up | 10 min each weekday, or asynchronous if schedules conflict | Progress toward goal, next action, blocker; not a manager status report |
-| Backlog refinement | 30 min on Day 5 | Readies the next stories without expanding current scope |
-| Pair/mob session | Two 45–60 min sessions | Shares setup/domain knowledge on risky work |
-| Sprint Review | 45 min on Day 10 | Demonstrate Done software and capture stakeholder feedback |
-| Retrospective | 45 min after Review | Choose one concrete process experiment for Sprint 1 |
+| Event              |                                                    Timebox | Purpose/output                                                          |
+| ------------------ | ---------------------------------------------------------: | ----------------------------------------------------------------------- |
+| Sprint Planning    |                                            90 min on Day 1 | Goal, capacity, committed backlog, owners and risks                     |
+| Stand-up           | 10 min each weekday, or asynchronous if schedules conflict | Progress toward goal, next action, blocker; not a manager status report |
+| Backlog refinement |                                            30 min on Day 5 | Readies the next stories without expanding current scope                |
+| Pair/mob session   |                                     Two 45–60 min sessions | Shares setup/domain knowledge on risky work                             |
+| Sprint Review      |                                           45 min on Day 10 | Demonstrate Done software and capture stakeholder feedback              |
+| Retrospective      |                                        45 min after Review | Choose one concrete process experiment for Sprint 1                     |
 
 When daily live attendance is impractical, updates use the fixed asynchronous
 format `Goal progress / next action / blocker or decision needed`; three
@@ -484,19 +484,19 @@ time already spent.
 
 The planned line is deliberately shallow in Week 1 and steeper in Week 2:
 
-| Checkpoint | Planned remaining hours |
-|---|---:|
-| Start / Day 1 | 70 |
-| End Day 1 | 69 |
-| End Day 2 | 67 |
-| End Day 3 | 64 |
-| End Day 4 | 59 |
-| End Day 5 | 50 |
-| End Day 6 | 40 |
-| End Day 7 | 30 |
-| End Day 8 | 19 |
-| End Day 9 | 6 |
-| End Day 10 | 0 |
+| Checkpoint    | Planned remaining hours |
+| ------------- | ----------------------: |
+| Start / Day 1 |                      70 |
+| End Day 1     |                      69 |
+| End Day 2     |                      67 |
+| End Day 3     |                      64 |
+| End Day 4     |                      59 |
+| End Day 5     |                      50 |
+| End Day 6     |                      40 |
+| End Day 7     |                      30 |
+| End Day 8     |                      19 |
+| End Day 9     |                       6 |
+| End Day 10    |                       0 |
 
 Scope changes require an explicit team decision and appear as upward movement;
 historical burndown values remain unchanged.
@@ -519,28 +519,28 @@ as features, and local data is not represented as secure multi-user privacy.
 
 ## 15. Risks and responses
 
-| Risk | Early signal | Sprint 0 response |
-|---|---|---|
-| Setup differs across laptops | A second member cannot run by Day 4 | Immediate pairing, version recording and setup simplification before features |
-| Proposal scope pulls work toward AWS too early | Cloud stories enter Ready | Cloud work remains in the backlog; interfaces are validated locally first |
-| Camera/media complexity consumes sprint | Recording spike starts before home slice | Real capture remains in Sprint 1; S0-X1 requires completion of all Must work |
-| Members work in silos | Large unreviewed branches or duplicate files | Reviewer map, WIP limit and short branches are enforced |
-| Documentation is postponed | No evidence/report owner by Day 5 | Evidence is acceptance work; D/E maintain continuous drafts |
-| “Local demo” is mistaken for privacy/auth | UI or presentation uses “secure login” | Simulation labelling and a negative membership-policy test are required |
-| Unknown availability causes missed work | Hours are not declared in planning | Capacity is recalculated and lowest-value scope is removed before commitment |
+| Risk                                           | Early signal                                 | Sprint 0 response                                                             |
+| ---------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------- |
+| Setup differs across laptops                   | A second member cannot run by Day 4          | Immediate pairing, version recording and setup simplification before features |
+| Proposal scope pulls work toward AWS too early | Cloud stories enter Ready                    | Cloud work remains in the backlog; interfaces are validated locally first     |
+| Camera/media complexity consumes sprint        | Recording spike starts before home slice     | Real capture remains in Sprint 1; S0-X1 requires completion of all Must work  |
+| Members work in silos                          | Large unreviewed branches or duplicate files | Reviewer map, WIP limit and short branches are enforced                       |
+| Documentation is postponed                     | No evidence/report owner by Day 5            | Evidence is acceptance work; D/E maintain continuous drafts                   |
+| “Local demo” is mistaken for privacy/auth      | UI or presentation uses “secure login”       | Simulation labelling and a negative membership-policy test are required       |
+| Unknown availability causes missed work        | Hours are not declared in planning           | Capacity is recalculated and lowest-value scope is removed before commitment  |
 
 ## 16. High-level direction after Sprint 0
 
 This is a forecast, not a detailed commitment:
 
-| Period | Indicative outcome | Share of total 400 h |
-|---|---|---:|
-| S0: 1–12 Sep | Planning, architecture, delivery rails, seeded skeleton, and local runtime foundation | 17.5% / 70 h |
-| S1: 13–26 Sep | Identity/groups, real device permission/capture, contribution lock, and local product flow | 26.25% / 105 h |
-| S2: 29 Sep–12 Oct | Reminder/chat plus simulated reveal/archive; strengthen security/CI evidence | 27.5% / 110 h |
-| S3: 13–26 Oct | Integration, highest-value approved cloud slice, device pilot, hardening and submission | 21.25% / 85 h |
-| Presentation: 27 Oct–2 Nov | Rehearsal, slide refinement, demo backup and presentation feedback preparation | 7.5% / 30 h |
-| **Total** |  | **100% / 400 h** |
+| Period                     | Indicative outcome                                                                         | Share of total 400 h |
+| -------------------------- | ------------------------------------------------------------------------------------------ | -------------------: |
+| S0: 1–12 Sep               | Planning, architecture, delivery rails, seeded skeleton, and local runtime foundation      |         17.5% / 70 h |
+| S1: 13–26 Sep              | Identity/groups, real device permission/capture, contribution lock, and local product flow |       26.25% / 105 h |
+| S2: 29 Sep–12 Oct          | Reminder/chat plus simulated reveal/archive; strengthen security/CI evidence               |        27.5% / 110 h |
+| S3: 13–26 Oct              | Integration, highest-value approved cloud slice, device pilot, hardening and submission    |        21.25% / 85 h |
+| Presentation: 27 Oct–2 Nov | Rehearsal, slide refinement, demo backup and presentation feedback preparation             |          7.5% / 30 h |
+| **Total**                  |                                                                                            |     **100% / 400 h** |
 
 This forecast assumes presentation preparation is part of the stated 400-hour
 project effort. If the lecturer requires all 400 hours to be expended before

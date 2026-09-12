@@ -4,6 +4,7 @@ This repository contains the active planning documents for the SWE5006 Practice
 Module project.
 
 ## Start here
+
 - [Project context and constraints](planning/context/project-brief.md) — the working interpretation of the module brief and report expectations.
 - [Rewind discovery handoff](planning/ideation/rewind-product-discovery-handoff.md) — product context, decisions, research, and open questions.
 - [Selected Rewind proposal](planning/proposals/proposal-rewind.md) — the current project scope and acceptance plan.
