@@ -175,7 +175,8 @@ text; it does not load or expose media, playback, or sharing actions.
 - `docs/architecture/` — local-first and camera capture boundary decisions.
 - `docs/domain/` — glossary and framework-independent contracts.
 - `scripts/check-architecture.mjs` — baseline framework/device boundary guard.
-- `planning/sprints/` — Sprint 1 extension, runtime gate, and fallback agreement.
+- `doc/` — imported planning workspace, including the Sprint 1 extension,
+  runtime gate, and fallback agreement under `doc/planning/`.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
 scope. Chat, archive playback, authentication, and cloud services remain

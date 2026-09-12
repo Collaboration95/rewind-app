@@ -1,0 +1,1079 @@
+SWE5006 SPRINT 1 PROGRESS REPORT EVIDENCE DRAFT
+Rewind Private Group Time Capsules
+
+Document status: source draft for later report distillation
+Evidence snapshot: 12 September 2026 (Asia/Singapore)
+Reporting period: [TO BE COMPLETED BY TEAM]
+Sprint: Sprint 1
+Team: [TEAM NUMBER TO BE COMPLETED]
+Members: [NAMES TO BE COMPLETED]
+
+PURPOSE AND SCOPE
+
+This text file gathers the evidence and report-ready narrative for the first
+Sprint 1 progress report. It is intentionally plain text so that the team can
+agree on facts before applying the supplied Word template.
+
+Instruction separation
+
+The direct request is to gather project context, closed work, evidence, and
+report content in a .txt file; inspect the Rewind implementation, planning
+documents, closed pull requests, and the available iOS evidence; leave the
+reporting dates for the team to add later; and suggest a methodology,
+objectives, retrospective, and other highlights.
+
+The attached Word file is a report template. Its visible content is not an
+additional task instruction. It supplies placeholders and section prompts for
+project name/team, introduction, methodology, summary, reporting period,
+sprint objectives, accomplishment, burndown, contribution summary, and other
+highlights. The template was not edited or filled here.
+
+Evidence boundary used in this draft
+
+- Sprint 1 counts are taken from the Collaboration95/rewind-app GitHub
+  repository and its Sprint 1 milestone.
+- The canonical Sprint 1 milestone contains 13 closed issues (#33 through #43,
+  #53, and #69). Nine additional review-defect issues (#81 through #89) were
+  created from the PR #80 review and closed by the replacement delivery PR
+  #91. Together these are 22 closed Sprint 1 deliverables.
+- The earlier Collaboration95/rewind-v1 repository is treated as predecessor
+  evidence and design context, not as a second Sprint 1 count. Its local-first
+  decisions informed the current app, but its V1 milestone is a separate
+  backlog.
+- PR #77 and PR #78 are included as enabling close-out/foundation work because
+  they moved the runtime boundary into Sprint 0 immediately before Sprint 1.
+- PR #92 is still open. Its changes and claims are listed only as follow-up
+  status, not as a closed Sprint 1 accomplishment.
+- “Implemented” below means supported by the merged PR/issue record and
+  repository evidence. It does not mean cloud production, secure
+  authentication, physical-device capture, or a completed reveal/archive
+  product unless the evidence explicitly proves that claim.
+
+
+1. INTRODUCTION
+
+1.1 Project name and description
+
+Project name: Rewind — Private Group Time Capsules.
+
+Rewind is a private, invite-only group-memory concept. Members contribute
+small, everyday moments during a collection cycle. The product deliberately
+delays the reveal so that the group experiences the resulting capsule together
+instead of immediately consuming a polished social-media feed. The selected
+proposal describes four-week cycles, a five-clip/30-second weekly allowance,
+retro-inspired presentation, a compiled group film, chat, reminders, and an
+archive [P2].
+
+The Sprint 1 implementation is a local-first proof of concept. It uses an Expo
+client and a typed local Node service backed by SQLite. Demo members, groups,
+sessions, invitations, cycles, and media metadata are synthetic/local data.
+The service is not cloud hosting, and a synthetic Demo session is not secure
+authentication or an account. The design preserves ports and adapters so a
+later milestone can replace local storage and transport without rewriting the
+domain model [P3, P5].
+
+1.2 Problem and proposed outcome
+
+Mainstream social media rewards immediate, curated publishing. After friends
+graduate, relocate, or otherwise separate, the small unplanned moments that
+maintained their connection can disappear. Rewind addresses this by making a
+shared group ritual: capture a short moment, keep it sealed during the cycle,
+and experience the collection later. The value is the shared memory and low
+pressure to perform, not photographic perfection [P2].
+
+For this Sprint 1 report, the meaningful outcome is narrower and demonstrable:
+the project moved from a seeded walking skeleton to a locally executable
+identity/group/capture boundary. A demonstrator can enter an explicitly
+labelled Demo session, create or join a local group, choose a prompt, inspect
+the current group/cycle state, exercise permission and capture states, review
+and accept a still or bounded clip, and submit a validated local pending clip
+job. The local runtime enforces session, membership, cycle-owner, media, and
+idempotency boundaries. Chat, real film compilation, reveal/playback, archive,
+cloud authentication, and cloud storage remain outside this increment.
+
+1.3 Project methodology
+
+The project uses Scrum, adapted for a small, evidence-oriented engineering
+team.
+
+- Sprint 0 produced the walking skeleton and the local runtime foundation. The
+  runtime foundation was deliberately moved from Sprint 1 into Sprint 0 so
+  feature work would start on a verified boundary [P3, PR #77, PR #78].
+- Sprint 1 is planned as a two-week slice (13–26 September 2026 in the
+  planning record). The exact reporting dates are intentionally left blank for
+  the team to enter.
+- Work is selected from a GitHub Project and milestone. Each issue has a
+  stable orchestration key, parent epic, dependencies, risks, observable
+  acceptance criteria, verification commands, and stop conditions [P3].
+- The working agreement limits concurrent implementation to five active child
+  issues. Dependent work is not considered Ready until its boundary and
+  predecessor evidence are clear.
+- The intended delivery loop is one bounded issue -> one branch -> one
+  reviewable pull request -> committed synthetic/manual proof -> issue status
+  Done. Peer review and automated checks are part of the Definition of Done.
+- The local-first fallback is explicit. If LAN, native capture, SQLite, or
+  FFmpeg is unavailable, the team may use deterministic local fixtures, but it
+  must not claim multi-device capture or production privacy.
+
+This is Scrum in practice rather than a claim that every planned ceremony or
+story was completed. The repository contains planning, backlog, PR, test, and
+evidence records; team meeting attendance, story-point estimates, and named
+individual contributions still need to be filled in from the team’s own notes.
+
+1.4 Project summary
+
+The original proposal was broader than the Sprint 1 proof. Its intended
+architecture is a modular monolith with a worker, PostgreSQL, private object
+storage, OIDC, scheduled reminders, and a future Android/PWA delivery path.
+The classroom demonstration uses a one-day cycle so the capture-to-reveal
+concept can be shown without waiting four weeks [P2].
+
+Sprint 0 and Sprint 1 consciously narrowed the active boundary to a local
+Node/SQLite/Expo system. The local service provides health/version reporting,
+deterministic five-member fixtures, migrations/reset, typed repositories,
+membership policy, Demo sessions, audit events, group/invite mutations, cycle
+control, and local media-job contracts. This boundary is valuable because it
+proves domain and failure behaviour without AWS credentials, production
+accounts, or private media. It also makes the remaining cloud transition
+visible instead of hiding it behind an unverified mock.
+
+
+2. SPRINT 1 OBJECTIVES AND INITIAL WORK PLAN
+
+2.1 Sprint goal from the planning document
+
+“A five-person group can locally sign in, create or join a group, capture and
+submit clips, chat, advance a one-day demonstration cycle, receive a compiled
+reveal, and replay or download it without any cloud service” [P3].
+
+This goal is intentionally recorded as the original plan. The actual closed
+increment did not reach every clause; the plan-versus-actual comparison in
+Section 3 is the evidence-based correction.
+
+2.2 Planned objectives
+
+1. Establish an explicit, bounded Demo session rather than treating the
+   profile picker as authentication.
+2. Let an owner create a named local group, choose a built-in or short custom
+   prompt, and start a one-day collecting cycle.
+3. Let a second Demo actor accept an owner-bound, expiring, one-use invitation
+   and become a member of the intended group only.
+4. Provide truthful camera and microphone capability/permission states,
+   including retry and Settings recovery.
+5. Capture portrait media within the product limits: still-image fixture/native
+   boundary and video contract with audio, a hard 15-second maximum, review,
+   trim, retake, and original capture modes.
+6. Validate local clip uploads, show progress, support cancellation/retry, and
+   avoid duplicate quota consumption through idempotency.
+7. Use one deterministic cycle engine for one-day and four-week windows and
+   protect the owner-only demo advance control.
+8. Prove cross-group negative access and preserve safe operational diagnostics.
+9. Finish the complete chat -> cycle transition -> film -> archive journey and
+   a repeatable local demo runbook.
+
+Objectives 1–8 have merged evidence in the current repository. Objective 9 is
+remaining work and must not be written as complete in the final report.
+
+2.3 Planned day-by-day sequence
+
+The extension plan allocated ten working days:
+
+- Day 1: Demo sessions, sign-in/out, group creation, and prompts.
+- Day 2: Invitation generation/acceptance and settings.
+- Day 3: Device permissions, vertical recording, review, trim, and retake.
+- Day 4: Upload, quota, processing, locked state, and deletion allowance.
+- Day 5: Chat, replies, reactions, reconnect, and reminder preference.
+- Day 6: Deterministic cycle controls and lifecycle transitions.
+- Day 7: Persistent compilation, film creation, retry, and delayed release.
+- Day 8: Premiere, archive, and authorised downloads.
+- Day 9: End-to-end, negative-access, and resilience suites.
+- Day 10: Native/web usability, runbook, and non-author demo validation.
+
+The actual merge history concentrated the completed work in the 10–11
+September close-out window. That is useful evidence of delivery momentum, but
+it also shows that the original ten-day scope was too broad for the verified
+increment: chat, reminders, compilation, reveal, archive, and runbook issues
+remain open.
+
+
+3. SPRINT ACCOMPLISHMENT: WORK PLAN VERSUS ACTUAL
+
+3.1 Quantitative snapshot
+
+- 13 canonical Sprint 1 milestone issues closed: #33–#43, #53, and #69.
+- 9 additional high-priority review defects closed: #81–#89.
+- 22 closed Sprint 1 deliverables in total when the review-fix issues are
+  included.
+- 3 directly relevant feature/fix PRs merged for Sprint 1: #79, #80, and #91.
+- 2 enabling PRs merged at the Sprint 0/Sprint 1 boundary: #77 and #78.
+- 20 canonical Sprint 1 milestone issues remain open: #44–#52, #54–#65,
+  #67, #71, #73, and #75. Duplicate copies (#56, #58, #60, #62, #64, #66,
+  #68, #70, #72, #74, and #76) are labelled duplicate and should not be
+  counted as new scope.
+- Four closed issues are explicitly marked STORY in the Sprint 1 milestone:
+  #35, #36, #38, and #41. The other closed items are tasks or review bugs that
+  support those stories.
+
+3.2 Planned-to-actual matrix
+
+Area: Runtime foundation (moved into Sprint 0)
+Planned outcome: A local service, SQLite schema, deterministic fixtures,
+typed client boundary, FFmpeg preflight, and shared membership policy.
+Actual evidence: PR #78 merged #28–#32. The service starts predictably,
+health/version and fixture endpoints are available, migrations/reset persist
+synthetic state, and protected categories use a uniform safe denial.
+Status: Complete as the Sprint 1 prerequisite; local-only.
+
+Area: Demo identity and auditability
+Planned outcome: Explicit bounded Demo access, session lifecycle, and safe job
+diagnostics.
+Actual evidence: PR #79 merged #33 and #34. Sessions have stable synthetic
+actors, explicit accessKind=demo, eight-hour expiry, persistence, validation,
+terminal invalidation, and lifecycle audit events. Job started/completed/failed
+events correlate by safe namespaced IDs without message bodies, invite codes,
+media paths, or secrets.
+Status: Complete for the local Demo boundary; not secure authentication.
+
+Area: Sign-in/sign-out and local settings
+Planned outcome: Deliberate Demo entry, session restore, sign-out, current
+actor/group display, and confirmed reset.
+Actual evidence: #35 and #39, delivered in PR #80 and hardened by #81. The
+entry screen offers five synthetic members; Settings shows actor, group, and
+owner/member role; reset names its local scope and restores the deterministic
+fixture. Runtime rejection no longer prevents local sign-out/reset cleanup.
+Status: Complete for local Demo access; no account or remote deletion.
+
+Area: Local groups, prompts, and invitations
+Planned outcome: Owner creates a group and one-day cycle; another Demo member
+joins through a bounded invite.
+Actual evidence: #36, #37, and #38. Group creation validates an 80-character
+name and 160-character prompt, atomically commits owner membership and the
+one-day cycle, and keeps the client session pointer consistent after review
+fixes. Invitation codes are eight-character uppercase values, owner-bound,
+expiring (24-hour default within five-minute/seven-day bounds), one-use, and
+accepted only inside an active Demo session. Malformed, expired, used,
+duplicate-member, and cross-group cases are rejected without membership
+writes.
+Status: Complete for local groups/invites; no public links or cloud identity.
+
+Area: Device capability and permission boundary
+Planned outcome: Truthful camera/microphone support states with retry and
+Settings guidance.
+Actual evidence: #40 and #89. The capture contract distinguishes supported,
+unsupported, and undecided capabilities from granted, undetermined, denied,
+and blocked permissions. The merged fixes feature-detect the native camera
+probe instead of treating a missing web-only export as permanent undecided
+state. iOS/Android permission strings are configured through Expo’s camera
+plugin.
+Status: Complete at the adapter/UX boundary; physical-device capture still
+requires a real device and is not proven by the simulator fixture.
+
+Area: Still and video capture/review/upload
+Planned outcome: Bounded contribution capture, review, and safe local submit.
+Actual evidence: #41, #42, and #43, delivered in PR #91 on top of PR #80.
+Video contracts require MP4, portrait dimensions, microphone audio, positive
+duration, and a hard 15-second maximum. Review enforces trim bounds and a
+minimum 0.5-second segment, and offers original Soft Focus and High Contrast
+modes. Upload validation rejects invalid type/size/duration/orientation/audio,
+uses an idempotency key, exposes validating/uploading/complete/cancelled/
+failed states, and supports retry without duplicate quota consumption. Native
+clip files are app-managed and cleaned on cancellation/retake/reset in the
+current follow-up branch; merged Sprint 1 evidence should describe the
+validated pending-job boundary, not a completed cloud upload.
+Status: Complete as a local capture and pending-job boundary; media processing,
+film compilation, and reveal remain open.
+
+Area: Deterministic cycle and owner control
+Planned outcome: One engine for one-day/four-week windows and an owner-only
+accelerated demonstration control.
+Actual evidence: #53. `createCycleWindow` and `advanceCycleWindow` are
+framework-independent, clock-injectable, preserve duration, and record old/new
+boundaries in SQLite. The HTTP control checks persisted owner membership before
+input validation and does not permit memberId spoofing after #82.
+Status: Complete for local demo control; full lifecycle transition is open in
+#54.
+
+Area: Cross-group authorization and review hardening
+Planned outcome: Protected data must not leak across groups, and review defects
+must be fixed before submission.
+Actual evidence: #69 and #81–#89. Server-side membership/owner policy covers
+group, message, contribution, clip, film, and download categories. PR #91
+also fixes sessionless cycle mutation, malformed URL decoding, offline
+session/group divergence, group-pointer reconciliation, accepted-still
+metadata loss, web still storage, native probe handling, and repository/test
+hygiene. The PR #80 review identified 13 findings; issue #90 indexes all of
+them.
+Status: Complete for the closed findings, with the body-drain note in #87
+remaining a lower-severity hygiene observation rather than a separately
+claimed feature.
+
+Area: Chat, reminders, full cycle, film, archive, and demo proof
+Planned outcome: Authorised local chat/reminders, lifecycle transition,
+compilation/retry, reveal/playback/download, full journey, and runbook.
+Actual evidence: No canonical issue in these areas is closed. The open set is
+#44–#52, #54–#65, #67, #71, #73, and #75.
+Status: Not complete; explicitly carry forward as next-sprint work.
+
+3.3 What was actually delivered
+
+The merged increment is best described as “local Demo identity, group,
+invitation, capture, cycle-control, and authorization foundations,” not as the
+complete Rewind product. It proves the most failure-prone boundaries needed
+before chat and reveal can be built:
+
+- an acting identity is explicit and bounded;
+- group and membership mutations are validated and atomic;
+- cycle timing is deterministic and shared by client/server policy;
+- device capability and media lifecycles are represented as states;
+- accepted capture metadata is separated from transient local file URIs;
+- uploads are validated, cancellable, retryable, and idempotent;
+- protected routes deny cross-group access without revealing resource content;
+- reset and failure paths are designed to recover without silently retaining
+  stale local state; and
+- all demo/simulator limitations are labelled honestly.
+
+
+4. CLOSED ISSUE DEEP DIVE
+
+The following entries provide report-sized detail for every closed Sprint 1
+issue. Each issue title and acceptance contract is available in the linked
+GitHub record. The issue numbers are intentionally retained so the final report
+can trace claims back to the backlog.
+
+4.1 Identity, groups, invitations, and diagnostics
+
+#33 — Add safe local audit event logging
+https://github.com/Collaboration95/rewind-app/issues/33
+
+The issue required diagnosable session/job actions without private-content
+logging. The implementation adds an allowlisted audit event shape containing
+event type, synthetic actor ID, namespaced local resource ID, timestamp, and
+success/failure/denied result. Job wrappers record started/completed/failed
+events while rethrowing the original failure, so a failed job remains
+correlatable without storing its exception, message body, invite code, raw
+media path, or secret. `npm run server:diagnostics` exposes human-readable or
+JSON local inspection. Events stay in the ignored SQLite database and are not
+remote telemetry.
+
+#34 — Define the mock-session contract
+https://github.com/Collaboration95/rewind-app/issues/34
+
+The profile picker was replaced conceptually by an explicit Demo-session
+contract. A session has a stable synthetic actor, group ID, `accessKind: demo`,
+start/expiry timestamps, and terminal invalidation. New sessions last eight
+hours and are revalidated by the local service; expiry is not silently
+extended. Missing, non-demo, expired, and invalidated sessions are denied and
+do not fall back to a picker or imply secure authentication. Contract tests
+cover persistence, bounded expiry, invalidation, and validation outcomes.
+
+#35 — Sign in and sign out with Demo access (STORY)
+https://github.com/Collaboration95/rewind-app/issues/35
+
+The demonstrator can choose one of five named synthetic members, restore the
+local Demo session, and deliberately leave it from Settings. The UI says
+“Demo” and “synthetic” rather than “account” or “login.” Sign-out returns to a
+clean Demo-entry state, and session errors remain actionable. The story is
+complete as a local demonstration flow; password collection, account creation,
+OIDC, and production identity remain excluded.
+
+#36 — Create a local group and choose a prompt (STORY)
+https://github.com/Collaboration95/rewind-app/issues/36
+
+An owner can create a named local group, choose a built-in prompt or enter a
+short custom prompt, and start a one-day collecting cycle. The client validates
+empty/oversized values before persistence; the server commits group, owner
+membership, and initial cycle atomically. Later review fixes reconcile the
+session pointer if a post-commit local write fails, preventing a misleading
+error followed by duplicate group creation. Owner transfer, removal,
+discovery, and cloud synchronization are not part of this story.
+
+#37 — Create an expiring local invitation code
+https://github.com/Collaboration95/rewind-app/issues/37
+
+The owner can generate and copy an eight-character uppercase code for the
+current group. The code exposes bounded expiry/use state, is never written to
+the audit stream, and cannot silently target another group. The contract uses a
+24-hour default within a five-minute minimum and seven-day maximum; cloud
+delivery, email, and public deep links are excluded.
+
+#38 — Accept an invite and establish local membership (STORY)
+https://github.com/Collaboration95/rewind-app/issues/38
+
+An active Demo member can enter a code and join only the intended local group.
+The runtime validates session, group binding, expiry, usage state, malformed
+input, duplicate membership, and cross-group attempts before atomically adding
+membership and consuming the code. Negative tests verify that rejected attempts
+do not write membership. This proves private-group policy in the local
+boundary, not cross-device identity proof.
+
+#39 — Add account/group settings and confirmed demo reset
+https://github.com/Collaboration95/rewind-app/issues/39
+
+Settings surfaces the current synthetic actor, group, and owner/member role. It
+provides group creation, sign-out, and an app-owned reset confirmation. The
+confirmation names the consequence: saved Demo session, locally created
+groups, local selection, accepted still metadata, and app-owned cached capture
+files are removed, then the deterministic fixture returns. It does not touch
+source-controlled files, migrations, remote data, or other users. Review bug
+#81 hardened this flow when the local runtime rejects or is unreachable.
+
+4.2 Capture and media boundary
+
+#40 — Add device capability and camera permission states
+https://github.com/Collaboration95/rewind-app/issues/40
+
+The capture route distinguishes capability from permission. Camera and
+microphone may be supported, unsupported, or undecided; permissions may be
+granted, undetermined, denied, or blocked. The UI keeps the shutter disabled
+until requirements are satisfied and provides retry/Settings guidance rather
+than trapping a user. Expo SDK 57 and explicit iOS/Android usage strings form
+the native boundary. The simulator fixture is deliberately separate from the
+native adapter.
+
+#41 — Record a vertical clip with audio and a 15-second cap (STORY)
+https://github.com/Collaboration95/rewind-app/issues/41
+
+The video contract accepts only portrait MP4 media with microphone audio and a
+maximum duration of 15 seconds. The recording session exposes idle,
+recording-with-elapsed-time, complete, cancelled, and failed states. A stop or
+cancel invalidates stale async completions so an old recording cannot overwrite
+a newer session. A real device is required for hardware recording; simulator
+evidence is not presented as physical capture.
+
+#42 — Review, trim, retake, and choose an original capture mode
+https://github.com/Collaboration95/rewind-app/issues/42
+
+Before submission, a member can review a bounded clip, set trim bounds inside
+the recorded duration, retake/discard, and choose original Soft Focus or High
+Contrast modes. Trim segments must be finite, ordered, inside the clip, and at
+least 0.5 seconds. Pending metadata is persisted separately from the local
+file URI. The modes are original metadata/preview choices, not copied recipes
+or pixel-processing claims.
+
+#43 — Upload local clip with validation and visible progress
+https://github.com/Collaboration95/rewind-app/issues/43
+
+The client validates session-bound MP4 input before a job is created: positive
+size under 50 MB, duration over zero and no more than 15 seconds, portrait
+dimensions, and audio. Upload progress has explicit validating, uploading,
+complete, cancelled, and failed states. An idempotency key lets retry return
+the same pending job rather than consuming quota twice; cancellation releases
+the pending contribution/job. The current contract is local runtime metadata
+and a temporary source, not cloud object storage or a completed film pipeline.
+
+4.3 Cycle and authorization
+
+#53 — Implement deterministic cycle clock and owner demo controls
+https://github.com/Collaboration95/rewind-app/issues/53
+
+One framework-independent engine calculates both one-day and four-week
+windows. Tests inject a clock, validate ISO instants, calculate phases and
+remaining seconds, and advance both boundaries by a positive whole number of
+seconds while preserving duration. The local owner control checks persisted
+owner membership before validating the requested advance and records previous
+and next boundaries, actor, amount, and timestamp. The control is a demo
+accelerator, not unrestricted member time travel or a production time service.
+
+#69 — Add cross-group negative-access regression suite
+https://github.com/Collaboration95/rewind-app/issues/69
+
+The suite exercises protected group, message, contribution, clip, film, and
+download categories. A member of another group receives the same safe 403
+denial without resource content, and owner-only cycle control is denied outside
+the intended group. Authorization is performed before resource lookup or cycle
+input validation so malformed requests do not reveal whether a resource
+exists. This is a strong local policy regression boundary, not a production
+penetration test or security certification.
+
+4.4 Review defects found and closed after PR #80
+
+PR #80 received a detailed review that indexed 13 findings. Issues #81–#89
+were opened for the actionable review defects and PR #91 delivered the fixes.
+The review index is recorded in issue #90:
+https://github.com/Collaboration95/rewind-app/issues/90
+
+#81 — Sign-out and Demo reset cannot clear local state when runtime rejects
+https://github.com/Collaboration95/rewind-app/issues/81
+
+The original mutation wrapped remote invalidation and local clearing in one
+try/catch. A runtime 404/409/unreachable response therefore kept the local
+session active and skipped cleanup. The fix follows the restore policy:
+401/404/409 or an unreachable local runtime are treated as “clear locally and
+continue.” Reset now still removes session, group, selection, and capture data
+when the runtime cannot respond, while a reachable runtime remains terminally
+invalidated.
+
+#82 — Demo cycle advance is reachable without a session
+https://github.com/Collaboration95/rewind-app/issues/82
+
+The old route fell back from missing `sessionId` to a guessable `memberId`
+query parameter. A LAN caller could advance the cycle and append an event
+without a validated session. The fix requires a valid session, derives the
+actor only from that session, returns `401 session_required` when absent, and
+regresses omitted, empty, invalid, owner, and non-owner cases. The synthetic
+profile read remains intentionally public within the demo boundary, so the
+correct report language is “session-protected local control,” not “secure
+authentication.”
+
+#83 — Capsule refetch churn plus review hygiene items
+https://github.com/Collaboration95/rewind-app/issues/83
+
+Three low-severity defects were closed: runtime repositories are memoized so
+unrelated session-context renders do not refetch the capsule; the actor-switch
+test asserts observable current-member state rather than a name that is always
+listed; and the machine-specific `premium-audit.json` artifact is removed or
+made reproducible. These fixes improve maintainability and test credibility
+without changing capture or cycle semantics.
+
+#84 — Offline group resolution and picker selection diverge from active session
+https://github.com/Collaboration95/rewind-app/issues/84
+
+The offline repository previously scanned local groups first and hardcoded an
+owner role, so a session attached to the seeded group could display an unrelated
+local group. Entry-screen member selection could also leave the selection store
+on Amber while the session actor was Birch. The fix makes the session’s member
+and group the source of truth, derives the role from membership, and keeps the
+picker/session actor aligned.
+
+#85 — Default web capture path cannot save a still
+https://github.com/Collaboration95/rewind-app/issues/85
+
+Expo’s legacy web file-system shim has no cache directory, so the default web
+camera could take a picture but always failed while copying it to managed
+storage. The fix adds a browser-local Blob-backed file store and keeps the URI
+transient; durable metadata stores dimensions, format, timestamp, byte length,
+and source only. Native capture continues to use the verified managed cache.
+
+#86 — Retaking a still deletes the just-accepted metadata record
+https://github.com/Collaboration95/rewind-app/issues/86
+
+After `accept()` persisted metadata, `retake()` still cleaned the active preview
+with metadata removal enabled. The fix treats accepted metadata as durable:
+retake releases only the transient preview file, while discard and explicit
+reset retain their cleanup semantics. This preserves the record the UI has
+already promised to accept without exposing a durable URI or thumbnail.
+
+#87 — Local runtime answers 500 for malformed path segments
+https://github.com/Collaboration95/rewind-app/issues/87
+
+Raw `decodeURIComponent` calls could throw `URIError` for malformed percent
+encoding and escape into the generic 500 handler across sessions, groups,
+messages, contributions, clips, films, and downloads. A shared safe decoder
+maps the client error to `400 invalid_request` before resource lookup. The
+issue also records a lower-severity request-body-draining hygiene note; the
+closed delivery claims malformed-path handling, not a separately verified
+socket-level body-drain change.
+
+#88 — Group creation can commit without the session pointing at the new group
+https://github.com/Collaboration95/rewind-app/issues/88
+
+The runtime committed group, membership, and cycle before the client stored the
+new session group pointer. If that local write failed, the user saw an error
+even though the group existed, and retry could create a duplicate. The fix
+reconciles the committed group/session state or makes the post-commit pointer
+step non-fatal, while retaining offline rollback behaviour.
+
+#89 — Native camera capability probe blocks capture on a physical device
+https://github.com/Collaboration95/rewind-app/issues/89
+
+`CameraView.isAvailableAsync()` was a web-only export in the installed Expo
+camera version. Calling it on native threw, and the catch path parked a real
+device in `capability-undecided` forever. The fix feature-detects the probe and
+uses the native device boundary/permissions when the export is absent. The
+explicit DemoCameraPlatform fixture remains labelled and cannot claim hardware
+capture.
+
+
+5. ARCHITECTURE, DESIGN PATTERNS, AND ENGINEERING PRACTICE
+
+The following are patterns evidenced by the code and design records. They are
+safe to present as “patterns applied/observed”; they should not be described as
+formal GoF claims unless the team adds diagrams and a rationale section.
+
+5.1 Ports and adapters (hexagonal boundary)
+
+Framework-independent domain contracts sit behind adapters. The capture UI
+depends on `CameraPlatform`, `CaptureFileStore`, and metadata ports instead of
+Expo or a filesystem implementation. `ExpoCameraPlatform` is the native/web
+adapter; `DemoCameraPlatform` is a deterministic simulator/test adapter. The
+same approach is used by typed runtime repositories and the local HTTP client.
+This keeps platform/device code out of domain policy and makes the local-first
+boundary replaceable [rewind-app/docs/architecture/ADR-0002-camera-capture-boundary.md,
+rewind-app/docs/architecture/architecture-guardrails.md].
+
+5.2 Repository pattern
+
+`GroupRepository`, `CycleRepository`, and runtime repository factories expose
+domain-shaped reads while hiding offline fixtures, SQLite, and HTTP details.
+The active session supplies the acting member and group context. Memoizing the
+runtime repository objects prevents unnecessary refetches and stabilizes React
+effects (#83).
+
+5.3 Strategy/adapter selection for platform capabilities
+
+The app selects native Expo, browser Blob, in-memory, or explicit simulator
+strategies for capture/file storage. The choice allows the same capture
+orchestration to run on a physical device, browser, simulator fixture, and
+tests without pretending those environments have identical capabilities.
+
+5.4 State-machine modelling
+
+Capture, upload, Demo-session, and cycle lifecycles are represented as explicit
+states and transitions rather than implicit booleans. Examples include
+checking -> capability/permission result -> ready -> capturing -> preview ->
+saving/saved or failure; upload validating -> uploading -> complete/cancelled/
+failed; and collecting/revealing/archived cycle phases. Generation counters
+prevent stale asynchronous recording/upload completions from mutating a newer
+state.
+
+5.5 Transaction and unit-of-work boundaries
+
+Local group creation commits group, owner membership, and the initial cycle as
+one SQLite mutation. Invite acceptance commits membership and invite
+consumption atomically. Cycle advance updates boundaries and records a control
+event in one transaction. These boundaries prevent partial state and make the
+failure tests meaningful.
+
+5.6 Command/idempotency and retryable job handling
+
+Clip upload carries an idempotency key and returns a pending contribution/job
+contract. Cancellation and retry are first-class operations. Audited job
+helpers record safe started/completed/failed events while preserving thrown
+failure semantics. This is the foundation for the future FFmpeg/film worker,
+not evidence that the worker or cloud queue is already complete.
+
+5.7 Policy-as-a-function and fail-closed authorization
+
+The server centralizes member and owner decisions. Authorization runs before
+resource lookup and input validation where disclosure would matter, and all
+protected categories return the same safe denial shape. The architecture check
+also fails closed when framework/device imports cross the domain boundary.
+
+
+6. VERIFICATION AND QUALITY EVIDENCE
+
+6.1 Merged PR verification
+
+PR #79 — explicit Demo sessions and safe audit diagnostics
+https://github.com/Collaboration95/rewind-app/pull/79
+
+- GitHub quality workflow passed.
+- Reported verification: formatting, lint, strict typecheck, scaffold,
+  server integration, and Jest; 39 app/domain tests and 8 server tests.
+- Diagnostics JSON command passed against a clean local database.
+- Focused tests cover session persistence/expiry/invalidation, audit redaction,
+  failed-job correlation, and diagnostics output.
+
+PR #80 — local Demo, groups/settings, cycle controls, and still capture
+https://github.com/Collaboration95/rewind-app/pull/80
+
+- GitHub quality workflow and GitGuardian passed.
+- Reported verification: `npm run check`, 20 server tests, 13 Jest suites / 80
+  tests, responsive checks 5/5, web export, `expo-doctor` 21/21, server
+  preflight, strict premium audit with zero findings, and `git diff --check`.
+- Eight integration screenshots were captured on iPhone 15 Pro simulator,
+  iOS 17.5, with explicit Demo/fixture labelling.
+- The review found 13 defects; the resulting issue index is #90 and the fixes
+  were carried into PR #91.
+
+PR #91 — Sprint 1 fixes and local capture flow
+https://github.com/Collaboration95/rewind-app/pull/91
+
+- Merged to `main` on 11 September 2026.
+- GitHub quality workflow and GitGuardian passed.
+- Reported verification: formatting, lint, architecture, typecheck, 27 server
+  tests, and 103 Jest tests; Expo web export; responsive checks 5/5; package
+  install/audit; and `git diff --check`.
+- The PR explicitly states that native recording/upload requires a physical
+  device; the simulator fixture never claims hardware capture.
+- The local runtime stores pending clip-job metadata; raw media remains a
+  temporary local source. Cloud storage/authentication, chat, reveal/playback,
+  and archive remain out of scope.
+
+6.2 Current open PR status
+
+PR #92 — polish Demo capture and invite flows
+https://github.com/Collaboration95/rewind-app/pull/92
+
+This PR is OPEN and therefore is not counted as a closed Sprint 1 deliverable.
+It contains additional recovery panels, invite/session hardening, bounded
+runtime requests, video cancellation/lifecycle work, and regression tests. Its
+GitHub checks currently pass, but the PR has no final review decision and issue
+#90 remains open. A local `npm run check` on the current PR92 worktree produced
+27/28 server tests passing; `server/tests/media-upload.test.mjs` still had one
+HTTP clip-upload assertion returning 404 instead of 201. This differs from the
+green GitHub check reported on PR #92 and should be reconciled before the
+follow-up is called complete. The final report should say “follow-up PR under
+review,” not “merged Sprint 1 work,” unless the team verifies a later merge.
+
+6.3 Verification language to use carefully
+
+- “Tests passed” is supported for the merged PRs by their GitHub checks and PR
+  verification summaries.
+- “Physically recorded video” is not supported by the simulator evidence. A
+  physical iOS/Android device is required for native recording and microphone
+  proof.
+- “Authenticated,” “encrypted,” “cloud-private,” and “multi-device” are not
+  supported claims for this local Demo boundary.
+- “Film compiled and released” is not supported by the closed Sprint 1 set;
+  compilation, reveal, playback, and archive issues remain open.
+
+
+7. IOS SIMULATOR AND SCREENSHOT EVIDENCE
+
+Evidence directory: `rewind-app/review-evidence/integration-2026-09/`
+Capture environment recorded by the repository: iPhone 15 Pro simulator,
+iOS 17.5, Expo Go, 10 September 2026. The simulator has no physical camera.
+
+Live environment check on 12 September 2026: the documented iPhone 15 Pro
+simulator was booted successfully, but Expo Go was not installed on that
+simulator at the time of inspection. No new live-app result is therefore added
+to the evidence set; the report relies on the committed screenshots and their
+README, with the same no-physical-camera limitation.
+
+The 11 available screenshots were inspected. Nine are current integration or
+local-demo evidence and two are supplementary historical iOS review images.
+
+1. `ios-demo-entry-chooser.png`
+   Shows “Choose who you are showing” and five synthetic members (Amber,
+   Birch, Clover, Dune, Echo). The copy explicitly says this is local Demo
+   access, not a secure account or sign-in. Supports #34/#35.
+
+2. `ios-settings-owner-group.png`
+   Shows Settings with current synthetic actor Amber, local group Weekend
+   People, owner role, group creation, sign-out, and reset actions. Supports
+   #35/#39.
+
+3. `ios-create-group-prompt-selection.png`
+   Shows the local group form with `Sunset Crew`, an 11/80 name counter, built-in
+   prompt choices, and the Create local group action. Supports #36 and the
+   bounded-input contract.
+
+4. `ios-reset-confirmation.png`
+   Shows the app-owned “Reset local Demo data?” modal. It names the affected
+   local session, groups, accepted still metadata, cached files, and fixture
+   restoration, with Keep local data and Reset local Demo data actions.
+   Supports #39/#81.
+
+5. `ios-camera-permission-denied-retry.png`
+   Shows the camera route’s SIMULATOR DEMO notice and a “Camera access is off”
+   panel with Try again and Open Settings. Supports #40 and the denied-state
+   recovery contract.
+
+6. `ios-camera-simulated-ready.png`
+   Shows “ACCESS GRANTED,” an explicitly labelled fixture preview, and Take
+   still image. It demonstrates the state machine, not physical camera access.
+   Supports #40 and the honest simulator boundary.
+
+7. `ios-camera-simulated-preview-retake.png`
+   Shows a “FIXTURE STILL,” “No physical image was captured,” 1200 x 900 JPG
+   metadata, and Retake / Use this still / Discard actions. Supports the still
+   review lifecycle and #86’s metadata distinction.
+
+8. `ios-locked-state-no-media-ui.png`
+   Shows the local runtime/demo fixture and a current-member selector while no
+   physical media is exposed. It supports the local-demo and safe locked-state
+   narrative; it is not reveal/playback evidence.
+
+9. `ios-locked-home.png`
+   Shows Weekend People, “Reveal in 2 days,” “4 of 5 members added a moment,”
+   sealed placeholders, the current prompt, and weekly quota. It demonstrates
+   the intended sealed capsule language without exposing media.
+
+10. `pr16-p1-ios-compile-failure.png`
+    Supplementary historical evidence of an Expo Go/iOS compile failure with a
+    missing Expo.fx resolution. This is a toolchain limitation image, not a
+    Sprint 1 acceptance result, and should only appear in the report’s risks or
+    engineering lessons if useful.
+
+11. `pr16-p2-ios-status-bar-contrast.png`
+    Supplementary historical iOS shell/status-bar contrast evidence. It can
+    support accessibility/design discussion, but it is not evidence of a
+    closed Sprint 1 user story by itself.
+
+Recommended report wording: “The simulator evidence validates navigation,
+Demo labelling, settings/reset, capability states, fixture still review, and
+locked-state privacy copy. It does not claim physical camera capture, native
+microphone recording, upload completion, film compilation, reveal, or
+playback.”
+
+
+8. PROJECT TEAM MEMBERS CONTRIBUTION SUMMARY
+
+The planning proposal assumes five members and assigns areas, but the checked
+GitHub records currently show the same GitHub account as PR author. Do not
+invent names or percentages. Replace the placeholders below with the team’s
+actual ownership, pair-review, and effort records.
+
+Provisional role-to-evidence mapping from the planning documents
+
+Member A — identity, groups, invitations, and access policy
+Potential evidence: #33–#39, #81, #84, #88; session/group/invite contracts;
+settings and invitation screenshots.
+Name: [TO BE COMPLETED]
+Actual contribution/remarks: [TO BE COMPLETED]
+
+Member B — camera and contribution lifecycle
+Potential evidence: #40–#43, #85, #86, #89; capture ports/adapters,
+video recording/review/upload tests, and camera screenshots.
+Name: [TO BE COMPLETED]
+Actual contribution/remarks: [TO BE COMPLETED]
+
+Member C — local runtime, persistence, cycle controls, and jobs
+Potential evidence: #53, #69, #82, #87; SQLite migrations, policy, cycle
+engine, audit/job code, and server test evidence.
+Name: [TO BE COMPLETED]
+Actual contribution/remarks: [TO BE COMPLETED]
+
+Member D — chat and reminders
+The planned role remains largely future scope in this snapshot. Issues #48–#52
+are still open.
+Name: [TO BE COMPLETED]
+Actual contribution/remarks: [TO BE COMPLETED]
+
+Member E — archive, accessibility, integration, and demo proof
+The closed evidence includes locked-state UX, responsive checks, architecture
+guardrails, and simulator captures, but archive/playback/download/runbook
+issues remain open (#63, #65, #67, #73, #75).
+Name: [TO BE COMPLETED]
+Actual contribution/remarks: [TO BE COMPLETED]
+
+Attribution note: the final contribution table should be based on branch/PR
+ownership, code review, test/evidence work, and team records—not inferred from
+the single GitHub account visible in the repository API.
+
+
+9. SPRINT RETROSPECTIVE DRAFT
+
+9.1 What went well
+
+- The team made the local-first boundary explicit. This removed cloud
+  credentials and deployment setup from the critical path while retaining a
+  replaceable adapter design.
+- Moving #28–#32 into Sprint 0 was a useful planning correction. Sprint 1
+  features could build on a typed service, SQLite, fixtures, FFmpeg preflight,
+  and membership policy instead of speculative UI-only state.
+- The identity/group/capture work was dependency ordered. Session state feeds
+  group and cycle policy; capture ports isolate native/browser differences; and
+  idempotent pending jobs provide a seam for later processing.
+- Review was productive rather than ceremonial. The PR #80 review identified
+  13 concrete defects, including a LAN-reachable sessionless cycle mutation,
+  native capture deadlock, reset failures, metadata loss, malformed-path 500s,
+  and state divergence. The defects were indexed and fixed through #81–#89 and
+  PR #91.
+- The app is unusually honest about evidence. The simulator fixture says that
+  no physical image was captured; locked states omit media controls; Demo
+  access is not called authentication; and cloud/reveal limitations are
+  documented.
+- Tests cover more than the happy path: invalid sessions, owner/non-owner
+  controls, cross-group denials, malformed paths, invite misuse, upload
+  validation/idempotency, capture cancellation, reset failure, and architecture
+  import boundaries.
+
+9.2 What could have been done better
+
+- The original Sprint 1 goal included chat, reminders, compilation, reveal,
+  archive, and a full demo runbook. The closed set stops before those features.
+  The plan should have been split into a smaller “identity + capture boundary”
+  sprint and a follow-up “cycle + archive” sprint.
+- The aggregate delivery shape made review harder. PR #91 carried many issues
+  and fixes together, while PR #92 is another broad follow-up with an open
+  review index. Smaller dependency-aligned PRs would make acceptance and
+  rollback easier.
+- The review found defects that focused tests could have caught earlier:
+  native capability feature detection, web cache behaviour, accepted-still
+  retention, session/group single-source-of-truth, and group pointer
+  reconciliation. Those boundaries should be added to the initial test matrix,
+  not only after review.
+- The plan did not record enough estimation/velocity data for a trustworthy
+  burndown. Closure timestamps can show the 13 milestone issues closed on
+  10–11 September, but story points, planned capacity, and ceremony time need
+  team records.
+- Physical-device evidence remains a risk. Simulator screens validate honest
+  UI states but cannot prove native camera/microphone recording or upload.
+  A real-device capture rehearsal should be scheduled before claiming the
+  complete contribution flow.
+- The repository experienced duplicate late Sprint 1 issues from an overlapping
+  GitHub CLI operation. The duplicates are labelled and blocked, but backlog
+  hygiene should be checked before the next sprint starts.
+- Named team ownership and contribution percentages are not recoverable from
+  the visible GitHub author data. The team should fill the contribution table
+  from meeting notes, commits, reviews, and testing/evidence work.
+- A lower-severity request-body-draining observation remains attached to #87.
+  It did not produce a separately verified client-visible break in the merged
+  evidence, but it should be either tested or explicitly deferred.
+
+9.3 What we will try next
+
+1. Close PR #92 only after issue #90 has an authoritative acceptance link,
+   current-main merge state, regression evidence, and final review.
+2. Finish the capture policy tail: persistent quota (#44), FFmpeg/temp-source
+   lifecycle (#45), processing/locked/failure UI (#46), and one
+   delete-and-recapture allowance (#47).
+3. Build authorised local chat and reminders (#48–#52) with reconnect, failure,
+   access-denial, and preference evidence.
+4. Complete cycle transition, persistent compilation, chronological film,
+   labelled filler, bounded retry/delayed release, premiere, archive, and
+   authorised downloads (#54–#65).
+5. Add the full reset-to-reveal happy path, resilience/negative suites, native
+   and web usability validation, and the repeatable local demo runbook (#67,
+   #71, #73, #75).
+6. Run a physical-device capture rehearsal and keep simulator fixture wording
+   separate from hardware claims.
+7. Record the real reporting period, team number, names, ownership, estimates,
+   burndown inputs, review attendees, and Sprint 1 acceptance decisions.
+
+
+10. OTHER THINGS TO HIGHLIGHT
+
+10.1 Local-first is a deliberate engineering decision
+
+The project did not accidentally omit AWS or OIDC. The accepted ADR chooses a
+cloud-free local prototype first so the team can learn phone operations,
+storage, permissions, and state policy without credentials/cost. Cloud work is
+visible in the proposal/backlog but remains blocked until the local definition
+of done is credible.
+
+10.2 Privacy and honesty are part of the product behaviour
+
+The sealed state is not just styling. Before reveal, the UI exposes aggregate
+status and text but no media URI, thumbnail, player, or share action. Durable
+metadata omits file paths. Audit logs use allowlisted event/resource fields.
+Demo identity is labelled synthetic, and simulator capture says that no
+physical image was captured. These constraints are appropriate evidence for a
+privacy-oriented group-memory product.
+
+10.3 One-day demonstration versus four-week product concept
+
+The same cycle engine supports a one-day classroom demo and the proposed
+four-week product cycle. This is a useful design decision: acceleration changes
+the window, not the policy engine or client/server timeline. The current
+closed work proves control and timing; it does not yet prove a complete
+cycle-to-film transition.
+
+10.4 Design and accessibility direction
+
+The interface uses a darkroom-inspired charcoal/paper palette, explicit warm
+accent, readable system typography, text-labelled status, dashed sealed
+placeholders, visible bottom navigation, and responsive phone-width layout.
+Accessible labels, disabled/busy states, retry actions, and non-colour-only
+locked status are part of the contract. The current screenshots show this
+direction without adding media-player chrome or a generic dashboard aesthetic.
+
+10.5 Burndown data seed
+
+The repository does not contain story-point estimates, so no numeric burndown
+should be invented. A defensible closure-count seed is:
+
+Date        Canonical milestone issues closed that day       Remaining canonical
+2026-09-10  #33, #34 (2)                                      31 of 33
+2026-09-11  #35–#43, #53, #69 (11)                           20 of 33
+
+The nine review bugs #81–#89 also closed on 2026-09-11, but they were not
+milestone-scoped and should be shown as review-fix throughput rather than mixed
+into the canonical planned-issue burndown. Add points/capacity from the
+team’s GitHub Project or sprint notes before building a chart.
+
+
+11. SOURCES AND TRACEABILITY
+
+Planning sources
+
+[P1] SWE5006 project brief, local file:
+SWEE5006-Project-Planning-docs/planning/context/project-brief.md
+
+[P2] Rewind project proposal, local file:
+SWEE5006-Project-Planning-docs/planning/proposals/proposal-rewind.md
+
+[P3] Rewind Sprint 0 extension and Sprint 1 plan, local file:
+SWEE5006-Project-Planning-docs/planning/sprints/sprint-0-plan-extension.md
+
+[P4] Rewind app Sprint 1 plan copy, local file:
+rewind-app/planning/sprints/sprint-0-plan-extension.md
+
+[P5] Local-first and repository decisions, local files:
+rewind-v1/planning/decisions/ADR-0001-v1-local-first.md
+rewind-v1/planning/decisions/ADR-0002-repository-topology.md
+rewind-v1/planning/decisions/ADR-0003-local-media-and-vignette-contract.md
+
+Merged pull requests
+
+[PR #77] docs: close Sprint 0 and record Sprint 1 extension
+https://github.com/Collaboration95/rewind-app/pull/77
+
+[PR #78] feat: add Sprint 0 local runtime foundation
+https://github.com/Collaboration95/rewind-app/pull/78
+
+[PR #79] feat: add explicit demo sessions and safe audit diagnostics
+https://github.com/Collaboration95/rewind-app/pull/79
+
+[PR #80] feat: integrate local Demo, cycle controls, and still capture
+https://github.com/Collaboration95/rewind-app/pull/80
+
+[PR #91] feat: deliver Sprint 1 fixes and local capture flow
+https://github.com/Collaboration95/rewind-app/pull/91
+
+Open follow-up pull request
+
+[PR #92] feat: polish demo capture and invite flows
+https://github.com/Collaboration95/rewind-app/pull/92
+
+Canonical Sprint 1 milestone issues
+
+https://github.com/Collaboration95/rewind-app/issues/33
+https://github.com/Collaboration95/rewind-app/issues/34
+https://github.com/Collaboration95/rewind-app/issues/35
+https://github.com/Collaboration95/rewind-app/issues/36
+https://github.com/Collaboration95/rewind-app/issues/37
+https://github.com/Collaboration95/rewind-app/issues/38
+https://github.com/Collaboration95/rewind-app/issues/39
+https://github.com/Collaboration95/rewind-app/issues/40
+https://github.com/Collaboration95/rewind-app/issues/41
+https://github.com/Collaboration95/rewind-app/issues/42
+https://github.com/Collaboration95/rewind-app/issues/43
+https://github.com/Collaboration95/rewind-app/issues/53
+https://github.com/Collaboration95/rewind-app/issues/69
+
+Closed review-defect issues
+
+https://github.com/Collaboration95/rewind-app/issues/81
+https://github.com/Collaboration95/rewind-app/issues/82
+https://github.com/Collaboration95/rewind-app/issues/83
+https://github.com/Collaboration95/rewind-app/issues/84
+https://github.com/Collaboration95/rewind-app/issues/85
+https://github.com/Collaboration95/rewind-app/issues/86
+https://github.com/Collaboration95/rewind-app/issues/87
+https://github.com/Collaboration95/rewind-app/issues/88
+https://github.com/Collaboration95/rewind-app/issues/89
+
+[Issue #90] verified PR #80 review-defect index
+https://github.com/Collaboration95/rewind-app/issues/90
+
+Implementation-facing contracts
+
+rewind-app/docs/domain/session-contract.md
+rewind-app/docs/domain/audit-contract.md
+rewind-app/docs/domain/invitation-contract.md
+rewind-app/docs/domain/media-contract.md
+rewind-app/docs/domain/cycle-control-contract.md
+rewind-app/docs/architecture/architecture-guardrails.md
+rewind-app/docs/architecture/ADR-0002-camera-capture-boundary.md
+rewind-app/UX-CONTRACT.md
+rewind-app/DESIGN.md
+
+Visual evidence
+
+rewind-app/review-evidence/integration-2026-09/README.md
+rewind-app/review-evidence/integration-2026-09/ios-demo-entry-chooser.png
+rewind-app/review-evidence/integration-2026-09/ios-settings-owner-group.png
+rewind-app/review-evidence/integration-2026-09/ios-create-group-prompt-selection.png
+rewind-app/review-evidence/integration-2026-09/ios-reset-confirmation.png
+rewind-app/review-evidence/integration-2026-09/ios-camera-permission-denied-retry.png
+rewind-app/review-evidence/integration-2026-09/ios-camera-simulated-ready.png
+rewind-app/review-evidence/integration-2026-09/ios-camera-simulated-preview-retake.png
+rewind-app/review-evidence/integration-2026-09/ios-locked-state-no-media-ui.png
+rewind-app/review-evidence/integration-2026-09/ios-locked-home.png
+rewind-app/review-evidence/pr16-p1-ios-compile-failure.png
+rewind-app/review-evidence/pr16-p2-ios-status-bar-contrast.png
+
+END OF SOURCE DRAFT
