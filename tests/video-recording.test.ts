@@ -33,6 +33,8 @@ describe('bounded video recording', () => {
   it.each([
     [{ ...clip, durationSeconds: 16 }, '15 seconds'],
     [{ ...clip, width: 1280, height: 720 }, 'portrait'],
+    [{ ...clip, width: 0, height: 1 }, 'portrait'],
+    [{ ...clip, width: 1.5, height: 2 }, 'portrait'],
     [{ ...clip, hasAudio: false }, 'audio'],
   ])('rejects an invalid capture %o', (invalid, message) => {
     expect(() => validateRecordedClip(invalid)).toThrow(message);
@@ -63,6 +65,7 @@ describe('bounded video recording', () => {
     expect(session.getState()).toEqual({ status: 'cancelled' });
     resolveRecording(clip);
     await expect(pending).rejects.toThrow('cancelled');
+    expect(session.getState()).toEqual({ status: 'cancelled' });
   });
 
   it('rejects a second start while a recording is active', async () => {

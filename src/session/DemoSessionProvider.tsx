@@ -208,28 +208,30 @@ export function DemoSessionProvider({
     setPending(true);
     setError(null);
     try {
-      if (session && runtimeClient?.invalidateDemoSession) {
-        await runtimeClient.invalidateDemoSession(session.id);
+      try {
+        if (session && runtimeClient?.invalidateDemoSession) {
+          await runtimeClient.invalidateDemoSession(session.id);
+        }
+      } catch (signOutError) {
+        if (!canClearAfterRuntimeFailure(signOutError)) {
+          if (mounted.current) {
+            setStatus('active');
+            setError(safeError(signOutError, 'Demo access could not be ended. Retry sign out.'));
+          }
+          return;
+        }
       }
-    } catch (signOutError) {
-      if (!canClearAfterRuntimeFailure(signOutError)) {
+      try {
+        await store.clear();
+        if (mounted.current) {
+          setSession(null);
+          setStatus('entry');
+        }
+      } catch (clearError) {
         if (mounted.current) {
           setStatus('active');
-          setError(safeError(signOutError, 'Demo access could not be ended. Retry sign out.'));
+          setError(safeError(clearError, 'Demo access could not be ended. Retry sign out.'));
         }
-        return;
-      }
-    }
-    try {
-      await store.clear();
-      if (mounted.current) {
-        setSession(null);
-        setStatus('entry');
-      }
-    } catch (clearError) {
-      if (mounted.current) {
-        setStatus('active');
-        setError(safeError(clearError, 'Demo access could not be ended. Retry sign out.'));
       }
     } finally {
       if (mounted.current) setPending(false);
@@ -241,35 +243,37 @@ export function DemoSessionProvider({
     setPending(true);
     setError(null);
     try {
-      if (session && runtimeClient?.resetDemoData) {
-        await runtimeClient.resetDemoData(session.id);
+      try {
+        if (session && runtimeClient?.resetDemoData) {
+          await runtimeClient.resetDemoData(session.id);
+        }
+      } catch (resetError) {
+        if (!canClearAfterRuntimeFailure(resetError)) {
+          if (mounted.current) {
+            setStatus('active');
+            setError(safeError(resetError, 'Local Demo data could not be reset. Retry the reset.'));
+          }
+          return false;
+        }
       }
-    } catch (resetError) {
-      if (!canClearAfterRuntimeFailure(resetError)) {
+      try {
+        await resetCaptureData();
+        await resetLocalDemoData();
+        await localGroupStore.clear();
+        await selectionStore.clear?.();
+        await store.clear();
+        if (mounted.current) {
+          setSession(null);
+          setStatus('entry');
+        }
+        return true;
+      } catch (resetError) {
         if (mounted.current) {
           setStatus('active');
           setError(safeError(resetError, 'Local Demo data could not be reset. Retry the reset.'));
         }
         return false;
       }
-    }
-    try {
-      await resetCaptureData();
-      await resetLocalDemoData();
-      await localGroupStore.clear();
-      await selectionStore.clear?.();
-      await store.clear();
-      if (mounted.current) {
-        setSession(null);
-        setStatus('entry');
-      }
-      return true;
-    } catch (resetError) {
-      if (mounted.current) {
-        setStatus('active');
-        setError(safeError(resetError, 'Local Demo data could not be reset. Retry the reset.'));
-      }
-      return false;
     } finally {
       if (mounted.current) setPending(false);
     }

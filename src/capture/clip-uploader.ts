@@ -38,8 +38,10 @@ export function validateClipUploadInput(input: ClipUploadInput): string | null {
     !Number.isFinite(input.durationSeconds) ||
     input.durationSeconds <= 0 ||
     input.durationSeconds > MAX_CLIP_DURATION_SECONDS ||
-    !Number.isFinite(input.width) ||
-    !Number.isFinite(input.height) ||
+    !Number.isInteger(input.width) ||
+    input.width <= 0 ||
+    !Number.isInteger(input.height) ||
+    input.height <= 0 ||
     input.width >= input.height ||
     input.hasAudio !== true
   ) {
@@ -107,11 +109,14 @@ export class ClipUploadSession {
 
   async cancel(): Promise<void> {
     this.generation += 1;
-    if (this.activeJobId) {
-      const jobId = this.activeJobId;
-      this.activeJobId = null;
+    const jobId = this.activeJobId;
+    this.activeJobId = null;
+    // Invalidate the local state before waiting on the runtime. A network
+    // cancellation can hang or fail, but the route must not remain stuck in
+    // an uploading state while that request is unresolved.
+    this.progress = { status: 'cancelled', percent: 0 };
+    if (jobId) {
       await this.transport.cancelClipUpload(jobId);
     }
-    this.progress = { status: 'cancelled', percent: 0 };
   }
 }

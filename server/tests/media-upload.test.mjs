@@ -74,6 +74,35 @@ test('clip upload validates media before creating a job and retries idempotently
   });
 });
 
+test('clip upload rejects ended cycles and malformed dimensions before writing', async () => {
+  await withDatabase(async ({ database }) => {
+    const ended = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      { ...validInput, idempotencyKey: 'ended-cycle-1' },
+      new Date('2026-09-12T00:00:01.000Z'),
+    );
+    assert.deepEqual(ended, { ok: false, reason: 'not_found' });
+
+    for (const [width, height, idempotencyKey] of [
+      [0, 1, 'zero-dimension'],
+      [1.5, 2, 'fraction-dimension'],
+    ]) {
+      assert.deepEqual(
+        createClipUpload(
+          database,
+          'demo-group',
+          'demo-1',
+          { ...validInput, width, height, idempotencyKey },
+          new Date('2026-09-11T12:00:00.000Z'),
+        ),
+        { ok: false, reason: 'invalid_media' },
+      );
+    }
+  });
+});
+
 test('HTTP clip upload requires a session and cancellation releases quota for retry', async () => {
   await withDatabase(async ({ config, database }) => {
     const server = createRuntimeServer(config, database);

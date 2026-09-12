@@ -46,7 +46,7 @@ export function CapsuleSummary({ clock = Date.now }: { clock?: () => number }) {
 
   if (state.status === 'error') {
     return (
-      <View accessible style={styles.statusPanel} testID="capsule-error">
+      <View accessible={false} style={styles.statusPanel} testID="capsule-error">
         <Text style={styles.label}>CURRENT CAPSULE</Text>
         <Text style={styles.statusTitle}>Capsule unavailable</Text>
         <Text accessibilityLiveRegion="assertive" style={styles.bodyText}>

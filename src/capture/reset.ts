@@ -5,12 +5,12 @@ import { IMAGE_METADATA_KEY } from './metadata-store';
 import { WebCaptureFileStore } from './file-store';
 import { PENDING_CLIP_METADATA_KEY } from './video-review';
 
-const CAPTURE_CACHE_FOLDER = 'rewind-stills';
+const CAPTURE_CACHE_FOLDERS = ['rewind-stills', 'rewind-clips'] as const;
 
 /**
- * Remove every app-owned still capture artifact during a local Demo reset.
- * Durable metadata intentionally has no URI, so reset owns the cache folder
- * directly instead of trying to recover paths from metadata.
+ * Remove every app-owned capture artifact during a local Demo reset. Durable
+ * metadata intentionally has no URI, so reset owns the cache folders directly
+ * instead of trying to recover paths from metadata.
  */
 export async function resetCaptureData(): Promise<void> {
   WebCaptureFileStore.resetAll();
@@ -21,9 +21,9 @@ export async function resetCaptureData(): Promise<void> {
   const cacheDirectory = FileSystem.cacheDirectory;
   if (cacheDirectory) {
     operations.push(
-      FileSystem.deleteAsync(`${cacheDirectory}${CAPTURE_CACHE_FOLDER}/`, {
-        idempotent: true,
-      }),
+      ...CAPTURE_CACHE_FOLDERS.map((folder) =>
+        FileSystem.deleteAsync(`${cacheDirectory}${folder}/`, { idempotent: true }),
+      ),
     );
   }
   const results = await Promise.allSettled(operations);

@@ -43,6 +43,8 @@ describe('local clip upload lifecycle', () => {
       uploadClip: jest.fn().mockResolvedValue(upload),
     };
     expect(validateClipUploadInput({ ...input, durationSeconds: 16 })).toContain('15 seconds');
+    expect(validateClipUploadInput({ ...input, width: 0, height: 1 })).toContain('portrait');
+    expect(validateClipUploadInput({ ...input, width: 1.5, height: 2 })).toContain('portrait');
     const session = new ClipUploadSession(transport);
     const progress: string[] = [];
     await expect(session.upload(input, (state) => progress.push(state.status))).resolves.toEqual(
@@ -69,5 +71,22 @@ describe('local clip upload lifecycle', () => {
     await expect(pending).rejects.toBeInstanceOf(ClipUploadError);
     expect(transport.cancelClipUpload).toHaveBeenCalledWith('job-1');
     expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
+  });
+
+  it('marks cancellation locally before a runtime cancellation settles', async () => {
+    let resolveCancellation: () => void = () => undefined;
+    const transport = {
+      cancelClipUpload: jest.fn(
+        () => new Promise<void>((resolve) => (resolveCancellation = resolve)),
+      ),
+      uploadClip: jest.fn().mockResolvedValue(upload),
+    };
+    const session = new ClipUploadSession(transport);
+    await session.upload(input);
+
+    const cancellation = session.cancel();
+    expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
+    resolveCancellation();
+    await cancellation;
   });
 });

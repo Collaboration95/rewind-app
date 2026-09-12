@@ -99,6 +99,8 @@ export interface CameraViewHandle {
 export interface CameraPlatform {
   readonly kind: 'expo' | 'demo';
   readonly supportsLivePreview: boolean;
+  /** Whether this adapter can record video in addition to still images. */
+  readonly supportsVideoRecording?: boolean;
 
   getCapabilities(): Promise<CapabilitySnapshot>;
   getPermissions(): Promise<PermissionSnapshot>;

@@ -132,7 +132,7 @@ one day with the demo contribution allowance.
 
 Settings also provides a confirmed **Reset local Demo data** action. Reset
 removes the saved local Demo session, locally created groups, and local
-selection, accepted still-image metadata, and app-owned cached still files,
+selection, accepted still-image metadata, and app-owned cached still and clip files,
 then restores the deterministic fixture. It does not touch source files,
 migrations, or remote data.
 
@@ -175,7 +175,8 @@ text; it does not load or expose media, playback, or sharing actions.
 - `docs/architecture/` — local-first and camera capture boundary decisions.
 - `docs/domain/` — glossary and framework-independent contracts.
 - `scripts/check-architecture.mjs` — baseline framework/device boundary guard.
-- `planning/sprints/` — Sprint 1 extension, runtime gate, and fallback agreement.
+- `doc/` — imported planning workspace, including the Sprint 1 extension,
+  runtime gate, and fallback agreement under `doc/planning/`.
 
 The Sprint 0 plan and issue acceptance criteria remain the source of product
 scope. Chat, archive playback, authentication, and cloud services remain

@@ -58,6 +58,18 @@ export interface RuntimeClient {
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Local runtime calls should not leave a screen waiting forever when a LAN
+ * service goes offline or stops responding. The timeout is deliberately
+ * short enough for recovery actions to remain usable, while allowing a
+ * healthy local request a little room on a busy development machine.
+ */
+export const DEFAULT_RUNTIME_REQUEST_TIMEOUT_MS = 10_000;
+
+export interface LocalRuntimeClientOptions {
+  requestTimeoutMs?: number;
+}
+
 interface ErrorPayload {
   error?: string;
   field?: string;
@@ -88,10 +100,20 @@ function normalizeBaseUrl(value: string): string {
 export class LocalRuntimeClient implements RuntimeClient {
   readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
+  private readonly requestTimeoutMs: number;
 
-  constructor(baseUrl: string, fetchImpl: FetchLike = fetch) {
+  constructor(
+    baseUrl: string,
+    fetchImpl: FetchLike = fetch,
+    options: LocalRuntimeClientOptions = {},
+  ) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.fetchImpl = fetchImpl;
+    const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_RUNTIME_REQUEST_TIMEOUT_MS;
+    if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
+      throw new LocalRuntimeError('The local runtime request timeout must be greater than zero.');
+    }
+    this.requestTimeoutMs = requestTimeoutMs;
   }
 
   async getHealth(): Promise<RuntimeHealth> {
@@ -269,21 +291,44 @@ export class LocalRuntimeClient implements RuntimeClient {
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     let response: Response;
+    let payload: unknown = null;
+    let timedOut = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutController =
+      typeof AbortController === 'function' ? new AbortController() : undefined;
+    const timeoutError = () =>
+      new LocalRuntimeError(
+        `The local runtime did not respond within ${this.requestTimeoutMs} ms. Check that the service is running and the URL is reachable.`,
+        undefined,
+        'runtime_timeout',
+      );
     try {
-      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      const fetchPromise = this.fetchImpl(`${this.baseUrl}${path}`, {
         ...init,
+        ...(timeoutController && !init.signal ? { signal: timeoutController.signal } : {}),
         headers: { Accept: 'application/json', ...(init.headers ?? {}) },
       });
-    } catch {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          timedOut = true;
+          timeoutController?.abort();
+          reject(timeoutError());
+        }, this.requestTimeoutMs);
+      });
+      response = await Promise.race([fetchPromise, timeoutPromise]);
+      try {
+        payload = await Promise.race([response.json(), timeoutPromise]);
+      } catch (error) {
+        if (timedOut) throw error;
+        // The error below remains actionable even when a proxy returns invalid JSON.
+      }
+    } catch (error) {
+      if (timedOut) throw error instanceof LocalRuntimeError ? error : timeoutError();
       throw new LocalRuntimeError(
         `Could not reach the local runtime at ${this.baseUrl}. Check that the service is running and the URL is reachable.`,
       );
-    }
-    let payload: unknown = null;
-    try {
-      payload = await response.json();
-    } catch {
-      // The error below remains actionable even when a proxy returns invalid JSON.
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
     if (!response.ok) {
       const errorPayload = (payload ?? {}) as ErrorPayload;

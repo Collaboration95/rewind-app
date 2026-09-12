@@ -19,6 +19,14 @@ scope or delivery status.
   `.claude/skills`, `.codex/skills`, and `.opencode/skills` links point to the
   same canonical `skills/` directory.
 
+## Project documentation
+
+- `doc/README.md` is the entry point for the consolidated planning workspace.
+- Current project context, proposals, Sprint plans, and planning evidence live
+  under `doc/planning/`.
+- Do not recreate or use the retired top-level `planning/` path or the separate
+  planning repository for current Rewind app scope and delivery decisions.
+
 ## Scrum
 
 - Each Sprint has a Sprint Goal and a visible Sprint Backlog. Use the Project
