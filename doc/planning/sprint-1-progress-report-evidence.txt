@@ -980,16 +980,16 @@ team’s GitHub Project or sprint notes before building a chart.
 Planning sources
 
 [P1] SWE5006 project brief, local file:
-SWEE5006-Project-Planning-docs/planning/context/project-brief.md
+rewind-app/doc/planning/context/project-brief.md
 
 [P2] Rewind project proposal, local file:
-SWEE5006-Project-Planning-docs/planning/proposals/proposal-rewind.md
+rewind-app/doc/planning/proposals/proposal-rewind.md
 
 [P3] Rewind Sprint 0 extension and Sprint 1 plan, local file:
-SWEE5006-Project-Planning-docs/planning/sprints/sprint-0-plan-extension.md
+rewind-app/doc/planning/sprints/sprint-0-plan-extension.md
 
-[P4] Rewind app Sprint 1 plan copy, local file:
-rewind-app/planning/sprints/sprint-0-plan-extension.md
+[P4] Rewind app Sprint 1 plan, local file:
+rewind-app/doc/planning/sprints/sprint-0-plan-extension.md
 
 [P5] Local-first and repository decisions, local files:
 rewind-v1/planning/decisions/ADR-0001-v1-local-first.md

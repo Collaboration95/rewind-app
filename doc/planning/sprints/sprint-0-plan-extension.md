@@ -2,7 +2,7 @@
 
 - **Status:** Applied backlog plan; no application code is part of this document
 - **Date:** 2026-09-10
-- **Planning repository:** `SWEE5006-Project-Planning-docs`
+- **Planning workspace:** `rewind-app/doc/planning/`
 - **Delivery repository:** `Collaboration95/rewind-app`
 
 ## Purpose

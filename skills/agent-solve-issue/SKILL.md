@@ -18,7 +18,8 @@ and likely implementation boundary. Do not change files.
 
 ## Solve
 
-1. Inspect the issue, working tree, existing patterns, and relevant tests.
+1. Inspect the issue, working tree, existing patterns, relevant tests, and
+   applicable project context under `doc/planning/`.
    Treat the issue's acceptance criteria and exclusions as the scope.
 2. Resolve only material product, UX, architecture, privacy, API, or platform
    choices. Ask one question at a time; recommend the smallest suitable option.

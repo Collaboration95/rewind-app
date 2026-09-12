@@ -173,10 +173,10 @@ how the documents fit together, not an instruction to duplicate their content.
 
 | File | Why it matters to Rewind |
 |---|---|
-| `planning/context/project-brief.md` | Derived but source-backed summary of project requirements and quality bar. |
-| `planning/proposals/proposal-rewind.md` | Full Rewind project scope, acceptance plan, architecture, course evidence, effort, and risks. |
-| `planning/sprints/sprint-0-plan.md` | First implementation slice, capacity, user stories, workflow, and demonstration plan. |
-| `README.md` | Entry point for the active five-file planning set. |
+| `doc/planning/context/project-brief.md` | Derived but source-backed summary of project requirements and quality bar. |
+| `doc/planning/proposals/proposal-rewind.md` | Full Rewind project scope, acceptance plan, architecture, course evidence, effort, and risks. |
+| `doc/planning/sprints/sprint-0-plan.md` | First implementation slice, capacity, user stories, workflow, and demonstration plan. |
+| `doc/README.md` | Entry point for the active planning set. |
 
 ## 8. External sources reviewed so far
 
@@ -196,7 +196,7 @@ how the documents fit together, not an instruction to duplicate their content.
 
 1. Resolve the 13 open questions in Section 4, prioritising reveal/archive semantics, chat boundary, authentication/invites, and membership/account controls.
 2. Record final scope choices in the proposal or sprint plan as they are agreed.
-3. Refine `planning/proposals/proposal-rewind.md` only when an agreed scope change requires it.
+3. Refine `doc/planning/proposals/proposal-rewind.md` only when an agreed scope change requires it.
 4. Keep the MVP bounded with explicit exclusions and a clear definition of done using a synthetic five-member group.
 5. Choose the actual stack after confirming available AWS credits and app-store/developer-account constraints; do not promise real-time shader filters until a prototype proves them.
 6. Create a backlog and accept/reject stretch work only after the complete capture-to-reveal vertical slice is working.
