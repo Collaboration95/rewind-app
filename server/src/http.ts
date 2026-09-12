@@ -108,20 +108,24 @@ function actingMember(url: URL): string | null {
   return url.searchParams.get('memberId');
 }
 
-function sessionMember(database: RewindDatabase, url: URL): string | null {
+function sessionMember(database: RewindDatabase, url: URL, now = new Date()): string | null {
   const sessionId = url.searchParams.get('sessionId');
   if (!sessionId) return actingMember(url);
-  const result = validateDemoSession(database, sessionId);
+  const result = validateDemoSession(database, sessionId, now);
   return result.status === 'valid' ? result.session.actor.memberId : null;
 }
 
-function sessionScope(database: RewindDatabase, url: URL) {
+function sessionScope(database: RewindDatabase, url: URL, now = new Date()) {
   const sessionId = url.searchParams.get('sessionId');
   if (!sessionId) return { memberId: actingMember(url), groupId: null };
-  const result = validateDemoSession(database, sessionId);
+  const result = validateDemoSession(database, sessionId, now);
   return result.status === 'valid'
     ? { memberId: result.session.actor.memberId, groupId: result.session.groupId }
     : { memberId: null, groupId: null };
+}
+
+export interface RuntimeServerOptions {
+  now?: () => Date;
 }
 
 async function requestBody(request: IncomingMessage): Promise<Record<string, unknown> | null> {
@@ -191,7 +195,9 @@ export async function handleRequest(
   response: ServerResponse,
   config: RuntimeConfig,
   database: RewindDatabase,
+  options: RuntimeServerOptions = {},
 ): Promise<void> {
+  const now = options.now ?? (() => new Date());
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
@@ -227,6 +233,7 @@ export async function handleRequest(
     const result = createDemoSession(database, {
       memberId: body.memberId,
       groupId: typeof body.groupId === 'string' ? body.groupId : undefined,
+      now: now(),
     });
     if (!result.ok) {
       if (result.reason === 'membership_denied') return sendDenied(response, config);
@@ -245,7 +252,7 @@ export async function handleRequest(
     const sessionId = decodePathSegment(sessionMatch[1], response, config);
     if (sessionId === null) return;
     if (request.method === 'GET') {
-      const result = validateDemoSession(database, sessionId);
+      const result = validateDemoSession(database, sessionId, now());
       if (result.status === 'valid') {
         sendJson(response, config, 200, { session: result.session });
       } else if (result.status === 'invalid') {
@@ -262,7 +269,7 @@ export async function handleRequest(
       return;
     }
     if (request.method === 'DELETE') {
-      const result = invalidateDemoSession(database, sessionId);
+      const result = invalidateDemoSession(database, sessionId, now());
       if (!result.ok) {
         if (result.reason === 'missing') {
           sendJson(response, config, 404, {
@@ -284,7 +291,7 @@ export async function handleRequest(
 
   if (url.pathname === '/demo/reset' && request.method === 'POST') {
     const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId || validateDemoSession(database, sessionId).status !== 'valid') {
+    if (!sessionId || validateDemoSession(database, sessionId, now()).status !== 'valid') {
       sendJson(response, config, 401, {
         error: 'session_required',
         message: 'Choose Demo access before resetting local Demo data.',
@@ -302,7 +309,7 @@ export async function handleRequest(
       sendDenied(response, config);
       return;
     }
-    const session = validateDemoSession(database, sessionId);
+    const session = validateDemoSession(database, sessionId, now());
     if (session.status !== 'valid') {
       sendJson(response, config, 401, {
         error: 'session_required',
@@ -314,6 +321,7 @@ export async function handleRequest(
     const result = createGroup(database, session.session.actor.memberId, {
       name: typeof body?.name === 'string' ? body.name : '',
       prompt: typeof body?.prompt === 'string' ? body.prompt : '',
+      now: now(),
     });
     if (!result.ok) {
       sendJson(response, config, 400, {
@@ -353,7 +361,7 @@ export async function handleRequest(
     const sessionId = url.searchParams.get('sessionId');
     const groupId = url.searchParams.get('groupId');
     if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId);
+    const session = validateDemoSession(database, sessionId, now());
     if (session.status !== 'valid') return sendSessionRequired(response, config);
     if (!groupId) return sendDenied(response, config);
     const body = await requestBody(request);
@@ -363,7 +371,13 @@ export async function handleRequest(
         : typeof body?.expiresInSeconds === 'string'
           ? Number(body.expiresInSeconds)
           : undefined;
-    const result = createInvite(database, session.session.actor.memberId, groupId, ttlSeconds);
+    const result = createInvite(
+      database,
+      session.session.actor.memberId,
+      groupId,
+      ttlSeconds,
+      now(),
+    );
     if (!result.ok) {
       if (result.reason === 'forbidden') return sendDenied(response, config);
       sendJson(response, config, 400, {
@@ -379,7 +393,7 @@ export async function handleRequest(
   if (url.pathname === '/invites/accept' && request.method === 'POST') {
     const sessionId = url.searchParams.get('sessionId');
     if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId);
+    const session = validateDemoSession(database, sessionId, now());
     if (session.status !== 'valid') return sendSessionRequired(response, config);
     const body = await requestBody(request);
     const code = typeof body?.code === 'string' ? body.code : (url.searchParams.get('code') ?? '');
@@ -388,6 +402,7 @@ export async function handleRequest(
       session.session.actor.memberId,
       code,
       url.searchParams.get('groupId') ?? undefined,
+      now(),
     );
     if (!result.ok) {
       const messages = {
@@ -424,7 +439,7 @@ export async function handleRequest(
     const sessionId = url.searchParams.get('sessionId');
     const groupId = url.searchParams.get('groupId');
     if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId);
+    const session = validateDemoSession(database, sessionId, now());
     if (session.status !== 'valid') return sendSessionRequired(response, config);
     if (!groupId) return sendDenied(response, config);
     const body = await requestBody(request);
@@ -439,7 +454,13 @@ export async function handleRequest(
       height: typeof body?.height === 'number' ? body.height : Number.NaN,
       hasAudio: body?.hasAudio === true,
     };
-    const result = createClipUpload(database, groupId, session.session.actor.memberId, input);
+    const result = createClipUpload(
+      database,
+      groupId,
+      session.session.actor.memberId,
+      input,
+      now(),
+    );
     if (!result.ok) {
       if (result.reason === 'not_found') return sendNotFound(response, config);
       sendJson(response, config, result.reason === 'quota_exceeded' ? 409 : 400, {
@@ -466,7 +487,7 @@ export async function handleRequest(
     const sessionId = url.searchParams.get('sessionId');
     const groupId = url.searchParams.get('groupId');
     if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId);
+    const session = validateDemoSession(database, sessionId, now());
     if (session.status !== 'valid') return sendSessionRequired(response, config);
     if (!groupId) return sendDenied(response, config);
     if (
@@ -498,7 +519,7 @@ export async function handleRequest(
       sendSessionRequired(response, config);
       return;
     }
-    const session = validateDemoSession(database, sessionId);
+    const session = validateDemoSession(database, sessionId, now());
     if (session.status !== 'valid') {
       sendSessionRequired(response, config);
       return;
@@ -533,7 +554,7 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/groups/current') {
-    const scope = sessionScope(database, url);
+    const scope = sessionScope(database, url, now());
     const memberId = scope.memberId;
     const group =
       (scope.groupId ? getGroup(database, scope.groupId, memberId ?? undefined) : null) ??
@@ -553,7 +574,7 @@ export async function handleRequest(
   if (groupMatch) {
     const groupId = decodePathSegment(groupMatch[1], response, config);
     if (groupId === null) return;
-    const memberId = sessionMember(database, url);
+    const memberId = sessionMember(database, url, now());
     if (!authorize(database, response, config, groupId, memberId, 'group')) return;
     const group = getGroup(database, groupId, memberId ?? undefined);
     if (!group) return sendNotFound(response, config);
@@ -567,7 +588,9 @@ export async function handleRequest(
       sendDenied(response, config);
       return;
     }
-    if (!authorize(database, response, config, groupId, sessionMember(database, url), 'group'))
+    if (
+      !authorize(database, response, config, groupId, sessionMember(database, url, now()), 'group')
+    )
       return;
     const cycle = getCurrentCycle(database, groupId);
     if (!cycle) return sendNotFound(response, config);
@@ -584,7 +607,16 @@ export async function handleRequest(
       sendDenied(response, config);
       return;
     }
-    if (!authorize(database, response, config, groupId, sessionMember(database, url), 'message'))
+    if (
+      !authorize(
+        database,
+        response,
+        config,
+        groupId,
+        sessionMember(database, url, now()),
+        'message',
+      )
+    )
       return;
     const message = getMessage(database, groupId, messageId);
     if (!message) return sendNotFound(response, config);
@@ -602,7 +634,14 @@ export async function handleRequest(
       return;
     }
     if (
-      !authorize(database, response, config, groupId, sessionMember(database, url), 'contribution')
+      !authorize(
+        database,
+        response,
+        config,
+        groupId,
+        sessionMember(database, url, now()),
+        'contribution',
+      )
     )
       return;
     const contribution = getContribution(database, groupId, contributionId);
@@ -621,7 +660,16 @@ export async function handleRequest(
         sendDenied(response, config);
         return;
       }
-      if (!authorize(database, response, config, groupId, sessionMember(database, url), resource))
+      if (
+        !authorize(
+          database,
+          response,
+          config,
+          groupId,
+          sessionMember(database, url, now()),
+          resource,
+        )
+      )
         return;
       const job = getMediaJob(database, groupId, resourceId, resource);
       if (!job) return sendNotFound(response, config);
@@ -633,9 +681,13 @@ export async function handleRequest(
   sendNotFound(response, config);
 }
 
-export function createRuntimeServer(config: RuntimeConfig, database: RewindDatabase): Server {
+export function createRuntimeServer(
+  config: RuntimeConfig,
+  database: RewindDatabase,
+  options: RuntimeServerOptions = {},
+): Server {
   return createServer((request, response) => {
-    void handleRequest(request, response, config, database).catch((error: unknown) => {
+    void handleRequest(request, response, config, database, options).catch((error: unknown) => {
       if (!response.headersSent) {
         sendJson(response, config, 500, {
           error: 'internal_error',

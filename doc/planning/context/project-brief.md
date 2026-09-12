@@ -63,13 +63,13 @@ Avoid selecting an idea solely because it uses an impressive technology. The tec
 
 The briefing gives the following indicative milestones; dates may be tentative and should be confirmed:
 
-| Milestone | Indicative date |
-|---|---|
-| Project proposal submission | 2026-08-28 |
-| Proposal review and project kick-off | 2026-08-31 |
-| Project conduct and fortnightly reports | From 2026-09-01 |
-| Final presentations | 2026-11-03 to 2026-11-04 |
-| Final report submission | 2026-11-10 |
+| Milestone                               | Indicative date          |
+| --------------------------------------- | ------------------------ |
+| Project proposal submission             | 2026-08-28               |
+| Proposal review and project kick-off    | 2026-08-31               |
+| Project conduct and fortnightly reports | From 2026-09-01          |
+| Final presentations                     | 2026-11-03 to 2026-11-04 |
+| Final report submission                 | 2026-11-10               |
 
 ## Related active documents
 
