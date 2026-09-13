@@ -1,5 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createWriteStream, existsSync } from 'node:fs';
+import { mkdir, rename, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
+import { once } from 'node:events';
 import { URL } from 'node:url';
 
 import { SERVICE_VERSION, type RuntimeConfig } from './config';
@@ -23,7 +27,27 @@ import {
 } from './session';
 import { createGroup } from './groups';
 import { acceptInvite, createInvite } from './invites';
-import { cancelClipUpload, createClipUpload, type ClipUploadInput } from './media';
+import { deleteContribution } from './contributions';
+import {
+  cancelClipUpload,
+  claimStagedSource,
+  acquireStagedSourceLock,
+  cleanupStagedSource,
+  createClipUpload,
+  findStagedSource,
+  markStagedSourceReady,
+  recordClipMediaMetadata,
+  reclaimStagedSource,
+  resetStagedSourceClaim,
+  registerStagedIntake,
+  stagedSourceId,
+  stagedSourcePath,
+  waitForStagedIntakesIdle,
+  type ClipUploadInput,
+} from './media';
+import { cleanupOrphanedStagedSources, processClipJob } from './jobs';
+import { resolve } from 'node:path';
+import { probeClipWithFfmpeg } from './ffmpeg';
 
 export interface HealthPayload {
   ok: true;
@@ -145,6 +169,45 @@ async function requestBody(request: IncomingMessage): Promise<Record<string, unk
       : null;
   } catch {
     return null;
+  }
+}
+
+const MAX_STAGED_SOURCE_BYTES = 50 * 1024 * 1024;
+
+async function stageSourceBody(
+  request: IncomingMessage,
+  stagingDir: string,
+  sourcePath: string,
+): Promise<number> {
+  const contentLength = Number(request.headers['content-length'] ?? Number.NaN);
+  if (Number.isFinite(contentLength) && contentLength <= 0) {
+    throw new Error('empty source');
+  }
+  if (Number.isFinite(contentLength) && contentLength > MAX_STAGED_SOURCE_BYTES) {
+    throw new Error('source too large');
+  }
+  await mkdir(stagingDir, { recursive: true });
+  const partialPath = `${sourcePath}.${randomUUID()}.part`;
+  const output = createWriteStream(partialPath, { flags: 'wx' });
+  let bytes = 0;
+  try {
+    for await (const chunk of request) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      bytes += buffer.byteLength;
+      if (bytes > MAX_STAGED_SOURCE_BYTES) throw new Error('source too large');
+      if (!output.write(buffer)) await once(output, 'drain');
+    }
+    await new Promise<void>((resolvePromise, reject) => {
+      output.once('error', reject);
+      output.end(() => resolvePromise());
+    });
+    if (bytes <= 0) throw new Error('empty source');
+    await rename(partialPath, sourcePath);
+    return bytes;
+  } catch (error) {
+    output.destroy();
+    await rm(partialPath, { force: true });
+    throw error;
   }
 }
 
@@ -298,8 +361,18 @@ export async function handleRequest(
       });
       return;
     }
-    restoreFixture(database);
-    sendJson(response, config, 200, { reset: true });
+    const stagingDir = resolve(config.dataDir, 'media', 'staging');
+    const releaseStagingLock = await acquireStagedSourceLock(stagingDir);
+    try {
+      await waitForStagedIntakesIdle();
+      restoreFixture(database);
+      // Reset removes database claims first, then safely removes all final and
+      // partial staged files that are no longer protected by an active job.
+      await cleanupOrphanedStagedSources(database, stagingDir, 100, 0);
+      sendJson(response, config, 200, { reset: true });
+    } finally {
+      releaseStagingLock();
+    }
     return;
   }
 
@@ -435,6 +508,188 @@ export async function handleRequest(
     return;
   }
 
+  if (url.pathname === '/contributions/upload/source' && request.method === 'POST') {
+    const sessionId = url.searchParams.get('sessionId');
+    const groupId = url.searchParams.get('groupId');
+    const idempotencyKey = url.searchParams.get('idempotencyKey') ?? '';
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId, now());
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (!groupId) return sendDenied(response, config);
+    if (
+      !authorize(
+        database,
+        response,
+        config,
+        groupId,
+        session.session.actor.memberId,
+        'contribution',
+      )
+    )
+      return;
+    if (!/^[A-Za-z0-9_-]{8,100}$/.test(idempotencyKey)) {
+      sendJson(response, config, 400, {
+        error: 'upload_invalid_key',
+        message: 'Provide a retryable upload key.',
+      });
+      return;
+    }
+    const contentType = String(request.headers['content-type'] ?? '')
+      .split(';', 1)[0]
+      .trim();
+    if (contentType !== 'video/mp4' && contentType !== 'application/octet-stream') {
+      sendJson(response, config, 400, {
+        error: 'upload_invalid_media',
+        message: 'Upload the clip as an MP4 source.',
+      });
+      return;
+    }
+    const stagingDir = resolve(config.dataDir, 'media', 'staging');
+    let releaseStagingLock: (() => void) | null = await acquireStagedSourceLock(stagingDir);
+    let releaseActiveIntake: (() => void) | null = null;
+    try {
+      await cleanupOrphanedStagedSources(database, stagingDir);
+      const sourceId = stagedSourceId(idempotencyKey);
+      const sourceUri = `staged://${sourceId}`;
+      const existingBeforeClaim = findStagedSource(database, sourceUri);
+      const nextGeneration = existingBeforeClaim
+        ? Math.max(1, existingBeforeClaim.claimGeneration)
+        : 1;
+      const sourcePath = stagedSourcePath(sourceUri, stagingDir, nextGeneration);
+      if (!sourcePath) return sendNotFound(response, config);
+      const claim = claimStagedSource(
+        database,
+        groupId,
+        session.session.actor.memberId,
+        idempotencyKey,
+        now(),
+        sourcePath,
+      );
+      if (!claim.ok) {
+        sendJson(response, config, 409, {
+          error: 'upload_source_conflict',
+          message: 'That upload key is already owned by another capture.',
+        });
+        return;
+      }
+      // The intake route always writes to the deterministic server-owned path;
+      // never trust a path carried by a legacy/database row as a write target.
+      let claimedSourcePath = claim.source.sourcePath ?? sourcePath;
+      let claimGeneration = claim.source.claimGeneration;
+      let canStage = !claim.existing;
+      if (
+        claim.existing &&
+        (claim.source.status === 'staged' || claim.source.status === 'pending')
+      ) {
+        const existingMetadata = findStagedSource(database, sourceUri);
+        if (
+          existingMetadata?.status === 'staged' &&
+          existingMetadata.byteLength &&
+          existsSync(claimedSourcePath)
+        ) {
+          sendJson(response, config, 200, {
+            source: { id: sourceId, uri: sourceUri, byteLength: existingMetadata.byteLength },
+          });
+          return;
+        }
+        if (
+          existingMetadata?.status === 'pending' &&
+          (!existingMetadata.claimExpiresAt ||
+            Date.parse(existingMetadata.claimExpiresAt) > now().getTime())
+        ) {
+          sendJson(response, config, 409, {
+            error: 'upload_source_conflict',
+            message: 'That upload is already being staged. Retry after it completes.',
+          });
+          return;
+        }
+        // A successful claim without a file is recoverable after interruption.
+        // Reclaiming increments the generation and assigns a new physical path,
+        // fencing any stale body/probe callback from the old request.
+        const reclaimed = reclaimStagedSource(
+          database,
+          groupId,
+          session.session.actor.memberId,
+          idempotencyKey,
+          stagedSourcePath(sourceUri, stagingDir, claimGeneration + 1) ?? sourcePath,
+          now(),
+        );
+        if (!reclaimed.ok || !reclaimed.source.sourcePath) {
+          sendJson(response, config, 409, {
+            error: 'upload_source_conflict',
+            message: 'That upload source changed while it was being recovered.',
+          });
+          return;
+        }
+        claimedSourcePath = reclaimed.source.sourcePath;
+        claimGeneration = reclaimed.source.claimGeneration;
+        canStage = true;
+      }
+      // A pending claim with a source path belongs to an intake request that is
+      // already consuming its body. Reject the duplicate before it can write a
+      // distinct payload over the same deterministic destination.
+      if (!canStage && claim.existing && claim.source.status === 'pending') {
+        sendJson(response, config, 409, {
+          error: 'upload_source_conflict',
+          message: 'That upload is already being staged. Retry after it completes.',
+        });
+        return;
+      }
+      // Let another same-key request observe the committed pending claim and
+      // return a conflict, while reset waits on this body/probe operation.
+      releaseActiveIntake = registerStagedIntake();
+      releaseStagingLock();
+      releaseStagingLock = null;
+      try {
+        await stageSourceBody(request, stagingDir, claimedSourcePath);
+        const probed = await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
+        database.exec('BEGIN');
+        try {
+          recordClipMediaMetadata(database, {
+            sourceUri,
+            ...probed,
+            // FFprobe's stat is authoritative; the stream byte count is only a
+            // transport guard and is never persisted as media truth.
+            byteLength: probed.byteLength,
+            verifiedAt: now().toISOString(),
+          });
+          if (
+            !markStagedSourceReady(
+              database,
+              sourceUri,
+              probed.byteLength,
+              claimedSourcePath,
+              claimGeneration,
+            )
+          ) {
+            throw new Error('staged source claim was superseded');
+          }
+          database.exec('COMMIT');
+        } catch (error) {
+          database.exec('ROLLBACK');
+          throw error;
+        }
+        sendJson(response, config, 201, {
+          source: { id: sourceId, uri: sourceUri, byteLength: probed.byteLength },
+        });
+      } catch (error) {
+        await rm(claimedSourcePath, { force: true }).catch(() => undefined);
+        resetStagedSourceClaim(database, sourceUri, claimedSourcePath, claimGeneration);
+        const message =
+          error instanceof Error && error.message === 'source too large'
+            ? 'The clip is larger than 50 MB.'
+            : 'The clip source could not be staged. Try again.';
+        sendJson(response, config, 400, { error: 'upload_staging_failed', message });
+      }
+    } finally {
+      releaseActiveIntake?.();
+      releaseActiveIntake = null;
+      releaseStagingLock?.();
+      releaseStagingLock = null;
+    }
+    return;
+  }
+
   if (url.pathname === '/contributions/upload' && request.method === 'POST') {
     const sessionId = url.searchParams.get('sessionId');
     const groupId = url.searchParams.get('groupId');
@@ -453,6 +708,22 @@ export async function handleRequest(
       width: typeof body?.width === 'number' ? body.width : Number.NaN,
       height: typeof body?.height === 'number' ? body.height : Number.NaN,
       hasAudio: body?.hasAudio === true,
+      ...(typeof body?.mode === 'string'
+        ? { mode: body.mode as 'soft-focus' | 'high-contrast' }
+        : {}),
+      ...(typeof body?.trimStartSeconds === 'number'
+        ? { trimStartSeconds: body.trimStartSeconds }
+        : typeof body?.startSeconds === 'number'
+          ? { startSeconds: body.startSeconds }
+          : {}),
+      ...(typeof body?.trimEndSeconds === 'number'
+        ? { trimEndSeconds: body.trimEndSeconds }
+        : typeof body?.endSeconds === 'number'
+          ? { endSeconds: body.endSeconds }
+          : {}),
+      ...(typeof body?.sourceDurationSeconds === 'number'
+        ? { sourceDurationSeconds: body.sourceDurationSeconds }
+        : {}),
     };
     const result = createClipUpload(
       database,
@@ -460,9 +731,19 @@ export async function handleRequest(
       session.session.actor.memberId,
       input,
       now(),
+      {
+        stagingDir: resolve(config.dataDir, 'media', 'staging'),
+        requireVerifiedMetadata: true,
+      },
     );
     if (!result.ok) {
       if (result.reason === 'not_found') return sendNotFound(response, config);
+      // Key validation happens before capability ownership is established. Do
+      // not let an invalid-key request delete a URI supplied by another
+      // capture (or an arbitrary caller-controlled URI).
+      if (result.reason !== 'invalid_key') {
+        cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
+      }
       sendJson(response, config, result.reason === 'quota_exceeded' ? 409 : 400, {
         error: `upload_${result.reason}`,
         message:
@@ -470,7 +751,9 @@ export async function handleRequest(
             ? 'This cycle has no remaining contribution allowance.'
             : result.reason === 'invalid_key'
               ? 'Provide a retryable upload key.'
-              : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
+              : result.reason === 'invalid_mode'
+                ? 'Choose a supported original capture mode.'
+                : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
       });
       return;
     }
@@ -501,9 +784,60 @@ export async function handleRequest(
       )
     )
       return;
-    const result = cancelClipUpload(database, groupId, session.session.actor.memberId, jobId);
+    const stagingDir = resolve(config.dataDir, 'media', 'staging');
+    const result = cancelClipUpload(database, groupId, session.session.actor.memberId, jobId, {
+      stagingDir,
+    });
     if (!result.ok) return sendNotFound(response, config);
     sendJson(response, config, 200, { cancelled: true, ...result });
+    return;
+  }
+
+  const processJobMatch = url.pathname.match(/^\/contributions\/jobs\/([^/]+)\/process$/);
+  if (processJobMatch && request.method === 'POST') {
+    const jobId = decodePathSegment(processJobMatch[1], response, config);
+    if (jobId === null) return;
+    const sessionId = url.searchParams.get('sessionId');
+    const groupId = url.searchParams.get('groupId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId, now());
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (!groupId) return sendDenied(response, config);
+    if (
+      !authorize(
+        database,
+        response,
+        config,
+        groupId,
+        session.session.actor.memberId,
+        'contribution',
+      )
+    )
+      return;
+    const result = await processClipJob(database, {
+      jobId,
+      groupId,
+      ffmpegBin: config.ffmpegBin,
+      stagingDir: resolve(config.dataDir, 'media', 'staging'),
+      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      actorMemberId: session.session.actor.memberId,
+    });
+    if (!result.ok && result.reason === 'not_found') return sendNotFound(response, config);
+    if (!result.ok && result.reason === 'already_processing') {
+      sendJson(response, config, 409, {
+        error: 'media_processing',
+        message: result.message,
+      });
+      return;
+    }
+    if (!result.ok) {
+      sendJson(response, config, 503, {
+        error: 'media_processing_failed',
+        message: result.message,
+      });
+      return;
+    }
+    sendJson(response, config, 200, { job: { id: result.jobId, status: result.status } });
     return;
   }
 
@@ -592,7 +926,12 @@ export async function handleRequest(
       !authorize(database, response, config, groupId, sessionMember(database, url, now()), 'group')
     )
       return;
-    const cycle = getCurrentCycle(database, groupId);
+    const cycle = getCurrentCycle(
+      database,
+      groupId,
+      sessionMember(database, url, now()) ?? undefined,
+      now(),
+    );
     if (!cycle) return sendNotFound(response, config);
     sendJson(response, config, 200, { cycle });
     return;
@@ -644,6 +983,41 @@ export async function handleRequest(
       )
     )
       return;
+    if (request.method === 'DELETE') {
+      const sessionId = url.searchParams.get('sessionId');
+      if (!sessionId) return sendSessionRequired(response, config);
+      const session = validateDemoSession(database, sessionId, now());
+      if (session.status !== 'valid') return sendSessionRequired(response, config);
+      const result = deleteContribution(
+        database,
+        groupId,
+        session.session.actor.memberId,
+        contributionId,
+        now(),
+        {
+          stagingDir: resolve(config.dataDir, 'media', 'staging'),
+          outputDir: resolve(config.dataDir, 'media', 'processed'),
+        },
+      );
+      if (!result.ok) {
+        const status =
+          result.reason === 'not_found' || result.reason === 'already_deleted' ? 404 : 409;
+        const messages = {
+          already_deleted: 'That contribution has already been deleted.',
+          deletion_used: 'The weekly delete-and-replace allowance has already been used.',
+          not_eligible: 'This contribution can no longer be deleted before reveal.',
+          not_found: 'The contribution was not found.',
+          processing: 'Wait for processing to finish before deleting this contribution.',
+        } as const;
+        sendJson(response, config, status, {
+          error: `contribution_${result.reason}`,
+          message: messages[result.reason],
+        });
+        return;
+      }
+      sendJson(response, config, 200, { deleted: true, ...result });
+      return;
+    }
     const contribution = getContribution(database, groupId, contributionId);
     if (!contribution) return sendNotFound(response, config);
     sendJson(response, config, 200, { contribution });

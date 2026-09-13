@@ -26,6 +26,11 @@ export interface ClipUploadInput {
   width: number;
   height: number;
   hasAudio: true;
+  /** Review metadata forwarded to the local processing worker. */
+  mode?: CaptureMode;
+  trimStartSeconds?: number;
+  trimEndSeconds?: number;
+  sourceDurationSeconds?: number;
 }
 
 export interface PendingClipUpload {
@@ -42,7 +47,7 @@ export interface PendingClipUpload {
     groupId: string;
     contributionId: string;
     kind: 'clip';
-    status: 'pending' | 'cancelled';
+    status: 'pending' | 'processing' | 'ready' | 'failed' | 'cancelled';
     createdAt: string;
   };
   existing: boolean;

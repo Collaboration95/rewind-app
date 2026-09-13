@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
+import { promisify } from 'node:util';
 import test from 'node:test';
+
+const execFileAsync = promisify(execFile);
 
 const { parseConfig } = await import('../dist/config.js');
 const { fixtureSummary, openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
-const { createClipUpload } = await import('../dist/media/index.js');
+const { createClipUpload, recordClipMediaMetadata } = await import('../dist/media/index.js');
 
 const validInput = {
   idempotencyKey: 'clip-retry-1',
@@ -19,6 +23,18 @@ const validInput = {
   height: 1280,
   hasAudio: true,
 };
+
+function registerMetadata(database, input = validInput) {
+  recordClipMediaMetadata(database, {
+    sourceUri: input.sourceUri,
+    mimeType: 'video/mp4',
+    byteLength: input.byteLength,
+    durationSeconds: input.durationSeconds,
+    width: input.width,
+    height: input.height,
+    hasAudio: true,
+  });
+}
 
 async function withDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-media-test-`);
@@ -34,6 +50,7 @@ async function withDatabase(run) {
 
 test('clip upload validates media before creating a job and retries idempotently', async () => {
   await withDatabase(async ({ database }) => {
+    registerMetadata(database);
     const baseline = fixtureSummary(database);
     assert.deepEqual(
       createClipUpload(database, 'demo-group', 'demo-1', {
@@ -76,6 +93,7 @@ test('clip upload validates media before creating a job and retries idempotently
 
 test('clip upload rejects ended cycles and malformed dimensions before writing', async () => {
   await withDatabase(async ({ database }) => {
+    registerMetadata(database);
     const ended = createClipUpload(
       database,
       'demo-group',
@@ -105,6 +123,30 @@ test('clip upload rejects ended cycles and malformed dimensions before writing',
 
 test('HTTP clip upload requires a session and cancellation releases quota for retry', async () => {
   await withDatabase(async ({ config, database }) => {
+    const sourceUri = `${config.dataDir}/media/staging/http-clip.mp4`;
+    await mkdir(`${config.dataDir}/media/staging`, { recursive: true });
+    await execFileAsync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=180x320:rate=12:duration=2',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=880:sample_rate=44100:duration=2',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-shortest',
+      sourceUri,
+    ]);
     const server = createRuntimeServer(config, database, {
       now: () => new Date('2026-09-10T12:00:00.000Z'),
     });
@@ -125,17 +167,28 @@ test('HTTP clip upload requires a session and cancellation releases quota for re
       });
       const { session } = await sessionResponse.json();
       const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+      const staged = await fetch(
+        `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=clip-retry-1`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'video/mp4' },
+          body: await readFile(sourceUri),
+        },
+      );
+      assert.equal(staged.status, 201);
+      const { source } = await staged.json();
+      const httpInput = { ...validInput, sourceUri: source.uri, byteLength: source.byteLength };
       const created = await fetch(`${baseUrl}/contributions/upload?${query}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(validInput),
+        body: JSON.stringify(httpInput),
       });
       assert.equal(created.status, 201);
       const first = await created.json();
       const retried = await fetch(`${baseUrl}/contributions/upload?${query}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(validInput),
+        body: JSON.stringify(httpInput),
       });
       assert.equal(retried.status, 200);
       assert.equal((await retried.json()).upload.existing, true);
@@ -148,6 +201,49 @@ test('HTTP clip upload requires a session and cancellation releases quota for re
       assert.equal(
         database.prepare('SELECT count_used FROM cycles WHERE id = ?').get('demo-cycle').count_used,
         0,
+      );
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});
+
+test('HTTP delete-and-replace is session-bound and restores the exact weekly allowance', async () => {
+  await withDatabase(async ({ config, database }) => {
+    const created = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      { ...validInput, idempotencyKey: 'http-delete-key' },
+      new Date('2026-09-10T12:00:00.000Z'),
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const server = createRuntimeServer(config, database, {
+      now: () => new Date('2026-09-10T12:00:00.000Z'),
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-1' }),
+      });
+      const { session } = await sessionResponse.json();
+      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+      const deleted = await fetch(
+        `${baseUrl}/contributions/${encodeURIComponent(created.upload.contribution.id)}?${query}`,
+        { method: 'DELETE' },
+      );
+      assert.equal(deleted.status, 200);
+      assert.deepEqual((await deleted.json()).restored, { count: 1, seconds: 8 });
+      assert.equal(
+        database.prepare('SELECT status FROM media_jobs WHERE id = ?').get(created.upload.job.id)
+          .status,
+        'deleted',
       );
     } finally {
       await new Promise((resolve) => server.close(resolve));

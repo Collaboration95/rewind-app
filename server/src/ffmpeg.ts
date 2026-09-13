@@ -1,9 +1,263 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+import { mkdtemp, realpath, rm, stat } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+
+/** The original capture modes supported by the client and local worker. */
+export const SUPPORTED_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
+export type CaptureMode = (typeof SUPPORTED_CAPTURE_MODES)[number];
+
+export interface FfmpegProcessInput {
+  inputPath: string;
+  outputPath: string;
+  trimStartSeconds: number;
+  trimEndSeconds: number;
+  mode: CaptureMode;
+}
+
+export interface FfmpegProcessResult {
+  outputPath: string;
+  durationSeconds: number;
+}
+
+export interface FfmpegMediaProbeResult {
+  mimeType: 'video/mp4';
+  byteLength: number;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  hasAudio: boolean;
+}
+
+/**
+ * Processing errors intentionally expose no command, source path, or output
+ * path. The detailed stderr belongs in neither the database nor an HTTP body.
+ */
+export class FfmpegProcessingError extends Error {
+  readonly code: 'invalid_metadata' | 'source_unavailable' | 'process_failed';
+
+  constructor(code: FfmpegProcessingError['code'], message: string) {
+    super(message);
+    this.name = 'FfmpegProcessingError';
+    this.code = code;
+  }
+}
+
+export function resolveLocalMediaPath(value: string): string {
+  if (value.startsWith('file://')) {
+    try {
+      return fileURLToPath(new URL(value));
+    } catch {
+      throw new FfmpegProcessingError(
+        'source_unavailable',
+        'The temporary media source is unavailable.',
+      );
+    }
+  }
+  if (isAbsolute(value)) return value;
+  throw new FfmpegProcessingError(
+    'source_unavailable',
+    'The temporary media source is unavailable.',
+  );
+}
+
+/**
+ * Resolve a source only when it is physically inside server-owned staging.
+ * Realpath resolution prevents a symlink in staging from escaping this
+ * boundary before FFmpeg reads or cleanup removes the source.
+ */
+export async function resolveStagedMediaPath(value: string, stagingDir: string): Promise<string> {
+  const candidate = resolveLocalMediaPath(value);
+  try {
+    const [source, staging] = await Promise.all([realpath(candidate), realpath(stagingDir)]);
+    const remainder = relative(staging, source);
+    if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) {
+      throw new FfmpegProcessingError(
+        'source_unavailable',
+        'The temporary media source is unavailable.',
+      );
+    }
+    return source;
+  } catch (error) {
+    if (error instanceof FfmpegProcessingError) throw error;
+    throw new FfmpegProcessingError(
+      'source_unavailable',
+      'The temporary media source is unavailable.',
+    );
+  }
+}
+
+function modeFilter(mode: CaptureMode): string {
+  return mode === 'high-contrast'
+    ? 'eq=contrast=1.18:brightness=0.02:saturation=1.12'
+    : 'eq=contrast=0.96:brightness=0.02:saturation=0.9,gblur=sigma=0.35';
+}
+
+function validProcessInput(input: FfmpegProcessInput): boolean {
+  return (
+    Number.isFinite(input.trimStartSeconds) &&
+    Number.isFinite(input.trimEndSeconds) &&
+    input.trimStartSeconds >= 0 &&
+    input.trimEndSeconds > input.trimStartSeconds &&
+    input.trimEndSeconds - input.trimStartSeconds <= 15 &&
+    input.trimEndSeconds - input.trimStartSeconds >= 0.5 &&
+    input.inputPath.length > 0 &&
+    input.outputPath.length > 0 &&
+    SUPPORTED_CAPTURE_MODES.includes(input.mode)
+  );
+}
+
+export async function processClipWithFfmpeg(
+  ffmpegBin: string,
+  input: FfmpegProcessInput,
+): Promise<FfmpegProcessResult> {
+  if (!validProcessInput(input)) {
+    throw new FfmpegProcessingError('invalid_metadata', 'The clip processing metadata is invalid.');
+  }
+  try {
+    // Re-check the immutable source boundary at the worker too. Client trim
+    // metadata may not extend past the duration FFprobe observed on the
+    // server-owned source, even if intake was interrupted or bypassed.
+    const source = await probeClipWithFfmpeg(ffmpegBin, input.inputPath);
+    if (input.trimEndSeconds > source.durationSeconds + 0.05) {
+      throw new FfmpegProcessingError(
+        'invalid_metadata',
+        'The clip processing metadata is outside the source duration.',
+      );
+    }
+    const durationSeconds = input.trimEndSeconds - input.trimStartSeconds;
+    await execFileAsync(
+      ffmpegBin,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-i',
+        input.inputPath,
+        '-ss',
+        String(input.trimStartSeconds),
+        '-t',
+        String(durationSeconds),
+        '-map',
+        '0:v:0',
+        '-map',
+        '0:a?',
+        '-vf',
+        `${modeFilter(input.mode)},setpts=PTS-STARTPTS`,
+        '-af',
+        'asetpts=PTS-STARTPTS',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-bf',
+        '0',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-movflags',
+        '+faststart',
+        '-avoid_negative_ts',
+        'make_zero',
+        input.outputPath,
+      ],
+      { timeout: 60_000, maxBuffer: 2_000_000 },
+    );
+    return { outputPath: input.outputPath, durationSeconds };
+  } catch (error) {
+    // Preserve a useful internal cause for diagnostics while returning only a
+    // stable, path-free error to callers.
+    const detail = error instanceof Error ? error.message.toLowerCase() : '';
+    const code =
+      detail.includes('no such file') || detail.includes('does not exist')
+        ? 'source_unavailable'
+        : 'process_failed';
+    throw new FfmpegProcessingError(
+      code,
+      code === 'source_unavailable'
+        ? 'The temporary media source is unavailable.'
+        : 'FFmpeg could not process the clip. Retry the job.',
+    );
+  }
+}
+
+export async function probeClipWithFfmpeg(
+  ffmpegBin: string,
+  inputPath: string,
+  stagingDir?: string,
+): Promise<FfmpegMediaProbeResult> {
+  const ffmpegDirectory = dirname(ffmpegBin);
+  const probeBin =
+    basename(ffmpegBin).startsWith('ffmpeg') && ffmpegDirectory !== '.'
+      ? `${ffmpegDirectory}/ffprobe`
+      : 'ffprobe';
+  try {
+    const safeInputPath = stagingDir
+      ? await resolveStagedMediaPath(inputPath, stagingDir)
+      : resolveLocalMediaPath(inputPath);
+    const [probe, file] = await Promise.all([
+      execFileAsync(
+        probeBin,
+        [
+          '-v',
+          'error',
+          '-show_entries',
+          'format=format_name,duration:stream=codec_type,width,height',
+          '-of',
+          'json',
+          safeInputPath,
+        ],
+        { timeout: 20_000, maxBuffer: 2_000_000 },
+      ),
+      // Stat the same normalized, boundary-checked path passed to ffprobe.
+      // `inputPath` may be a file:// URL, which is not a filesystem path.
+      stat(safeInputPath),
+    ]);
+    const parsed = JSON.parse(probe.stdout) as {
+      format?: { format_name?: string; duration?: string };
+      streams?: { codec_type?: string; width?: number; height?: number }[];
+    };
+    const video = parsed.streams?.find((stream) => stream.codec_type === 'video');
+    const durationSeconds = Number(parsed.format?.duration);
+    const width = Number(video?.width);
+    const height = Number(video?.height);
+    const hasAudio = parsed.streams?.some((stream) => stream.codec_type === 'audio') === true;
+    const formatNames = parsed.format?.format_name?.split(',').map((value) => value.trim()) ?? [];
+    if (
+      !formatNames.includes('mp4') ||
+      !Number.isInteger(file.size) ||
+      file.size <= 0 ||
+      !Number.isFinite(durationSeconds) ||
+      !Number.isInteger(width) ||
+      !Number.isInteger(height) ||
+      width <= 0 ||
+      height <= 0 ||
+      width >= height ||
+      !hasAudio
+    ) {
+      throw new Error('invalid media');
+    }
+    return {
+      mimeType: 'video/mp4',
+      byteLength: file.size,
+      durationSeconds,
+      width,
+      height,
+      hasAudio,
+    };
+  } catch {
+    throw new FfmpegProcessingError('process_failed', 'The staged media could not be verified.');
+  }
+}
+
+// Descriptive alias for callers that treat FFmpeg as a generic media adapter.
+export const runFfmpegTransform = processClipWithFfmpeg;
 
 export interface FfmpegProbeResult {
   configured: boolean;

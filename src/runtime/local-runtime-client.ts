@@ -53,7 +53,23 @@ export interface RuntimeClient {
     groupId: string,
     input: ClipUploadInput,
   ): Promise<PendingClipUpload>;
+  stageClipSource?(
+    sessionId: string,
+    groupId: string,
+    idempotencyKey: string,
+    base64: string,
+  ): Promise<{ uri: string; byteLength: number }>;
   cancelClipUpload?(sessionId: string, groupId: string, jobId: string): Promise<void>;
+  processClipJob?(
+    sessionId: string,
+    groupId: string,
+    jobId: string,
+  ): Promise<PendingClipUpload['job']>;
+  deleteContribution?(
+    sessionId: string,
+    groupId: string,
+    contributionId: string,
+  ): Promise<{ contributionId: string; jobId: string; restored: { count: 1; seconds: number } }>;
 }
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -65,6 +81,7 @@ export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promis
  * healthy local request a little room on a busy development machine.
  */
 export const DEFAULT_RUNTIME_REQUEST_TIMEOUT_MS = 10_000;
+export const MEDIA_RUNTIME_REQUEST_TIMEOUT_MS = 75_000;
 
 export interface LocalRuntimeClientOptions {
   requestTimeoutMs?: number;
@@ -95,6 +112,15 @@ function normalizeBaseUrl(value: string): string {
     throw new LocalRuntimeError('The local runtime URL must start with http:// or https://.');
   }
   return trimmed;
+}
+
+function decodeBase64(value: string): Uint8Array {
+  try {
+    const binary = atob(value);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    throw new LocalRuntimeError('The captured clip could not be prepared for upload.');
+  }
 }
 
 export class LocalRuntimeClient implements RuntimeClient {
@@ -289,7 +315,76 @@ export class LocalRuntimeClient implements RuntimeClient {
     );
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  async processClipJob(
+    sessionId: string,
+    groupId: string,
+    jobId: string,
+  ): Promise<PendingClipUpload['job']> {
+    try {
+      const body = await this.request<{ job: PendingClipUpload['job'] }>(
+        `/contributions/jobs/${encodeURIComponent(jobId)}/process?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+        { method: 'POST' },
+        MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+      );
+      return body.job;
+    } catch (error) {
+      // The server may still be finishing FFmpeg after a client-side timeout.
+      // Read the redacted status endpoint before surfacing a false failure.
+      if (
+        error instanceof LocalRuntimeError &&
+        (error.code === 'runtime_timeout' || error.status === 409)
+      ) {
+        return this.waitForProcessedClip(sessionId, groupId, jobId);
+      }
+      throw error;
+    }
+  }
+
+  async deleteContribution(
+    sessionId: string,
+    groupId: string,
+    contributionId: string,
+  ): Promise<{ contributionId: string; jobId: string; restored: { count: 1; seconds: number } }> {
+    const body = await this.request<{
+      deleted: true;
+      contributionId: string;
+      jobId: string;
+      restored: { count: 1; seconds: number };
+    }>(
+      `/contributions/${encodeURIComponent(contributionId)}?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      { method: 'DELETE' },
+    );
+    return {
+      contributionId: body.contributionId,
+      jobId: body.jobId,
+      restored: body.restored,
+    };
+  }
+
+  async stageClipSource(
+    sessionId: string,
+    groupId: string,
+    idempotencyKey: string,
+    base64: string,
+  ): Promise<{ uri: string; byteLength: number }> {
+    const binary = decodeBase64(base64);
+    const body = await this.request<{ source: { uri: string; byteLength: number } }>(
+      `/contributions/upload/source?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}&idempotencyKey=${encodeURIComponent(idempotencyKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'video/mp4' },
+        body: binary as unknown as BodyInit,
+      },
+      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+    );
+    return body.source;
+  }
+
+  private async request<T>(
+    path: string,
+    init: RequestInit = {},
+    timeoutMs = this.requestTimeoutMs,
+  ): Promise<T> {
     let response: Response;
     let payload: unknown = null;
     let timedOut = false;
@@ -298,7 +393,7 @@ export class LocalRuntimeClient implements RuntimeClient {
       typeof AbortController === 'function' ? new AbortController() : undefined;
     const timeoutError = () =>
       new LocalRuntimeError(
-        `The local runtime did not respond within ${this.requestTimeoutMs} ms. Check that the service is running and the URL is reachable.`,
+        `The local runtime did not respond within ${timeoutMs} ms. Check that the service is running and the URL is reachable.`,
         undefined,
         'runtime_timeout',
       );
@@ -313,7 +408,7 @@ export class LocalRuntimeClient implements RuntimeClient {
           timedOut = true;
           timeoutController?.abort();
           reject(timeoutError());
-        }, this.requestTimeoutMs);
+        }, timeoutMs);
       });
       response = await Promise.race([fetchPromise, timeoutPromise]);
       try {
@@ -343,5 +438,31 @@ export class LocalRuntimeClient implements RuntimeClient {
       );
     }
     return payload as T;
+  }
+
+  private async waitForProcessedClip(
+    sessionId: string,
+    groupId: string,
+    jobId: string,
+  ): Promise<PendingClipUpload['job']> {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const body = await this.request<{ clip: PendingClipUpload['job'] }>(
+        `/clips/${encodeURIComponent(jobId)}?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      );
+      if (body.clip.status === 'ready') return body.clip;
+      if (body.clip.status === 'failed' || body.clip.status === 'cancelled') {
+        throw new LocalRuntimeError(
+          'The clip could not be processed. Retry the job.',
+          503,
+          'media_processing_failed',
+        );
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 1_000));
+    }
+    throw new LocalRuntimeError(
+      'The clip is still processing. Check the contribution status and retry if needed.',
+      undefined,
+      'runtime_timeout',
+    );
   }
 }

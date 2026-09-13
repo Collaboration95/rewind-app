@@ -22,6 +22,7 @@ import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
 import { DemoSessionProvider, useDemoSession } from './src/session/DemoSessionProvider';
 import {
   CameraCaptureScreen,
+  ContributionStatusProvider,
   DemoCameraPlatform,
   VideoCaptureScreen,
   type CameraPlatform,
@@ -127,14 +128,26 @@ function SessionGate({
     [runtimeClient, session],
   );
   if (status === 'loading') return <SessionLoadingScreen />;
-  if (status === 'entry' || status === 'error') return <DemoAccessEntry />;
+  if (status === 'entry' || status === 'error' || !session) return <DemoAccessEntry />;
   return (
-    <CapsuleProvider
-      groupRepository={groupRepository ?? sessionRepositories?.groupRepository}
-      cycleRepository={cycleRepository ?? sessionRepositories?.cycleRepository}
+    <ContributionStatusProvider
+      scope={{
+        groupId: session.groupId,
+        memberId: session.actor.memberId,
+        sessionId: session.id,
+      }}
     >
-      <ActiveAppShell cameraPlatform={cameraPlatform} clock={clock} runtimeClient={runtimeClient} />
-    </CapsuleProvider>
+      <CapsuleProvider
+        groupRepository={groupRepository ?? sessionRepositories?.groupRepository}
+        cycleRepository={cycleRepository ?? sessionRepositories?.cycleRepository}
+      >
+        <ActiveAppShell
+          cameraPlatform={cameraPlatform}
+          clock={clock}
+          runtimeClient={runtimeClient}
+        />
+      </CapsuleProvider>
+    </ContributionStatusProvider>
   );
 }
 
@@ -180,6 +193,7 @@ function ActiveAppShell({
   cameraPlatform?: CameraPlatform;
 }) {
   const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group' | 'video'>('home');
+  const { retry: refreshCapsule } = useCapsule();
   const resolvedCameraPlatform = useMemo(() => {
     if (cameraPlatform) return cameraPlatform;
     if (typeof process !== 'undefined') {
@@ -222,6 +236,7 @@ function ActiveAppShell({
         ) : activeRoute === 'video' ? (
           <VideoCaptureScreen
             onBack={() => setActiveRoute('camera')}
+            onContributionDeleted={refreshCapsule}
             platform={resolvedCameraPlatform}
             runtimeClient={runtimeClient}
           />
