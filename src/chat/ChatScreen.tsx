@@ -286,7 +286,7 @@ export function ChatSessionSurface({
             const canReply = Boolean(runtimeClient?.sendChatReply && !message.replyTo);
             return (
               <View
-                accessible
+                accessible={false}
                 accessibilityLabel={`${author}${isCurrentMember ? ', you' : ''}. ${message.body}. ${formatTimestamp(message.createdAt)}${message.replyTo ? `. Reply to ${message.replyTo.body}` : ''}${reactionCount ? `. ${reactionCount} sparkle reactions` : ''}`}
                 key={message.id}
                 style={[styles.message, isCurrentMember && styles.currentMessage]}
@@ -314,7 +314,13 @@ export function ChatSessionSurface({
                   <View style={styles.messageActions}>
                     {runtimeClient?.toggleChatReaction ? (
                       <Pressable
-                        accessibilityLabel={`${reactionCount} sparkle reactions${reactionActive[message.id] ? ', remove yours' : ', add sparkle reaction'}`}
+                        accessibilityLabel={`${reactionCount} sparkle reactions, ${
+                          reactionActive[message.id] === undefined
+                            ? 'toggle sparkle reaction'
+                            : reactionActive[message.id]
+                              ? 'remove yours'
+                              : 'add sparkle reaction'
+                        }`}
                         accessibilityRole="button"
                         disabled={reactionBusy === message.id}
                         onPress={() => void toggleReaction(message)}
@@ -354,7 +360,7 @@ export function ChatSessionSurface({
         <View style={styles.composer}>
           <Text style={styles.fieldLabel}>MESSAGE</Text>
           {replyTarget ? (
-            <View accessible style={styles.composerReply} testID="chat-reply-target">
+            <View accessible={false} style={styles.composerReply} testID="chat-reply-target">
               <Text style={styles.replyLabel}>REPLYING TO</Text>
               <Text numberOfLines={1} style={styles.replyText}>
                 {replyTarget.body}

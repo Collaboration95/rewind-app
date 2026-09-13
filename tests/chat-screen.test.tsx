@@ -230,9 +230,14 @@ describe('persistent group chat timeline', () => {
     await result.findByTestId('chat-empty');
     await act(async () => runtime.emit(original));
     await result.findByTestId(`chat-reaction-${original.message.id}`);
-    await fireEvent.press(result.getByTestId(`chat-reaction-${original.message.id}`));
+    expect(result.getByTestId('chat-message').props.accessible).toBe(false);
+    const reaction = result.getByTestId(`chat-reaction-${original.message.id}`);
+    expect(reaction.props.accessibilityLabel).toBe('0 sparkle reactions, toggle sparkle reaction');
+    await fireEvent.press(reaction);
     await waitFor(() => expect(result.getByText('✨ Reacted 1')).toBeTruthy());
     await fireEvent.press(result.getByTestId(`chat-reply-${original.message.id}`));
+    expect(result.getByTestId('chat-reply-target').props.accessible).toBe(false);
+    expect(result.getByRole('button', { name: 'Cancel reply' })).toBeTruthy();
     expect(result.getAllByText('Original message').length).toBeGreaterThan(0);
     await fireEvent.changeText(result.getByTestId('chat-composer'), 'A reply');
     await fireEvent.press(result.getByTestId('chat-send'));
@@ -322,6 +327,9 @@ describe('persistent group chat timeline', () => {
     const remountedReaction = await result.findByTestId(`chat-reaction-${original.message.id}`);
     expect(remountedReaction).toHaveTextContent('✨ 2');
     expect(remountedReaction).not.toHaveTextContent('Reacted');
+    expect(remountedReaction.props.accessibilityLabel).toBe(
+      '2 sparkle reactions, toggle sparkle reaction',
+    );
 
     // Because the click is a server-authoritative toggle, it removes the persisted reaction.
     await fireEvent.press(remountedReaction);
