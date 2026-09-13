@@ -161,6 +161,20 @@ export function migrateDatabase(database: RewindDatabase): void {
       .run(migration.version, new Date().toISOString());
     markMigration(database, migration.key);
   }
+  // The staged-source lease/generation fence was added after the original
+  // quota migration had shipped. Keep the migration identity stable while
+  // upgrading existing local databases in place.
+  if (hasTable(database, 'staged_sources')) {
+    const columns = tableColumns(database, 'staged_sources');
+    if (!columns.has('claim_generation')) {
+      database.exec(
+        'ALTER TABLE staged_sources ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0',
+      );
+    }
+    if (!columns.has('claim_expires_at')) {
+      database.exec('ALTER TABLE staged_sources ADD COLUMN claim_expires_at TEXT');
+    }
+  }
 }
 
 function markMigration(database: RewindDatabase, key: string): void {

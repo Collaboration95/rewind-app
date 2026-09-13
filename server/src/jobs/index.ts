@@ -4,7 +4,12 @@ import { relative, resolve, isAbsolute } from 'node:path';
 
 import type { RewindDatabase } from '../db';
 import { recordAuditEvent } from '../audit';
-import { removeStagedSource } from '../media';
+import {
+  cleanupStagedSource,
+  cleanupUnclaimedStagedPath,
+  findStagedSource,
+  removeStagedSource,
+} from '../media';
 import {
   processClipWithFfmpeg,
   resolveStagedMediaPath,
@@ -271,10 +276,9 @@ export async function cleanupOrphanedStagedSources(
   const boundedLimit = Math.max(0, Math.min(100, Math.floor(limit)));
   let removed = 0;
   for (const entry of names) {
-    const sourceMatch = /^source-([a-f0-9]{24}|[a-f0-9]{32})\.mp4$/.exec(entry.name);
-    const partialMatch = /^source-([a-f0-9]{24}|[a-f0-9]{32})\.mp4\.[a-f0-9-]+\.part$/.exec(
-      entry.name,
-    );
+    const sourceMatch = /^source-([a-f0-9]{24}|[a-f0-9]{32})(?:-([0-9]+))?\.mp4$/.exec(entry.name);
+    const partialMatch =
+      /^source-([a-f0-9]{24}|[a-f0-9]{32})(?:-([0-9]+))?\.mp4\.[a-f0-9-]+\.part$/.exec(entry.name);
     if (removed >= boundedLimit || !entry.isFile() || (!sourceMatch && !partialMatch)) {
       continue;
     }
@@ -283,6 +287,19 @@ export async function cleanupOrphanedStagedSources(
     if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) continue;
     const details = await stat(sourcePath).catch(() => null);
     if (!details || Date.now() - details.mtimeMs < maxAgeMs) continue;
+    const sourceId = (sourceMatch ?? partialMatch)?.[1];
+    const staged = sourceId ? findStagedSource(database, `staged://${sourceId}`) : null;
+    // A live intake lease protects both its final path and any random-suffix
+    // partial path. Cleanup may remove an expired claim, but its generation
+    // fence prevents the old request from touching a later reclaim.
+    if (
+      staged &&
+      staged.status === 'pending' &&
+      staged.claimExpiresAt &&
+      Date.parse(staged.claimExpiresAt) > Date.now()
+    ) {
+      continue;
+    }
     // A partial file is never a job input and can be removed once stale. A
     // completed source is retained only while a job still claims its path.
     if (sourceMatch) {
@@ -291,7 +308,19 @@ export async function cleanupOrphanedStagedSources(
         .get(sourcePath);
       if (active) continue;
     }
-    await rm(sourcePath, { force: true });
+    if (sourceMatch && staged) {
+      // This helper takes the writer lock, verifies the current row, and
+      // removes the capability and path as one mutation. It is intentionally
+      // generation/lease-aware instead of deleting by URI blindly.
+      const before = await stat(sourcePath).catch(() => null);
+      cleanupStagedSource(database, `staged://${sourceId}`, stagingDir);
+      const after = await stat(sourcePath).catch(() => null);
+      if (before && !after) removed += 1;
+      continue;
+    }
+    const protectedPath = partialMatch ? sourcePath.replace(/\.[a-f0-9-]+\.part$/, '') : sourcePath;
+    const removedFile = cleanupUnclaimedStagedPath(database, sourcePath, stagingDir, protectedPath);
+    if (!removedFile) continue;
     if (sourceMatch) {
       const sourceUri = `staged://${sourceMatch[1]}`;
       database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
@@ -306,16 +335,17 @@ export async function cleanupOrphanedStagedSources(
     .prepare(
       `SELECT source_uri AS sourceUri FROM staged_sources
        WHERE status = 'pending' AND created_at < ?
+         AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
          AND NOT EXISTS (
            SELECT 1 FROM media_jobs WHERE media_jobs.source_path = staged_sources.source_path
          )`,
     )
-    .all(cutoff) as { sourceUri?: string }[];
+    .all(cutoff, new Date().toISOString()) as { sourceUri?: string }[];
   for (const row of stale) {
     if (removed >= boundedLimit || !row.sourceUri) break;
-    database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(row.sourceUri);
-    removeStagedSource(database, row.sourceUri);
-    removed += 1;
+    const before = findStagedSource(database, row.sourceUri);
+    cleanupStagedSource(database, row.sourceUri, stagingDir);
+    if (!findStagedSource(database, row.sourceUri) && before) removed += 1;
   }
   return removed;
 }

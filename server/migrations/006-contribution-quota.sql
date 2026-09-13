@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS staged_sources (
   source_path TEXT,
   byte_length INTEGER CHECK (byte_length IS NULL OR byte_length > 0),
   status TEXT NOT NULL CHECK (status IN ('pending', 'staged')),
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  claim_generation INTEGER NOT NULL DEFAULT 0 CHECK (claim_generation >= 0),
+  claim_expires_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS staged_sources_owner_idx

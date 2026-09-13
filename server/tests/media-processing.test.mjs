@@ -19,6 +19,9 @@ const {
   cancelClipUpload,
   createClipUpload,
   markStagedSourceReady,
+  reclaimStagedSource,
+  recordClipMediaMetadata,
+  resetStagedSourceClaim,
   setStagedSourcePath,
   stagedSourceId,
   stagedSourcePath,
@@ -329,6 +332,78 @@ test('same-key staging claims one pending source and rejects a concurrent distin
   });
 });
 
+test('stale intake callbacks cannot complete or reset a reclaimed generation', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'generation-fence-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const firstPath = stagedSourcePath(sourceUri, stagingDir, 1);
+    const secondPath = stagedSourcePath(sourceUri, stagingDir, 2);
+    assert.ok(firstPath);
+    assert.ok(secondPath);
+    const first = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:00:00.000Z'),
+      firstPath,
+    );
+    assert.equal(first.ok, true);
+    assert.equal(first.source.claimGeneration, 1);
+    assert.equal(resetStagedSourceClaim(database, sourceUri, firstPath, 1), true);
+    const second = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:01:00.000Z'),
+      secondPath,
+    );
+    assert.equal(second.ok, true);
+    assert.equal(second.source.claimGeneration, 2);
+    assert.equal(markStagedSourceReady(database, sourceUri, 1000, firstPath, 1), false);
+    assert.equal(resetStagedSourceClaim(database, sourceUri, firstPath, 1), false);
+    assert.equal(markStagedSourceReady(database, sourceUri, 1000, secondPath, 2), true);
+    const current = database
+      .prepare(
+        'SELECT status, source_path AS sourcePath, claim_generation AS claimGeneration FROM staged_sources WHERE source_uri = ?',
+      )
+      .get(sourceUri);
+    assert.deepEqual(
+      { ...current },
+      {
+        status: 'staged',
+        sourcePath: secondPath,
+        claimGeneration: 2,
+      },
+    );
+  });
+});
+
+test('cleanup preserves a live leased intake claim even when its file is old', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'leased-cleanup-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const sourcePath = stagedSourcePath(sourceUri, stagingDir, 1);
+    assert.ok(sourcePath);
+    await mkdir(stagingDir, { recursive: true });
+    await copyFile(`${dataDir}/fixture.mp4`, sourcePath).catch(async () => {
+      const fixture = `${dataDir}/fixture.mp4`;
+      await createSyntheticSource(fixture);
+      await copyFile(fixture, sourcePath);
+    });
+    const staleAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await utimes(sourcePath, staleAt, staleAt);
+    const claim = claimStagedSource(database, 'demo-group', 'demo-1', key, new Date(), sourcePath);
+    assert.equal(claim.ok, true);
+    assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 25, 0), 0);
+    await access(sourcePath);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 1);
+  });
+});
+
 test('processing failure is recoverable and never discloses media paths', async () => {
   await withDatabase(async ({ database, config, dataDir }) => {
     const sourcePath = `${dataDir}/external-source.mp4`;
@@ -440,6 +515,80 @@ test('cancellation rechecks the job state after a concurrent processor claim', a
     } finally {
       await worker.terminate();
     }
+  });
+});
+
+test('cancellation fences a capability that is concurrently recovered to a new path', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const fixture = `${dataDir}/cancel-recovery-fixture.mp4`;
+    await createSyntheticSource(fixture);
+    const key = 'cancel-recovery-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const firstPath = stagedSourcePath(sourceUri, stagingDir, 1);
+    const recoveredPath = stagedSourcePath(sourceUri, stagingDir, 2);
+    assert.ok(firstPath);
+    assert.ok(recoveredPath);
+    await mkdir(stagingDir, { recursive: true });
+    await copyFile(fixture, firstPath);
+    const claim = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:00:00.000Z'),
+      firstPath,
+    );
+    assert.equal(claim.ok, true);
+    assert.equal(markStagedSourceReady(database, sourceUri, 1000, firstPath, 1), true);
+    recordClipMediaMetadata(database, {
+      sourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+    });
+    const upload = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        idempotencyKey: key,
+        sourceUri,
+        mimeType: 'video/mp4',
+        byteLength: 1000,
+        durationSeconds: 1,
+        width: 180,
+        height: 320,
+        hasAudio: true,
+        mode: 'soft-focus',
+        trimStartSeconds: 0.25,
+        trimEndSeconds: 1.25,
+      },
+      new Date('2026-09-10T12:00:00.000Z'),
+      { stagingDir, requireVerifiedMetadata: true },
+    );
+    assert.equal(upload.ok, true);
+    await rm(firstPath, { force: true });
+    const recovered = reclaimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      recoveredPath,
+      new Date('2026-09-10T12:01:00.000Z'),
+    );
+    assert.equal(recovered.ok, true);
+    await copyFile(fixture, recoveredPath);
+    assert.equal(
+      cancelClipUpload(database, 'demo-group', 'demo-1', upload.upload.job.id, { stagingDir }).ok,
+      true,
+    );
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 0);
+    await assert.rejects(access(firstPath));
+    await assert.rejects(access(recoveredPath));
   });
 });
 

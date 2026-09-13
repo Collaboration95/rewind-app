@@ -10,6 +10,8 @@ import type { RewindDatabase } from '../db';
 export const MAX_CLIP_BYTES = 50 * 1024 * 1024;
 export const MAX_CLIP_DURATION_SECONDS = 15;
 export const MIN_CLIP_DURATION_SECONDS = 0.5;
+/** A body/probe claim is kept alive long enough for a bounded local upload. */
+export const STAGED_SOURCE_LEASE_MS = 2 * 60 * 60 * 1000;
 export const SUPPORTED_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
 export type CaptureMode = (typeof SUPPORTED_CAPTURE_MODES)[number];
 
@@ -100,6 +102,8 @@ interface StagedSourceRecord {
   byteLength: number | null;
   status: 'pending' | 'staged';
   createdAt: string;
+  claimGeneration: number;
+  claimExpiresAt: string | null;
 }
 
 export type StagedSource = StagedSourceRecord;
@@ -161,11 +165,20 @@ export function stagedSourceId(idempotencyKey: string): string {
   return keyHash(idempotencyKey).slice(0, 24);
 }
 
-export function stagedSourcePath(sourceUri: string, stagingDir: string): string | null {
+export function stagedSourcePath(
+  sourceUri: string,
+  stagingDir: string,
+  claimGeneration?: number,
+): string | null {
   // 32-character tokens are accepted only to let a legacy v6 job finish. New
   // capabilities always use the deterministic 24-character #44 token.
   const match = /^staged:\/\/([a-f0-9]{24}|[a-f0-9]{32})$/.exec(sourceUri);
-  return match ? resolve(stagingDir, `source-${match[1]}.mp4`) : null;
+  if (!match) return null;
+  // Keep the original path for generation 0/1 for compatibility with old
+  // rows. Every reclaim gets a distinct path so a stale request can never
+  // unlink the replacement source after its generation has been fenced off.
+  const suffix = claimGeneration && claimGeneration > 1 ? `-${claimGeneration}` : '';
+  return resolve(stagingDir, `source-${match[1]}${suffix}.mp4`);
 }
 
 export function findStagedSource(database: RewindDatabase, sourceUri: string): StagedSource | null {
@@ -175,7 +188,8 @@ export function findStagedSource(database: RewindDatabase, sourceUri: string): S
           group_id AS groupId, member_id AS memberId,
           idempotency_key_hash AS idempotencyKeyHash,
           source_path AS sourcePath, byte_length AS byteLength, status,
-          created_at AS createdAt
+          created_at AS createdAt, claim_generation AS claimGeneration,
+          claim_expires_at AS claimExpiresAt
        FROM staged_sources WHERE source_uri = ?`,
     )
     .get(sourceUri) as Record<string, unknown> | undefined;
@@ -190,6 +204,8 @@ export function findStagedSource(database: RewindDatabase, sourceUri: string): S
     byteLength: row.byteLength === null ? null : Number(row.byteLength),
     status: row.status === 'staged' ? 'staged' : 'pending',
     createdAt: String(row.createdAt),
+    claimGeneration: Number(row.claimGeneration ?? 0),
+    claimExpiresAt: row.claimExpiresAt === null ? null : String(row.claimExpiresAt),
   };
 }
 
@@ -223,11 +239,16 @@ export function claimStagedSource(
         sourcePath &&
         !existing.sourcePath
       ) {
+        // resetStagedSourceClaim already advances the fence before clearing
+        // the path; claiming that reset row must use its current generation,
+        // not advance it a second time.
+        const generation = Math.max(1, existing.claimGeneration);
+        const expiresAt = new Date(now.getTime() + STAGED_SOURCE_LEASE_MS).toISOString();
         database
           .prepare(
-            "UPDATE staged_sources SET source_path = ? WHERE source_uri = ? AND status = 'pending' AND source_path IS NULL",
+            "UPDATE staged_sources SET source_path = ?, claim_generation = ?, claim_expires_at = ? WHERE source_uri = ? AND status = 'pending' AND source_path IS NULL",
           )
-          .run(sourcePath, sourceUri);
+          .run(sourcePath, generation, expiresAt, sourceUri);
         const claimed = findStagedSource(database, sourceUri);
         if (!claimed) throw new Error('Staged source could not be persisted.');
         database.exec('COMMIT');
@@ -256,6 +277,11 @@ export function claimStagedSource(
         sourcePath ?? null,
         now.toISOString(),
       );
+    database
+      .prepare(
+        'UPDATE staged_sources SET claim_generation = 1, claim_expires_at = ? WHERE source_uri = ?',
+      )
+      .run(new Date(now.getTime() + STAGED_SOURCE_LEASE_MS).toISOString(), sourceUri);
     const source = findStagedSource(database, sourceUri);
     if (!source) throw new Error('Staged source could not be persisted.');
     database.exec('COMMIT');
@@ -290,14 +316,27 @@ export function markStagedSourceReady(
   sourceUri: string,
   byteLength: number,
   sourcePath?: string,
-): void {
-  database
+  claimGeneration?: number,
+): boolean {
+  const result = database
     .prepare(
       `UPDATE staged_sources
-       SET byte_length = ?, status = 'staged', source_path = COALESCE(?, source_path)
-       WHERE source_uri = ? AND status = 'pending'`,
+       SET byte_length = ?, status = 'staged', source_path = COALESCE(?, source_path),
+           claim_expires_at = NULL
+       WHERE source_uri = ? AND status = 'pending'
+         AND (? IS NULL OR claim_generation = ?)
+         AND (? IS NULL OR source_path IS NULL OR source_path = ?)`,
     )
-    .run(byteLength, sourcePath ?? null, sourceUri);
+    .run(
+      byteLength,
+      sourcePath ?? null,
+      sourceUri,
+      claimGeneration ?? null,
+      claimGeneration ?? null,
+      sourcePath ?? null,
+      sourcePath ?? null,
+    );
+  return Number(result.changes) === 1;
 }
 
 /** Release an intake claim after its body/probe failed so a retry can reclaim it. */
@@ -305,19 +344,135 @@ export function resetStagedSourceClaim(
   database: RewindDatabase,
   sourceUri: string,
   sourcePath: string,
-): void {
-  database
+  claimGeneration?: number,
+): boolean {
+  const result = database
     .prepare(
       `UPDATE staged_sources
-       SET source_path = NULL, byte_length = NULL, status = 'pending'
-       WHERE source_uri = ? AND source_path = ? AND status = 'pending'`,
+       SET source_path = NULL, byte_length = NULL, status = 'pending',
+           claim_generation = claim_generation + 1, claim_expires_at = NULL
+       WHERE source_uri = ? AND source_path = ? AND status = 'pending'
+         AND (? IS NULL OR claim_generation = ?)`,
     )
-    .run(sourceUri, sourcePath);
-  database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
+    .run(sourceUri, sourcePath, claimGeneration ?? null, claimGeneration ?? null);
+  if (Number(result.changes) === 1) {
+    database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
+    return true;
+  }
+  return false;
+}
+
+/** Reclaim a staged capability whose final file disappeared after a crash. */
+export function reclaimStagedSource(
+  database: RewindDatabase,
+  groupId: string,
+  memberId: string,
+  idempotencyKey: string,
+  sourcePath: string,
+  now = new Date(),
+): { ok: true; source: StagedSource } | { ok: false } {
+  const sourceUri = `staged://${stagedSourceId(idempotencyKey)}`;
+  const hash = keyHash(idempotencyKey);
+  let started = false;
+  try {
+    beginImmediateWithRetry(database);
+    started = true;
+    const generation = database
+      .prepare(
+        `SELECT claim_generation AS claimGeneration FROM staged_sources
+         WHERE source_uri = ? AND group_id = ? AND member_id = ?
+           AND idempotency_key_hash = ? AND status = 'staged'`,
+      )
+      .get(sourceUri, groupId, memberId, hash) as { claimGeneration?: number } | undefined;
+    if (!generation) {
+      database.exec('COMMIT');
+      started = false;
+      return { ok: false };
+    }
+    const nextGeneration = Number(generation.claimGeneration ?? 0) + 1;
+    const result = database
+      .prepare(
+        `UPDATE staged_sources SET status = 'pending', byte_length = NULL,
+           source_path = ?, claim_generation = ?, claim_expires_at = ?
+         WHERE source_uri = ? AND status = 'staged' AND claim_generation = ?`,
+      )
+      .run(
+        sourcePath,
+        nextGeneration,
+        new Date(now.getTime() + STAGED_SOURCE_LEASE_MS).toISOString(),
+        sourceUri,
+        generation.claimGeneration ?? 0,
+      );
+    if (Number(result.changes) !== 1) {
+      database.exec('COMMIT');
+      started = false;
+      return { ok: false };
+    }
+    const source = findStagedSource(database, sourceUri);
+    if (!source) throw new Error('Staged source could not be reclaimed.');
+    database.exec('COMMIT');
+    started = false;
+    return { ok: true, source };
+  } catch (error) {
+    if (started) database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function removeStagedSource(database: RewindDatabase, sourceUri: string): void {
   database.prepare('DELETE FROM staged_sources WHERE source_uri = ?').run(sourceUri);
+}
+
+const stagingLocks = new Map<string, Promise<void>>();
+let activeStagedIntakes = 0;
+let stagedIntakesIdle: (() => void)[] = [];
+
+/** Serialize intake/reset mutations within a runtime process. Database fences
+ * remain authoritative across processes; this lock also protects awaits while
+ * a request is consuming/probing a body. */
+export async function acquireStagedSourceLock(lockKey: string): Promise<() => void> {
+  const previous = stagingLocks.get(lockKey) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolvePromise) => {
+    releaseCurrent = resolvePromise;
+  });
+  stagingLocks.set(lockKey, current);
+  await previous;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (stagingLocks.get(lockKey) === current) stagingLocks.delete(lockKey);
+    releaseCurrent();
+  };
+}
+
+/** Register the body/probe portion after its DB claim has been committed. */
+export function registerStagedIntake(): () => void {
+  activeStagedIntakes += 1;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeStagedIntakes = Math.max(0, activeStagedIntakes - 1);
+    if (activeStagedIntakes === 0) {
+      const waiters = stagedIntakesIdle;
+      stagedIntakesIdle = [];
+      for (const resolveWaiter of waiters) resolveWaiter();
+    }
+  };
+}
+
+/** Reset waits for all in-process body/probe operations to finish. */
+export async function waitForStagedIntakesIdle(): Promise<void> {
+  if (activeStagedIntakes === 0) return;
+  await new Promise<void>((resolvePromise) => stagedIntakesIdle.push(resolvePromise));
+}
+
+function stagedClaimIsActive(source: StagedSource, at = Date.now()): boolean {
+  if (source.status !== 'pending' || !source.sourcePath) return false;
+  const expires = source.claimExpiresAt ? Date.parse(source.claimExpiresAt) : Number.NaN;
+  return Number.isFinite(expires) && expires > at;
 }
 
 export function cleanupStagedSource(
@@ -325,12 +480,50 @@ export function cleanupStagedSource(
   sourceUri: string,
   stagingDir: string,
 ): void {
-  const sourcePath =
-    findStagedSource(database, sourceUri)?.sourcePath ?? stagedSourcePath(sourceUri, stagingDir);
-  if (!sourcePath) return;
-  cleanupStagedSourcePath(sourcePath, stagingDir);
-  database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
-  removeStagedSource(database, sourceUri);
+  beginImmediateWithRetry(database);
+  try {
+    const source = findStagedSource(database, sourceUri);
+    // Invalid upload metadata must never clean up a body that another request
+    // currently owns. A lease expiry allows bounded crash recovery.
+    if (!source || stagedClaimIsActive(source)) {
+      database.exec('COMMIT');
+      return;
+    }
+    const sourcePath =
+      source.sourcePath ?? stagedSourcePath(sourceUri, stagingDir, source.claimGeneration);
+    if (sourcePath) cleanupStagedSourcePath(sourcePath, stagingDir);
+    database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
+    database.prepare('DELETE FROM staged_sources WHERE source_uri = ?').run(sourceUri);
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Remove an unclaimed staging file while holding the DB writer lock. */
+export function cleanupUnclaimedStagedPath(
+  database: RewindDatabase,
+  sourcePath: string,
+  stagingDir: string,
+  protectedPath = sourcePath,
+): boolean {
+  beginImmediateWithRetry(database);
+  try {
+    const claimed = database
+      .prepare('SELECT 1 FROM staged_sources WHERE source_path = ? LIMIT 1')
+      .get(protectedPath);
+    if (claimed) {
+      database.exec('COMMIT');
+      return false;
+    }
+    cleanupStagedSourcePath(sourcePath, stagingDir);
+    database.exec('COMMIT');
+    return true;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 export function cleanupStagedSourcePath(sourcePath: string, stagingDir: string): void {
@@ -717,7 +910,7 @@ export function cancelClipUpload(
     .prepare(
       `SELECT j.id AS jobId, c.id AS contributionId, c.cycle_id AS cycleId,
                 c.duration_seconds AS durationSeconds, c.quota_window_start_at AS windowStartsAt,
-                j.source_path AS sourcePath
+                j.source_path AS sourcePath, j.idempotency_key AS idempotencyKeyHash
        FROM media_jobs j JOIN contributions c ON c.id = j.contribution_id
        WHERE j.id = ? AND j.group_id = ? AND c.member_id = ? AND j.kind = 'clip'
          AND j.status = 'pending'`,
@@ -730,6 +923,7 @@ export function cancelClipUpload(
         durationSeconds: number;
         windowStartsAt?: string;
         sourcePath?: string;
+        idempotencyKeyHash?: string;
       }
     | undefined;
   if (!row) return { ok: false, reason: 'not_found' };
@@ -742,7 +936,7 @@ export function cancelClipUpload(
       .prepare(
         `SELECT j.id AS jobId, c.id AS contributionId, c.cycle_id AS cycleId,
                   c.duration_seconds AS durationSeconds, c.quota_window_start_at AS windowStartsAt,
-                  j.source_path AS sourcePath
+                  j.source_path AS sourcePath, j.idempotency_key AS idempotencyKeyHash
          FROM media_jobs j JOIN contributions c ON c.id = j.contribution_id
          WHERE j.id = ? AND j.group_id = ? AND c.member_id = ? AND j.kind = 'clip'
            AND j.status = 'pending'`,
@@ -771,20 +965,54 @@ export function cancelClipUpload(
         row.durationSeconds,
       );
     }
+    // Keep capability deletion and server-owned path cleanup inside the same
+    // writer-locked cancellation transition. A retry/recovery request cannot
+    // reclaim this source until both the row and file are gone; generation
+    // binding also prevents an old path cleanup from deleting a replacement.
+    if (options.stagingDir && row.sourcePath) {
+      const staged = database
+        .prepare(
+          `SELECT source_uri AS sourceUri, claim_generation AS claimGeneration,
+                  source_path AS sourcePath
+           FROM staged_sources
+           WHERE (source_path = ? OR idempotency_key_hash = ?)
+             AND group_id = ? AND member_id = ?
+           ORDER BY CASE WHEN source_path = ? THEN 0 ELSE 1 END
+           LIMIT 1`,
+        )
+        .get(row.sourcePath, row.idempotencyKeyHash ?? null, groupId, memberId, row.sourcePath) as
+        { sourceUri?: string; claimGeneration?: number; sourcePath?: string } | undefined;
+      cleanupStagedSourcePath(row.sourcePath, options.stagingDir);
+      if (staged?.sourcePath && staged.sourcePath !== row.sourcePath) {
+        cleanupStagedSourcePath(staged.sourcePath, options.stagingDir);
+      }
+      if (staged?.sourceUri) {
+        database
+          .prepare(
+            `DELETE FROM media_metadata WHERE source_uri = ?
+             AND EXISTS (
+               SELECT 1 FROM staged_sources
+               WHERE source_uri = ? AND source_path = ? AND claim_generation = ?
+             )`,
+          )
+          .run(
+            staged.sourceUri,
+            staged.sourceUri,
+            staged.sourcePath ?? row.sourcePath,
+            staged.claimGeneration ?? 0,
+          );
+        database
+          .prepare(
+            `DELETE FROM staged_sources
+             WHERE source_uri = ? AND source_path = ? AND claim_generation = ?`,
+          )
+          .run(staged.sourceUri, staged.sourcePath ?? row.sourcePath, staged.claimGeneration ?? 0);
+      }
+    }
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
-  }
-  if (options.stagingDir && row.sourcePath) {
-    cleanupStagedSourcePath(row.sourcePath, options.stagingDir);
-    const staged = database
-      .prepare('SELECT source_uri AS sourceUri FROM staged_sources WHERE source_path = ?')
-      .get(row.sourcePath) as { sourceUri?: string } | undefined;
-    database
-      .prepare('DELETE FROM media_metadata WHERE source_uri = ?')
-      .run(staged?.sourceUri ?? null);
-    database.prepare('DELETE FROM staged_sources WHERE source_path = ?').run(row.sourcePath);
   }
   return { ok: true, contributionId: row.contributionId, jobId: row.jobId };
 }

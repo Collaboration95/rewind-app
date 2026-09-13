@@ -30,14 +30,18 @@ import { acceptInvite, createInvite } from './invites';
 import {
   cancelClipUpload,
   claimStagedSource,
+  acquireStagedSourceLock,
   cleanupStagedSource,
   createClipUpload,
   findStagedSource,
   markStagedSourceReady,
   recordClipMediaMetadata,
+  reclaimStagedSource,
   resetStagedSourceClaim,
+  registerStagedIntake,
   stagedSourceId,
   stagedSourcePath,
+  waitForStagedIntakesIdle,
   type ClipUploadInput,
 } from './media';
 import { cleanupOrphanedStagedSources, processClipJob } from './jobs';
@@ -357,11 +361,17 @@ export async function handleRequest(
       return;
     }
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
-    restoreFixture(database);
-    // Reset removes database claims first, then safely removes all final and
-    // partial staged files that are no longer protected by an active job.
-    await cleanupOrphanedStagedSources(database, stagingDir, 100, 0);
-    sendJson(response, config, 200, { reset: true });
+    const releaseStagingLock = await acquireStagedSourceLock(stagingDir);
+    try {
+      await waitForStagedIntakesIdle();
+      restoreFixture(database);
+      // Reset removes database claims first, then safely removes all final and
+      // partial staged files that are no longer protected by an active job.
+      await cleanupOrphanedStagedSources(database, stagingDir, 100, 0);
+      sendJson(response, config, 200, { reset: true });
+    } finally {
+      releaseStagingLock();
+    }
     return;
   }
 
@@ -534,87 +544,129 @@ export async function handleRequest(
       return;
     }
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
-    await cleanupOrphanedStagedSources(database, stagingDir);
-    const sourceId = stagedSourceId(idempotencyKey);
-    const sourceUri = `staged://${sourceId}`;
-    const sourcePath = stagedSourcePath(sourceUri, stagingDir);
-    if (!sourcePath) return sendNotFound(response, config);
-    const claim = claimStagedSource(
-      database,
-      groupId,
-      session.session.actor.memberId,
-      idempotencyKey,
-      now(),
-      sourcePath,
-    );
-    if (!claim.ok) {
-      sendJson(response, config, 409, {
-        error: 'upload_source_conflict',
-        message: 'That upload key is already owned by another capture.',
-      });
-      return;
-    }
-    // The intake route always writes to the deterministic server-owned path;
-    // never trust a path carried by a legacy/database row as a write target.
-    const claimedSourcePath = sourcePath;
-    let canStage = !claim.existing;
-    if (claim.existing && claim.source.status === 'staged') {
-      const existingMetadata = findStagedSource(database, sourceUri);
-      if (existingMetadata?.byteLength && existsSync(claimedSourcePath)) {
-        sendJson(response, config, 200, {
-          source: { id: sourceId, uri: sourceUri, byteLength: existingMetadata.byteLength },
+    let releaseStagingLock: (() => void) | null = await acquireStagedSourceLock(stagingDir);
+    let releaseActiveIntake: (() => void) | null = null;
+    try {
+      await cleanupOrphanedStagedSources(database, stagingDir);
+      const sourceId = stagedSourceId(idempotencyKey);
+      const sourceUri = `staged://${sourceId}`;
+      const existingBeforeClaim = findStagedSource(database, sourceUri);
+      const nextGeneration = existingBeforeClaim
+        ? Math.max(1, existingBeforeClaim.claimGeneration)
+        : 1;
+      const sourcePath = stagedSourcePath(sourceUri, stagingDir, nextGeneration);
+      if (!sourcePath) return sendNotFound(response, config);
+      const claim = claimStagedSource(
+        database,
+        groupId,
+        session.session.actor.memberId,
+        idempotencyKey,
+        now(),
+        sourcePath,
+      );
+      if (!claim.ok) {
+        sendJson(response, config, 409, {
+          error: 'upload_source_conflict',
+          message: 'That upload key is already owned by another capture.',
         });
         return;
       }
-      // A successful claim without a file is recoverable after interruption;
-      // reset the same owner/key to pending before replacing its source.
-      database
-        .prepare(
-          "UPDATE staged_sources SET status = 'pending', byte_length = NULL, source_path = NULL WHERE source_uri = ?",
-        )
-        .run(sourceUri);
-      canStage = true;
-    }
-    // A pending claim with a source path belongs to an intake request that is
-    // already consuming its body. Reject the duplicate before it can write a
-    // distinct payload over the same deterministic destination.
-    if (!canStage && claim.existing && claim.source.status === 'pending') {
-      sendJson(response, config, 409, {
-        error: 'upload_source_conflict',
-        message: 'That upload is already being staged. Retry after it completes.',
-      });
-      return;
-    }
-    try {
-      await stageSourceBody(request, stagingDir, claimedSourcePath);
-      const probed = await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
-      database.exec('BEGIN');
-      try {
-        recordClipMediaMetadata(database, {
-          sourceUri,
-          ...probed,
-          // FFprobe's stat is authoritative; the stream byte count is only a
-          // transport guard and is never persisted as media truth.
-          byteLength: probed.byteLength,
-          verifiedAt: now().toISOString(),
-        });
-        markStagedSourceReady(database, sourceUri, probed.byteLength, claimedSourcePath);
-        database.exec('COMMIT');
-      } catch (error) {
-        database.exec('ROLLBACK');
-        throw error;
+      // The intake route always writes to the deterministic server-owned path;
+      // never trust a path carried by a legacy/database row as a write target.
+      let claimedSourcePath = claim.source.sourcePath ?? sourcePath;
+      let claimGeneration = claim.source.claimGeneration;
+      let canStage = !claim.existing;
+      if (claim.existing && claim.source.status === 'staged') {
+        const existingMetadata = findStagedSource(database, sourceUri);
+        if (existingMetadata?.byteLength && existsSync(claimedSourcePath)) {
+          sendJson(response, config, 200, {
+            source: { id: sourceId, uri: sourceUri, byteLength: existingMetadata.byteLength },
+          });
+          return;
+        }
+        // A successful claim without a file is recoverable after interruption.
+        // Reclaiming increments the generation and assigns a new physical path,
+        // fencing any stale body/probe callback from the old request.
+        const reclaimed = reclaimStagedSource(
+          database,
+          groupId,
+          session.session.actor.memberId,
+          idempotencyKey,
+          stagedSourcePath(sourceUri, stagingDir, claimGeneration + 1) ?? sourcePath,
+          now(),
+        );
+        if (!reclaimed.ok || !reclaimed.source.sourcePath) {
+          sendJson(response, config, 409, {
+            error: 'upload_source_conflict',
+            message: 'That upload source changed while it was being recovered.',
+          });
+          return;
+        }
+        claimedSourcePath = reclaimed.source.sourcePath;
+        claimGeneration = reclaimed.source.claimGeneration;
+        canStage = true;
       }
-      sendJson(response, config, 201, {
-        source: { id: sourceId, uri: sourceUri, byteLength: probed.byteLength },
-      });
-    } catch (error) {
-      await rm(claimedSourcePath, { force: true }).catch(() => undefined);
-      resetStagedSourceClaim(database, sourceUri, claimedSourcePath);
-      const message =
-        error instanceof Error && error.message === 'source too large'
-          ? 'The clip is larger than 50 MB.'
-          : 'The clip source could not be staged. Try again.';
-      sendJson(response, config, 400, { error: 'upload_staging_failed', message });
+      // A pending claim with a source path belongs to an intake request that is
+      // already consuming its body. Reject the duplicate before it can write a
+      // distinct payload over the same deterministic destination.
+      if (!canStage && claim.existing && claim.source.status === 'pending') {
+        sendJson(response, config, 409, {
+          error: 'upload_source_conflict',
+          message: 'That upload is already being staged. Retry after it completes.',
+        });
+        return;
+      }
+      // Let another same-key request observe the committed pending claim and
+      // return a conflict, while reset waits on this body/probe operation.
+      releaseActiveIntake = registerStagedIntake();
+      releaseStagingLock();
+      releaseStagingLock = null;
+      try {
+        await stageSourceBody(request, stagingDir, claimedSourcePath);
+        const probed = await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
+        database.exec('BEGIN');
+        try {
+          recordClipMediaMetadata(database, {
+            sourceUri,
+            ...probed,
+            // FFprobe's stat is authoritative; the stream byte count is only a
+            // transport guard and is never persisted as media truth.
+            byteLength: probed.byteLength,
+            verifiedAt: now().toISOString(),
+          });
+          if (
+            !markStagedSourceReady(
+              database,
+              sourceUri,
+              probed.byteLength,
+              claimedSourcePath,
+              claimGeneration,
+            )
+          ) {
+            throw new Error('staged source claim was superseded');
+          }
+          database.exec('COMMIT');
+        } catch (error) {
+          database.exec('ROLLBACK');
+          throw error;
+        }
+        sendJson(response, config, 201, {
+          source: { id: sourceId, uri: sourceUri, byteLength: probed.byteLength },
+        });
+      } catch (error) {
+        await rm(claimedSourcePath, { force: true }).catch(() => undefined);
+        resetStagedSourceClaim(database, sourceUri, claimedSourcePath, claimGeneration);
+        const message =
+          error instanceof Error && error.message === 'source too large'
+            ? 'The clip is larger than 50 MB.'
+            : 'The clip source could not be staged. Try again.';
+        sendJson(response, config, 400, { error: 'upload_staging_failed', message });
+      }
+    } finally {
+      releaseActiveIntake?.();
+      releaseActiveIntake = null;
+      releaseStagingLock?.();
+      releaseStagingLock = null;
     }
     return;
   }
