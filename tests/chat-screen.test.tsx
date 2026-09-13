@@ -1,10 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import type { ComponentProps } from 'react';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
+import { ChatSessionSurface } from '../src/chat/ChatScreen';
 import type { Cycle } from '../src/domain/cycles';
 import type { Group, MembershipDenied } from '../src/domain/profiles';
+import type { DemoSession } from '../src/domain/session';
 import type { ChatMessageEvent, SubscribeOptions } from '../src/chat';
 import type { RuntimeClient } from '../src/runtime/local-runtime-client';
 
@@ -32,6 +35,33 @@ const cycle: Cycle = {
   quota: { maxCount: 5, maxSeconds: 30 },
   contributionUsage: { countUsed: 0, secondsUsed: 0 },
 };
+
+const sessionA: DemoSession = {
+  id: 'session-a',
+  accessKind: 'demo',
+  actor: { memberId: 'demo-1', displayName: 'Amber', isSynthetic: true },
+  groupId: 'demo-group',
+  startedAt: '2026-09-13T00:00:00.000Z',
+  expiresAt: '2026-09-14T00:00:00.000Z',
+  invalidatedAt: null,
+};
+
+const sessionB: DemoSession = {
+  ...sessionA,
+  id: 'session-b',
+  groupId: 'other-group',
+};
+
+const otherGroup: Group = {
+  ...group,
+  id: 'other-group',
+  name: 'Other People',
+};
+
+const memberNames = new Map([
+  ['demo-1', 'Amber'],
+  ['demo-2', 'Birch'],
+]);
 
 function event(
   eventId: number,
@@ -82,6 +112,13 @@ function runtimeMock(overrides: Partial<RuntimeClient> = {}) {
     emit: (next: ChatMessageEvent) => subscriptionOptions?.onEvent(next),
     fail: (error: unknown) => subscriptionOptions?.onError?.(error),
   };
+}
+
+function ScopedChatSurface({
+  scope,
+  ...props
+}: ComponentProps<typeof ChatSessionSurface> & { scope: string }) {
+  return <ChatSessionSurface key={scope} {...props} />;
 }
 
 beforeEach(async () => {
@@ -136,5 +173,61 @@ describe('persistent group chat timeline', () => {
     await result.findByTestId('chat-denied');
     expect(result.queryByText('private text')).toBeNull();
     expect(runtime.client.subscribeChat).not.toHaveBeenCalled();
+  });
+
+  it('keeps chat available when the authorized group has no current cycle or its cycle fails', async () => {
+    const emptyRuntime = runtimeMock({
+      getCurrentCycle: jest.fn().mockResolvedValue({ kind: 'NotFound' as const }),
+    });
+    const empty = await render(<App runtimeClient={emptyRuntime.client} />);
+    await fireEvent.press(await empty.findByRole('tab', { name: 'Chat' }));
+    await empty.findByTestId('chat-empty');
+    expect(empty.getByTestId('chat-composer')).toBeTruthy();
+
+    const errorRuntime = runtimeMock({
+      getCurrentCycle: jest.fn().mockRejectedValue(new Error('cycle unavailable')),
+    });
+    const failed = await render(<App runtimeClient={errorRuntime.client} />);
+    await fireEvent.press(await failed.findByRole('tab', { name: 'Chat' }));
+    await failed.findByTestId('chat-empty');
+    expect(failed.getByTestId('chat-composer')).toBeTruthy();
+  });
+
+  it('clears a previous group body before subscribing to a new group scope', async () => {
+    const runtime = runtimeMock();
+    const result = await render(
+      <ScopedChatSurface
+        accessState="known"
+        capsuleStatus="ready"
+        group={group}
+        scope="session-a:demo-group"
+        memberNames={memberNames}
+        retryCapsule={jest.fn()}
+        runtimeClient={runtime.client}
+        session={sessionA}
+      />,
+    );
+    await result.findByTestId('chat-empty');
+    await act(async () =>
+      runtime.emit(event(7, 'Only in the first group', '2026-09-13T01:00:00.000Z')),
+    );
+    expect(result.getByText('Only in the first group')).toBeTruthy();
+
+    await act(async () =>
+      result.rerender(
+        <ScopedChatSurface
+          accessState="known"
+          capsuleStatus="ready"
+          group={otherGroup}
+          scope="session-b:other-group"
+          memberNames={memberNames}
+          retryCapsule={jest.fn()}
+          runtimeClient={runtime.client}
+          session={sessionB}
+        />,
+      ),
+    );
+    expect(result.queryByText('Only in the first group')).toBeNull();
+    await result.findByTestId('chat-empty');
   });
 });

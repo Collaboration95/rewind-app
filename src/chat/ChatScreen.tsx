@@ -1,16 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { useCapsule, type CapsuleState } from '../capsule/CapsuleProvider';
 import { demoRepository } from '../data/demo-repository';
-import { useCapsule } from '../capsule/CapsuleProvider';
+import type { Group } from '../domain/profiles';
+import type { DemoSession } from '../domain/session';
 import { useDemoSession } from '../session/DemoSessionProvider';
+import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { COLORS } from '../theme';
 import type { ChatMessage, ChatMessageEvent } from './realtime-client';
-import type { RuntimeClient } from '../runtime/local-runtime-client';
 
 const MESSAGE_MAX_LENGTH = 2_000;
 
 type TimelineState = 'loading' | 'ready' | 'error' | 'unavailable' | 'denied';
+
 interface TimelineMessage {
   eventId: number;
   message: ChatMessage;
@@ -40,39 +43,68 @@ function errorMessage(error: unknown): string {
     : 'The chat connection could not be established.';
 }
 
+/**
+ * The parent owns the capsule lookup, but a group remains a valid chat scope
+ * when its current cycle is empty or could not be loaded. The key is the
+ * security boundary: a changed session or group remounts this surface before
+ * any old timeline, draft, or error state can be rendered in the new scope.
+ */
 export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
   const { session } = useDemoSession();
-  const { state, retry: retryCapsule } = useCapsule();
-  const [messages, setMessages] = useState<TimelineMessage[]>([]);
-  const [timelineState, setTimelineState] = useState<TimelineState>('loading');
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [connectionErrorScope, setConnectionErrorScope] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [retryKey, setRetryKey] = useState(0);
-  const subscriptionScope = useRef<string | null>(null);
+  const { state, retry } = useCapsule();
   const profiles = useMemo(() => demoRepository.listProfiles(), []);
-
-  const group = state.status === 'ready' ? state.group : null;
+  const group = 'group' in state ? state.group : null;
+  const accessState = state.status === 'denied' ? 'denied' : group ? 'known' : 'loading';
+  const scopeKey = session
+    ? `${session.id}:${group?.id ?? (accessState === 'denied' ? 'denied' : 'loading')}`
+    : 'no-session';
   const memberNames = useMemo(
     () => new Map(profiles.map((profile) => [profile.id, profile.displayName])),
     [profiles],
   );
 
-  useEffect(() => {
-    if (!session || state.status === 'denied') {
-      return;
-    }
-    if (state.status !== 'ready' || !group) {
-      return;
-    }
-    if (!runtimeClient?.subscribeChat) {
-      return;
-    }
+  return (
+    <ChatSessionSurface
+      accessState={accessState}
+      capsuleStatus={state.status}
+      group={group}
+      key={scopeKey}
+      memberNames={memberNames}
+      retryCapsule={retry}
+      runtimeClient={runtimeClient}
+      session={session}
+    />
+  );
+}
 
-    const scopeKey = `${session.id}:${group.id}`;
-    subscriptionScope.current = scopeKey;
+export function ChatSessionSurface({
+  accessState,
+  capsuleStatus,
+  group,
+  memberNames,
+  retryCapsule,
+  runtimeClient,
+  session,
+}: {
+  accessState: 'loading' | 'known' | 'denied';
+  capsuleStatus: CapsuleState['status'];
+  group: Group | null;
+  memberNames: Map<string, string>;
+  retryCapsule: () => void;
+  runtimeClient: RuntimeClient | null;
+  session: DemoSession | null;
+}) {
+  const [messages, setMessages] = useState<TimelineMessage[]>([]);
+  const [timelineState, setTimelineState] = useState<TimelineState>('loading');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    if (accessState !== 'known' || !session || !group || !runtimeClient?.subscribeChat) return;
+
     let active = true;
     let subscription: { close(): void } | null = null;
     const readyTimer = setTimeout(() => {
@@ -82,20 +114,14 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
       subscription = runtimeClient.subscribeChat(session.id, group.id, {
         onEvent: (event) => {
           if (!active) return;
-          setMessages((current) =>
-            subscriptionScope.current === scopeKey
-              ? appendEvent(current, event)
-              : appendEvent([], event),
-          );
+          setMessages((current) => appendEvent(current, event));
           setTimelineState('ready');
           setConnectionError(null);
-          setConnectionErrorScope(null);
         },
         onError: (error) => {
           if (!active) return;
           setTimelineState('error');
           setConnectionError(errorMessage(error));
-          setConnectionErrorScope(scopeKey);
         },
       });
     } catch (error) {
@@ -103,7 +129,6 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
         if (!active) return;
         setTimelineState('error');
         setConnectionError(errorMessage(error));
-        setConnectionErrorScope(scopeKey);
       }, 0);
     }
 
@@ -112,17 +137,15 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
       clearTimeout(readyTimer);
       subscription?.close();
     };
-  }, [group, retryKey, runtimeClient, session, state.status]);
+  }, [accessState, group, retryKey, runtimeClient, session]);
 
   const retry = useCallback(() => {
     setMessages([]);
-    subscriptionScope.current = null;
     setConnectionError(null);
-    setConnectionErrorScope(null);
     setSendError(null);
-    if (state.status === 'error' || state.status === 'loading') retryCapsule();
+    if (capsuleStatus === 'error' || capsuleStatus === 'loading') retryCapsule();
     setRetryKey((current) => current + 1);
-  }, [retryCapsule, state.status]);
+  }, [capsuleStatus, retryCapsule]);
 
   const send = useCallback(async () => {
     const body = draft.trim();
@@ -144,24 +167,16 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
     }
   }, [draft, group, runtimeClient, sending, session]);
 
-  const activeMessageScope = session && group ? `${session.id}:${group.id}` : null;
-  const hasActiveSubscription =
-    activeMessageScope !== null && subscriptionScope.current === activeMessageScope;
   const effectiveTimelineState: TimelineState =
-    state.status === 'denied'
+    accessState === 'denied'
       ? 'denied'
-      : state.status === 'error'
-        ? 'error'
-        : state.status !== 'ready'
-          ? 'loading'
-          : !runtimeClient?.subscribeChat
-            ? 'unavailable'
-            : hasActiveSubscription
-              ? timelineState
-              : 'loading';
+      : accessState === 'loading'
+        ? 'loading'
+        : !runtimeClient?.subscribeChat
+          ? 'unavailable'
+          : timelineState;
   const showComposer = effectiveTimelineState === 'ready' || effectiveTimelineState === 'error';
-  const retryLabel = state.status === 'error' ? 'Retry loading chat' : 'Retry chat connection';
-  const canRenderMessages = hasActiveSubscription && effectiveTimelineState !== 'unavailable';
+  const canRenderMessages = accessState === 'known' && effectiveTimelineState !== 'unavailable';
 
   return (
     <View style={styles.screen} testID="chat-screen">
@@ -201,18 +216,14 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
         {effectiveTimelineState === 'unavailable' ? (
           <View accessible style={styles.statePanel} testID="chat-unavailable">
             <Text style={styles.panelTitle}>Chat needs the local runtime</Text>
-            <Text style={styles.bodyText}>
-              {connectionError ?? 'Connect the local runtime to load this group chat.'}
-            </Text>
+            <Text style={styles.bodyText}>Connect the local runtime to load this group chat.</Text>
           </View>
         ) : null}
 
         {effectiveTimelineState === 'error' ? (
           <View accessible style={styles.errorPanel} testID="chat-error">
             <Text accessibilityRole="alert" style={styles.errorText}>
-              {connectionErrorScope === activeMessageScope
-                ? connectionError
-                : 'The chat connection could not be established.'}
+              {connectionError ?? 'The chat connection could not be established.'}
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -220,7 +231,7 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
               style={styles.outlineButton}
               testID="chat-retry"
             >
-              <Text style={styles.outlineButtonText}>{retryLabel}</Text>
+              <Text style={styles.outlineButtonText}>Retry chat connection</Text>
             </Pressable>
           </View>
         ) : null}
