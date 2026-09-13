@@ -9,7 +9,11 @@ import type { CaptureMode, ClipUploadInput, RecordedClip } from '../domain/video
 import { ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
 import { BoundedVideoRecordingSession, type VideoRecordingPlatform } from './video-recording';
 import { ClipReviewSession, InMemoryPendingClipMetadataStore } from './video-review';
-import { ExpoCameraPlatform, removeManagedRecordedClip } from './platform';
+import {
+  ExpoCameraPlatform,
+  readManagedRecordedClipBase64,
+  removeManagedRecordedClip,
+} from './platform';
 import type { CameraPlatform } from './contracts';
 
 type AccessStatus =
@@ -86,6 +90,7 @@ export function VideoCaptureScreen({
   const uploadSessionRef = useRef(uploadSession);
   const clipRef = useRef<RecordedClip | null>(clip);
   const activeUploadRef = useRef(false);
+  const processingSucceededRef = useRef(false);
   const mountedRef = useRef(true);
   const captureLeftRef = useRef(false);
   useEffect(() => {
@@ -115,7 +120,9 @@ export function VideoCaptureScreen({
       mountedRef.current = false;
       void cancelActiveWork().finally(() => {
         const sourceUri = clipRef.current?.sourceUri;
-        if (sourceUri) void removeManagedRecordedClip(sourceUri).catch(() => undefined);
+        if (sourceUri && processingSucceededRef.current) {
+          void removeManagedRecordedClip(sourceUri).catch(() => undefined);
+        }
       });
     };
   }, [cancelActiveWork]);
@@ -294,27 +301,55 @@ export function VideoCaptureScreen({
       setError('Connect the local runtime and an active Demo session before uploading.');
       return;
     }
+    const reviewMetadata = review.getReview();
     const input: ClipUploadInput = {
       byteLength: clip.byteLength ?? 0,
-      durationSeconds: review.getReview().endSeconds - review.getReview().startSeconds,
+      durationSeconds: reviewMetadata.endSeconds - reviewMetadata.startSeconds,
       hasAudio: true,
       height: clip.height,
       idempotencyKey: `clip-${Date.now()}`,
       mimeType: 'video/mp4',
+      mode: reviewMetadata.mode,
       sourceUri: clip.sourceUri,
+      sourceDurationSeconds: reviewMetadata.durationSeconds,
+      trimEndSeconds: reviewMetadata.endSeconds,
+      trimStartSeconds: reviewMetadata.startSeconds,
       width: clip.width,
     };
     try {
       activeUploadRef.current = true;
+      if (runtimeClient?.stageClipSource && demoSession?.session) {
+        const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
+        const staged = await runtimeClient.stageClipSource(
+          demoSession.session.id,
+          demoSession.session.groupId,
+          input.idempotencyKey,
+          sourceData,
+        );
+        input.sourceUri = staged.uri;
+        input.byteLength = staged.byteLength;
+      }
       await review.savePending(input.idempotencyKey);
       if (!isCaptureActive()) return;
-      await uploadSession.upload(input, (progress) => {
+      const uploaded = await uploadSession.upload(input, (progress) => {
         if (isCaptureActive() && activeUploadRef.current) setUploadProgress(progress);
       });
-      try {
-        await removeManagedRecordedClip(clip.sourceUri);
-      } catch {
-        setError('The queued clip is ready, but its local cache file could not be removed.');
+      if (runtimeClient?.processClipJob && demoSession?.session) {
+        const session = demoSession.session;
+        const processed = await runtimeClient.processClipJob(
+          session.id,
+          session.groupId,
+          uploaded.job.id,
+        );
+        if (processed.status !== 'ready') {
+          throw new Error('The clip could not be processed. Retry the job.');
+        }
+        processingSucceededRef.current = true;
+        try {
+          await removeManagedRecordedClip(clip.sourceUri);
+        } catch {
+          setError('The clip is processed, but its local cache file could not be removed.');
+        }
       }
     } catch (uploadError) {
       if (!isCaptureActive()) return;

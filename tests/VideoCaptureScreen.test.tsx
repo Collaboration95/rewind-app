@@ -237,6 +237,40 @@ describe('VideoCaptureScreen', () => {
     expect(await tooShort.findByText('Keep at least half a second in the clip.')).toBeTruthy();
   });
 
+  it('forwards trim and mode metadata and invokes server processing before local cleanup', async () => {
+    const processClipJob = jest.fn().mockResolvedValue({
+      contributionId: 'contribution-ui',
+      createdAt: '2026-09-11T00:00:00.000Z',
+      groupId: 'demo-group',
+      id: 'job-ui',
+      kind: 'clip',
+      status: 'ready',
+    });
+    const uploadClip = jest.fn().mockResolvedValue(upload);
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ uploadClip, processClipJob }),
+    );
+    await fireEvent.changeText(result.getByDisplayValue('0'), '1');
+    await fireEvent.changeText(result.getByDisplayValue('8'), '5');
+    await fireEvent.press(result.getByRole('radio', { name: 'High Contrast' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Save trim and mode' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByText('Upload queued as one pending contribution.');
+    expect(uploadClip).toHaveBeenCalledWith(
+      'demo-session-ui',
+      'demo-group',
+      expect.objectContaining({
+        durationSeconds: 4,
+        mode: 'high-contrast',
+        sourceDurationSeconds: 8,
+        trimEndSeconds: 5,
+        trimStartSeconds: 1,
+      }),
+    );
+    expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
+  });
+
   it('surfaces an upload failure and retries the same review successfully', async () => {
     const uploadClip = jest
       .fn()

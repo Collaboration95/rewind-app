@@ -60,6 +60,17 @@ export async function removeManagedRecordedClip(uri: string): Promise<void> {
   await FileSystem.deleteAsync(uri, { idempotent: true });
 }
 
+/** Read a managed capture only for the server-owned binary upload boundary. */
+export async function readManagedRecordedClipBase64(uri: string): Promise<string> {
+  const cacheDirectory = FileSystem.cacheDirectory;
+  if (!cacheDirectory || !uri.startsWith(`${cacheDirectory}${VIDEO_CACHE_FOLDER}/`)) {
+    throw new Error('The captured clip is no longer available in local storage.');
+  }
+  return FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+}
+
 export function permissionState(response: {
   status: string;
   canAskAgain?: boolean;

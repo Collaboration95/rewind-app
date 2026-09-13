@@ -1,4 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import { relative, resolve, isAbsolute } from 'node:path';
 
 import { cyclePhase } from '../cycles/engine';
 import { getCurrentCycle, isMember } from '../db';
@@ -6,6 +8,9 @@ import type { RewindDatabase } from '../db';
 
 export const MAX_CLIP_BYTES = 50 * 1024 * 1024;
 export const MAX_CLIP_DURATION_SECONDS = 15;
+export const MIN_CLIP_DURATION_SECONDS = 0.5;
+export const SUPPORTED_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
+export type CaptureMode = (typeof SUPPORTED_CAPTURE_MODES)[number];
 
 export interface ClipUploadInput {
   idempotencyKey: string;
@@ -16,6 +21,14 @@ export interface ClipUploadInput {
   width: number;
   height: number;
   hasAudio: boolean;
+  /** Optional review metadata. The duration remains the quota duration. */
+  mode?: CaptureMode;
+  trimStartSeconds?: number;
+  trimEndSeconds?: number;
+  /** Aliases accepted for clients that use the review metadata names. */
+  startSeconds?: number;
+  endSeconds?: number;
+  sourceDurationSeconds?: number;
 }
 
 export interface PendingClipUpload {
@@ -32,7 +45,7 @@ export interface PendingClipUpload {
     groupId: string;
     contributionId: string;
     kind: 'clip';
-    status: 'pending' | 'cancelled';
+    status: 'pending' | 'processing' | 'ready' | 'failed' | 'cancelled';
     createdAt: string;
   };
   existing: boolean;
@@ -42,7 +55,13 @@ export type ClipUploadResult =
   | { ok: true; upload: PendingClipUpload }
   | {
       ok: false;
-      reason: 'invalid_media' | 'invalid_key' | 'not_found' | 'quota_exceeded' | 'already_member';
+      reason:
+        | 'invalid_media'
+        | 'invalid_mode'
+        | 'invalid_key'
+        | 'not_found'
+        | 'quota_exceeded'
+        | 'already_member';
     };
 
 export type CancelClipUploadResult =
@@ -60,8 +79,154 @@ interface UploadRow {
   jobCreatedAt: string;
 }
 
+interface StoredClipMetadata {
+  sourceUri: string;
+  mimeType: string;
+  byteLength: number;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  hasAudio: number;
+}
+
+interface StagedSourceRecord {
+  sourceUri: string;
+  groupId: string;
+  memberId: string;
+  sourcePath: string;
+}
+
+export interface ClipProcessingMetadata {
+  mode: CaptureMode;
+  trimStartSeconds: number;
+  trimEndSeconds: number;
+}
+
+export interface ClipUploadOptions {
+  stagingDir?: string;
+  requireVerifiedMetadata?: boolean;
+}
+
+export interface CancelClipUploadOptions {
+  stagingDir?: string;
+}
+
+export interface ServerClipMetadata {
+  sourceUri: string;
+  mimeType: 'video/mp4';
+  byteLength: number;
+  durationSeconds: number;
+  width: number;
+  height: number;
+  hasAudio: boolean;
+  verifiedAt?: string;
+}
+
 function keyHash(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 32);
+}
+
+export function stagedSourceId(): string {
+  return randomUUID().replaceAll('-', '');
+}
+
+export function stagedSourcePath(sourceUri: string, stagingDir: string): string | null {
+  const match = /^staged:\/\/([a-f0-9]{32})$/.exec(sourceUri);
+  return match ? resolve(stagingDir, `source-${match[1]}.mp4`) : null;
+}
+
+export function cleanupStagedSource(
+  database: RewindDatabase,
+  sourceUri: string,
+  stagingDir: string,
+): void {
+  const sourcePath = stagedSourcePath(sourceUri, stagingDir);
+  if (!sourcePath) return;
+  cleanupStagedSourcePath(sourcePath, stagingDir);
+  database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
+  database.prepare('DELETE FROM staged_media_sources WHERE source_uri = ?').run(sourceUri);
+}
+
+export function cleanupStagedSourcePath(sourcePath: string, stagingDir: string): void {
+  const remainder = relative(resolve(stagingDir), resolve(sourcePath));
+  if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) return;
+  rmSync(resolve(sourcePath), { force: true });
+}
+
+export function recordClipMediaMetadata(
+  database: RewindDatabase,
+  metadata: ServerClipMetadata,
+  verifiedAt = new Date(),
+): void {
+  if (
+    !metadata.sourceUri ||
+    metadata.mimeType !== 'video/mp4' ||
+    !Number.isInteger(metadata.byteLength) ||
+    metadata.byteLength <= 0 ||
+    metadata.byteLength > MAX_CLIP_BYTES ||
+    !Number.isFinite(metadata.durationSeconds) ||
+    metadata.durationSeconds <= 0 ||
+    metadata.durationSeconds > MAX_CLIP_DURATION_SECONDS ||
+    !Number.isInteger(metadata.width) ||
+    metadata.width <= 0 ||
+    !Number.isInteger(metadata.height) ||
+    metadata.height <= 0 ||
+    metadata.width >= metadata.height ||
+    metadata.hasAudio !== true
+  ) {
+    throw new RangeError('Server media metadata does not describe an acceptable clip.');
+  }
+  database
+    .prepare(
+      `INSERT INTO media_metadata
+        (source_uri, mime_type, byte_length, duration_seconds, width, height, has_audio, verified_at)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+       ON CONFLICT(source_uri) DO UPDATE SET
+         mime_type = excluded.mime_type,
+         byte_length = excluded.byte_length,
+         duration_seconds = excluded.duration_seconds,
+         width = excluded.width,
+         height = excluded.height,
+         has_audio = excluded.has_audio,
+         verified_at = excluded.verified_at`,
+    )
+    .run(
+      metadata.sourceUri,
+      metadata.mimeType,
+      metadata.byteLength,
+      metadata.durationSeconds,
+      metadata.width,
+      metadata.height,
+      metadata.verifiedAt ?? verifiedAt.toISOString(),
+    );
+}
+
+function storedClipMetadata(
+  database: RewindDatabase,
+  sourceUri: string,
+): StoredClipMetadata | null {
+  const row = database
+    .prepare(
+      `SELECT source_uri AS sourceUri, mime_type AS mimeType, byte_length AS byteLength,
+              duration_seconds AS durationSeconds, width, height, has_audio AS hasAudio
+       FROM media_metadata WHERE source_uri = ?`,
+    )
+    .get(sourceUri) as StoredClipMetadata | undefined;
+  return row ?? null;
+}
+
+function stagedSourceRecord(
+  database: RewindDatabase,
+  sourceUri: string,
+): StagedSourceRecord | null {
+  const row = database
+    .prepare(
+      `SELECT source_uri AS sourceUri, group_id AS groupId, member_id AS memberId,
+              source_path AS sourcePath
+       FROM staged_media_sources WHERE source_uri = ?`,
+    )
+    .get(sourceUri) as StagedSourceRecord | undefined;
+  return row ?? null;
 }
 
 function idSuffix(key: string): string {
@@ -83,10 +248,29 @@ function mapUpload(row: UploadRow, existing: boolean): PendingClipUpload {
       groupId: row.groupId,
       contributionId: row.contributionId,
       kind: 'clip',
-      status: row.jobStatus === 'cancelled' ? 'cancelled' : 'pending',
+      status:
+        row.jobStatus === 'cancelled'
+          ? 'cancelled'
+          : row.jobStatus === 'processing'
+            ? 'processing'
+            : row.jobStatus === 'ready'
+              ? 'ready'
+              : row.jobStatus === 'failed'
+                ? 'failed'
+                : 'pending',
       createdAt: row.jobCreatedAt,
     },
     existing,
+  };
+}
+
+export function getClipProcessingMetadata(input: ClipUploadInput): ClipProcessingMetadata {
+  const trimStartSeconds = input.trimStartSeconds ?? input.startSeconds ?? 0;
+  const trimEndSeconds = input.trimEndSeconds ?? input.endSeconds ?? input.durationSeconds;
+  return {
+    mode: input.mode ?? 'soft-focus',
+    trimStartSeconds,
+    trimEndSeconds,
   };
 }
 
@@ -109,6 +293,23 @@ export function validateClipUpload(input: ClipUploadInput): ClipUploadResult | n
     input.height <= 0 ||
     input.width >= input.height ||
     input.hasAudio !== true
+  ) {
+    return { ok: false, reason: 'invalid_media' };
+  }
+  const metadata = getClipProcessingMetadata(input);
+  if (!SUPPORTED_CAPTURE_MODES.includes(metadata.mode)) {
+    return { ok: false, reason: 'invalid_mode' };
+  }
+  if (
+    !Number.isFinite(metadata.trimStartSeconds) ||
+    !Number.isFinite(metadata.trimEndSeconds) ||
+    metadata.trimStartSeconds < 0 ||
+    metadata.trimEndSeconds <= metadata.trimStartSeconds ||
+    metadata.trimEndSeconds - metadata.trimStartSeconds < MIN_CLIP_DURATION_SECONDS ||
+    metadata.trimEndSeconds - metadata.trimStartSeconds > MAX_CLIP_DURATION_SECONDS ||
+    (input.sourceDurationSeconds !== undefined &&
+      (!Number.isFinite(input.sourceDurationSeconds) ||
+        metadata.trimEndSeconds > input.sourceDurationSeconds))
   ) {
     return { ok: false, reason: 'invalid_media' };
   }
@@ -142,6 +343,7 @@ export function createClipUpload(
   memberId: string,
   input: ClipUploadInput,
   now = new Date(),
+  options: ClipUploadOptions = {},
 ): ClipUploadResult {
   const validation = validateClipUpload(input);
   if (validation) return validation;
@@ -149,6 +351,35 @@ export function createClipUpload(
   const key = keyHash(input.idempotencyKey);
   const existing = existingUpload(database, input.idempotencyKey, groupId, memberId);
   if (existing) return { ok: true, upload: existing };
+  const verified = storedClipMetadata(database, input.sourceUri);
+  const stagedRecord = stagedSourceRecord(database, input.sourceUri);
+  const isStagedSource = Boolean(
+    options.stagingDir && stagedSourcePath(input.sourceUri, options.stagingDir),
+  );
+  if (options.requireVerifiedMetadata && isStagedSource && !verified) {
+    return { ok: false, reason: 'invalid_media' };
+  }
+  if (
+    options.requireVerifiedMetadata &&
+    isStagedSource &&
+    (!stagedRecord || stagedRecord.groupId !== groupId || stagedRecord.memberId !== memberId)
+  ) {
+    return { ok: false, reason: 'not_found' };
+  }
+  const effectiveInput = verified
+    ? {
+        ...input,
+        mimeType: verified.mimeType,
+        byteLength: verified.byteLength,
+        durationSeconds: verified.durationSeconds,
+        width: verified.width,
+        height: verified.height,
+        hasAudio: verified.hasAudio === 1,
+        sourceDurationSeconds: input.sourceDurationSeconds ?? verified.durationSeconds,
+      }
+    : input;
+  const effectiveValidation = validateClipUpload(effectiveInput);
+  if (effectiveValidation) return effectiveValidation;
   const cycle = getCurrentCycle(database, groupId);
   const phase = cycle
     ? cyclePhase(
@@ -161,9 +392,15 @@ export function createClipUpload(
       )
     : null;
   if (!cycle || phase !== 'collecting') return { ok: false, reason: 'not_found' };
+  const processing = getClipProcessingMetadata(effectiveInput);
+  const sourcePath =
+    stagedRecord?.sourcePath ??
+    (options.stagingDir && stagedSourcePath(input.sourceUri, options.stagingDir)) ??
+    input.sourceUri;
+  const durationSeconds = processing.trimEndSeconds - processing.trimStartSeconds;
   if (
     cycle.contributionUsage.countUsed + 1 > cycle.quota.maxCount ||
-    cycle.contributionUsage.secondsUsed + input.durationSeconds > cycle.quota.maxSeconds
+    cycle.contributionUsage.secondsUsed + durationSeconds > cycle.quota.maxSeconds
   ) {
     return { ok: false, reason: 'quota_exceeded' };
   }
@@ -180,14 +417,25 @@ export function createClipUpload(
           (id, cycle_id, member_id, media_job_id, duration_seconds, created_at)
          VALUES (?, ?, ?, NULL, ?, ?)`,
       )
-      .run(contributionId, cycle.id, memberId, input.durationSeconds, createdAt);
+      .run(contributionId, cycle.id, memberId, durationSeconds, createdAt);
     database
       .prepare(
         `INSERT INTO media_jobs
-          (id, group_id, contribution_id, kind, status, output_path, created_at, idempotency_key)
-         VALUES (?, ?, ?, 'clip', 'pending', NULL, ?, ?)`,
+          (id, group_id, contribution_id, kind, status, output_path, created_at, idempotency_key,
+           source_path, trim_start_seconds, trim_end_seconds, mode, error_code)
+         VALUES (?, ?, ?, 'clip', 'pending', NULL, ?, ?, ?, ?, ?, ?, NULL)`,
       )
-      .run(jobId, groupId, contributionId, createdAt, key);
+      .run(
+        jobId,
+        groupId,
+        contributionId,
+        createdAt,
+        key,
+        sourcePath,
+        processing.trimStartSeconds,
+        processing.trimEndSeconds,
+        processing.mode,
+      );
     database
       .prepare('UPDATE contributions SET media_job_id = ? WHERE id = ?')
       .run(jobId, contributionId);
@@ -197,7 +445,7 @@ export function createClipUpload(
          SET count_used = count_used + 1, seconds_used = seconds_used + ?
          WHERE id = ?`,
       )
-      .run(input.durationSeconds, cycle.id);
+      .run(durationSeconds, cycle.id);
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
@@ -215,7 +463,7 @@ export function createClipUpload(
         cycleId: cycle.id,
         groupId,
         memberId,
-        durationSeconds: input.durationSeconds,
+        durationSeconds,
         contributionCreatedAt: createdAt,
         jobId,
         jobStatus: 'pending',
@@ -231,17 +479,25 @@ export function cancelClipUpload(
   groupId: string,
   memberId: string,
   jobId: string,
+  options: CancelClipUploadOptions = {},
 ): CancelClipUploadResult {
   const row = database
     .prepare(
       `SELECT j.id AS jobId, c.id AS contributionId, c.cycle_id AS cycleId,
-              c.duration_seconds AS durationSeconds
+                c.duration_seconds AS durationSeconds, j.source_path AS sourcePath
        FROM media_jobs j JOIN contributions c ON c.id = j.contribution_id
        WHERE j.id = ? AND j.group_id = ? AND c.member_id = ? AND j.kind = 'clip'
          AND j.status = 'pending'`,
     )
     .get(jobId, groupId, memberId) as
-    { jobId: string; contributionId: string; cycleId: string; durationSeconds: number } | undefined;
+    | {
+        jobId: string;
+        contributionId: string;
+        cycleId: string;
+        durationSeconds: number;
+        sourcePath?: string;
+      }
+    | undefined;
   if (!row) return { ok: false, reason: 'not_found' };
   database.exec('BEGIN');
   try {
@@ -258,6 +514,10 @@ export function cancelClipUpload(
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
+  }
+  if (options.stagingDir && row.sourcePath) {
+    cleanupStagedSourcePath(row.sourcePath, options.stagingDir);
+    database.prepare('DELETE FROM staged_media_sources WHERE source_path = ?').run(row.sourcePath);
   }
   return { ok: true, contributionId: row.contributionId, jobId: row.jobId };
 }

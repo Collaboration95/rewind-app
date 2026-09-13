@@ -86,6 +86,66 @@ describe('LocalRuntimeClient', () => {
     }
   });
 
+  it('waits for a server-side FFmpeg job after the long processing request times out', async () => {
+    jest.useFakeTimers();
+    try {
+      let calls = 0;
+      const fetchImpl = jest.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        calls += 1;
+        if (calls === 1) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          });
+        }
+        return Promise.resolve(
+          response(200, {
+            clip: { id: 'job-1', status: 'ready' },
+          }),
+        );
+      });
+      const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+      const processing = client.processClipJob('session-1', 'group-1', 'job-1');
+      await jest.advanceTimersByTimeAsync(75_000);
+      await expect(processing).resolves.toMatchObject({ id: 'job-1', status: 'ready' });
+      expect(fetchImpl.mock.calls[0][0]).toContain('/contributions/jobs/job-1/process');
+      expect(fetchImpl.mock.calls[1][0]).toContain('/clips/job-1');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('uploads captured bytes to the server-owned staging endpoint', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValue(response(201, { source: { uri: 'staged://abc123', byteLength: 3 } }));
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(
+      client.stageClipSource('session-1', 'group-1', 'retryable-1', btoa('mp4')),
+    ).resolves.toEqual({ uri: 'staged://abc123', byteLength: 3 });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining('/contributions/upload/source?'),
+      expect.objectContaining({
+        body: expect.any(Uint8Array),
+        headers: { Accept: 'application/json', 'Content-Type': 'video/mp4' },
+        method: 'POST',
+      }),
+    );
+  });
+
+  it('polls status after an already-processing response instead of surfacing a false failure', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(response(409, { error: 'media_processing', message: 'busy' }))
+      .mockResolvedValueOnce(response(200, { clip: { id: 'job-1', status: 'ready' } }));
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.processClipJob('session-1', 'group-1', 'job-1')).resolves.toMatchObject({
+      id: 'job-1',
+      status: 'ready',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[1][0]).toContain('/clips/job-1');
+  });
+
   it('rejects non-http runtime URLs before a request is made', () => {
     expect(() => new LocalRuntimeClient('localhost:8787')).toThrow(LocalRuntimeError);
   });

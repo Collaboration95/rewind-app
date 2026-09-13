@@ -5,16 +5,16 @@ import { resolve } from 'node:path';
 import type { RuntimeConfig } from './config';
 import { DEMO_SESSION_LIFETIME_MS } from './session/contract';
 
-const MIGRATION_FILES = [
-  '001-initial.sql',
-  '002-session-audit.sql',
-  '003-cycle-controls.sql',
-  '004-invites.sql',
-  '005-media-idempotency.sql',
-] as const;
-const MIGRATIONS = MIGRATION_FILES.map((fileName, index) => ({
-  version: index + 1,
-  sql: readFileSync(resolve(process.cwd(), 'server/migrations', fileName), 'utf8'),
+const MIGRATIONS = [
+  { version: 1, fileName: '001-initial.sql' },
+  { version: 2, fileName: '002-session-audit.sql' },
+  { version: 3, fileName: '003-cycle-controls.sql' },
+  { version: 4, fileName: '004-invites.sql' },
+  { version: 5, fileName: '005-media-idempotency.sql' },
+  { version: 7, fileName: '007-media-processing.sql' },
+].map((migration) => ({
+  ...migration,
+  sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
 }));
 const FIXTURE = JSON.parse(
   readFileSync(resolve(process.cwd(), 'server/fixtures/demo-fixture.json'), 'utf8'),
@@ -72,6 +72,50 @@ export function migrateDatabase(database: RewindDatabase): void {
       .prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = ?')
       .get(migration.version) as { applied?: number } | undefined;
     if (!applied?.applied) {
+      // Early #45 work used the media migration as array position 6. Treat a
+      // database with all media columns already present as the compatibility
+      // form of explicit schema version 7, without rerunning ALTER TABLE.
+      if (
+        migration.version === 7 &&
+        database.prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = 6').get()
+          ?.applied &&
+        ['source_path', 'trim_start_seconds', 'trim_end_seconds', 'mode', 'error_code'].every(
+          (column) =>
+            database
+              .prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?')
+              .get('media_jobs', column),
+        )
+      ) {
+        const quotaMigrationPath = resolve(
+          process.cwd(),
+          'server/migrations',
+          '006-contribution-quota.sql',
+        );
+        const hasQuotaSchema =
+          database
+            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_metadata'")
+            .get() &&
+          database
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'contribution_quota_windows'",
+            )
+            .get();
+        if (!hasQuotaSchema) {
+          if (!existsSync(quotaMigrationPath)) {
+            throw new Error(
+              'Cannot promote a legacy media-v6 database before the #44 quota migration is installed.',
+            );
+          }
+          // A pre-integration database may have recorded the media migration
+          // as v6. Replay the trusted #44 schema first, then promote media to
+          // explicit v7 without rerunning ALTER TABLE on existing columns.
+          database.exec(readFileSync(quotaMigrationPath, 'utf8'));
+        }
+        database
+          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(migration.version, new Date().toISOString());
+        continue;
+      }
       database.exec(migration.sql);
       database
         .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
@@ -207,6 +251,8 @@ export function restoreFixture(database: RewindDatabase): void {
     for (const table of [
       'reactions',
       'messages',
+      'media_metadata',
+      'staged_media_sources',
       'media_jobs',
       'contributions',
       'sessions',

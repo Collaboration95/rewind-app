@@ -1,5 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createWriteStream } from 'node:fs';
+import { mkdir, rename, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
+import { once } from 'node:events';
 import { URL } from 'node:url';
 
 import { SERVICE_VERSION, type RuntimeConfig } from './config';
@@ -23,7 +27,18 @@ import {
 } from './session';
 import { createGroup } from './groups';
 import { acceptInvite, createInvite } from './invites';
-import { cancelClipUpload, createClipUpload, type ClipUploadInput } from './media';
+import {
+  cancelClipUpload,
+  cleanupStagedSource,
+  createClipUpload,
+  recordClipMediaMetadata,
+  stagedSourceId,
+  stagedSourcePath,
+  type ClipUploadInput,
+} from './media';
+import { cleanupOrphanedStagedSources, processClipJob } from './jobs';
+import { resolve } from 'node:path';
+import { probeClipWithFfmpeg } from './ffmpeg';
 
 export interface HealthPayload {
   ok: true;
@@ -145,6 +160,45 @@ async function requestBody(request: IncomingMessage): Promise<Record<string, unk
       : null;
   } catch {
     return null;
+  }
+}
+
+const MAX_STAGED_SOURCE_BYTES = 50 * 1024 * 1024;
+
+async function stageSourceBody(
+  request: IncomingMessage,
+  stagingDir: string,
+  sourcePath: string,
+): Promise<number> {
+  const contentLength = Number(request.headers['content-length'] ?? Number.NaN);
+  if (Number.isFinite(contentLength) && contentLength <= 0) {
+    throw new Error('empty source');
+  }
+  if (Number.isFinite(contentLength) && contentLength > MAX_STAGED_SOURCE_BYTES) {
+    throw new Error('source too large');
+  }
+  await mkdir(stagingDir, { recursive: true });
+  const partialPath = `${sourcePath}.${randomUUID()}.part`;
+  const output = createWriteStream(partialPath, { flags: 'wx' });
+  let bytes = 0;
+  try {
+    for await (const chunk of request) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      bytes += buffer.byteLength;
+      if (bytes > MAX_STAGED_SOURCE_BYTES) throw new Error('source too large');
+      if (!output.write(buffer)) await once(output, 'drain');
+    }
+    await new Promise<void>((resolvePromise, reject) => {
+      output.once('error', reject);
+      output.end(() => resolvePromise());
+    });
+    if (bytes <= 0) throw new Error('empty source');
+    await rename(partialPath, sourcePath);
+    return bytes;
+  } catch (error) {
+    output.destroy();
+    await rm(partialPath, { force: true });
+    throw error;
   }
 }
 
@@ -435,6 +489,78 @@ export async function handleRequest(
     return;
   }
 
+  if (url.pathname === '/contributions/upload/source' && request.method === 'POST') {
+    const sessionId = url.searchParams.get('sessionId');
+    const groupId = url.searchParams.get('groupId');
+    const idempotencyKey = url.searchParams.get('idempotencyKey') ?? '';
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId, now());
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (!groupId) return sendDenied(response, config);
+    if (
+      !authorize(
+        database,
+        response,
+        config,
+        groupId,
+        session.session.actor.memberId,
+        'contribution',
+      )
+    )
+      return;
+    if (!/^[A-Za-z0-9_-]{8,100}$/.test(idempotencyKey)) {
+      sendJson(response, config, 400, {
+        error: 'upload_invalid_key',
+        message: 'Provide a retryable upload key.',
+      });
+      return;
+    }
+    const contentType = String(request.headers['content-type'] ?? '')
+      .split(';', 1)[0]
+      .trim();
+    if (contentType !== 'video/mp4' && contentType !== 'application/octet-stream') {
+      sendJson(response, config, 400, {
+        error: 'upload_invalid_media',
+        message: 'Upload the clip as an MP4 source.',
+      });
+      return;
+    }
+    const stagingDir = resolve(config.dataDir, 'media', 'staging');
+    const sourceId = stagedSourceId();
+    const sourceUri = `staged://${sourceId}`;
+    const sourcePath = stagedSourcePath(sourceUri, stagingDir);
+    if (!sourcePath) return sendNotFound(response, config);
+    try {
+      await cleanupOrphanedStagedSources(database, stagingDir);
+      const byteLength = await stageSourceBody(request, stagingDir, sourcePath);
+      const probed = await probeClipWithFfmpeg(config.ffmpegBin, sourcePath);
+      recordClipMediaMetadata(database, {
+        sourceUri,
+        ...probed,
+        byteLength,
+        verifiedAt: now().toISOString(),
+      });
+      database
+        .prepare(
+          `INSERT INTO staged_media_sources
+            (source_uri, group_id, member_id, source_path, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(sourceUri, groupId, session.session.actor.memberId, sourcePath, now().toISOString());
+      sendJson(response, config, 201, {
+        source: { id: sourceId, uri: sourceUri, byteLength },
+      });
+    } catch (error) {
+      await rm(sourcePath, { force: true }).catch(() => undefined);
+      const message =
+        error instanceof Error && error.message === 'source too large'
+          ? 'The clip is larger than 50 MB.'
+          : 'The clip source could not be staged. Try again.';
+      sendJson(response, config, 400, { error: 'upload_staging_failed', message });
+    }
+    return;
+  }
+
   if (url.pathname === '/contributions/upload' && request.method === 'POST') {
     const sessionId = url.searchParams.get('sessionId');
     const groupId = url.searchParams.get('groupId');
@@ -453,6 +579,22 @@ export async function handleRequest(
       width: typeof body?.width === 'number' ? body.width : Number.NaN,
       height: typeof body?.height === 'number' ? body.height : Number.NaN,
       hasAudio: body?.hasAudio === true,
+      ...(typeof body?.mode === 'string'
+        ? { mode: body.mode as 'soft-focus' | 'high-contrast' }
+        : {}),
+      ...(typeof body?.trimStartSeconds === 'number'
+        ? { trimStartSeconds: body.trimStartSeconds }
+        : typeof body?.startSeconds === 'number'
+          ? { startSeconds: body.startSeconds }
+          : {}),
+      ...(typeof body?.trimEndSeconds === 'number'
+        ? { trimEndSeconds: body.trimEndSeconds }
+        : typeof body?.endSeconds === 'number'
+          ? { endSeconds: body.endSeconds }
+          : {}),
+      ...(typeof body?.sourceDurationSeconds === 'number'
+        ? { sourceDurationSeconds: body.sourceDurationSeconds }
+        : {}),
     };
     const result = createClipUpload(
       database,
@@ -460,8 +602,13 @@ export async function handleRequest(
       session.session.actor.memberId,
       input,
       now(),
+      {
+        stagingDir: resolve(config.dataDir, 'media', 'staging'),
+        requireVerifiedMetadata: true,
+      },
     );
     if (!result.ok) {
+      cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
       if (result.reason === 'not_found') return sendNotFound(response, config);
       sendJson(response, config, result.reason === 'quota_exceeded' ? 409 : 400, {
         error: `upload_${result.reason}`,
@@ -470,7 +617,9 @@ export async function handleRequest(
             ? 'This cycle has no remaining contribution allowance.'
             : result.reason === 'invalid_key'
               ? 'Provide a retryable upload key.'
-              : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
+              : result.reason === 'invalid_mode'
+                ? 'Choose a supported original capture mode.'
+                : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
       });
       return;
     }
@@ -501,9 +650,60 @@ export async function handleRequest(
       )
     )
       return;
-    const result = cancelClipUpload(database, groupId, session.session.actor.memberId, jobId);
+    const stagingDir = resolve(config.dataDir, 'media', 'staging');
+    const result = cancelClipUpload(database, groupId, session.session.actor.memberId, jobId, {
+      stagingDir,
+    });
     if (!result.ok) return sendNotFound(response, config);
     sendJson(response, config, 200, { cancelled: true, ...result });
+    return;
+  }
+
+  const processJobMatch = url.pathname.match(/^\/contributions\/jobs\/([^/]+)\/process$/);
+  if (processJobMatch && request.method === 'POST') {
+    const jobId = decodePathSegment(processJobMatch[1], response, config);
+    if (jobId === null) return;
+    const sessionId = url.searchParams.get('sessionId');
+    const groupId = url.searchParams.get('groupId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId, now());
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (!groupId) return sendDenied(response, config);
+    if (
+      !authorize(
+        database,
+        response,
+        config,
+        groupId,
+        session.session.actor.memberId,
+        'contribution',
+      )
+    )
+      return;
+    const result = await processClipJob(database, {
+      jobId,
+      groupId,
+      ffmpegBin: config.ffmpegBin,
+      stagingDir: resolve(config.dataDir, 'media', 'staging'),
+      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      actorMemberId: session.session.actor.memberId,
+    });
+    if (!result.ok && result.reason === 'not_found') return sendNotFound(response, config);
+    if (!result.ok && result.reason === 'already_processing') {
+      sendJson(response, config, 409, {
+        error: 'media_processing',
+        message: result.message,
+      });
+      return;
+    }
+    if (!result.ok) {
+      sendJson(response, config, 503, {
+        error: 'media_processing_failed',
+        message: result.message,
+      });
+      return;
+    }
+    sendJson(response, config, 200, { job: { id: result.jobId, status: result.status } });
     return;
   }
 
