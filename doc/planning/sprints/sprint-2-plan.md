@@ -451,3 +451,65 @@ BLOCKED_COUNT: 11
 DRIFT_COUNT: 22
 SYNCED: no
 ```
+
+## 14. Autonomous-first execution phases
+
+To keep implementation moving while account access, hosted infrastructure, and
+device availability are arranged, execute the local work in three phases. These
+phases are a priority boundary, not a single serial branch: each change still
+lands as a small reviewed increment on `main`.
+
+### Phase 1 — local foundation and sealed contribution
+
+- Upgrade the supported baseline to Node 24 and update CI/container references.
+- Build the production-shaped runtime container and persistent database/media
+  directories (`s2-cloud-001` and `s2-cloud-002`).
+- Add local migrate, seed, reset, readiness, health, and safe-log behaviour
+  (`s2-cloud-007` and the non-hosted portion of `s2-cloud-008`).
+- Validate the local Expo web export (`s2-cloud-005`).
+- Add the server-owned synthetic clip path (`s2-media-001`), persistent quota
+  and idempotency (#44), FFmpeg processing and cleanup (#45 plus
+  `s2-media-004`), hosted-session policy (`s2-media-006`), and truthful
+  contribution states (#46 / `s2-media-005`).
+
+**Exit checkpoint:** the local runtime can accept a labelled synthetic clip,
+process it, remove the successful temporary source, and expose only sealed
+metadata before release.
+
+### Phase 2 — cycle, film, premiere, and archive
+
+- Make cycle transitions idempotent (#54) and expose the owner-only Demo
+  advance control (`s2-cycle-002`).
+- Create and resume persistent compilation jobs (#55 and `s2-film-002`).
+- Concatenate clips chronologically, normalise audio, publish atomically (#57),
+  and add bounded delayed/failure handling (#61).
+- Implement authorised premiere playback (#63) and Archive listing (#65).
+
+**Exit checkpoint:** a clean local reset can produce exactly one playable film
+from deterministic contributions, without exposing unreleased media.
+
+### Phase 3 — proof and repeatability
+
+- Build the local reset-to-reveal harness (#67) and extend it as each phase
+  lands; do not defer the harness until the end.
+- Add cross-group denial coverage (#69), restart/media-failure resilience (#71),
+  and the non-author runbook (#75).
+- Complete native/web usability validation (#73) when the supported device or
+  simulator is available.
+
+**Exit checkpoint:** the local journey passes twice from reset and its failure,
+access-control, and recovery claims are evidenced.
+
+### Parallel human-dependent work
+
+Do not wait for all three local phases before starting the hosted path. In
+parallel, resolve `s2-architecture-001`, obtain the AWS account/region/budget
+access, and progress `s2-cloud-003`, `s2-cloud-004`, the deployed portion of
+`s2-cloud-005`, `s2-cloud-006`, the budget-alert portion of `s2-cloud-008`, and
+hosted quality checks (`s2-quality-002` through `s2-quality-005`). These tasks
+need credentials, account decisions, a public endpoint, or a non-author/device
+review, but should consume the same local artifacts and checks rather than
+creating a separate end-of-sprint integration branch.
+
+The first 10–12 autonomous outcomes are the recommended immediate commitment;
+the remaining local phases should follow without making the hosted work wait.
