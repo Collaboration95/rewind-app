@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
 
@@ -8,6 +9,7 @@ import {
   cleanupStagedSource,
   cleanupUnclaimedStagedPath,
   findStagedSource,
+  cleanupStagedSourcePath,
   removeStagedSource,
 } from '../media';
 import {
@@ -109,11 +111,217 @@ export type ProcessClipJobResult =
 interface ClipJobRow {
   id: string;
   status: string;
+  outputPath: string | null;
+  sourceUri: string | null;
+  sourceGeneration: number | null;
   sourcePath: string | null;
   trimStartSeconds: number | null;
   trimEndSeconds: number | null;
   mode: string | null;
   processingStartedAt: string | null;
+}
+
+function readClipJob(database: RewindDatabase, jobId: string, groupId?: string): ClipJobRow | null {
+  const row = database
+    .prepare(
+      `SELECT id, status, output_path AS outputPath, source_uri AS sourceUri,
+              source_generation AS sourceGeneration, source_path AS sourcePath,
+              trim_start_seconds AS trimStartSeconds,
+              trim_end_seconds AS trimEndSeconds, mode,
+              processing_started_at AS processingStartedAt
+       FROM media_jobs
+       WHERE id = ? AND kind = 'clip' ${groupId ? 'AND group_id = ?' : ''}`,
+    )
+    .get(...(groupId ? [jobId, groupId] : [jobId])) as ClipJobRow | undefined;
+  return row ?? null;
+}
+
+function beginJobTransaction(database: RewindDatabase): void {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      database.exec('BEGIN IMMEDIATE');
+      return;
+    } catch (error) {
+      const candidate = error as { code?: string; message?: string };
+      if (
+        !(
+          candidate.code === 'SQLITE_BUSY' ||
+          /database is locked|SQLITE_BUSY/i.test(candidate.message ?? '')
+        ) ||
+        attempt === 7
+      ) {
+        throw error;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2 ** attempt);
+    }
+  }
+}
+
+function stagedBindingMatches(database: RewindDatabase, row: ClipJobRow): boolean {
+  if (!row.sourceUri) return true;
+  if (row.sourceGeneration === null || !row.sourcePath) return false;
+  const staged = findStagedSource(database, row.sourceUri);
+  return Boolean(
+    staged &&
+    staged.status === 'staged' &&
+    staged.claimGeneration === row.sourceGeneration &&
+    staged.sourcePath === row.sourcePath,
+  );
+}
+
+/** Persist the output before touching the raw source. This marker is the
+ * durable hand-off that lets a restarted worker finish a partially completed
+ * finalization without ever retrying against an already-deleted source. */
+function markOutputPrepared(
+  database: RewindDatabase,
+  row: ClipJobRow,
+  outputPath: string,
+): boolean {
+  beginJobTransaction(database);
+  try {
+    const locked = readClipJob(database, row.id);
+    if (
+      !locked ||
+      locked.status !== 'processing' ||
+      locked.sourcePath !== row.sourcePath ||
+      locked.sourceUri !== row.sourceUri ||
+      locked.sourceGeneration !== row.sourceGeneration ||
+      !stagedBindingMatches(database, locked)
+    ) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    database
+      .prepare(
+        `UPDATE media_jobs SET output_path = ?, error_code = NULL
+         WHERE id = ? AND kind = 'clip' AND status = 'processing'
+           AND (output_path IS NULL OR output_path = ?)`,
+      )
+      .run(outputPath, row.id, outputPath);
+    database.exec('COMMIT');
+    return true;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Complete the filesystem/DB hand-off under one writer lock. Filesystem
+ * deletion is intentionally idempotent: a crash after deletion but before
+ * COMMIT is recovered by the same output marker on the next worker run. */
+function finalizePreparedOutput(
+  database: RewindDatabase,
+  row: ClipJobRow,
+  stagingDir: string,
+  outputPath: string,
+): boolean {
+  beginJobTransaction(database);
+  try {
+    const locked = readClipJob(database, row.id);
+    if (!locked || locked.status === 'ready') {
+      database.exec('COMMIT');
+      return locked?.status === 'ready';
+    }
+    if (
+      locked.status !== 'processing' ||
+      locked.outputPath !== outputPath ||
+      locked.sourcePath !== row.sourcePath ||
+      locked.sourceUri !== row.sourceUri ||
+      locked.sourceGeneration !== row.sourceGeneration ||
+      !stagedBindingMatches(database, locked)
+    ) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    if (locked.sourcePath) {
+      // cleanupStagedSourcePath enforces the server-owned staging boundary;
+      // it is safe to call after a prior crash because force is idempotent.
+      cleanupStagedSourcePath(locked.sourcePath, stagingDir);
+    }
+    if (locked.sourceUri) {
+      database
+        .prepare(
+          `DELETE FROM media_metadata WHERE source_uri = ?
+           AND EXISTS (
+             SELECT 1 FROM staged_sources
+             WHERE source_uri = ? AND claim_generation = ? AND source_path IS ?
+           )`,
+        )
+        .run(locked.sourceUri, locked.sourceUri, locked.sourceGeneration, locked.sourcePath);
+      database
+        .prepare(
+          `DELETE FROM staged_sources
+           WHERE source_uri = ? AND claim_generation = ? AND source_path IS ?`,
+        )
+        .run(locked.sourceUri, locked.sourceGeneration, locked.sourcePath);
+    }
+    database
+      .prepare(
+        `UPDATE media_jobs
+         SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL,
+             processing_started_at = NULL
+         WHERE id = ? AND kind = 'clip' AND status = 'processing'
+           AND output_path = ?`,
+      )
+      .run(outputPath, row.id, outputPath);
+    database.exec('COMMIT');
+    return true;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function claimClipJob(database: RewindDatabase, row: ClipJobRow): ClipJobRow | null {
+  beginJobTransaction(database);
+  try {
+    const locked = readClipJob(database, row.id);
+    if (!locked) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    const processingStartedAt = locked.processingStartedAt
+      ? Date.parse(locked.processingStartedAt)
+      : Number.NaN;
+    const stale =
+      locked.status === 'processing' &&
+      (!Number.isFinite(processingStartedAt) ||
+        Date.now() - processingStartedAt >= PROCESSING_CLAIM_LEASE_MS);
+    if (locked.status === 'processing' && !stale) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    if (!['pending', 'failed', 'processing'].includes(locked.status)) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    if (!stagedBindingMatches(database, locked)) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    const result = database
+      .prepare(
+        `UPDATE media_jobs SET status = 'processing', error_code = NULL,
+             processing_started_at = ?
+         WHERE id = ? AND kind = 'clip' AND status IN ('pending', 'failed', 'processing')
+           AND (processing_started_at IS ? OR processing_started_at = ?)`,
+      )
+      .run(
+        new Date().toISOString(),
+        locked.id,
+        locked.processingStartedAt,
+        locked.processingStartedAt,
+      );
+    if (Number(result.changes) !== 1) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    database.exec('COMMIT');
+    return { ...locked, status: 'processing', processingStartedAt: new Date().toISOString() };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 function safeOutputName(jobId: string): string {
@@ -126,7 +334,7 @@ function markFailed(database: RewindDatabase, jobId: string, errorCode: string):
     .prepare(
       `UPDATE media_jobs
        SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL
-       WHERE id = ? AND kind = 'clip'`,
+       WHERE id = ? AND kind = 'clip' AND status = 'processing'`,
     )
     .run(errorCode, jobId);
 }
@@ -140,17 +348,7 @@ export async function processClipJob(
   database: RewindDatabase,
   options: ProcessClipJobOptions,
 ): Promise<ProcessClipJobResult> {
-  const row = database
-    .prepare(
-      `SELECT id, status, source_path AS sourcePath,
-              trim_start_seconds AS trimStartSeconds,
-              trim_end_seconds AS trimEndSeconds, mode,
-              processing_started_at AS processingStartedAt
-       FROM media_jobs
-       WHERE id = ? AND kind = 'clip' ${options.groupId ? 'AND group_id = ?' : ''}`,
-    )
-    .get(...(options.groupId ? [options.jobId, options.groupId] : [options.jobId])) as
-    ClipJobRow | undefined;
+  let row = readClipJob(database, options.jobId, options.groupId);
   if (!row) {
     return {
       ok: false,
@@ -187,15 +385,25 @@ export async function processClipJob(
     };
   }
 
-  const claim = database
-    .prepare(
-      `UPDATE media_jobs SET status = 'processing', error_code = NULL
-       , processing_started_at = ?
-       WHERE id = ? AND kind = 'clip' AND status IN ('pending', 'failed', 'processing')
-         AND (processing_started_at IS ? OR processing_started_at = ?)`,
-    )
-    .run(new Date().toISOString(), row.id, row.processingStartedAt, row.processingStartedAt);
-  if (Number(claim.changes) !== 1) {
+  const outputDir =
+    options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
+  const stagingDir =
+    options.stagingDir ?? resolve(process.cwd(), '.local-data', 'media', 'staging');
+  // A stale worker may have already persisted the output marker. Finish that
+  // hand-off first; rerunning FFmpeg would risk replacing a file while another
+  // process is finalizing it.
+  if (row.status === 'processing' && row.outputPath) {
+    if (
+      existsSync(row.outputPath) &&
+      finalizePreparedOutput(database, row, stagingDir, row.outputPath)
+    ) {
+      return { ok: true, jobId: row.id, status: 'ready' };
+    }
+    row = readClipJob(database, options.jobId, options.groupId);
+    if (!row || row.status === 'ready') return { ok: true, jobId: options.jobId, status: 'ready' };
+  }
+  const claim = claimClipJob(database, row);
+  if (!claim) {
     return {
       ok: false,
       jobId: row.id,
@@ -204,10 +412,8 @@ export async function processClipJob(
       message: 'The media job is already processing.',
     };
   }
-
-  const outputDir =
-    options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
-  const outputPath = resolve(outputDir, safeOutputName(row.id));
+  row = claim;
+  const outputPath = row.outputPath ?? resolve(outputDir, safeOutputName(row.id));
   try {
     if (!row.sourcePath || row.trimStartSeconds === null || row.trimEndSeconds === null) {
       throw new FfmpegProcessingError(
@@ -215,9 +421,12 @@ export async function processClipJob(
         'The clip processing metadata is invalid.',
       );
     }
-    const stagingDir =
-      options.stagingDir ?? resolve(process.cwd(), '.local-data', 'media', 'staging');
-    const staged = findStagedSourceByPath(database, row.sourcePath);
+    if (!stagedBindingMatches(database, row)) {
+      throw new FfmpegProcessingError(
+        'source_unavailable',
+        'The temporary media source is unavailable.',
+      );
+    }
     const sourcePath = await resolveStagedMediaPath(row.sourcePath, stagingDir);
     await mkdir(outputDir, { recursive: true });
     await runAuditedJob(database, {
@@ -231,26 +440,28 @@ export async function processClipJob(
           trimEndSeconds: Number(row.trimEndSeconds),
           mode: row.mode as CaptureMode,
         });
-        // Never claim success while the unfiltered source remains. If this
-        // removal fails, the output is discarded and the job remains retryable.
-        await rm(sourcePath, { force: false });
-        if (staged) {
-          database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(staged.sourceUri);
-          removeStagedSource(database, staged.sourceUri);
+        if (!markOutputPrepared(database, row, outputPath)) {
+          throw new FfmpegProcessingError(
+            'source_unavailable',
+            'The staged media source changed while processing.',
+          );
         }
-        database
-          .prepare(
-            `UPDATE media_jobs
-             SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL,
-                 processing_started_at = NULL
-             WHERE id = ? AND kind = 'clip' AND status = 'processing'`,
-          )
-          .run(outputPath, row.id);
+        if (!finalizePreparedOutput(database, row, stagingDir, outputPath)) {
+          throw new FfmpegProcessingError(
+            'source_unavailable',
+            'The staged media source changed while finalizing.',
+          );
+        }
       },
     });
     return { ok: true, jobId: row.id, status: 'ready' };
   } catch (error) {
-    await rm(outputPath, { force: true }).catch(() => undefined);
+    // A competing stale worker may have completed the durable finalization
+    // after this worker observed a binding change. Never delete an output
+    // that is already committed as ready.
+    if (readClipJob(database, row.id)?.status !== 'ready') {
+      await rm(outputPath, { force: true }).catch(() => undefined);
+    }
     const errorCode = error instanceof FfmpegProcessingError ? error.code : 'cleanup_failed';
     markFailed(database, row.id, errorCode);
     return {
@@ -304,8 +515,13 @@ export async function cleanupOrphanedStagedSources(
     // completed source is retained only while a job still claims its path.
     if (sourceMatch) {
       const active = database
-        .prepare("SELECT 1 FROM media_jobs WHERE kind = 'clip' AND source_path = ? LIMIT 1")
-        .get(sourcePath);
+        .prepare(
+          `SELECT 1 FROM media_jobs
+           WHERE kind = 'clip' AND status IN ('pending', 'failed', 'processing')
+             AND (source_path = ? OR source_uri = ?)
+           LIMIT 1`,
+        )
+        .get(sourcePath, sourceId ? `staged://${sourceId}` : null);
       if (active) continue;
     }
     if (sourceMatch && staged) {
@@ -348,14 +564,4 @@ export async function cleanupOrphanedStagedSources(
     if (!findStagedSource(database, row.sourceUri) && before) removed += 1;
   }
   return removed;
-}
-
-function findStagedSourceByPath(
-  database: RewindDatabase,
-  sourcePath: string,
-): { sourceUri: string } | null {
-  const row = database
-    .prepare('SELECT source_uri AS sourceUri FROM staged_sources WHERE source_path = ?')
-    .get(sourcePath) as { sourceUri?: string } | undefined;
-  return row?.sourceUri ? { sourceUri: row.sourceUri } : null;
 }

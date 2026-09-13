@@ -381,6 +381,193 @@ test('stale intake callbacks cannot complete or reset a reclaimed generation', a
   });
 });
 
+test('enqueue retries rebind a pending job to the recovered staged generation', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'enqueue-recovery-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const firstPath = stagedSourcePath(sourceUri, stagingDir, 1);
+    const secondPath = stagedSourcePath(sourceUri, stagingDir, 2);
+    assert.ok(firstPath);
+    assert.ok(secondPath);
+    const first = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:00:00.000Z'),
+      firstPath,
+    );
+    assert.equal(first.ok, true);
+    assert.equal(markStagedSourceReady(database, sourceUri, 1000, firstPath, 1), true);
+    recordClipMediaMetadata(database, {
+      sourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+    });
+    const input = {
+      idempotencyKey: key,
+      sourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1000,
+      durationSeconds: 1,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+      mode: 'soft-focus',
+      trimStartSeconds: 0.25,
+      trimEndSeconds: 1.25,
+    };
+    const upload = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      input,
+      new Date('2026-09-10T12:00:00.000Z'),
+      { stagingDir, requireVerifiedMetadata: true },
+    );
+    assert.equal(upload.ok, true);
+    if (!upload.ok) return;
+    await rm(firstPath, { force: true });
+    assert.equal(
+      reclaimStagedSource(
+        database,
+        'demo-group',
+        'demo-1',
+        key,
+        secondPath,
+        new Date('2026-09-10T12:01:00.000Z'),
+      ).ok,
+      true,
+    );
+    assert.equal(markStagedSourceReady(database, sourceUri, 1000, secondPath, 2), true);
+    recordClipMediaMetadata(database, {
+      sourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+    });
+    const retry = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      input,
+      new Date('2026-09-10T12:02:00.000Z'),
+      { stagingDir, requireVerifiedMetadata: true },
+    );
+    assert.equal(retry.ok, true);
+    assert.equal(retry.ok && retry.upload.existing, true);
+    const job = database
+      .prepare(
+        'SELECT source_uri AS sourceUri, source_generation AS sourceGeneration, source_path AS sourcePath FROM media_jobs WHERE id = ?',
+      )
+      .get(upload.upload.job.id);
+    assert.deepEqual(
+      { ...job },
+      {
+        sourceUri,
+        sourceGeneration: 2,
+        sourcePath: secondPath,
+      },
+    );
+  });
+});
+
+test('a worker restart finalizes a durable output marker after raw deletion', async () => {
+  await withDatabase(async ({ database, config, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const outputDir = `${dataDir}/processed`;
+    const sourceUri = `staged://${stagedSourceId('finalize-marker-key')}`;
+    const sourcePath = stagedSourcePath(sourceUri, stagingDir, 1);
+    assert.ok(sourcePath);
+    await mkdir(stagingDir, { recursive: true });
+    const fixture = `${dataDir}/finalize-fixture.mp4`;
+    await createSyntheticSource(fixture);
+    await copyFile(fixture, sourcePath);
+    assert.equal(
+      claimStagedSource(
+        database,
+        'demo-group',
+        'demo-1',
+        'finalize-marker-key',
+        new Date('2026-09-10T12:00:00.000Z'),
+        sourcePath,
+      ).ok,
+      true,
+    );
+    assert.equal(markStagedSourceReady(database, sourceUri, 1000, sourcePath, 1), true);
+    recordClipMediaMetadata(database, {
+      sourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+    });
+    const upload = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        idempotencyKey: 'finalize-marker-key',
+        sourceUri,
+        mimeType: 'video/mp4',
+        byteLength: 1000,
+        durationSeconds: 1,
+        width: 180,
+        height: 320,
+        hasAudio: true,
+        mode: 'soft-focus',
+        trimStartSeconds: 0.25,
+        trimEndSeconds: 1.25,
+      },
+      new Date('2026-09-10T12:00:00.000Z'),
+      { stagingDir, requireVerifiedMetadata: true },
+    );
+    assert.equal(upload.ok, true);
+    if (!upload.ok) return;
+    const outputPath = `${outputDir}/durable-output.mp4`;
+    await mkdir(outputDir, { recursive: true });
+    await copyFile(fixture, outputPath);
+    await rm(sourcePath, { force: true });
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'processing', output_path = ?,
+           processing_started_at = ?, source_path = ?
+         WHERE id = ?`,
+      )
+      .run(
+        outputPath,
+        new Date(Date.now() - PROCESSING_CLAIM_LEASE_MS - 1_000).toISOString(),
+        sourcePath,
+        upload.upload.job.id,
+      );
+    const result = await processClipJob(database, {
+      jobId: upload.upload.job.id,
+      ffmpegBin: config.ffmpegBin,
+      stagingDir,
+      outputDir,
+    });
+    assert.deepEqual(result, { ok: true, jobId: upload.upload.job.id, status: 'ready' });
+    assert.equal(
+      database.prepare('SELECT status FROM media_jobs WHERE id = ?').get(upload.upload.job.id)
+        .status,
+      'ready',
+    );
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 0);
+    await access(outputPath);
+    await assert.rejects(access(sourcePath));
+  });
+});
+
 test('cleanup preserves a live leased intake claim even when its file is old', async () => {
   await withDatabase(async ({ database, dataDir }) => {
     const stagingDir = `${dataDir}/media/staging`;
@@ -774,7 +961,7 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
       .prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all()
       .map((row) => Number(row.version));
-    assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7]);
+    assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8]);
 
     // Databases created by the first #45 implementation recorded media as
     // version 6. Existing columns are enough to promote that record safely.
@@ -821,7 +1008,7 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
         .map((row) => Number(row.version)),
-      [1, 2, 3, 4, 5, 6, 7],
+      [1, 2, 3, 4, 5, 6, 7, 8],
     );
     assert.equal(
       database

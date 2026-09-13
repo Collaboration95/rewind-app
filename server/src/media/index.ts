@@ -80,6 +80,9 @@ interface UploadRow {
   jobId: string;
   jobStatus: string;
   jobCreatedAt: string;
+  sourceUri?: string | null;
+  sourceGeneration?: number | null;
+  sourcePath?: string | null;
 }
 
 interface StoredClipMetadata {
@@ -381,10 +384,31 @@ export function reclaimStagedSource(
       .prepare(
         `SELECT claim_generation AS claimGeneration FROM staged_sources
          WHERE source_uri = ? AND group_id = ? AND member_id = ?
-           AND idempotency_key_hash = ? AND status = 'staged'`,
+           AND idempotency_key_hash = ?
+           AND (
+             status = 'staged' OR
+             (status = 'pending' AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?)
+           )`,
       )
-      .get(sourceUri, groupId, memberId, hash) as { claimGeneration?: number } | undefined;
+      .get(sourceUri, groupId, memberId, hash, now.toISOString()) as
+      { claimGeneration?: number } | undefined;
     if (!generation) {
+      database.exec('COMMIT');
+      started = false;
+      return { ok: false };
+    }
+    // A processing worker owns its old generation until it finalizes. Do not
+    // reclaim that capability underneath it; a stale worker must first be
+    // allowed to reconcile its durable finalization marker.
+    const activeJob = database
+      .prepare(
+        `SELECT 1 FROM media_jobs
+         WHERE (source_uri = ? OR idempotency_key = ?)
+           AND source_generation = ?
+           AND status IN ('processing', 'ready') LIMIT 1`,
+      )
+      .get(sourceUri, hash, generation.claimGeneration ?? 0);
+    if (activeJob) {
       database.exec('COMMIT');
       started = false;
       return { ok: false };
@@ -408,6 +432,20 @@ export function reclaimStagedSource(
       started = false;
       return { ok: false };
     }
+    // Move retryable jobs with the capability in the same writer transaction.
+    // This is what prevents a pending/failed job from retaining the deleted
+    // path after recovery advances the source generation.
+    database
+      .prepare(
+        `UPDATE media_jobs
+         SET source_uri = ?, source_generation = ?, source_path = ?, output_path = NULL,
+             error_code = NULL
+         WHERE kind = 'clip' AND status IN ('pending', 'failed')
+           AND (source_uri = ? OR idempotency_key = ?)
+           AND (source_generation IS NULL OR source_generation = ?)`,
+      )
+      .run(sourceUri, nextGeneration, sourcePath, sourceUri, hash, generation.claimGeneration ?? 0);
+    database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
     const source = findStagedSource(database, sourceUri);
     if (!source) throw new Error('Staged source could not be reclaimed.');
     database.exec('COMMIT');
@@ -486,6 +524,20 @@ export function cleanupStagedSource(
     // Invalid upload metadata must never clean up a body that another request
     // currently owns. A lease expiry allows bounded crash recovery.
     if (!source || stagedClaimIsActive(source)) {
+      database.exec('COMMIT');
+      return;
+    }
+    // A durable job binding owns this capability even after its intake lease
+    // expires. Cleanup must never remove a source that a retry/finalizer can
+    // still legitimately consume.
+    const job = database
+      .prepare(
+        `SELECT 1 FROM media_jobs
+         WHERE kind = 'clip' AND (source_uri = ? OR source_path = ?)
+           AND status IN ('pending', 'failed', 'processing') LIMIT 1`,
+      )
+      .get(sourceUri, source.sourcePath ?? null);
+    if (job) {
       database.exec('COMMIT');
       return;
     }
@@ -697,7 +749,8 @@ function existingUpload(
       `SELECT c.id AS contributionId, c.cycle_id AS cycleId, cy.group_id AS groupId,
               c.member_id AS memberId, c.duration_seconds AS durationSeconds,
               c.created_at AS contributionCreatedAt, j.id AS jobId, j.status AS jobStatus,
-              j.created_at AS jobCreatedAt
+              j.created_at AS jobCreatedAt, j.source_uri AS sourceUri,
+              j.source_generation AS sourceGeneration, j.source_path AS sourcePath
        FROM media_jobs j
        JOIN contributions c ON c.id = j.contribution_id
        JOIN cycles cy ON cy.id = c.cycle_id
@@ -705,6 +758,31 @@ function existingUpload(
     )
     .get(keyHash(key), groupId, memberId) as UploadRow | undefined;
   return row ? mapUpload(row, true) : null;
+}
+
+/** Rebind a retryable job to the current staged capability generation. The
+ * caller must hold the writer transaction while it verifies the capability. */
+function updateExistingStagedBinding(
+  database: RewindDatabase,
+  input: ClipUploadInput,
+  groupId: string,
+  staged: StagedSourceRecord,
+): void {
+  database
+    .prepare(
+      `UPDATE media_jobs
+       SET source_uri = ?, source_generation = ?, source_path = ?, output_path = NULL,
+           error_code = NULL
+       WHERE idempotency_key = ? AND group_id = ? AND kind = 'clip'
+         AND status IN ('pending', 'failed')`,
+    )
+    .run(
+      staged.sourceUri,
+      staged.claimGeneration,
+      staged.sourcePath,
+      keyHash(input.idempotencyKey),
+      groupId,
+    );
 }
 
 export function createClipUpload(
@@ -720,11 +798,15 @@ export function createClipUpload(
     return { ok: false, reason: 'invalid_key' };
   }
   const key = keyHash(input.idempotencyKey);
-  const existing = existingUpload(database, input.idempotencyKey, groupId, memberId);
-  if (existing) return { ok: true, upload: existing };
   const isStagedSource = /^staged:\/\/(?:[a-f0-9]{24}|[a-f0-9]{32})$/.test(input.sourceUri);
+  const existing = existingUpload(database, input.idempotencyKey, groupId, memberId);
+  // Staged retries are revalidated inside the writer transaction below. A
+  // preflight existing-row hit must not bypass recovery/generation checks.
+  if (existing && (!isStagedSource || !['pending', 'failed'].includes(existing.job.status))) {
+    return { ok: true, upload: existing };
+  }
   let stagedRecord: StagedSourceRecord | null = null;
-  if (isStagedSource) {
+  if (isStagedSource && (!existing || ['pending', 'failed'].includes(existing.job.status))) {
     // Capability ownership and key binding are checked before reading or
     // probing any source. A token is not authorization by itself.
     stagedRecord = stagedSourceRecord(database, input.sourceUri);
@@ -747,7 +829,7 @@ export function createClipUpload(
   if (options.requireVerifiedMetadata && (!isStagedSource || !verified)) {
     return { ok: false, reason: 'invalid_media' };
   }
-  const effectiveInput = verified
+  let effectiveInput = verified
     ? {
         ...input,
         mimeType: verified.mimeType,
@@ -774,12 +856,13 @@ export function createClipUpload(
       )
     : null;
   if (!cycle || phase !== 'collecting') return { ok: false, reason: 'not_found' };
-  const processing = getClipProcessingMetadata(effectiveInput);
-  const sourcePath =
+  let processing = getClipProcessingMetadata(effectiveInput);
+  let sourcePath =
     stagedRecord?.sourcePath ??
     (options.stagingDir && stagedSourcePath(input.sourceUri, options.stagingDir)) ??
     input.sourceUri;
-  const durationSeconds = processing.trimEndSeconds - processing.trimStartSeconds;
+  let sourceGeneration: number | null = stagedRecord?.claimGeneration ?? null;
+  let durationSeconds = processing.trimEndSeconds - processing.trimStartSeconds;
 
   const suffix = idSuffix(input.idempotencyKey);
   const contributionId = `contribution-${suffix}`;
@@ -790,9 +873,62 @@ export function createClipUpload(
     beginImmediateWithRetry(database);
     transactionStarted = true;
     const retry = existingUpload(database, input.idempotencyKey, groupId, memberId);
+    // Re-read every capability field while the writer lock is held. A source
+    // may have been reclaimed between preflight and this transaction; using
+    // the preflight path/generation would bind a retry to a deleted file.
+    const verifyLockedStaged =
+      isStagedSource && (!retry || ['pending', 'failed'].includes(retry.job.status));
+    const lockedStaged = verifyLockedStaged ? stagedSourceRecord(database, input.sourceUri) : null;
+    const lockedMetadata = verifyLockedStaged
+      ? storedClipMetadata(database, input.sourceUri)
+      : null;
+    if (verifyLockedStaged) {
+      if (
+        !lockedStaged ||
+        lockedStaged.status !== 'staged' ||
+        lockedStaged.groupId !== groupId ||
+        lockedStaged.memberId !== memberId ||
+        lockedStaged.idempotencyKeyHash !== key ||
+        !lockedStaged.sourcePath ||
+        !lockedStaged.byteLength ||
+        !lockedMetadata ||
+        lockedMetadata.byteLength !== lockedStaged.byteLength
+      ) {
+        database.exec('ROLLBACK');
+        return { ok: false, reason: 'not_found' };
+      }
+      stagedRecord = lockedStaged;
+      effectiveInput = {
+        ...input,
+        mimeType: lockedMetadata.mimeType,
+        byteLength: lockedMetadata.byteLength,
+        durationSeconds: lockedMetadata.durationSeconds,
+        width: lockedMetadata.width,
+        height: lockedMetadata.height,
+        hasAudio: lockedMetadata.hasAudio === 1,
+      };
+      const lockedValidation = validateClipUpload(effectiveInput, lockedMetadata.durationSeconds);
+      if (lockedValidation) {
+        database.exec('ROLLBACK');
+        return lockedValidation;
+      }
+      processing = getClipProcessingMetadata(effectiveInput);
+      sourcePath = lockedStaged.sourcePath;
+      sourceGeneration = lockedStaged.claimGeneration;
+      durationSeconds = processing.trimEndSeconds - processing.trimStartSeconds;
+    }
     if (retry) {
+      if (verifyLockedStaged && stagedRecord) {
+        updateExistingStagedBinding(database, input, groupId, stagedRecord);
+      }
+      const committedRetry = existingUpload(database, input.idempotencyKey, groupId, memberId);
       database.exec('COMMIT');
-      return { ok: true, upload: retry };
+      // Re-read after the optional binding update so the response describes
+      // the durable job state committed by this transaction.
+      return {
+        ok: true,
+        upload: committedRetry ?? retry,
+      };
     }
     const lockedCycle = getCurrentCycle(database, groupId);
     const lockedPhase = lockedCycle
@@ -846,8 +982,9 @@ export function createClipUpload(
       .prepare(
         `INSERT INTO media_jobs
           (id, group_id, contribution_id, kind, status, output_path, created_at, idempotency_key,
-           source_path, trim_start_seconds, trim_end_seconds, mode, error_code)
-         VALUES (?, ?, ?, 'clip', 'pending', NULL, ?, ?, ?, ?, ?, ?, NULL)`,
+           source_uri, source_generation, source_path, trim_start_seconds, trim_end_seconds,
+           mode, error_code)
+         VALUES (?, ?, ?, 'clip', 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       )
       .run(
         jobId,
@@ -855,6 +992,8 @@ export function createClipUpload(
         contributionId,
         createdAt,
         key,
+        isStagedSource ? input.sourceUri : null,
+        sourceGeneration,
         sourcePath,
         processing.trimStartSeconds,
         processing.trimEndSeconds,
@@ -910,6 +1049,7 @@ export function cancelClipUpload(
     .prepare(
       `SELECT j.id AS jobId, c.id AS contributionId, c.cycle_id AS cycleId,
                 c.duration_seconds AS durationSeconds, c.quota_window_start_at AS windowStartsAt,
+                j.source_uri AS sourceUri, j.source_generation AS sourceGeneration,
                 j.source_path AS sourcePath, j.idempotency_key AS idempotencyKeyHash
        FROM media_jobs j JOIN contributions c ON c.id = j.contribution_id
        WHERE j.id = ? AND j.group_id = ? AND c.member_id = ? AND j.kind = 'clip'
@@ -923,6 +1063,8 @@ export function cancelClipUpload(
         durationSeconds: number;
         windowStartsAt?: string;
         sourcePath?: string;
+        sourceUri?: string;
+        sourceGeneration?: number;
         idempotencyKeyHash?: string;
       }
     | undefined;
@@ -936,6 +1078,7 @@ export function cancelClipUpload(
       .prepare(
         `SELECT j.id AS jobId, c.id AS contributionId, c.cycle_id AS cycleId,
                   c.duration_seconds AS durationSeconds, c.quota_window_start_at AS windowStartsAt,
+                  j.source_uri AS sourceUri, j.source_generation AS sourceGeneration,
                   j.source_path AS sourcePath, j.idempotency_key AS idempotencyKeyHash
          FROM media_jobs j JOIN contributions c ON c.id = j.contribution_id
          WHERE j.id = ? AND j.group_id = ? AND c.member_id = ? AND j.kind = 'clip'
@@ -975,13 +1118,20 @@ export function cancelClipUpload(
           `SELECT source_uri AS sourceUri, claim_generation AS claimGeneration,
                   source_path AS sourcePath
            FROM staged_sources
-           WHERE (source_path = ? OR idempotency_key_hash = ?)
+           WHERE (source_path = ? OR source_uri = ? OR idempotency_key_hash = ?)
              AND group_id = ? AND member_id = ?
-           ORDER BY CASE WHEN source_path = ? THEN 0 ELSE 1 END
+           ORDER BY CASE WHEN source_path = ? THEN 0 WHEN source_uri = ? THEN 1 ELSE 2 END
            LIMIT 1`,
         )
-        .get(row.sourcePath, row.idempotencyKeyHash ?? null, groupId, memberId, row.sourcePath) as
-        { sourceUri?: string; claimGeneration?: number; sourcePath?: string } | undefined;
+        .get(
+          row.sourcePath,
+          row.sourceUri ?? null,
+          row.idempotencyKeyHash ?? null,
+          groupId,
+          memberId,
+          row.sourcePath,
+          row.sourceUri ?? null,
+        ) as { sourceUri?: string; claimGeneration?: number; sourcePath?: string } | undefined;
       cleanupStagedSourcePath(row.sourcePath, options.stagingDir);
       if (staged?.sourcePath && staged.sourcePath !== row.sourcePath) {
         cleanupStagedSourcePath(staged.sourcePath, options.stagingDir);

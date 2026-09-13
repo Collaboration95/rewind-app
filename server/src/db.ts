@@ -17,6 +17,7 @@ const MIGRATIONS = [
   { version: 5, key: 'media-idempotency-v1', fileName: '005-media-idempotency.sql' },
   { version: 6, key: 'contribution-quota-v1', fileName: '006-contribution-quota.sql' },
   { version: 7, key: 'media-processing-v1', fileName: '007-media-processing.sql' },
+  { version: 8, key: 'media-source-binding-v1', fileName: '008-media-source-binding.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -124,6 +125,13 @@ export function migrateDatabase(database: RewindDatabase): void {
       'processing_started_at',
     ].every((column) => tableColumns(database, 'media_jobs').has(column));
 
+    const mediaJobColumns = hasTable(database, 'media_jobs')
+      ? tableColumns(database, 'media_jobs')
+      : new Set<string>();
+    const sourceBindingReady =
+      hasTable(database, 'media_jobs') &&
+      ['source_uri', 'source_generation'].every((column) => mediaJobColumns.has(column));
+
     // Version 6 was briefly occupied by #45's media ALTERs. The stable
     // migration key lets an integrated build install #44's quota/staging
     // schema exactly once without trying to reuse that version row.
@@ -144,6 +152,58 @@ export function migrateDatabase(database: RewindDatabase): void {
           .run(migration.version, new Date().toISOString());
       }
       migrateLegacyStagedSources(database);
+      markMigration(database, migration.key);
+      continue;
+    }
+
+    // A development build may have added the binding columns before its
+    // migration marker was recorded. Complete that upgrade idempotently
+    // instead of replaying ALTER TABLE against an existing column.
+    if (migration.key === 'media-source-binding-v1' && sourceBindingReady) {
+      if (!applied?.applied) {
+        database
+          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(migration.version, new Date().toISOString());
+      }
+      markMigration(database, migration.key);
+      continue;
+    }
+
+    // Recover a partially applied development upgrade (for example, a
+    // process that died between the two ALTER TABLE statements) without
+    // replaying the already successful ALTER.
+    if (
+      migration.key === 'media-source-binding-v1' &&
+      hasTable(database, 'media_jobs') &&
+      (mediaJobColumns.has('source_uri') || mediaJobColumns.has('source_generation'))
+    ) {
+      if (!mediaJobColumns.has('source_uri')) {
+        database.exec('ALTER TABLE media_jobs ADD COLUMN source_uri TEXT');
+      }
+      if (!mediaJobColumns.has('source_generation')) {
+        database.exec('ALTER TABLE media_jobs ADD COLUMN source_generation INTEGER');
+      }
+      database.exec(
+        `CREATE INDEX IF NOT EXISTS media_jobs_source_binding_idx
+           ON media_jobs (source_uri, source_generation, source_path)`,
+      );
+      database.exec(
+        `UPDATE media_jobs
+         SET source_uri = (
+               SELECT source_uri FROM staged_sources
+               WHERE staged_sources.source_path = media_jobs.source_path LIMIT 1
+             ),
+             source_generation = (
+               SELECT claim_generation FROM staged_sources
+               WHERE staged_sources.source_path = media_jobs.source_path LIMIT 1
+             )
+         WHERE source_path IS NOT NULL AND source_uri IS NULL`,
+      );
+      if (!applied?.applied) {
+        database
+          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(migration.version, new Date().toISOString());
+      }
       markMigration(database, migration.key);
       continue;
     }

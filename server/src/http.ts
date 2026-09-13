@@ -576,11 +576,29 @@ export async function handleRequest(
       let claimedSourcePath = claim.source.sourcePath ?? sourcePath;
       let claimGeneration = claim.source.claimGeneration;
       let canStage = !claim.existing;
-      if (claim.existing && claim.source.status === 'staged') {
+      if (
+        claim.existing &&
+        (claim.source.status === 'staged' || claim.source.status === 'pending')
+      ) {
         const existingMetadata = findStagedSource(database, sourceUri);
-        if (existingMetadata?.byteLength && existsSync(claimedSourcePath)) {
+        if (
+          existingMetadata?.status === 'staged' &&
+          existingMetadata.byteLength &&
+          existsSync(claimedSourcePath)
+        ) {
           sendJson(response, config, 200, {
             source: { id: sourceId, uri: sourceUri, byteLength: existingMetadata.byteLength },
+          });
+          return;
+        }
+        if (
+          existingMetadata?.status === 'pending' &&
+          (!existingMetadata.claimExpiresAt ||
+            Date.parse(existingMetadata.claimExpiresAt) > now().getTime())
+        ) {
+          sendJson(response, config, 409, {
+            error: 'upload_source_conflict',
+            message: 'That upload is already being staged. Retry after it completes.',
           });
           return;
         }
