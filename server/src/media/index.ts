@@ -418,7 +418,11 @@ export function reclaimStagedSource(
       .prepare(
         `UPDATE staged_sources SET status = 'pending', byte_length = NULL,
            source_path = ?, claim_generation = ?, claim_expires_at = ?
-         WHERE source_uri = ? AND status = 'staged' AND claim_generation = ?`,
+         WHERE source_uri = ? AND claim_generation = ?
+           AND (
+             status = 'staged' OR
+             (status = 'pending' AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?)
+           )`,
       )
       .run(
         sourcePath,
@@ -426,6 +430,7 @@ export function reclaimStagedSource(
         new Date(now.getTime() + STAGED_SOURCE_LEASE_MS).toISOString(),
         sourceUri,
         generation.claimGeneration ?? 0,
+        now.toISOString(),
       );
     if (Number(result.changes) !== 1) {
       database.exec('COMMIT');

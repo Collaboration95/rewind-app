@@ -18,6 +18,9 @@ const MIGRATIONS = [
   { version: 6, key: 'contribution-quota-v1', fileName: '006-contribution-quota.sql' },
   { version: 7, key: 'media-processing-v1', fileName: '007-media-processing.sql' },
   { version: 8, key: 'media-source-binding-v1', fileName: '008-media-source-binding.sql' },
+  // #54 originally claimed version 006.  Keep lifecycle's durable identity
+  // at a distinct version so both upgrade orders remain unambiguous.
+  { version: 9, key: 'cycle-lifecycle-v1', fileName: '009-cycle-lifecycle.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -53,7 +56,7 @@ export type RewindDatabase = DatabaseSync;
 export function openDatabase(config: RuntimeConfig): RewindDatabase {
   mkdirSync(config.dataDir, { recursive: true });
   const database = new DatabaseSync(config.databasePath);
-  database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
+  database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   migrateDatabase(database);
   seedDatabase(database);
   return database;
@@ -63,13 +66,14 @@ export function openDatabaseAt(databasePath: string): RewindDatabase {
   const dataDir = resolve(databasePath, '..');
   mkdirSync(dataDir, { recursive: true });
   const database = new DatabaseSync(databasePath);
-  database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
+  database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   migrateDatabase(database);
   seedDatabase(database);
   return database;
 }
 
 export function migrateDatabase(database: RewindDatabase): void {
+  database.exec('PRAGMA busy_timeout = 5000;');
   database.exec(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);',
   );
@@ -83,40 +87,65 @@ export function migrateDatabase(database: RewindDatabase): void {
     const applied = database
       .prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = ?')
       .get(migration.version) as { applied?: number } | undefined;
-    if (marked?.applied && applied?.applied) {
-      if (
-        migration.key === 'media-processing-v1' &&
-        tableColumns(database, 'media_jobs').has('source_path') &&
-        !tableColumns(database, 'media_jobs').has('processing_started_at')
-      ) {
-        database.exec('ALTER TABLE media_jobs ADD COLUMN processing_started_at TEXT');
-      }
-      continue;
-    }
-    const quotaReady =
-      hasTable(database, 'contribution_quota_windows') &&
-      hasTable(database, 'staged_sources') &&
-      hasTable(database, 'media_metadata') &&
-      tableColumns(database, 'contributions').has('quota_window_start_at');
-    const mediaBaseReady = [
-      'source_path',
-      'trim_start_seconds',
-      'trim_end_seconds',
-      'mode',
-      'error_code',
-    ].every((column) => tableColumns(database, 'media_jobs').has(column));
+    const needsRepair = migrationNeedsRepair(database, migration.key);
+    if (marked?.applied && applied?.applied && !needsRepair) continue;
 
-    // Older #45 databases already ran the media migration before the worker
-    // lease column was introduced. Add that nullable column in place so a
-    // restart can recover a job claimed by a process that died mid-transform.
-    if (
-      migration.key === 'media-processing-v1' &&
-      mediaBaseReady &&
-      !tableColumns(database, 'media_jobs').has('processing_started_at')
-    ) {
-      database.exec('ALTER TABLE media_jobs ADD COLUMN processing_started_at TEXT');
+    beginMigrationTransaction(database);
+    try {
+      // Re-read after acquiring the writer lock: a concurrent starter may
+      // have completed this migration while this connection was waiting.
+      const appliedInside = database
+        .prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = ?')
+        .get(migration.version) as { applied?: number } | undefined;
+      if (migration.key === 'contribution-quota-v1') {
+        applyContributionQuotaMigration(database);
+      } else if (migration.key === 'media-processing-v1') {
+        applyMediaProcessingMigration(database);
+      } else if (migration.key === 'media-source-binding-v1') {
+        applyMediaSourceBindingMigration(database);
+      } else if (migration.key === 'cycle-lifecycle-v1') {
+        applyCycleLifecycleMigration(database);
+      } else if (!appliedInside?.applied) {
+        database.exec(migration.sql);
+      }
+      // Version 006 is occupied by the old #54 lifecycle migration in some
+      // databases. Its row is retained; stable markers distinguish the
+      // canonical #44 quota identity from that historical shape.
+      if (!appliedInside?.applied) {
+        database
+          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(migration.version, new Date().toISOString());
+      }
+      markMigration(database, migration.key);
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
     }
-    const mediaReady = [
+  }
+}
+
+function beginMigrationTransaction(database: RewindDatabase): void {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    try {
+      database.exec('BEGIN IMMEDIATE');
+      return;
+    } catch (error) {
+      const candidate = error as { code?: string; message?: string };
+      const busy =
+        candidate.code === 'SQLITE_BUSY' ||
+        /database is locked|SQLITE_BUSY/i.test(candidate.message ?? '');
+      if (!busy || attempt === 7) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2 ** attempt);
+    }
+  }
+}
+
+function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
+  if (key === 'contribution-quota-v1')
+    return !quotaSchemaReady(database) || Boolean(hasTable(database, 'staged_media_sources'));
+  if (key === 'media-processing-v1') {
+    return ![
       'source_path',
       'trim_start_seconds',
       'trim_end_seconds',
@@ -124,69 +153,203 @@ export function migrateDatabase(database: RewindDatabase): void {
       'error_code',
       'processing_started_at',
     ].every((column) => tableColumns(database, 'media_jobs').has(column));
+  }
+  if (key === 'media-source-binding-v1') return !sourceBindingSchemaReady(database);
+  if (key === 'cycle-lifecycle-v1') return cycleLifecycleMigrationNeedsRepair(database);
+  return false;
+}
 
-    const mediaJobColumns = hasTable(database, 'media_jobs')
-      ? tableColumns(database, 'media_jobs')
-      : new Set<string>();
-    const sourceBindingReady =
-      hasTable(database, 'media_jobs') &&
-      ['source_uri', 'source_generation'].every((column) => mediaJobColumns.has(column));
+function quotaSchemaReady(database: RewindDatabase): boolean {
+  return (
+    tableColumns(database, 'contributions').has('quota_window_start_at') &&
+    hasColumns(database, 'media_metadata', [
+      'source_uri',
+      'mime_type',
+      'byte_length',
+      'duration_seconds',
+      'width',
+      'height',
+      'has_audio',
+      'verified_at',
+    ]) &&
+    hasColumns(database, 'staged_sources', [
+      'source_id',
+      'source_uri',
+      'idempotency_key_hash',
+      'group_id',
+      'member_id',
+      'source_path',
+      'byte_length',
+      'status',
+      'created_at',
+      'claim_generation',
+      'claim_expires_at',
+    ]) &&
+    hasColumns(database, 'contribution_quota_windows', [
+      'id',
+      'cycle_id',
+      'member_id',
+      'window_start_at',
+      'window_end_at',
+      'max_count',
+      'max_seconds',
+      'count_used',
+      'seconds_used',
+    ]) &&
+    ['source_path', 'claim_generation', 'claim_expires_at'].every((column) =>
+      tableColumns(database, 'staged_sources').has(column),
+    ) &&
+    hasIndex(database, 'staged_sources_owner_idx') &&
+    hasIndex(database, 'contribution_quota_windows_member_idx')
+  );
+}
 
-    // Version 6 was briefly occupied by #45's media ALTERs. The stable
-    // migration key lets an integrated build install #44's quota/staging
-    // schema exactly once without trying to reuse that version row.
-    if (migration.key === 'contribution-quota-v1' && applied?.applied && !quotaReady) {
-      database.exec(migration.sql);
-      migrateLegacyStagedSources(database);
-      markMigration(database, migration.key);
-      continue;
-    }
+function applyContributionQuotaMigration(database: RewindDatabase): void {
+  if (!tableColumns(database, 'contributions').has('quota_window_start_at')) {
+    database.exec('ALTER TABLE contributions ADD COLUMN quota_window_start_at TEXT');
+  }
+  database.exec(
+    `CREATE TABLE IF NOT EXISTS media_metadata (
+      source_uri TEXT PRIMARY KEY,
+      mime_type TEXT NOT NULL,
+      byte_length INTEGER NOT NULL CHECK (byte_length > 0),
+      duration_seconds REAL NOT NULL CHECK (duration_seconds > 0 AND duration_seconds <= 15),
+      width INTEGER NOT NULL CHECK (width > 0),
+      height INTEGER NOT NULL CHECK (height > 0),
+      has_audio INTEGER NOT NULL CHECK (has_audio = 1),
+      verified_at TEXT NOT NULL
+    )`,
+  );
+  database.exec(
+    `CREATE TABLE IF NOT EXISTS staged_sources (
+      source_id TEXT PRIMARY KEY,
+      source_uri TEXT NOT NULL UNIQUE,
+      idempotency_key_hash TEXT NOT NULL UNIQUE,
+      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      member_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      source_path TEXT,
+      byte_length INTEGER CHECK (byte_length IS NULL OR byte_length > 0),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'staged')),
+      created_at TEXT NOT NULL,
+      claim_generation INTEGER NOT NULL DEFAULT 0 CHECK (claim_generation >= 0),
+      claim_expires_at TEXT
+    )`,
+  );
+  const stagedColumns = tableColumns(database, 'staged_sources');
+  if (!stagedColumns.has('source_path'))
+    database.exec('ALTER TABLE staged_sources ADD COLUMN source_path TEXT');
+  if (!stagedColumns.has('claim_generation'))
+    database.exec(
+      'ALTER TABLE staged_sources ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0',
+    );
+  if (!stagedColumns.has('claim_expires_at'))
+    database.exec('ALTER TABLE staged_sources ADD COLUMN claim_expires_at TEXT');
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS staged_sources_owner_idx
+       ON staged_sources (group_id, member_id, created_at DESC)`,
+  );
+  database.exec(
+    `CREATE TABLE IF NOT EXISTS contribution_quota_windows (
+      id TEXT PRIMARY KEY,
+      cycle_id TEXT NOT NULL REFERENCES cycles(id) ON DELETE CASCADE,
+      member_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+      window_start_at TEXT NOT NULL,
+      window_end_at TEXT NOT NULL,
+      max_count INTEGER NOT NULL CHECK (max_count > 0 AND max_count <= 5),
+      max_seconds INTEGER NOT NULL CHECK (max_seconds > 0 AND max_seconds <= 30),
+      count_used INTEGER NOT NULL DEFAULT 0 CHECK (count_used >= 0),
+      seconds_used INTEGER NOT NULL DEFAULT 0 CHECK (seconds_used >= 0),
+      UNIQUE (cycle_id, member_id, window_start_at)
+    )`,
+  );
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS contribution_quota_windows_member_idx
+       ON contribution_quota_windows (cycle_id, member_id, window_start_at)`,
+  );
+  // Backfill and promotion are idempotent and stay inside the same migration
+  // transaction as the DDL and receipt.
+  database.exec(
+    `INSERT OR IGNORE INTO contribution_quota_windows
+      (id, cycle_id, member_id, window_start_at, window_end_at,
+       max_count, max_seconds, count_used, seconds_used)
+     SELECT
+       'contribution-quota-legacy-' || c.cycle_id || '-' || c.member_id || '-' ||
+         CAST(MAX(0, (julianday(c.created_at) - julianday(cy.starts_at)) / 7) AS INTEGER),
+       c.cycle_id,
+       c.member_id,
+       strftime(
+         '%Y-%m-%dT%H:%M:%fZ', cy.starts_at,
+         printf('+%d days', 7 * CAST(MAX(0, (julianday(c.created_at) - julianday(cy.starts_at)) / 7) AS INTEGER))
+       ),
+       strftime(
+         '%Y-%m-%dT%H:%M:%fZ', cy.starts_at,
+         printf('+%d days', 7 * (CAST(MAX(0, (julianday(c.created_at) - julianday(cy.starts_at)) / 7) AS INTEGER) + 1))
+       ),
+       MIN(5, MAX(1, cy.max_count)),
+       MIN(30, MAX(1, cy.max_seconds)),
+       COUNT(*),
+       SUM(c.duration_seconds)
+     FROM contributions c
+     JOIN cycles cy ON cy.id = c.cycle_id
+     GROUP BY c.cycle_id, c.member_id,
+       CAST(MAX(0, (julianday(c.created_at) - julianday(cy.starts_at)) / 7) AS INTEGER)`,
+  );
+  database.exec(
+    `UPDATE contributions
+     SET quota_window_start_at = (
+       SELECT strftime(
+         '%Y-%m-%dT%H:%M:%fZ', cy.starts_at,
+         printf('+%d days', 7 * CAST(MAX(0, (julianday(contributions.created_at) - julianday(cy.starts_at)) / 7) AS INTEGER))
+       )
+       FROM cycles cy WHERE cy.id = contributions.cycle_id
+     )
+     WHERE quota_window_start_at IS NULL`,
+  );
+  migrateLegacyStagedSources(database);
+}
 
-    // Existing #44 databases may have the quota schema but no marker, while
-    // existing #45 databases may have media columns at version 6. In either
-    // case, record the stable identity and never replay duplicate ALTERs.
-    if (migration.key === 'media-processing-v1' && mediaReady) {
-      if (!applied?.applied) {
-        database
-          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-          .run(migration.version, new Date().toISOString());
-      }
-      migrateLegacyStagedSources(database);
-      markMigration(database, migration.key);
-      continue;
-    }
+function applyMediaProcessingMigration(database: RewindDatabase): void {
+  const columns = tableColumns(database, 'media_jobs');
+  for (const [name, type] of [
+    ['source_path', 'TEXT'],
+    ['trim_start_seconds', 'REAL'],
+    ['trim_end_seconds', 'REAL'],
+    ['mode', 'TEXT'],
+    ['error_code', 'TEXT'],
+    ['processing_started_at', 'TEXT'],
+  ] as const) {
+    if (!columns.has(name)) database.exec(`ALTER TABLE media_jobs ADD COLUMN ${name} ${type}`);
+  }
+}
 
-    // A development build may have added the binding columns before its
-    // migration marker was recorded. Complete that upgrade idempotently
-    // instead of replaying ALTER TABLE against an existing column.
-    if (migration.key === 'media-source-binding-v1' && sourceBindingReady) {
-      if (!applied?.applied) {
-        database
-          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-          .run(migration.version, new Date().toISOString());
-      }
-      markMigration(database, migration.key);
-      continue;
-    }
+function sourceBindingSchemaReady(database: RewindDatabase): boolean {
+  return (
+    hasTable(database, 'media_jobs') &&
+    ['source_uri', 'source_generation'].every((column) =>
+      tableColumns(database, 'media_jobs').has(column),
+    ) &&
+    Boolean(
+      database
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'media_jobs_source_binding_idx'",
+        )
+        .get(),
+    )
+  );
+}
 
-    // Recover a partially applied development upgrade (for example, a
-    // process that died between the two ALTER TABLE statements) without
-    // replaying the already successful ALTER.
-    if (
-      migration.key === 'media-source-binding-v1' &&
-      hasTable(database, 'media_jobs') &&
-      (mediaJobColumns.has('source_uri') || mediaJobColumns.has('source_generation'))
-    ) {
-      if (!mediaJobColumns.has('source_uri')) {
-        database.exec('ALTER TABLE media_jobs ADD COLUMN source_uri TEXT');
-      }
-      if (!mediaJobColumns.has('source_generation')) {
-        database.exec('ALTER TABLE media_jobs ADD COLUMN source_generation INTEGER');
-      }
-      database.exec(
-        `CREATE INDEX IF NOT EXISTS media_jobs_source_binding_idx
-           ON media_jobs (source_uri, source_generation, source_path)`,
-      );
+function applyMediaSourceBindingMigration(database: RewindDatabase): void {
+  const columns = tableColumns(database, 'media_jobs');
+  if (!columns.has('source_uri'))
+    database.exec('ALTER TABLE media_jobs ADD COLUMN source_uri TEXT');
+  if (!columns.has('source_generation'))
+    database.exec('ALTER TABLE media_jobs ADD COLUMN source_generation INTEGER');
+  if (tableColumns(database, 'media_jobs').has('source_path')) {
+    database.exec(
+      `CREATE INDEX IF NOT EXISTS media_jobs_source_binding_idx
+         ON media_jobs (source_uri, source_generation, source_path)`,
+    );
+    if (hasTable(database, 'staged_sources')) {
       database.exec(
         `UPDATE media_jobs
          SET source_uri = (
@@ -199,40 +362,200 @@ export function migrateDatabase(database: RewindDatabase): void {
              )
          WHERE source_path IS NOT NULL AND source_uri IS NULL`,
       );
-      if (!applied?.applied) {
-        database
-          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-          .run(migration.version, new Date().toISOString());
-      }
-      markMigration(database, migration.key);
-      continue;
     }
-
-    if (applied?.applied) {
-      if (migration.key === 'contribution-quota-v1') migrateLegacyStagedSources(database);
-      markMigration(database, migration.key);
-      continue;
-    }
-
-    database.exec(migration.sql);
-    if (migration.key === 'contribution-quota-v1') migrateLegacyStagedSources(database);
-    database
-      .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-      .run(migration.version, new Date().toISOString());
-    markMigration(database, migration.key);
   }
-  // The staged-source lease/generation fence was added after the original
-  // quota migration had shipped. Keep the migration identity stable while
-  // upgrading existing local databases in place.
-  if (hasTable(database, 'staged_sources')) {
-    const columns = tableColumns(database, 'staged_sources');
-    if (!columns.has('claim_generation')) {
+}
+
+function cycleLifecycleMigrationNeedsRepair(database: RewindDatabase): boolean {
+  const cycleColumns = tableColumns(database, 'cycles');
+  if (
+    !cycleColumns.has('release_status') ||
+    !cycleColumns.has('release_published_at') ||
+    !cycleColumns.has('previous_cycle_id')
+  ) {
+    return true;
+  }
+  if (!hasTable(database, 'cycle_lifecycle_events') || !lifecycleTableIsValid(database)) {
+    return true;
+  }
+  return (
+    !indexMatches(database, 'cycles_previous_cycle_idx', true, ['previous_cycle_id']) ||
+    !indexMatches(database, 'cycle_lifecycle_events_group_idx', false, [
+      'group_id',
+      'occurred_at',
+      'id',
+    ]) ||
+    !indexMatches(database, 'cycle_lifecycle_events_receipt_idx', true, ['cycle_id', 'transition'])
+  );
+}
+
+function indexMatches(
+  database: RewindDatabase,
+  name: string,
+  unique: boolean,
+  columns: string[],
+): boolean {
+  const index = ['cycles', 'cycle_lifecycle_events']
+    .flatMap((table) => database.prepare(`PRAGMA index_list(${table})`).all())
+    .find((row) => String((row as { name?: unknown }).name) === name) as
+    { name?: string; unique?: number } | undefined;
+  if (!index || Number(index.unique) !== (unique ? 1 : 0)) return false;
+  const indexColumns = database
+    .prepare(`PRAGMA index_info(${name})`)
+    .all()
+    .sort(
+      (left, right) =>
+        Number((left as { seqno?: number }).seqno) - Number((right as { seqno?: number }).seqno),
+    )
+    .map((row) => String((row as { name?: unknown }).name));
+  return (
+    indexColumns.length === columns.length &&
+    indexColumns.every((column, indexPosition) => column === columns[indexPosition])
+  );
+}
+
+function lifecycleTableIsValid(database: RewindDatabase): boolean {
+  const table = database
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cycle_lifecycle_events'",
+    )
+    .get() as { sql?: string } | undefined;
+  if (!table?.sql) return false;
+  const columnRows = database.prepare('PRAGMA table_info(cycle_lifecycle_events)').all() as {
+    name?: string;
+    notnull?: number;
+    pk?: number;
+  }[];
+  const columns = new Set(columnRows.map((column) => String(column.name)));
+  const primaryKey = columnRows.find((column) => column.name === 'id');
+  const foreignKeys = database.prepare('PRAGMA foreign_key_list(cycle_lifecycle_events)').all() as {
+    table?: string;
+    from?: string;
+    on_delete?: string;
+  }[];
+  const sql = table.sql.replace(/\s+/g, ' ').toLowerCase();
+  return (
+    columns.has('id') &&
+    primaryKey?.pk === 1 &&
+    ['cycle_id', 'group_id', 'transition', 'occurred_at'].every(
+      (column) =>
+        columns.has(column) && columnRows.find((row) => row.name === column)?.notnull === 1,
+    ) &&
+    foreignKeys.some(
+      (foreignKey) =>
+        foreignKey.table === 'cycles' &&
+        foreignKey.from === 'cycle_id' &&
+        foreignKey.on_delete?.toUpperCase() === 'CASCADE',
+    ) &&
+    foreignKeys.some(
+      (foreignKey) =>
+        foreignKey.table === 'groups' &&
+        foreignKey.from === 'group_id' &&
+        foreignKey.on_delete?.toUpperCase() === 'CASCADE',
+    ) &&
+    /unique\s*\(\s*cycle_id\s*,\s*transition\s*\)/.test(sql) &&
+    /check\s*\(\s*transition\s+in\s*\(/.test(sql)
+  );
+}
+
+function rebuildLifecycleTable(database: RewindDatabase): void {
+  const legacyTable = 'cycle_lifecycle_events_recovery';
+  database.exec(`DROP TABLE IF EXISTS ${legacyTable}`);
+  database.exec(`ALTER TABLE cycle_lifecycle_events RENAME TO ${legacyTable}`);
+  database.exec(
+    `CREATE TABLE cycle_lifecycle_events (
+      id TEXT PRIMARY KEY,
+      cycle_id TEXT NOT NULL REFERENCES cycles(id) ON DELETE CASCADE,
+      group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      transition TEXT NOT NULL CHECK (
+        transition IN ('collecting_to_revealing', 'revealing_to_archived', 'next_cycle_created')
+      ),
+      occurred_at TEXT NOT NULL,
+      UNIQUE (cycle_id, transition)
+    )`,
+  );
+  const columns = tableColumns(database, legacyTable);
+  if (
+    ['id', 'cycle_id', 'group_id', 'transition', 'occurred_at'].every((column) =>
+      columns.has(column),
+    )
+  ) {
+    database.exec(
+      `INSERT OR IGNORE INTO cycle_lifecycle_events
+         (id, cycle_id, group_id, transition, occurred_at)
+       SELECT legacy.id, legacy.cycle_id, legacy.group_id, legacy.transition, legacy.occurred_at
+       FROM ${legacyTable} legacy
+       WHERE legacy.transition IN ('collecting_to_revealing', 'revealing_to_archived', 'next_cycle_created')
+         AND legacy.occurred_at IS NOT NULL
+         AND EXISTS (
+           SELECT 1 FROM cycles
+           WHERE cycles.id = legacy.cycle_id AND cycles.group_id = legacy.group_id
+         )`,
+    );
+  }
+  database.exec(`DROP TABLE ${legacyTable}`);
+}
+
+/** Repair the old #54 version-006 shape and any interrupted DDL atomically. */
+function applyCycleLifecycleMigration(database: RewindDatabase): void {
+  const cycleColumns = tableColumns(database, 'cycles');
+  if (!cycleColumns.has('release_status')) {
+    database.exec(
+      "ALTER TABLE cycles ADD COLUMN release_status TEXT NOT NULL DEFAULT 'unpublished' CHECK (release_status IN ('unpublished', 'published'))",
+    );
+  }
+  if (!cycleColumns.has('release_published_at')) {
+    database.exec('ALTER TABLE cycles ADD COLUMN release_published_at TEXT');
+  }
+  if (!cycleColumns.has('previous_cycle_id')) {
+    database.exec(
+      'ALTER TABLE cycles ADD COLUMN previous_cycle_id TEXT REFERENCES cycles(id) ON DELETE SET NULL',
+    );
+  }
+  if (!hasTable(database, 'cycle_lifecycle_events')) {
+    database.exec(
+      `CREATE TABLE cycle_lifecycle_events (
+        id TEXT PRIMARY KEY,
+        cycle_id TEXT NOT NULL REFERENCES cycles(id) ON DELETE CASCADE,
+        group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+        transition TEXT NOT NULL CHECK (
+          transition IN ('collecting_to_revealing', 'revealing_to_archived', 'next_cycle_created')
+        ),
+        occurred_at TEXT NOT NULL,
+        UNIQUE (cycle_id, transition)
+      )`,
+    );
+  } else if (!lifecycleTableIsValid(database)) {
+    rebuildLifecycleTable(database);
+  }
+  for (const [name, isUnique, columns, where, table] of [
+    [
+      'cycles_previous_cycle_idx',
+      true,
+      ['previous_cycle_id'],
+      ' WHERE previous_cycle_id IS NOT NULL',
+      'cycles',
+    ],
+    [
+      'cycle_lifecycle_events_group_idx',
+      false,
+      ['group_id', 'occurred_at', 'id'],
+      '',
+      'cycle_lifecycle_events',
+    ],
+    [
+      'cycle_lifecycle_events_receipt_idx',
+      true,
+      ['cycle_id', 'transition'],
+      '',
+      'cycle_lifecycle_events',
+    ],
+  ] as const) {
+    if (!indexMatches(database, name, isUnique, [...columns])) {
+      database.exec(`DROP INDEX IF EXISTS ${name}`);
       database.exec(
-        'ALTER TABLE staged_sources ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0',
+        `CREATE ${isUnique ? 'UNIQUE ' : ''}INDEX ${name} ON ${table} (${columns.join(', ')})${where}`,
       );
-    }
-    if (!columns.has('claim_expires_at')) {
-      database.exec('ALTER TABLE staged_sources ADD COLUMN claim_expires_at TEXT');
     }
   }
 }
@@ -243,6 +566,19 @@ function markMigration(database: RewindDatabase, key: string): void {
       'INSERT OR IGNORE INTO schema_migration_markers (migration_key, applied_at) VALUES (?, ?)',
     )
     .run(key, new Date().toISOString());
+}
+
+function hasColumns(database: RewindDatabase, table: string, columns: string[]): boolean {
+  return (
+    hasTable(database, table) &&
+    columns.every((column) => tableColumns(database, table).has(column))
+  );
+}
+
+function hasIndex(database: RewindDatabase, name: string): boolean {
+  return Boolean(
+    database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(name),
+  );
 }
 
 function hasTable(database: RewindDatabase, name: string): boolean {
@@ -280,6 +616,8 @@ function migrateLegacyStagedSources(database: RewindDatabase): void {
     sourcePath: string;
     createdAt: string;
   }[];
+  const mediaJobsHaveSourcePath =
+    hasTable(database, 'media_jobs') && tableColumns(database, 'media_jobs').has('source_path');
   const insert = database.prepare(
     `INSERT OR IGNORE INTO staged_sources
       (source_id, source_uri, idempotency_key_hash, group_id, member_id, source_path,
@@ -291,11 +629,13 @@ function migrateLegacyStagedSources(database: RewindDatabase): void {
   );
   for (const row of rows) {
     const sourceId = createHash('sha256').update(row.sourceUri).digest('hex').slice(0, 24);
-    const linkedJob = database
-      .prepare(
-        'SELECT idempotency_key AS idempotencyKey FROM media_jobs WHERE source_path = ? LIMIT 1',
-      )
-      .get(row.sourcePath) as { idempotencyKey?: string } | undefined;
+    const linkedJob = mediaJobsHaveSourcePath
+      ? (database
+          .prepare(
+            'SELECT idempotency_key AS idempotencyKey FROM media_jobs WHERE source_path = ? LIMIT 1',
+          )
+          .get(row.sourcePath) as { idempotencyKey?: string } | undefined)
+      : undefined;
     // `media_jobs.idempotency_key` was already persisted as the 32-character
     // SHA-256 key hash by the legacy #45 implementation. Preserve it exactly;
     // hashing it again would make a retry with the original client key fail
@@ -546,10 +886,22 @@ export function getCurrentCycle(
     .prepare(
       `SELECT id, group_id AS groupId, prompt, starts_at AS startsAt, ends_at AS endsAt,
         status, lock_state AS lockState, max_count AS maxCount, max_seconds AS maxSeconds,
-        count_used AS countUsed, seconds_used AS secondsUsed
-       FROM cycles WHERE group_id = ? ORDER BY starts_at DESC LIMIT 1`,
+        count_used AS countUsed, seconds_used AS secondsUsed,
+        release_status AS releaseStatus, release_published_at AS releasePublishedAt,
+        previous_cycle_id AS previousCycleId
+       FROM cycles
+       WHERE group_id = ? AND (
+             id = (SELECT current_cycle_id FROM groups WHERE id = ?)
+          OR NOT EXISTS (
+            SELECT 1 FROM cycles selected
+            WHERE selected.id = (SELECT current_cycle_id FROM groups WHERE id = ?)
+              AND selected.group_id = ?
+          ))
+       ORDER BY CASE WHEN id = (SELECT current_cycle_id FROM groups WHERE id = ?) THEN 0 ELSE 1 END,
+                starts_at DESC
+       LIMIT 1`,
     )
-    .get(groupId) as Record<string, unknown> | undefined;
+    .get(groupId, groupId, groupId, groupId, groupId) as Record<string, unknown> | undefined;
   if (!cycle) return null;
   const contributionUsage = memberId
     ? (database
@@ -588,6 +940,9 @@ export function getCurrentCycle(
           countUsed: Number(cycle.countUsed),
           secondsUsed: Number(cycle.secondsUsed),
         },
+    releaseStatus: String(cycle.releaseStatus ?? 'unpublished'),
+    releasePublishedAt: cycle.releasePublishedAt ? String(cycle.releasePublishedAt) : null,
+    previousCycleId: cycle.previousCycleId ? String(cycle.previousCycleId) : null,
   };
 }
 

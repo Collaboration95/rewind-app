@@ -381,6 +381,40 @@ test('stale intake callbacks cannot complete or reset a reclaimed generation', a
   });
 });
 
+test('expired pending intake claims can be reclaimed to a new generation', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'expired-pending-reclaim-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const firstPath = stagedSourcePath(sourceUri, stagingDir, 1);
+    const secondPath = stagedSourcePath(sourceUri, stagingDir, 2);
+    assert.ok(firstPath);
+    assert.ok(secondPath);
+    const claimed = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:00:00.000Z'),
+      firstPath,
+    );
+    assert.equal(claimed.ok, true);
+    const reclaimed = reclaimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      secondPath,
+      new Date('2026-09-10T15:00:00.000Z'),
+    );
+    assert.equal(reclaimed.ok, true);
+    if (!reclaimed.ok) return;
+    assert.equal(reclaimed.source.status, 'pending');
+    assert.equal(reclaimed.source.sourcePath, secondPath);
+    assert.equal(reclaimed.source.claimGeneration, 2);
+  });
+});
+
 test('enqueue retries rebind a pending job to the recovered staged generation', async () => {
   await withDatabase(async ({ database, dataDir }) => {
     const stagingDir = `${dataDir}/media/staging`;
@@ -961,7 +995,7 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
       .prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all()
       .map((row) => Number(row.version));
-    assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
     // Databases created by the first #45 implementation recorded media as
     // version 6. Existing columns are enough to promote that record safely.
@@ -1008,7 +1042,7 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
         .map((row) => Number(row.version)),
-      [1, 2, 3, 4, 5, 6, 7, 8],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9],
     );
     assert.equal(
       database
