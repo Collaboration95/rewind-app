@@ -11,6 +11,7 @@ const MIGRATION_FILES = [
   '003-cycle-controls.sql',
   '004-invites.sql',
   '005-media-idempotency.sql',
+  '006-realtime-messages.sql',
 ] as const;
 const MIGRATIONS = MIGRATION_FILES.map((fileName, index) => ({
   version: index + 1,
@@ -177,6 +178,12 @@ export function seedDatabase(database: RewindDatabase): void {
       .run(FIXTURE.message.id, FIXTURE.group.id, FIXTURE.profiles[0].id, FIXTURE.message.body, now);
     database
       .prepare(
+        `INSERT INTO realtime_events (group_id, message_id, event_type, occurred_at)
+         VALUES (?, ?, 'message', ?)`,
+      )
+      .run(FIXTURE.group.id, FIXTURE.message.id, now);
+    database
+      .prepare(
         'INSERT INTO reactions (id, message_id, member_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)',
       )
       .run('demo-reaction', FIXTURE.message.id, FIXTURE.profiles[1].id, '✨', now);
@@ -206,6 +213,7 @@ export function restoreFixture(database: RewindDatabase): void {
   try {
     for (const table of [
       'reactions',
+      'realtime_events',
       'messages',
       'media_jobs',
       'contributions',

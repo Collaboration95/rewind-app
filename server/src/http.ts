@@ -9,14 +9,19 @@ import {
   getGroup,
   getMediaJob,
   getMessage,
+  isMember,
   listProfiles,
   restoreFixture,
   type RewindDatabase,
 } from './db';
+import { createChatMessage, listChatEvents } from './chat';
+import { encodeSseEvent, RealtimeHub } from './realtime';
 import { advanceDemoCycle } from './cycles';
+import { classifyDemoSession } from './session/contract';
 import { authorizeMember, SAFE_DENIAL, type ProtectedResource } from './policy';
 import {
   createDemoSession,
+  getDemoSession,
   invalidateDemoSession,
   updateDemoSessionGroup,
   validateDemoSession,
@@ -51,7 +56,7 @@ function sendJson(
 ): void {
   const encoded = JSON.stringify(body);
   response.writeHead(status, {
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Origin': config.allowOrigin,
     'Cache-Control': 'no-store',
@@ -126,6 +131,7 @@ function sessionScope(database: RewindDatabase, url: URL, now = new Date()) {
 
 export interface RuntimeServerOptions {
   now?: () => Date;
+  realtimeHub?: RealtimeHub;
 }
 
 async function requestBody(request: IncomingMessage): Promise<Record<string, unknown> | null> {
@@ -201,7 +207,7 @@ export async function handleRequest(
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Origin': config.allowOrigin,
     });
@@ -300,6 +306,121 @@ export async function handleRequest(
     }
     restoreFixture(database);
     sendJson(response, config, 200, { reset: true });
+    return;
+  }
+
+  const realtimeEventsMatch = url.pathname.match(/^\/realtime\/groups\/([^/]+)\/events$/);
+  if (realtimeEventsMatch && request.method === 'GET') {
+    const groupId = decodePathSegment(realtimeEventsMatch[1], response, config);
+    if (groupId === null) return;
+    const sessionId = url.searchParams.get('sessionId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId, now());
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (
+      !authorize(database, response, config, groupId, session.session.actor.memberId, 'message')
+    ) {
+      return;
+    }
+
+    const lastEventHeader = request.headers['last-event-id'];
+    const lastEventValue = Array.isArray(lastEventHeader)
+      ? lastEventHeader[0]
+      : (lastEventHeader ?? url.searchParams.get('sinceEventId'));
+    const parsedLastEventId = lastEventValue ? Number(lastEventValue) : 0;
+    const sinceEventId =
+      Number.isSafeInteger(parsedLastEventId) && parsedLastEventId >= 0 ? parsedLastEventId : 0;
+    const hub = options.realtimeHub;
+    if (!hub) {
+      sendJson(response, config, 500, {
+        error: 'realtime_unavailable',
+        message: 'The local realtime transport is not available.',
+      });
+      return;
+    }
+
+    response.writeHead(200, {
+      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
+      'Access-Control-Allow-Origin': config.allowOrigin,
+      'Cache-Control': 'no-cache, no-store',
+      Connection: 'keep-alive',
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'X-Accel-Buffering': 'no',
+    });
+    response.write(': connected\n\n');
+
+    const writeEvent = (event: Parameters<typeof encodeSseEvent>[0]) => {
+      if (!response.writableEnded && !response.destroyed) response.write(encodeSseEvent(event));
+    };
+    let unsubscribe = () => {};
+    const writeAuthorisedEvent = (event: Parameters<typeof encodeSseEvent>[0]) => {
+      const currentSession = getDemoSession(database, session.session.id);
+      const stillValid =
+        currentSession &&
+        currentSession.actor.memberId === session.session.actor.memberId &&
+        classifyDemoSession(currentSession.expiresAt, currentSession.invalidatedAt, now()) ===
+          'valid' &&
+        isMember(database, groupId, currentSession.actor.memberId);
+      if (!stillValid) {
+        unsubscribe();
+        if (!response.writableEnded && !response.destroyed) response.end();
+        return;
+      }
+      writeEvent(event);
+    };
+    // Register before writing the replay so a message sent during a reconnect
+    // is either observed live or present in the replay query, never silently
+    // lost between the two operations.
+    unsubscribe = hub.subscribe(groupId, writeAuthorisedEvent);
+    for (const event of listChatEvents(database, groupId, sinceEventId)) writeEvent(event);
+    const heartbeat = setInterval(() => {
+      if (!response.writableEnded && !response.destroyed) response.write(': keep-alive\n\n');
+    }, 15_000);
+    heartbeat.unref();
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
+    response.once('close', cleanup);
+    return;
+  }
+
+  const realtimeMessagesMatch = url.pathname.match(/^\/realtime\/groups\/([^/]+)\/messages$/);
+  if (realtimeMessagesMatch && request.method === 'POST') {
+    const groupId = decodePathSegment(realtimeMessagesMatch[1], response, config);
+    if (groupId === null) return;
+    const sessionId = url.searchParams.get('sessionId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId, now());
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (
+      !authorize(database, response, config, groupId, session.session.actor.memberId, 'message')
+    ) {
+      return;
+    }
+    const body = await requestBody(request);
+    const result = createChatMessage(database, {
+      groupId,
+      memberId: session.session.actor.memberId,
+      body: typeof body?.body === 'string' ? body.body : '',
+      messageId: typeof body?.messageId === 'string' ? body.messageId : undefined,
+      now: now(),
+    });
+    if (!result.ok) {
+      if (result.reason === 'membership_denied') return sendDenied(response, config);
+      sendJson(response, config, 400, {
+        error: `message_${result.reason}`,
+        message:
+          result.reason === 'empty_body'
+            ? 'Enter a message before sending.'
+            : result.reason === 'body_too_long'
+              ? 'Message text is too long.'
+              : 'The message timestamp is invalid.',
+      });
+      return;
+    }
+    options.realtimeHub?.publish(result.event);
+    sendJson(response, config, 201, { event: result.event, message: result.event.message });
     return;
   }
 
@@ -686,17 +807,20 @@ export function createRuntimeServer(
   database: RewindDatabase,
   options: RuntimeServerOptions = {},
 ): Server {
+  const realtimeHub = options.realtimeHub ?? new RealtimeHub();
   return createServer((request, response) => {
-    void handleRequest(request, response, config, database, options).catch((error: unknown) => {
-      if (!response.headersSent) {
-        sendJson(response, config, 500, {
-          error: 'internal_error',
-          message: 'The local runtime could not complete the request.',
-        });
-      } else {
-        response.destroy();
-      }
-      console.error('[rewind-local-runtime]', error);
-    });
+    void handleRequest(request, response, config, database, { ...options, realtimeHub }).catch(
+      (error: unknown) => {
+        if (!response.headersSent) {
+          sendJson(response, config, 500, {
+            error: 'internal_error',
+            message: 'The local runtime could not complete the request.',
+          });
+        } else {
+          response.destroy();
+        }
+        console.error('[rewind-local-runtime]', error);
+      },
+    );
   });
 }
