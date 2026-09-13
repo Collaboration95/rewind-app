@@ -250,6 +250,90 @@ describe('persistent group chat timeline', () => {
     );
   });
 
+  it('lets the server-authoritative toggle remove a reaction persisted before remount', async () => {
+    const original = event(10, 'Persisted reaction', '2026-09-13T05:00:00.000Z');
+    let persistedActive = false;
+    const toggleChatReaction = jest
+      .fn()
+      .mockImplementation(async (_session, _group, messageId, emoji, requestedActive) => {
+        expect(requestedActive).toBeUndefined();
+        persistedActive = !persistedActive;
+        const count = persistedActive ? 2 : 1;
+        return {
+          reaction: {
+            messageId,
+            groupId: 'demo-group',
+            memberId: 'demo-1',
+            emoji,
+            active: persistedActive,
+            count,
+          },
+          message: { ...original.message, reactionCounts: { '✨': count } },
+        };
+      });
+    const runtime = runtimeMock({ toggleChatReaction });
+    const result = await render(
+      <ScopedChatSurface
+        accessState="known"
+        capsuleStatus="ready"
+        group={group}
+        scope="reaction-scope-a"
+        memberNames={memberNames}
+        retryCapsule={jest.fn()}
+        runtimeClient={runtime.client}
+        session={sessionA}
+      />,
+    );
+    await result.findByTestId('chat-empty');
+    await act(async () =>
+      runtime.emit({
+        ...original,
+        message: { ...original.message, reactionCounts: { '✨': 1 } },
+      }),
+    );
+    const reaction = await result.findByTestId(`chat-reaction-${original.message.id}`);
+
+    // The first click adds a reaction that is now persisted on the server.
+    await fireEvent.press(reaction);
+    await waitFor(() => expect(reaction).toHaveTextContent('✨ Reacted 2'));
+
+    // A scope remount clears local viewer state while the persisted reaction remains active.
+    await act(async () =>
+      result.rerender(
+        <ScopedChatSurface
+          accessState="known"
+          capsuleStatus="ready"
+          group={group}
+          scope="reaction-scope-b"
+          memberNames={memberNames}
+          retryCapsule={jest.fn()}
+          runtimeClient={runtime.client}
+          session={sessionA}
+        />,
+      ),
+    );
+    await result.findByTestId('chat-empty');
+    await act(async () =>
+      runtime.emit({
+        ...original,
+        message: { ...original.message, reactionCounts: { '✨': 2 } },
+      }),
+    );
+    const remountedReaction = await result.findByTestId(`chat-reaction-${original.message.id}`);
+    expect(remountedReaction).toHaveTextContent('✨ 2');
+    expect(remountedReaction).not.toHaveTextContent('Reacted');
+
+    // Because the click is a server-authoritative toggle, it removes the persisted reaction.
+    await fireEvent.press(remountedReaction);
+    await waitFor(() => expect(remountedReaction).toHaveTextContent('✨ 1'));
+    expect(toggleChatReaction).toHaveBeenLastCalledWith(
+      sessionA.id,
+      group.id,
+      original.message.id,
+      '✨',
+    );
+  });
+
   it('clears a previous group body before subscribing to a new group scope', async () => {
     const runtime = runtimeMock();
     const result = await render(

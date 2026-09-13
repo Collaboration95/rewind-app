@@ -179,7 +179,6 @@ export function ChatSessionSurface({
   const toggleReaction = useCallback(
     async (message: ChatMessage) => {
       if (!runtimeClient?.toggleChatReaction || !session || !group || reactionBusy) return;
-      const active = !(reactionActive[message.id] ?? false);
       setReactionBusy(message.id);
       try {
         const result = await runtimeClient.toggleChatReaction(
@@ -187,7 +186,6 @@ export function ChatSessionSurface({
           group.id,
           message.id,
           '✨',
-          active,
         );
         setMessages((current) =>
           current.map((entry) =>
@@ -201,7 +199,7 @@ export function ChatSessionSurface({
         setReactionBusy(null);
       }
     },
-    [group, reactionActive, reactionBusy, runtimeClient, session],
+    [group, reactionBusy, runtimeClient, session],
   );
 
   const effectiveTimelineState: TimelineState =

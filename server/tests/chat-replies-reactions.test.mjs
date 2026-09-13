@@ -103,6 +103,20 @@ test('supported reaction add/remove is idempotent and returns aggregate counts',
     );
     const final = await fetch(url).then((response) => response.json());
     assert.equal(final.message.reactionCounts['✨'] ?? 0, 1);
+
+    // Omitting active is the viewer-safe toggle form used after a timeline remount.
+    const toggle = () =>
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emoji: '✨' }),
+      });
+    const toggledOn = await toggle();
+    assert.equal(toggledOn.status, 200);
+    assert.equal((await toggledOn.json()).reaction.active, true);
+    const toggledOff = await toggle();
+    assert.equal(toggledOff.status, 200);
+    assert.equal((await toggledOff.json()).reaction.active, false);
   });
 });
 
