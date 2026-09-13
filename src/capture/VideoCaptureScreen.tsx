@@ -5,8 +5,18 @@ import { AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-na
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 import { COLORS } from '../theme';
-import type { CaptureMode, ClipUploadInput, RecordedClip } from '../domain/video';
+import type {
+  CaptureMode,
+  ClipUploadInput,
+  PendingClipUpload,
+  RecordedClip,
+} from '../domain/video';
 import { ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
+import {
+  ContributionStatusPanel,
+  useOptionalContributionStatus,
+  type ContributionStatus,
+} from './contribution-status';
 import { BoundedVideoRecordingSession, type VideoRecordingPlatform } from './video-recording';
 import { ClipReviewSession, InMemoryPendingClipMetadataStore } from './video-review';
 import {
@@ -71,6 +81,23 @@ export function VideoCaptureScreen({
     status: 'idle',
     percent: 0,
   });
+  const statusContext = useOptionalContributionStatus();
+  const [localContributionStatus, setLocalContributionStatus] = useState<ContributionStatus | null>(
+    null,
+  );
+  const latestUploadRef = useRef<PendingClipUpload | null>(null);
+  const contributionStatus = statusContext?.status ?? localContributionStatus;
+  const setContributionStatus = useCallback(
+    (next: ContributionStatus) => {
+      setLocalContributionStatus(next);
+      statusContext?.setStatus(next);
+    },
+    [statusContext],
+  );
+  const clearContributionStatus = useCallback(() => {
+    setLocalContributionStatus(null);
+    statusContext?.clearStatus();
+  }, [statusContext]);
   const uploadSession = useMemo(() => {
     if (!runtimeClient?.uploadClip || !runtimeClient.cancelClipUpload || !demoSession?.session) {
       return null;
@@ -277,6 +304,8 @@ export function VideoCaptureScreen({
     setClip(null);
     setReview(null);
     setUploadProgress({ status: 'idle', percent: 0 });
+    latestUploadRef.current = null;
+    clearContributionStatus();
     setError(null);
   };
 
@@ -294,6 +323,45 @@ export function VideoCaptureScreen({
     review.setMode(mode);
     setError(null);
   };
+
+  const describeUpload = useCallback(
+    (uploaded: PendingClipUpload, state: ContributionStatus['state']): ContributionStatus => ({
+      contributionId: uploaded.contribution.id,
+      createdAt: uploaded.contribution.createdAt,
+      durationSeconds: uploaded.contribution.durationSeconds,
+      jobId: uploaded.job.id,
+      retryable: state === 'failed',
+      state,
+    }),
+    [],
+  );
+
+  const processUploaded = useCallback(
+    async (uploaded: PendingClipUpload): Promise<PendingClipUpload['job']> => {
+      latestUploadRef.current = uploaded;
+      setContributionStatus(describeUpload(uploaded, 'queued'));
+      if (!runtimeClient?.processClipJob || !demoSession?.session) return uploaded.job;
+
+      setContributionStatus(describeUpload(uploaded, 'processing'));
+      const session = demoSession.session;
+      const processed = await runtimeClient.processClipJob(
+        session.id,
+        session.groupId,
+        uploaded.job.id,
+      );
+      if (processed.status === 'ready') {
+        setContributionStatus({
+          ...describeUpload(uploaded, 'sealed'),
+          jobId: processed.id,
+        });
+        return processed;
+      }
+      const state = processed.status === 'processing' ? 'processing' : 'queued';
+      setContributionStatus({ ...describeUpload(uploaded, state), jobId: processed.id });
+      return processed;
+    },
+    [demoSession, describeUpload, runtimeClient, setContributionStatus],
+  );
 
   const upload = async () => {
     if (!isCaptureActive()) return;
@@ -334,16 +402,8 @@ export function VideoCaptureScreen({
       const uploaded = await uploadSession.upload(input, (progress) => {
         if (isCaptureActive() && activeUploadRef.current) setUploadProgress(progress);
       });
-      if (runtimeClient?.processClipJob && demoSession?.session) {
-        const session = demoSession.session;
-        const processed = await runtimeClient.processClipJob(
-          session.id,
-          session.groupId,
-          uploaded.job.id,
-        );
-        if (processed.status !== 'ready') {
-          throw new Error('The clip could not be processed. Retry the job.');
-        }
+      const processed = await processUploaded(uploaded);
+      if (processed.status === 'ready') {
         processingSucceededRef.current = true;
         try {
           await removeManagedRecordedClip(clip.sourceUri);
@@ -353,9 +413,26 @@ export function VideoCaptureScreen({
       }
     } catch (uploadError) {
       if (!isCaptureActive()) return;
-      setError(
-        uploadError instanceof Error ? uploadError.message : 'The clip could not be uploaded.',
+      const message =
+        uploadError instanceof Error ? uploadError.message : 'The clip could not be uploaded.';
+      if (message === 'The upload was cancelled.') {
+        clearContributionStatus();
+        setError(message);
+        return;
+      }
+      const uploaded = latestUploadRef.current;
+      setContributionStatus(
+        uploaded
+          ? { ...describeUpload(uploaded, 'failed'), message }
+          : {
+              createdAt: new Date().toISOString(),
+              durationSeconds: review.getReview().endSeconds - review.getReview().startSeconds,
+              message,
+              retryable: true,
+              state: 'failed',
+            },
       );
+      setError(message);
     } finally {
       activeUploadRef.current = false;
     }
@@ -365,14 +442,41 @@ export function VideoCaptureScreen({
     if (!isCaptureActive()) return;
     try {
       activeUploadRef.current = true;
-      await uploadSession?.retry((progress) => {
+      const retried = await uploadSession?.retry((progress) => {
         if (isCaptureActive() && activeUploadRef.current) setUploadProgress(progress);
       });
+      if (retried) {
+        const processed = await processUploaded(retried);
+        if (processed.status === 'ready') {
+          processingSucceededRef.current = true;
+          if (clip) {
+            try {
+              await removeManagedRecordedClip(clip.sourceUri);
+            } catch {
+              setError('The clip is sealed, but its local cache file could not be removed.');
+            }
+          }
+        }
+      }
     } catch (uploadError) {
       if (!isCaptureActive()) return;
-      setError(
-        uploadError instanceof Error ? uploadError.message : 'The clip could not be uploaded.',
-      );
+      const message =
+        uploadError instanceof Error ? uploadError.message : 'The clip could not be uploaded.';
+      if (message === 'The upload was cancelled.') {
+        clearContributionStatus();
+        setError(message);
+        return;
+      }
+      const uploaded = latestUploadRef.current;
+      if (uploaded) setContributionStatus({ ...describeUpload(uploaded, 'failed'), message });
+      else
+        setContributionStatus({
+          createdAt: new Date().toISOString(),
+          message,
+          retryable: true,
+          state: 'failed',
+        });
+      setError(message);
     } finally {
       activeUploadRef.current = false;
     }
@@ -394,9 +498,16 @@ export function VideoCaptureScreen({
       const message =
         cancelError instanceof Error && cancelError.message ? cancelError.message : 'Try again.';
       setUploadProgress({ status: 'failed', percent: 10, message });
+      setContributionStatus({
+        createdAt: new Date().toISOString(),
+        durationSeconds: review?.getReview().endSeconds,
+        message,
+        retryable: true,
+        state: 'failed',
+      });
       setError(`The upload could not be cancelled. ${message}`);
     }
-  }, [isCaptureActive, uploadProgress.status, uploadSession]);
+  }, [isCaptureActive, review, setContributionStatus, uploadProgress.status, uploadSession]);
 
   const leaveCapture = useCallback(() => {
     const currentClip = clipRef.current;
@@ -545,7 +656,7 @@ export function VideoCaptureScreen({
           </Pressable>
           {uploadProgress.status === 'complete' ? (
             <Text style={styles.success}>Upload queued as one pending contribution.</Text>
-          ) : (
+          ) : uploadProgress.status === 'failed' ? null : (
             <Pressable
               accessibilityRole="button"
               onPress={() => void upload()}
@@ -558,15 +669,12 @@ export function VideoCaptureScreen({
               </Text>
             </Pressable>
           )}
-          {uploadProgress.status === 'failed' ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void retryUpload()}
-              style={styles.outlineButton}
-            >
-              <Text style={styles.outlineText}>Retry upload</Text>
-            </Pressable>
-          ) : null}
+          <ContributionStatusPanel
+            onRetry={uploadProgress.status === 'failed' ? () => void retryUpload() : undefined}
+            retryLabel="Retry upload"
+            status={contributionStatus}
+            testID="camera-contribution-status"
+          />
           {uploadProgress.status === 'uploading' ? (
             <Pressable
               accessibilityRole="button"

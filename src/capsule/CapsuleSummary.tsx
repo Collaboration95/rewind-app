@@ -4,9 +4,15 @@ import { useCapsule } from './CapsuleProvider';
 import { useCycleCountdown } from './cycle-time';
 import type { Cycle } from '../domain/cycles';
 import { COLORS } from '../theme';
+import {
+  ContributionStatusPanel,
+  useOptionalContributionStatus,
+  type ContributionStatus,
+} from '../capture/contribution-status';
 
 export function CapsuleSummary({ clock = Date.now }: { clock?: () => number }) {
   const { state, retry } = useCapsule();
+  const contributionStatus = useOptionalContributionStatus()?.status ?? null;
 
   if (state.status === 'loading') {
     return (
@@ -64,15 +70,24 @@ export function CapsuleSummary({ clock = Date.now }: { clock?: () => number }) {
     );
   }
 
-  return <ReadyCapsuleSummary clock={clock} cycle={state.cycle} groupName={state.group.name} />;
+  return (
+    <ReadyCapsuleSummary
+      clock={clock}
+      contributionStatus={contributionStatus}
+      cycle={state.cycle}
+      groupName={state.group.name}
+    />
+  );
 }
 
 function ReadyCapsuleSummary({
   clock,
+  contributionStatus,
   cycle,
   groupName,
 }: {
   clock: () => number;
+  contributionStatus: ContributionStatus | null;
   cycle: Cycle;
   groupName: string;
 }) {
@@ -106,6 +121,8 @@ function ReadyCapsuleSummary({
           {countdown.label}
         </Text>
       </View>
+
+      <ContributionStatusPanel status={contributionStatus} testID="home-contribution-status" />
 
       <View
         accessible

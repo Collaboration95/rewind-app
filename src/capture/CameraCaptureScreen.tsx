@@ -19,6 +19,7 @@ import { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } f
 import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './metadata-store';
 import { ExpoCameraPlatform } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
+import { ContributionStatusPanel, useOptionalContributionStatus } from './contribution-status';
 
 export interface CameraCaptureScreenProps {
   platform?: CameraPlatform;
@@ -86,6 +87,7 @@ export function CameraCaptureScreen({
   const [state, setState] = useState<CaptureState>(initialCaptureState);
   const [cameraReady, setCameraReady] = useState(!platform.supportsLivePreview);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const contributionStatus = useOptionalContributionStatus()?.status ?? null;
 
   const refreshAccess = useCallback(async () => {
     setSettingsError(null);
@@ -256,6 +258,8 @@ export function CameraCaptureScreen({
           <Text style={styles.videoButtonText}>Record a 15-second clip</Text>
         </Pressable>
       ) : null}
+
+      <ContributionStatusPanel status={contributionStatus} testID="camera-contribution-status" />
 
       {platform.kind === 'demo' ? (
         <View
