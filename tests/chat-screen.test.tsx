@@ -193,6 +193,63 @@ describe('persistent group chat timeline', () => {
     expect(failed.getByTestId('chat-composer')).toBeTruthy();
   });
 
+  it('exposes accessible reply context and toggles a supported reaction', async () => {
+    const original = event(8, 'Original message', '2026-09-13T04:00:00.000Z');
+    const reply = event(9, 'A reply', '2026-09-13T04:01:00.000Z');
+    reply.message.replyTo = {
+      id: original.message.id,
+      memberId: original.message.memberId,
+      body: original.message.body,
+      createdAt: original.message.createdAt,
+    };
+    const runtime = runtimeMock({
+      sendChatReply: jest.fn().mockResolvedValue(reply),
+      toggleChatReaction: jest.fn().mockImplementation(async (_session, _group, messageId) => ({
+        reaction: {
+          messageId,
+          groupId: 'demo-group',
+          memberId: 'demo-1',
+          emoji: '✨',
+          active: true,
+          count: 1,
+        },
+        message: { ...original.message, reactionCounts: { '✨': 1 } },
+      })),
+    });
+    const result = await render(
+      <ChatSessionSurface
+        accessState="known"
+        capsuleStatus="ready"
+        group={group}
+        memberNames={memberNames}
+        retryCapsule={jest.fn()}
+        runtimeClient={runtime.client}
+        session={sessionA}
+      />,
+    );
+    await result.findByTestId('chat-empty');
+    await act(async () => runtime.emit(original));
+    await result.findByTestId(`chat-reaction-${original.message.id}`);
+    await fireEvent.press(result.getByTestId(`chat-reaction-${original.message.id}`));
+    await waitFor(() => expect(result.getByText('✨ Reacted 1')).toBeTruthy());
+    await fireEvent.press(result.getByTestId(`chat-reply-${original.message.id}`));
+    expect(result.getAllByText('Original message').length).toBeGreaterThan(0);
+    await fireEvent.changeText(result.getByTestId('chat-composer'), 'A reply');
+    await fireEvent.press(result.getByTestId('chat-send'));
+    await waitFor(() =>
+      expect(runtime.client.sendChatReply).toHaveBeenCalledWith(
+        sessionA.id,
+        group.id,
+        'A reply',
+        original.message.id,
+      ),
+    );
+    await act(async () => runtime.emit(reply));
+    expect(result.getByTestId('chat-reply-context')).toHaveAccessibleName(
+      'Replying to Original message',
+    );
+  });
+
   it('clears a previous group body before subscribing to a new group scope', async () => {
     const runtime = runtimeMock();
     const result = await render(

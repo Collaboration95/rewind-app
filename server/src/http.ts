@@ -14,7 +14,12 @@ import {
   restoreFixture,
   type RewindDatabase,
 } from './db';
-import { createChatMessage, listChatEvents } from './chat';
+import {
+  SUPPORTED_CHAT_REACTION,
+  createChatMessage,
+  listChatEvents,
+  toggleChatReaction,
+} from './chat';
 import { encodeSseEvent, RealtimeHub } from './realtime';
 import { advanceDemoCycle } from './cycles';
 import { classifyDemoSession } from './session/contract';
@@ -414,6 +419,8 @@ export async function handleRequest(
       sessionId: session.session.id,
       body: typeof body?.body === 'string' ? body.body : '',
       messageId: typeof body?.messageId === 'string' ? body.messageId : undefined,
+      replyToMessageId:
+        typeof body?.replyToMessageId === 'string' ? body.replyToMessageId : undefined,
       now,
     });
     if (!result.ok) {
@@ -425,12 +432,84 @@ export async function handleRequest(
             ? 'Enter a message before sending.'
             : result.reason === 'body_too_long'
               ? 'Message text is too long.'
-              : 'The message timestamp is invalid.',
+              : result.reason === 'reply_not_found'
+                ? 'The message you are replying to is not available in this group.'
+                : result.reason === 'nested_reply_not_allowed'
+                  ? 'Replies can only target an original message.'
+                  : 'The message timestamp is invalid.',
       });
       return;
     }
     options.realtimeHub?.publish(result.event);
     sendJson(response, config, 201, { event: result.event, message: result.event.message });
+    return;
+  }
+
+  const realtimeReactionMatch = url.pathname.match(
+    /^\/realtime\/groups\/([^/]+)\/messages\/([^/]+)\/reactions(?:\/([^/]+))?$/,
+  );
+  if (
+    realtimeReactionMatch &&
+    (request.method === 'GET' || request.method === 'POST' || request.method === 'DELETE')
+  ) {
+    const groupId = decodePathSegment(realtimeReactionMatch[1], response, config);
+    const messageId = decodePathSegment(realtimeReactionMatch[2], response, config);
+    const pathEmoji = realtimeReactionMatch[3]
+      ? decodePathSegment(realtimeReactionMatch[3], response, config)
+      : undefined;
+    if (groupId === null || messageId === null || pathEmoji === null) return;
+    const sessionId = url.searchParams.get('sessionId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId, now());
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (
+      !authorize(database, response, config, groupId, session.session.actor.memberId, 'message')
+    ) {
+      return;
+    }
+    if (request.method === 'GET') {
+      const message = getMessage(database, groupId, messageId);
+      if (!message) return sendNotFound(response, config);
+      sendJson(response, config, 200, { message });
+      return;
+    }
+    const body = await requestBody(request);
+    const emoji =
+      pathEmoji ??
+      (typeof body?.emoji === 'string' ? body.emoji : url.searchParams.get('emoji')) ??
+      SUPPORTED_CHAT_REACTION;
+    const active =
+      request.method === 'DELETE'
+        ? false
+        : typeof body?.active === 'boolean'
+          ? body.active
+          : body?.action === 'remove'
+            ? false
+            : body?.action === 'add'
+              ? true
+              : undefined;
+    const result = toggleChatReaction(database, {
+      groupId,
+      memberId: session.session.actor.memberId,
+      sessionId: session.session.id,
+      messageId,
+      emoji,
+      active,
+      now,
+    });
+    if (!result.ok) {
+      if (result.reason === 'membership_denied') return sendDenied(response, config);
+      if (result.reason === 'message_not_found') return sendNotFound(response, config);
+      sendJson(response, config, 400, {
+        error: `reaction_${result.reason}`,
+        message:
+          result.reason === 'unsupported_reaction'
+            ? 'That reaction is not supported.'
+            : 'The reaction timestamp is invalid.',
+      });
+      return;
+    }
+    sendJson(response, config, 200, result);
     return;
   }
 

@@ -101,6 +101,9 @@ export function ChatSessionSurface({
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
+  const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
+  const [reactionBusy, setReactionBusy] = useState<string | null>(null);
+  const [reactionActive, setReactionActive] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (accessState !== 'known' || !session || !group || !runtimeClient?.subscribeChat) return;
@@ -143,6 +146,8 @@ export function ChatSessionSurface({
     setMessages([]);
     setConnectionError(null);
     setSendError(null);
+    setReplyTarget(null);
+    setReactionActive({});
     if (capsuleStatus === 'error' || capsuleStatus === 'loading') retryCapsule();
     setRetryKey((current) => current + 1);
   }, [capsuleStatus, retryCapsule]);
@@ -153,9 +158,13 @@ export function ChatSessionSurface({
     setSending(true);
     setSendError(null);
     try {
-      const event = await runtimeClient.sendChatMessage(session.id, group.id, body);
+      const event =
+        replyTarget && runtimeClient.sendChatReply
+          ? await runtimeClient.sendChatReply(session.id, group.id, body, replyTarget.id)
+          : await runtimeClient.sendChatMessage(session.id, group.id, body);
       setMessages((current) => appendEvent(current, event));
       setDraft('');
+      setReplyTarget(null);
     } catch (error) {
       setSendError(
         error instanceof Error && error.message
@@ -165,7 +174,35 @@ export function ChatSessionSurface({
     } finally {
       setSending(false);
     }
-  }, [draft, group, runtimeClient, sending, session]);
+  }, [draft, group, replyTarget, runtimeClient, sending, session]);
+
+  const toggleReaction = useCallback(
+    async (message: ChatMessage) => {
+      if (!runtimeClient?.toggleChatReaction || !session || !group || reactionBusy) return;
+      const active = !(reactionActive[message.id] ?? false);
+      setReactionBusy(message.id);
+      try {
+        const result = await runtimeClient.toggleChatReaction(
+          session.id,
+          group.id,
+          message.id,
+          '✨',
+          active,
+        );
+        setMessages((current) =>
+          current.map((entry) =>
+            entry.message.id === message.id ? { ...entry, message: result.message } : entry,
+          ),
+        );
+        setReactionActive((current) => ({ ...current, [message.id]: result.reaction.active }));
+      } catch (error) {
+        setSendError(errorMessage(error));
+      } finally {
+        setReactionBusy(null);
+      }
+    },
+    [group, reactionActive, reactionBusy, runtimeClient, session],
+  );
 
   const effectiveTimelineState: TimelineState =
     accessState === 'denied'
@@ -247,10 +284,12 @@ export function ChatSessionSurface({
           messages.map(({ message }) => {
             const author = memberNames.get(message.memberId) ?? 'Group member';
             const isCurrentMember = message.memberId === session?.actor.memberId;
+            const reactionCount = message.reactionCounts?.['✨'] ?? 0;
+            const canReply = Boolean(runtimeClient?.sendChatReply && !message.replyTo);
             return (
               <View
                 accessible
-                accessibilityLabel={`${author}${isCurrentMember ? ', you' : ''}. ${message.body}. ${formatTimestamp(message.createdAt)}`}
+                accessibilityLabel={`${author}${isCurrentMember ? ', you' : ''}. ${message.body}. ${formatTimestamp(message.createdAt)}${message.replyTo ? `. Reply to ${message.replyTo.body}` : ''}${reactionCount ? `. ${reactionCount} sparkle reactions` : ''}`}
                 key={message.id}
                 style={[styles.message, isCurrentMember && styles.currentMessage]}
                 testID="chat-message"
@@ -259,7 +298,49 @@ export function ChatSessionSurface({
                   <Text style={styles.author}>{isCurrentMember ? 'You' : author}</Text>
                   <Text style={styles.timestamp}>{formatTimestamp(message.createdAt)}</Text>
                 </View>
+                {message.replyTo ? (
+                  <View
+                    accessible
+                    accessibilityLabel={`Replying to ${message.replyTo.body}`}
+                    style={styles.replyContext}
+                    testID="chat-reply-context"
+                  >
+                    <Text style={styles.replyLabel}>REPLYING TO</Text>
+                    <Text numberOfLines={2} style={styles.replyText}>
+                      {message.replyTo.body}
+                    </Text>
+                  </View>
+                ) : null}
                 <Text style={styles.messageBody}>{message.body}</Text>
+                {runtimeClient?.toggleChatReaction || canReply ? (
+                  <View style={styles.messageActions}>
+                    {runtimeClient?.toggleChatReaction ? (
+                      <Pressable
+                        accessibilityLabel={`${reactionCount} sparkle reactions${reactionActive[message.id] ? ', remove yours' : ', add sparkle reaction'}`}
+                        accessibilityRole="button"
+                        disabled={reactionBusy === message.id}
+                        onPress={() => void toggleReaction(message)}
+                        style={styles.actionButton}
+                        testID={`chat-reaction-${message.id}`}
+                      >
+                        <Text style={styles.actionText}>
+                          {reactionActive[message.id] ? '✨ Reacted' : '✨'} {reactionCount}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    {canReply ? (
+                      <Pressable
+                        accessibilityLabel={`Reply to ${author}`}
+                        accessibilityRole="button"
+                        onPress={() => setReplyTarget(message)}
+                        style={styles.actionButton}
+                        testID={`chat-reply-${message.id}`}
+                      >
+                        <Text style={styles.actionText}>Reply</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ) : null}
               </View>
             );
           })}
@@ -274,6 +355,22 @@ export function ChatSessionSurface({
       {showComposer && runtimeClient?.sendChatMessage && group && session ? (
         <View style={styles.composer}>
           <Text style={styles.fieldLabel}>MESSAGE</Text>
+          {replyTarget ? (
+            <View accessible style={styles.composerReply} testID="chat-reply-target">
+              <Text style={styles.replyLabel}>REPLYING TO</Text>
+              <Text numberOfLines={1} style={styles.replyText}>
+                {replyTarget.body}
+              </Text>
+              <Pressable
+                accessibilityLabel="Cancel reply"
+                accessibilityRole="button"
+                onPress={() => setReplyTarget(null)}
+                testID="chat-reply-cancel"
+              >
+                <Text style={styles.actionText}>Cancel</Text>
+              </Pressable>
+            </View>
+          ) : null}
           <TextInput
             accessibilityLabel="Chat message"
             maxLength={MESSAGE_MAX_LENGTH}
@@ -349,6 +446,27 @@ const styles = StyleSheet.create({
   author: { color: COLORS.ink, fontSize: 13, fontWeight: '700' },
   timestamp: { color: COLORS.muted, fontSize: 11 },
   messageBody: { color: COLORS.ink, fontSize: 16, lineHeight: 23 },
+  messageActions: { flexDirection: 'row', gap: 8, marginTop: 2 },
+  actionButton: { paddingVertical: 3, paddingHorizontal: 2 },
+  actionText: { color: COLORS.edge, fontSize: 12, fontWeight: '700' },
+  replyContext: {
+    backgroundColor: COLORS.background,
+    borderLeftColor: COLORS.edge,
+    borderLeftWidth: 3,
+    gap: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  composerReply: {
+    backgroundColor: COLORS.paper,
+    borderColor: COLORS.line,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 3,
+    padding: 8,
+  },
+  replyLabel: { color: COLORS.edge, fontSize: 10, fontWeight: '700', letterSpacing: 1 },
+  replyText: { color: COLORS.muted, fontSize: 12 },
   composer: {
     backgroundColor: COLORS.background,
     borderColor: COLORS.line,

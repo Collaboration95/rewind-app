@@ -12,6 +12,7 @@ const MIGRATION_FILES = [
   '004-invites.sql',
   '005-media-idempotency.sql',
   '006-realtime-messages.sql',
+  '007-chat-replies-reactions.sql',
 ] as const;
 const MIGRATIONS = MIGRATION_FILES.map((fileName, index) => ({
   version: index + 1,
@@ -344,11 +345,41 @@ export function isOwner(database: RewindDatabase, groupId: string, memberId: str
 }
 
 export function getMessage(database: RewindDatabase, groupId: string, messageId: string) {
-  return database
+  const row = database
     .prepare(
-      'SELECT id, group_id AS groupId, member_id AS memberId, body, created_at AS createdAt FROM messages WHERE id = ? AND group_id = ?',
+      `SELECT m.id, m.group_id AS groupId, m.member_id AS memberId,
+        m.body, m.created_at AS createdAt,
+        parent.id AS replyToId, parent.member_id AS replyToMemberId,
+        parent.body AS replyToBody, parent.created_at AS replyToCreatedAt
+       FROM messages m
+       LEFT JOIN messages parent ON parent.id = m.reply_to_message_id
+       WHERE m.id = ? AND m.group_id = ?`,
     )
     .get(messageId, groupId);
+  if (!row) return null;
+  const message = row as Record<string, unknown>;
+  const counts = database
+    .prepare('SELECT emoji, COUNT(*) AS count FROM reactions WHERE message_id = ? GROUP BY emoji')
+    .all(messageId) as { emoji?: unknown; count?: unknown }[];
+  const reactionCounts = Object.fromEntries(
+    counts.map((count) => [String(count.emoji), Number(count.count)]),
+  );
+  return {
+    id: String(message.id),
+    groupId: String(message.groupId),
+    memberId: String(message.memberId),
+    body: String(message.body),
+    createdAt: String(message.createdAt),
+    replyTo: message.replyToId
+      ? {
+          id: String(message.replyToId),
+          memberId: String(message.replyToMemberId),
+          body: String(message.replyToBody),
+          createdAt: String(message.replyToCreatedAt),
+        }
+      : null,
+    reactionCounts,
+  };
 }
 
 export function getContribution(database: RewindDatabase, groupId: string, contributionId: string) {

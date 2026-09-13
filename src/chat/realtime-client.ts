@@ -4,6 +4,26 @@ export interface ChatMessage {
   memberId: string;
   body: string;
   createdAt: string;
+  replyTo?: ChatReplyContext | null;
+  reactionCounts?: Partial<Record<ChatReactionEmoji, number>>;
+}
+
+export interface ChatReplyContext {
+  id: string;
+  memberId: string;
+  body: string;
+  createdAt: string;
+}
+
+export type ChatReactionEmoji = '✨';
+
+export interface ChatReactionResult {
+  messageId: string;
+  groupId: string;
+  memberId: string;
+  emoji: ChatReactionEmoji;
+  active: boolean;
+  count: number;
 }
 
 export interface ChatMessageEvent {
@@ -84,13 +104,18 @@ export class RealtimeChatClient {
     this.eventSourceFactory = options.eventSourceFactory ?? defaultEventSourceFactory;
   }
 
-  async sendMessage(sessionId: string, groupId: string, body: string): Promise<ChatMessageEvent> {
+  async sendMessage(
+    sessionId: string,
+    groupId: string,
+    body: string,
+    replyToMessageId?: string,
+  ): Promise<ChatMessageEvent> {
     const response = await this.fetchImpl(
       `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages?sessionId=${encodeURIComponent(sessionId)}`,
       {
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, ...(replyToMessageId ? { replyToMessageId } : {}) }),
       },
     );
     const payload = (await response.json().catch(() => ({}))) as {
@@ -106,6 +131,43 @@ export class RealtimeChatClient {
       );
     }
     return payload.event;
+  }
+
+  async toggleReaction(
+    sessionId: string,
+    groupId: string,
+    messageId: string,
+    emoji: ChatReactionEmoji = '✨',
+    active?: boolean,
+  ): Promise<{ reaction: ChatReactionResult; message: ChatMessage }> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(messageId)}/reactions?sessionId=${encodeURIComponent(sessionId)}`,
+      {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emoji, ...(active === undefined ? {} : { active }) }),
+      },
+    );
+    const payload = (await response.json().catch(() => ({}))) as {
+      reaction?: ChatReactionResult;
+      message?: ChatMessage | string;
+      error?: string;
+    };
+    if (
+      !response.ok ||
+      !payload.reaction ||
+      !payload.message ||
+      typeof payload.message === 'string'
+    ) {
+      throw new RealtimeChatError(
+        typeof payload.message === 'string'
+          ? payload.message
+          : `Local realtime runtime returned HTTP ${response.status}.`,
+        response.status,
+        payload.error,
+      );
+    }
+    return { reaction: payload.reaction, message: payload.message as ChatMessage };
   }
 
   subscribe(sessionId: string, groupId: string, options: SubscribeOptions): RealtimeSubscription {
