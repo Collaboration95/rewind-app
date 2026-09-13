@@ -199,6 +199,7 @@ export function claimStagedSource(
   memberId: string,
   idempotencyKey: string,
   now = new Date(),
+  sourcePath?: string,
 ): { ok: true; source: StagedSource; existing: boolean } | { ok: false; reason: 'conflict' } {
   const sourceId = stagedSourceId(idempotencyKey);
   const sourceUri = `staged://${sourceId}`;
@@ -209,6 +210,30 @@ export function claimStagedSource(
     started = true;
     const existing = findStagedSource(database, sourceUri);
     if (existing) {
+      // A pending source with a path has an active intake owner. The path is
+      // written as part of this transaction, before the request reads its
+      // body, so a second same-key request cannot race into the same target.
+      // A pending legacy row without a path can be claimed by the first
+      // request that supplies one (for example after a process restart).
+      if (
+        existing.groupId === groupId &&
+        existing.memberId === memberId &&
+        existing.idempotencyKeyHash === idempotencyKeyHash &&
+        existing.status === 'pending' &&
+        sourcePath &&
+        !existing.sourcePath
+      ) {
+        database
+          .prepare(
+            "UPDATE staged_sources SET source_path = ? WHERE source_uri = ? AND status = 'pending' AND source_path IS NULL",
+          )
+          .run(sourcePath, sourceUri);
+        const claimed = findStagedSource(database, sourceUri);
+        if (!claimed) throw new Error('Staged source could not be persisted.');
+        database.exec('COMMIT');
+        started = false;
+        return { ok: true, source: claimed, existing: false };
+      }
       database.exec('COMMIT');
       return existing.groupId === groupId &&
         existing.memberId === memberId &&
@@ -219,10 +244,18 @@ export function claimStagedSource(
     database
       .prepare(
         `INSERT INTO staged_sources
-          (source_id, source_uri, idempotency_key_hash, group_id, member_id, status, created_at)
-         VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+          (source_id, source_uri, idempotency_key_hash, group_id, member_id, source_path, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
       )
-      .run(sourceId, sourceUri, idempotencyKeyHash, groupId, memberId, now.toISOString());
+      .run(
+        sourceId,
+        sourceUri,
+        idempotencyKeyHash,
+        groupId,
+        memberId,
+        sourcePath ?? null,
+        now.toISOString(),
+      );
     const source = findStagedSource(database, sourceUri);
     if (!source) throw new Error('Staged source could not be persisted.');
     database.exec('COMMIT');
@@ -265,6 +298,22 @@ export function markStagedSourceReady(
        WHERE source_uri = ? AND status = 'pending'`,
     )
     .run(byteLength, sourcePath ?? null, sourceUri);
+}
+
+/** Release an intake claim after its body/probe failed so a retry can reclaim it. */
+export function resetStagedSourceClaim(
+  database: RewindDatabase,
+  sourceUri: string,
+  sourcePath: string,
+): void {
+  database
+    .prepare(
+      `UPDATE staged_sources
+       SET source_path = NULL, byte_length = NULL, status = 'pending'
+       WHERE source_uri = ? AND source_path = ? AND status = 'pending'`,
+    )
+    .run(sourceUri, sourcePath);
+  database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
 }
 
 export function removeStagedSource(database: RewindDatabase, sourceUri: string): void {
@@ -499,7 +548,10 @@ export function createClipUpload(
   const requestValidation = validateClipUpload(input);
   if (requestValidation) return requestValidation;
   const verified = storedClipMetadata(database, input.sourceUri);
-  if (options.requireVerifiedMetadata && isStagedSource && !verified) {
+  // Production enqueue paths must consume only a server-probed, owner-bound
+  // staged capability. In particular, never let a caller substitute an
+  // arbitrary absolute/file:// path when verification is required.
+  if (options.requireVerifiedMetadata && (!isStagedSource || !verified)) {
     return { ok: false, reason: 'invalid_media' };
   }
   const effectiveInput = verified
@@ -661,7 +713,7 @@ export function cancelClipUpload(
   jobId: string,
   options: CancelClipUploadOptions = {},
 ): CancelClipUploadResult {
-  const row = database
+  let row = database
     .prepare(
       `SELECT j.id AS jobId, c.id AS contributionId, c.cycle_id AS cycleId,
                 c.duration_seconds AS durationSeconds, c.quota_window_start_at AS windowStartsAt,
@@ -683,6 +735,24 @@ export function cancelClipUpload(
   if (!row) return { ok: false, reason: 'not_found' };
   beginImmediateWithRetry(database);
   try {
+    // Re-read under the writer lock. A processor may claim the job between
+    // the initial lookup and BEGIN; cancellation must never delete a job that
+    // has already moved out of the pending state.
+    const lockedRow = database
+      .prepare(
+        `SELECT j.id AS jobId, c.id AS contributionId, c.cycle_id AS cycleId,
+                  c.duration_seconds AS durationSeconds, c.quota_window_start_at AS windowStartsAt,
+                  j.source_path AS sourcePath
+         FROM media_jobs j JOIN contributions c ON c.id = j.contribution_id
+         WHERE j.id = ? AND j.group_id = ? AND c.member_id = ? AND j.kind = 'clip'
+           AND j.status = 'pending'`,
+      )
+      .get(jobId, groupId, memberId) as typeof row;
+    if (!lockedRow) {
+      database.exec('COMMIT');
+      return { ok: false, reason: 'not_found' };
+    }
+    row = lockedRow;
     database.prepare('DELETE FROM media_jobs WHERE id = ?').run(row.jobId);
     database.prepare('DELETE FROM contributions WHERE id = ?').run(row.contributionId);
     database

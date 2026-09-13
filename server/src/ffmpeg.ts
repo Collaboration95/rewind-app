@@ -215,7 +215,9 @@ export async function probeClipWithFfmpeg(
         ],
         { timeout: 20_000, maxBuffer: 2_000_000 },
       ),
-      stat(inputPath),
+      // Stat the same normalized, boundary-checked path passed to ffprobe.
+      // `inputPath` may be a file:// URL, which is not a filesystem path.
+      stat(safeInputPath),
     ]);
     const parsed = JSON.parse(probe.stdout) as {
       format?: { format_name?: string; duration?: string };

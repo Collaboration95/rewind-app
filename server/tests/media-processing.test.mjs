@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
@@ -12,13 +16,15 @@ const { migrateDatabase, openDatabase } = await import('../dist/db.js');
 const { copyFile, utimes } = await import('node:fs/promises');
 const {
   claimStagedSource,
+  cancelClipUpload,
   createClipUpload,
   markStagedSourceReady,
   setStagedSourcePath,
   stagedSourceId,
   stagedSourcePath,
 } = await import('../dist/media/index.js');
-const { cleanupOrphanedStagedSources, processClipJob } = await import('../dist/jobs/index.js');
+const { cleanupOrphanedStagedSources, processClipJob, PROCESSING_CLAIM_LEASE_MS } =
+  await import('../dist/jobs/index.js');
 const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 
@@ -38,7 +44,7 @@ async function withDatabase(run) {
   }
 }
 
-async function createSyntheticSource(path) {
+async function createSyntheticSource(path, firstColor = 'red') {
   await execFileAsync(
     'ffmpeg',
     [
@@ -49,7 +55,7 @@ async function createSyntheticSource(path) {
       '-f',
       'lavfi',
       '-i',
-      'color=c=red:size=180x320:rate=12:duration=1',
+      `color=c=${firstColor}:size=180x320:rate=12:duration=1`,
       '-f',
       'lavfi',
       '-i',
@@ -224,11 +230,16 @@ test('the shared probe accepts only playable portrait MP4 sources with audio', a
     const mp4Path = `${dataDir}/probe.mp4`;
     await createSyntheticSource(mp4Path);
     const metadata = await probeClipWithFfmpeg(config.ffmpegBin, mp4Path);
+    const fileUrlMetadata = await probeClipWithFfmpeg(
+      config.ffmpegBin,
+      pathToFileURL(mp4Path).href,
+    );
     assert.equal(metadata.mimeType, 'video/mp4');
     assert.equal(metadata.hasAudio, true);
     assert.equal(metadata.width, 180);
     assert.equal(metadata.height, 320);
     assert.ok(metadata.durationSeconds > 0);
+    assert.deepEqual(fileUrlMetadata, metadata);
 
     const webmPath = `${dataDir}/probe.webm`;
     await execFileAsync('ffmpeg', [
@@ -252,6 +263,69 @@ test('the shared probe accepts only playable portrait MP4 sources with audio', a
       webmPath,
     ]);
     await assert.rejects(probeClipWithFfmpeg(config.ffmpegBin, webmPath));
+  });
+});
+
+async function* delayedBody(buffer) {
+  for (let offset = 0; offset < buffer.byteLength; offset += 1024) {
+    yield buffer.subarray(offset, Math.min(offset + 1024, buffer.byteLength));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test('same-key staging claims one pending source and rejects a concurrent distinct payload', async () => {
+  await withDatabase(async ({ database, config, dataDir }) => {
+    const firstPath = `${dataDir}/first.mp4`;
+    const secondPath = `${dataDir}/second.mp4`;
+    await createSyntheticSource(firstPath, 'red');
+    await createSyntheticSource(secondPath, 'green');
+    database
+      .prepare('UPDATE cycles SET ends_at = ? WHERE id = ?')
+      .run(new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), 'demo-cycle');
+    const server = createRuntimeServer(config, database);
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-1' }),
+      });
+      const { session } = await sessionResponse.json();
+      const query = `sessionId=${encodeURIComponent(session.id)}&groupId=demo-group&idempotencyKey=concurrent-stage-key`;
+      const [firstBody, secondBody] = await Promise.all([
+        readFile(firstPath),
+        readFile(secondPath),
+      ]);
+      const responses = await Promise.all(
+        [firstBody, secondBody].map((body) =>
+          fetch(`${baseUrl}/contributions/upload/source?${query}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'video/mp4' },
+            body: delayedBody(body),
+            duplex: 'half',
+          }),
+        ),
+      );
+      assert.deepEqual(
+        responses.map((response) => response.status).sort((a, b) => a - b),
+        [201, 409],
+      );
+      const sourceUri = `staged://${stagedSourceId('concurrent-stage-key')}`;
+      const sourcePath = stagedSourcePath(sourceUri, `${dataDir}/media/staging`);
+      assert.ok(sourcePath);
+      const stored = await readFile(sourcePath);
+      assert.equal(
+        [firstBody, secondBody].some((body) => Buffer.compare(stored, body) === 0),
+        true,
+      );
+      assert.equal(database.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 1);
+      assert.equal(database.prepare('SELECT status FROM staged_sources').get().status, 'staged');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 });
 
@@ -300,6 +374,72 @@ test('processing failure is recoverable and never discloses media paths', async 
     });
     assert.deepEqual(retry, { ok: true, jobId, status: 'ready' });
     await assert.rejects(access(stagedSourcePath));
+  });
+});
+
+test('a stale processing claim is recoverable after a worker restart', async () => {
+  await withDatabase(async ({ database, config, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const sourcePath = `${stagingDir}/stale-claim.mp4`;
+    await mkdir(stagingDir, { recursive: true });
+    await createSyntheticSource(sourcePath);
+    const jobId = await enqueue(database, sourcePath, 'soft-focus', 'stale-claim-key');
+    database
+      .prepare(
+        `UPDATE media_jobs
+         SET status = 'processing', processing_started_at = ?
+         WHERE id = ?`,
+      )
+      .run(new Date(Date.now() - PROCESSING_CLAIM_LEASE_MS - 1_000).toISOString(), jobId);
+    const result = await processClipJob(database, {
+      jobId,
+      ffmpegBin: config.ffmpegBin,
+      stagingDir,
+      outputDir: `${dataDir}/processed`,
+    });
+    assert.deepEqual(result, { ok: true, jobId, status: 'ready' });
+    assert.equal(
+      database
+        .prepare('SELECT processing_started_at AS startedAt FROM media_jobs WHERE id = ?')
+        .get(jobId).startedAt,
+      null,
+    );
+    await assert.rejects(access(sourcePath));
+  });
+});
+
+test('cancellation rechecks the job state after a concurrent processor claim', async () => {
+  await withDatabase(async ({ database, config, dataDir }) => {
+    const sourcePath = `${dataDir}/cancel-race.mp4`;
+    const jobId = await enqueue(database, sourcePath, 'soft-focus', 'cancel-race-key');
+    const worker = new Worker(
+      `const { parentPort, workerData } = require('node:worker_threads');
+       const { DatabaseSync } = require('node:sqlite');
+       const db = new DatabaseSync(workerData.databasePath);
+       db.exec('BEGIN IMMEDIATE');
+       db.prepare("UPDATE media_jobs SET status = 'processing' WHERE id = ?").run(workerData.jobId);
+       parentPort.postMessage('claimed');
+       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120);
+       db.exec('COMMIT');
+       db.close();`,
+      { eval: true, workerData: { databasePath: config.databasePath, jobId } },
+    );
+    try {
+      await new Promise((resolve, reject) => {
+        worker.once('message', (message) => (message === 'claimed' ? resolve() : undefined));
+        worker.once('error', reject);
+      });
+      assert.deepEqual(cancelClipUpload(database, 'demo-group', 'demo-1', jobId), {
+        ok: false,
+        reason: 'not_found',
+      });
+      assert.equal(
+        database.prepare('SELECT status FROM media_jobs WHERE id = ?').get(jobId).status,
+        'processing',
+      );
+    } finally {
+      await worker.terminate();
+    }
   });
 });
 
@@ -375,6 +515,25 @@ test('session-authorized HTTP processing completes a staged capture workflow', a
       // with a different key is intentionally indistinguishable from a
       // missing resource and must not delete the owner's source.
       assert.equal(invalidUploadResponse.status, 404);
+      await access(stagedSourcePath(invalidSource.uri, stagingDir));
+      const malformedKeyResponse = await fetch(`${baseUrl}/contributions/upload?${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey: 'bad',
+          sourceUri: invalidSource.uri,
+          mimeType: 'video/mp4',
+          byteLength: 10_000,
+          durationSeconds: 1.25,
+          width: 180,
+          height: 320,
+          hasAudio: true,
+          mode: 'soft-focus',
+          trimStartSeconds: 0.25,
+          trimEndSeconds: 1.5,
+        }),
+      });
+      assert.equal(malformedKeyResponse.status, 400);
       await access(stagedSourcePath(invalidSource.uri, stagingDir));
       const uploadResponse = await fetch(`${baseUrl}/contributions/upload?${query}`, {
         method: 'POST',
@@ -461,7 +620,7 @@ test('session-authorized HTTP processing completes a staged capture workflow', a
 });
 
 test('migration versions are explicit and guard legacy media-v6 promotion until quota is installed', async () => {
-  await withDatabase(async ({ database }) => {
+  await withDatabase(async ({ database, dataDir }) => {
     const versions = database
       .prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all()
@@ -474,6 +633,36 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
     database
       .prepare('DELETE FROM schema_migration_markers WHERE migration_key IN (?, ?)')
       .run('contribution-quota-v1', 'media-processing-v1');
+    const originalKey = 'legacy-original-key';
+    const legacySourceUri = `staged://${'f'.repeat(32)}`;
+    const legacySourcePath = `${dataDir}/legacy-source.mp4`;
+    database
+      .prepare('UPDATE media_jobs SET source_path = ?, idempotency_key = ? WHERE id = ?')
+      .run(
+        legacySourcePath,
+        createHash('sha256').update(originalKey).digest('hex').slice(0, 32),
+        'demo-clip',
+      );
+    database.exec(
+      `CREATE TABLE staged_media_sources (
+         source_uri TEXT PRIMARY KEY, group_id TEXT NOT NULL, member_id TEXT NOT NULL,
+         source_path TEXT NOT NULL, created_at TEXT NOT NULL
+       );`,
+    );
+    database
+      .prepare(
+        `INSERT INTO media_metadata
+          (source_uri, mime_type, byte_length, duration_seconds, width, height, has_audio, verified_at)
+         VALUES (?, 'video/mp4', 1000, 1, 180, 320, 1, ?)`,
+      )
+      .run(legacySourceUri, new Date().toISOString());
+    database
+      .prepare(
+        `INSERT INTO staged_media_sources
+          (source_uri, group_id, member_id, source_path, created_at)
+         VALUES (?, 'demo-group', 'demo-1', ?, ?)`,
+      )
+      .run(legacySourceUri, legacySourcePath, new Date().toISOString());
     database
       .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)')
       .run(new Date().toISOString());
@@ -493,6 +682,35 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
         .get(),
       undefined,
     );
+    const migrated = database
+      .prepare(
+        'SELECT idempotency_key_hash AS idempotencyKeyHash FROM staged_sources WHERE source_uri = ?',
+      )
+      .get(legacySourceUri);
+    assert.equal(
+      migrated.idempotencyKeyHash,
+      createHash('sha256').update(originalKey).digest('hex').slice(0, 32),
+    );
+    const retry = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        idempotencyKey: originalKey,
+        sourceUri: legacySourceUri,
+        mimeType: 'video/mp4',
+        byteLength: 1000,
+        durationSeconds: 1,
+        width: 180,
+        height: 320,
+        hasAudio: true,
+        mode: 'soft-focus',
+      },
+      new Date('2026-09-10T12:00:00.000Z'),
+      { stagingDir: `${dataDir}/media/staging`, requireVerifiedMetadata: true },
+    );
+    assert.equal(retry.ok, true);
+    assert.equal(retry.ok && retry.upload.existing, true);
   });
 });
 
@@ -562,5 +780,30 @@ test('staged source tokens cannot be enqueued across owner or group boundaries',
       { stagingDir, requireVerifiedMetadata: true },
     );
     assert.deepEqual(result, { ok: false, reason: 'not_found' });
+  });
+});
+
+test('production enqueue rejects arbitrary local paths without verified staged metadata', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const result = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        idempotencyKey: 'arbitrary-path-key',
+        sourceUri: pathToFileURL(`${dataDir}/caller-owned.mp4`).href,
+        mimeType: 'video/mp4',
+        byteLength: 1000,
+        durationSeconds: 1,
+        width: 180,
+        height: 320,
+        hasAudio: true,
+        mode: 'soft-focus',
+      },
+      new Date('2026-09-10T12:00:00.000Z'),
+      { stagingDir: `${dataDir}/media/staging`, requireVerifiedMetadata: true },
+    );
+    assert.deepEqual(result, { ok: false, reason: 'invalid_media' });
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM media_jobs').get().count, 3);
   });
 });

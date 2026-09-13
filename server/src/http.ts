@@ -35,7 +35,8 @@ import {
   findStagedSource,
   markStagedSourceReady,
   recordClipMediaMetadata,
-  setStagedSourcePath,
+  resetStagedSourceClaim,
+  stagedSourceId,
   stagedSourcePath,
   type ClipUploadInput,
 } from './media';
@@ -534,12 +535,17 @@ export async function handleRequest(
     }
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
     await cleanupOrphanedStagedSources(database, stagingDir);
+    const sourceId = stagedSourceId(idempotencyKey);
+    const sourceUri = `staged://${sourceId}`;
+    const sourcePath = stagedSourcePath(sourceUri, stagingDir);
+    if (!sourcePath) return sendNotFound(response, config);
     const claim = claimStagedSource(
       database,
       groupId,
       session.session.actor.memberId,
       idempotencyKey,
       now(),
+      sourcePath,
     );
     if (!claim.ok) {
       sendJson(response, config, 409, {
@@ -548,14 +554,13 @@ export async function handleRequest(
       });
       return;
     }
-    const sourceId = claim.source.sourceId;
-    const sourceUri = `staged://${sourceId}`;
-    const sourcePath = stagedSourcePath(sourceUri, stagingDir);
-    if (!sourcePath) return sendNotFound(response, config);
-    setStagedSourcePath(database, sourceUri, sourcePath);
+    // The intake route always writes to the deterministic server-owned path;
+    // never trust a path carried by a legacy/database row as a write target.
+    const claimedSourcePath = sourcePath;
+    let canStage = !claim.existing;
     if (claim.existing && claim.source.status === 'staged') {
       const existingMetadata = findStagedSource(database, sourceUri);
-      if (existingMetadata?.byteLength && existsSync(sourcePath)) {
+      if (existingMetadata?.byteLength && existsSync(claimedSourcePath)) {
         sendJson(response, config, 200, {
           source: { id: sourceId, uri: sourceUri, byteLength: existingMetadata.byteLength },
         });
@@ -565,13 +570,24 @@ export async function handleRequest(
       // reset the same owner/key to pending before replacing its source.
       database
         .prepare(
-          "UPDATE staged_sources SET status = 'pending', byte_length = NULL WHERE source_uri = ?",
+          "UPDATE staged_sources SET status = 'pending', byte_length = NULL, source_path = NULL WHERE source_uri = ?",
         )
         .run(sourceUri);
+      canStage = true;
+    }
+    // A pending claim with a source path belongs to an intake request that is
+    // already consuming its body. Reject the duplicate before it can write a
+    // distinct payload over the same deterministic destination.
+    if (!canStage && claim.existing && claim.source.status === 'pending') {
+      sendJson(response, config, 409, {
+        error: 'upload_source_conflict',
+        message: 'That upload is already being staged. Retry after it completes.',
+      });
+      return;
     }
     try {
-      await stageSourceBody(request, stagingDir, sourcePath);
-      const probed = await probeClipWithFfmpeg(config.ffmpegBin, sourcePath, stagingDir);
+      await stageSourceBody(request, stagingDir, claimedSourcePath);
+      const probed = await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
       database.exec('BEGIN');
       try {
         recordClipMediaMetadata(database, {
@@ -582,7 +598,7 @@ export async function handleRequest(
           byteLength: probed.byteLength,
           verifiedAt: now().toISOString(),
         });
-        markStagedSourceReady(database, sourceUri, probed.byteLength, sourcePath);
+        markStagedSourceReady(database, sourceUri, probed.byteLength, claimedSourcePath);
         database.exec('COMMIT');
       } catch (error) {
         database.exec('ROLLBACK');
@@ -592,7 +608,8 @@ export async function handleRequest(
         source: { id: sourceId, uri: sourceUri, byteLength: probed.byteLength },
       });
     } catch (error) {
-      await rm(sourcePath, { force: true }).catch(() => undefined);
+      await rm(claimedSourcePath, { force: true }).catch(() => undefined);
+      resetStagedSourceClaim(database, sourceUri, claimedSourcePath);
       const message =
         error instanceof Error && error.message === 'source too large'
           ? 'The clip is larger than 50 MB.'
@@ -650,7 +667,12 @@ export async function handleRequest(
     );
     if (!result.ok) {
       if (result.reason === 'not_found') return sendNotFound(response, config);
-      cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
+      // Key validation happens before capability ownership is established. Do
+      // not let an invalid-key request delete a URI supplied by another
+      // capture (or an arbitrary caller-controlled URI).
+      if (result.reason !== 'invalid_key') {
+        cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
+      }
       sendJson(response, config, result.reason === 'quota_exceeded' ? 409 : 400, {
         error: `upload_${result.reason}`,
         message:

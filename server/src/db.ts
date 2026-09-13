@@ -82,18 +82,46 @@ export function migrateDatabase(database: RewindDatabase): void {
     const applied = database
       .prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = ?')
       .get(migration.version) as { applied?: number } | undefined;
-    if (marked?.applied && applied?.applied) continue;
+    if (marked?.applied && applied?.applied) {
+      if (
+        migration.key === 'media-processing-v1' &&
+        tableColumns(database, 'media_jobs').has('source_path') &&
+        !tableColumns(database, 'media_jobs').has('processing_started_at')
+      ) {
+        database.exec('ALTER TABLE media_jobs ADD COLUMN processing_started_at TEXT');
+      }
+      continue;
+    }
     const quotaReady =
       hasTable(database, 'contribution_quota_windows') &&
       hasTable(database, 'staged_sources') &&
       hasTable(database, 'media_metadata') &&
       tableColumns(database, 'contributions').has('quota_window_start_at');
+    const mediaBaseReady = [
+      'source_path',
+      'trim_start_seconds',
+      'trim_end_seconds',
+      'mode',
+      'error_code',
+    ].every((column) => tableColumns(database, 'media_jobs').has(column));
+
+    // Older #45 databases already ran the media migration before the worker
+    // lease column was introduced. Add that nullable column in place so a
+    // restart can recover a job claimed by a process that died mid-transform.
+    if (
+      migration.key === 'media-processing-v1' &&
+      mediaBaseReady &&
+      !tableColumns(database, 'media_jobs').has('processing_started_at')
+    ) {
+      database.exec('ALTER TABLE media_jobs ADD COLUMN processing_started_at TEXT');
+    }
     const mediaReady = [
       'source_path',
       'trim_start_seconds',
       'trim_end_seconds',
       'mode',
       'error_code',
+      'processing_started_at',
     ].every((column) => tableColumns(database, 'media_jobs').has(column));
 
     // Version 6 was briefly occupied by #45's media ALTERs. The stable
@@ -194,8 +222,12 @@ function migrateLegacyStagedSources(database: RewindDatabase): void {
         'SELECT idempotency_key AS idempotencyKey FROM media_jobs WHERE source_path = ? LIMIT 1',
       )
       .get(row.sourcePath) as { idempotencyKey?: string } | undefined;
+    // `media_jobs.idempotency_key` was already persisted as the 32-character
+    // SHA-256 key hash by the legacy #45 implementation. Preserve it exactly;
+    // hashing it again would make a retry with the original client key fail
+    // the staged capability binding after migration.
     const idempotencyKeyHash = linkedJob?.idempotencyKey
-      ? createHash('sha256').update(linkedJob.idempotencyKey).digest('hex').slice(0, 32)
+      ? linkedJob.idempotencyKey
       : createHash('sha256').update(row.sourceUri).digest('hex').slice(0, 32);
     insert.run(
       sourceId,

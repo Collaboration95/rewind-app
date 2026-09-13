@@ -88,6 +88,9 @@ export interface ProcessClipJobOptions {
   actorMemberId?: string | null;
 }
 
+/** A worker claim is recoverable after a process dies without completing it. */
+export const PROCESSING_CLAIM_LEASE_MS = 15 * 60 * 1000;
+
 export type ProcessClipJobResult =
   | { ok: true; jobId: string; status: 'ready' }
   | {
@@ -105,6 +108,7 @@ interface ClipJobRow {
   trimStartSeconds: number | null;
   trimEndSeconds: number | null;
   mode: string | null;
+  processingStartedAt: string | null;
 }
 
 function safeOutputName(jobId: string): string {
@@ -116,7 +120,7 @@ function markFailed(database: RewindDatabase, jobId: string, errorCode: string):
   database
     .prepare(
       `UPDATE media_jobs
-       SET status = 'failed', output_path = NULL, error_code = ?
+       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL
        WHERE id = ? AND kind = 'clip'`,
     )
     .run(errorCode, jobId);
@@ -135,7 +139,8 @@ export async function processClipJob(
     .prepare(
       `SELECT id, status, source_path AS sourcePath,
               trim_start_seconds AS trimStartSeconds,
-              trim_end_seconds AS trimEndSeconds, mode
+              trim_end_seconds AS trimEndSeconds, mode,
+              processing_started_at AS processingStartedAt
        FROM media_jobs
        WHERE id = ? AND kind = 'clip' ${options.groupId ? 'AND group_id = ?' : ''}`,
     )
@@ -151,7 +156,14 @@ export async function processClipJob(
     };
   }
   if (row.status === 'ready') return { ok: true, jobId: row.id, status: 'ready' };
-  if (row.status === 'processing') {
+  const processingStartedAt = row.processingStartedAt
+    ? Date.parse(row.processingStartedAt)
+    : Number.NaN;
+  const staleProcessing =
+    row.status === 'processing' &&
+    (!Number.isFinite(processingStartedAt) ||
+      Date.now() - processingStartedAt >= PROCESSING_CLAIM_LEASE_MS);
+  if (row.status === 'processing' && !staleProcessing) {
     return {
       ok: false,
       jobId: row.id,
@@ -160,7 +172,7 @@ export async function processClipJob(
       message: 'The media job is already processing.',
     };
   }
-  if (!['pending', 'failed'].includes(row.status)) {
+  if (!['pending', 'failed', 'processing'].includes(row.status)) {
     return {
       ok: false,
       jobId: row.id,
@@ -173,9 +185,11 @@ export async function processClipJob(
   const claim = database
     .prepare(
       `UPDATE media_jobs SET status = 'processing', error_code = NULL
-       WHERE id = ? AND kind = 'clip' AND status IN ('pending', 'failed')`,
+       , processing_started_at = ?
+       WHERE id = ? AND kind = 'clip' AND status IN ('pending', 'failed', 'processing')
+         AND (processing_started_at IS ? OR processing_started_at = ?)`,
     )
-    .run(row.id);
+    .run(new Date().toISOString(), row.id, row.processingStartedAt, row.processingStartedAt);
   if (Number(claim.changes) !== 1) {
     return {
       ok: false,
@@ -222,7 +236,8 @@ export async function processClipJob(
         database
           .prepare(
             `UPDATE media_jobs
-             SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL
+             SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL,
+                 processing_started_at = NULL
              WHERE id = ? AND kind = 'clip' AND status = 'processing'`,
           )
           .run(outputPath, row.id);
