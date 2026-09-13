@@ -192,6 +192,26 @@ test('a non-member cannot open a group realtime subscription or post', async () 
   }
 });
 
+test('an EventSource-compatible denial sends a terminal SSE event', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-sse-denial-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const { server, baseUrl } = await startRuntime(config, database);
+  const session = await createSession(baseUrl, 'demo-2');
+  try {
+    const response = await fetch(
+      `${baseUrl}/realtime/groups/missing-group/events?sessionId=${encodeURIComponent(session.id)}`,
+      { headers: { Accept: 'text/event-stream' } },
+    );
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /event: access-denied/);
+    assert.match(body, /"status":403/);
+  } finally {
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
 test('a session invalidated while the request body is delayed cannot persist a message', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-delay-test-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
@@ -340,5 +360,57 @@ test('persisted message events replay after the runtime and database are reopene
   } finally {
     await reader.cancel();
     await closeRuntime(secondRuntime.server, reopened, dataDir);
+  }
+});
+
+test('retrying the same client message id replays one persisted event', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-idempotency-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const hub = new RealtimeHub();
+  const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
+  const session = await createSession(baseUrl, 'demo-1');
+  try {
+    const messageId = 'client-retry-message';
+    const request = () =>
+      fetch(
+        `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: 'retry this safely', messageId }),
+        },
+      );
+    const first = await request();
+    assert.equal(first.status, 201);
+    const firstPayload = await first.json();
+    const retry = await request();
+    assert.equal(retry.status, 200);
+    const retryPayload = await retry.json();
+    assert.equal(retryPayload.deduplicated, true);
+    assert.deepEqual(retryPayload.event, firstPayload.event);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM messages WHERE id = ?').get(messageId).count,
+      1,
+    );
+    assert.equal(
+      database
+        .prepare('SELECT COUNT(*) AS count FROM realtime_events WHERE message_id = ?')
+        .get(messageId).count,
+      1,
+    );
+
+    const conflict = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'different text', messageId }),
+      },
+    );
+    assert.equal(conflict.status, 409);
+    assert.equal((await conflict.json()).error, 'message_duplicate_message');
+  } finally {
+    await closeRuntime(server, database, dataDir);
   }
 });

@@ -33,10 +33,15 @@ export interface CreateChatMessageInput {
 }
 
 export type CreateChatMessageResult =
-  | { ok: true; event: ChatMessageEvent }
+  | { ok: true; event: ChatMessageEvent; deduplicated?: boolean }
   | {
       ok: false;
-      reason: 'membership_denied' | 'empty_body' | 'body_too_long' | 'invalid_timestamp';
+      reason:
+        | 'membership_denied'
+        | 'empty_body'
+        | 'body_too_long'
+        | 'invalid_timestamp'
+        | 'duplicate_message';
     };
 
 function mapMessage(row: Record<string, unknown>): ChatMessage {
@@ -132,6 +137,36 @@ export function createChatMessage(
     if (!sessionIsCurrent || !isMember(database, input.groupId, input.memberId)) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'membership_denied' };
+    }
+
+    // A client may have persisted the message but lost the HTTP response. A
+    // retry with the same client-generated id must return that event instead
+    // of inserting another message (or publishing the same event twice).
+    const existing = database
+      .prepare(
+        `SELECT m.id, m.group_id AS groupId, m.member_id AS memberId,
+          m.body, m.created_at AS createdAt,
+          e.id AS eventId, e.occurred_at AS occurredAt
+         FROM messages m
+         LEFT JOIN realtime_events e ON e.message_id = m.id
+         WHERE m.id = ?`,
+      )
+      .get(messageId) as Record<string, unknown> | undefined;
+    if (existing) {
+      const sameRequest =
+        String(existing.groupId) === input.groupId &&
+        String(existing.memberId) === input.memberId &&
+        String(existing.body) === body;
+      if (!sameRequest || existing.eventId === null || existing.eventId === undefined) {
+        database.exec('ROLLBACK');
+        return { ok: false, reason: 'duplicate_message' };
+      }
+      database.exec('COMMIT');
+      return {
+        ok: true,
+        deduplicated: true,
+        event: mapEvent(existing),
+      };
     }
     database
       .prepare(
