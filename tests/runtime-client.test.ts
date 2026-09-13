@@ -337,4 +337,22 @@ describe('LocalRuntimeClient', () => {
       ],
     ]);
   });
+
+  it('stages captured bytes before clip submission', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValue(response(201, { source: { uri: 'staged://source-1', byteLength: 3 } }));
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(
+      client.stageClipSource('session-1', 'demo-group', 'clip-stage-1', btoa('mp4')),
+    ).resolves.toEqual({ uri: 'staged://source-1', byteLength: 3 });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining('/contributions/upload/source?'),
+      expect.objectContaining({
+        body: expect.any(Uint8Array),
+        headers: { Accept: 'application/json', 'Content-Type': 'video/mp4' },
+        method: 'POST',
+      }),
+    );
+  });
 });
