@@ -10,6 +10,7 @@ import type { DemoSession, DemoSessionStore } from '../src/domain/session';
 import type { PendingClipUpload, RecordedClip } from '../src/domain/video';
 import type { CameraPlatform, PermissionSnapshot } from '../src/capture/contracts';
 import type { VideoRecordingPlatform } from '../src/capture/video-recording';
+import { LocalRuntimeError } from '../src/runtime/local-runtime-client';
 import type { RuntimeClient } from '../src/runtime/local-runtime-client';
 
 jest.mock('@react-native-async-storage/async-storage', () =>

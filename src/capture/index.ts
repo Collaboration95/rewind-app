@@ -53,6 +53,7 @@ export {
   ClipUploadSession,
   MAX_CLIP_BYTES,
   validateClipUploadInput,
+  type ClipUploadErrorOptions,
   type ClipUploadProgress,
   type ClipUploadTransport,
 } from './clip-uploader';

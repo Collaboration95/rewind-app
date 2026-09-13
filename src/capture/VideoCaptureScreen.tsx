@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
 import { AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { RuntimeClient } from '../runtime/local-runtime-client';
+import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 import { COLORS } from '../theme';
 import type {
@@ -11,7 +11,7 @@ import type {
   PendingClipUpload,
   RecordedClip,
 } from '../domain/video';
-import { ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
+import { ClipUploadError, ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
 import {
   ContributionStatusPanel,
   useOptionalContributionStatus,
@@ -43,6 +43,52 @@ function isVideoPlatform(
     typeof (platform as Partial<VideoRecordingPlatform>).recordClip === 'function' &&
     typeof (platform as Partial<VideoRecordingPlatform>).stopRecording === 'function' &&
     typeof (platform as Partial<VideoRecordingPlatform>).cancelRecording === 'function'
+  );
+}
+
+interface ContributionFailure {
+  message: string;
+  retryable: boolean;
+}
+
+/**
+ * A retry is only safe when the same contribution may be submitted again.
+ * Runtime errors carry status/code metadata; do not infer retryability from
+ * the upload progress because processing can fail after upload is complete.
+ */
+function classifyContributionFailure(error: unknown): ContributionFailure {
+  const message = error instanceof Error ? error.message : 'The clip could not be uploaded.';
+  if (error instanceof ClipUploadError) {
+    return { message, retryable: error.retryable };
+  }
+  if (error instanceof LocalRuntimeError) {
+    if (error.status !== undefined && error.status >= 400 && error.status < 500) {
+      return { message, retryable: false };
+    }
+    if (
+      [
+        'authorization',
+        'forbidden',
+        'invalid_duration',
+        'invalid_metadata',
+        'missing_source',
+        'not_found',
+        'quota_exceeded',
+        'source_unavailable',
+        'validation',
+      ].includes(error.code ?? '')
+    ) {
+      return { message, retryable: false };
+    }
+    return { message, retryable: true };
+  }
+  return { message, retryable: true };
+}
+
+function isUploadCancellation(error: unknown): boolean {
+  return (
+    (error instanceof ClipUploadError && error.code === 'cancelled') ||
+    (error instanceof Error && error.message === 'The upload was cancelled.')
   );
 }
 
@@ -327,12 +373,18 @@ export function VideoCaptureScreen({
   };
 
   const describeUpload = useCallback(
-    (uploaded: PendingClipUpload, state: ContributionStatus['state']): ContributionStatus => ({
+    (
+      uploaded: PendingClipUpload,
+      state: ContributionStatus['state'],
+      options: Pick<ContributionStatus, 'message' | 'retryable'> = {
+        retryable: state === 'failed',
+      },
+    ): ContributionStatus => ({
       contributionId: uploaded.contribution.id,
       createdAt: uploaded.contribution.createdAt,
       durationSeconds: uploaded.contribution.durationSeconds,
       jobId: uploaded.job.id,
-      retryable: state === 'failed',
+      ...options,
       state,
     }),
     [],
@@ -352,14 +404,26 @@ export function VideoCaptureScreen({
         uploaded.job.id,
       );
       if (processed.status === 'ready') {
-        setContributionStatus({
-          ...describeUpload(uploaded, 'sealed'),
-          jobId: processed.id,
-        });
-        return processed;
+        setContributionStatus(describeUpload(uploaded, 'sealed'));
+      } else if (processed.status === 'processing') {
+        setContributionStatus(describeUpload(uploaded, 'processing'));
+      } else if (processed.status === 'failed') {
+        setContributionStatus(
+          describeUpload(uploaded, 'failed', {
+            message: 'The clip could not be processed. Retry the job.',
+            retryable: true,
+          }),
+        );
+      } else if (processed.status === 'cancelled') {
+        setContributionStatus(
+          describeUpload(uploaded, 'failed', {
+            message: 'The contribution was cancelled. Retake it to submit a new contribution.',
+            retryable: false,
+          }),
+        );
+      } else {
+        setContributionStatus(describeUpload(uploaded, 'queued'));
       }
-      const state = processed.status === 'processing' ? 'processing' : 'queued';
-      setContributionStatus({ ...describeUpload(uploaded, state), jobId: processed.id });
       return processed;
     },
     [demoSession, describeUpload, runtimeClient, setContributionStatus],
@@ -415,26 +479,24 @@ export function VideoCaptureScreen({
       }
     } catch (uploadError) {
       if (!isCaptureActive()) return;
-      const message =
-        uploadError instanceof Error ? uploadError.message : 'The clip could not be uploaded.';
-      if (message === 'The upload was cancelled.') {
+      const failure = classifyContributionFailure(uploadError);
+      if (isUploadCancellation(uploadError)) {
         clearContributionStatus();
-        setError(message);
+        setError(failure.message);
         return;
       }
       const uploaded = latestUploadRef.current;
       setContributionStatus(
         uploaded
-          ? { ...describeUpload(uploaded, 'failed'), message }
+          ? describeUpload(uploaded, 'failed', failure)
           : {
               createdAt: new Date().toISOString(),
               durationSeconds: review.getReview().endSeconds - review.getReview().startSeconds,
-              message,
-              retryable: true,
+              ...failure,
               state: 'failed',
             },
       );
-      setError(message);
+      setError(failure.message);
     } finally {
       activeUploadRef.current = false;
     }
@@ -462,23 +524,21 @@ export function VideoCaptureScreen({
       }
     } catch (uploadError) {
       if (!isCaptureActive()) return;
-      const message =
-        uploadError instanceof Error ? uploadError.message : 'The clip could not be uploaded.';
-      if (message === 'The upload was cancelled.') {
+      const failure = classifyContributionFailure(uploadError);
+      if (isUploadCancellation(uploadError)) {
         clearContributionStatus();
-        setError(message);
+        setError(failure.message);
         return;
       }
       const uploaded = latestUploadRef.current;
-      if (uploaded) setContributionStatus({ ...describeUpload(uploaded, 'failed'), message });
+      if (uploaded) setContributionStatus(describeUpload(uploaded, 'failed', failure));
       else
         setContributionStatus({
           createdAt: new Date().toISOString(),
-          message,
-          retryable: true,
+          ...failure,
           state: 'failed',
         });
-      setError(message);
+      setError(failure.message);
     } finally {
       activeUploadRef.current = false;
     }
@@ -497,17 +557,15 @@ export function VideoCaptureScreen({
       await uploadSession.cancel();
     } catch (cancelError) {
       if (!isCaptureActive()) return;
-      const message =
-        cancelError instanceof Error && cancelError.message ? cancelError.message : 'Try again.';
-      setUploadProgress({ status: 'failed', percent: 10, message });
+      const failure = classifyContributionFailure(cancelError);
+      setUploadProgress({ status: 'failed', percent: 10, message: failure.message });
       setContributionStatus({
         createdAt: new Date().toISOString(),
         durationSeconds: review?.getReview().endSeconds,
-        message,
-        retryable: true,
+        ...failure,
         state: 'failed',
       });
-      setError(`The upload could not be cancelled. ${message}`);
+      setError(`The upload could not be cancelled. ${failure.message}`);
     }
   }, [isCaptureActive, review, setContributionStatus, uploadProgress.status, uploadSession]);
 
@@ -708,9 +766,9 @@ export function VideoCaptureScreen({
           >
             <Text style={styles.outlineText}>Retake</Text>
           </Pressable>
-          {uploadProgress.status === 'complete' ? (
+          {uploadProgress.status === 'complete' && !contributionFailed ? (
             <Text style={styles.success}>Upload queued as one pending contribution.</Text>
-          ) : uploadProgress.status === 'failed' ? null : (
+          ) : uploadProgress.status === 'failed' || contributionFailed ? null : (
             <Pressable
               accessibilityRole="button"
               onPress={() => void upload()}

@@ -183,7 +183,10 @@ export function useOptionalContributionStatus(): ContributionStatusContextValue 
   return useContext(ContributionStatusContext);
 }
 
-const lifecycleCopy: Record<ContributionLifecycle, { body: string; title: string }> = {
+const lifecycleCopy: Record<
+  Exclude<ContributionLifecycle, 'failed'>,
+  { body: string; title: string }
+> = {
   queued: {
     title: 'Contribution queued',
     body: 'Your contribution is safely queued. It stays sealed while processing begins.',
@@ -196,11 +199,18 @@ const lifecycleCopy: Record<ContributionLifecycle, { body: string; title: string
     title: 'Contribution sealed',
     body: 'The contribution is ready for the group reveal. Its media stays unavailable until then.',
   },
-  failed: {
-    title: 'Contribution needs a retry',
-    body: 'The contribution could not be prepared. Retry is available without exposing its file.',
-  },
 };
+
+const failureCopy = (retryable: boolean): { body: string; title: string } =>
+  retryable
+    ? {
+        title: 'Contribution needs a retry',
+        body: 'The contribution could not be prepared. Retry is available without exposing its file.',
+      }
+    : {
+        title: 'Contribution could not be prepared',
+        body: 'This contribution cannot be retried. Retake it to submit a new contribution.',
+      };
 
 export function ContributionStatusPanel({
   onDelete,
@@ -218,7 +228,8 @@ export function ContributionStatusPanel({
   testID?: string;
 }) {
   if (!status) return null;
-  const copy = lifecycleCopy[status.state];
+  const copy =
+    status.state === 'failed' ? failureCopy(status.retryable) : lifecycleCopy[status.state];
   const metadata = status.durationSeconds
     ? `${status.durationSeconds.toFixed(1)} seconds · metadata only`
     : 'Metadata only · no media is shown';
