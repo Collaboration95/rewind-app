@@ -123,9 +123,8 @@ describe('Rewind Home start screen', () => {
     expect(await result.findByTestId('camera-capability-undecided')).toBeTruthy();
 
     await fireEvent.press(result.getByRole('tab', { name: 'Chat' }));
-    expect(
-      result.getByText('Chat is not implemented. No messages are being sent or stored.'),
-    ).toBeTruthy();
+    expect(result.getByRole('header', { name: 'Chat' })).toBeTruthy();
+    expect(await result.findByTestId('chat-unavailable')).toBeTruthy();
 
     await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
     expect(
