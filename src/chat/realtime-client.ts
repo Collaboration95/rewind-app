@@ -63,6 +63,8 @@ export type RealtimeEventSourceFactory = (url: string) => RealtimeEventSource;
 export interface RealtimeChatClientOptions {
   eventSourceFactory?: RealtimeEventSourceFactory;
   reconnectDelayMs?: number;
+  /** Maximum time a direct message POST may remain in flight. */
+  sendTimeoutMs?: number;
 }
 
 export interface SubscribeOptions {
@@ -141,6 +143,7 @@ export class RealtimeChatClient {
   private readonly fetchImpl: typeof fetch;
   private readonly eventSourceFactory: RealtimeEventSourceFactory;
   private readonly reconnectDelayMs: number;
+  private readonly sendTimeoutMs: number;
 
   constructor(
     baseUrl: string,
@@ -155,6 +158,11 @@ export class RealtimeChatClient {
       throw new RealtimeChatError('The realtime reconnect delay must not be negative.');
     }
     this.reconnectDelayMs = reconnectDelayMs;
+    const sendTimeoutMs = options.sendTimeoutMs ?? 10_000;
+    if (!Number.isFinite(sendTimeoutMs) || sendTimeoutMs <= 0) {
+      throw new RealtimeChatError('The realtime message send timeout must be greater than zero.');
+    }
+    this.sendTimeoutMs = sendTimeoutMs;
   }
 
   /** Create a retryable draft without changing or discarding its compose text. */
@@ -172,34 +180,57 @@ export class RealtimeChatClient {
     const messageId =
       options.messageId ??
       (isMessageDraft(bodyOrDraft) ? bodyOrDraft.messageId : randomMessageId());
-    try {
-      const response = await this.fetchImpl(
-        `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages?sessionId=${encodeURIComponent(sessionId)}`,
-        {
-          method: 'POST',
-          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            body,
-            messageId,
-            ...(options.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {}),
-          }),
-        },
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    const timeoutController =
+      typeof AbortController === 'function' ? new AbortController() : undefined;
+    const timeoutError = () =>
+      new RealtimeChatError(
+        `The realtime message did not receive a response within ${this.sendTimeoutMs} ms. You can retry safely.`,
+        undefined,
+        'send_timeout',
+        messageId,
       );
-      const payload = (await response.json().catch(() => ({}))) as {
-        event?: ChatMessageEvent;
-        message?: string;
-        error?: string;
-      };
-      if (!response.ok || !payload.event) {
-        throw new RealtimeChatError(
-          payload.message ?? `Local realtime runtime returned HTTP ${response.status}.`,
-          response.status,
-          payload.error,
-          messageId,
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          timedOut = true;
+          timeoutController?.abort();
+          reject(timeoutError());
+        }, this.sendTimeoutMs);
+      });
+      const requestPromise = (async () => {
+        const response = await this.fetchImpl(
+          `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages?sessionId=${encodeURIComponent(sessionId)}`,
+          {
+            method: 'POST',
+            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              body,
+              messageId,
+              ...(options.replyToMessageId ? { replyToMessageId: options.replyToMessageId } : {}),
+            }),
+            ...(timeoutController ? { signal: timeoutController.signal } : {}),
+          },
         );
-      }
-      return payload.event;
+        const payload = (await response.json().catch(() => ({}))) as {
+          event?: ChatMessageEvent;
+          message?: string;
+          error?: string;
+        };
+        if (!response.ok || !payload.event) {
+          throw new RealtimeChatError(
+            payload.message ?? `Local realtime runtime returned HTTP ${response.status}.`,
+            response.status,
+            payload.error,
+            messageId,
+          );
+        }
+        return payload.event;
+      })();
+      return await Promise.race([requestPromise, timeoutPromise]);
     } catch (error) {
+      if (timedOut) throw timeoutError();
       if (error instanceof RealtimeChatError) throw error;
       throw new RealtimeChatError(
         error instanceof Error && error.message
@@ -209,6 +240,8 @@ export class RealtimeChatClient {
         'network_error',
         messageId,
       );
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
   }
 

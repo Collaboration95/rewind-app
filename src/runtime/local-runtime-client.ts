@@ -94,7 +94,7 @@ export interface RuntimeClient {
   sendChatReply?(
     sessionId: string,
     groupId: string,
-    body: string,
+    bodyOrDraft: string | ChatMessageDraft,
     replyToMessageId: string,
   ): Promise<ChatMessageEvent>;
   toggleChatReaction?(
@@ -175,12 +175,14 @@ export class LocalRuntimeClient implements RuntimeClient {
   ) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.fetchImpl = fetchImpl;
-    this.realtimeChatClient = new RealtimeChatClient(baseUrl, fetchImpl as typeof fetch);
     const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_RUNTIME_REQUEST_TIMEOUT_MS;
     if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
       throw new LocalRuntimeError('The local runtime request timeout must be greater than zero.');
     }
     this.requestTimeoutMs = requestTimeoutMs;
+    this.realtimeChatClient = new RealtimeChatClient(baseUrl, fetchImpl as typeof fetch, {
+      sendTimeoutMs: requestTimeoutMs,
+    });
   }
 
   async getHealth(): Promise<RuntimeHealth> {
@@ -440,10 +442,10 @@ export class LocalRuntimeClient implements RuntimeClient {
   sendChatReply(
     sessionId: string,
     groupId: string,
-    body: string,
+    bodyOrDraft: string | ChatMessageDraft,
     replyToMessageId: string,
   ): Promise<ChatMessageEvent> {
-    return this.realtimeChatClient.sendMessage(sessionId, groupId, body, {
+    return this.realtimeChatClient.sendMessage(sessionId, groupId, bodyOrDraft, {
       replyToMessageId,
     });
   }

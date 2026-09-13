@@ -247,7 +247,7 @@ describe('persistent group chat timeline', () => {
       expect(runtime.client.sendChatReply).toHaveBeenCalledWith(
         sessionA.id,
         group.id,
-        'A reply',
+        expect.objectContaining({ body: 'A reply', messageId: expect.any(String) }),
         original.message.id,
       ),
     );
@@ -255,6 +255,40 @@ describe('persistent group chat timeline', () => {
     expect(result.getByTestId('chat-reply-context')).toHaveAccessibleName(
       'Replying to Original message',
     );
+  });
+
+  it('retains a reply draft identity when the response is lost and retries', async () => {
+    const original = event(12, 'Original for retry', '2026-09-13T06:00:00.000Z');
+    const reply = event(13, 'Reply after retry', '2026-09-13T06:01:00.000Z');
+    const sendChatReply = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('The response was lost.'))
+      .mockResolvedValueOnce(reply);
+    const runtime = runtimeMock({ sendChatReply });
+    const result = await render(
+      <ChatSessionSurface
+        accessState="known"
+        capsuleStatus="ready"
+        group={group}
+        memberNames={memberNames}
+        retryCapsule={jest.fn()}
+        runtimeClient={runtime.client}
+        session={sessionA}
+      />,
+    );
+    await result.findByTestId('chat-empty');
+    await act(async () => runtime.emit(original));
+    await result.findByTestId(`chat-reply-${original.message.id}`);
+    await fireEvent.press(result.getByTestId(`chat-reply-${original.message.id}`));
+    await fireEvent.changeText(result.getByTestId('chat-composer'), 'Retry this reply');
+    await fireEvent.press(result.getByTestId('chat-send'));
+    await result.findByTestId('chat-send-error');
+    const firstDraft = sendChatReply.mock.calls[0][2];
+    expect(firstDraft).toEqual(expect.objectContaining({ body: 'Retry this reply' }));
+    await fireEvent.press(result.getByTestId('chat-send-retry'));
+    await waitFor(() => expect(sendChatReply).toHaveBeenCalledTimes(2));
+    expect(sendChatReply.mock.calls[1][2].messageId).toBe(firstDraft.messageId);
+    expect(result.getByText('Reply after retry')).toBeTruthy();
   });
 
   it('lets the server-authoritative toggle remove a reaction persisted before remount', async () => {

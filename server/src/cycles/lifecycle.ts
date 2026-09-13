@@ -126,6 +126,23 @@ function currentCycleId(database: RewindDatabase, groupId: string): string | nul
   return row?.currentCycleId ? String(row.currentCycleId) : null;
 }
 
+/** A release is only safe once the durable film job has committed its output. */
+function hasReadyCompilationOutput(
+  database: RewindDatabase,
+  groupId: string,
+  cycleId: string,
+): boolean {
+  const job = database
+    .prepare(
+      `SELECT status, output_path AS outputPath
+       FROM media_jobs
+       WHERE kind = 'film' AND cycle_id = ? AND group_id = ?
+       ORDER BY id ASC LIMIT 1`,
+    )
+    .get(cycleId, groupId) as { status?: string; outputPath?: string | null } | undefined;
+  return job?.status === 'ready' && typeof job.outputPath === 'string' && job.outputPath.length > 0;
+}
+
 function addEvent(
   database: RewindDatabase,
   cycleId: string,
@@ -164,6 +181,10 @@ export function publishCycleRelease(
       return { ok: false, reason: 'not_found' };
     }
     if (cycle.releaseStatus === 'published') {
+      if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId)) {
+        database.exec('ROLLBACK');
+        return { ok: false, reason: 'not_ready' };
+      }
       database.exec('COMMIT');
       return { ok: true, action: 'already_published', cycle };
     }
@@ -174,6 +195,10 @@ export function publishCycleRelease(
     if (publishedAt.getTime() < instant(cycle.endsAt, 'invalid_state').getTime()) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'too_early' };
+    }
+    if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId)) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'not_ready' };
     }
     database
       .prepare(
@@ -246,6 +271,12 @@ export function advanceCycleLifecycle(
 
     if (cycle.status === 'revealing') {
       if (cycle.releaseStatus !== 'published') {
+        database.exec('COMMIT');
+        return { ok: true, action: 'waiting_for_release', cycle, nextCycle: null };
+      }
+      if (!hasReadyCompilationOutput(database, input.groupId, cycle.id)) {
+        // A stale or externally repaired release marker must not advance the
+        // archive pointer until the durable compilation output is present.
         database.exec('COMMIT');
         return { ok: true, action: 'waiting_for_release', cycle, nextCycle: null };
       }

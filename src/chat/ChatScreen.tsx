@@ -281,7 +281,7 @@ export function ChatSessionSurface({
     try {
       const event =
         replyTarget && runtimeClient.sendChatReply
-          ? await runtimeClient.sendChatReply(session.id, group.id, body, replyTarget.id)
+          ? await runtimeClient.sendChatReply(session.id, group.id, messageDraft, replyTarget.id)
           : await runtimeClient.sendChatMessage(session.id, group.id, messageDraft);
       if (!isCurrentSend() || event.message.groupId !== group.id) return;
       setMessages((current) => appendEvent(current, event));

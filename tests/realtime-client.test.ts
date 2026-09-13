@@ -198,3 +198,34 @@ test('send failures retain a draft id for an explicit retry', async () => {
   expect(JSON.parse(fetchImpl.mock.calls[0][1].body as string).messageId).toBe(draft.messageId);
   expect(JSON.parse(fetchImpl.mock.calls[1][1].body as string).messageId).toBe(draft.messageId);
 });
+
+test('bounds a direct chat send, aborts fetch, and preserves its retry identity', async () => {
+  jest.useFakeTimers();
+  try {
+    let requestInit: RequestInit | undefined;
+    const fetchImpl = jest.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          requestInit = init;
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    );
+    const client = new RealtimeChatClient('http://127.0.0.1:8787', fetchImpl, {
+      sendTimeoutMs: 25,
+    });
+    const draft = client.createDraft('response may be lost');
+    const request = client.sendMessage('session-1', 'demo-group', draft);
+    const rejection = expect(request).rejects.toMatchObject({
+      code: 'send_timeout',
+      messageId: draft.messageId,
+    });
+    await jest.advanceTimersByTimeAsync(25);
+    await rejection;
+    expect(requestInit?.signal).toBeDefined();
+    expect(JSON.parse(fetchImpl.mock.calls[0]?.[1]?.body as string).messageId).toBe(
+      draft.messageId,
+    );
+  } finally {
+    jest.useRealTimers();
+  }
+});

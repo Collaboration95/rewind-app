@@ -171,6 +171,33 @@ test('cycle lifecycle transitions wait for release and create one successor idem
       'waiting_for_release',
     );
 
+    const filmJob = database
+      .prepare("SELECT id FROM media_jobs WHERE kind = 'film' AND cycle_id = ?")
+      .get('demo-cycle');
+    assert.ok(filmJob);
+    assert.equal(
+      publishCycleRelease(database, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+        publishedAt: new Date('2026-09-11T00:00:30.000Z'),
+      }).reason,
+      'not_ready',
+    );
+    database
+      .prepare("UPDATE media_jobs SET status = 'failed', output_path = NULL WHERE id = ?")
+      .run(filmJob.id);
+    assert.equal(
+      publishCycleRelease(database, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+        publishedAt: new Date('2026-09-11T00:00:45.000Z'),
+      }).reason,
+      'not_ready',
+    );
+    database
+      .prepare("UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = ?")
+      .run('/private/film/demo-cycle.mp4', filmJob.id);
+
     const publishedAt = new Date('2026-09-11T00:01:00.000Z');
     assert.equal(
       publishCycleRelease(database, {
@@ -206,6 +233,61 @@ test('cycle lifecycle transitions wait for release and create one successor idem
     assert.equal(replay.ok, true);
     assert.equal(replay.action, 'already_archived');
     assert.equal(replay.nextCycle.id, archived.nextCycle.id);
+  });
+});
+
+test('lifecycle never archives or creates a successor without a ready film output', async () => {
+  await withDatabase(async ({ database }) => {
+    const boundary = new Date('2026-09-11T00:00:00.000Z');
+    database
+      .prepare('UPDATE cycles SET starts_at = ?, ends_at = ? WHERE id = ?')
+      .run('2026-09-10T00:00:00.000Z', boundary.toISOString(), 'demo-cycle');
+    const revealing = advanceCycleLifecycle(database, {
+      groupId: 'demo-group',
+      clock: () => boundary,
+    });
+    assert.equal(revealing.action, 'revealing');
+    const filmJob = database
+      .prepare("SELECT id FROM media_jobs WHERE kind = 'film' AND cycle_id = ?")
+      .get('demo-cycle');
+    assert.ok(filmJob);
+
+    // Simulate a stale published marker left by an interrupted release call.
+    database
+      .prepare(
+        "UPDATE cycles SET release_status = 'published', release_published_at = ? WHERE id = ?",
+      )
+      .run('2026-09-11T00:01:00.000Z', 'demo-cycle');
+    const pending = advanceCycleLifecycle(database, {
+      groupId: 'demo-group',
+      clock: () => new Date('2026-09-11T00:02:00.000Z'),
+    });
+    assert.equal(pending.action, 'waiting_for_release');
+    assert.equal(pending.cycle.status, 'revealing');
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM cycles').get().count, 1);
+
+    database
+      .prepare("UPDATE media_jobs SET status = 'failed', output_path = NULL WHERE id = ?")
+      .run(filmJob.id);
+    const failed = advanceCycleLifecycle(database, {
+      groupId: 'demo-group',
+      clock: () => new Date('2026-09-11T00:03:00.000Z'),
+    });
+    assert.equal(failed.action, 'waiting_for_release');
+    assert.equal(failed.cycle.status, 'revealing');
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM cycles').get().count, 1);
+
+    database
+      .prepare("UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = ?")
+      .run('/private/film/demo-cycle.mp4', filmJob.id);
+    const archived = advanceCycleLifecycle(database, {
+      groupId: 'demo-group',
+      clock: () => new Date('2026-09-11T00:04:00.000Z'),
+    });
+    assert.equal(archived.action, 'archived');
+    assert.equal(archived.cycle.status, 'archived');
+    assert.equal(archived.nextCycle.previousCycleId, 'demo-cycle');
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM cycles').get().count, 2);
   });
 });
 
