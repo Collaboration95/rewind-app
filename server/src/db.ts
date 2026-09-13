@@ -22,6 +22,10 @@ const MIGRATIONS = [
   // at a distinct version so both upgrade orders remain unambiguous.
   { version: 9, key: 'cycle-lifecycle-v1', fileName: '009-cycle-lifecycle.sql' },
   { version: 10, key: 'contribution-deletion-v1', fileName: '010-contribution-deletion.sql' },
+  // Realtime transport originally shipped with a second 006 filename. Keep
+  // its durable identity distinct from quota/lifecycle while preserving the
+  // migration SQL for fresh installs and upgrades.
+  { version: 11, key: 'realtime-messages-v1', fileName: '006-realtime-messages.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -1076,6 +1080,12 @@ export function seedDatabase(database: RewindDatabase): void {
       .run(FIXTURE.message.id, FIXTURE.group.id, FIXTURE.profiles[0].id, FIXTURE.message.body, now);
     database
       .prepare(
+        `INSERT INTO realtime_events (group_id, message_id, event_type, occurred_at)
+         VALUES (?, ?, 'message', ?)`,
+      )
+      .run(FIXTURE.group.id, FIXTURE.message.id, now);
+    database
+      .prepare(
         'INSERT INTO reactions (id, message_id, member_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)',
       )
       .run('demo-reaction', FIXTURE.message.id, FIXTURE.profiles[1].id, '✨', now);
@@ -1108,6 +1118,7 @@ export function restoreFixture(database: RewindDatabase): void {
   try {
     for (const table of [
       'reactions',
+      'realtime_events',
       'messages',
       'media_metadata',
       'staged_sources',
