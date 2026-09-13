@@ -96,6 +96,11 @@ function randomMessageId(): string {
   return `message-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+/** Public draft factory for consumers that do not own a RealtimeChatClient. */
+export function createChatMessageDraft(body: string): ChatMessageDraft {
+  return { body, messageId: randomMessageId() };
+}
+
 function errorStatus(error: unknown, source?: RealtimeEventSource): number | undefined {
   if (error && typeof error === 'object') {
     const candidate = error as { status?: unknown; statusCode?: unknown };
@@ -134,7 +139,7 @@ export class RealtimeChatClient {
 
   /** Create a retryable draft without changing or discarding its compose text. */
   createDraft(body: string): ChatMessageDraft {
-    return { body, messageId: randomMessageId() };
+    return createChatMessageDraft(body);
   }
 
   async sendMessage(

@@ -11,6 +11,7 @@ import type {
 import type { DemoSession } from '../domain/session';
 import {
   RealtimeChatClient,
+  type ChatMessageDraft,
   type ChatMessageEvent,
   type RealtimeSubscription,
   type SubscribeOptions,
@@ -60,7 +61,17 @@ export interface RuntimeClient {
     input: ClipUploadInput,
   ): Promise<PendingClipUpload>;
   cancelClipUpload?(sessionId: string, groupId: string, jobId: string): Promise<void>;
-  sendChatMessage?(sessionId: string, groupId: string, body: string): Promise<ChatMessageEvent>;
+  createChatDraft?(body: string): ChatMessageDraft;
+  sendChatMessage?(
+    sessionId: string,
+    groupId: string,
+    bodyOrDraft: string | ChatMessageDraft,
+  ): Promise<ChatMessageEvent>;
+  retryChatMessage?(
+    sessionId: string,
+    groupId: string,
+    draft: ChatMessageDraft,
+  ): Promise<ChatMessageEvent>;
   subscribeChat?(
     sessionId: string,
     groupId: string,
@@ -303,8 +314,20 @@ export class LocalRuntimeClient implements RuntimeClient {
     );
   }
 
-  sendChatMessage(sessionId: string, groupId: string, body: string): Promise<ChatMessageEvent> {
-    return this.realtimeChatClient.sendMessage(sessionId, groupId, body);
+  createChatDraft(body: string): ChatMessageDraft {
+    return this.realtimeChatClient.createDraft(body);
+  }
+
+  sendChatMessage(
+    sessionId: string,
+    groupId: string,
+    bodyOrDraft: string | ChatMessageDraft,
+  ): Promise<ChatMessageEvent> {
+    return this.realtimeChatClient.sendMessage(sessionId, groupId, bodyOrDraft);
+  }
+
+  retryChatMessage(sessionId: string, groupId: string, draft: ChatMessageDraft) {
+    return this.realtimeChatClient.retryMessage(sessionId, groupId, draft);
   }
 
   subscribeChat(

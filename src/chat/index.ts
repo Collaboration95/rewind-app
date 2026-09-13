@@ -1,6 +1,7 @@
 export {
   RealtimeChatClient,
   RealtimeChatError,
+  createChatMessageDraft,
   type ChatMessage,
   type ChatMessageDraft,
   type ChatMessageEvent,

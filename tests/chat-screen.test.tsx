@@ -70,7 +70,7 @@ function runtimeMock(overrides: Partial<RuntimeClient> = {}) {
     advanceDemoCycle: jest.fn(),
     subscribeChat: jest.fn((_sessionId, _groupId, options) => {
       subscriptionOptions = options;
-      return { close: jest.fn() };
+      return { close: jest.fn(), state: 'connected' as const };
     }),
     sendChatMessage: jest
       .fn()
@@ -81,6 +81,7 @@ function runtimeMock(overrides: Partial<RuntimeClient> = {}) {
     client,
     emit: (next: ChatMessageEvent) => subscriptionOptions?.onEvent(next),
     fail: (error: unknown) => subscriptionOptions?.onError?.(error),
+    deny: () => subscriptionOptions?.onConnectionStateChange?.('denied'),
   };
 }
 
@@ -110,9 +111,36 @@ describe('persistent group chat timeline', () => {
     expect(runtime.client.sendChatMessage).toHaveBeenCalledWith(
       expect.any(String),
       'demo-group',
-      'A new note',
+      expect.objectContaining({ body: 'A new note', messageId: expect.any(String) }),
     );
     expect(result.getByText('Sent from the composer')).toBeTruthy();
+  });
+
+  it('keeps one draft identity and compose text when the response is lost', async () => {
+    const sendChatMessage = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('The response was lost.'))
+      .mockResolvedValueOnce(event(4, 'Recovered note', '2026-09-13T04:00:00.000Z'));
+    const runtime = runtimeMock({ sendChatMessage });
+    const result = await render(<App runtimeClient={runtime.client} />);
+    await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
+    await result.findByTestId('chat-empty');
+
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'Keep this text'),
+    );
+    await fireEvent.press(result.getByTestId('chat-send'));
+    await result.findByTestId('chat-send-error');
+    expect(result.getByTestId('chat-composer')).toHaveProp('value', 'Keep this text');
+    const firstDraft = sendChatMessage.mock.calls[0][2];
+    expect(firstDraft).toEqual(
+      expect.objectContaining({ body: 'Keep this text', messageId: expect.any(String) }),
+    );
+
+    await fireEvent.press(result.getByTestId('chat-send-retry'));
+    await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(2));
+    expect(sendChatMessage.mock.calls[1][2].messageId).toBe(firstDraft.messageId);
+    expect(result.getByText('Recovered note')).toBeTruthy();
   });
 
   it('keeps an understandable connection error and supports retry', async () => {
@@ -136,5 +164,18 @@ describe('persistent group chat timeline', () => {
     await result.findByTestId('chat-denied');
     expect(result.queryByText('private text')).toBeNull();
     expect(runtime.client.subscribeChat).not.toHaveBeenCalled();
+  });
+
+  it('hides and disables the composer when the subscription is terminally denied', async () => {
+    const runtime = runtimeMock();
+    const result = await render(<App runtimeClient={runtime.client} />);
+    await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
+    await result.findByTestId('chat-empty');
+
+    await act(async () => runtime.deny());
+    expect(await result.findByTestId('chat-denied')).toBeTruthy();
+    expect(result.queryByTestId('chat-composer')).toBeNull();
+    expect(result.queryByTestId('chat-send')).toBeNull();
+    expect(runtime.client.sendChatMessage).not.toHaveBeenCalled();
   });
 });

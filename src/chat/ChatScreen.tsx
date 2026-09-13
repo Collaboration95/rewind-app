@@ -5,7 +5,12 @@ import { demoRepository } from '../data/demo-repository';
 import { useCapsule } from '../capsule/CapsuleProvider';
 import { useDemoSession } from '../session/DemoSessionProvider';
 import { COLORS } from '../theme';
-import type { ChatMessage, ChatMessageEvent } from './realtime-client';
+import {
+  createChatMessageDraft,
+  type ChatMessage,
+  type ChatMessageDraft,
+  type ChatMessageEvent,
+} from './realtime-client';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 
 const MESSAGE_MAX_LENGTH = 2_000;
@@ -48,8 +53,10 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionErrorScope, setConnectionErrorScope] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [pendingDraft, setPendingDraft] = useState<ChatMessageDraft | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [subscriptionDenied, setSubscriptionDenied] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const subscriptionScope = useRef<string | null>(null);
   const profiles = useMemo(() => demoRepository.listProfiles(), []);
@@ -73,6 +80,7 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
 
     const scopeKey = `${session.id}:${group.id}`;
     subscriptionScope.current = scopeKey;
+    setSubscriptionDenied(false);
     let active = true;
     let subscription: { close(): void } | null = null;
     const readyTimer = setTimeout(() => {
@@ -97,6 +105,17 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
           setConnectionError(errorMessage(error));
           setConnectionErrorScope(scopeKey);
         },
+        onConnectionStateChange: (connectionState) => {
+          if (!active) return;
+          if (connectionState === 'denied') {
+            setSubscriptionDenied(true);
+            setTimelineState('denied');
+            setSendError(null);
+            setSending(false);
+          } else if (connectionState === 'connected') {
+            setSubscriptionDenied(false);
+          }
+        },
       });
     } catch (error) {
       setTimeout(() => {
@@ -120,19 +139,35 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
     setConnectionError(null);
     setConnectionErrorScope(null);
     setSendError(null);
+    setPendingDraft(null);
     if (state.status === 'error' || state.status === 'loading') retryCapsule();
     setRetryKey((current) => current + 1);
   }, [retryCapsule, state.status]);
 
   const send = useCallback(async () => {
     const body = draft.trim();
-    if (!body || sending || !runtimeClient?.sendChatMessage || !session || !group) return;
+    if (
+      !body ||
+      sending ||
+      subscriptionDenied ||
+      !runtimeClient?.sendChatMessage ||
+      !session ||
+      !group
+    )
+      return;
+    const submittedText = draft;
+    const messageDraft =
+      pendingDraft?.body === submittedText
+        ? pendingDraft
+        : (runtimeClient.createChatDraft?.(submittedText) ?? createChatMessageDraft(submittedText));
+    setPendingDraft(messageDraft);
     setSending(true);
     setSendError(null);
     try {
-      const event = await runtimeClient.sendChatMessage(session.id, group.id, body);
+      const event = await runtimeClient.sendChatMessage(session.id, group.id, messageDraft);
       setMessages((current) => appendEvent(current, event));
-      setDraft('');
+      setPendingDraft(null);
+      setDraft((current) => (current === submittedText ? '' : current));
     } catch (error) {
       setSendError(
         error instanceof Error && error.message
@@ -142,13 +177,13 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
     } finally {
       setSending(false);
     }
-  }, [draft, group, runtimeClient, sending, session]);
+  }, [draft, group, pendingDraft, runtimeClient, sending, session, subscriptionDenied]);
 
   const activeMessageScope = session && group ? `${session.id}:${group.id}` : null;
   const hasActiveSubscription =
     activeMessageScope !== null && subscriptionScope.current === activeMessageScope;
   const effectiveTimelineState: TimelineState =
-    state.status === 'denied'
+    state.status === 'denied' || subscriptionDenied
       ? 'denied'
       : state.status === 'error'
         ? 'error'
@@ -260,7 +295,7 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
         ) : null}
       </ScrollView>
 
-      {showComposer && runtimeClient?.sendChatMessage && group && session ? (
+      {showComposer && !subscriptionDenied && runtimeClient?.sendChatMessage && group && session ? (
         <View style={styles.composer}>
           <Text style={styles.fieldLabel}>MESSAGE</Text>
           <TextInput
@@ -269,6 +304,7 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
             multiline
             onChangeText={(value) => {
               setDraft(value);
+              setPendingDraft((current) => (current?.body === value ? current : null));
               setSendError(null);
             }}
             placeholder="Write a message"
@@ -292,6 +328,16 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
             </Pressable>
           </View>
         </View>
+      ) : null}
+      {sendError && pendingDraft && !subscriptionDenied ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => void send()}
+          style={styles.outlineButton}
+          testID="chat-send-retry"
+        >
+          <Text style={styles.outlineButtonText}>Retry sending</Text>
+        </Pressable>
       ) : null}
     </View>
   );
