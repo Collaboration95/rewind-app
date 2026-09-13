@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { isMember, type RewindDatabase } from '../db';
+import { getDemoSession } from '../session';
+import { classifyDemoSession } from '../session/contract';
 
 export const CHAT_MESSAGE_MAX_LENGTH = 2_000;
 
@@ -22,8 +24,11 @@ export interface ChatMessageEvent {
 export interface CreateChatMessageInput {
   groupId: string;
   memberId: string;
+  /** The session that established the HTTP authorization context. */
+  sessionId?: string;
   body: string;
-  now?: Date;
+  /** A fixed timestamp for tests, or a clock evaluated inside the transaction. */
+  now?: Date | (() => Date);
   messageId?: string;
 }
 
@@ -94,17 +99,37 @@ export function createChatMessage(
   if (body.length > CHAT_MESSAGE_MAX_LENGTH) {
     return { ok: false, reason: 'body_too_long' };
   }
-  const now = input.now ?? new Date();
-  if (!Number.isFinite(now.getTime())) return { ok: false, reason: 'invalid_timestamp' };
-  const occurredAt = now.toISOString();
+  if (input.now instanceof Date && !Number.isFinite(input.now.getTime())) {
+    return { ok: false, reason: 'invalid_timestamp' };
+  }
   const messageId = input.messageId ?? `message-${randomUUID()}`;
 
   database.exec('BEGIN IMMEDIATE');
   try {
-    // Re-check inside the write transaction. The HTTP body is read before
-    // this function is called, so membership may have changed since the
-    // request-level guard ran.
-    if (!isMember(database, input.groupId, input.memberId)) {
+    // Re-check the complete authorization context immediately before either
+    // insert. Reading the body happens before this function is called, so a
+    // session can have been invalidated while a client was still uploading it.
+    // BEGIN IMMEDIATE makes this check and the inserts one serialized write.
+    const currentSession = input.sessionId ? getDemoSession(database, input.sessionId) : null;
+    const transactionNow =
+      typeof input.now === 'function' ? input.now() : (input.now ?? new Date());
+    if (!Number.isFinite(transactionNow.getTime())) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'invalid_timestamp' };
+    }
+    const occurredAt = transactionNow.toISOString();
+    const sessionIsCurrent =
+      !input.sessionId ||
+      Boolean(
+        currentSession &&
+        currentSession.actor.memberId === input.memberId &&
+        classifyDemoSession(
+          currentSession.expiresAt,
+          currentSession.invalidatedAt,
+          transactionNow,
+        ) === 'valid',
+      );
+    if (!sessionIsCurrent || !isMember(database, input.groupId, input.memberId)) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'membership_denied' };
     }

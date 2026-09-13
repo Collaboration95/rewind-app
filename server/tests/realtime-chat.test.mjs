@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { once } from 'node:events';
+import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
@@ -30,6 +31,36 @@ async function createSession(baseUrl, memberId, groupId = 'demo-group') {
   });
   assert.equal(response.status, 201);
   return (await response.json()).session;
+}
+
+function delayedMessageRequest(baseUrl, sessionId) {
+  const url = new URL(
+    `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(sessionId)}`,
+  );
+  let resolveResponse;
+  let rejectResponse;
+  const responsePromise = new Promise((resolve, reject) => {
+    resolveResponse = resolve;
+    rejectResponse = reject;
+  });
+  const request = httpRequest(
+    {
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked' },
+    },
+    (response) => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => (body += chunk));
+      response.on('end', () => resolveResponse({ status: response.statusCode, body }));
+    },
+  );
+  request.on('error', rejectResponse);
+  request.write('{"body":"message held open');
+  return { request, responsePromise };
 }
 
 async function readSseEvent(reader, pending = '') {
@@ -132,6 +163,90 @@ test('a non-member cannot open a group realtime subscription or post', async () 
       0,
     );
   } finally {
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
+test('a session invalidated while the request body is delayed cannot persist a message', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-delay-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const { server, baseUrl } = await startRuntime(config, database);
+  const session = await createSession(baseUrl, 'demo-1');
+  try {
+    const delayed = delayedMessageRequest(baseUrl, session.id);
+    await new Promise((resolve) => setImmediate(resolve));
+    const invalidated = await fetch(`${baseUrl}/sessions/${encodeURIComponent(session.id)}`, {
+      method: 'DELETE',
+    });
+    assert.equal(invalidated.status, 200);
+    delayed.request.end('"}');
+    const result = await delayed.responsePromise;
+    assert.equal(result.status, 403);
+    assert.equal(
+      database
+        .prepare("SELECT COUNT(*) AS count FROM messages WHERE body LIKE 'message held open%'")
+        .get().count,
+      0,
+    );
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM realtime_events').get().count, 1);
+  } finally {
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
+test('realtime delivery is isolated to the subscribed group', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-isolation-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  database.exec(`
+    INSERT INTO profiles (id, display_name, avatar_label, is_synthetic)
+      VALUES ('demo-6', 'Fable', 'Fable, second-group member', 1);
+    INSERT INTO groups (id, name, current_cycle_id)
+      VALUES ('other-group', 'Other People', 'other-cycle');
+    INSERT INTO cycles
+      (id, group_id, prompt, starts_at, ends_at, status, lock_state,
+       max_count, max_seconds, count_used, seconds_used)
+      VALUES
+      ('other-cycle', 'other-group', 'A private prompt',
+       '2026-09-01T00:00:00.000Z', '2026-09-12T00:00:00.000Z',
+       'collecting', 'locked', 5, 30, 0, 0);
+    INSERT INTO memberships (group_id, member_id, role, accepted_at)
+      VALUES ('other-group', 'demo-6', 'member', '2026-09-01T00:00:00.000Z');
+  `);
+  const { server, baseUrl } = await startRuntime(config, database);
+  const first = await createSession(baseUrl, 'demo-1');
+  const second = await createSession(baseUrl, 'demo-6', 'other-group');
+  const firstStream = await fetch(
+    `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(first.id)}&sinceEventId=1`,
+  );
+  const secondStream = await fetch(
+    `${baseUrl}/realtime/groups/other-group/events?sessionId=${encodeURIComponent(second.id)}`,
+  );
+  assert.equal(firstStream.status, 200);
+  assert.equal(secondStream.status, 200);
+  const firstReader = firstStream.body.getReader();
+  const secondReader = secondStream.body.getReader();
+  try {
+    const sent = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(first.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'only the first group sees this' }),
+      },
+    );
+    assert.equal(sent.status, 201);
+    const received = await readSseEvent(firstReader);
+    assert.equal(received.event.message.body, 'only the first group sees this');
+    const noCrossGroupEvent = await Promise.race([
+      readSseEvent(secondReader).then(() => false),
+      new Promise((resolve) => setTimeout(() => resolve(true), 100)),
+    ]);
+    assert.equal(noCrossGroupEvent, true);
+  } finally {
+    await firstReader.cancel();
+    await secondReader.cancel();
     await closeRuntime(server, database, dataDir);
   }
 });

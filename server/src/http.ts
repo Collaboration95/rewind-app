@@ -372,7 +372,9 @@ export async function handleRequest(
     // is either observed live or present in the replay query, never silently
     // lost between the two operations.
     unsubscribe = hub.subscribe(groupId, writeAuthorisedEvent);
-    for (const event of listChatEvents(database, groupId, sinceEventId)) writeEvent(event);
+    for (const event of listChatEvents(database, groupId, sinceEventId)) {
+      writeAuthorisedEvent(event);
+    }
     const heartbeat = setInterval(() => {
       if (!response.writableEnded && !response.destroyed) response.write(': keep-alive\n\n');
     }, 15_000);
@@ -402,9 +404,10 @@ export async function handleRequest(
     const result = createChatMessage(database, {
       groupId,
       memberId: session.session.actor.memberId,
+      sessionId: session.session.id,
       body: typeof body?.body === 'string' ? body.body : '',
       messageId: typeof body?.messageId === 'string' ? body.messageId : undefined,
-      now: now(),
+      now,
     });
     if (!result.ok) {
       if (result.reason === 'membership_denied') return sendDenied(response, config);
