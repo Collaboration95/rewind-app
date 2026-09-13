@@ -1,9 +1,6 @@
 -- Contribution allowance is durable state, scoped to a member and to a
 -- seven-day window anchored at the cycle start. The hard limits are policy
 -- limits; cycle metadata may only make an allowance smaller.
--- Integration note: this migration is the provisional next migration on the
--- #44 branch. If another Sprint 1 branch also claims version 006, retain both
--- statements and renumber this file once in the integration branch.
 ALTER TABLE contributions ADD COLUMN quota_window_start_at TEXT;
 
 -- Media metadata is written by the server's media intake/probe boundary. It
@@ -28,6 +25,7 @@ CREATE TABLE IF NOT EXISTS staged_sources (
   idempotency_key_hash TEXT NOT NULL UNIQUE,
   group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
   member_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  source_path TEXT,
   byte_length INTEGER CHECK (byte_length IS NULL OR byte_length > 0),
   status TEXT NOT NULL CHECK (status IN ('pending', 'staged')),
   created_at TEXT NOT NULL

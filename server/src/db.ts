@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -6,12 +7,16 @@ import type { RuntimeConfig } from './config';
 import { DEMO_SESSION_LIFETIME_MS } from './session/contract';
 
 const MIGRATIONS = [
-  { version: 1, fileName: '001-initial.sql' },
-  { version: 2, fileName: '002-session-audit.sql' },
-  { version: 3, fileName: '003-cycle-controls.sql' },
-  { version: 4, fileName: '004-invites.sql' },
-  { version: 5, fileName: '005-media-idempotency.sql' },
-  { version: 7, fileName: '007-media-processing.sql' },
+  // `key` is the durable identity. Version 6 is reserved here for quota;
+  // #54's cycle-lifecycle migration must use its own key and the next free
+  // version during integration rather than claiming this slot again.
+  { version: 1, key: 'initial-v1', fileName: '001-initial.sql' },
+  { version: 2, key: 'session-audit-v1', fileName: '002-session-audit.sql' },
+  { version: 3, key: 'cycle-controls-v1', fileName: '003-cycle-controls.sql' },
+  { version: 4, key: 'invites-v1', fileName: '004-invites.sql' },
+  { version: 5, key: 'media-idempotency-v1', fileName: '005-media-idempotency.sql' },
+  { version: 6, key: 'contribution-quota-v1', fileName: '006-contribution-quota.sql' },
+  { version: 7, key: 'media-processing-v1', fileName: '007-media-processing.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -67,61 +72,144 @@ export function migrateDatabase(database: RewindDatabase): void {
   database.exec(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);',
   );
+  database.exec(
+    'CREATE TABLE IF NOT EXISTS schema_migration_markers (migration_key TEXT PRIMARY KEY, applied_at TEXT NOT NULL);',
+  );
   for (const migration of MIGRATIONS) {
+    const marked = database
+      .prepare('SELECT 1 AS applied FROM schema_migration_markers WHERE migration_key = ?')
+      .get(migration.key) as { applied?: number } | undefined;
     const applied = database
       .prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = ?')
       .get(migration.version) as { applied?: number } | undefined;
-    if (!applied?.applied) {
-      // Early #45 work used the media migration as array position 6. Treat a
-      // database with all media columns already present as the compatibility
-      // form of explicit schema version 7, without rerunning ALTER TABLE.
-      if (
-        migration.version === 7 &&
-        database.prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = 6').get()
-          ?.applied &&
-        ['source_path', 'trim_start_seconds', 'trim_end_seconds', 'mode', 'error_code'].every(
-          (column) =>
-            database
-              .prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = ?')
-              .get('media_jobs', column),
-        )
-      ) {
-        const quotaMigrationPath = resolve(
-          process.cwd(),
-          'server/migrations',
-          '006-contribution-quota.sql',
-        );
-        const hasQuotaSchema =
-          database
-            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'media_metadata'")
-            .get() &&
-          database
-            .prepare(
-              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'contribution_quota_windows'",
-            )
-            .get();
-        if (!hasQuotaSchema) {
-          if (!existsSync(quotaMigrationPath)) {
-            throw new Error(
-              'Cannot promote a legacy media-v6 database before the #44 quota migration is installed.',
-            );
-          }
-          // A pre-integration database may have recorded the media migration
-          // as v6. Replay the trusted #44 schema first, then promote media to
-          // explicit v7 without rerunning ALTER TABLE on existing columns.
-          database.exec(readFileSync(quotaMigrationPath, 'utf8'));
-        }
+    if (marked?.applied && applied?.applied) continue;
+    const quotaReady =
+      hasTable(database, 'contribution_quota_windows') &&
+      hasTable(database, 'staged_sources') &&
+      hasTable(database, 'media_metadata') &&
+      tableColumns(database, 'contributions').has('quota_window_start_at');
+    const mediaReady = [
+      'source_path',
+      'trim_start_seconds',
+      'trim_end_seconds',
+      'mode',
+      'error_code',
+    ].every((column) => tableColumns(database, 'media_jobs').has(column));
+
+    // Version 6 was briefly occupied by #45's media ALTERs. The stable
+    // migration key lets an integrated build install #44's quota/staging
+    // schema exactly once without trying to reuse that version row.
+    if (migration.key === 'contribution-quota-v1' && applied?.applied && !quotaReady) {
+      database.exec(migration.sql);
+      migrateLegacyStagedSources(database);
+      markMigration(database, migration.key);
+      continue;
+    }
+
+    // Existing #44 databases may have the quota schema but no marker, while
+    // existing #45 databases may have media columns at version 6. In either
+    // case, record the stable identity and never replay duplicate ALTERs.
+    if (migration.key === 'media-processing-v1' && mediaReady) {
+      if (!applied?.applied) {
         database
           .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
           .run(migration.version, new Date().toISOString());
-        continue;
       }
-      database.exec(migration.sql);
-      database
-        .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-        .run(migration.version, new Date().toISOString());
+      migrateLegacyStagedSources(database);
+      markMigration(database, migration.key);
+      continue;
     }
+
+    if (applied?.applied) {
+      if (migration.key === 'contribution-quota-v1') migrateLegacyStagedSources(database);
+      markMigration(database, migration.key);
+      continue;
+    }
+
+    database.exec(migration.sql);
+    if (migration.key === 'contribution-quota-v1') migrateLegacyStagedSources(database);
+    database
+      .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+      .run(migration.version, new Date().toISOString());
+    markMigration(database, migration.key);
   }
+}
+
+function markMigration(database: RewindDatabase, key: string): void {
+  database
+    .prepare(
+      'INSERT OR IGNORE INTO schema_migration_markers (migration_key, applied_at) VALUES (?, ?)',
+    )
+    .run(key, new Date().toISOString());
+}
+
+function hasTable(database: RewindDatabase, name: string): boolean {
+  return Boolean(
+    database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name),
+  );
+}
+
+function tableColumns(database: RewindDatabase, table: string): Set<string> {
+  return new Set(
+    database
+      .prepare(`PRAGMA table_info(${table})`)
+      .all()
+      .map((row) => String((row as { name?: unknown }).name)),
+  );
+}
+
+/** Promote early #45's random-token table into the canonical #44 capability table. */
+function migrateLegacyStagedSources(database: RewindDatabase): void {
+  if (!hasTable(database, 'staged_sources')) return;
+  if (!tableColumns(database, 'staged_sources').has('source_path')) {
+    database.exec('ALTER TABLE staged_sources ADD COLUMN source_path TEXT');
+  }
+  if (!hasTable(database, 'staged_media_sources')) return;
+  const rows = database
+    .prepare(
+      `SELECT source_uri AS sourceUri, group_id AS groupId, member_id AS memberId,
+              source_path AS sourcePath, created_at AS createdAt
+       FROM staged_media_sources`,
+    )
+    .all() as {
+    sourceUri: string;
+    groupId: string;
+    memberId: string;
+    sourcePath: string;
+    createdAt: string;
+  }[];
+  const insert = database.prepare(
+    `INSERT OR IGNORE INTO staged_sources
+      (source_id, source_uri, idempotency_key_hash, group_id, member_id, source_path,
+       byte_length, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?,
+       (SELECT byte_length FROM media_metadata WHERE source_uri = ?),
+       CASE WHEN EXISTS (SELECT 1 FROM media_metadata WHERE source_uri = ?) THEN 'staged' ELSE 'pending' END,
+       ?)`,
+  );
+  for (const row of rows) {
+    const sourceId = createHash('sha256').update(row.sourceUri).digest('hex').slice(0, 24);
+    const linkedJob = database
+      .prepare(
+        'SELECT idempotency_key AS idempotencyKey FROM media_jobs WHERE source_path = ? LIMIT 1',
+      )
+      .get(row.sourcePath) as { idempotencyKey?: string } | undefined;
+    const idempotencyKeyHash = linkedJob?.idempotencyKey
+      ? createHash('sha256').update(linkedJob.idempotencyKey).digest('hex').slice(0, 32)
+      : createHash('sha256').update(row.sourceUri).digest('hex').slice(0, 32);
+    insert.run(
+      sourceId,
+      row.sourceUri,
+      idempotencyKeyHash,
+      row.groupId,
+      row.memberId,
+      row.sourcePath,
+      row.sourceUri,
+      row.sourceUri,
+      row.createdAt,
+    );
+  }
+  database.exec('DROP TABLE staged_media_sources');
 }
 
 export function seedDatabase(database: RewindDatabase): void {
@@ -232,8 +320,11 @@ export function seedDatabase(database: RewindDatabase): void {
 }
 
 export function resetDatabase(config: RuntimeConfig): void {
-  // The path is resolved from the validated data directory; only the local DB
-  // and SQLite's transient WAL files are removed. Source and migrations remain.
+  // The path is resolved from the validated data directory. Reset removes the
+  // local DB plus server-owned temporary sources; migrations and retained
+  // processed output remain available for the next local run.
+  const stagingDir = resolve(config.dataDir, 'media', 'staging');
+  if (existsSync(stagingDir)) rmSync(stagingDir, { recursive: true, force: true });
   for (const path of [
     config.databasePath,
     `${config.databasePath}-wal`,
@@ -252,7 +343,8 @@ export function restoreFixture(database: RewindDatabase): void {
       'reactions',
       'messages',
       'media_metadata',
-      'staged_media_sources',
+      'staged_sources',
+      'contribution_quota_windows',
       'media_jobs',
       'contributions',
       'sessions',
@@ -338,7 +430,12 @@ export function getGroup(database: RewindDatabase, groupId: string, actingMember
   };
 }
 
-export function getCurrentCycle(database: RewindDatabase, groupId: string) {
+export function getCurrentCycle(
+  database: RewindDatabase,
+  groupId: string,
+  memberId?: string,
+  now: Date | string = new Date(),
+) {
   const cycle = database
     .prepare(
       `SELECT id, group_id AS groupId, prompt, starts_at AS startsAt, ends_at AS endsAt,
@@ -348,6 +445,22 @@ export function getCurrentCycle(database: RewindDatabase, groupId: string) {
     )
     .get(groupId) as Record<string, unknown> | undefined;
   if (!cycle) return null;
+  const contributionUsage = memberId
+    ? (database
+        .prepare(
+          `SELECT COALESCE(SUM(count_used), 0) AS countUsed,
+                  COALESCE(SUM(seconds_used), 0) AS secondsUsed
+           FROM contribution_quota_windows
+           WHERE cycle_id = ? AND member_id = ?
+             AND window_start_at <= ? AND window_end_at > ?`,
+        )
+        .get(
+          String(cycle.id),
+          memberId,
+          now instanceof Date ? now.toISOString() : new Date(now).toISOString(),
+          now instanceof Date ? now.toISOString() : new Date(now).toISOString(),
+        ) as { countUsed?: number; secondsUsed?: number })
+    : undefined;
   return {
     id: String(cycle.id),
     groupId: String(cycle.groupId),
@@ -356,11 +469,19 @@ export function getCurrentCycle(database: RewindDatabase, groupId: string) {
     endsAt: String(cycle.endsAt),
     status: String(cycle.status),
     lockState: String(cycle.lockState),
-    quota: { maxCount: Number(cycle.maxCount), maxSeconds: Number(cycle.maxSeconds) },
-    contributionUsage: {
-      countUsed: Number(cycle.countUsed),
-      secondsUsed: Number(cycle.secondsUsed),
+    quota: {
+      maxCount: Math.max(1, Math.min(5, Number(cycle.maxCount))),
+      maxSeconds: Math.max(1, Math.min(30, Number(cycle.maxSeconds))),
     },
+    contributionUsage: contributionUsage
+      ? {
+          countUsed: Number(contributionUsage.countUsed ?? 0),
+          secondsUsed: Number(contributionUsage.secondsUsed ?? 0),
+        }
+      : {
+          countUsed: Number(cycle.countUsed),
+          secondsUsed: Number(cycle.secondsUsed),
+        },
   };
 }
 

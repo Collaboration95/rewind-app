@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, existsSync } from 'node:fs';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
@@ -29,10 +29,13 @@ import { createGroup } from './groups';
 import { acceptInvite, createInvite } from './invites';
 import {
   cancelClipUpload,
+  claimStagedSource,
   cleanupStagedSource,
   createClipUpload,
+  findStagedSource,
+  markStagedSourceReady,
   recordClipMediaMetadata,
-  stagedSourceId,
+  setStagedSourcePath,
   stagedSourcePath,
   type ClipUploadInput,
 } from './media';
@@ -352,7 +355,11 @@ export async function handleRequest(
       });
       return;
     }
+    const stagingDir = resolve(config.dataDir, 'media', 'staging');
     restoreFixture(database);
+    // Reset removes database claims first, then safely removes all final and
+    // partial staged files that are no longer protected by an active job.
+    await cleanupOrphanedStagedSources(database, stagingDir, 100, 0);
     sendJson(response, config, 200, { reset: true });
     return;
   }
@@ -526,29 +533,63 @@ export async function handleRequest(
       return;
     }
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
-    const sourceId = stagedSourceId();
+    await cleanupOrphanedStagedSources(database, stagingDir);
+    const claim = claimStagedSource(
+      database,
+      groupId,
+      session.session.actor.memberId,
+      idempotencyKey,
+      now(),
+    );
+    if (!claim.ok) {
+      sendJson(response, config, 409, {
+        error: 'upload_source_conflict',
+        message: 'That upload key is already owned by another capture.',
+      });
+      return;
+    }
+    const sourceId = claim.source.sourceId;
     const sourceUri = `staged://${sourceId}`;
     const sourcePath = stagedSourcePath(sourceUri, stagingDir);
     if (!sourcePath) return sendNotFound(response, config);
-    try {
-      await cleanupOrphanedStagedSources(database, stagingDir);
-      const byteLength = await stageSourceBody(request, stagingDir, sourcePath);
-      const probed = await probeClipWithFfmpeg(config.ffmpegBin, sourcePath);
-      recordClipMediaMetadata(database, {
-        sourceUri,
-        ...probed,
-        byteLength,
-        verifiedAt: now().toISOString(),
-      });
+    setStagedSourcePath(database, sourceUri, sourcePath);
+    if (claim.existing && claim.source.status === 'staged') {
+      const existingMetadata = findStagedSource(database, sourceUri);
+      if (existingMetadata?.byteLength && existsSync(sourcePath)) {
+        sendJson(response, config, 200, {
+          source: { id: sourceId, uri: sourceUri, byteLength: existingMetadata.byteLength },
+        });
+        return;
+      }
+      // A successful claim without a file is recoverable after interruption;
+      // reset the same owner/key to pending before replacing its source.
       database
         .prepare(
-          `INSERT INTO staged_media_sources
-            (source_uri, group_id, member_id, source_path, created_at)
-           VALUES (?, ?, ?, ?, ?)`,
+          "UPDATE staged_sources SET status = 'pending', byte_length = NULL WHERE source_uri = ?",
         )
-        .run(sourceUri, groupId, session.session.actor.memberId, sourcePath, now().toISOString());
+        .run(sourceUri);
+    }
+    try {
+      await stageSourceBody(request, stagingDir, sourcePath);
+      const probed = await probeClipWithFfmpeg(config.ffmpegBin, sourcePath, stagingDir);
+      database.exec('BEGIN');
+      try {
+        recordClipMediaMetadata(database, {
+          sourceUri,
+          ...probed,
+          // FFprobe's stat is authoritative; the stream byte count is only a
+          // transport guard and is never persisted as media truth.
+          byteLength: probed.byteLength,
+          verifiedAt: now().toISOString(),
+        });
+        markStagedSourceReady(database, sourceUri, probed.byteLength, sourcePath);
+        database.exec('COMMIT');
+      } catch (error) {
+        database.exec('ROLLBACK');
+        throw error;
+      }
       sendJson(response, config, 201, {
-        source: { id: sourceId, uri: sourceUri, byteLength },
+        source: { id: sourceId, uri: sourceUri, byteLength: probed.byteLength },
       });
     } catch (error) {
       await rm(sourcePath, { force: true }).catch(() => undefined);
@@ -608,8 +649,8 @@ export async function handleRequest(
       },
     );
     if (!result.ok) {
-      cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
       if (result.reason === 'not_found') return sendNotFound(response, config);
+      cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
       sendJson(response, config, result.reason === 'quota_exceeded' ? 409 : 400, {
         error: `upload_${result.reason}`,
         message:
@@ -792,7 +833,12 @@ export async function handleRequest(
       !authorize(database, response, config, groupId, sessionMember(database, url, now()), 'group')
     )
       return;
-    const cycle = getCurrentCycle(database, groupId);
+    const cycle = getCurrentCycle(
+      database,
+      groupId,
+      sessionMember(database, url, now()) ?? undefined,
+      now(),
+    );
     if (!cycle) return sendNotFound(response, config);
     sendJson(response, config, 200, { cycle });
     return;

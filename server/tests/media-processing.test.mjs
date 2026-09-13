@@ -10,8 +10,16 @@ const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, openDatabase } = await import('../dist/db.js');
 const { copyFile, utimes } = await import('node:fs/promises');
-const { createClipUpload, stagedSourcePath } = await import('../dist/media/index.js');
+const {
+  claimStagedSource,
+  createClipUpload,
+  markStagedSourceReady,
+  setStagedSourcePath,
+  stagedSourceId,
+  stagedSourcePath,
+} = await import('../dist/media/index.js');
 const { cleanupOrphanedStagedSources, processClipJob } = await import('../dist/jobs/index.js');
+const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 
 async function withDatabase(run) {
@@ -211,6 +219,42 @@ for (const mode of ['soft-focus', 'high-contrast']) {
   });
 }
 
+test('the shared probe accepts only playable portrait MP4 sources with audio', async () => {
+  await withDatabase(async ({ config, dataDir }) => {
+    const mp4Path = `${dataDir}/probe.mp4`;
+    await createSyntheticSource(mp4Path);
+    const metadata = await probeClipWithFfmpeg(config.ffmpegBin, mp4Path);
+    assert.equal(metadata.mimeType, 'video/mp4');
+    assert.equal(metadata.hasAudio, true);
+    assert.equal(metadata.width, 180);
+    assert.equal(metadata.height, 320);
+    assert.ok(metadata.durationSeconds > 0);
+
+    const webmPath = `${dataDir}/probe.webm`;
+    await execFileAsync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=180x320:rate=12:duration=1',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=44100:duration=1',
+      '-c:v',
+      'libvpx-vp9',
+      '-c:a',
+      'libopus',
+      '-shortest',
+      webmPath,
+    ]);
+    await assert.rejects(probeClipWithFfmpeg(config.ffmpegBin, webmPath));
+  });
+});
+
 test('processing failure is recoverable and never discloses media paths', async () => {
   await withDatabase(async ({ database, config, dataDir }) => {
     const sourcePath = `${dataDir}/external-source.mp4`;
@@ -289,6 +333,17 @@ test('session-authorized HTTP processing completes a staged capture workflow', a
       );
       assert.equal(stagedResponse.status, 201);
       const { source } = await stagedResponse.json();
+      const stagedRetry = await fetch(
+        `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=http-staged-key`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'video/mp4' },
+          body: await readFile(sourcePath),
+        },
+      );
+      assert.equal(stagedRetry.status, 200);
+      assert.deepEqual((await stagedRetry.json()).source, source);
+      assert.equal(database.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 1);
       const invalidStagedResponse = await fetch(
         `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=invalid-stage-key`,
         {
@@ -316,13 +371,16 @@ test('session-authorized HTTP processing completes a staged capture workflow', a
           sourceDurationSeconds: 2,
         }),
       });
-      assert.equal(invalidUploadResponse.status, 400);
-      await assert.rejects(access(stagedSourcePath(invalidSource.uri, stagingDir)));
+      // The staged token is bound to the staging idempotency key. A submit
+      // with a different key is intentionally indistinguishable from a
+      // missing resource and must not delete the owner's source.
+      assert.equal(invalidUploadResponse.status, 404);
+      await access(stagedSourcePath(invalidSource.uri, stagingDir));
       const uploadResponse = await fetch(`${baseUrl}/contributions/upload?${query}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          idempotencyKey: 'http-staged-job-key',
+          idempotencyKey: 'http-staged-key',
           sourceUri: source.uri,
           mimeType: 'video/mp4',
           byteLength: 10_000,
@@ -364,7 +422,7 @@ test('session-authorized HTTP processing completes a staged capture workflow', a
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          idempotencyKey: 'cancel-job-key',
+          idempotencyKey: 'cancel-source-key',
           sourceUri: cancelSource.uri,
           mimeType: 'video/mp4',
           byteLength: 10_000,
@@ -408,15 +466,33 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
       .prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all()
       .map((row) => Number(row.version));
-    assert.deepEqual(versions, [1, 2, 3, 4, 5, 7]);
+    assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7]);
 
     // Databases created by the first #45 implementation recorded media as
     // version 6. Existing columns are enough to promote that record safely.
-    database.prepare('DELETE FROM schema_migrations WHERE version = 7').run();
+    database.prepare('DELETE FROM schema_migrations WHERE version IN (6, 7)').run();
+    database
+      .prepare('DELETE FROM schema_migration_markers WHERE migration_key IN (?, ?)')
+      .run('contribution-quota-v1', 'media-processing-v1');
     database
       .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)')
       .run(new Date().toISOString());
-    assert.throws(() => migrateDatabase(database), /legacy media-v6 database.*#44 quota migration/);
+    migrateDatabase(database);
+    assert.deepEqual(
+      database
+        .prepare('SELECT version FROM schema_migrations ORDER BY version')
+        .all()
+        .map((row) => Number(row.version)),
+      [1, 2, 3, 4, 5, 6, 7],
+    );
+    assert.equal(
+      database
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'staged_media_sources'",
+        )
+        .get(),
+      undefined,
+    );
   });
 });
 
@@ -425,13 +501,16 @@ test('staged orphan cleanup is bounded and leaves active job sources untouched',
     const stagingDir = `${dataDir}/media/staging`;
     await mkdir(stagingDir, { recursive: true });
     const orphanSource = `${stagingDir}/source-${'a'.repeat(32)}.mp4`;
+    const orphanPart = `${stagingDir}/source-${'d'.repeat(24)}.mp4.${'e'.repeat(8)}.part`;
     const activeSource = `${stagingDir}/source-${'b'.repeat(32)}.mp4`;
     const fixtureSource = `${dataDir}/fixture.mp4`;
     await createSyntheticSource(fixtureSource);
     await copyFile(fixtureSource, orphanSource);
+    await copyFile(fixtureSource, orphanPart);
     await copyFile(fixtureSource, activeSource);
     const staleAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
     await utimes(orphanSource, staleAt, staleAt);
+    await utimes(orphanPart, staleAt, staleAt);
     database
       .prepare(
         `INSERT INTO media_jobs
@@ -442,15 +521,21 @@ test('staged orphan cleanup is bounded and leaves active job sources untouched',
     assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 1), 1);
     await assert.rejects(access(orphanSource));
     await access(activeSource);
-    assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 25), 0);
+    assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 25), 1);
+    await assert.rejects(access(orphanPart));
   });
 });
 
 test('staged source tokens cannot be enqueued across owner or group boundaries', async () => {
   await withDatabase(async ({ database, dataDir }) => {
     const stagingDir = `${dataDir}/media/staging`;
-    const sourceUri = `staged://${'c'.repeat(32)}`;
-    const sourcePath = `${stagingDir}/source-${'c'.repeat(32)}.mp4`;
+    const key = 'cross-group-stage-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const sourcePath = stagedSourcePath(sourceUri, stagingDir);
+    const claimed = claimStagedSource(database, 'demo-group', 'demo-2', key);
+    assert.equal(claimed.ok, true);
+    setStagedSourcePath(database, sourceUri, sourcePath);
+    markStagedSourceReady(database, sourceUri, 1000, sourcePath);
     database
       .prepare(
         `INSERT INTO media_metadata
@@ -458,13 +543,6 @@ test('staged source tokens cannot be enqueued across owner or group boundaries',
          VALUES (?, 'video/mp4', 1000, 1, 180, 320, 1, ?)`,
       )
       .run(sourceUri, new Date().toISOString());
-    database
-      .prepare(
-        `INSERT INTO staged_media_sources
-          (source_uri, group_id, member_id, source_path, created_at)
-          VALUES (?, 'demo-group', 'demo-2', ?, ?)`,
-      )
-      .run(sourceUri, sourcePath, new Date().toISOString());
     const result = createClipUpload(
       database,
       'demo-group',

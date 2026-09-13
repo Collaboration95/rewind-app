@@ -1,8 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { relative, resolve, isAbsolute } from 'node:path';
 
 import { cyclePhase } from '../cycles/engine';
+import { releaseContributionAllowance, reserveContributionAllowance } from '../contributions';
 import { getCurrentCycle, isMember } from '../db';
 import type { RewindDatabase } from '../db';
 
@@ -90,11 +91,18 @@ interface StoredClipMetadata {
 }
 
 interface StagedSourceRecord {
+  sourceId: string;
   sourceUri: string;
   groupId: string;
   memberId: string;
-  sourcePath: string;
+  idempotencyKeyHash: string;
+  sourcePath: string | null;
+  byteLength: number | null;
+  status: 'pending' | 'staged';
+  createdAt: string;
 }
+
+export type StagedSource = StagedSourceRecord;
 
 export interface ClipProcessingMetadata {
   mode: CaptureMode;
@@ -126,13 +134,141 @@ function keyHash(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 32);
 }
 
-export function stagedSourceId(): string {
-  return randomUUID().replaceAll('-', '');
+const SQLITE_BUSY_RETRIES = 8;
+
+function isBusyError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { code?: string; message?: string };
+  return (
+    candidate.code === 'SQLITE_BUSY' ||
+    /database is locked|SQLITE_BUSY/i.test(candidate.message ?? '')
+  );
+}
+
+function beginImmediateWithRetry(database: RewindDatabase): void {
+  for (let attempt = 0; attempt < SQLITE_BUSY_RETRIES; attempt += 1) {
+    try {
+      database.exec('BEGIN IMMEDIATE');
+      return;
+    } catch (error) {
+      if (!isBusyError(error) || attempt === SQLITE_BUSY_RETRIES - 1) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2 ** attempt);
+    }
+  }
+}
+
+export function stagedSourceId(idempotencyKey: string): string {
+  return keyHash(idempotencyKey).slice(0, 24);
 }
 
 export function stagedSourcePath(sourceUri: string, stagingDir: string): string | null {
-  const match = /^staged:\/\/([a-f0-9]{32})$/.exec(sourceUri);
+  // 32-character tokens are accepted only to let a legacy v6 job finish. New
+  // capabilities always use the deterministic 24-character #44 token.
+  const match = /^staged:\/\/([a-f0-9]{24}|[a-f0-9]{32})$/.exec(sourceUri);
   return match ? resolve(stagingDir, `source-${match[1]}.mp4`) : null;
+}
+
+export function findStagedSource(database: RewindDatabase, sourceUri: string): StagedSource | null {
+  const row = database
+    .prepare(
+      `SELECT source_id AS sourceId, source_uri AS sourceUri,
+          group_id AS groupId, member_id AS memberId,
+          idempotency_key_hash AS idempotencyKeyHash,
+          source_path AS sourcePath, byte_length AS byteLength, status,
+          created_at AS createdAt
+       FROM staged_sources WHERE source_uri = ?`,
+    )
+    .get(sourceUri) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    sourceId: String(row.sourceId),
+    sourceUri: String(row.sourceUri),
+    groupId: String(row.groupId),
+    memberId: String(row.memberId),
+    idempotencyKeyHash: String(row.idempotencyKeyHash),
+    sourcePath: row.sourcePath === null ? null : String(row.sourcePath),
+    byteLength: row.byteLength === null ? null : Number(row.byteLength),
+    status: row.status === 'staged' ? 'staged' : 'pending',
+    createdAt: String(row.createdAt),
+  };
+}
+
+export function claimStagedSource(
+  database: RewindDatabase,
+  groupId: string,
+  memberId: string,
+  idempotencyKey: string,
+  now = new Date(),
+): { ok: true; source: StagedSource; existing: boolean } | { ok: false; reason: 'conflict' } {
+  const sourceId = stagedSourceId(idempotencyKey);
+  const sourceUri = `staged://${sourceId}`;
+  const idempotencyKeyHash = keyHash(idempotencyKey);
+  let started = false;
+  try {
+    beginImmediateWithRetry(database);
+    started = true;
+    const existing = findStagedSource(database, sourceUri);
+    if (existing) {
+      database.exec('COMMIT');
+      return existing.groupId === groupId &&
+        existing.memberId === memberId &&
+        existing.idempotencyKeyHash === idempotencyKeyHash
+        ? { ok: true, source: existing, existing: true }
+        : { ok: false, reason: 'conflict' };
+    }
+    database
+      .prepare(
+        `INSERT INTO staged_sources
+          (source_id, source_uri, idempotency_key_hash, group_id, member_id, status, created_at)
+         VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+      )
+      .run(sourceId, sourceUri, idempotencyKeyHash, groupId, memberId, now.toISOString());
+    const source = findStagedSource(database, sourceUri);
+    if (!source) throw new Error('Staged source could not be persisted.');
+    database.exec('COMMIT');
+    started = false;
+    return { ok: true, source, existing: false };
+  } catch (error) {
+    if (started) database.exec('ROLLBACK');
+    if (isBusyError(error)) throw error;
+    if (String(error).includes('UNIQUE constraint failed')) {
+      const existing = findStagedSource(database, sourceUri);
+      if (existing && existing.groupId === groupId && existing.memberId === memberId) {
+        return { ok: true, source: existing, existing: true };
+      }
+      return { ok: false, reason: 'conflict' };
+    }
+    throw error;
+  }
+}
+
+export function setStagedSourcePath(
+  database: RewindDatabase,
+  sourceUri: string,
+  sourcePath: string,
+): void {
+  database
+    .prepare('UPDATE staged_sources SET source_path = ? WHERE source_uri = ?')
+    .run(sourcePath, sourceUri);
+}
+
+export function markStagedSourceReady(
+  database: RewindDatabase,
+  sourceUri: string,
+  byteLength: number,
+  sourcePath?: string,
+): void {
+  database
+    .prepare(
+      `UPDATE staged_sources
+       SET byte_length = ?, status = 'staged', source_path = COALESCE(?, source_path)
+       WHERE source_uri = ? AND status = 'pending'`,
+    )
+    .run(byteLength, sourcePath ?? null, sourceUri);
+}
+
+export function removeStagedSource(database: RewindDatabase, sourceUri: string): void {
+  database.prepare('DELETE FROM staged_sources WHERE source_uri = ?').run(sourceUri);
 }
 
 export function cleanupStagedSource(
@@ -140,11 +276,12 @@ export function cleanupStagedSource(
   sourceUri: string,
   stagingDir: string,
 ): void {
-  const sourcePath = stagedSourcePath(sourceUri, stagingDir);
+  const sourcePath =
+    findStagedSource(database, sourceUri)?.sourcePath ?? stagedSourcePath(sourceUri, stagingDir);
   if (!sourcePath) return;
   cleanupStagedSourcePath(sourcePath, stagingDir);
   database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
-  database.prepare('DELETE FROM staged_media_sources WHERE source_uri = ?').run(sourceUri);
+  removeStagedSource(database, sourceUri);
 }
 
 export function cleanupStagedSourcePath(sourcePath: string, stagingDir: string): void {
@@ -215,19 +352,7 @@ function storedClipMetadata(
   return row ?? null;
 }
 
-function stagedSourceRecord(
-  database: RewindDatabase,
-  sourceUri: string,
-): StagedSourceRecord | null {
-  const row = database
-    .prepare(
-      `SELECT source_uri AS sourceUri, group_id AS groupId, member_id AS memberId,
-              source_path AS sourcePath
-       FROM staged_media_sources WHERE source_uri = ?`,
-    )
-    .get(sourceUri) as StagedSourceRecord | undefined;
-  return row ?? null;
-}
+const stagedSourceRecord = findStagedSource;
 
 function idSuffix(key: string): string {
   return keyHash(key).slice(0, 16);
@@ -274,7 +399,10 @@ export function getClipProcessingMetadata(input: ClipUploadInput): ClipProcessin
   };
 }
 
-export function validateClipUpload(input: ClipUploadInput): ClipUploadResult | null {
+export function validateClipUpload(
+  input: ClipUploadInput,
+  verifiedSourceDurationSeconds?: number,
+): ClipUploadResult | null {
   if (!/^[A-Za-z0-9_-]{8,100}$/.test(input.idempotencyKey)) {
     return { ok: false, reason: 'invalid_key' };
   }
@@ -307,9 +435,9 @@ export function validateClipUpload(input: ClipUploadInput): ClipUploadResult | n
     metadata.trimEndSeconds <= metadata.trimStartSeconds ||
     metadata.trimEndSeconds - metadata.trimStartSeconds < MIN_CLIP_DURATION_SECONDS ||
     metadata.trimEndSeconds - metadata.trimStartSeconds > MAX_CLIP_DURATION_SECONDS ||
-    (input.sourceDurationSeconds !== undefined &&
-      (!Number.isFinite(input.sourceDurationSeconds) ||
-        metadata.trimEndSeconds > input.sourceDurationSeconds))
+    (verifiedSourceDurationSeconds !== undefined &&
+      (!Number.isFinite(verifiedSourceDurationSeconds) ||
+        metadata.trimEndSeconds > verifiedSourceDurationSeconds + 0.05))
   ) {
     return { ok: false, reason: 'invalid_media' };
   }
@@ -345,26 +473,34 @@ export function createClipUpload(
   now = new Date(),
   options: ClipUploadOptions = {},
 ): ClipUploadResult {
-  const validation = validateClipUpload(input);
-  if (validation) return validation;
   if (!isMember(database, groupId, memberId)) return { ok: false, reason: 'not_found' };
+  if (!/^[A-Za-z0-9_-]{8,100}$/.test(input.idempotencyKey)) {
+    return { ok: false, reason: 'invalid_key' };
+  }
   const key = keyHash(input.idempotencyKey);
   const existing = existingUpload(database, input.idempotencyKey, groupId, memberId);
   if (existing) return { ok: true, upload: existing };
+  const isStagedSource = /^staged:\/\/(?:[a-f0-9]{24}|[a-f0-9]{32})$/.test(input.sourceUri);
+  let stagedRecord: StagedSourceRecord | null = null;
+  if (isStagedSource) {
+    // Capability ownership and key binding are checked before reading or
+    // probing any source. A token is not authorization by itself.
+    stagedRecord = stagedSourceRecord(database, input.sourceUri);
+    if (
+      !stagedRecord ||
+      stagedRecord.status !== 'staged' ||
+      stagedRecord.groupId !== groupId ||
+      stagedRecord.memberId !== memberId ||
+      stagedRecord.idempotencyKeyHash !== key
+    ) {
+      return { ok: false, reason: 'not_found' };
+    }
+  }
+  const requestValidation = validateClipUpload(input);
+  if (requestValidation) return requestValidation;
   const verified = storedClipMetadata(database, input.sourceUri);
-  const stagedRecord = stagedSourceRecord(database, input.sourceUri);
-  const isStagedSource = Boolean(
-    options.stagingDir && stagedSourcePath(input.sourceUri, options.stagingDir),
-  );
   if (options.requireVerifiedMetadata && isStagedSource && !verified) {
     return { ok: false, reason: 'invalid_media' };
-  }
-  if (
-    options.requireVerifiedMetadata &&
-    isStagedSource &&
-    (!stagedRecord || stagedRecord.groupId !== groupId || stagedRecord.memberId !== memberId)
-  ) {
-    return { ok: false, reason: 'not_found' };
   }
   const effectiveInput = verified
     ? {
@@ -375,10 +511,11 @@ export function createClipUpload(
         width: verified.width,
         height: verified.height,
         hasAudio: verified.hasAudio === 1,
-        sourceDurationSeconds: input.sourceDurationSeconds ?? verified.durationSeconds,
       }
     : input;
-  const effectiveValidation = validateClipUpload(effectiveInput);
+  // Only the duration reported by the trusted FFprobe metadata can bound the
+  // requested trim. `input.sourceDurationSeconds` is deliberately ignored.
+  const effectiveValidation = validateClipUpload(effectiveInput, verified?.durationSeconds);
   if (effectiveValidation) return effectiveValidation;
   const cycle = getCurrentCycle(database, groupId);
   const phase = cycle
@@ -398,26 +535,68 @@ export function createClipUpload(
     (options.stagingDir && stagedSourcePath(input.sourceUri, options.stagingDir)) ??
     input.sourceUri;
   const durationSeconds = processing.trimEndSeconds - processing.trimStartSeconds;
-  if (
-    cycle.contributionUsage.countUsed + 1 > cycle.quota.maxCount ||
-    cycle.contributionUsage.secondsUsed + durationSeconds > cycle.quota.maxSeconds
-  ) {
-    return { ok: false, reason: 'quota_exceeded' };
-  }
 
   const suffix = idSuffix(input.idempotencyKey);
   const contributionId = `contribution-${suffix}`;
   const jobId = `clip-job-${suffix}`;
   const createdAt = now.toISOString();
-  database.exec('BEGIN');
+  let transactionStarted = false;
   try {
+    beginImmediateWithRetry(database);
+    transactionStarted = true;
+    const retry = existingUpload(database, input.idempotencyKey, groupId, memberId);
+    if (retry) {
+      database.exec('COMMIT');
+      return { ok: true, upload: retry };
+    }
+    const lockedCycle = getCurrentCycle(database, groupId);
+    const lockedPhase = lockedCycle
+      ? cyclePhase(
+          {
+            startsAt: lockedCycle.startsAt,
+            endsAt: lockedCycle.endsAt,
+            status: lockedCycle.status as 'collecting' | 'revealing' | 'archived',
+          },
+          now,
+        )
+      : null;
+    if (!lockedCycle || lockedCycle.id !== cycle.id || lockedPhase !== 'collecting') {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
+    const reservation = reserveContributionAllowance(
+      database,
+      {
+        id: lockedCycle.id,
+        startsAt: lockedCycle.startsAt,
+        endsAt: lockedCycle.endsAt,
+        maxCount: lockedCycle.quota.maxCount,
+        maxSeconds: lockedCycle.quota.maxSeconds,
+      },
+      memberId,
+      durationSeconds,
+      now,
+    );
+    if ('reason' in reservation) {
+      database.exec('ROLLBACK');
+      return reservation.reason === 'invalid_duration'
+        ? { ok: false, reason: 'invalid_media' }
+        : { ok: false, reason: 'quota_exceeded' };
+    }
     database
       .prepare(
         `INSERT INTO contributions
-          (id, cycle_id, member_id, media_job_id, duration_seconds, created_at)
-         VALUES (?, ?, ?, NULL, ?, ?)`,
+          (id, cycle_id, member_id, media_job_id, duration_seconds, created_at, quota_window_start_at)
+         VALUES (?, ?, ?, NULL, ?, ?, ?)`,
       )
-      .run(contributionId, cycle.id, memberId, durationSeconds, createdAt);
+      .run(
+        contributionId,
+        lockedCycle.id,
+        memberId,
+        durationSeconds,
+        createdAt,
+        reservation.startsAt,
+      );
     database
       .prepare(
         `INSERT INTO media_jobs
@@ -445,10 +624,11 @@ export function createClipUpload(
          SET count_used = count_used + 1, seconds_used = seconds_used + ?
          WHERE id = ?`,
       )
-      .run(durationSeconds, cycle.id);
+      .run(durationSeconds, lockedCycle.id);
     database.exec('COMMIT');
+    transactionStarted = false;
   } catch (error) {
-    database.exec('ROLLBACK');
+    if (transactionStarted) database.exec('ROLLBACK');
     if (String(error).includes('UNIQUE constraint failed: media_jobs.idempotency_key')) {
       const retried = existingUpload(database, input.idempotencyKey, groupId, memberId);
       if (retried) return { ok: true, upload: retried };
@@ -484,7 +664,8 @@ export function cancelClipUpload(
   const row = database
     .prepare(
       `SELECT j.id AS jobId, c.id AS contributionId, c.cycle_id AS cycleId,
-                c.duration_seconds AS durationSeconds, j.source_path AS sourcePath
+                c.duration_seconds AS durationSeconds, c.quota_window_start_at AS windowStartsAt,
+                j.source_path AS sourcePath
        FROM media_jobs j JOIN contributions c ON c.id = j.contribution_id
        WHERE j.id = ? AND j.group_id = ? AND c.member_id = ? AND j.kind = 'clip'
          AND j.status = 'pending'`,
@@ -495,11 +676,12 @@ export function cancelClipUpload(
         contributionId: string;
         cycleId: string;
         durationSeconds: number;
+        windowStartsAt?: string;
         sourcePath?: string;
       }
     | undefined;
   if (!row) return { ok: false, reason: 'not_found' };
-  database.exec('BEGIN');
+  beginImmediateWithRetry(database);
   try {
     database.prepare('DELETE FROM media_jobs WHERE id = ?').run(row.jobId);
     database.prepare('DELETE FROM contributions WHERE id = ?').run(row.contributionId);
@@ -510,6 +692,15 @@ export function cancelClipUpload(
          WHERE id = ?`,
       )
       .run(row.durationSeconds, row.cycleId);
+    if (row.windowStartsAt) {
+      releaseContributionAllowance(
+        database,
+        row.cycleId,
+        memberId,
+        row.windowStartsAt,
+        row.durationSeconds,
+      );
+    }
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
@@ -517,7 +708,13 @@ export function cancelClipUpload(
   }
   if (options.stagingDir && row.sourcePath) {
     cleanupStagedSourcePath(row.sourcePath, options.stagingDir);
-    database.prepare('DELETE FROM staged_media_sources WHERE source_path = ?').run(row.sourcePath);
+    const staged = database
+      .prepare('SELECT source_uri AS sourceUri FROM staged_sources WHERE source_path = ?')
+      .get(row.sourcePath) as { sourceUri?: string } | undefined;
+    database
+      .prepare('DELETE FROM media_metadata WHERE source_uri = ?')
+      .run(staged?.sourceUri ?? null);
+    database.prepare('DELETE FROM staged_sources WHERE source_path = ?').run(row.sourcePath);
   }
   return { ok: true, contributionId: row.contributionId, jobId: row.jobId };
 }

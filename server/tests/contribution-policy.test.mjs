@@ -177,10 +177,37 @@ test('a legacy media-only v6 is repaired without losing its media schema', async
        ALTER TABLE media_jobs ADD COLUMN mode TEXT;
        ALTER TABLE media_jobs ADD COLUMN error_code TEXT;`,
     );
+    legacy.exec(
+      `CREATE TABLE media_metadata (
+         source_uri TEXT PRIMARY KEY, mime_type TEXT NOT NULL, byte_length INTEGER NOT NULL,
+         duration_seconds REAL NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
+         has_audio INTEGER NOT NULL, verified_at TEXT NOT NULL
+       );
+       CREATE TABLE staged_media_sources (
+         source_uri TEXT PRIMARY KEY, group_id TEXT NOT NULL, member_id TEXT NOT NULL,
+         source_path TEXT NOT NULL, created_at TEXT NOT NULL
+       );`,
+    );
     legacy
       .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)')
       .run(new Date().toISOString());
     seedDatabase(legacy);
+    const legacySourceUri = `staged://${'f'.repeat(32)}`;
+    const legacySourcePath = `${dataDir}/legacy-source.mp4`;
+    legacy
+      .prepare(
+        `INSERT INTO media_metadata
+          (source_uri, mime_type, byte_length, duration_seconds, width, height, has_audio, verified_at)
+         VALUES (?, 'video/mp4', 1000, 1, 180, 320, 1, ?)`,
+      )
+      .run(legacySourceUri, new Date().toISOString());
+    legacy
+      .prepare(
+        `INSERT INTO staged_media_sources
+          (source_uri, group_id, member_id, source_path, created_at)
+         VALUES (?, 'demo-group', 'demo-1', ?, ?)`,
+      )
+      .run(legacySourceUri, legacySourcePath, new Date().toISOString());
     legacy.close();
 
     const upgraded = openDatabaseAt(databasePath);
@@ -197,6 +224,15 @@ test('a legacy media-only v6 is repaired without losing its media schema', async
         upgraded.prepare('SELECT source_path FROM media_jobs LIMIT 1').get().source_path,
         null,
       );
+      assert.equal(
+        upgraded
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'staged_media_sources'",
+          )
+          .get(),
+        undefined,
+      );
+      assert.equal(upgraded.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 1);
       assert.deepEqual(
         upgraded
           .prepare('SELECT version FROM schema_migrations ORDER BY version')
@@ -358,6 +394,78 @@ test('quota uses verified server metadata when a client submits a shorter durati
         .secondsUsed,
       14,
     );
+  });
+});
+
+test('trim bounds use verified FFprobe duration rather than a client source-duration hint', async () => {
+  await withDatabase(async ({ database }) => {
+    const key = 'verified-trim-bound';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const claimed = claimStagedSource(database, 'demo-group', 'demo-1', key);
+    assert.equal(claimed.ok, true);
+    markStagedSourceReady(database, sourceUri, 1000, '/tmp/verified-trim-bound.mp4');
+    recordClipMediaMetadata(database, {
+      sourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+    });
+    const accepted = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        ...validInput,
+        idempotencyKey: key,
+        sourceUri,
+        byteLength: 1000,
+        durationSeconds: 1.25,
+        width: 180,
+        height: 320,
+        trimStartSeconds: 0.25,
+        trimEndSeconds: 1.5,
+        sourceDurationSeconds: 1,
+      },
+      new Date('2026-09-09T00:00:00.000Z'),
+      { stagingDir: '/tmp', requireVerifiedMetadata: true },
+    );
+    assert.equal(accepted.ok, true);
+    const longKey = 'verified-trim-bound-too-long';
+    const longSourceUri = `staged://${stagedSourceId(longKey)}`;
+    assert.equal(claimStagedSource(database, 'demo-group', 'demo-1', longKey).ok, true);
+    markStagedSourceReady(database, longSourceUri, 1000, '/tmp/verified-trim-bound-too-long.mp4');
+    recordClipMediaMetadata(database, {
+      sourceUri: longSourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+    });
+    const rejected = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        ...validInput,
+        idempotencyKey: 'verified-trim-bound-too-long',
+        sourceUri: longSourceUri,
+        byteLength: 1000,
+        durationSeconds: 2.25,
+        width: 180,
+        height: 320,
+        trimStartSeconds: 0.25,
+        trimEndSeconds: 2.5,
+        sourceDurationSeconds: 99,
+      },
+      new Date('2026-09-09T00:00:00.000Z'),
+      { stagingDir: '/tmp', requireVerifiedMetadata: true },
+    );
+    assert.deepEqual(rejected, { ok: false, reason: 'invalid_media' });
   });
 });
 

@@ -118,8 +118,18 @@ export async function processClipWithFfmpeg(
   if (!validProcessInput(input)) {
     throw new FfmpegProcessingError('invalid_metadata', 'The clip processing metadata is invalid.');
   }
-  const durationSeconds = input.trimEndSeconds - input.trimStartSeconds;
   try {
+    // Re-check the immutable source boundary at the worker too. Client trim
+    // metadata may not extend past the duration FFprobe observed on the
+    // server-owned source, even if intake was interrupted or bypassed.
+    const source = await probeClipWithFfmpeg(ffmpegBin, input.inputPath);
+    if (input.trimEndSeconds > source.durationSeconds + 0.05) {
+      throw new FfmpegProcessingError(
+        'invalid_metadata',
+        'The clip processing metadata is outside the source duration.',
+      );
+    }
+    const durationSeconds = input.trimEndSeconds - input.trimStartSeconds;
     await execFileAsync(
       ffmpegBin,
       [
@@ -180,6 +190,7 @@ export async function processClipWithFfmpeg(
 export async function probeClipWithFfmpeg(
   ffmpegBin: string,
   inputPath: string,
+  stagingDir?: string,
 ): Promise<FfmpegMediaProbeResult> {
   const ffmpegDirectory = dirname(ffmpegBin);
   const probeBin =
@@ -187,6 +198,9 @@ export async function probeClipWithFfmpeg(
       ? `${ffmpegDirectory}/ffprobe`
       : 'ffprobe';
   try {
+    const safeInputPath = stagingDir
+      ? await resolveStagedMediaPath(inputPath, stagingDir)
+      : resolveLocalMediaPath(inputPath);
     const [probe, file] = await Promise.all([
       execFileAsync(
         probeBin,
@@ -194,17 +208,17 @@ export async function probeClipWithFfmpeg(
           '-v',
           'error',
           '-show_entries',
-          'format=duration:stream=codec_type,width,height',
+          'format=format_name,duration:stream=codec_type,width,height',
           '-of',
           'json',
-          inputPath,
+          safeInputPath,
         ],
         { timeout: 20_000, maxBuffer: 2_000_000 },
       ),
       stat(inputPath),
     ]);
     const parsed = JSON.parse(probe.stdout) as {
-      format?: { duration?: string };
+      format?: { format_name?: string; duration?: string };
       streams?: { codec_type?: string; width?: number; height?: number }[];
     };
     const video = parsed.streams?.find((stream) => stream.codec_type === 'video');
@@ -212,14 +226,18 @@ export async function probeClipWithFfmpeg(
     const width = Number(video?.width);
     const height = Number(video?.height);
     const hasAudio = parsed.streams?.some((stream) => stream.codec_type === 'audio') === true;
+    const formatNames = parsed.format?.format_name?.split(',').map((value) => value.trim()) ?? [];
     if (
+      !formatNames.includes('mp4') ||
       !Number.isInteger(file.size) ||
       file.size <= 0 ||
       !Number.isFinite(durationSeconds) ||
-      !Number.isFinite(width) ||
-      !Number.isFinite(height) ||
+      !Number.isInteger(width) ||
+      !Number.isInteger(height) ||
       width <= 0 ||
-      height <= 0
+      height <= 0 ||
+      width >= height ||
+      !hasAudio
     ) {
       throw new Error('invalid media');
     }

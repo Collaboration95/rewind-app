@@ -65,12 +65,6 @@ export interface RuntimeClient {
     groupId: string,
     jobId: string,
   ): Promise<PendingClipUpload['job']>;
-  stageClipSource?(
-    sessionId: string,
-    groupId: string,
-    idempotencyKey: string,
-    base64: string,
-  ): Promise<{ uri: string; byteLength: number }>;
 }
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -307,24 +301,6 @@ export class LocalRuntimeClient implements RuntimeClient {
       },
     );
     return body.upload;
-  }
-
-  async stageClipSource(
-    sessionId: string,
-    groupId: string,
-    idempotencyKey: string,
-    base64: string,
-  ): Promise<{ uri: string; byteLength: number }> {
-    const binary = decodeBase64(base64);
-    const body = await this.request<{ source: { uri: string; byteLength: number } }>(
-      `/contributions/upload/source?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}&idempotencyKey=${encodeURIComponent(idempotencyKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'video/mp4' },
-        body: binary as unknown as BodyInit,
-      },
-    );
-    return body.source;
   }
 
   async cancelClipUpload(sessionId: string, groupId: string, jobId: string): Promise<void> {

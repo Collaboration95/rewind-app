@@ -4,6 +4,7 @@ import { relative, resolve, isAbsolute } from 'node:path';
 
 import type { RewindDatabase } from '../db';
 import { recordAuditEvent } from '../audit';
+import { removeStagedSource } from '../media';
 import {
   processClipWithFfmpeg,
   resolveStagedMediaPath,
@@ -197,6 +198,7 @@ export async function processClipJob(
     }
     const stagingDir =
       options.stagingDir ?? resolve(process.cwd(), '.local-data', 'media', 'staging');
+    const staged = findStagedSourceByPath(database, row.sourcePath);
     const sourcePath = await resolveStagedMediaPath(row.sourcePath, stagingDir);
     await mkdir(outputDir, { recursive: true });
     await runAuditedJob(database, {
@@ -213,7 +215,10 @@ export async function processClipJob(
         // Never claim success while the unfiltered source remains. If this
         // removal fails, the output is discarded and the job remains retryable.
         await rm(sourcePath, { force: false });
-        database.prepare('DELETE FROM staged_media_sources WHERE source_path = ?').run(sourcePath);
+        if (staged) {
+          database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(staged.sourceUri);
+          removeStagedSource(database, staged.sourceUri);
+        }
         database
           .prepare(
             `UPDATE media_jobs
@@ -251,11 +256,11 @@ export async function cleanupOrphanedStagedSources(
   const boundedLimit = Math.max(0, Math.min(100, Math.floor(limit)));
   let removed = 0;
   for (const entry of names) {
-    if (
-      removed >= boundedLimit ||
-      !entry.isFile() ||
-      !/^source-[a-f0-9]{32}\.mp4$/.test(entry.name)
-    ) {
+    const sourceMatch = /^source-([a-f0-9]{24}|[a-f0-9]{32})\.mp4$/.exec(entry.name);
+    const partialMatch = /^source-([a-f0-9]{24}|[a-f0-9]{32})\.mp4\.[a-f0-9-]+\.part$/.exec(
+      entry.name,
+    );
+    if (removed >= boundedLimit || !entry.isFile() || (!sourceMatch && !partialMatch)) {
       continue;
     }
     const sourcePath = resolve(stagingDir, entry.name);
@@ -263,18 +268,49 @@ export async function cleanupOrphanedStagedSources(
     if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) continue;
     const details = await stat(sourcePath).catch(() => null);
     if (!details || Date.now() - details.mtimeMs < maxAgeMs) continue;
-    const active = database
-      .prepare("SELECT 1 FROM media_jobs WHERE kind = 'clip' AND source_path = ? LIMIT 1")
-      .get(sourcePath);
-    if (active) continue;
+    // A partial file is never a job input and can be removed once stale. A
+    // completed source is retained only while a job still claims its path.
+    if (sourceMatch) {
+      const active = database
+        .prepare("SELECT 1 FROM media_jobs WHERE kind = 'clip' AND source_path = ? LIMIT 1")
+        .get(sourcePath);
+      if (active) continue;
+    }
     await rm(sourcePath, { force: true });
-    database
-      .prepare('DELETE FROM media_metadata WHERE source_uri = ?')
-      .run(`staged://${entry.name.slice('source-'.length, -'.mp4'.length)}`);
-    database
-      .prepare('DELETE FROM staged_media_sources WHERE source_uri = ?')
-      .run(`staged://${entry.name.slice('source-'.length, -'.mp4'.length)}`);
+    if (sourceMatch) {
+      const sourceUri = `staged://${sourceMatch[1]}`;
+      database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
+      removeStagedSource(database, sourceUri);
+    }
+    removed += 1;
+  }
+  // A process can die after claiming a token but before writing the final
+  // file. Remove stale pending claims too; the same owner/key can claim again.
+  const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+  const stale = database
+    .prepare(
+      `SELECT source_uri AS sourceUri FROM staged_sources
+       WHERE status = 'pending' AND created_at < ?
+         AND NOT EXISTS (
+           SELECT 1 FROM media_jobs WHERE media_jobs.source_path = staged_sources.source_path
+         )`,
+    )
+    .all(cutoff) as { sourceUri?: string }[];
+  for (const row of stale) {
+    if (removed >= boundedLimit || !row.sourceUri) break;
+    database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(row.sourceUri);
+    removeStagedSource(database, row.sourceUri);
     removed += 1;
   }
   return removed;
+}
+
+function findStagedSourceByPath(
+  database: RewindDatabase,
+  sourcePath: string,
+): { sourceUri: string } | null {
+  const row = database
+    .prepare('SELECT source_uri AS sourceUri FROM staged_sources WHERE source_path = ?')
+    .get(sourcePath) as { sourceUri?: string } | undefined;
+  return row?.sourceUri ? { sourceUri: row.sourceUri } : null;
 }
