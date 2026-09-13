@@ -64,6 +64,23 @@ not used.
   length, and source only. Native file URIs remain in the active session and
   app-owned cache; they are not persisted as metadata or uploaded.
 
+## Group chat
+
+- Chat is available only when the active Demo session is a member of the
+  selected group. The server authorizes the session before opening the
+  persisted event stream or accepting a message; denied reads do not return
+  message text.
+- The timeline replays the append-only persisted text event log in event order
+  and merges newly delivered events without duplicates. Each message shows its
+  synthetic author and created timestamp.
+- The composer accepts trimmed text up to the server's 2,000-character limit.
+  A successful send clears the draft; a recoverable failure preserves it and
+  explains how to retry. Attachments, edits/deletes, read receipts, replies,
+  reactions, and direct messages are out of scope.
+- Loading, empty, connection-error, unavailable-runtime, and membership-denied
+  states are explicit in the chat surface. A connection error offers a
+  labelled retry action and does not replace persisted messages already shown.
+
 ## Accessibility and responsive behavior
 
 - Every action is a native button/pressable with a visible label and accessible
@@ -82,4 +99,6 @@ not used.
 types and validation. `src/session/` owns local persistence and lifecycle.
 `src/runtime/local-runtime-client.ts` owns the typed HTTP adapter. The server
 revalidates sessions and owns atomic SQLite group/cycle writes. `DESIGN.md` and
-`src/theme.ts` remain the paired visual token sources.
+`src/theme.ts` remain the paired visual token sources. The typed chat transport
+is owned by `src/chat/realtime-client.ts` and exposed to the product through
+`src/runtime/local-runtime-client.ts`.

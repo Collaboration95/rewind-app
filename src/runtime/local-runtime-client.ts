@@ -9,6 +9,12 @@ import type {
   MembershipDenied,
 } from '../domain/profiles';
 import type { DemoSession } from '../domain/session';
+import {
+  RealtimeChatClient,
+  type ChatMessageEvent,
+  type RealtimeSubscription,
+  type SubscribeOptions,
+} from '../chat/realtime-client';
 
 export interface RuntimeHealth {
   ok: true;
@@ -70,6 +76,12 @@ export interface RuntimeClient {
     groupId: string,
     contributionId: string,
   ): Promise<{ contributionId: string; jobId: string; restored: { count: 1; seconds: number } }>;
+  sendChatMessage?(sessionId: string, groupId: string, body: string): Promise<ChatMessageEvent>;
+  subscribeChat?(
+    sessionId: string,
+    groupId: string,
+    options: SubscribeOptions,
+  ): RealtimeSubscription;
 }
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -127,6 +139,7 @@ export class LocalRuntimeClient implements RuntimeClient {
   readonly baseUrl: string;
   private readonly fetchImpl: FetchLike;
   private readonly requestTimeoutMs: number;
+  private readonly realtimeChatClient: RealtimeChatClient;
 
   constructor(
     baseUrl: string,
@@ -135,6 +148,7 @@ export class LocalRuntimeClient implements RuntimeClient {
   ) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.fetchImpl = fetchImpl;
+    this.realtimeChatClient = new RealtimeChatClient(baseUrl, fetchImpl as typeof fetch);
     const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_RUNTIME_REQUEST_TIMEOUT_MS;
     if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
       throw new LocalRuntimeError('The local runtime request timeout must be greater than zero.');
@@ -378,6 +392,18 @@ export class LocalRuntimeClient implements RuntimeClient {
       MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
     );
     return body.source;
+  }
+
+  sendChatMessage(sessionId: string, groupId: string, body: string): Promise<ChatMessageEvent> {
+    return this.realtimeChatClient.sendMessage(sessionId, groupId, body);
+  }
+
+  subscribeChat(
+    sessionId: string,
+    groupId: string,
+    options: SubscribeOptions,
+  ): RealtimeSubscription {
+    return this.realtimeChatClient.subscribe(sessionId, groupId, options);
   }
 
   private async request<T>(
