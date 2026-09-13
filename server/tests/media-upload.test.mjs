@@ -207,3 +207,46 @@ test('HTTP clip upload requires a session and cancellation releases quota for re
     }
   });
 });
+
+test('HTTP delete-and-replace is session-bound and restores the exact weekly allowance', async () => {
+  await withDatabase(async ({ config, database }) => {
+    const created = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      { ...validInput, idempotencyKey: 'http-delete-key' },
+      new Date('2026-09-10T12:00:00.000Z'),
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const server = createRuntimeServer(config, database, {
+      now: () => new Date('2026-09-10T12:00:00.000Z'),
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-1' }),
+      });
+      const { session } = await sessionResponse.json();
+      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+      const deleted = await fetch(
+        `${baseUrl}/contributions/${encodeURIComponent(created.upload.contribution.id)}?${query}`,
+        { method: 'DELETE' },
+      );
+      assert.equal(deleted.status, 200);
+      assert.deepEqual((await deleted.json()).restored, { count: 1, seconds: 8 });
+      assert.equal(
+        database.prepare('SELECT status FROM media_jobs WHERE id = ?').get(created.upload.job.id)
+          .status,
+        'deleted',
+      );
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+});

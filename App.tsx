@@ -193,6 +193,7 @@ function ActiveAppShell({
   cameraPlatform?: CameraPlatform;
 }) {
   const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group' | 'video'>('home');
+  const { retry: refreshCapsule } = useCapsule();
   const resolvedCameraPlatform = useMemo(() => {
     if (cameraPlatform) return cameraPlatform;
     if (typeof process !== 'undefined') {
@@ -235,6 +236,7 @@ function ActiveAppShell({
         ) : activeRoute === 'video' ? (
           <VideoCaptureScreen
             onBack={() => setActiveRoute('camera')}
+            onContributionDeleted={refreshCapsule}
             platform={resolvedCameraPlatform}
             runtimeClient={runtimeClient}
           />

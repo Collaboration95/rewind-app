@@ -65,6 +65,11 @@ export interface RuntimeClient {
     groupId: string,
     jobId: string,
   ): Promise<PendingClipUpload['job']>;
+  deleteContribution?(
+    sessionId: string,
+    groupId: string,
+    contributionId: string,
+  ): Promise<{ contributionId: string; jobId: string; restored: { count: 1; seconds: number } }>;
 }
 
 export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -333,6 +338,27 @@ export class LocalRuntimeClient implements RuntimeClient {
       }
       throw error;
     }
+  }
+
+  async deleteContribution(
+    sessionId: string,
+    groupId: string,
+    contributionId: string,
+  ): Promise<{ contributionId: string; jobId: string; restored: { count: 1; seconds: number } }> {
+    const body = await this.request<{
+      deleted: true;
+      contributionId: string;
+      jobId: string;
+      restored: { count: 1; seconds: number };
+    }>(
+      `/contributions/${encodeURIComponent(contributionId)}?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      { method: 'DELETE' },
+    );
+    return {
+      contributionId: body.contributionId,
+      jobId: body.jobId,
+      restored: body.restored,
+    };
   }
 
   async stageClipSource(

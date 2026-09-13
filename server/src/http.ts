@@ -27,6 +27,7 @@ import {
 } from './session';
 import { createGroup } from './groups';
 import { acceptInvite, createInvite } from './invites';
+import { deleteContribution } from './contributions';
 import {
   cancelClipUpload,
   claimStagedSource,
@@ -982,6 +983,41 @@ export async function handleRequest(
       )
     )
       return;
+    if (request.method === 'DELETE') {
+      const sessionId = url.searchParams.get('sessionId');
+      if (!sessionId) return sendSessionRequired(response, config);
+      const session = validateDemoSession(database, sessionId, now());
+      if (session.status !== 'valid') return sendSessionRequired(response, config);
+      const result = deleteContribution(
+        database,
+        groupId,
+        session.session.actor.memberId,
+        contributionId,
+        now(),
+        {
+          stagingDir: resolve(config.dataDir, 'media', 'staging'),
+          outputDir: resolve(config.dataDir, 'media', 'processed'),
+        },
+      );
+      if (!result.ok) {
+        const status =
+          result.reason === 'not_found' || result.reason === 'already_deleted' ? 404 : 409;
+        const messages = {
+          already_deleted: 'That contribution has already been deleted.',
+          deletion_used: 'The weekly delete-and-replace allowance has already been used.',
+          not_eligible: 'This contribution can no longer be deleted before reveal.',
+          not_found: 'The contribution was not found.',
+          processing: 'Wait for processing to finish before deleting this contribution.',
+        } as const;
+        sendJson(response, config, status, {
+          error: `contribution_${result.reason}`,
+          message: messages[result.reason],
+        });
+        return;
+      }
+      sendJson(response, config, 200, { deleted: true, ...result });
+      return;
+    }
     const contribution = getContribution(database, groupId, contributionId);
     if (!contribution) return sendNotFound(response, config);
     sendJson(response, config, 200, { contribution });

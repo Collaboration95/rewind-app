@@ -203,12 +203,16 @@ const lifecycleCopy: Record<ContributionLifecycle, { body: string; title: string
 };
 
 export function ContributionStatusPanel({
+  onDelete,
+  deleteLabel = 'Delete and replace',
   onRetry,
   retryLabel = 'Retry contribution',
   status,
   testID = 'contribution-status',
 }: {
   status: ContributionStatus | null;
+  onDelete?: () => void | Promise<void>;
+  deleteLabel?: string;
   onRetry?: () => void | Promise<void>;
   retryLabel?: string;
   testID?: string;
@@ -237,6 +241,11 @@ export function ContributionStatusPanel({
       {status.state === 'failed' && status.retryable && onRetry ? (
         <Pressable accessibilityRole="button" onPress={onRetry} style={styles.retryButton}>
           <Text style={styles.retryText}>{retryLabel}</Text>
+        </Pressable>
+      ) : null}
+      {onDelete ? (
+        <Pressable accessibilityRole="button" onPress={onDelete} style={styles.deleteButton}>
+          <Text style={styles.deleteText}>{deleteLabel}</Text>
         </Pressable>
       ) : null}
     </View>
@@ -269,4 +278,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   retryText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
+  deleteButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    borderColor: COLORS.line,
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 44,
+    justifyContent: 'center',
+    marginTop: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  deleteText: { color: COLORS.muted, fontSize: 14, fontWeight: '700' },
 });

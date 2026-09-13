@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Worker } from 'node:worker_threads';
 import test from 'node:test';
@@ -7,8 +7,12 @@ import test from 'node:test';
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase, openDatabaseAt, restoreFixture, seedDatabase } =
   await import('../dist/db.js');
-const { contributionQuotaWindow, MAX_CONTRIBUTION_COUNT, MAX_CONTRIBUTION_SECONDS } =
-  await import('../dist/contributions/index.js');
+const {
+  contributionQuotaWindow,
+  deleteContribution,
+  MAX_CONTRIBUTION_COUNT,
+  MAX_CONTRIBUTION_SECONDS,
+} = await import('../dist/contributions/index.js');
 const {
   cancelClipUpload,
   claimStagedSource,
@@ -111,7 +115,7 @@ test('upgrading a v005 database backfills the cycle-start quota ledger', async (
           .prepare('SELECT version FROM schema_migrations ORDER BY version')
           .all()
           .map((row) => row.version),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
       );
       const rows = upgraded
         .prepare(
@@ -238,7 +242,7 @@ test('a legacy media-only v6 is repaired without losing its media schema', async
           .prepare('SELECT version FROM schema_migrations ORDER BY version')
           .all()
           .map((row) => row.version),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
       );
     } finally {
       upgraded.close();
@@ -288,6 +292,134 @@ test('clip submissions enforce five clips and thirty seconds per member window',
       now,
     );
     assert.equal(otherMember.ok, true);
+  });
+});
+
+test('one current-week deletion tombstones media, restores exact allowance, and permits replacement', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const now = new Date('2026-09-10T12:00:00.000Z');
+    const sourceUri = 'file:///tmp/delete-me.mp4';
+    registerMetadata(database, { ...validInput, sourceUri, durationSeconds: 7 });
+    const upload = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      { ...validInput, sourceUri, durationSeconds: 7, idempotencyKey: 'delete-policy-key' },
+      now,
+    );
+    assert.equal(upload.ok, true);
+    if (!upload.ok) return;
+    const outputDir = `${dataDir}/media/processed`;
+    const outputPath = `${outputDir}/deleted-output.mp4`;
+    await writeFile(outputPath, 'private processed bytes').catch(async () => {
+      const { mkdir } = await import('node:fs/promises');
+      await mkdir(outputDir, { recursive: true });
+      await writeFile(outputPath, 'private processed bytes');
+    });
+    database
+      .prepare("UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = ?")
+      .run(outputPath, upload.upload.job.id);
+
+    assert.deepEqual(
+      deleteContribution(database, 'demo-group', 'demo-1', upload.upload.contribution.id, now, {
+        outputDir,
+      }),
+      {
+        ok: true,
+        contributionId: upload.upload.contribution.id,
+        jobId: upload.upload.job.id,
+        restored: { count: 1, seconds: 7 },
+      },
+    );
+    assert.equal(
+      database
+        .prepare('SELECT deleted_at AS deletedAt FROM contributions WHERE id = ?')
+        .get(upload.upload.contribution.id).deletedAt !== null,
+      true,
+    );
+    assert.equal(
+      database.prepare('SELECT status FROM media_jobs WHERE id = ?').get(upload.upload.job.id)
+        .status,
+      'deleted',
+    );
+    assert.equal(
+      database.prepare('SELECT count_used FROM cycles WHERE id = ?').get('demo-cycle').count_used,
+      0,
+    );
+    assert.equal(
+      database
+        .prepare('SELECT seconds_used, deletions_used FROM contribution_quota_windows LIMIT 1')
+        .get().seconds_used,
+      0,
+    );
+
+    const replacement = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        ...validInput,
+        sourceUri: 'file:///tmp/replacement.mp4',
+        idempotencyKey: 'replacement-key',
+      },
+      now,
+    );
+    assert.equal(replacement.ok, true);
+    assert.equal(
+      database.prepare('SELECT deletions_used FROM contribution_quota_windows LIMIT 1').get()
+        .deletions_used,
+      1,
+    );
+    assert.equal(
+      await import('node:fs/promises').then(({ access }) =>
+        access(outputPath).then(
+          () => true,
+          () => false,
+        ),
+      ),
+      false,
+    );
+  });
+});
+
+test('second deletion in the same weekly window and post-reveal deletion are denied', async () => {
+  await withDatabase(async ({ database }) => {
+    const now = new Date('2026-09-10T12:00:00.000Z');
+    const first = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      { ...validInput, idempotencyKey: 'delete-first-key' },
+      now,
+    );
+    assert.equal(first.ok, true);
+    if (!first.ok) return;
+    assert.equal(
+      deleteContribution(database, 'demo-group', 'demo-1', first.upload.contribution.id, now).ok,
+      true,
+    );
+    const second = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        ...validInput,
+        sourceUri: 'file:///tmp/delete-second.mp4',
+        idempotencyKey: 'delete-second-key',
+      },
+      now,
+    );
+    assert.equal(second.ok, true);
+    if (!second.ok) return;
+    assert.deepEqual(
+      deleteContribution(database, 'demo-group', 'demo-1', second.upload.contribution.id, now),
+      { ok: false, reason: 'deletion_used' },
+    );
+    database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();
+    assert.deepEqual(
+      deleteContribution(database, 'demo-group', 'demo-1', second.upload.contribution.id, now),
+      { ok: false, reason: 'not_eligible' },
+    );
   });
 });
 

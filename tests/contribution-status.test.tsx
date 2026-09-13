@@ -58,6 +58,43 @@ describe('ContributionStatusPanel', () => {
     expect(result.queryByText(/file:\/\/|uri:|share|download|player|thumbnail/i)).toBeNull();
   });
 
+  it('uses terminal failure copy and hides retry for non-retryable failures', async () => {
+    const result = await render(
+      <ContributionStatusPanel
+        onRetry={() => undefined}
+        status={{
+          ...base,
+          message: 'The contribution is not authorised.',
+          retryable: false,
+          state: 'failed',
+        }}
+        testID="status"
+      />,
+    );
+
+    await result.findByTestId('status-failed');
+    expect(
+      result.getByText(
+        'This contribution cannot be retried. Retake it to submit a new contribution.',
+      ),
+    ).toBeTruthy();
+    expect(result.queryByRole('button', { name: /retry/i })).toBeNull();
+  });
+
+  it('offers the bounded delete-and-replace action only when the owner supplies it', async () => {
+    const onDelete = jest.fn();
+    const result = await render(
+      <ContributionStatusPanel
+        deleteLabel="Delete and replace"
+        onDelete={onDelete}
+        status={{ ...base, state: 'sealed' }}
+        testID="deletable-status"
+      />,
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Delete and replace' }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
+  });
   it('keeps status metadata scoped and restores it when the camera route remounts', async () => {
     const values = new Map<string, ContributionStatus>();
     const store: ContributionStatusStore = {

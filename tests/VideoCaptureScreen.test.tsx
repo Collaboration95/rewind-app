@@ -271,6 +271,77 @@ describe('VideoCaptureScreen', () => {
     expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
   });
 
+  it('clears the sealed contribution state after the bounded delete-and-replace action', async () => {
+    const processClipJob = jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' as const });
+    const deleteContribution = jest.fn().mockResolvedValue({
+      contributionId: upload.contribution.id,
+      jobId: upload.job.id,
+      restored: { count: 1 as const, seconds: 8 },
+    });
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ processClipJob, deleteContribution }),
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByTestId('camera-contribution-status-sealed');
+    await fireEvent.press(result.getByRole('button', { name: 'Delete and replace' }));
+
+    expect(deleteContribution).toHaveBeenCalledWith(
+      'demo-session-ui',
+      'demo-group',
+      'contribution-ui',
+    );
+    await result.findByTestId('video-live-preview');
+    expect(result.queryByTestId('camera-contribution-status-sealed')).toBeNull();
+    expect(
+      result.getByText('Contribution deleted. Your weekly allowance is restored for a replacement.'),
+    ).toBeTruthy();
+  });
+
+  it('renders a returned processing failure as retryable contribution state after upload completes', async () => {
+    const processClipJob = jest
+      .fn()
+      .mockResolvedValueOnce({ ...upload.job, status: 'failed' as const })
+      .mockResolvedValueOnce({ ...upload.job, status: 'ready' as const });
+    const uploadClip = jest.fn().mockResolvedValue(upload);
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ uploadClip, processClipJob }),
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByTestId('camera-contribution-status-failed');
+    expect(result.queryByText('Upload queued as one pending contribution.')).toBeNull();
+    expect(result.getByRole('button', { name: 'Retry upload' })).toBeTruthy();
+
+    await fireEvent.press(result.getByRole('button', { name: 'Retry upload' }));
+    await result.findByTestId('camera-contribution-status-sealed');
+    expect(uploadClip).toHaveBeenCalledTimes(2);
+    expect(processClipJob).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not offer retry for a typed terminal processing rejection', async () => {
+    const processClipJob = jest
+      .fn()
+      .mockRejectedValue(
+        new LocalRuntimeError('The contribution is not authorised.', 403, 'forbidden'),
+      );
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ processClipJob }),
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByTestId('camera-contribution-status-failed');
+    expect(
+      result.getByText(
+        'This contribution cannot be retried. Retake it to submit a new contribution.',
+      ),
+    ).toBeTruthy();
+    expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
+    expect(result.queryByText('Upload queued as one pending contribution.')).toBeNull();
+  });
   it('surfaces an upload failure and retries the same review successfully', async () => {
     const uploadClip = jest
       .fn()

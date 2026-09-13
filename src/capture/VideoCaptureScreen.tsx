@@ -33,6 +33,7 @@ export interface VideoCaptureScreenProps {
   platform?: CameraPlatform;
   runtimeClient?: RuntimeClient | null;
   onBack?: () => void;
+  onContributionDeleted?: () => void;
 }
 
 function isVideoPlatform(
@@ -47,6 +48,7 @@ function isVideoPlatform(
 
 export function VideoCaptureScreen({
   onBack,
+  onContributionDeleted,
   platform: platformProp,
   runtimeClient = null,
 }: VideoCaptureScreenProps = {}) {
@@ -517,6 +519,58 @@ export function VideoCaptureScreen({
     onBack?.();
   }, [cancelActiveWork, onBack]);
 
+  const contributionFailed = contributionStatus?.state === 'failed';
+  const canRetryContribution = contributionFailed && contributionStatus.retryable;
+
+  const canDeleteContribution = Boolean(
+    contributionStatus?.contributionId &&
+    runtimeClient?.deleteContribution &&
+    contributionStatus.state !== 'processing',
+  );
+
+  const deleteContributionForReplacement = useCallback(async () => {
+    if (
+      !isCaptureActive() ||
+      !canDeleteContribution ||
+      !contributionStatus?.contributionId ||
+      !runtimeClient?.deleteContribution ||
+      !demoSession?.session
+    )
+      return;
+    try {
+      await runtimeClient.deleteContribution(
+        demoSession.session.id,
+        demoSession.session.groupId,
+        contributionStatus.contributionId,
+      );
+      const currentClip = clipRef.current;
+      if (currentClip) await removeManagedRecordedClip(currentClip.sourceUri);
+      recorder?.reset();
+      setClip(null);
+      setReview(null);
+      setUploadProgress({ status: 'idle', percent: 0 });
+      latestUploadRef.current = null;
+      clearContributionStatus();
+      onContributionDeleted?.();
+      setError('Contribution deleted. Your weekly allowance is restored for a replacement.');
+    } catch (deleteError) {
+      if (!isCaptureActive()) return;
+      setError(
+        deleteError instanceof Error
+          ? `The contribution could not be deleted. ${deleteError.message}`
+          : 'The contribution could not be deleted. Try again.',
+      );
+    }
+  }, [
+    canDeleteContribution,
+    clearContributionStatus,
+    contributionStatus,
+    demoSession,
+    isCaptureActive,
+    onContributionDeleted,
+    recorder,
+    runtimeClient,
+  ]);
   return (
     <View style={styles.screen} testID="video-capture-screen">
       <View style={styles.header}>
@@ -670,7 +724,9 @@ export function VideoCaptureScreen({
             </Pressable>
           )}
           <ContributionStatusPanel
-            onRetry={uploadProgress.status === 'failed' ? () => void retryUpload() : undefined}
+            deleteLabel="Delete and replace"
+            onDelete={canDeleteContribution ? deleteContributionForReplacement : undefined}
+            onRetry={canRetryContribution ? () => void retryUpload() : undefined}
             retryLabel="Retry upload"
             status={contributionStatus}
             testID="camera-contribution-status"

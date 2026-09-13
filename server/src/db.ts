@@ -21,6 +21,7 @@ const MIGRATIONS = [
   // #54 originally claimed version 006.  Keep lifecycle's durable identity
   // at a distinct version so both upgrade orders remain unambiguous.
   { version: 9, key: 'cycle-lifecycle-v1', fileName: '009-cycle-lifecycle.sql' },
+  { version: 10, key: 'contribution-deletion-v1', fileName: '010-contribution-deletion.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -105,6 +106,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyMediaSourceBindingMigration(database);
       } else if (migration.key === 'cycle-lifecycle-v1') {
         applyCycleLifecycleMigration(database);
+      } else if (migration.key === 'contribution-deletion-v1') {
+        applyContributionDeletionMigration(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -156,6 +159,7 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   }
   if (key === 'media-source-binding-v1') return !sourceBindingSchemaReady(database);
   if (key === 'cycle-lifecycle-v1') return cycleLifecycleMigrationNeedsRepair(database);
+  if (key === 'contribution-deletion-v1') return !contributionDeletionSchemaReady(database);
   return false;
 }
 
@@ -264,6 +268,32 @@ function compilationJobInputsTableIsValid(database: RewindDatabase): boolean {
         foreignKey.to === 'id' &&
         String(foreignKey.on_delete ?? '').toUpperCase() === 'CASCADE',
     ),
+  );
+}
+
+function contributionDeletionSchemaReady(database: RewindDatabase): boolean {
+  return (
+    hasColumns(database, 'contributions', ['deleted_at']) &&
+    hasColumns(database, 'media_jobs', ['deleted_at']) &&
+    hasColumns(database, 'contribution_quota_windows', ['deletions_used']) &&
+    hasIndex(database, 'contributions_active_cycle_idx')
+  );
+}
+
+function applyContributionDeletionMigration(database: RewindDatabase): void {
+  if (!tableColumns(database, 'contributions').has('deleted_at')) {
+    database.exec('ALTER TABLE contributions ADD COLUMN deleted_at TEXT');
+  }
+  if (!tableColumns(database, 'media_jobs').has('deleted_at')) {
+    database.exec('ALTER TABLE media_jobs ADD COLUMN deleted_at TEXT');
+  }
+  if (!tableColumns(database, 'contribution_quota_windows').has('deletions_used')) {
+    database.exec(
+      'ALTER TABLE contribution_quota_windows ADD COLUMN deletions_used INTEGER NOT NULL DEFAULT 0 CHECK (deletions_used >= 0 AND deletions_used <= 1)',
+    );
+  }
+  database.exec(
+    'CREATE INDEX IF NOT EXISTS contributions_active_cycle_idx ON contributions (cycle_id, member_id, deleted_at, created_at)',
   );
 }
 
