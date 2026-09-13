@@ -8,13 +8,26 @@ import test from 'node:test';
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
+const { RealtimeHub } = await import('../dist/realtime/index.js');
 
-async function startRuntime(config, database) {
-  const server = createRuntimeServer(config, database);
+async function startRuntime(config, database, options = {}) {
+  const server = createRuntimeServer(config, database, options);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
+async function readUntilClosed(reader, timeoutMs = 500) {
+  return Promise.race([
+    (async () => {
+      while (true) {
+        const result = await reader.read();
+        if (result.done) return true;
+      }
+    })(),
+    new Promise((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
 }
 
 async function closeRuntime(server, database, dataDir) {
@@ -39,9 +52,13 @@ function delayedMessageRequest(baseUrl, sessionId) {
   );
   let resolveResponse;
   let rejectResponse;
+  let resolveStarted;
   const responsePromise = new Promise((resolve, reject) => {
     resolveResponse = resolve;
     rejectResponse = reject;
+  });
+  const startedPromise = new Promise((resolve) => {
+    resolveStarted = resolve;
   });
   const request = httpRequest(
     {
@@ -49,7 +66,11 @@ function delayedMessageRequest(baseUrl, sessionId) {
       port: url.port,
       path: `${url.pathname}${url.search}`,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Transfer-Encoding': 'chunked' },
+      headers: {
+        'Content-Type': 'application/json',
+        Expect: '100-continue',
+        'Transfer-Encoding': 'chunked',
+      },
     },
     (response) => {
       let body = '';
@@ -59,8 +80,12 @@ function delayedMessageRequest(baseUrl, sessionId) {
     },
   );
   request.on('error', rejectResponse);
-  request.write('{"body":"message held open');
-  return { request, responsePromise };
+  request.on('continue', () => {
+    request.write('{"body":"message held open');
+    resolveStarted();
+  });
+  request.flushHeaders();
+  return { request, responsePromise, startedPromise };
 }
 
 async function readSseEvent(reader, pending = '') {
@@ -175,7 +200,7 @@ test('a session invalidated while the request body is delayed cannot persist a m
   const session = await createSession(baseUrl, 'demo-1');
   try {
     const delayed = delayedMessageRequest(baseUrl, session.id);
-    await new Promise((resolve) => setImmediate(resolve));
+    await delayed.startedPromise;
     const invalidated = await fetch(`${baseUrl}/sessions/${encodeURIComponent(session.id)}`, {
       method: 'DELETE',
     });
@@ -247,6 +272,37 @@ test('realtime delivery is isolated to the subscribed group', async () => {
   } finally {
     await firstReader.cancel();
     await secondReader.cancel();
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
+test('heartbeat closes and removes a subscription after its session is revoked', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-revocation-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const hub = new RealtimeHub();
+  const { server, baseUrl } = await startRuntime(config, database, {
+    realtimeHeartbeatIntervalMs: 10,
+    realtimeHub: hub,
+  });
+  const session = await createSession(baseUrl, 'demo-2');
+  const stream = await fetch(
+    `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=1`,
+  );
+  assert.equal(stream.status, 200);
+  const reader = stream.body.getReader();
+  try {
+    const connected = await reader.read();
+    assert.equal(connected.done, false);
+    assert.equal(hub.subscriberCount('demo-group'), 1);
+    const revoked = await fetch(`${baseUrl}/sessions/${encodeURIComponent(session.id)}`, {
+      method: 'DELETE',
+    });
+    assert.equal(revoked.status, 200);
+    assert.equal(await readUntilClosed(reader), true);
+    assert.equal(hub.subscriberCount('demo-group'), 0);
+  } finally {
+    await reader.cancel();
     await closeRuntime(server, database, dataDir);
   }
 });

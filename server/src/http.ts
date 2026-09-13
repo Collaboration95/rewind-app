@@ -132,6 +132,7 @@ function sessionScope(database: RewindDatabase, url: URL, now = new Date()) {
 export interface RuntimeServerOptions {
   now?: () => Date;
   realtimeHub?: RealtimeHub;
+  realtimeHeartbeatIntervalMs?: number;
 }
 
 async function requestBody(request: IncomingMessage): Promise<Record<string, unknown> | null> {
@@ -353,19 +354,24 @@ export async function handleRequest(
       if (!response.writableEnded && !response.destroyed) response.write(encodeSseEvent(event));
     };
     let unsubscribe = () => {};
-    const writeAuthorisedEvent = (event: Parameters<typeof encodeSseEvent>[0]) => {
+    const streamIsAuthorised = () => {
       const currentSession = getDemoSession(database, session.session.id);
-      const stillValid =
+      return Boolean(
         currentSession &&
         currentSession.actor.memberId === session.session.actor.memberId &&
         classifyDemoSession(currentSession.expiresAt, currentSession.invalidatedAt, now()) ===
           'valid' &&
-        isMember(database, groupId, currentSession.actor.memberId);
-      if (!stillValid) {
-        unsubscribe();
-        if (!response.writableEnded && !response.destroyed) response.end();
-        return;
-      }
+        isMember(database, groupId, currentSession.actor.memberId),
+      );
+    };
+    const endUnauthorisedStream = () => {
+      if (streamIsAuthorised()) return false;
+      unsubscribe();
+      if (!response.writableEnded && !response.destroyed) response.end();
+      return true;
+    };
+    const writeAuthorisedEvent = (event: Parameters<typeof encodeSseEvent>[0]) => {
+      if (endUnauthorisedStream()) return;
       writeEvent(event);
     };
     // Register before writing the replay so a message sent during a reconnect
@@ -376,8 +382,9 @@ export async function handleRequest(
       writeAuthorisedEvent(event);
     }
     const heartbeat = setInterval(() => {
-      if (!response.writableEnded && !response.destroyed) response.write(': keep-alive\n\n');
-    }, 15_000);
+      if (response.writableEnded || response.destroyed || endUnauthorisedStream()) return;
+      response.write(': keep-alive\n\n');
+    }, options.realtimeHeartbeatIntervalMs ?? 15_000);
     heartbeat.unref();
     const cleanup = () => {
       clearInterval(heartbeat);
