@@ -133,6 +133,59 @@ function sendSessionRequired(response: ServerResponse, config: RuntimeConfig): v
   });
 }
 
+function acceptsEventStream(request: IncomingMessage): boolean {
+  const accept = request.headers.accept;
+  return (Array.isArray(accept) ? accept.join(',') : (accept ?? ''))
+    .toLowerCase()
+    .includes('text/event-stream');
+}
+
+/** EventSource hides HTTP response bodies/statuses behind a generic onerror.
+ * Return a terminal SSE frame when the caller is a standard EventSource so
+ * clients can stop reconnecting and disable chat actions deterministically. */
+function sendRealtimeAccessDenied(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  status: number = SAFE_DENIAL.status,
+  message: string = SAFE_DENIAL.message,
+): boolean {
+  if (!acceptsEventStream(request)) return false;
+  response.writeHead(200, {
+    'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
+    'Access-Control-Allow-Origin': config.allowOrigin,
+    'Cache-Control': 'no-cache, no-store',
+    Connection: 'keep-alive',
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'X-Accel-Buffering': 'no',
+  });
+  response.end(
+    [
+      'event: access-denied',
+      `data: ${JSON.stringify({ allowed: false, status, error: 'forbidden', message })}`,
+      '',
+      '',
+    ].join('\n'),
+  );
+  return true;
+}
+
+function writeRealtimeAccessDenied(
+  response: ServerResponse,
+  status: number = SAFE_DENIAL.status,
+  message: string = SAFE_DENIAL.message,
+): void {
+  if (response.writableEnded || response.destroyed) return;
+  response.write(
+    [
+      'event: access-denied',
+      `data: ${JSON.stringify({ allowed: false, status, error: 'forbidden', message })}`,
+      '',
+      '',
+    ].join('\n'),
+  );
+}
+
 function actingMember(url: URL): string | null {
   return url.searchParams.get('memberId');
 }
@@ -388,12 +441,38 @@ export async function handleRequest(
     const groupId = decodePathSegment(realtimeEventsMatch[1], response, config);
     if (groupId === null) return;
     const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) return sendSessionRequired(response, config);
+    if (!sessionId) {
+      if (
+        !sendRealtimeAccessDenied(
+          request,
+          response,
+          config,
+          401,
+          'Choose Demo access before joining chat.',
+        )
+      ) {
+        sendSessionRequired(response, config);
+      }
+      return;
+    }
     const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') return sendSessionRequired(response, config);
-    if (
-      !authorize(database, response, config, groupId, session.session.actor.memberId, 'message')
-    ) {
+    if (session.status !== 'valid') {
+      if (
+        !sendRealtimeAccessDenied(
+          request,
+          response,
+          config,
+          401,
+          'Choose Demo access before joining chat.',
+        )
+      ) {
+        sendSessionRequired(response, config);
+      }
+      return;
+    }
+    const access = authorizeMember(database, groupId, session.session.actor.memberId, 'message');
+    if (!access.allowed) {
+      if (!sendRealtimeAccessDenied(request, response, config)) sendDenied(response, config);
       return;
     }
 
@@ -440,6 +519,7 @@ export async function handleRequest(
     const endUnauthorisedStream = () => {
       if (streamIsAuthorised()) return false;
       unsubscribe();
+      writeRealtimeAccessDenied(response);
       if (!response.writableEnded && !response.destroyed) response.end();
       return true;
     };
@@ -490,19 +570,25 @@ export async function handleRequest(
     });
     if (!result.ok) {
       if (result.reason === 'membership_denied') return sendDenied(response, config);
-      sendJson(response, config, 400, {
+      sendJson(response, config, result.reason === 'duplicate_message' ? 409 : 400, {
         error: `message_${result.reason}`,
         message:
           result.reason === 'empty_body'
             ? 'Enter a message before sending.'
             : result.reason === 'body_too_long'
               ? 'Message text is too long.'
-              : 'The message timestamp is invalid.',
+              : result.reason === 'invalid_timestamp'
+                ? 'The message timestamp is invalid.'
+                : 'This message retry conflicts with an existing message.',
       });
       return;
     }
-    options.realtimeHub?.publish(result.event);
-    sendJson(response, config, 201, { event: result.event, message: result.event.message });
+    if (!result.deduplicated) options.realtimeHub?.publish(result.event);
+    sendJson(response, config, result.deduplicated ? 200 : 201, {
+      event: result.event,
+      message: result.event.message,
+      ...(result.deduplicated ? { deduplicated: true } : {}),
+    });
     return;
   }
 

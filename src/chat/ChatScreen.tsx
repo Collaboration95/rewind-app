@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useCapsule, type CapsuleState } from '../capsule/CapsuleProvider';
@@ -8,7 +8,12 @@ import type { DemoSession } from '../domain/session';
 import { useDemoSession } from '../session/DemoSessionProvider';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { COLORS } from '../theme';
-import type { ChatMessage, ChatMessageEvent } from './realtime-client';
+import {
+  createChatMessageDraft,
+  type ChatMessage,
+  type ChatMessageDraft,
+  type ChatMessageEvent,
+} from './realtime-client';
 
 const MESSAGE_MAX_LENGTH = 2_000;
 
@@ -41,6 +46,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message
     ? error.message
     : 'The chat connection could not be established.';
+}
+
+function isAccessDeniedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { status?: unknown; statusCode?: unknown };
+  return (
+    candidate.status === 401 ||
+    candidate.status === 403 ||
+    candidate.statusCode === 401 ||
+    candidate.statusCode === 403
+  );
 }
 
 /**
@@ -98,13 +114,46 @@ export function ChatSessionSurface({
   const [timelineState, setTimelineState] = useState<TimelineState>('loading');
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [pendingDraft, setPendingDraft] = useState<ChatMessageDraft | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [subscriptionDenied, setSubscriptionDenied] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
+  const subscriptionScope = useRef<string | null>(null);
+  const sendRequestId = useRef(0);
+  const activeSendRequest = useRef<{ id: number; scope: string } | null>(null);
+  const currentScopeRef = useRef<string | null>(null);
+  const previousScopeRef = useRef<string | null>(null);
+
+  const activeMessageScope = session && group ? `${session.id}:${group.id}` : null;
+  currentScopeRef.current = activeMessageScope;
+
+  const clearSensitiveState = useCallback(() => {
+    subscriptionScope.current = null;
+    activeSendRequest.current = null;
+    setMessages([]);
+    setDraft('');
+    setPendingDraft(null);
+    setSendError(null);
+    setSending(false);
+    setConnectionError(null);
+    setSubscriptionDenied(false);
+    setTimelineState('loading');
+  }, []);
+
+  useLayoutEffect(() => {
+    if (previousScopeRef.current === activeMessageScope) return;
+    previousScopeRef.current = activeMessageScope;
+    clearSensitiveState();
+  }, [activeMessageScope, clearSensitiveState]);
 
   useEffect(() => {
     if (accessState !== 'known' || !session || !group || !runtimeClient?.subscribeChat) return;
 
+    const scopeKey = activeMessageScope;
+    if (!scopeKey) return;
+    subscriptionScope.current = scopeKey;
+    setSubscriptionDenied(false);
     let active = true;
     let subscription: { close(): void } | null = null;
     const readyTimer = setTimeout(() => {
@@ -113,20 +162,54 @@ export function ChatSessionSurface({
     try {
       subscription = runtimeClient.subscribeChat(session.id, group.id, {
         onEvent: (event) => {
-          if (!active) return;
+          if (
+            !active ||
+            currentScopeRef.current !== scopeKey ||
+            subscriptionScope.current !== scopeKey ||
+            event.message.groupId !== group.id
+          )
+            return;
           setMessages((current) => appendEvent(current, event));
           setTimelineState('ready');
           setConnectionError(null);
         },
         onError: (error) => {
-          if (!active) return;
+          if (
+            !active ||
+            currentScopeRef.current !== scopeKey ||
+            subscriptionScope.current !== scopeKey
+          )
+            return;
+          if (isAccessDeniedError(error)) {
+            clearSensitiveState();
+            setSubscriptionDenied(true);
+            setTimelineState('denied');
+            return;
+          }
           setTimelineState('error');
           setConnectionError(errorMessage(error));
+        },
+        onConnectionStateChange: (connectionState) => {
+          if (
+            !active ||
+            currentScopeRef.current !== scopeKey ||
+            subscriptionScope.current !== scopeKey
+          )
+            return;
+          if (connectionState === 'denied') {
+            clearSensitiveState();
+            setSubscriptionDenied(true);
+            setTimelineState('denied');
+          } else if (connectionState === 'connected') {
+            setSubscriptionDenied(false);
+            setTimelineState('ready');
+            setConnectionError(null);
+          }
         },
       });
     } catch (error) {
       setTimeout(() => {
-        if (!active) return;
+        if (!active || currentScopeRef.current !== scopeKey) return;
         setTimelineState('error');
         setConnectionError(errorMessage(error));
       }, 0);
@@ -137,38 +220,79 @@ export function ChatSessionSurface({
       clearTimeout(readyTimer);
       subscription?.close();
     };
-  }, [accessState, group, retryKey, runtimeClient, session]);
+  }, [accessState, activeMessageScope, clearSensitiveState, group, retryKey, runtimeClient, session]);
 
   const retry = useCallback(() => {
     setMessages([]);
+    subscriptionScope.current = null;
     setConnectionError(null);
     setSendError(null);
+    setPendingDraft(null);
     if (capsuleStatus === 'error' || capsuleStatus === 'loading') retryCapsule();
     setRetryKey((current) => current + 1);
   }, [capsuleStatus, retryCapsule]);
 
   const send = useCallback(async () => {
     const body = draft.trim();
-    if (!body || sending || !runtimeClient?.sendChatMessage || !session || !group) return;
+    if (
+      !body ||
+      sending ||
+      subscriptionDenied ||
+      !runtimeClient?.sendChatMessage ||
+      !session ||
+      !group
+    )
+      return;
+    const submittedText = draft;
+    const sendScope = `${session.id}:${group.id}`;
+    const messageDraft =
+      pendingDraft?.body === submittedText
+        ? pendingDraft
+        : (runtimeClient.createChatDraft?.(submittedText) ?? createChatMessageDraft(submittedText));
+    const requestId = ++sendRequestId.current;
+    activeSendRequest.current = { id: requestId, scope: sendScope };
+    setPendingDraft(messageDraft);
     setSending(true);
     setSendError(null);
+    const isCurrentSend = () => {
+      const activeRequest = activeSendRequest.current;
+      return Boolean(
+        activeRequest &&
+        activeRequest.id === requestId &&
+        activeRequest.scope === sendScope &&
+        currentScopeRef.current === sendScope &&
+        subscriptionScope.current === sendScope,
+      );
+    };
     try {
-      const event = await runtimeClient.sendChatMessage(session.id, group.id, body);
+      const event = await runtimeClient.sendChatMessage(session.id, group.id, messageDraft);
+      if (!isCurrentSend() || event.message.groupId !== group.id) return;
       setMessages((current) => appendEvent(current, event));
-      setDraft('');
+      setPendingDraft(null);
+      setDraft((current) => (current === submittedText ? '' : current));
     } catch (error) {
+      if (!isCurrentSend()) return;
+      if (isAccessDeniedError(error)) {
+        clearSensitiveState();
+        setSubscriptionDenied(true);
+        setTimelineState('denied');
+        return;
+      }
       setSendError(
         error instanceof Error && error.message
           ? error.message
           : 'Your message could not be sent. Try again.',
       );
     } finally {
-      setSending(false);
+      if (isCurrentSend()) {
+        activeSendRequest.current = null;
+        setSending(false);
+      }
     }
-  }, [draft, group, runtimeClient, sending, session]);
+  }, [clearSensitiveState, draft, group, pendingDraft, runtimeClient, sending, session, subscriptionDenied]);
 
   const effectiveTimelineState: TimelineState =
-    accessState === 'denied'
+      accessState === 'denied' || subscriptionDenied
       ? 'denied'
       : accessState === 'loading'
         ? 'loading'
@@ -271,7 +395,7 @@ export function ChatSessionSurface({
         ) : null}
       </ScrollView>
 
-      {showComposer && runtimeClient?.sendChatMessage && group && session ? (
+      {showComposer && !subscriptionDenied && runtimeClient?.sendChatMessage && group && session ? (
         <View style={styles.composer}>
           <Text style={styles.fieldLabel}>MESSAGE</Text>
           <TextInput
@@ -280,6 +404,7 @@ export function ChatSessionSurface({
             multiline
             onChangeText={(value) => {
               setDraft(value);
+              setPendingDraft((current) => (current?.body === value ? current : null));
               setSendError(null);
             }}
             placeholder="Write a message"
@@ -303,6 +428,16 @@ export function ChatSessionSurface({
             </Pressable>
           </View>
         </View>
+      ) : null}
+      {sendError && pendingDraft && !subscriptionDenied ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => void send()}
+          style={styles.outlineButton}
+          testID="chat-send-retry"
+        >
+          <Text style={styles.outlineButtonText}>Retry sending</Text>
+        </Pressable>
       ) : null}
     </View>
   );
