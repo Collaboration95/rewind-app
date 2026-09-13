@@ -143,6 +143,8 @@ export interface UpdateCompilationProgressInput {
   claimGeneration: number;
   completedCount: number;
   progress?: number;
+  /** Timestamp at which this worker heartbeat renews its processing lease. */
+  now?: Date | string;
 }
 
 interface CompilationJobRow {
@@ -380,37 +382,66 @@ export function updateCompilationJobProgress(
   database: RewindDatabase,
   input: UpdateCompilationProgressInput,
 ): CompilationJobRecord | null {
+  const now = new Date(input.now ?? new Date());
+  if (!Number.isFinite(now.getTime())) return null;
   const completedCount = Math.max(0, Math.floor(input.completedCount));
   if (!Number.isSafeInteger(input.claimGeneration) || completedCount !== input.completedCount)
     return null;
-  const current = readCompilationJob(database, input.jobId);
-  if (
-    !current ||
-    current.status !== 'processing' ||
-    current.claimGeneration !== input.claimGeneration ||
-    completedCount < current.completedCount ||
-    completedCount > current.inputCount
-  )
-    return null;
-  if (
-    input.progress !== undefined &&
-    (!Number.isFinite(input.progress) || !Number.isSafeInteger(input.progress))
-  )
-    return null;
-  const progress =
-    input.progress === undefined
-      ? current.inputCount === 0
-        ? 0
-        : Math.floor((completedCount / current.inputCount) * 100)
-      : Math.max(0, Math.min(100, Math.floor(input.progress)));
-  if (progress < current.progress) return null;
-  database
-    .prepare(
-      `UPDATE media_jobs SET completed_count = ?, progress = ?
-       WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
-    )
-    .run(completedCount, progress, input.jobId, input.claimGeneration);
-  return readCompilationJob(database, input.jobId);
+  beginJobTransaction(database);
+  try {
+    // Read and update under the same writer lock. This prevents a stale
+    // worker from renewing a lease after another worker has reclaimed it.
+    const current = readCompilationJob(database, input.jobId);
+    if (
+      !current ||
+      current.status !== 'processing' ||
+      current.claimGeneration !== input.claimGeneration ||
+      completedCount < current.completedCount ||
+      completedCount > current.inputCount
+    ) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    if (
+      input.progress !== undefined &&
+      (!Number.isFinite(input.progress) || !Number.isSafeInteger(input.progress))
+    ) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    const progress =
+      input.progress === undefined
+        ? current.inputCount === 0
+          ? 0
+          : Math.floor((completedCount / current.inputCount) * 100)
+        : Math.max(0, Math.min(100, Math.floor(input.progress)));
+    if (progress < current.progress) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    const result = database
+      .prepare(
+        `UPDATE media_jobs
+         SET completed_count = ?, progress = ?, processing_started_at = ?
+         WHERE id = ? AND kind = 'film' AND status = 'processing'
+           AND claim_generation = ?`,
+      )
+      .run(completedCount, progress, now.toISOString(), input.jobId, input.claimGeneration);
+    if (Number(result.changes) !== 1) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    const updated = readCompilationJob(database, input.jobId);
+    if (!updated) {
+      database.exec('ROLLBACK');
+      return null;
+    }
+    database.exec('COMMIT');
+    return updated;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }
 
 /** A worker claim is recoverable after a process dies without completing it. */

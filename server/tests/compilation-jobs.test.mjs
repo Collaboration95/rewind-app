@@ -135,6 +135,7 @@ test('compilation claims and progress survive a restart without duplicate jobs',
         jobId: created.job.id,
         claimGeneration: firstClaim.job.claimGeneration,
         completedCount: 1,
+        now: '2026-09-11T00:00:00.000Z',
       }).progress,
       100,
     );
@@ -174,5 +175,155 @@ test('compilation claims and progress survive a restart without duplicate jobs',
     } finally {
       reopened.close();
     }
+  });
+});
+
+test('progress heartbeats renew only the current fenced claim lease', async () => {
+  await withDatabase(async ({ database }) => {
+    database.prepare('UPDATE cycles SET status = ? WHERE id = ?').run('revealing', 'demo-cycle');
+    database.exec(`
+      INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
+        VALUES ('lease-contribution', 'demo-cycle', 'demo-2', 4, '2026-09-10T01:00:00.000Z');
+      INSERT INTO media_jobs
+        (id, group_id, contribution_id, kind, status, output_path, created_at, source_path)
+        VALUES ('lease-clip', 'demo-group', 'lease-contribution', 'clip', 'ready',
+                '/private/processed/lease.mp4', '2026-09-10T01:00:00.000Z', NULL);
+    `);
+    const created = createCompilationJob(database, {
+      groupId: 'demo-group',
+      cycleId: 'demo-cycle',
+      createdAt: '2026-09-11T00:00:00.000Z',
+    });
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const claimed = claimCompilationJob(database, {
+      jobId: created.job.id,
+      now: '2026-09-11T00:00:00.000Z',
+      leaseMs: 1000,
+    });
+    assert.equal(claimed.ok, true);
+    if (!claimed.ok) return;
+
+    const renewed = updateCompilationJobProgress(database, {
+      jobId: created.job.id,
+      claimGeneration: claimed.job.claimGeneration,
+      completedCount: 0,
+      now: '2026-09-11T00:00:00.900Z',
+    });
+    assert.equal(renewed?.processingStartedAt, '2026-09-11T00:00:00.900Z');
+    const stillOwned = claimCompilationJob(database, {
+      jobId: created.job.id,
+      now: '2026-09-11T00:00:01.500Z',
+      leaseMs: 1000,
+    });
+    assert.equal(stillOwned.ok, true);
+    assert.equal(stillOwned.action, 'already_processing');
+
+    const reclaimed = claimCompilationJob(database, {
+      jobId: created.job.id,
+      now: '2026-09-11T00:00:02.000Z',
+      leaseMs: 1000,
+    });
+    assert.equal(reclaimed.ok, true);
+    if (!reclaimed.ok) return;
+    assert.equal(reclaimed.action, 'claimed');
+    assert.equal(reclaimed.job.claimGeneration, claimed.job.claimGeneration + 1);
+    assert.equal(
+      updateCompilationJobProgress(database, {
+        jobId: created.job.id,
+        claimGeneration: claimed.job.claimGeneration,
+        completedCount: 1,
+        now: '2026-09-11T00:00:02.100Z',
+      }),
+      null,
+    );
+    assert.equal(
+      database
+        .prepare('SELECT claim_generation AS claimGeneration FROM media_jobs WHERE id = ?')
+        .get(created.job.id).claimGeneration,
+      reclaimed.job.claimGeneration,
+    );
+  });
+});
+
+test('recorded compilation migration repairs malformed input shape and keeps valid rows', async () => {
+  await withDatabase(async ({ database }) => {
+    database.exec(`
+      DROP INDEX compilation_job_inputs_order_idx;
+      DROP INDEX media_jobs_cycle_idx;
+      DROP INDEX media_jobs_one_film_per_cycle_idx;
+      ALTER TABLE compilation_job_inputs RENAME TO compilation_job_inputs_broken;
+      CREATE TABLE compilation_job_inputs (
+        job_id TEXT,
+        clip_job_id TEXT,
+        contribution_id TEXT,
+        position TEXT
+      );
+      INSERT INTO compilation_job_inputs VALUES
+        ('demo-film', 'demo-clip', 'demo-contribution', '0'),
+        ('demo-film', 'demo-clip', 'demo-contribution', '1'),
+        ('missing-job', 'demo-clip', 'demo-contribution', '2'),
+        ('demo-film', 'demo-clip', 'missing-contribution', '3'),
+        ('demo-film', 'demo-clip', 'demo-contribution', '-1');
+      DROP TABLE compilation_job_inputs_broken;
+      CREATE INDEX media_jobs_cycle_idx ON media_jobs (kind);
+      CREATE INDEX media_jobs_one_film_per_cycle_idx ON media_jobs (cycle_id);
+    `);
+    // The durable migration receipt remains present; migrateDatabase must use
+    // the shape validator and repair rather than trusting the receipt.
+    const { migrateDatabase } = await import('../dist/db.js');
+    migrateDatabase(database);
+
+    assert.equal(
+      database
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'compilation_job_inputs'",
+        )
+        .get()
+        .sql.includes('REFERENCES media_jobs'),
+      true,
+    );
+    assert.deepEqual(
+      database
+        .prepare(
+          'SELECT job_id AS jobId, clip_job_id AS clipJobId, contribution_id AS contributionId, position FROM compilation_job_inputs',
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          jobId: 'demo-film',
+          clipJobId: 'demo-clip',
+          contributionId: 'demo-contribution',
+          position: 0,
+        },
+      ],
+    );
+    assert.deepEqual(
+      database
+        .prepare('PRAGMA foreign_key_list(compilation_job_inputs)')
+        .all()
+        .map((row) => ({ from: row.from, table: row.table, onDelete: row.on_delete }))
+        .sort((left, right) => left.from.localeCompare(right.from)),
+      [
+        { from: 'clip_job_id', table: 'media_jobs', onDelete: 'CASCADE' },
+        { from: 'contribution_id', table: 'contributions', onDelete: 'CASCADE' },
+        { from: 'job_id', table: 'media_jobs', onDelete: 'CASCADE' },
+      ],
+    );
+    assert.deepEqual(
+      database
+        .prepare('PRAGMA index_info(compilation_job_inputs_order_idx)')
+        .all()
+        .map((row) => row.name),
+      ['job_id', 'position'],
+    );
+    assert.deepEqual(
+      database
+        .prepare('PRAGMA index_info(media_jobs_cycle_idx)')
+        .all()
+        .map((row) => row.name),
+      ['cycle_id', 'kind', 'created_at'],
+    );
   });
 });

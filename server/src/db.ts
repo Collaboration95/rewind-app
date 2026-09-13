@@ -168,15 +168,102 @@ function compilationJobsSchemaReady(database: RewindDatabase): boolean {
       'completed_count',
       'claim_generation',
     ]) &&
-    hasColumns(database, 'compilation_job_inputs', [
-      'job_id',
-      'clip_job_id',
-      'contribution_id',
-      'position',
-    ]) &&
-    hasIndex(database, 'media_jobs_cycle_idx') &&
-    hasIndex(database, 'media_jobs_one_film_per_cycle_idx') &&
-    hasIndex(database, 'compilation_job_inputs_order_idx')
+    compilationJobInputsTableIsValid(database) &&
+    indexMatches(
+      database,
+      'media_jobs_cycle_idx',
+      false,
+      ['cycle_id', 'kind', 'created_at'],
+      'none',
+      'media_jobs',
+    ) &&
+    indexMatches(
+      database,
+      'media_jobs_one_film_per_cycle_idx',
+      true,
+      ['cycle_id'],
+      'film-cycle',
+      'media_jobs',
+    ) &&
+    indexMatches(
+      database,
+      'compilation_job_inputs_order_idx',
+      false,
+      ['job_id', 'position'],
+      'none',
+      'compilation_job_inputs',
+    )
+  );
+}
+
+interface CompilationInputForeignKey {
+  table?: string;
+  from?: string;
+  to?: string;
+  on_delete?: string;
+}
+
+/** Validate the complete durable shape, not merely the existence of names.
+ * Migration receipts can outlive an interrupted or hand-edited DDL change. */
+function compilationJobInputsTableIsValid(database: RewindDatabase): boolean {
+  if (!hasTable(database, 'compilation_job_inputs')) return false;
+  const columns = database.prepare('PRAGMA table_info(compilation_job_inputs)').all() as {
+    name?: string;
+    type?: string;
+    notnull?: number;
+    pk?: number;
+  }[];
+  const expected = [
+    ['job_id', 'TEXT', 1, 1],
+    ['clip_job_id', 'TEXT', 1, 2],
+    ['contribution_id', 'TEXT', 1, 0],
+    ['position', 'INTEGER', 1, 0],
+  ] as const;
+  if (
+    columns.length !== expected.length ||
+    !expected.every(([name, type, notnull, pk], index) => {
+      const column = columns[index];
+      return (
+        column?.name === name &&
+        String(column.type ?? '').toUpperCase() === type &&
+        Number(column.notnull) === notnull &&
+        Number(column.pk) === pk
+      );
+    })
+  ) {
+    return false;
+  }
+  const table = database
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'compilation_job_inputs'",
+    )
+    .get() as { sql?: string } | undefined;
+  if (!table?.sql) return false;
+  const sql = table.sql.replace(/["`]/g, '').replace(/\s+/g, ' ').toLowerCase();
+  if (
+    !/primary\s+key\s*\(\s*job_id\s*,\s*clip_job_id\s*\)/.test(sql) ||
+    !/unique\s*\(\s*job_id\s*,\s*contribution_id\s*\)/.test(sql) ||
+    !/check\s*\(\s*position\s*>=\s*0\s*\)/.test(sql)
+  ) {
+    return false;
+  }
+  const foreignKeys = database
+    .prepare('PRAGMA foreign_key_list(compilation_job_inputs)')
+    .all() as CompilationInputForeignKey[];
+  if (foreignKeys.length !== 3) return false;
+  const requiredForeignKeys = [
+    ['job_id', 'media_jobs'],
+    ['clip_job_id', 'media_jobs'],
+    ['contribution_id', 'contributions'],
+  ] as const;
+  return requiredForeignKeys.every(([from, tableName]) =>
+    foreignKeys.some(
+      (foreignKey) =>
+        foreignKey.from === from &&
+        foreignKey.table === tableName &&
+        foreignKey.to === 'id' &&
+        String(foreignKey.on_delete ?? '').toUpperCase() === 'CASCADE',
+    ),
   );
 }
 
@@ -414,17 +501,37 @@ function cycleLifecycleMigrationNeedsRepair(database: RewindDatabase): boolean {
   );
 }
 
+type IndexWhereExpectation = 'ignore' | 'none' | 'film-cycle';
+
 function indexMatches(
   database: RewindDatabase,
   name: string,
   unique: boolean,
   columns: string[],
+  where: IndexWhereExpectation = 'ignore',
+  table?: string,
 ): boolean {
-  const index = ['cycles', 'cycle_lifecycle_events']
+  const index = (table ? [table] : ['cycles', 'cycle_lifecycle_events'])
     .flatMap((table) => database.prepare(`PRAGMA index_list(${table})`).all())
     .find((row) => String((row as { name?: unknown }).name) === name) as
     { name?: string; unique?: number } | undefined;
   if (!index || Number(index.unique) !== (unique ? 1 : 0)) return false;
+  if (where !== 'ignore') {
+    const definition = database
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+      .get(name) as { sql?: string } | undefined;
+    const sql = String(definition?.sql ?? '')
+      .replace(/["`]/g, '')
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+    if (where === 'none' && /\bwhere\b/.test(sql)) return false;
+    if (
+      where === 'film-cycle' &&
+      !/where\s+kind\s*=\s*'film'\s+and\s+cycle_id\s+is\s+not\s+null/.test(sql)
+    ) {
+      return false;
+    }
+  }
   const indexColumns = database
     .prepare(`PRAGMA index_info(${name})`)
     .all()
@@ -590,6 +697,79 @@ function applyCycleLifecycleMigration(database: RewindDatabase): void {
   applyCompilationJobsMigration(database);
 }
 
+function quoteIdentifier(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+function createCompilationJobInputsTable(database: RewindDatabase): void {
+  database.exec(
+    `CREATE TABLE compilation_job_inputs (
+       job_id TEXT NOT NULL REFERENCES media_jobs(id) ON DELETE CASCADE,
+       clip_job_id TEXT NOT NULL REFERENCES media_jobs(id) ON DELETE CASCADE,
+       contribution_id TEXT NOT NULL REFERENCES contributions(id) ON DELETE CASCADE,
+       position INTEGER NOT NULL CHECK (position >= 0),
+       PRIMARY KEY (job_id, clip_job_id),
+       UNIQUE (job_id, contribution_id)
+     )`,
+  );
+}
+
+/** Rebuild a malformed recorded table and retain rows that satisfy the
+ * canonical constraints. OR IGNORE also deterministically deduplicates rows
+ * that were admitted by the malformed table (rowid order keeps the first). */
+function rebuildCompilationJobInputsTable(database: RewindDatabase): void {
+  const legacyTable = 'compilation_job_inputs_recovery';
+  database.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(legacyTable)}`);
+  if (hasTable(database, 'compilation_job_inputs')) {
+    const indexes = database.prepare('PRAGMA index_list(compilation_job_inputs)').all() as {
+      name?: string;
+    }[];
+    for (const index of indexes) {
+      const name = String(index.name ?? '');
+      // SQLite's implicit PRIMARY KEY/UNIQUE indexes disappear with their
+      // table. Explicit names must be removed before the replacement table is
+      // created so a malformed index cannot shadow the canonical one.
+      if (name && !name.startsWith('sqlite_autoindex_')) {
+        database.exec(`DROP INDEX IF EXISTS ${quoteIdentifier(name)}`);
+      }
+    }
+    database.exec(`ALTER TABLE compilation_job_inputs RENAME TO ${quoteIdentifier(legacyTable)}`);
+  }
+  createCompilationJobInputsTable(database);
+
+  if (
+    !hasTable(database, legacyTable) ||
+    !['job_id', 'clip_job_id', 'contribution_id', 'position'].every((column) =>
+      tableColumns(database, legacyTable).has(column),
+    )
+  ) {
+    if (hasTable(database, legacyTable))
+      database.exec(`DROP TABLE ${quoteIdentifier(legacyTable)}`);
+    return;
+  }
+  // Filter parent references before insertion: SQLite foreign-key violations
+  // are not suppressible by INSERT OR IGNORE. Numeric strings are accepted as
+  // positions when they are losslessly non-negative integers.
+  database.exec(
+    `INSERT OR IGNORE INTO compilation_job_inputs
+       (job_id, clip_job_id, contribution_id, position)
+     SELECT legacy.job_id, legacy.clip_job_id, legacy.contribution_id,
+            CAST(legacy.position AS INTEGER)
+     FROM ${quoteIdentifier(legacyTable)} AS legacy
+     WHERE typeof(legacy.job_id) = 'text'
+       AND typeof(legacy.clip_job_id) = 'text'
+       AND typeof(legacy.contribution_id) = 'text'
+       AND CAST(legacy.position AS TEXT) <> ''
+       AND CAST(legacy.position AS TEXT) NOT GLOB '*[^0-9]*'
+       AND CAST(legacy.position AS INTEGER) >= 0
+       AND EXISTS (SELECT 1 FROM media_jobs WHERE id = legacy.job_id)
+       AND EXISTS (SELECT 1 FROM media_jobs WHERE id = legacy.clip_job_id)
+       AND EXISTS (SELECT 1 FROM contributions WHERE id = legacy.contribution_id)
+     ORDER BY legacy.rowid`,
+  );
+  database.exec(`DROP TABLE ${quoteIdentifier(legacyTable)}`);
+}
+
 /** Apply the cycle-scoped compilation schema in a repairable form. The
  * migration can be resumed after an interrupted DDL sequence. */
 function applyCompilationJobsMigration(database: RewindDatabase): void {
@@ -619,23 +799,37 @@ function applyCompilationJobsMigration(database: RewindDatabase): void {
       'ALTER TABLE media_jobs ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0 CHECK (claim_generation >= 0)',
     );
   }
-  database.exec(
-    `CREATE INDEX IF NOT EXISTS media_jobs_cycle_idx
-       ON media_jobs (cycle_id, kind, created_at);
-     CREATE UNIQUE INDEX IF NOT EXISTS media_jobs_one_film_per_cycle_idx
-       ON media_jobs (cycle_id)
-       WHERE kind = 'film' AND cycle_id IS NOT NULL;
-     CREATE TABLE IF NOT EXISTS compilation_job_inputs (
-       job_id TEXT NOT NULL REFERENCES media_jobs(id) ON DELETE CASCADE,
-       clip_job_id TEXT NOT NULL REFERENCES media_jobs(id) ON DELETE CASCADE,
-       contribution_id TEXT NOT NULL REFERENCES contributions(id) ON DELETE CASCADE,
-       position INTEGER NOT NULL CHECK (position >= 0),
-       PRIMARY KEY (job_id, clip_job_id),
-       UNIQUE (job_id, contribution_id)
-     );
-     CREATE INDEX IF NOT EXISTS compilation_job_inputs_order_idx
-       ON compilation_job_inputs (job_id, position);`,
-  );
+  if (!compilationJobInputsTableIsValid(database)) {
+    rebuildCompilationJobInputsTable(database);
+  }
+  const indexes = [
+    [
+      'media_jobs_cycle_idx',
+      false,
+      ['cycle_id', 'kind', 'created_at'],
+      'none' as const,
+      'media_jobs',
+    ],
+    ['media_jobs_one_film_per_cycle_idx', true, ['cycle_id'], 'film-cycle' as const, 'media_jobs'],
+    [
+      'compilation_job_inputs_order_idx',
+      false,
+      ['job_id', 'position'],
+      'none' as const,
+      'compilation_job_inputs',
+    ],
+  ] as const;
+  for (const [name, unique, indexColumns, where, table] of indexes) {
+    if (!indexMatches(database, name, unique, [...indexColumns], where, table)) {
+      database.exec(`DROP INDEX IF EXISTS ${quoteIdentifier(name)}`);
+      database.exec(
+        `CREATE ${unique ? 'UNIQUE ' : ''}INDEX ${quoteIdentifier(name)}
+           ON ${quoteIdentifier(table)} (${indexColumns.join(', ')})${
+             where === 'film-cycle' ? " WHERE kind = 'film' AND cycle_id IS NOT NULL" : ''
+           }`,
+      );
+    }
+  }
 }
 
 function markMigration(database: RewindDatabase, key: string): void {
