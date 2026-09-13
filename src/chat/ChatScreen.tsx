@@ -226,14 +226,20 @@ export function ChatSessionSurface({
       clearTimeout(readyTimer);
       subscription?.close();
     };
-  }, [accessState, activeMessageScope, clearSensitiveState, group, retryKey, runtimeClient, session]);
+  }, [
+    accessState,
+    activeMessageScope,
+    clearSensitiveState,
+    group,
+    retryKey,
+    runtimeClient,
+    session,
+  ]);
 
   const retry = useCallback(() => {
     setMessages([]);
     subscriptionScope.current = null;
     setConnectionError(null);
-    setSendError(null);
-    setPendingDraft(null);
     setReplyTarget(null);
     setReactionActive({});
     if (capsuleStatus === 'error' || capsuleStatus === 'loading') retryCapsule();
@@ -301,7 +307,17 @@ export function ChatSessionSurface({
         setSending(false);
       }
     }
-  }, [clearSensitiveState, draft, group, pendingDraft, replyTarget, runtimeClient, sending, session, subscriptionDenied]);
+  }, [
+    clearSensitiveState,
+    draft,
+    group,
+    pendingDraft,
+    replyTarget,
+    runtimeClient,
+    sending,
+    session,
+    subscriptionDenied,
+  ]);
 
   const toggleReaction = useCallback(
     async (message: ChatMessage) => {
@@ -330,7 +346,7 @@ export function ChatSessionSurface({
   );
 
   const effectiveTimelineState: TimelineState =
-      accessState === 'denied' || subscriptionDenied
+    accessState === 'denied' || subscriptionDenied
       ? 'denied'
       : accessState === 'loading'
         ? 'loading'

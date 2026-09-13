@@ -388,13 +388,17 @@ describe('persistent group chat timeline', () => {
     const result = await render(<App runtimeClient={runtime.client} />);
     await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
     await result.findByTestId('chat-empty');
-    await act(async () => fireEvent.changeText(result.getByTestId('chat-composer'), 'Sensitive revoked note'));
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'Sensitive revoked note'),
+    );
     await fireEvent.press(result.getByTestId('chat-send'));
     await result.findByTestId('chat-denied');
     expect(result.queryByText('Sensitive revoked note')).toBeNull();
     expect(result.queryByTestId('chat-composer')).toBeNull();
     expect(result.queryByTestId('chat-send-retry')).toBeNull();
-    await act(async () => runtime.emit(event(8, 'Post-denial private text', '2026-09-13T08:00:00.000Z')));
+    await act(async () =>
+      runtime.emit(event(8, 'Post-denial private text', '2026-09-13T08:00:00.000Z')),
+    );
     expect(result.queryByText('Post-denial private text')).toBeNull();
   });
 
@@ -403,9 +407,13 @@ describe('persistent group chat timeline', () => {
     const result = await render(<App runtimeClient={runtime.client} />);
     await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
     await result.findByTestId('chat-empty');
-    await act(async () => runtime.emit(event(6, 'Revoked private text', '2026-09-13T06:00:00.000Z')));
+    await act(async () =>
+      runtime.emit(event(6, 'Revoked private text', '2026-09-13T06:00:00.000Z')),
+    );
     await result.findByText('Revoked private text');
-    await act(async () => fireEvent.changeText(result.getByTestId('chat-composer'), 'Sensitive unsent draft'));
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'Sensitive unsent draft'),
+    );
     await act(async () => runtime.deny());
     await result.findByTestId('chat-denied');
     expect(result.queryByText('Revoked private text')).toBeNull();
@@ -423,7 +431,9 @@ describe('persistent group chat timeline', () => {
     const result = await render(<App runtimeClient={runtime.client} />);
     await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
     await result.findByTestId('chat-empty');
-    await act(async () => fireEvent.changeText(result.getByTestId('chat-composer'), 'Retry after reconnect'));
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'Retry after reconnect'),
+    );
     await fireEvent.press(result.getByTestId('chat-send'));
     await result.findByTestId('chat-send-error');
     const firstDraft = sendChatMessage.mock.calls[0][2];
@@ -441,32 +451,52 @@ describe('persistent group chat timeline', () => {
   it('does not let a stale send completion clear a newer scope send', async () => {
     let resolveFirst!: (value: ChatMessageEvent) => void;
     let resolveSecond!: (value: ChatMessageEvent) => void;
-    const firstSend = new Promise<ChatMessageEvent>((resolve) => { resolveFirst = resolve; });
-    const secondSend = new Promise<ChatMessageEvent>((resolve) => { resolveSecond = resolve; });
-    const sendChatMessage = jest.fn().mockReturnValueOnce(firstSend).mockReturnValueOnce(secondSend);
+    const firstSend = new Promise<ChatMessageEvent>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondSend = new Promise<ChatMessageEvent>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const sendChatMessage = jest
+      .fn()
+      .mockReturnValueOnce(firstSend)
+      .mockReturnValueOnce(secondSend);
     const runtime = runtimeMock({ sendChatMessage });
     const result = await render(<App runtimeClient={runtime.client} />);
     await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
     await result.findByTestId('chat-empty');
-    await act(async () => fireEvent.changeText(result.getByTestId('chat-composer'), 'First scope message'));
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'First scope message'),
+    );
     await fireEvent.press(result.getByTestId('chat-send'));
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1));
-    const otherGroup: Group = { ...group, id: 'other-group', name: 'Other Group', currentCycleId: 'other-cycle' };
+    const otherGroup: Group = {
+      ...group,
+      id: 'other-group',
+      name: 'Other Group',
+      currentCycleId: 'other-cycle',
+    };
     const otherCycle: Cycle = { ...cycle, groupId: otherGroup.id, id: otherGroup.currentCycleId };
-    await act(async () => result.rerender(
-      <App
-        cycleRepository={{ getCurrentCycle: jest.fn().mockResolvedValue(otherCycle) }}
-        groupRepository={{ getGroupForMember: jest.fn().mockResolvedValue(otherGroup) }}
-        runtimeClient={runtime.client}
-      />,
-    ));
+    await act(async () =>
+      result.rerender(
+        <App
+          cycleRepository={{ getCurrentCycle: jest.fn().mockResolvedValue(otherCycle) }}
+          groupRepository={{ getGroupForMember: jest.fn().mockResolvedValue(otherGroup) }}
+          runtimeClient={runtime.client}
+        />,
+      ),
+    );
     await waitFor(() => expect(result.getByText('Other Group')).toBeTruthy());
     await result.findByTestId('chat-empty');
-    await act(async () => fireEvent.changeText(result.getByTestId('chat-composer'), 'Second scope message'));
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'Second scope message'),
+    );
     await fireEvent.press(result.getByTestId('chat-send'));
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(2));
     expect(result.getByTestId('chat-send')).toHaveTextContent('Sending…');
-    await act(async () => resolveFirst(event(9, 'Stale first scope response', '2026-09-13T09:00:00.000Z')));
+    await act(async () =>
+      resolveFirst(event(9, 'Stale first scope response', '2026-09-13T09:00:00.000Z')),
+    );
     expect(result.getByTestId('chat-send')).toHaveTextContent('Sending…');
     expect(result.getByTestId('chat-send')).toBeDisabled();
     const secondEvent = event(10, 'Second scope response', '2026-09-13T10:00:00.000Z');
