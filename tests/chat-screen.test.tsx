@@ -195,6 +195,79 @@ describe('persistent group chat timeline', () => {
     expect(runtime.client.sendChatMessage).not.toHaveBeenCalled();
   });
 
+  it('clears the timeline and compose state when access is revoked', async () => {
+    const runtime = runtimeMock();
+    const result = await render(<App runtimeClient={runtime.client} />);
+    await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
+    await result.findByTestId('chat-empty');
+
+    await act(async () =>
+      runtime.emit(event(6, 'Revoked private text', '2026-09-13T06:00:00.000Z')),
+    );
+    await result.findByText('Revoked private text');
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'Sensitive unsent draft'),
+    );
+
+    await act(async () => runtime.deny());
+    await result.findByTestId('chat-denied');
+    expect(result.queryByText('Revoked private text')).toBeNull();
+    expect(result.queryByText('Sensitive unsent draft')).toBeNull();
+    expect(result.queryByTestId('chat-composer')).toBeNull();
+    expect(result.queryByTestId('chat-send-retry')).toBeNull();
+  });
+
+  it('clears the previous group timeline before a new group scope is ready', async () => {
+    const runtime = runtimeMock();
+    const otherGroup: Group = {
+      ...group,
+      id: 'other-group',
+      name: 'Other Group',
+      currentCycleId: 'other-cycle',
+    };
+    const otherCycle: Cycle = { ...cycle, groupId: otherGroup.id, id: otherGroup.currentCycleId };
+    const firstGroupRepository = {
+      getGroupForMember: jest.fn().mockResolvedValue(group),
+    };
+    const firstCycleRepository = {
+      getCurrentCycle: jest.fn().mockResolvedValue(cycle),
+    };
+    const result = await render(
+      <App
+        cycleRepository={firstCycleRepository}
+        groupRepository={firstGroupRepository}
+        runtimeClient={runtime.client}
+      />,
+    );
+    await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
+    await result.findByTestId('chat-empty');
+    await act(async () =>
+      runtime.emit(event(7, 'First group private text', '2026-09-13T07:00:00.000Z')),
+    );
+    await result.findByText('First group private text');
+
+    const secondGroupRepository = {
+      getGroupForMember: jest.fn().mockResolvedValue(otherGroup),
+    };
+    const secondCycleRepository = {
+      getCurrentCycle: jest.fn().mockResolvedValue(otherCycle),
+    };
+    await act(async () => {
+      result.rerender(
+        <App
+          cycleRepository={secondCycleRepository}
+          groupRepository={secondGroupRepository}
+          runtimeClient={runtime.client}
+        />,
+      );
+    });
+
+    expect(result.queryByText('First group private text')).toBeNull();
+    await waitFor(() => expect(result.getByText('Other Group')).toBeTruthy());
+    await result.findByTestId('chat-empty');
+    expect(result.queryByText('First group private text')).toBeNull();
+  });
+
   it('retains a failed draft identity across connection retry before sending again', async () => {
     const sendChatMessage = jest
       .fn()

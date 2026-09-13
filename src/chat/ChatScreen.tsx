@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { demoRepository } from '../data/demo-repository';
@@ -45,10 +45,22 @@ function errorMessage(error: unknown): string {
     : 'The chat connection could not be established.';
 }
 
+function isAccessDeniedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { status?: unknown; statusCode?: unknown };
+  return (
+    candidate.status === 401 ||
+    candidate.status === 403 ||
+    candidate.statusCode === 401 ||
+    candidate.statusCode === 403
+  );
+}
+
 export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
   const { session } = useDemoSession();
   const { state, retry: retryCapsule } = useCapsule();
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
+  const [messageScope, setMessageScope] = useState<string | null>(null);
   const [timelineState, setTimelineState] = useState<TimelineState>('loading');
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionErrorScope, setConnectionErrorScope] = useState<string | null>(null);
@@ -59,9 +71,35 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
   const [subscriptionDenied, setSubscriptionDenied] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const subscriptionScope = useRef<string | null>(null);
+  const currentScopeRef = useRef<string | null>(null);
+  const previousScopeRef = useRef<string | null>(null);
   const profiles = useMemo(() => demoRepository.listProfiles(), []);
 
   const group = state.status === 'ready' ? state.group : null;
+  const activeMessageScope = session && group ? `${session.id}:${group.id}` : null;
+  // Keep async callbacks from a previous render from mutating the new scope.
+  currentScopeRef.current = activeMessageScope;
+
+  const clearSensitiveState = useCallback(() => {
+    subscriptionScope.current = null;
+    setMessages([]);
+    setMessageScope(null);
+    setDraft('');
+    setPendingDraft(null);
+    setSendError(null);
+    setSending(false);
+    setConnectionError(null);
+    setConnectionErrorScope(null);
+    setSubscriptionDenied(false);
+    setTimelineState('loading');
+  }, []);
+
+  useLayoutEffect(() => {
+    if (previousScopeRef.current === activeMessageScope) return;
+    previousScopeRef.current = activeMessageScope;
+    clearSensitiveState();
+  }, [activeMessageScope, clearSensitiveState]);
+
   const memberNames = useMemo(
     () => new Map(profiles.map((profile) => [profile.id, profile.displayName])),
     [profiles],
@@ -78,7 +116,8 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
       return;
     }
 
-    const scopeKey = `${session.id}:${group.id}`;
+    const scopeKey = activeMessageScope;
+    if (!scopeKey) return;
     subscriptionScope.current = scopeKey;
     setSubscriptionDenied(false);
     let active = true;
@@ -89,29 +128,47 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
     try {
       subscription = runtimeClient.subscribeChat(session.id, group.id, {
         onEvent: (event) => {
-          if (!active) return;
-          setMessages((current) =>
-            subscriptionScope.current === scopeKey
-              ? appendEvent(current, event)
-              : appendEvent([], event),
-          );
+          if (
+            !active ||
+            currentScopeRef.current !== scopeKey ||
+            subscriptionScope.current !== scopeKey ||
+            event.message.groupId !== group.id
+          )
+            return;
+          setMessages((current) => appendEvent(current, event));
+          setMessageScope(scopeKey);
           setTimelineState('ready');
           setConnectionError(null);
           setConnectionErrorScope(null);
         },
         onError: (error) => {
-          if (!active) return;
+          if (
+            !active ||
+            currentScopeRef.current !== scopeKey ||
+            subscriptionScope.current !== scopeKey
+          )
+            return;
+          if (isAccessDeniedError(error)) {
+            clearSensitiveState();
+            setSubscriptionDenied(true);
+            setTimelineState('denied');
+            return;
+          }
           setTimelineState('error');
           setConnectionError(errorMessage(error));
           setConnectionErrorScope(scopeKey);
         },
         onConnectionStateChange: (connectionState) => {
-          if (!active) return;
+          if (
+            !active ||
+            currentScopeRef.current !== scopeKey ||
+            subscriptionScope.current !== scopeKey
+          )
+            return;
           if (connectionState === 'denied') {
+            clearSensitiveState();
             setSubscriptionDenied(true);
             setTimelineState('denied');
-            setSendError(null);
-            setSending(false);
           } else if (connectionState === 'connected') {
             setSubscriptionDenied(false);
             setTimelineState('ready');
@@ -134,7 +191,15 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
       clearTimeout(readyTimer);
       subscription?.close();
     };
-  }, [group, retryKey, runtimeClient, session, state.status]);
+  }, [
+    activeMessageScope,
+    clearSensitiveState,
+    group,
+    retryKey,
+    runtimeClient,
+    session,
+    state.status,
+  ]);
 
   const retry = useCallback(() => {
     setMessages([]);
@@ -157,6 +222,7 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
     )
       return;
     const submittedText = draft;
+    const sendScope = `${session.id}:${group.id}`;
     const messageDraft =
       pendingDraft?.body === submittedText
         ? pendingDraft
@@ -166,21 +232,29 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
     setSendError(null);
     try {
       const event = await runtimeClient.sendChatMessage(session.id, group.id, messageDraft);
+      if (
+        currentScopeRef.current !== sendScope ||
+        subscriptionScope.current !== sendScope ||
+        event.message.groupId !== group.id
+      )
+        return;
       setMessages((current) => appendEvent(current, event));
+      setMessageScope(sendScope);
       setPendingDraft(null);
       setDraft((current) => (current === submittedText ? '' : current));
     } catch (error) {
-      setSendError(
-        error instanceof Error && error.message
-          ? error.message
-          : 'Your message could not be sent. Try again.',
-      );
+      if (currentScopeRef.current === sendScope && subscriptionScope.current === sendScope) {
+        setSendError(
+          error instanceof Error && error.message
+            ? error.message
+            : 'Your message could not be sent. Try again.',
+        );
+      }
     } finally {
       setSending(false);
     }
   }, [draft, group, pendingDraft, runtimeClient, sending, session, subscriptionDenied]);
 
-  const activeMessageScope = session && group ? `${session.id}:${group.id}` : null;
   const hasActiveSubscription =
     activeMessageScope !== null && subscriptionScope.current === activeMessageScope;
   const effectiveTimelineState: TimelineState =
@@ -197,7 +271,11 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
               : 'loading';
   const showComposer = effectiveTimelineState === 'ready' || effectiveTimelineState === 'error';
   const retryLabel = state.status === 'error' ? 'Retry loading chat' : 'Retry chat connection';
-  const canRenderMessages = hasActiveSubscription && effectiveTimelineState !== 'unavailable';
+  const canRenderMessages =
+    hasActiveSubscription &&
+    (messages.length === 0 || messageScope === activeMessageScope) &&
+    effectiveTimelineState !== 'unavailable' &&
+    effectiveTimelineState !== 'denied';
 
   return (
     <View style={styles.screen} testID="chat-screen">
