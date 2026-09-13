@@ -114,6 +114,9 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
             setSending(false);
           } else if (connectionState === 'connected') {
             setSubscriptionDenied(false);
+            setTimelineState('ready');
+            setConnectionError(null);
+            setConnectionErrorScope(null);
           }
         },
       });
@@ -138,8 +141,6 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
     subscriptionScope.current = null;
     setConnectionError(null);
     setConnectionErrorScope(null);
-    setSendError(null);
-    setPendingDraft(null);
     if (state.status === 'error' || state.status === 'loading') retryCapsule();
     setRetryKey((current) => current + 1);
   }, [retryCapsule, state.status]);

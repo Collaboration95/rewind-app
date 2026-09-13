@@ -82,6 +82,7 @@ function runtimeMock(overrides: Partial<RuntimeClient> = {}) {
     emit: (next: ChatMessageEvent) => subscriptionOptions?.onEvent(next),
     fail: (error: unknown) => subscriptionOptions?.onError?.(error),
     deny: () => subscriptionOptions?.onConnectionStateChange?.('denied'),
+    connect: () => subscriptionOptions?.onConnectionStateChange?.('connected'),
   };
 }
 
@@ -156,6 +157,21 @@ describe('persistent group chat timeline', () => {
     await result.findByTestId('chat-empty');
   });
 
+  it('restores the ready timeline on reconnect without waiting for another message', async () => {
+    const runtime = runtimeMock();
+    const result = await render(<App runtimeClient={runtime.client} />);
+    await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
+    await result.findByTestId('chat-empty');
+
+    await act(async () => runtime.emit(event(2, 'Still here', '2026-09-13T02:00:00.000Z')));
+    await act(async () => runtime.fail(new Error('The local runtime is offline.')));
+    expect(await result.findByTestId('chat-error')).toBeTruthy();
+    await act(async () => runtime.connect());
+    await waitFor(() => expect(result.queryByTestId('chat-error')).toBeNull());
+    expect(result.getByText('Still here')).toBeTruthy();
+    expect(result.getByTestId('chat-composer')).toBeTruthy();
+  });
+
   it('does not render message text when group membership is denied', async () => {
     const denied: MembershipDenied = { kind: 'MembershipDenied' };
     const runtime = runtimeMock({ getGroupForMember: jest.fn().mockResolvedValue(denied) });
@@ -177,5 +193,35 @@ describe('persistent group chat timeline', () => {
     expect(result.queryByTestId('chat-composer')).toBeNull();
     expect(result.queryByTestId('chat-send')).toBeNull();
     expect(runtime.client.sendChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('retains a failed draft identity across connection retry before sending again', async () => {
+    const sendChatMessage = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('The response was lost.'))
+      .mockResolvedValueOnce(event(5, 'Sent once after reconnect', '2026-09-13T05:00:00.000Z'));
+    const runtime = runtimeMock({ sendChatMessage });
+    const result = await render(<App runtimeClient={runtime.client} />);
+    await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
+    await result.findByTestId('chat-empty');
+
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'Retry after reconnect'),
+    );
+    await fireEvent.press(result.getByTestId('chat-send'));
+    await result.findByTestId('chat-send-error');
+    const firstDraft = sendChatMessage.mock.calls[0][2];
+
+    await act(async () => runtime.fail(new Error('The connection dropped.')));
+    await result.findByTestId('chat-error');
+    await fireEvent.press(result.getByTestId('chat-retry'));
+    await result.findByTestId('chat-empty');
+    expect(result.getByTestId('chat-composer')).toHaveProp('value', 'Retry after reconnect');
+    expect(result.getByTestId('chat-send-retry')).toBeTruthy();
+
+    await fireEvent.press(result.getByTestId('chat-send-retry'));
+    await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(2));
+    expect(sendChatMessage.mock.calls[1][2].messageId).toBe(firstDraft.messageId);
+    expect(result.getByText('Sent once after reconnect')).toBeTruthy();
   });
 });
