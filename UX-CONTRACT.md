@@ -75,8 +75,9 @@ not used.
   synthetic author and created timestamp.
 - The composer accepts trimmed text up to the server's 2,000-character limit.
   A successful send clears the draft; a recoverable failure preserves it and
-  explains how to retry. Attachments, edits/deletes, read receipts, replies,
-  reactions, and direct messages are out of scope.
+  explains how to retry. One-level replies and one supported reaction are
+  available. Attachments, edits/deletes, read receipts, and direct messages
+  remain out of scope.
 - Loading, empty, connection-error, unavailable-runtime, and membership-denied
   states are explicit in the chat surface. A connection error offers a
   labelled retry action and does not replace persisted messages already shown.

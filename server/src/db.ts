@@ -26,6 +26,7 @@ const MIGRATIONS = [
   // its durable identity distinct from quota/lifecycle while preserving the
   // migration SQL for fresh installs and upgrades.
   { version: 11, key: 'realtime-messages-v1', fileName: '006-realtime-messages.sql' },
+  { version: 12, key: 'chat-replies-reactions-v1', fileName: '007-chat-replies-reactions.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -112,6 +113,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyCycleLifecycleMigration(database);
       } else if (migration.key === 'contribution-deletion-v1') {
         applyContributionDeletionMigration(database);
+      } else if (migration.key === 'chat-replies-reactions-v1') {
+        applyChatRepliesReactionsMigration(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -164,7 +167,35 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'media-source-binding-v1') return !sourceBindingSchemaReady(database);
   if (key === 'cycle-lifecycle-v1') return cycleLifecycleMigrationNeedsRepair(database);
   if (key === 'contribution-deletion-v1') return !contributionDeletionSchemaReady(database);
+  if (key === 'chat-replies-reactions-v1') return !chatRepliesReactionsSchemaReady(database);
   return false;
+}
+
+function chatRepliesReactionsSchemaReady(database: RewindDatabase): boolean {
+  return (
+    hasColumns(database, 'messages', ['reply_to_message_id']) &&
+    indexMatches(
+      database,
+      'messages_reply_to_idx',
+      false,
+      ['reply_to_message_id'],
+      'none',
+      'messages',
+    )
+  );
+}
+
+/** Apply the chat reply schema defensively when an upgrade was interrupted
+ * after the ALTER but before its migration receipt was written. */
+function applyChatRepliesReactionsMigration(database: RewindDatabase): void {
+  if (!hasColumns(database, 'messages', ['reply_to_message_id'])) {
+    database.exec(
+      'ALTER TABLE messages ADD COLUMN reply_to_message_id TEXT REFERENCES messages(id) ON DELETE SET NULL;',
+    );
+  }
+  database.exec(
+    'CREATE INDEX IF NOT EXISTS messages_reply_to_idx ON messages (reply_to_message_id);',
+  );
 }
 
 function compilationJobsSchemaReady(database: RewindDatabase): boolean {

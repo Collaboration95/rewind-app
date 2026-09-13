@@ -11,8 +11,11 @@ import type {
 import type { DemoSession } from '../domain/session';
 import {
   RealtimeChatClient,
+  type ChatMessage,
   type ChatMessageDraft,
   type ChatMessageEvent,
+  type ChatReactionEmoji,
+  type ChatReactionResult,
   type RealtimeSubscription,
   type SubscribeOptions,
 } from '../chat/realtime-client';
@@ -88,6 +91,19 @@ export interface RuntimeClient {
     groupId: string,
     draft: ChatMessageDraft,
   ): Promise<ChatMessageEvent>;
+  sendChatReply?(
+    sessionId: string,
+    groupId: string,
+    body: string,
+    replyToMessageId: string,
+  ): Promise<ChatMessageEvent>;
+  toggleChatReaction?(
+    sessionId: string,
+    groupId: string,
+    messageId: string,
+    emoji?: ChatReactionEmoji,
+    active?: boolean,
+  ): Promise<{ reaction: ChatReactionResult; message: ChatMessage }>;
   subscribeChat?(
     sessionId: string,
     groupId: string,
@@ -419,6 +435,27 @@ export class LocalRuntimeClient implements RuntimeClient {
 
   retryChatMessage(sessionId: string, groupId: string, draft: ChatMessageDraft) {
     return this.realtimeChatClient.retryMessage(sessionId, groupId, draft);
+  }
+
+  sendChatReply(
+    sessionId: string,
+    groupId: string,
+    body: string,
+    replyToMessageId: string,
+  ): Promise<ChatMessageEvent> {
+    return this.realtimeChatClient.sendMessage(sessionId, groupId, body, {
+      replyToMessageId,
+    });
+  }
+
+  toggleChatReaction(
+    sessionId: string,
+    groupId: string,
+    messageId: string,
+    emoji: ChatReactionEmoji = '✨',
+    active?: boolean,
+  ): Promise<{ reaction: ChatReactionResult; message: ChatMessage }> {
+    return this.realtimeChatClient.toggleReaction(sessionId, groupId, messageId, emoji, active);
   }
 
   subscribeChat(
