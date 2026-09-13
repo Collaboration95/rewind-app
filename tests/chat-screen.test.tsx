@@ -195,6 +195,32 @@ describe('persistent group chat timeline', () => {
     expect(runtime.client.sendChatMessage).not.toHaveBeenCalled();
   });
 
+  it('terminally denies the chat when a send loses access before the stream does', async () => {
+    const sendChatMessage = jest.fn().mockRejectedValue({ status: 403 });
+    const runtime = runtimeMock({ sendChatMessage });
+    const result = await render(<App runtimeClient={runtime.client} />);
+    await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
+    await result.findByTestId('chat-empty');
+
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'Sensitive revoked note'),
+    );
+    await fireEvent.press(result.getByTestId('chat-send'));
+
+    await result.findByTestId('chat-denied');
+    expect(result.queryByText('Sensitive revoked note')).toBeNull();
+    expect(result.queryByTestId('chat-composer')).toBeNull();
+    expect(result.queryByTestId('chat-send')).toBeNull();
+    expect(result.queryByTestId('chat-send-retry')).toBeNull();
+
+    // The old stream is still connected in this race, but it must no longer
+    // be able to repopulate private state after the send denial.
+    await act(async () =>
+      runtime.emit(event(8, 'Post-denial private text', '2026-09-13T08:00:00.000Z')),
+    );
+    expect(result.queryByText('Post-denial private text')).toBeNull();
+  });
+
   it('clears the timeline and compose state when access is revoked', async () => {
     const runtime = runtimeMock();
     const result = await render(<App runtimeClient={runtime.client} />);
@@ -296,5 +322,79 @@ describe('persistent group chat timeline', () => {
     await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(2));
     expect(sendChatMessage.mock.calls[1][2].messageId).toBe(firstDraft.messageId);
     expect(result.getByText('Sent once after reconnect')).toBeTruthy();
+  });
+
+  it('does not let a stale send completion clear a newer scope send', async () => {
+    let resolveFirst!: (value: ChatMessageEvent) => void;
+    let resolveSecond!: (value: ChatMessageEvent) => void;
+    const firstSend = new Promise<ChatMessageEvent>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondSend = new Promise<ChatMessageEvent>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const sendChatMessage = jest
+      .fn()
+      .mockReturnValueOnce(firstSend)
+      .mockReturnValueOnce(secondSend);
+    const runtime = runtimeMock({ sendChatMessage });
+    const firstGroupRepository = {
+      getGroupForMember: jest.fn().mockResolvedValue(group),
+    };
+    const firstCycleRepository = {
+      getCurrentCycle: jest.fn().mockResolvedValue(cycle),
+    };
+    const result = await render(
+      <App
+        cycleRepository={firstCycleRepository}
+        groupRepository={firstGroupRepository}
+        runtimeClient={runtime.client}
+      />,
+    );
+    await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
+    await result.findByTestId('chat-empty');
+
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'First scope message'),
+    );
+    await fireEvent.press(result.getByTestId('chat-send'));
+    await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(1));
+
+    const otherGroup: Group = {
+      ...group,
+      id: 'other-group',
+      name: 'Other Group',
+      currentCycleId: 'other-cycle',
+    };
+    const otherCycle: Cycle = { ...cycle, groupId: otherGroup.id, id: otherGroup.currentCycleId };
+    await act(async () =>
+      result.rerender(
+        <App
+          cycleRepository={{ getCurrentCycle: jest.fn().mockResolvedValue(otherCycle) }}
+          groupRepository={{ getGroupForMember: jest.fn().mockResolvedValue(otherGroup) }}
+          runtimeClient={runtime.client}
+        />,
+      ),
+    );
+    await waitFor(() => expect(result.getByText('Other Group')).toBeTruthy());
+    await result.findByTestId('chat-empty');
+
+    await act(async () =>
+      fireEvent.changeText(result.getByTestId('chat-composer'), 'Second scope message'),
+    );
+    await fireEvent.press(result.getByTestId('chat-send'));
+    await waitFor(() => expect(sendChatMessage).toHaveBeenCalledTimes(2));
+    expect(result.getByTestId('chat-send')).toHaveTextContent('Sending…');
+
+    await act(async () =>
+      resolveFirst(event(9, 'Stale first scope response', '2026-09-13T09:00:00.000Z')),
+    );
+    expect(result.getByTestId('chat-send')).toHaveTextContent('Sending…');
+    expect(result.getByTestId('chat-send')).toBeDisabled();
+
+    const secondEvent = event(10, 'Second scope response', '2026-09-13T10:00:00.000Z');
+    secondEvent.message.groupId = otherGroup.id;
+    await act(async () => resolveSecond(secondEvent));
+    await waitFor(() => expect(result.getByText('Second scope response')).toBeTruthy());
   });
 });

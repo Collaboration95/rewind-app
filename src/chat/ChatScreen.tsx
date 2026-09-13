@@ -71,6 +71,8 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
   const [subscriptionDenied, setSubscriptionDenied] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
   const subscriptionScope = useRef<string | null>(null);
+  const sendRequestId = useRef(0);
+  const activeSendRequest = useRef<{ id: number; scope: string } | null>(null);
   const currentScopeRef = useRef<string | null>(null);
   const previousScopeRef = useRef<string | null>(null);
   const profiles = useMemo(() => demoRepository.listProfiles(), []);
@@ -82,6 +84,7 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
 
   const clearSensitiveState = useCallback(() => {
     subscriptionScope.current = null;
+    activeSendRequest.current = null;
     setMessages([]);
     setMessageScope(null);
     setDraft('');
@@ -227,23 +230,34 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
       pendingDraft?.body === submittedText
         ? pendingDraft
         : (runtimeClient.createChatDraft?.(submittedText) ?? createChatMessageDraft(submittedText));
+    const requestId = ++sendRequestId.current;
+    activeSendRequest.current = { id: requestId, scope: sendScope };
     setPendingDraft(messageDraft);
     setSending(true);
     setSendError(null);
+    const isCurrentSend = () => {
+      const activeRequest = activeSendRequest.current;
+      return Boolean(
+        activeRequest &&
+        activeRequest.id === requestId &&
+        activeRequest.scope === sendScope &&
+        currentScopeRef.current === sendScope &&
+        subscriptionScope.current === sendScope,
+      );
+    };
     try {
       const event = await runtimeClient.sendChatMessage(session.id, group.id, messageDraft);
-      if (
-        currentScopeRef.current !== sendScope ||
-        subscriptionScope.current !== sendScope ||
-        event.message.groupId !== group.id
-      )
-        return;
+      if (!isCurrentSend() || event.message.groupId !== group.id) return;
       setMessages((current) => appendEvent(current, event));
       setMessageScope(sendScope);
       setPendingDraft(null);
       setDraft((current) => (current === submittedText ? '' : current));
     } catch (error) {
-      if (currentScopeRef.current === sendScope && subscriptionScope.current === sendScope) {
+      if (isCurrentSend() && isAccessDeniedError(error)) {
+        clearSensitiveState();
+        setSubscriptionDenied(true);
+        setTimelineState('denied');
+      } else if (isCurrentSend()) {
         setSendError(
           error instanceof Error && error.message
             ? error.message
@@ -251,9 +265,27 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
         );
       }
     } finally {
-      setSending(false);
+      const activeRequest = activeSendRequest.current;
+      if (
+        activeRequest &&
+        activeRequest.id === requestId &&
+        activeRequest.scope === sendScope &&
+        currentScopeRef.current === sendScope
+      ) {
+        activeSendRequest.current = null;
+        setSending(false);
+      }
     }
-  }, [draft, group, pendingDraft, runtimeClient, sending, session, subscriptionDenied]);
+  }, [
+    clearSensitiveState,
+    draft,
+    group,
+    pendingDraft,
+    runtimeClient,
+    sending,
+    session,
+    subscriptionDenied,
+  ]);
 
   const hasActiveSubscription =
     activeMessageScope !== null && subscriptionScope.current === activeMessageScope;
