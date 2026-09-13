@@ -276,7 +276,14 @@ function contributionDeletionSchemaReady(database: RewindDatabase): boolean {
     hasColumns(database, 'contributions', ['deleted_at']) &&
     hasColumns(database, 'media_jobs', ['deleted_at']) &&
     hasColumns(database, 'contribution_quota_windows', ['deletions_used']) &&
-    hasIndex(database, 'contributions_active_cycle_idx')
+    indexMatches(
+      database,
+      'contributions_active_cycle_idx',
+      false,
+      ['cycle_id', 'member_id', 'deleted_at', 'created_at'],
+      'none',
+      'contributions',
+    )
   );
 }
 
@@ -292,9 +299,21 @@ function applyContributionDeletionMigration(database: RewindDatabase): void {
       'ALTER TABLE contribution_quota_windows ADD COLUMN deletions_used INTEGER NOT NULL DEFAULT 0 CHECK (deletions_used >= 0 AND deletions_used <= 1)',
     );
   }
-  database.exec(
-    'CREATE INDEX IF NOT EXISTS contributions_active_cycle_idx ON contributions (cycle_id, member_id, deleted_at, created_at)',
-  );
+  if (
+    !indexMatches(
+      database,
+      'contributions_active_cycle_idx',
+      false,
+      ['cycle_id', 'member_id', 'deleted_at', 'created_at'],
+      'none',
+      'contributions',
+    )
+  ) {
+    database.exec('DROP INDEX IF EXISTS contributions_active_cycle_idx');
+    database.exec(
+      'CREATE INDEX contributions_active_cycle_idx ON contributions (cycle_id, member_id, deleted_at, created_at)',
+    );
+  }
 }
 
 function quotaSchemaReady(database: RewindDatabase): boolean {

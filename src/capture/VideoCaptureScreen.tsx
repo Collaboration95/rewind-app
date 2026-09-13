@@ -384,6 +384,7 @@ export function VideoCaptureScreen({
       createdAt: uploaded.contribution.createdAt,
       durationSeconds: uploaded.contribution.durationSeconds,
       jobId: uploaded.job.id,
+      deletionAvailability: 'available',
       ...options,
       state,
     }),
@@ -583,7 +584,9 @@ export function VideoCaptureScreen({
   const canDeleteContribution = Boolean(
     contributionStatus?.contributionId &&
     runtimeClient?.deleteContribution &&
-    contributionStatus.state !== 'processing',
+    contributionStatus.state !== 'processing' &&
+    contributionStatus.deletionAvailability !== 'used' &&
+    contributionStatus.deletionAvailability !== 'unavailable',
   );
 
   const deleteContributionForReplacement = useCallback(async () => {
@@ -613,6 +616,19 @@ export function VideoCaptureScreen({
       setError('Contribution deleted. Your weekly allowance is restored for a replacement.');
     } catch (deleteError) {
       if (!isCaptureActive()) return;
+      if (contributionStatus) {
+        const deletionAvailability =
+          deleteError instanceof LocalRuntimeError &&
+          deleteError.code === 'contribution_deletion_used'
+            ? 'used'
+            : deleteError instanceof LocalRuntimeError &&
+                (deleteError.status === 404 || deleteError.status === 409)
+              ? 'unavailable'
+              : contributionStatus.deletionAvailability;
+        if (deletionAvailability !== contributionStatus.deletionAvailability) {
+          setContributionStatus({ ...contributionStatus, deletionAvailability });
+        }
+      }
       setError(
         deleteError instanceof Error
           ? `The contribution could not be deleted. ${deleteError.message}`
@@ -628,6 +644,7 @@ export function VideoCaptureScreen({
     onContributionDeleted,
     recorder,
     runtimeClient,
+    setContributionStatus,
   ]);
   return (
     <View style={styles.screen} testID="video-capture-screen">

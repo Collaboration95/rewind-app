@@ -29,6 +29,8 @@ export interface ContributionStatus {
   createdAt: string;
   message?: string;
   retryable: boolean;
+  /** Whether the one bounded delete-and-replace action can still be shown. */
+  deletionAvailability?: 'available' | 'used' | 'unavailable';
 }
 
 export interface ContributionStatusScope {
@@ -100,7 +102,11 @@ function isContributionStatus(value: unknown): value is ContributionStatus {
     (candidate.jobId === undefined || typeof candidate.jobId === 'string') &&
     (candidate.durationSeconds === undefined ||
       (typeof candidate.durationSeconds === 'number' && candidate.durationSeconds > 0)) &&
-    (candidate.message === undefined || typeof candidate.message === 'string')
+    (candidate.message === undefined || typeof candidate.message === 'string') &&
+    (candidate.deletionAvailability === undefined ||
+      candidate.deletionAvailability === 'available' ||
+      candidate.deletionAvailability === 'used' ||
+      candidate.deletionAvailability === 'unavailable')
   );
 }
 
@@ -249,12 +255,25 @@ export function ContributionStatusPanel({
       </Text>
       <Text style={styles.body}>{copy.body}</Text>
       <Text style={styles.metadata}>{metadata}</Text>
+      {status.deletionAvailability === 'used' ? (
+        <Text style={styles.availability} testID={`${testID}-delete-used`}>
+          Delete and replace is unavailable because this week&apos;s allowance has already been
+          used.
+        </Text>
+      ) : null}
+      {status.deletionAvailability === 'unavailable' ? (
+        <Text style={styles.availability} testID={`${testID}-delete-unavailable`}>
+          Delete and replace is no longer available for this contribution.
+        </Text>
+      ) : null}
       {status.state === 'failed' && status.retryable && onRetry ? (
         <Pressable accessibilityRole="button" onPress={onRetry} style={styles.retryButton}>
           <Text style={styles.retryText}>{retryLabel}</Text>
         </Pressable>
       ) : null}
-      {onDelete ? (
+      {onDelete &&
+      status.deletionAvailability !== 'used' &&
+      status.deletionAvailability !== 'unavailable' ? (
         <Pressable accessibilityRole="button" onPress={onDelete} style={styles.deleteButton}>
           <Text style={styles.deleteText}>{deleteLabel}</Text>
         </Pressable>
@@ -277,6 +296,7 @@ const styles = StyleSheet.create({
   title: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
   body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   metadata: { color: COLORS.edge, fontSize: 13, fontWeight: '600' },
+  availability: { color: COLORS.muted, fontSize: 13, lineHeight: 19 },
   error: { color: COLORS.accent, fontSize: 14, lineHeight: 20 },
   retryButton: {
     alignItems: 'center',

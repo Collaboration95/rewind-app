@@ -4,11 +4,12 @@ import { tmpdir } from 'node:os';
 import test from 'node:test';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase, openDatabaseAt } = await import('../dist/db.js');
+const { migrateDatabase, openDatabase, openDatabaseAt } = await import('../dist/db.js');
 const {
   claimCompilationJob,
   createCompilationJob,
   getCompilationJob,
+  reconcileCompilationJobInputs,
   updateCompilationJobProgress,
 } = await import('../dist/jobs/index.js');
 const { advanceCycleLifecycle } = await import('../dist/cycles/index.js');
@@ -53,6 +54,13 @@ test('cycle boundary creates one persistent film job from processed non-raw clip
         (id, group_id, contribution_id, kind, status, output_path, created_at, source_path)
         VALUES ('pending-clip', 'demo-group', 'pending-contribution', 'clip', 'pending',
                 NULL, '2026-09-10T03:00:00.000Z', '/private/raw-pending.mp4');
+      INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at, deleted_at)
+        VALUES ('deleted-contribution', 'demo-cycle', 'demo-2', 4,
+                '2026-09-10T04:00:00.000Z', '2026-09-10T04:01:00.000Z');
+      INSERT INTO media_jobs
+        (id, group_id, contribution_id, kind, status, output_path, created_at, source_path)
+        VALUES ('deleted-clip', 'demo-group', 'deleted-contribution', 'clip', 'ready',
+                '/private/processed/deleted.mp4', '2026-09-10T04:00:00.000Z', NULL);
     `);
 
     const transitioned = advanceCycleLifecycle(database, {
@@ -174,6 +182,86 @@ test('compilation claims and progress survive a restart without duplicate jobs',
       );
     } finally {
       reopened.close();
+    }
+  });
+});
+
+test('compilation excludes tombstones and a worker claim reconciles stale inputs atomically', async () => {
+  await withDatabase(async ({ database }) => {
+    database.prepare('UPDATE cycles SET status = ? WHERE id = ?').run('revealing', 'demo-cycle');
+    database.exec(`
+      INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
+        VALUES ('reconcile-valid', 'demo-cycle', 'demo-2', 4, '2026-09-10T01:00:00.000Z'),
+               ('reconcile-deleted', 'demo-cycle', 'demo-3', 4, '2026-09-10T02:00:00.000Z'),
+               ('reconcile-pending', 'demo-cycle', 'demo-4', 4, '2026-09-10T03:00:00.000Z'),
+               ('reconcile-kind', 'demo-cycle', 'demo-2', 4, '2026-09-10T04:00:00.000Z');
+      INSERT INTO media_jobs
+        (id, group_id, contribution_id, kind, status, output_path, created_at, source_path)
+        VALUES ('reconcile-valid-clip', 'demo-group', 'reconcile-valid', 'clip', 'ready',
+                '/private/processed/reconcile-valid.mp4', '2026-09-10T01:00:00.000Z', NULL),
+               ('reconcile-deleted-clip', 'demo-group', 'reconcile-deleted', 'clip', 'ready',
+                '/private/processed/reconcile-deleted.mp4', '2026-09-10T02:00:00.000Z', NULL),
+               ('reconcile-pending-clip', 'demo-group', 'reconcile-pending', 'clip', 'pending',
+                NULL, '2026-09-10T03:00:00.000Z', '/private/raw-pending.mp4'),
+               ('reconcile-wrong-kind', 'demo-group', 'reconcile-kind', 'film', 'ready',
+                '/private/processed/reconcile-film.mp4', '2026-09-10T04:00:00.000Z', NULL);
+      UPDATE contributions SET deleted_at = '2026-09-10T05:00:00.000Z'
+        WHERE id = 'reconcile-deleted';
+    `);
+    const created = createCompilationJob(database, {
+      groupId: 'demo-group',
+      cycleId: 'demo-cycle',
+      createdAt: '2026-09-11T00:00:00.000Z',
+    });
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+
+    database
+      .prepare(
+        `INSERT INTO compilation_job_inputs (job_id, clip_job_id, contribution_id, position)
+         VALUES (?, 'reconcile-deleted-clip', 'reconcile-deleted', 1),
+                (?, 'reconcile-pending-clip', 'reconcile-pending', 2),
+                (?, 'reconcile-wrong-kind', 'reconcile-kind', 3)`,
+      )
+      .run(created.job.id, created.job.id, created.job.id);
+    database
+      .prepare(
+        `UPDATE media_jobs SET input_count = 4, completed_count = 3, progress = 75 WHERE id = ?`,
+      )
+      .run(created.job.id);
+
+    const reconciled = reconcileCompilationJobInputs(database, created.job.id);
+    assert.equal(reconciled?.inputCount, 1);
+    assert.equal(reconciled?.completedCount, 1);
+    assert.equal(reconciled?.progress, 100);
+    assert.deepEqual(reconciled?.clipJobIds, ['reconcile-valid-clip']);
+    assert.deepEqual(
+      database
+        .prepare(
+          'SELECT clip_job_id AS clipJobId, contribution_id AS contributionId, position FROM compilation_job_inputs WHERE job_id = ?',
+        )
+        .all(created.job.id)
+        .map((row) => ({ ...row })),
+      [{ clipJobId: 'reconcile-valid-clip', contributionId: 'reconcile-valid', position: 0 }],
+    );
+
+    // Reintroduce a tombstoned input to prove the worker's claim path repeats
+    // the same fence immediately before it hands the snapshot to a consumer.
+    database
+      .prepare(
+        `INSERT INTO compilation_job_inputs (job_id, clip_job_id, contribution_id, position)
+         VALUES (?, 'reconcile-deleted-clip', 'reconcile-deleted', 1)`,
+      )
+      .run(created.job.id);
+    const claimed = claimCompilationJob(database, {
+      jobId: created.job.id,
+      now: '2026-09-11T00:00:00.000Z',
+    });
+    assert.equal(claimed.ok, true);
+    if (claimed.ok) {
+      assert.equal(claimed.action, 'claimed');
+      assert.deepEqual(claimed.job.clipJobIds, ['reconcile-valid-clip']);
+      assert.equal(claimed.job.inputCount, 1);
     }
   });
 });
@@ -324,6 +412,25 @@ test('recorded compilation migration repairs malformed input shape and keeps val
         .all()
         .map((row) => row.name),
       ['cycle_id', 'kind', 'created_at'],
+    );
+  });
+});
+
+test('recorded deletion migration repairs a malformed active-contribution index', async () => {
+  await withDatabase(async ({ database }) => {
+    database.exec(`
+      DROP INDEX contributions_active_cycle_idx;
+      CREATE INDEX contributions_active_cycle_idx ON contributions (member_id);
+    `);
+    // Migration 010 is already recorded on a fresh install. Its durable
+    // marker must not suppress shape repair on the next process start.
+    migrateDatabase(database);
+    assert.deepEqual(
+      database
+        .prepare('PRAGMA index_info(contributions_active_cycle_idx)')
+        .all()
+        .map((row) => row.name),
+      ['cycle_id', 'member_id', 'deleted_at', 'created_at'],
     );
   });
 });

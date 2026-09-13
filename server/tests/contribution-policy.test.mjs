@@ -423,6 +423,34 @@ test('second deletion in the same weekly window and post-reveal deletion are den
   });
 });
 
+test('processing contributions cannot be deleted while a worker owns the job', async () => {
+  await withDatabase(async ({ database }) => {
+    const now = new Date('2026-09-10T12:00:00.000Z');
+    const upload = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      { ...validInput, idempotencyKey: 'delete-processing-key' },
+      now,
+    );
+    assert.equal(upload.ok, true);
+    if (!upload.ok) return;
+    database
+      .prepare("UPDATE media_jobs SET status = 'processing' WHERE id = ?")
+      .run(upload.upload.job.id);
+    assert.deepEqual(
+      deleteContribution(database, 'demo-group', 'demo-1', upload.upload.contribution.id, now),
+      { ok: false, reason: 'processing' },
+    );
+    assert.equal(
+      database
+        .prepare('SELECT deleted_at FROM contributions WHERE id = ?')
+        .get(upload.upload.contribution.id).deleted_at,
+      null,
+    );
+  });
+});
+
 test('idempotent retries consume one allowance and persisted state survives reopen', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-retry-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });

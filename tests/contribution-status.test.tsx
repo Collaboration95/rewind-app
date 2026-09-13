@@ -95,6 +95,20 @@ describe('ContributionStatusPanel', () => {
     await fireEvent.press(result.getByRole('button', { name: 'Delete and replace' }));
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
+
+  it('explains when the bounded delete allowance is already used', async () => {
+    const result = await render(
+      <ContributionStatusPanel
+        onRetry={() => undefined}
+        onDelete={() => undefined}
+        status={{ ...base, deletionAvailability: 'used', state: 'sealed' }}
+        testID="used-status"
+      />,
+    );
+
+    await result.findByTestId('used-status-delete-used');
+    expect(result.queryByRole('button', { name: 'Delete and replace' })).toBeNull();
+  });
   it('keeps status metadata scoped and restores it when the camera route remounts', async () => {
     const values = new Map<string, ContributionStatus>();
     const store: ContributionStatusStore = {

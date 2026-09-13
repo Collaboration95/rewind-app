@@ -220,6 +220,105 @@ export function getCompilationJob(
 }
 
 /**
+ * Reconcile the durable input snapshot immediately before a film worker uses
+ * it. Contributions are intentionally tombstoned, so a foreign or deleted
+ * input can remain in the snapshot after a correction without being removed
+ * by a cascading delete. This writer-locked pass removes every input that no
+ * longer belongs to this film's group/cycle or is not a processed clip, then
+ * compacts positions and the progress counters as one state transition.
+ *
+ * The returned record is the only input snapshot a caller should consume.
+ */
+function reconcileCompilationJobInputsLocked(
+  database: RewindDatabase,
+  jobId: string,
+): CompilationJobRecord | null {
+  const job = readCompilationJob(database, jobId);
+  if (!job) return null;
+  const rows = database
+    .prepare(
+      `SELECT i.clip_job_id AS clipJobId, i.contribution_id AS contributionId,
+              i.position AS position,
+              CASE WHEN c.id IS NOT NULL
+                    AND c.deleted_at IS NULL
+                    AND c.cycle_id = film.cycle_id
+                    AND cy.id = film.cycle_id
+                    AND cy.group_id = film.group_id
+                    AND clip.id IS NOT NULL
+                    AND clip.group_id = film.group_id
+                    AND clip.kind = 'clip'
+                    AND clip.contribution_id = c.id
+                    AND clip.deleted_at IS NULL
+                    AND clip.status = 'ready'
+                    AND clip.source_path IS NULL
+                    AND clip.output_path IS NOT NULL
+                   THEN 1 ELSE 0 END AS valid
+       FROM compilation_job_inputs i
+       JOIN media_jobs film ON film.id = i.job_id
+       LEFT JOIN contributions c ON c.id = i.contribution_id
+       LEFT JOIN cycles cy ON cy.id = c.cycle_id
+       LEFT JOIN media_jobs clip ON clip.id = i.clip_job_id
+       WHERE i.job_id = ?
+       ORDER BY i.position ASC, i.clip_job_id ASC`,
+    )
+    .all(jobId) as {
+    clipJobId: string;
+    contributionId: string;
+    position: number;
+    valid: number;
+  }[];
+  const validRows = rows.filter((row) => row.valid === 1);
+  const completedBefore = Math.max(0, Math.min(job.completedCount, rows.length));
+  const invalidCompleted = rows.filter(
+    (row) => row.valid !== 1 && Number(row.position) < completedBefore,
+  ).length;
+  const completedCount = Math.max(
+    0,
+    Math.min(validRows.length, completedBefore - invalidCompleted),
+  );
+
+  const deleteInput = database.prepare(
+    'DELETE FROM compilation_job_inputs WHERE job_id = ? AND clip_job_id = ?',
+  );
+  const validIds = new Set(validRows.map((row) => row.clipJobId));
+  for (const row of rows) {
+    if (!validIds.has(row.clipJobId)) deleteInput.run(jobId, row.clipJobId);
+  }
+  const updatePosition = database.prepare(
+    'UPDATE compilation_job_inputs SET position = ? WHERE job_id = ? AND clip_job_id = ?',
+  );
+  for (const [position, row] of validRows.entries()) {
+    updatePosition.run(position, jobId, row.clipJobId);
+  }
+  const progress =
+    validRows.length === 0 ? 0 : Math.floor((completedCount / validRows.length) * 100);
+  database
+    .prepare(
+      `UPDATE media_jobs
+       SET input_count = ?, completed_count = ?, progress = ?
+       WHERE id = ? AND kind = 'film' AND cycle_id IS NOT NULL`,
+    )
+    .run(validRows.length, completedCount, progress, jobId);
+  return readCompilationJob(database, jobId);
+}
+
+/** Reconcile a film's input snapshot in its own writer transaction. */
+export function reconcileCompilationJobInputs(
+  database: RewindDatabase,
+  jobId: string,
+): CompilationJobRecord | null {
+  beginJobTransaction(database);
+  try {
+    const job = reconcileCompilationJobInputsLocked(database, jobId);
+    database.exec(job ? 'COMMIT' : 'ROLLBACK');
+    return job;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/**
  * Create the one cycle-scoped film job and snapshot only processed clip job
  * ids. This helper deliberately assumes that its caller already owns the
  * SQLite writer transaction; the public createCompilationJob wrapper below
@@ -252,7 +351,9 @@ export function ensureCompilationJob(
        JOIN media_jobs clip
          ON clip.contribution_id = c.id AND clip.group_id = cy.group_id
         AND clip.kind = 'clip' AND clip.status = 'ready'
+        AND clip.deleted_at IS NULL
        WHERE c.cycle_id = ?
+         AND c.deleted_at IS NULL
          -- A ready clip has completed processing only when its raw staged
          -- path is no longer retained. No source path is copied to the film
          -- job or its input snapshot.
@@ -340,6 +441,11 @@ export function claimCompilationJob(
     if (!job) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'not_found' };
+    }
+    job = reconcileCompilationJobInputsLocked(database, job.id);
+    if (!job) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'invalid_state' };
     }
     if (job.status === 'ready') {
       database.exec('COMMIT');

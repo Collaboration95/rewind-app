@@ -296,8 +296,33 @@ describe('VideoCaptureScreen', () => {
     await result.findByTestId('video-live-preview');
     expect(result.queryByTestId('camera-contribution-status-sealed')).toBeNull();
     expect(
-      result.getByText('Contribution deleted. Your weekly allowance is restored for a replacement.'),
+      result.getByText(
+        'Contribution deleted. Your weekly allowance is restored for a replacement.',
+      ),
     ).toBeTruthy();
+  });
+
+  it('persists a used delete allowance in the status and removes the action', async () => {
+    const deleteContribution = jest
+      .fn()
+      .mockRejectedValue(
+        new LocalRuntimeError(
+          'The weekly delete-and-replace allowance has already been used.',
+          409,
+          'contribution_deletion_used',
+        ),
+      );
+    const processClipJob = jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' as const });
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ deleteContribution, processClipJob }),
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByTestId('camera-contribution-status-sealed');
+    await fireEvent.press(result.getByRole('button', { name: 'Delete and replace' }));
+    await result.findByTestId('camera-contribution-status-delete-used');
+    expect(result.queryByRole('button', { name: 'Delete and replace' })).toBeNull();
   });
 
   it('renders a returned processing failure as retryable contribution state after upload completes', async () => {
