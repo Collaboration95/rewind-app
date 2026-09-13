@@ -40,6 +40,7 @@ import {
   validateGroupInput,
 } from './src/domain/groups';
 import { isValidInviteCode, normalizeInviteCode } from './src/domain/invites';
+import { ChatScreen } from './src/chat/ChatScreen';
 
 const lockedMoments = [1, 2, 3];
 
@@ -61,7 +62,7 @@ const unavailableScreens: Record<UnavailableRouteKey, { description: string; tit
     title: 'Archive',
   },
   chat: {
-    description: 'Chat is not implemented. No messages are being sent or stored.',
+    description: 'Chat is not available in this area.',
     title: 'Chat',
   },
 };
@@ -225,6 +226,8 @@ function ActiveAppShell({
             platform={resolvedCameraPlatform}
             runtimeClient={runtimeClient}
           />
+        ) : activeRoute === 'chat' ? (
+          <ChatScreen runtimeClient={runtimeClient} />
         ) : (
           <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
         )}

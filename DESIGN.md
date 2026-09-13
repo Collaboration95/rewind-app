@@ -67,7 +67,8 @@ honest about what is sealed—rather than a social feed or a media gallery.
 - **Memorable signature:** A sealed-state card uses warm outlined rules and
   explicit words to make delayed reveal feel tangible without showing media.
 - **Restraint:** Keep panels, labels, and navigation quiet; do not simulate
-  recording, playback, chat, or authentication.
+  recording, playback, or authentication. Group chat is a persisted text-only
+  surface and must not imply attachments or private direct messages.
 - **Anti-references:** Avoid generic bright dashboard gradients, image-first
   social feeds, and glossy media-player chrome because those imply capabilities
   this Sprint 0 increment does not provide.
@@ -142,6 +143,14 @@ inside the panel without changing the page frame. The reset confirmation is an
 app-owned compact modal: warm paper surface, deep backdrop, benign cancel
 action first, and an explicit local-demo-data scope. Future capture and
 permission flows must establish their own contract before they are added.
+
+### Group chat
+
+The chat timeline uses the same warm paper panels as capsule data. Message
+author and local timestamp stay visible with every text bubble, while empty,
+loading, connection-error, and denied states retain stable panel geometry.
+Composer actions are text-labelled and bounded; no attachment affordance or
+media preview belongs on this surface.
 
 ### Iconography
 
