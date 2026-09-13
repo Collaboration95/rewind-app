@@ -159,6 +159,27 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   return false;
 }
 
+function compilationJobsSchemaReady(database: RewindDatabase): boolean {
+  return (
+    hasColumns(database, 'media_jobs', [
+      'cycle_id',
+      'progress',
+      'input_count',
+      'completed_count',
+      'claim_generation',
+    ]) &&
+    hasColumns(database, 'compilation_job_inputs', [
+      'job_id',
+      'clip_job_id',
+      'contribution_id',
+      'position',
+    ]) &&
+    hasIndex(database, 'media_jobs_cycle_idx') &&
+    hasIndex(database, 'media_jobs_one_film_per_cycle_idx') &&
+    hasIndex(database, 'compilation_job_inputs_order_idx')
+  );
+}
+
 function quotaSchemaReady(database: RewindDatabase): boolean {
   return (
     tableColumns(database, 'contributions').has('quota_window_start_at') &&
@@ -385,7 +406,11 @@ function cycleLifecycleMigrationNeedsRepair(database: RewindDatabase): boolean {
       'occurred_at',
       'id',
     ]) ||
-    !indexMatches(database, 'cycle_lifecycle_events_receipt_idx', true, ['cycle_id', 'transition'])
+    !indexMatches(database, 'cycle_lifecycle_events_receipt_idx', true, [
+      'cycle_id',
+      'transition',
+    ]) ||
+    !compilationJobsSchemaReady(database)
   );
 }
 
@@ -558,6 +583,59 @@ function applyCycleLifecycleMigration(database: RewindDatabase): void {
       );
     }
   }
+  // The cycle lifecycle and its cycle-scoped compilation receipt are applied
+  // under the same durable migration lock. Keeping this repairable here also
+  // preserves the historical version-9 migration identity used by installs
+  // that briefly carried #54 at version 006.
+  applyCompilationJobsMigration(database);
+}
+
+/** Apply the cycle-scoped compilation schema in a repairable form. The
+ * migration can be resumed after an interrupted DDL sequence. */
+function applyCompilationJobsMigration(database: RewindDatabase): void {
+  const columns = tableColumns(database, 'media_jobs');
+  if (!columns.has('cycle_id')) {
+    database.exec(
+      'ALTER TABLE media_jobs ADD COLUMN cycle_id TEXT REFERENCES cycles(id) ON DELETE CASCADE',
+    );
+  }
+  if (!columns.has('progress')) {
+    database.exec(
+      'ALTER TABLE media_jobs ADD COLUMN progress INTEGER NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 100)',
+    );
+  }
+  if (!columns.has('input_count')) {
+    database.exec(
+      'ALTER TABLE media_jobs ADD COLUMN input_count INTEGER NOT NULL DEFAULT 0 CHECK (input_count >= 0)',
+    );
+  }
+  if (!columns.has('completed_count')) {
+    database.exec(
+      'ALTER TABLE media_jobs ADD COLUMN completed_count INTEGER NOT NULL DEFAULT 0 CHECK (completed_count >= 0)',
+    );
+  }
+  if (!columns.has('claim_generation')) {
+    database.exec(
+      'ALTER TABLE media_jobs ADD COLUMN claim_generation INTEGER NOT NULL DEFAULT 0 CHECK (claim_generation >= 0)',
+    );
+  }
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS media_jobs_cycle_idx
+       ON media_jobs (cycle_id, kind, created_at);
+     CREATE UNIQUE INDEX IF NOT EXISTS media_jobs_one_film_per_cycle_idx
+       ON media_jobs (cycle_id)
+       WHERE kind = 'film' AND cycle_id IS NOT NULL;
+     CREATE TABLE IF NOT EXISTS compilation_job_inputs (
+       job_id TEXT NOT NULL REFERENCES media_jobs(id) ON DELETE CASCADE,
+       clip_job_id TEXT NOT NULL REFERENCES media_jobs(id) ON DELETE CASCADE,
+       contribution_id TEXT NOT NULL REFERENCES contributions(id) ON DELETE CASCADE,
+       position INTEGER NOT NULL CHECK (position >= 0),
+       PRIMARY KEY (job_id, clip_job_id),
+       UNIQUE (job_id, contribution_id)
+     );
+     CREATE INDEX IF NOT EXISTS compilation_job_inputs_order_idx
+       ON compilation_job_inputs (job_id, position);`,
+  );
 }
 
 function markMigration(database: RewindDatabase, key: string): void {
@@ -987,9 +1065,27 @@ export function getMediaJob(
   jobId: string,
   kind: 'clip' | 'film' | 'download',
 ) {
-  return database
+  const row = database
     .prepare(
-      'SELECT id, group_id AS groupId, kind, status, created_at AS createdAt FROM media_jobs WHERE id = ? AND group_id = ? AND kind = ?',
+      `SELECT id, group_id AS groupId, kind, status, created_at AS createdAt,
+              cycle_id AS cycleId, progress, input_count AS inputCount,
+              completed_count AS completedCount, processing_started_at AS processingStartedAt
+       FROM media_jobs WHERE id = ? AND group_id = ? AND kind = ?`,
     )
     .get(jobId, groupId, kind);
+  if (!row || kind === 'film') return row;
+  const base = row as {
+    id: string;
+    groupId: string;
+    kind: string;
+    status: string;
+    createdAt: string;
+  };
+  return {
+    id: base.id,
+    groupId: base.groupId,
+    kind: base.kind,
+    status: base.status,
+    createdAt: base.createdAt,
+  };
 }

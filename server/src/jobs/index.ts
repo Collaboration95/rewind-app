@@ -95,6 +95,324 @@ export interface ProcessClipJobOptions {
   actorMemberId?: string | null;
 }
 
+export type CompilationJobStatus = 'pending' | 'processing' | 'ready' | 'failed';
+
+export interface CompilationJobInput {
+  groupId: string;
+  cycleId: string;
+  createdAt?: Date | string;
+}
+
+export interface CompilationJobRecord {
+  id: string;
+  groupId: string;
+  cycleId: string;
+  kind: 'film';
+  status: CompilationJobStatus;
+  progress: number;
+  inputCount: number;
+  completedCount: number;
+  claimGeneration: number;
+  processingStartedAt: string | null;
+  outputPath: string | null;
+  createdAt: string;
+  clipJobIds: string[];
+}
+
+export type CompilationJobResult =
+  | { ok: true; job: CompilationJobRecord; created: boolean }
+  | { ok: false; reason: 'not_found' | 'invalid_state' };
+
+export type CompilationJobClaimResult =
+  | {
+      ok: true;
+      action: 'claimed' | 'already_processing' | 'already_ready';
+      job: CompilationJobRecord;
+    }
+  | { ok: false; reason: 'not_found' | 'invalid_state' };
+
+export interface ClaimCompilationJobInput {
+  jobId: string;
+  groupId?: string;
+  now?: Date | string;
+  leaseMs?: number;
+}
+
+export interface UpdateCompilationProgressInput {
+  jobId: string;
+  claimGeneration: number;
+  completedCount: number;
+  progress?: number;
+}
+
+interface CompilationJobRow {
+  id: string;
+  groupId: string;
+  cycleId: string;
+  status: string;
+  progress: number;
+  inputCount: number;
+  completedCount: number;
+  claimGeneration: number;
+  processingStartedAt: string | null;
+  outputPath: string | null;
+  createdAt: string;
+}
+
+function compilationJobId(groupId: string, cycleId: string): string {
+  return `film-${createHash('sha256').update(`${groupId}:${cycleId}`).digest('hex').slice(0, 24)}`;
+}
+
+function readCompilationJob(
+  database: RewindDatabase,
+  jobId: string,
+  groupId?: string,
+): CompilationJobRecord | null {
+  const row = database
+    .prepare(
+      `SELECT id, group_id AS groupId, cycle_id AS cycleId, status,
+              progress, input_count AS inputCount, completed_count AS completedCount,
+              claim_generation AS claimGeneration,
+              processing_started_at AS processingStartedAt,
+              output_path AS outputPath, created_at AS createdAt
+       FROM media_jobs
+       WHERE id = ? AND kind = 'film' AND cycle_id IS NOT NULL
+         ${groupId ? 'AND group_id = ?' : ''}`,
+    )
+    .get(...(groupId ? [jobId, groupId] : [jobId])) as CompilationJobRow | undefined;
+  if (!row) return null;
+  const clipJobIds = database
+    .prepare(
+      `SELECT clip_job_id AS clipJobId
+       FROM compilation_job_inputs WHERE job_id = ? ORDER BY position ASC, clip_job_id ASC`,
+    )
+    .all(row.id)
+    .map((input) => String((input as { clipJobId: string }).clipJobId));
+  const status: CompilationJobStatus =
+    row.status === 'processing' || row.status === 'ready' || row.status === 'failed'
+      ? row.status
+      : 'pending';
+  return {
+    id: row.id,
+    groupId: row.groupId,
+    cycleId: row.cycleId,
+    kind: 'film',
+    status,
+    progress: Number(row.progress),
+    inputCount: Number(row.inputCount),
+    completedCount: Number(row.completedCount),
+    claimGeneration: Number(row.claimGeneration),
+    processingStartedAt: row.processingStartedAt ?? null,
+    outputPath: row.outputPath ?? null,
+    createdAt: row.createdAt,
+    clipJobIds,
+  };
+}
+
+export function getCompilationJob(
+  database: RewindDatabase,
+  jobId: string,
+  groupId?: string,
+): CompilationJobRecord | null {
+  return readCompilationJob(database, jobId, groupId);
+}
+
+/**
+ * Create the one cycle-scoped film job and snapshot only processed clip job
+ * ids. This helper deliberately assumes that its caller already owns the
+ * SQLite writer transaction; the public createCompilationJob wrapper below
+ * supplies that transaction for standalone callers and lifecycle uses this
+ * helper to keep cycle transition + job creation atomic.
+ */
+export function ensureCompilationJob(
+  database: RewindDatabase,
+  input: CompilationJobInput,
+): CompilationJobRecord | null {
+  const cycle = database
+    .prepare('SELECT id, group_id AS groupId, status FROM cycles WHERE id = ? AND group_id = ?')
+    .get(input.cycleId, input.groupId) as
+    { id: string; groupId: string; status: string } | undefined;
+  if (!cycle || !['revealing', 'archived'].includes(cycle.status)) return null;
+
+  const existingId = database
+    .prepare(
+      `SELECT id FROM media_jobs
+       WHERE kind = 'film' AND cycle_id = ? AND group_id = ? LIMIT 1`,
+    )
+    .get(input.cycleId, input.groupId) as { id?: string } | undefined;
+  if (existingId?.id) return readCompilationJob(database, existingId.id, input.groupId);
+
+  const eligible = database
+    .prepare(
+      `SELECT clip.id AS clipJobId, c.id AS contributionId
+       FROM contributions c
+       JOIN cycles cy ON cy.id = c.cycle_id AND cy.group_id = ?
+       JOIN media_jobs clip
+         ON clip.contribution_id = c.id AND clip.group_id = cy.group_id
+        AND clip.kind = 'clip' AND clip.status = 'ready'
+       WHERE c.cycle_id = ?
+         -- A ready clip has completed processing only when its raw staged
+         -- path is no longer retained. No source path is copied to the film
+         -- job or its input snapshot.
+         AND clip.source_path IS NULL
+         AND clip.output_path IS NOT NULL
+       ORDER BY c.created_at ASC, c.id ASC, clip.id ASC`,
+    )
+    .all(input.groupId, input.cycleId) as { clipJobId: string; contributionId: string }[];
+  const createdAt = new Date(input.createdAt ?? new Date());
+  if (!Number.isFinite(createdAt.getTime())) return null;
+  const jobId = compilationJobId(input.groupId, input.cycleId);
+  database
+    .prepare(
+      `INSERT INTO media_jobs
+        (id, group_id, contribution_id, kind, status, output_path, created_at,
+         idempotency_key, cycle_id, progress, input_count, completed_count,
+         claim_generation, processing_started_at)
+       VALUES (?, ?, NULL, 'film', 'pending', NULL, ?, NULL, ?, 0, ?, 0, 0, NULL)`,
+    )
+    .run(jobId, input.groupId, createdAt.toISOString(), input.cycleId, eligible.length);
+  const insertInput = database.prepare(
+    `INSERT INTO compilation_job_inputs (job_id, clip_job_id, contribution_id, position)
+     VALUES (?, ?, ?, ?)`,
+  );
+  for (const [position, clip] of eligible.entries()) {
+    insertInput.run(jobId, clip.clipJobId, clip.contributionId, position);
+  }
+  return readCompilationJob(database, jobId, input.groupId);
+}
+
+/** Create or retrieve the single persistent film job for a completed cycle. */
+export function createCompilationJob(
+  database: RewindDatabase,
+  input: CompilationJobInput,
+): CompilationJobResult {
+  beginJobTransaction(database);
+  try {
+    const existing = database
+      .prepare(
+        `SELECT id FROM media_jobs
+         WHERE kind = 'film' AND cycle_id = ? AND group_id = ? LIMIT 1`,
+      )
+      .get(input.cycleId, input.groupId) as { id?: string } | undefined;
+    if (existing?.id) {
+      const job = readCompilationJob(database, existing.id, input.groupId);
+      database.exec('COMMIT');
+      return job ? { ok: true, job, created: false } : { ok: false, reason: 'invalid_state' };
+    }
+    const cycle = database
+      .prepare('SELECT status FROM cycles WHERE id = ? AND group_id = ?')
+      .get(input.cycleId, input.groupId) as { status?: string } | undefined;
+    if (!cycle) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
+    if (!['revealing', 'archived'].includes(String(cycle.status))) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'invalid_state' };
+    }
+    const job = ensureCompilationJob(database, input);
+    if (!job) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'invalid_state' };
+    }
+    database.exec('COMMIT');
+    return { ok: true, job, created: true };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Atomically claim a pending/failed job, or reclaim a stale worker claim. */
+export function claimCompilationJob(
+  database: RewindDatabase,
+  input: ClaimCompilationJobInput,
+): CompilationJobClaimResult {
+  const now = new Date(input.now ?? new Date());
+  if (!Number.isFinite(now.getTime())) return { ok: false, reason: 'invalid_state' };
+  const leaseMs = input.leaseMs ?? PROCESSING_CLAIM_LEASE_MS;
+  if (!Number.isFinite(leaseMs) || leaseMs <= 0) return { ok: false, reason: 'invalid_state' };
+  beginJobTransaction(database);
+  try {
+    let job = readCompilationJob(database, input.jobId, input.groupId);
+    if (!job) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
+    if (job.status === 'ready') {
+      database.exec('COMMIT');
+      return { ok: true, action: 'already_ready', job };
+    }
+    if (job.status === 'processing') {
+      const startedAt = job.processingStartedAt ? Date.parse(job.processingStartedAt) : Number.NaN;
+      if (Number.isFinite(startedAt) && now.getTime() - startedAt < leaseMs) {
+        database.exec('COMMIT');
+        return { ok: true, action: 'already_processing', job };
+      }
+    } else if (!['pending', 'failed'].includes(job.status)) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'invalid_state' };
+    }
+    const generation = job.claimGeneration + 1;
+    database
+      .prepare(
+        `UPDATE media_jobs
+         SET status = 'processing', error_code = NULL,
+             processing_started_at = ?, claim_generation = ?
+         WHERE id = ? AND kind = 'film' AND status IN ('pending', 'failed', 'processing')`,
+      )
+      .run(now.toISOString(), generation, job.id);
+    job = readCompilationJob(database, job.id, input.groupId);
+    if (!job) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'invalid_state' };
+    }
+    database.exec('COMMIT');
+    return { ok: true, action: 'claimed', job };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Persist monotonic progress for the worker that owns a specific claim. */
+export function updateCompilationJobProgress(
+  database: RewindDatabase,
+  input: UpdateCompilationProgressInput,
+): CompilationJobRecord | null {
+  const completedCount = Math.max(0, Math.floor(input.completedCount));
+  if (!Number.isSafeInteger(input.claimGeneration) || completedCount !== input.completedCount)
+    return null;
+  const current = readCompilationJob(database, input.jobId);
+  if (
+    !current ||
+    current.status !== 'processing' ||
+    current.claimGeneration !== input.claimGeneration ||
+    completedCount < current.completedCount ||
+    completedCount > current.inputCount
+  )
+    return null;
+  if (
+    input.progress !== undefined &&
+    (!Number.isFinite(input.progress) || !Number.isSafeInteger(input.progress))
+  )
+    return null;
+  const progress =
+    input.progress === undefined
+      ? current.inputCount === 0
+        ? 0
+        : Math.floor((completedCount / current.inputCount) * 100)
+      : Math.max(0, Math.min(100, Math.floor(input.progress)));
+  if (progress < current.progress) return null;
+  database
+    .prepare(
+      `UPDATE media_jobs SET completed_count = ?, progress = ?
+       WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
+    )
+    .run(completedCount, progress, input.jobId, input.claimGeneration);
+  return readCompilationJob(database, input.jobId);
+}
+
 /** A worker claim is recoverable after a process dies without completing it. */
 export const PROCESSING_CLAIM_LEASE_MS = 15 * 60 * 1000;
 

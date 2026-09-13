@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { RewindDatabase } from '../db';
 import type { CycleClock } from './engine';
+import { ensureCompilationJob } from '../jobs';
 
 type StoredCycle = {
   id: string;
@@ -224,6 +225,19 @@ export function advanceCycleLifecycle(
         )
         .run(cycle.id, input.groupId);
       addEvent(database, cycle.id, input.groupId, 'collecting_to_revealing', now.toISOString());
+      // Create the cycle's one persistent film job while the lifecycle writer
+      // transaction is still open. A crash therefore cannot commit the
+      // revealing state without also committing its idempotent job record.
+      if (
+        !ensureCompilationJob(database, {
+          groupId: input.groupId,
+          cycleId: cycle.id,
+          createdAt: now,
+        })
+      ) {
+        database.exec('ROLLBACK');
+        return { ok: false, reason: 'invalid_state' };
+      }
       database.exec('COMMIT');
       const revealing = readCycle(database, cycle.id, input.groupId);
       if (!revealing) return { ok: false, reason: 'not_found' };
