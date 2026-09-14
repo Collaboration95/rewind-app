@@ -6,6 +6,19 @@ import { authorizeOwner, SAFE_DENIAL, type DeniedDecision } from '../policy';
 
 export { CYCLE_DURATION_MS, createCycleEngine } from './engine';
 export type { CycleClock, CycleDurationPreset } from './engine';
+export {
+  advanceCycleLifecycle,
+  transitionCycleLifecycle,
+  processCycleLifecycle,
+  publishCycleRelease,
+} from './lifecycle';
+export type {
+  AdvanceCycleLifecycleInput,
+  AdvanceCycleLifecycleResult,
+  CycleLifecycleAction,
+  PublishCycleReleaseInput,
+  PublishCycleReleaseResult,
+} from './lifecycle';
 
 export const MAX_DEMO_ADVANCE_SECONDS = 28 * 24 * 60 * 60;
 

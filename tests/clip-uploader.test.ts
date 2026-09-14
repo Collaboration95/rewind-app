@@ -4,6 +4,7 @@ import {
   validateClipUploadInput,
 } from '../src/capture/clip-uploader';
 import type { ClipUploadInput, PendingClipUpload } from '../src/domain/video';
+import { LocalRuntimeError } from '../src/runtime/local-runtime-client';
 
 const input: ClipUploadInput = {
   byteLength: 2048,
@@ -71,6 +72,24 @@ describe('local clip upload lifecycle', () => {
     await expect(pending).rejects.toBeInstanceOf(ClipUploadError);
     expect(transport.cancelClipUpload).toHaveBeenCalledWith('job-1');
     expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
+  });
+
+  it('preserves typed runtime failures for the caller to classify', async () => {
+    const failure = new LocalRuntimeError('The contribution is not authorised.', 403, 'forbidden');
+    const transport = {
+      cancelClipUpload: jest.fn().mockResolvedValue(undefined),
+      uploadClip: jest.fn().mockRejectedValue(failure),
+    };
+    const session = new ClipUploadSession(transport);
+
+    const pending = session.upload(input);
+    await expect(pending).rejects.toMatchObject({
+      code: 'forbidden',
+      retryable: false,
+      status: 403,
+    });
+    await expect(pending).rejects.toBeInstanceOf(ClipUploadError);
+    expect(session.getProgress()).toMatchObject({ status: 'failed', percent: 10 });
   });
 
   it('marks cancellation locally before a runtime cancellation settles', async () => {
