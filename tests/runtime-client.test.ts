@@ -114,6 +114,36 @@ describe('LocalRuntimeClient', () => {
     }
   });
 
+  it('maps a ready premiere path to a runtime URL without inventing one before release', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(response(200, { premiere: { state: 'locked', cycleId: 'cycle-1' } }))
+      .mockResolvedValueOnce(
+        response(200, {
+          premiere: {
+            state: 'ready',
+            cycleId: 'cycle-1',
+            filmId: 'film-1',
+            playbackPath: '/films/film-1/play?groupId=group-1&sessionId=session-1',
+          },
+        }),
+      );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.getPremiere('session-1', 'group-1', 'cycle-1')).resolves.toEqual({
+      state: 'locked',
+      cycleId: 'cycle-1',
+    });
+    await expect(client.getPremiere('session-1', 'group-1', 'cycle-1')).resolves.toEqual({
+      state: 'ready',
+      cycleId: 'cycle-1',
+      filmId: 'film-1',
+      playbackUrl: 'http://localhost:8787/films/film-1/play?groupId=group-1&sessionId=session-1',
+    });
+    expect(fetchImpl.mock.calls[0][0]).toContain(
+      '/cycles/cycle-1/premiere?groupId=group-1&sessionId=session-1',
+    );
+  });
+
   it('uploads captured bytes to the server-owned staging endpoint', async () => {
     const fetchImpl = jest
       .fn()

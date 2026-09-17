@@ -42,6 +42,7 @@ import {
 } from './src/domain/groups';
 import { isValidInviteCode, normalizeInviteCode } from './src/domain/invites';
 import { ChatScreen } from './src/chat/ChatScreen';
+import { ArchiveScreen } from './src/archive/ArchiveScreen';
 
 const lockedMoments = [1, 2, 3];
 
@@ -54,14 +55,9 @@ const ROUTES = [
 ] as const;
 
 type RouteKey = (typeof ROUTES)[number]['key'];
-type UnavailableRouteKey = Exclude<RouteKey, 'home' | 'settings' | 'camera'>;
+type UnavailableRouteKey = Exclude<RouteKey, 'home' | 'settings' | 'camera' | 'archive'>;
 
 const unavailableScreens: Record<UnavailableRouteKey, { description: string; title: string }> = {
-  archive: {
-    description:
-      'Archive playback is not implemented. Locked moments remain unavailable until reveal.',
-    title: 'Archive',
-  },
   chat: {
     description: 'Chat is not available in this area.',
     title: 'Chat',
@@ -243,6 +239,8 @@ function ActiveAppShell({
           />
         ) : activeRoute === 'chat' ? (
           <ChatScreen runtimeClient={runtimeClient} />
+        ) : activeRoute === 'archive' ? (
+          <ArchiveScreen runtimeClient={runtimeClient} />
         ) : (
           <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
         )}

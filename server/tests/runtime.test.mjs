@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -150,6 +151,88 @@ test('every protected endpoint category returns the same safe denial to a non-me
 
     const allowed = await fetch(`${baseUrl}/films/demo-film?groupId=demo-group&memberId=demo-1`);
     assert.equal(allowed.status, 200);
+  });
+});
+
+test('premiere playback is session-bound, release-gated, and never exposes a filesystem path', async () => {
+  await withRuntime(async ({ baseUrl, config, database }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+
+    const locked = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+    assert.equal(locked.status, 200);
+    assert.deepEqual(await locked.json(), {
+      premiere: { state: 'locked', cycleId: 'demo-cycle' },
+    });
+    const noSession = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?groupId=demo-group`);
+    assert.equal(noSession.status, 401);
+
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'failed', attempt_count = 3, output_path = NULL,
+           cycle_id = ? WHERE id = 'demo-film' AND kind = 'film'`,
+      )
+      .run('demo-cycle');
+    database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();
+    const delayed = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+    assert.deepEqual(await delayed.json(), {
+      premiere: { state: 'delayed', cycleId: 'demo-cycle' },
+    });
+
+    const processedDir = resolve(config.dataDir, 'media', 'processed');
+    const outputPath = resolve(processedDir, 'demo-film.mp4');
+    await mkdir(processedDir, { recursive: true });
+    await writeFile(outputPath, Buffer.from('synthetic playable bytes'));
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'ready', cycle_id = ?, output_path = ?
+         WHERE id = 'demo-film' AND kind = 'film'`,
+      )
+      .run('demo-cycle', outputPath);
+    database
+      .prepare(
+        `UPDATE cycles SET status = 'revealing', release_status = 'published',
+           release_published_at = ? WHERE id = 'demo-cycle'`,
+      )
+      .run(new Date().toISOString());
+
+    const ready = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+    assert.equal(ready.status, 200);
+    const readyBody = await ready.json();
+    assert.equal(readyBody.premiere.state, 'ready');
+    assert.equal(readyBody.premiere.filmId, 'demo-film');
+    assert.match(readyBody.premiere.playbackPath, /^\/films\/demo-film\/play\?/);
+    assert.doesNotMatch(
+      JSON.stringify(readyBody),
+      new RegExp(config.dataDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+
+    const playback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
+    assert.equal(playback.status, 200);
+    assert.equal(playback.headers.get('content-type'), 'video/mp4');
+    assert.deepEqual(
+      Buffer.from(await playback.arrayBuffer()),
+      Buffer.from('synthetic playable bytes'),
+    );
+    const rangedPlayback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`, {
+      headers: { Range: 'bytes=10-18' },
+    });
+    assert.equal(rangedPlayback.status, 206);
+    assert.equal(rangedPlayback.headers.get('content-range'), 'bytes 10-18/24');
+    assert.deepEqual(Buffer.from(await rangedPlayback.arrayBuffer()), Buffer.from('playable '));
+
+    database
+      .prepare(
+        "UPDATE cycles SET release_status = 'unpublished', release_published_at = NULL WHERE id = ?",
+      )
+      .run('demo-cycle');
+    const afterUnpublish = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
+    assert.equal(afterUnpublish.status, 404);
   });
 });
 

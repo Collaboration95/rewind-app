@@ -1461,3 +1461,44 @@ export function getMediaJob(
     createdAt: base.createdAt,
   };
 }
+
+export interface PremiereFilmRecord {
+  cycleId: string;
+  cycleStatus: string;
+  releaseStatus: 'unpublished' | 'published';
+  filmId: string | null;
+  filmStatus: string | null;
+  outputPath: string | null;
+  attemptCount: number;
+}
+
+/** The HTTP layer decides which safe premiere state to expose. This query
+ * deliberately retains the output path only for its server-side stream gate. */
+export function getPremiereFilm(
+  database: RewindDatabase,
+  groupId: string,
+  cycleId: string,
+): PremiereFilmRecord | null {
+  const row = database
+    .prepare(
+      `SELECT c.id AS cycleId, c.status AS cycleStatus, c.release_status AS releaseStatus,
+              f.id AS filmId, f.status AS filmStatus, f.output_path AS outputPath,
+              f.attempt_count AS attemptCount
+       FROM cycles c
+       LEFT JOIN media_jobs f
+         ON f.cycle_id = c.id AND f.group_id = c.group_id AND f.kind = 'film'
+       WHERE c.id = ? AND c.group_id = ?
+       ORDER BY f.created_at DESC, f.id DESC LIMIT 1`,
+    )
+    .get(cycleId, groupId) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    cycleId: String(row.cycleId),
+    cycleStatus: String(row.cycleStatus),
+    releaseStatus: row.releaseStatus === 'published' ? 'published' : 'unpublished',
+    filmId: row.filmId ? String(row.filmId) : null,
+    filmStatus: row.filmStatus ? String(row.filmStatus) : null,
+    outputPath: row.outputPath ? String(row.outputPath) : null,
+    attemptCount: Math.max(0, Number(row.attemptCount ?? 0)),
+  };
+}

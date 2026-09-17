@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createWriteStream, existsSync } from 'node:fs';
-import { mkdir, readdir, rename, rm } from 'node:fs/promises';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
+import { mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import { once } from 'node:events';
@@ -12,6 +12,7 @@ import {
   getCurrentCycle,
   getGroup,
   getMediaJob,
+  getPremiereFilm,
   getMessage,
   isMember,
   listProfiles,
@@ -57,7 +58,7 @@ import {
   type ClipUploadInput,
 } from './media';
 import { cleanupOrphanedStagedSources, processClipJob } from './jobs';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { probeClipWithFfmpeg } from './ffmpeg';
 
 export interface HealthPayload {
@@ -214,6 +215,113 @@ function sessionScope(database: RewindDatabase, url: URL, now = new Date()) {
   return result.status === 'valid'
     ? { memberId: result.session.actor.memberId, groupId: result.session.groupId }
     : { memberId: null, groupId: null };
+}
+
+function requireSessionMember(
+  database: RewindDatabase,
+  url: URL,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  now: Date,
+): { memberId: string; groupId: string } | null {
+  const sessionId = url.searchParams.get('sessionId');
+  if (!sessionId) {
+    sendSessionRequired(response, config);
+    return null;
+  }
+  const session = validateDemoSession(database, sessionId, now);
+  if (session.status !== 'valid') {
+    sendSessionRequired(response, config);
+    return null;
+  }
+  return { memberId: session.session.actor.memberId, groupId: session.session.groupId };
+}
+
+type PremiereState = 'locked' | 'processing' | 'delayed' | 'ready';
+
+function premiereState(film: ReturnType<typeof getPremiereFilm>): PremiereState {
+  if (!film) return 'locked';
+  if (film.filmStatus === 'failed' && film.attemptCount >= 3) return 'delayed';
+  if (
+    film.releaseStatus === 'published' &&
+    film.filmStatus === 'ready' &&
+    film.outputPath &&
+    film.filmId
+  ) {
+    return 'ready';
+  }
+  if (film.cycleStatus === 'revealing' || film.cycleStatus === 'archived') return 'processing';
+  return 'locked';
+}
+
+async function resolveOwnedFilmPath(outputPath: string, dataDir: string): Promise<string | null> {
+  try {
+    const processedDir = resolve(dataDir, 'media', 'processed');
+    const [film, processed] = await Promise.all([realpath(outputPath), realpath(processedDir)]);
+    const remainder = relative(processed, film);
+    if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) return null;
+    const details = await stat(film);
+    return details.isFile() && details.size > 0 ? film : null;
+  } catch {
+    return null;
+  }
+}
+
+function streamMp4(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  path: string,
+  size: number,
+): void {
+  const range = request.headers.range;
+  let start = 0;
+  let end = size - 1;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match) {
+      response.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      response.end();
+      return;
+    }
+    if (!match[1] && !match[2]) {
+      response.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      response.end();
+      return;
+    }
+    if (!match[1]) {
+      const suffixLength = Number(match[2]);
+      start = Math.max(0, size - suffixLength);
+      end = size - 1;
+    } else {
+      start = Number(match[1]);
+      end = match[2] ? Number(match[2]) : end;
+    }
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end < start ||
+      start >= size
+    ) {
+      response.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      response.end();
+      return;
+    }
+    end = Math.min(end, size - 1);
+  }
+  const status = range ? 206 : 200;
+  response.writeHead(status, {
+    'Accept-Ranges': 'bytes',
+    'Access-Control-Allow-Origin': config.allowOrigin,
+    'Cache-Control': 'no-store',
+    'Content-Length': String(end - start + 1),
+    'Content-Type': 'video/mp4',
+    ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
+  });
+  createReadStream(path, { start, end })
+    .on('error', () => response.destroy())
+    .pipe(response);
 }
 
 export interface RuntimeServerOptions {
@@ -1336,6 +1444,68 @@ export async function handleRequest(
     const contribution = getContribution(database, groupId, contributionId);
     if (!contribution) return sendNotFound(response, config);
     sendJson(response, config, 200, { contribution });
+    return;
+  }
+
+  const premiereMatch = url.pathname.match(/^\/cycles\/([^/]+)\/premiere$/);
+  if (premiereMatch && request.method === 'GET') {
+    const cycleId = decodePathSegment(premiereMatch[1], response, config);
+    if (cycleId === null) return;
+    const groupId = url.searchParams.get('groupId');
+    if (!groupId) return sendDenied(response, config);
+    const session = requireSessionMember(database, url, response, config, now());
+    if (!session) return;
+    if (session.groupId !== groupId) return sendDenied(response, config);
+    if (!authorize(database, response, config, groupId, session.memberId, 'film')) return;
+    const film = getPremiereFilm(database, groupId, cycleId);
+    if (!film) return sendNotFound(response, config);
+    const state = premiereState(film);
+    const sessionId = url.searchParams.get('sessionId');
+    sendJson(response, config, 200, {
+      premiere:
+        state === 'ready'
+          ? {
+              state,
+              cycleId,
+              filmId: film.filmId,
+              playbackPath: `/films/${encodeURIComponent(film.filmId!)}/play?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId!)}`,
+            }
+          : { state, cycleId },
+    });
+    return;
+  }
+
+  const playbackMatch = url.pathname.match(/^\/films\/([^/]+)\/play$/);
+  if (playbackMatch && request.method === 'GET') {
+    const filmId = decodePathSegment(playbackMatch[1], response, config);
+    if (filmId === null) return;
+    const groupId = url.searchParams.get('groupId');
+    if (!groupId) return sendDenied(response, config);
+    const session = requireSessionMember(database, url, response, config, now());
+    if (!session) return;
+    if (session.groupId !== groupId) return sendDenied(response, config);
+    if (!authorize(database, response, config, groupId, session.memberId, 'film')) return;
+    const film = database
+      .prepare(
+        `SELECT cycle_id AS cycleId FROM media_jobs
+         WHERE id = ? AND group_id = ? AND kind = 'film'`,
+      )
+      .get(filmId, groupId) as { cycleId?: string } | undefined;
+    if (!film?.cycleId) return sendNotFound(response, config);
+    const premiere = getPremiereFilm(database, groupId, film.cycleId);
+    if (
+      !premiere ||
+      premiere.filmId !== filmId ||
+      premiereState(premiere) !== 'ready' ||
+      !premiere.outputPath
+    ) {
+      return sendNotFound(response, config);
+    }
+    const path = await resolveOwnedFilmPath(premiere.outputPath, config.dataDir);
+    if (!path) return sendNotFound(response, config);
+    const details = await stat(path).catch(() => null);
+    if (!details || !details.isFile() || details.size <= 0) return sendNotFound(response, config);
+    streamMp4(request, response, config, path, details.size);
     return;
   }
 

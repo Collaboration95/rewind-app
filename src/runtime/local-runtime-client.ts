@@ -9,6 +9,7 @@ import type {
   MembershipDenied,
 } from '../domain/profiles';
 import type { DemoSession } from '../domain/session';
+import type { Premiere } from '../domain/premiere';
 import {
   RealtimeChatClient,
   type ChatMessage,
@@ -75,6 +76,7 @@ export interface RuntimeClient {
     groupId: string,
     jobId: string,
   ): Promise<PendingClipUpload['job']>;
+  getPremiere?(sessionId: string, groupId: string, cycleId: string): Promise<Premiere>;
   deleteContribution?(
     sessionId: string,
     groupId: string,
@@ -381,6 +383,21 @@ export class LocalRuntimeClient implements RuntimeClient {
       }
       throw error;
     }
+  }
+
+  async getPremiere(sessionId: string, groupId: string, cycleId: string): Promise<Premiere> {
+    const body = await this.request<{
+      premiere:
+        | { state: 'locked' | 'processing' | 'delayed'; cycleId: string }
+        | { state: 'ready'; cycleId: string; filmId: string; playbackPath: string };
+    }>(
+      `/cycles/${encodeURIComponent(cycleId)}/premiere?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId)}`,
+      {},
+      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+    );
+    if (body.premiere.state !== 'ready') return body.premiere;
+    const { playbackPath, ...premiere } = body.premiere;
+    return { ...premiere, playbackUrl: `${this.baseUrl}${playbackPath}` };
   }
 
   async deleteContribution(
