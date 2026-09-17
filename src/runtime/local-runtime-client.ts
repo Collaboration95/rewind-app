@@ -1,4 +1,9 @@
-import type { CurrentCycleResult, Cycle, CycleAdvanceResult } from '../domain/cycles';
+import type {
+  CurrentCycleResult,
+  Cycle,
+  CycleAdvanceResult,
+  DemoRevealState,
+} from '../domain/cycles';
 import type { InviteAcceptance, LocalInvite } from '../domain/invites';
 import type { ClipUploadInput, PendingClipUpload } from '../domain/video';
 import type {
@@ -49,6 +54,7 @@ export interface RuntimeClient {
     advanceSeconds: number,
     sessionId?: string,
   ): Promise<CycleAdvanceResult>;
+  revealDemoCycle?(sessionId: string, groupId: string): Promise<DemoRevealState>;
   getDemoSession?(sessionId: string): Promise<DemoSession>;
   createDemoSession?(memberId: MemberId, groupId?: string): Promise<DemoSession>;
   invalidateDemoSession?(sessionId: string): Promise<DemoSession>;
@@ -250,6 +256,15 @@ export class LocalRuntimeClient implements RuntimeClient {
       if (error.status === 400) return { kind: 'InvalidRequest' };
       return { kind: 'RecoverableFailure' };
     }
+  }
+
+  async revealDemoCycle(sessionId: string, groupId: string): Promise<DemoRevealState> {
+    const body = await this.request<{ reveal: DemoRevealState }>(
+      `/demo/reveal?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      { method: 'POST' },
+      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+    );
+    return body.reveal;
   }
 
   async getDemoSession(sessionId: string): Promise<DemoSession> {

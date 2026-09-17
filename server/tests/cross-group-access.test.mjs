@@ -157,6 +157,23 @@ test('a session from another group cannot inspect or play a group premiere', asy
   });
 });
 
+test('a session from another group cannot operate the local Demo reveal control', async () => {
+  await withSecondGroup(async ({ baseUrl }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-6', groupId: 'other-group' }),
+    });
+    const { session } = await sessionResponse.json();
+    const response = await fetch(
+      `${baseUrl}/demo/reveal?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`,
+      { method: 'POST' },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), SAFE_DENIAL);
+  });
+});
+
 test('a session from another group cannot create a synthetic Demo contribution', async () => {
   await withSecondGroup(async ({ baseUrl }) => {
     const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {

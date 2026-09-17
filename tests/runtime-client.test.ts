@@ -320,6 +320,24 @@ describe('LocalRuntimeClient', () => {
     );
   });
 
+  it('progresses the owner-only local reveal through a session-bound route', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValue(
+        response(200, { reveal: { state: 'compiling', cycleId: 'cycle-1', jobId: 'film-1' } }),
+      );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.revealDemoCycle('session-1', 'group-1')).resolves.toEqual({
+      state: 'compiling',
+      cycleId: 'cycle-1',
+      jobId: 'film-1',
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://localhost:8787/demo/reveal?sessionId=session-1&groupId=group-1',
+      expect.objectContaining({ method: 'POST', headers: { Accept: 'application/json' } }),
+    );
+  });
+
   it('maps owner-control access denial without exposing server details', async () => {
     const client = new LocalRuntimeClient(
       'http://localhost:8787',

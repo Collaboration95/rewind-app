@@ -11,9 +11,6 @@ const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
-const { advanceCycleLifecycle, publishCycleRelease } = await import('../dist/cycles/index.js');
-const { processCompilationJob } = await import('../dist/jobs/index.js');
-
 const START = new Date('2026-09-10T12:00:00.000Z');
 const REVEAL = new Date('2026-09-11T12:00:01.000Z');
 
@@ -72,7 +69,8 @@ test('full-cycle: reset → join → sealed clip → reveal → authorized archi
     REWIND_FFMPEG_BIN: 'ffmpeg',
   });
   const database = openDatabase(config);
-  const server = createRuntimeServer(config, database, { now: () => START });
+  let clock = START;
+  const server = createRuntimeServer(config, database, { now: () => clock });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -95,7 +93,7 @@ test('full-cycle: reset → join → sealed clip → reveal → authorized archi
       201,
     );
     const { group, cycle } = groupCreated;
-    const ownerQuery = `groupId=${encodeURIComponent(group.id)}&sessionId=${encodeURIComponent(ownerSessionId)}`;
+    let ownerQuery = `groupId=${encodeURIComponent(group.id)}&sessionId=${encodeURIComponent(ownerSessionId)}`;
 
     const invite = await postJson(
       'owner creates invite',
@@ -119,7 +117,7 @@ test('full-cycle: reset → join → sealed clip → reveal → authorized archi
       { code: invite.invite.code, groupId: group.id },
       200,
     );
-    const guestQuery = `groupId=${encodeURIComponent(group.id)}&sessionId=${encodeURIComponent(guestSessionId)}`;
+    let guestQuery = `groupId=${encodeURIComponent(group.id)}&sessionId=${encodeURIComponent(guestSessionId)}`;
 
     const sourcePath = resolve(dataDir, 'generated-input.mp4');
     await createSyntheticMp4(sourcePath);
@@ -172,28 +170,34 @@ test('full-cycle: reset → join → sealed clip → reveal → authorized archi
     );
     assert.deepEqual(sealed.premiere, { state: 'locked', cycleId: cycle.id });
 
-    const revealing = advanceCycleLifecycle(database, {
-      groupId: group.id,
-      cycleId: cycle.id,
-      clock: () => REVEAL,
-    });
-    assert.deepEqual(revealing.ok && revealing.action, 'revealing', 'transition to reveal');
-    const film = database
-      .prepare("SELECT id FROM media_jobs WHERE group_id = ? AND cycle_id = ? AND kind = 'film'")
-      .get(group.id, cycle.id);
-    assert.ok(film?.id, 'reveal stage did not create a film job');
-    const compiled = await processCompilationJob(database, {
-      jobId: film.id,
-      ffmpegBin: config.ffmpegBin,
-      outputDir: resolve(dataDir, 'media', 'processed'),
-    });
-    assert.deepEqual(compiled, { ok: true, jobId: film.id, status: 'ready' }, 'compile film');
-    const published = publishCycleRelease(database, {
-      groupId: group.id,
-      cycleId: cycle.id,
-      publishedAt: REVEAL,
-    });
-    assert.deepEqual(published.ok && published.action, 'published', 'publish release');
+    clock = REVEAL;
+    const revealOwner = await postJson(
+      'owner re-enters Demo access for reveal',
+      baseUrl,
+      '/sessions/demo',
+      { memberId: 'demo-1', groupId: group.id },
+      201,
+    );
+    ownerQuery = `groupId=${encodeURIComponent(group.id)}&sessionId=${encodeURIComponent(revealOwner.session.id)}`;
+    const compiling = await expectJson(
+      'owner starts the supported reveal control',
+      await fetch(`${baseUrl}/demo/reveal?${ownerQuery}`, { method: 'POST' }),
+      200,
+    );
+    assert.equal(compiling.reveal.state, 'compiling');
+    assert.equal(compiling.reveal.cycleId, cycle.id);
+    const beforeRelease = await expectJson(
+      'assert no player before release',
+      await fetch(`${baseUrl}/cycles/${encodeURIComponent(cycle.id)}/premiere?${ownerQuery}`),
+      200,
+    );
+    assert.deepEqual(beforeRelease.premiere, { state: 'processing', cycleId: cycle.id });
+    const released = await expectJson(
+      'owner completes the supported reveal control',
+      await fetch(`${baseUrl}/demo/reveal?${ownerQuery}`, { method: 'POST' }),
+      200,
+    );
+    assert.deepEqual(released.reveal, { state: 'released', cycleId: cycle.id });
 
     const premiere = await expectJson(
       'load authorized premiere',
@@ -205,6 +209,14 @@ test('full-cycle: reset → join → sealed clip → reveal → authorized archi
     assert.equal(playback.status, 200, 'authorized playback');
     assert.ok((await playback.arrayBuffer()).byteLength > 0, 'authorized playback was empty');
 
+    const revealGuest = await postJson(
+      'guest re-enters Demo access for released archive',
+      baseUrl,
+      '/sessions/demo',
+      { memberId: 'demo-2', groupId: group.id },
+      201,
+    );
+    guestQuery = `groupId=${encodeURIComponent(group.id)}&sessionId=${encodeURIComponent(revealGuest.session.id)}`;
     const archive = await expectJson(
       'load released archive',
       await fetch(`${baseUrl}/archive?${guestQuery}`),

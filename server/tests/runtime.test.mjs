@@ -347,6 +347,75 @@ test('a session-authorized synthetic Demo clip enters the ordinary sealed proces
   );
 });
 
+test('the owner reveal control reports collecting while the cycle is still open', async () => {
+  await withRuntime(
+    async ({ baseUrl }) => {
+      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-1' }),
+      });
+      const { session } = await sessionResponse.json();
+      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+
+      const collecting = await fetch(`${baseUrl}/demo/reveal?${query}`, { method: 'POST' });
+      assert.equal(collecting.status, 200);
+      assert.deepEqual(await collecting.json(), {
+        reveal: { state: 'collecting', cycleId: 'demo-cycle' },
+      });
+    },
+    { now: () => new Date('2026-09-10T12:00:00.000Z') },
+  );
+});
+
+test('the owner reveal control reports a durable compile failure as delayed without a player', async () => {
+  await withRuntime(async ({ baseUrl }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+
+    const compiling = await fetch(`${baseUrl}/demo/reveal?${query}`, { method: 'POST' });
+    assert.equal(compiling.status, 200);
+    assert.equal((await compiling.json()).reveal.state, 'compiling');
+    const delayed = await fetch(`${baseUrl}/demo/reveal?${query}`, { method: 'POST' });
+    assert.equal(delayed.status, 200);
+    const delayedBody = await delayed.json();
+    assert.equal(delayedBody.reveal.state, 'delayed');
+    const premiere = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+    assert.equal(premiere.status, 200);
+    assert.deepEqual((await premiere.json()).premiere, {
+      state: 'processing',
+      cycleId: 'demo-cycle',
+    });
+  });
+});
+
+test('a non-owner Demo member cannot operate the reveal control', async () => {
+  await withRuntime(async ({ baseUrl }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-2' }),
+    });
+    const { session } = await sessionResponse.json();
+    const response = await fetch(
+      `${baseUrl}/demo/reveal?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`,
+      { method: 'POST' },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), {
+      allowed: false,
+      status: 403,
+      error: 'forbidden',
+      message: 'You do not have access to this resource.',
+    });
+  });
+});
+
 test('malformed percent-encoded path segments return a client error for every route family', async () => {
   await withRuntime(async ({ baseUrl }) => {
     const malformed = '%E0%A4%A';

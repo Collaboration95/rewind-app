@@ -50,14 +50,26 @@ For the offline Expo shell, use `npm run web`. If a local runtime has been
 started manually, `npm run server:reset` restores its deterministic five-member
 fixture.
 
+To prove the same journey through the mobile UI, start the runtime in one
+terminal with `npm run server:start`, then start the Demo web shell in another:
+
+```sh
+EXPO_PUBLIC_LOCAL_BASE_URL=http://127.0.0.1:8787 \
+EXPO_PUBLIC_CAMERA_MODE=demo npm run web
+```
+
+Choose the owner member, create a local group from Settings, and use Camera →
+video → **Create synthetic Demo clip**. Return to Settings and use
+**Start local reveal**, followed by **Compile and release**. The owner control
+advances the local Demo clock for this development-only journey; it still waits
+for a durable film output before publishing. Open Archive only after the
+control reports release.
+
 ## Known limits and fallback
 
 The automated command is the complete supported no-hardware demonstration.
-The mobile fixture camera intentionally does not claim to record video, and
-the current app has no owner-facing reveal control. Do not describe the fixture
-as a physical recording or use the app UI to claim a manual end-to-end release.
-
-The pending local-Demo reveal control and server-owned synthetic clip are tracked
-in GitHub issues #102 and #103. Hosted deployment, backup, and shutdown work is
+The mobile fixture camera intentionally does not claim to record video. The
+synthetic clip action is explicitly local Demo media and must not be described
+as a physical recording. Hosted deployment, backup, and shutdown work is
 separate; follow the guarded [deployment guide](../deploy/README.md) rather
 than using this local runbook for AWS operations.

@@ -53,6 +53,11 @@ export interface OwnerControlDenied {
 export type CycleAdvanceResult =
   Cycle | OwnerControlDenied | CycleNotFound | InvalidCycleAdvance | RecoverableFailure;
 
+/** Truthful states returned by the owner-only local Demo reveal control. */
+export type DemoRevealState =
+  | { state: 'collecting' | 'released'; cycleId: string }
+  | { state: 'compiling' | 'delayed'; cycleId: string; jobId: string };
+
 export interface CycleRepository {
   getCurrentCycle(groupId: string, actingMemberId: MemberId): Promise<CurrentCycleResult>;
 }

@@ -30,7 +30,7 @@ import {
   toggleChatReaction,
 } from './chat';
 import { encodeSseEvent, RealtimeHub } from './realtime';
-import { advanceDemoCycle } from './cycles';
+import { advanceCycleLifecycle, advanceDemoCycle, publishCycleRelease } from './cycles';
 import { classifyDemoSession } from './session/contract';
 import { authorizeMember, authorizeOwner, SAFE_DENIAL, type ProtectedResource } from './policy';
 import {
@@ -60,7 +60,12 @@ import {
   waitForStagedIntakesIdle,
   type ClipUploadInput,
 } from './media';
-import { cleanupOrphanedStagedSources, processClipJob } from './jobs';
+import {
+  cleanupOrphanedStagedSources,
+  getCompilationJob,
+  processClipJob,
+  processCompilationJob,
+} from './jobs';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { generateSyntheticDemoClip, probeClipWithFfmpeg } from './ffmpeg';
 
@@ -255,6 +260,17 @@ function premiereState(film: ReturnType<typeof getPremiereFilm>): PremiereState 
   }
   if (film.cycleStatus === 'revealing' || film.cycleStatus === 'archived') return 'processing';
   return 'locked';
+}
+
+function cycleCompilationJob(database: RewindDatabase, groupId: string, cycleId: string) {
+  const row = database
+    .prepare(
+      `SELECT id FROM media_jobs
+       WHERE group_id = ? AND cycle_id = ? AND kind = 'film'
+       ORDER BY created_at ASC, id ASC LIMIT 1`,
+    )
+    .get(groupId, cycleId) as { id?: string } | undefined;
+  return row?.id ? getCompilationJob(database, row.id, groupId) : null;
 }
 
 async function resolveOwnedProcessedPath(
@@ -1402,6 +1418,86 @@ export async function handleRequest(
 
   if (url.pathname === '/profiles') {
     sendJson(response, config, 200, { profiles: listProfiles(database) });
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/demo/reveal') {
+    const groupId = url.searchParams.get('groupId');
+    const sessionId = url.searchParams.get('sessionId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId, now());
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (
+      !groupId ||
+      session.session.groupId !== groupId ||
+      !authorizeOwner(database, groupId, session.session.actor.memberId).allowed
+    )
+      return sendDenied(response, config);
+
+    const lifecycle = advanceCycleLifecycle(database, { groupId, clock: now });
+    if (!lifecycle.ok) return sendNotFound(response, config);
+    if (lifecycle.action === 'waiting_for_boundary') {
+      sendJson(response, config, 200, {
+        reveal: { state: 'collecting', cycleId: lifecycle.cycle.id },
+      });
+      return;
+    }
+    if (lifecycle.action === 'revealing') {
+      const job = cycleCompilationJob(database, groupId, lifecycle.cycle.id);
+      if (!job) return sendNotFound(response, config);
+      sendJson(response, config, 200, {
+        reveal: { state: 'compiling', cycleId: lifecycle.cycle.id, jobId: job.id },
+      });
+      return;
+    }
+    if (lifecycle.action === 'archived' || lifecycle.action === 'already_archived') {
+      sendJson(response, config, 200, {
+        reveal: { state: 'released', cycleId: lifecycle.cycle.id },
+      });
+      return;
+    }
+
+    const job = cycleCompilationJob(database, groupId, lifecycle.cycle.id);
+    if (!job) return sendNotFound(response, config);
+    if (job.status === 'processing') {
+      sendJson(response, config, 200, {
+        reveal: { state: 'compiling', cycleId: lifecycle.cycle.id, jobId: job.id },
+      });
+      return;
+    }
+    const compiled = await processCompilationJob(database, {
+      jobId: job.id,
+      groupId,
+      ffmpegBin: config.ffmpegBin,
+      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      actorMemberId: session.session.actor.memberId,
+    });
+    if (!compiled.ok) {
+      sendJson(response, config, 200, {
+        reveal: { state: 'delayed', cycleId: lifecycle.cycle.id, jobId: job.id },
+      });
+      return;
+    }
+    const published = publishCycleRelease(database, {
+      groupId,
+      cycleId: lifecycle.cycle.id,
+      clock: now,
+    });
+    if (!published.ok) {
+      sendJson(response, config, 200, {
+        reveal: { state: 'delayed', cycleId: lifecycle.cycle.id, jobId: job.id },
+      });
+      return;
+    }
+    const archived = advanceCycleLifecycle(database, {
+      groupId,
+      cycleId: lifecycle.cycle.id,
+      clock: now,
+    });
+    if (!archived.ok) return sendNotFound(response, config);
+    sendJson(response, config, 200, {
+      reveal: { state: 'released', cycleId: lifecycle.cycle.id },
+    });
     return;
   }
 

@@ -87,7 +87,20 @@ function runtimeClientWithPremiere(
       actingMemberRole: 'owner',
     }),
     getCurrentCycle: jest.fn().mockResolvedValue(cycleFixture({ status: 'revealing' })),
-    advanceDemoCycle: jest.fn(),
+    advanceDemoCycle: jest.fn().mockResolvedValue({
+      id: 'demo-cycle',
+      groupId: 'demo-group',
+      prompt: 'Prompt',
+      startsAt: '2026-09-01T00:00:00.000Z',
+      endsAt: '2026-09-12T00:00:00.000Z',
+      status: 'collecting',
+      lockState: 'locked',
+      quota: { maxCount: 5, maxSeconds: 30 },
+      contributionUsage: { countUsed: 0, secondsUsed: 0 },
+    }),
+    revealDemoCycle: jest
+      .fn()
+      .mockResolvedValue({ state: 'compiling', cycleId: 'demo-cycle', jobId: 'demo-film' }),
     getPremiere: jest.fn().mockResolvedValue(premiere),
     getReleasedArchive: jest.fn().mockResolvedValue({ films: [], clips: [] }),
   };
@@ -178,6 +191,27 @@ describe('Rewind Home start screen', () => {
     await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
     expect(await result.findByTestId('archive-video-player')).toBeTruthy();
     expect(result.queryByTestId('archive-locked')).toBeNull();
+  });
+
+  it('shows the owner-only local reveal control and keeps its lifecycle truthful', async () => {
+    const runtime = runtimeClientWithPremiere({
+      state: 'locked',
+      cycleId: 'demo-cycle',
+    });
+    const result = await render(<App runtimeClient={runtime} />);
+    await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await result.findByTestId('settings-local-reveal');
+    await fireEvent.press(result.getByTestId('progress-local-reveal'));
+    await result.findByText(/durable film job is ready to compile/);
+    expect(runtime.advanceDemoCycle).toHaveBeenCalledWith(
+      'demo-group',
+      'demo-1',
+      24 * 60 * 60,
+      expect.any(String),
+    );
+    expect(runtime.revealDemoCycle).toHaveBeenCalledWith(expect.any(String), 'demo-group');
+    expect(result.getByRole('button', { name: 'Compile and release' })).toBeTruthy();
   });
 
   it('keeps the archive player absent while a premiere is locked or delayed', async () => {

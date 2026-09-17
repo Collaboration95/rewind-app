@@ -8,7 +8,7 @@ import { DemoProfilePicker } from './src/profiles/DemoProfilePicker';
 import { DemoProfileProvider } from './src/profiles/DemoProfileProvider';
 import { CapsuleProvider, useCapsule } from './src/capsule/CapsuleProvider';
 import { CapsuleSummary } from './src/capsule/CapsuleSummary';
-import type { CycleRepository } from './src/domain/cycles';
+import type { CycleRepository, DemoRevealState } from './src/domain/cycles';
 import type {
   AsyncGroupRepository,
   CreateGroupInput,
@@ -359,6 +359,7 @@ function SettingsScreen({
         <Text style={styles.bodyText}>{role === 'owner' ? 'Owner' : 'Member'} · local group</Text>
       </View>
       <InvitePanel groupId={session.groupId} runtimeClient={runtimeClient} />
+      <DemoRevealPanel groupId={session.groupId} runtimeClient={runtimeClient} />
       {error ? (
         <Text accessibilityRole="alert" style={styles.errorText}>
           {error}
@@ -446,6 +447,93 @@ function SettingsScreen({
         </View>
       </Modal>
     </ScrollView>
+  );
+}
+
+function DemoRevealPanel({
+  groupId,
+  runtimeClient,
+}: {
+  groupId: string;
+  runtimeClient: RuntimeClient | null;
+}) {
+  const { session } = useDemoSession();
+  const { state, retry } = useCapsule();
+  const [reveal, setReveal] = useState<DemoRevealState | null>(null);
+  const [pending, setPending] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const owner = state.group?.actingMemberRole === 'owner';
+  const revealDemoCycle = runtimeClient?.revealDemoCycle;
+
+  if (!owner || !session || !revealDemoCycle) return null;
+
+  const progress = async () => {
+    setPending(true);
+    setFeedback(null);
+    try {
+      if (!reveal || reveal.state === 'collecting') {
+        const advanced = await runtimeClient.advanceDemoCycle(
+          groupId,
+          session.actor.memberId,
+          24 * 60 * 60,
+          session.id,
+        );
+        if ('kind' in advanced) {
+          throw new Error('The local Demo cycle could not be advanced for reveal.');
+        }
+      }
+      const next = await revealDemoCycle(session.id, groupId);
+      setReveal(next);
+      retry();
+    } catch (error) {
+      setFeedback(
+        error instanceof Error ? error.message : 'The local reveal could not be progressed.',
+      );
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const actionLabel =
+    reveal?.state === 'compiling'
+      ? 'Compile and release'
+      : reveal?.state === 'delayed'
+        ? 'Retry compilation'
+        : reveal?.state === 'collecting'
+          ? 'Check local reveal'
+          : 'Start local reveal';
+  const status =
+    reveal?.state === 'compiling'
+      ? 'A durable film job is ready to compile. Playback remains locked until release.'
+      : reveal?.state === 'delayed'
+        ? 'The film is delayed. No player or download has been published.'
+        : reveal?.state === 'released'
+          ? 'The film is released. Open Archive to view the published result.'
+          : reveal?.state === 'collecting'
+            ? 'The collection window is still open. Media remains sealed.'
+            : 'This owner-only local Demo control advances the Demo clock, then uses the normal cycle, compilation, and release gates.';
+
+  return (
+    <View accessible={false} style={styles.settingsPanel} testID="settings-local-reveal">
+      <Text style={styles.label}>LOCAL REVEAL CONTROL</Text>
+      <Text style={styles.bodyText}>{status}</Text>
+      {reveal?.state !== 'released' ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={pending}
+          onPress={() => void progress()}
+          style={styles.primaryButton}
+          testID="progress-local-reveal"
+        >
+          <Text style={styles.primaryButtonText}>{pending ? 'Progressing…' : actionLabel}</Text>
+        </Pressable>
+      ) : null}
+      {feedback ? (
+        <Text accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.bodyText}>
+          {feedback}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
