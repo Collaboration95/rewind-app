@@ -1472,6 +1472,96 @@ export interface PremiereFilmRecord {
   attemptCount: number;
 }
 
+export interface ReleasedArchiveRecord {
+  films: { id: string; cycleId: string; publishedAt: string }[];
+  clips: { id: string; contributionId: string; cycleId: string; createdAt: string }[];
+}
+
+/** List only ready, released media. Filesystem paths stay server-side. */
+export function listReleasedArchive(
+  database: RewindDatabase,
+  groupId: string,
+  memberId: string,
+): ReleasedArchiveRecord {
+  const films = database
+    .prepare(
+      `SELECT f.id, c.id AS cycleId, c.release_published_at AS publishedAt
+       FROM media_jobs f
+       JOIN cycles c ON c.id = f.cycle_id AND c.group_id = f.group_id
+       WHERE f.group_id = ? AND f.kind = 'film' AND f.status = 'ready'
+         AND f.output_path IS NOT NULL AND c.release_status = 'published'
+       ORDER BY c.release_published_at DESC, f.created_at DESC, f.id DESC`,
+    )
+    .all(groupId) as Record<string, unknown>[];
+  const clips = database
+    .prepare(
+      `SELECT clip.id, contribution.id AS contributionId, cycle.id AS cycleId,
+              contribution.created_at AS createdAt
+       FROM media_jobs clip
+       JOIN contributions contribution ON contribution.id = clip.contribution_id
+       JOIN cycles cycle ON cycle.id = contribution.cycle_id
+       WHERE clip.group_id = ? AND clip.kind = 'clip' AND clip.status = 'ready'
+         AND clip.output_path IS NOT NULL AND contribution.member_id = ?
+         AND cycle.group_id = ? AND cycle.release_status = 'published'
+         AND clip.deleted_at IS NULL
+       ORDER BY contribution.created_at DESC, clip.id DESC`,
+    )
+    .all(groupId, memberId, groupId) as Record<string, unknown>[];
+  return {
+    films: films.map((film) => ({
+      id: String(film.id),
+      cycleId: String(film.cycleId),
+      publishedAt: String(film.publishedAt),
+    })),
+    clips: clips.map((clip) => ({
+      id: String(clip.id),
+      contributionId: String(clip.contributionId),
+      cycleId: String(clip.cycleId),
+      createdAt: String(clip.createdAt),
+    })),
+  };
+}
+
+export function getReleasedFilmDownload(
+  database: RewindDatabase,
+  groupId: string,
+  filmId: string,
+): { outputPath: string } | null {
+  const row = database
+    .prepare(
+      `SELECT f.output_path AS outputPath
+       FROM media_jobs f
+       JOIN cycles c ON c.id = f.cycle_id AND c.group_id = f.group_id
+       WHERE f.id = ? AND f.group_id = ? AND f.kind = 'film' AND f.status = 'ready'
+         AND f.output_path IS NOT NULL AND c.release_status = 'published'
+       LIMIT 1`,
+    )
+    .get(filmId, groupId) as Record<string, unknown> | undefined;
+  return row?.outputPath ? { outputPath: String(row.outputPath) } : null;
+}
+
+export function getReleasedOwnClipDownload(
+  database: RewindDatabase,
+  groupId: string,
+  memberId: string,
+  clipId: string,
+): { outputPath: string } | null {
+  const row = database
+    .prepare(
+      `SELECT clip.output_path AS outputPath
+       FROM media_jobs clip
+       JOIN contributions contribution ON contribution.id = clip.contribution_id
+       JOIN cycles cycle ON cycle.id = contribution.cycle_id
+       WHERE clip.id = ? AND clip.group_id = ? AND clip.kind = 'clip' AND clip.status = 'ready'
+         AND clip.output_path IS NOT NULL AND contribution.member_id = ?
+         AND cycle.group_id = ? AND cycle.release_status = 'published'
+         AND clip.deleted_at IS NULL
+       LIMIT 1`,
+    )
+    .get(clipId, groupId, memberId, groupId) as Record<string, unknown> | undefined;
+  return row?.outputPath ? { outputPath: String(row.outputPath) } : null;
+}
+
 /** The HTTP layer decides which safe premiere state to expose. This query
  * deliberately retains the output path only for its server-side stream gate. */
 export function getPremiereFilm(

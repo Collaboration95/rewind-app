@@ -13,8 +13,11 @@ import {
   getGroup,
   getMediaJob,
   getPremiereFilm,
+  getReleasedFilmDownload,
+  getReleasedOwnClipDownload,
   getMessage,
   isMember,
+  listReleasedArchive,
   listProfiles,
   restoreFixture,
   schemaReadiness,
@@ -254,7 +257,10 @@ function premiereState(film: ReturnType<typeof getPremiereFilm>): PremiereState 
   return 'locked';
 }
 
-async function resolveOwnedFilmPath(outputPath: string, dataDir: string): Promise<string | null> {
+async function resolveOwnedProcessedPath(
+  outputPath: string,
+  dataDir: string,
+): Promise<string | null> {
   try {
     const processedDir = resolve(dataDir, 'media', 'processed');
     const [film, processed] = await Promise.all([realpath(outputPath), realpath(processedDir)]);
@@ -273,6 +279,7 @@ function streamMp4(
   config: RuntimeConfig,
   path: string,
   size: number,
+  attachmentName?: string,
 ): void {
   const range = request.headers.range;
   let start = 0;
@@ -317,6 +324,9 @@ function streamMp4(
     'Cache-Control': 'no-store',
     'Content-Length': String(end - start + 1),
     'Content-Type': 'video/mp4',
+    ...(attachmentName
+      ? { 'Content-Disposition': `attachment; filename="${attachmentName}"` }
+      : {}),
     ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
   });
   createReadStream(path, { start, end })
@@ -1501,11 +1511,69 @@ export async function handleRequest(
     ) {
       return sendNotFound(response, config);
     }
-    const path = await resolveOwnedFilmPath(premiere.outputPath, config.dataDir);
+    const path = await resolveOwnedProcessedPath(premiere.outputPath, config.dataDir);
     if (!path) return sendNotFound(response, config);
     const details = await stat(path).catch(() => null);
     if (!details || !details.isFile() || details.size <= 0) return sendNotFound(response, config);
     streamMp4(request, response, config, path, details.size);
+    return;
+  }
+
+  if (url.pathname === '/archive' && request.method === 'GET') {
+    const groupId = url.searchParams.get('groupId');
+    if (!groupId) return sendDenied(response, config);
+    const session = requireSessionMember(database, url, response, config, now());
+    if (!session) return;
+    if (session.groupId !== groupId) return sendDenied(response, config);
+    if (!authorize(database, response, config, groupId, session.memberId, 'download')) return;
+    const sessionId = url.searchParams.get('sessionId');
+    const archive = listReleasedArchive(database, groupId, session.memberId);
+    sendJson(response, config, 200, {
+      archive: {
+        films: archive.films.map((film) => ({
+          ...film,
+          downloadPath: `/films/${encodeURIComponent(film.id)}/download?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId!)}`,
+        })),
+        clips: archive.clips.map((clip) => ({
+          ...clip,
+          downloadPath: `/clips/${encodeURIComponent(clip.id)}/download?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId!)}`,
+        })),
+      },
+    });
+    return;
+  }
+
+  const filmDownloadMatch = url.pathname.match(/^\/films\/([^/]+)\/download$/);
+  const clipDownloadMatch = url.pathname.match(/^\/clips\/([^/]+)\/download$/);
+  if ((filmDownloadMatch || clipDownloadMatch) && request.method === 'GET') {
+    const resourceId = decodePathSegment(
+      (filmDownloadMatch ?? clipDownloadMatch)![1],
+      response,
+      config,
+    );
+    if (resourceId === null) return;
+    const groupId = url.searchParams.get('groupId');
+    if (!groupId) return sendDenied(response, config);
+    const session = requireSessionMember(database, url, response, config, now());
+    if (!session) return;
+    if (session.groupId !== groupId) return sendDenied(response, config);
+    if (!authorize(database, response, config, groupId, session.memberId, 'download')) return;
+    const media = filmDownloadMatch
+      ? getReleasedFilmDownload(database, groupId, resourceId)
+      : getReleasedOwnClipDownload(database, groupId, session.memberId, resourceId);
+    if (!media) return sendNotFound(response, config);
+    const path = await resolveOwnedProcessedPath(media.outputPath, config.dataDir);
+    if (!path) return sendNotFound(response, config);
+    const details = await stat(path).catch(() => null);
+    if (!details || !details.isFile() || details.size <= 0) return sendNotFound(response, config);
+    streamMp4(
+      request,
+      response,
+      config,
+      path,
+      details.size,
+      filmDownloadMatch ? 'rewind-group-film.mp4' : 'rewind-my-clip.mp4',
+    );
     return;
   }
 

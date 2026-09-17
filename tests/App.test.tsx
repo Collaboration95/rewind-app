@@ -89,6 +89,7 @@ function runtimeClientWithPremiere(
     getCurrentCycle: jest.fn().mockResolvedValue(cycleFixture({ status: 'revealing' })),
     advanceDemoCycle: jest.fn(),
     getPremiere: jest.fn().mockResolvedValue(premiere),
+    getReleasedArchive: jest.fn().mockResolvedValue({ films: [], clips: [] }),
   };
 }
 
@@ -187,6 +188,28 @@ describe('Rewind Home start screen', () => {
     expect(await result.findByTestId('archive-delayed')).toBeTruthy();
     expect(result.getByText('Film delayed')).toBeTruthy();
     expect(result.queryByTestId('archive-video-player')).toBeNull();
+  });
+
+  it('lists only released media and presents explicit archive empty states', async () => {
+    const client = runtimeClientWithPremiere({ state: 'locked', cycleId: 'demo-cycle' });
+    client.getReleasedArchive.mockResolvedValue({
+      films: [
+        {
+          id: 'film-1',
+          cycleId: 'old-cycle',
+          publishedAt: '2026-09-18T00:00:00.000Z',
+          downloadUrl: 'http://localhost:8787/films/film-1/download?sessionId=demo',
+        },
+      ],
+      clips: [],
+    });
+    const result = await render(<App runtimeClient={client} />);
+    await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
+    expect(await result.findByTestId('archive-released-media')).toBeTruthy();
+    expect(result.getByText('Group film')).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Download released group film' })).toBeTruthy();
+    expect(result.getByTestId('archive-empty-clips')).toBeTruthy();
   });
 
   it('keeps sample moments sealed and routes Add a moment to Camera', async () => {

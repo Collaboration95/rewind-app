@@ -10,6 +10,7 @@ import type {
 } from '../domain/profiles';
 import type { DemoSession } from '../domain/session';
 import type { Premiere } from '../domain/premiere';
+import type { ReleasedArchive } from '../domain/archive';
 import {
   RealtimeChatClient,
   type ChatMessage,
@@ -77,6 +78,7 @@ export interface RuntimeClient {
     jobId: string,
   ): Promise<PendingClipUpload['job']>;
   getPremiere?(sessionId: string, groupId: string, cycleId: string): Promise<Premiere>;
+  getReleasedArchive?(sessionId: string, groupId: string): Promise<ReleasedArchive>;
   deleteContribution?(
     sessionId: string,
     groupId: string,
@@ -398,6 +400,35 @@ export class LocalRuntimeClient implements RuntimeClient {
     if (body.premiere.state !== 'ready') return body.premiere;
     const { playbackPath, ...premiere } = body.premiere;
     return { ...premiere, playbackUrl: `${this.baseUrl}${playbackPath}` };
+  }
+
+  async getReleasedArchive(sessionId: string, groupId: string): Promise<ReleasedArchive> {
+    const body = await this.request<{
+      archive: {
+        films: { id: string; cycleId: string; publishedAt: string; downloadPath: string }[];
+        clips: {
+          id: string;
+          contributionId: string;
+          cycleId: string;
+          createdAt: string;
+          downloadPath: string;
+        }[];
+      };
+    }>(
+      `/archive?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId)}`,
+      {},
+      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+    );
+    return {
+      films: body.archive.films.map(({ downloadPath, ...film }) => ({
+        ...film,
+        downloadUrl: `${this.baseUrl}${downloadPath}`,
+      })),
+      clips: body.archive.clips.map(({ downloadPath, ...clip }) => ({
+        ...clip,
+        downloadUrl: `${this.baseUrl}${downloadPath}`,
+      })),
+    };
   }
 
   async deleteContribution(

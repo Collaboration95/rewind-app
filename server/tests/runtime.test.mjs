@@ -154,7 +154,7 @@ test('every protected endpoint category returns the same safe denial to a non-me
   });
 });
 
-test('premiere playback is session-bound, release-gated, and never exposes a filesystem path', async () => {
+test('released archive downloads are session-bound, owner-scoped, release-gated, and never expose paths', async () => {
   await withRuntime(async ({ baseUrl, config, database }) => {
     const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
       method: 'POST',
@@ -171,6 +171,10 @@ test('premiere playback is session-bound, release-gated, and never exposes a fil
     });
     const noSession = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?groupId=demo-group`);
     assert.equal(noSession.status, 401);
+    const noArchiveSession = await fetch(`${baseUrl}/archive?groupId=demo-group`);
+    assert.equal(noArchiveSession.status, 401);
+    const noDownloadSession = await fetch(`${baseUrl}/films/demo-film/download?groupId=demo-group`);
+    assert.equal(noDownloadSession.status, 401);
 
     database
       .prepare(
@@ -186,14 +190,19 @@ test('premiere playback is session-bound, release-gated, and never exposes a fil
 
     const processedDir = resolve(config.dataDir, 'media', 'processed');
     const outputPath = resolve(processedDir, 'demo-film.mp4');
+    const clipOutputPath = resolve(processedDir, 'demo-clip.mp4');
     await mkdir(processedDir, { recursive: true });
     await writeFile(outputPath, Buffer.from('synthetic playable bytes'));
+    await writeFile(clipOutputPath, Buffer.from('synthetic clip bytes'));
     database
       .prepare(
         `UPDATE media_jobs SET status = 'ready', cycle_id = ?, output_path = ?
          WHERE id = 'demo-film' AND kind = 'film'`,
       )
       .run('demo-cycle', outputPath);
+    database
+      .prepare(`UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = 'demo-clip'`)
+      .run(clipOutputPath);
     database
       .prepare(
         `UPDATE cycles SET status = 'revealing', release_status = 'published',
@@ -211,6 +220,55 @@ test('premiere playback is session-bound, release-gated, and never exposes a fil
       JSON.stringify(readyBody),
       new RegExp(config.dataDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
     );
+
+    const archiveResponse = await fetch(`${baseUrl}/archive?${query}`);
+    assert.equal(archiveResponse.status, 200);
+    const archive = await archiveResponse.json();
+    assert.equal(archive.archive.films.length, 1);
+    assert.equal(archive.archive.clips.length, 1);
+    assert.match(archive.archive.films[0].downloadPath, /^\/films\/demo-film\/download\?/);
+    assert.match(archive.archive.clips[0].downloadPath, /^\/clips\/demo-clip\/download\?/);
+    assert.doesNotMatch(
+      JSON.stringify(archive),
+      new RegExp(config.dataDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+
+    const filmDownload = await fetch(`${baseUrl}${archive.archive.films[0].downloadPath}`);
+    assert.equal(filmDownload.status, 200);
+    assert.equal(
+      filmDownload.headers.get('content-disposition'),
+      'attachment; filename="rewind-group-film.mp4"',
+    );
+    assert.deepEqual(
+      Buffer.from(await filmDownload.arrayBuffer()),
+      Buffer.from('synthetic playable bytes'),
+    );
+    const clipDownload = await fetch(`${baseUrl}${archive.archive.clips[0].downloadPath}`);
+    assert.equal(clipDownload.status, 200);
+    assert.equal(
+      clipDownload.headers.get('content-disposition'),
+      'attachment; filename="rewind-my-clip.mp4"',
+    );
+    assert.deepEqual(
+      Buffer.from(await clipDownload.arrayBuffer()),
+      Buffer.from('synthetic clip bytes'),
+    );
+
+    const otherMemberResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-2', groupId: 'demo-group' }),
+    });
+    const { session: otherMemberSession } = await otherMemberResponse.json();
+    const otherMemberArchive = await fetch(
+      `${baseUrl}/archive?groupId=demo-group&sessionId=${encodeURIComponent(otherMemberSession.id)}`,
+    ).then((response) => response.json());
+    assert.equal(otherMemberArchive.archive.films.length, 1);
+    assert.equal(otherMemberArchive.archive.clips.length, 0);
+    const otherMemberClip = await fetch(
+      `${baseUrl}/clips/demo-clip/download?groupId=demo-group&sessionId=${encodeURIComponent(otherMemberSession.id)}`,
+    );
+    assert.equal(otherMemberClip.status, 404);
 
     const playback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
     assert.equal(playback.status, 200);
@@ -233,6 +291,12 @@ test('premiere playback is session-bound, release-gated, and never exposes a fil
       .run('demo-cycle');
     const afterUnpublish = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
     assert.equal(afterUnpublish.status, 404);
+    const archiveAfterUnpublish = await fetch(`${baseUrl}/archive?${query}`).then((response) =>
+      response.json(),
+    );
+    assert.deepEqual(archiveAfterUnpublish.archive, { films: [], clips: [] });
+    const revokedDownload = await fetch(`${baseUrl}${archive.archive.films[0].downloadPath}`);
+    assert.equal(revokedDownload.status, 404);
   });
 });
 

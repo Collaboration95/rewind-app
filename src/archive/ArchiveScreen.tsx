@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
+import type { ReleasedArchive } from '../domain/archive';
 import type { Premiere } from '../domain/premiere';
 import { useCapsule } from '../capsule/CapsuleProvider';
 import { useDemoSession } from '../session/DemoSessionProvider';
@@ -11,7 +13,9 @@ import { COLORS } from '../theme';
 type ArchiveState =
   | { status: 'loading' }
   | { status: 'unavailable'; message: string }
-  | { status: 'premiere'; premiere: Premiere };
+  | { status: 'ready'; premiere: Premiere; archive: ReleasedArchive };
+
+const EMPTY_ARCHIVE: ReleasedArchive = { films: [], clips: [] };
 
 function readyCopy(state: Exclude<Premiere['state'], 'ready'>): { title: string; body: string } {
   if (state === 'delayed') {
@@ -58,10 +62,77 @@ function PublishedPlayer({ premiere }: { premiere: Extract<Premiere, { state: 'r
   );
 }
 
+function ArchiveEntries({
+  archive,
+  download,
+  notice,
+}: {
+  archive: ReleasedArchive;
+  download: (url: string, name: string) => void;
+  notice: string | null;
+}) {
+  return (
+    <View style={styles.panel} testID="archive-released-media">
+      <Text style={styles.label}>RELEASED MEDIA</Text>
+      <Text accessibilityRole="header" style={styles.sectionTitle}>
+        Your archive
+      </Text>
+      {archive.films.length === 0 ? (
+        <Text style={styles.bodyText} testID="archive-empty-films">
+          No released group films yet.
+        </Text>
+      ) : (
+        archive.films.map((film) => (
+          <View key={film.id} style={styles.entry}>
+            <Text style={styles.entryTitle}>Group film</Text>
+            <Text style={styles.entryMeta}>
+              Released {new Date(film.publishedAt).toLocaleDateString()}
+            </Text>
+            <Pressable
+              accessibilityLabel="Download released group film"
+              accessibilityRole="button"
+              onPress={() => download(film.downloadUrl, 'rewind-group-film.mp4')}
+              style={styles.downloadButton}
+            >
+              <Text style={styles.downloadText}>Download film</Text>
+            </Pressable>
+          </View>
+        ))
+      )}
+      <Text style={styles.subhead}>Your released clips</Text>
+      {archive.clips.length === 0 ? (
+        <Text style={styles.bodyText} testID="archive-empty-clips">
+          Your released clips will appear here.
+        </Text>
+      ) : (
+        archive.clips.map((clip) => (
+          <View key={clip.id} style={styles.entry}>
+            <Text style={styles.entryTitle}>Your clip</Text>
+            <Pressable
+              accessibilityLabel="Download your released clip"
+              accessibilityRole="button"
+              onPress={() => download(clip.downloadUrl, 'rewind-my-clip.mp4')}
+              style={styles.downloadButton}
+            >
+              <Text style={styles.downloadText}>Download clip</Text>
+            </Pressable>
+          </View>
+        ))
+      )}
+      {notice ? (
+        <Text accessibilityLiveRegion="polite" style={styles.notice}>
+          {notice}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
   const { session } = useDemoSession();
   const { state: capsuleState, retry: retryCapsule } = useCapsule();
   const [state, setState] = useState<ArchiveState>({ status: 'loading' });
+  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
   const cycle = capsuleState.status === 'ready' ? capsuleState.cycle : null;
   const group = capsuleState.status === 'ready' ? capsuleState.group : null;
 
@@ -74,9 +145,13 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
       return;
     }
     setState({ status: 'loading' });
-    void runtimeClient
-      .getPremiere(session.id, group.id, cycle.id)
-      .then((premiere) => setState({ status: 'premiere', premiere }))
+    void Promise.all([
+      runtimeClient.getPremiere(session.id, group.id, cycle.id),
+      runtimeClient.getReleasedArchive
+        ? runtimeClient.getReleasedArchive(session.id, group.id)
+        : Promise.resolve(EMPTY_ARCHIVE),
+    ])
+      .then(([premiere, archive]) => setState({ status: 'ready', premiere, archive }))
       .catch(() =>
         setState({
           status: 'unavailable',
@@ -92,6 +167,23 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
     // it must refresh when a reveal or selected Demo member changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, cycle?.id, group?.id, runtimeClient]);
+
+  const download = (url: string, name: string) => {
+    const cacheDirectory = FileSystem.cacheDirectory;
+    if (!cacheDirectory) {
+      setDownloadNotice('Downloads are unavailable on this device.');
+      return;
+    }
+    setDownloadNotice('Saving your authorized media…');
+    void FileSystem.makeDirectoryAsync(`${cacheDirectory}rewind-archive`, { intermediates: true })
+      .then(() => FileSystem.downloadAsync(url, `${cacheDirectory}rewind-archive/${name}`))
+      .then(() => setDownloadNotice('Saved to this device.'))
+      .catch(() =>
+        setDownloadNotice(
+          'The download could not be saved. Try again while the runtime is available.',
+        ),
+      );
+  };
 
   if (state.status === 'loading') {
     return (
@@ -128,10 +220,30 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
     );
   }
 
-  if (state.premiere.state === 'ready') return <PublishedPlayer premiere={state.premiere} />;
-  const copy = readyCopy(state.premiere.state);
+  const premierePanel =
+    state.premiere.state === 'ready' ? (
+      <PublishedPlayer premiere={state.premiere} />
+    ) : (
+      <PremiereStatus premiere={state.premiere} reload={load} />
+    );
   return (
-    <View style={styles.panel} testID={`archive-${state.premiere.state}`}>
+    <View style={styles.stack}>
+      {premierePanel}
+      <ArchiveEntries archive={state.archive} download={download} notice={downloadNotice} />
+    </View>
+  );
+}
+
+function PremiereStatus({
+  premiere,
+  reload,
+}: {
+  premiere: Exclude<Premiere, { state: 'ready' }>;
+  reload: () => void;
+}) {
+  const copy = readyCopy(premiere.state);
+  return (
+    <View style={styles.panel} testID={`archive-${premiere.state}`}>
       <Text style={styles.label}>ARCHIVE</Text>
       <Text accessibilityRole="header" style={styles.title}>
         {copy.title}
@@ -139,7 +251,7 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
       <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
         {copy.body}
       </Text>
-      <Pressable accessibilityRole="button" onPress={load} style={styles.retryButton}>
+      <Pressable accessibilityRole="button" onPress={reload} style={styles.retryButton}>
         <Text style={styles.retryText}>Check premiere again</Text>
       </Pressable>
     </View>
@@ -147,6 +259,7 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
 }
 
 const styles = StyleSheet.create({
+  stack: { gap: 14 },
   panel: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,
@@ -157,6 +270,8 @@ const styles = StyleSheet.create({
   },
   label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
   title: { color: COLORS.ink, fontSize: 26, fontWeight: '700' },
+  sectionTitle: { color: COLORS.ink, fontSize: 22, fontWeight: '700' },
+  subhead: { color: COLORS.ink, fontSize: 16, fontWeight: '700', marginTop: 4 },
   bodyText: { color: COLORS.muted, fontSize: 15, lineHeight: 22 },
   player: { backgroundColor: COLORS.deep, borderRadius: 8, height: 360, width: '100%' },
   retryButton: {
@@ -171,4 +286,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   retryText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
+  entry: { borderTopColor: COLORS.line, borderTopWidth: 1, gap: 7, paddingTop: 12 },
+  entryTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '700' },
+  entryMeta: { color: COLORS.muted, fontSize: 13 },
+  downloadButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: COLORS.deep,
+    borderRadius: 8,
+    minHeight: 42,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  downloadText: { color: COLORS.paper, fontSize: 14, fontWeight: '700' },
+  notice: { color: COLORS.muted, fontSize: 14 },
 });

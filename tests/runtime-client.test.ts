@@ -144,6 +144,58 @@ describe('LocalRuntimeClient', () => {
     );
   });
 
+  it('maps released archive download paths to runtime URLs without exposing server paths', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      response(200, {
+        archive: {
+          films: [
+            {
+              id: 'film-1',
+              cycleId: 'cycle-1',
+              publishedAt: '2026-09-18T00:00:00.000Z',
+              downloadPath: '/films/film-1/download?groupId=group-1&sessionId=session-1',
+            },
+          ],
+          clips: [
+            {
+              id: 'clip-1',
+              contributionId: 'contribution-1',
+              cycleId: 'cycle-1',
+              createdAt: '2026-09-12T00:00:00.000Z',
+              downloadPath: '/clips/clip-1/download?groupId=group-1&sessionId=session-1',
+            },
+          ],
+        },
+      }),
+    );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.getReleasedArchive('session-1', 'group-1')).resolves.toEqual({
+      films: [
+        {
+          id: 'film-1',
+          cycleId: 'cycle-1',
+          publishedAt: '2026-09-18T00:00:00.000Z',
+          downloadUrl:
+            'http://localhost:8787/films/film-1/download?groupId=group-1&sessionId=session-1',
+        },
+      ],
+      clips: [
+        {
+          id: 'clip-1',
+          contributionId: 'contribution-1',
+          cycleId: 'cycle-1',
+          createdAt: '2026-09-12T00:00:00.000Z',
+          downloadUrl:
+            'http://localhost:8787/clips/clip-1/download?groupId=group-1&sessionId=session-1',
+        },
+      ],
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://localhost:8787/archive?groupId=group-1&sessionId=session-1',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it('uploads captured bytes to the server-owned staging endpoint', async () => {
     const fetchImpl = jest
       .fn()
