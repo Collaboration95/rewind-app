@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { mkdir, readdir, rm, stat } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, renameSync } from 'node:fs';
+import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
 
 import type { RewindDatabase } from '../db';
@@ -13,7 +13,9 @@ import {
   removeStagedSource,
 } from '../media';
 import {
+  compileFilmWithFfmpeg,
   processClipWithFfmpeg,
+  probeClipWithFfmpeg,
   resolveStagedMediaPath,
   type CaptureMode,
   FfmpegProcessingError,
@@ -547,6 +549,235 @@ export function updateCompilationJobProgress(
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
+  }
+}
+
+export type ProcessCompilationJobResult =
+  | { ok: true; jobId: string; status: 'ready' }
+  | {
+      ok: false;
+      jobId: string;
+      status: 'failed' | 'processing' | 'not_found';
+      reason: 'not_found' | 'already_processing' | 'processing_failed';
+      message: string;
+    };
+
+export interface ProcessCompilationJobOptions {
+  jobId: string;
+  ffmpegBin: string;
+  groupId?: string;
+  /** Directory for retained processed clips and final films. */
+  outputDir?: string;
+  actorMemberId?: string | null;
+}
+
+interface CompilationInputOutput {
+  clipJobId: string;
+  outputPath: string;
+}
+
+function filmOutputName(jobId: string): string {
+  const suffix = createHash('sha256').update(jobId).digest('hex').slice(0, 24);
+  return `film-${suffix}.mp4`;
+}
+
+function readCompilationInputOutputs(
+  database: RewindDatabase,
+  jobId: string,
+): CompilationInputOutput[] {
+  return database
+    .prepare(
+      `SELECT i.clip_job_id AS clipJobId, clip.output_path AS outputPath
+       FROM compilation_job_inputs i
+       JOIN media_jobs clip ON clip.id = i.clip_job_id
+       WHERE i.job_id = ?
+         AND clip.kind = 'clip' AND clip.status = 'ready'
+         AND clip.source_path IS NULL AND clip.output_path IS NOT NULL
+         AND clip.deleted_at IS NULL
+       ORDER BY i.position ASC, i.clip_job_id ASC`,
+    )
+    .all(jobId)
+    .map((row) => ({
+      clipJobId: String((row as { clipJobId: string }).clipJobId),
+      outputPath: String((row as { outputPath: string }).outputPath),
+    }));
+}
+
+async function resolveProcessedMediaPath(value: string, outputDir: string): Promise<string> {
+  try {
+    const [source, processed] = await Promise.all([realpath(value), realpath(outputDir)]);
+    const remainder = relative(processed, source);
+    if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) {
+      throw new Error('outside processed directory');
+    }
+    return source;
+  } catch {
+    throw new FfmpegProcessingError(
+      'source_unavailable',
+      'A processed clip is unavailable for film compilation.',
+    );
+  }
+}
+
+function markCompilationFailed(
+  database: RewindDatabase,
+  jobId: string,
+  claimGeneration: number,
+  errorCode: string,
+): void {
+  database
+    .prepare(
+      `UPDATE media_jobs
+       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL
+       WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
+    )
+    .run(errorCode, jobId, claimGeneration);
+}
+
+/**
+ * Atomically publish a completed film only while the same worker generation
+ * still owns the reconciled chronological input snapshot. A completed FFmpeg
+ * temp file never becomes the durable output unless this fence succeeds.
+ */
+function publishCompilationOutput(
+  database: RewindDatabase,
+  job: CompilationJobRecord,
+  expectedClipJobIds: string[],
+  temporaryOutputPath: string,
+  finalOutputPath: string,
+): boolean {
+  beginJobTransaction(database);
+  try {
+    const current = reconcileCompilationJobInputsLocked(database, job.id);
+    if (
+      !current ||
+      current.status !== 'processing' ||
+      current.claimGeneration !== job.claimGeneration ||
+      current.inputCount === 0 ||
+      current.clipJobIds.length !== expectedClipJobIds.length ||
+      current.clipJobIds.some((id, index) => id !== expectedClipJobIds[index])
+    ) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    renameSync(temporaryOutputPath, finalOutputPath);
+    const result = database
+      .prepare(
+        `UPDATE media_jobs
+         SET status = 'ready', output_path = ?, completed_count = input_count, progress = 100,
+             error_code = NULL, processing_started_at = NULL
+         WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
+      )
+      .run(finalOutputPath, job.id, job.claimGeneration);
+    if (Number(result.changes) !== 1) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    database.exec('COMMIT');
+    return true;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Compile a cycle's reconciled, retained clips into one ready-only film. */
+export async function processCompilationJob(
+  database: RewindDatabase,
+  options: ProcessCompilationJobOptions,
+): Promise<ProcessCompilationJobResult> {
+  const claim = claimCompilationJob(database, { jobId: options.jobId, groupId: options.groupId });
+  if (!claim.ok) {
+    return {
+      ok: false,
+      jobId: options.jobId,
+      status: claim.reason === 'not_found' ? 'not_found' : 'failed',
+      reason: claim.reason === 'not_found' ? 'not_found' : 'processing_failed',
+      message:
+        claim.reason === 'not_found'
+          ? 'The film job was not found.'
+          : 'The film job cannot be processed in its current state.',
+    };
+  }
+  if (claim.action === 'already_ready') return { ok: true, jobId: claim.job.id, status: 'ready' };
+  if (claim.action === 'already_processing') {
+    return {
+      ok: false,
+      jobId: claim.job.id,
+      status: 'processing',
+      reason: 'already_processing',
+      message: 'The film job is already processing.',
+    };
+  }
+
+  const outputDir =
+    options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
+  const finalOutputPath = resolve(outputDir, filmOutputName(claim.job.id));
+  const temporaryOutputPath = resolve(
+    outputDir,
+    `.${filmOutputName(claim.job.id)}.${randomUUID()}.part.mp4`,
+  );
+  try {
+    if (claim.job.inputCount === 0) {
+      throw new FfmpegProcessingError(
+        'invalid_metadata',
+        'The film has no processed clips to compile.',
+      );
+    }
+    const inputs = readCompilationInputOutputs(database, claim.job.id);
+    if (
+      inputs.length !== claim.job.clipJobIds.length ||
+      inputs.some((input, index) => input.clipJobId !== claim.job.clipJobIds[index])
+    ) {
+      throw new FfmpegProcessingError(
+        'source_unavailable',
+        'A processed clip changed while preparing the film.',
+      );
+    }
+    await mkdir(outputDir, { recursive: true });
+    const inputPaths = await Promise.all(
+      inputs.map((input) => resolveProcessedMediaPath(input.outputPath, outputDir)),
+    );
+    await runAuditedJob(database, {
+      jobId: claim.job.id,
+      actorMemberId: options.actorMemberId,
+      run: async () => {
+        await compileFilmWithFfmpeg(options.ffmpegBin, {
+          inputPaths,
+          outputPath: temporaryOutputPath,
+        });
+        await probeClipWithFfmpeg(options.ffmpegBin, temporaryOutputPath);
+        if (
+          !publishCompilationOutput(
+            database,
+            claim.job,
+            claim.job.clipJobIds,
+            temporaryOutputPath,
+            finalOutputPath,
+          )
+        ) {
+          throw new FfmpegProcessingError(
+            'source_unavailable',
+            'The film inputs changed while finalizing.',
+          );
+        }
+      },
+    });
+    return { ok: true, jobId: claim.job.id, status: 'ready' };
+  } catch (error) {
+    await rm(temporaryOutputPath, { force: true }).catch(() => undefined);
+    if (getCompilationJob(database, claim.job.id)?.status !== 'ready') {
+      await rm(finalOutputPath, { force: true }).catch(() => undefined);
+      const errorCode = error instanceof FfmpegProcessingError ? error.code : 'cleanup_failed';
+      markCompilationFailed(database, claim.job.id, claim.job.claimGeneration, errorCode);
+    }
+    return {
+      ok: false,
+      jobId: claim.job.id,
+      status: 'failed',
+      reason: 'processing_failed',
+      message: 'The film could not be compiled. Retry the job.',
+    };
   }
 }
 
