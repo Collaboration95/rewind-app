@@ -157,6 +157,23 @@ test('a session from another group cannot inspect or play a group premiere', asy
   });
 });
 
+test('a session from another group cannot create a synthetic Demo contribution', async () => {
+  await withSecondGroup(async ({ baseUrl }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-6', groupId: 'other-group' }),
+    });
+    const { session } = await sessionResponse.json();
+    const response = await fetch(
+      `${baseUrl}/demo/synthetic-clip?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`,
+      { method: 'POST' },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), SAFE_DENIAL);
+  });
+});
+
 test('invitations are documented as out of this route contract rather than given false coverage', async () => {
   await withSecondGroup(async ({ baseUrl }) => {
     const response = await fetch(

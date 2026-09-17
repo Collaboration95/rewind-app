@@ -329,6 +329,19 @@ test('a session-authorized synthetic Demo clip enters the ordinary sealed proces
       );
       assert.equal(processed.status, 200);
       assert.equal((await processed.json()).job.status, 'ready');
+
+      const memberSessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-2' }),
+      });
+      const { session: memberSession } = await memberSessionResponse.json();
+      const memberCreated = await fetch(
+        `${baseUrl}/demo/synthetic-clip?groupId=demo-group&sessionId=${encodeURIComponent(memberSession.id)}`,
+        { method: 'POST' },
+      );
+      assert.equal(memberCreated.status, 201);
+      assert.equal((await memberCreated.json()).synthetic, true);
     },
     { now: () => new Date('2026-09-10T12:00:00.000Z') },
   );
