@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createWriteStream, existsSync } from 'node:fs';
-import { mkdir, rename, rm } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import { once } from 'node:events';
@@ -16,6 +16,7 @@ import {
   isMember,
   listProfiles,
   restoreFixture,
+  schemaReadiness,
   type RewindDatabase,
 } from './db';
 import {
@@ -27,7 +28,7 @@ import {
 import { encodeSseEvent, RealtimeHub } from './realtime';
 import { advanceDemoCycle } from './cycles';
 import { classifyDemoSession } from './session/contract';
-import { authorizeMember, SAFE_DENIAL, type ProtectedResource } from './policy';
+import { authorizeMember, authorizeOwner, SAFE_DENIAL, type ProtectedResource } from './policy';
 import {
   createDemoSession,
   getDemoSession,
@@ -60,11 +61,15 @@ import { resolve } from 'node:path';
 import { probeClipWithFfmpeg } from './ffmpeg';
 
 export interface HealthPayload {
-  ok: true;
+  ok: boolean;
   service: 'rewind-local-runtime';
   version: string;
-  ready: true;
-  checks: { sqlite: true; ffmpegConfigured: boolean };
+  ready: boolean;
+  checks: {
+    sqlite: true;
+    ffmpegConfigured: boolean;
+    schema: ReturnType<typeof schemaReadiness>;
+  };
   addresses: { local: string; lan: string | null };
 }
 
@@ -302,15 +307,16 @@ function groupForMember(database: RewindDatabase, memberId: string | null) {
   return row?.groupId ? getGroup(database, row.groupId) : null;
 }
 
-function healthPayload(config: RuntimeConfig): HealthPayload {
+function healthPayload(config: RuntimeConfig, database: RewindDatabase): HealthPayload {
   const localHost = config.host === '0.0.0.0' || config.host === '::' ? '127.0.0.1' : config.host;
   const lan = getLanAddress();
+  const schema = schemaReadiness(database);
   return {
-    ok: true,
+    ok: schema.ready,
     service: 'rewind-local-runtime',
     version: SERVICE_VERSION,
-    ready: true,
-    checks: { sqlite: true, ffmpegConfigured: Boolean(config.ffmpegBin) },
+    ready: schema.ready,
+    checks: { sqlite: true, ffmpegConfigured: Boolean(config.ffmpegBin), schema },
     addresses: {
       local: `http://${localHost}:${config.port}`,
       lan: lan ? `http://${lan}:${config.port}` : null,
@@ -345,7 +351,8 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/health' || url.pathname === '/version') {
-    sendJson(response, config, 200, healthPayload(config));
+    const health = healthPayload(config, database);
+    sendJson(response, config, health.ready ? 200 : 503, health);
     return;
   }
 
@@ -419,11 +426,19 @@ export async function handleRequest(
 
   if (url.pathname === '/demo/reset' && request.method === 'POST') {
     const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId || validateDemoSession(database, sessionId, now()).status !== 'valid') {
+    const validation = sessionId ? validateDemoSession(database, sessionId, now()) : null;
+    if (!validation || validation.status !== 'valid') {
       sendJson(response, config, 401, {
         error: 'session_required',
         message: 'Choose Demo access before resetting local Demo data.',
       });
+      return;
+    }
+    if (
+      !authorizeOwner(database, validation.session.groupId, validation.session.actor.memberId)
+        .allowed
+    ) {
+      sendDenied(response, config);
       return;
     }
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
@@ -431,9 +446,14 @@ export async function handleRequest(
     try {
       await waitForStagedIntakesIdle();
       restoreFixture(database);
-      // Reset removes database claims first, then safely removes all final and
-      // partial staged files that are no longer protected by an active job.
-      await cleanupOrphanedStagedSources(database, stagingDir, 100, 0);
+      // The lock prevents a concurrent upload from recreating a staged file
+      // while reset is clearing every Demo-owned media artifact. Keep the
+      // directory itself because hosted Compose binds it as a mount target.
+      const mediaDir = resolve(config.dataDir, 'media');
+      for (const entry of await readdir(mediaDir).catch(() => [])) {
+        await rm(resolve(mediaDir, entry), { recursive: true, force: true });
+      }
+      await mkdir(stagingDir, { recursive: true });
       sendJson(response, config, 200, { reset: true });
     } finally {
       releaseStagingLock();

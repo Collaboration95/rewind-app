@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type { RuntimeConfig } from './config';
@@ -58,6 +58,35 @@ export interface DemoFixture {
 }
 
 export type RewindDatabase = DatabaseSync;
+
+export interface SchemaReadiness {
+  ready: boolean;
+  expectedMigrationVersion: number;
+  missingMigrationKeys: string[];
+}
+
+/**
+ * The durable migration marker and version receipts are the hosted Demo's
+ * schema contract. Startup applies this contract before accepting traffic;
+ * health checks repeat it so an interrupted or manually damaged migration is
+ * never reported as ready.
+ */
+export function schemaReadiness(database: RewindDatabase): SchemaReadiness {
+  const missingMigrationKeys = MIGRATIONS.filter((migration) => {
+    const marked = database
+      .prepare('SELECT 1 AS applied FROM schema_migration_markers WHERE migration_key = ?')
+      .get(migration.key) as { applied?: number } | undefined;
+    const versioned = database
+      .prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = ?')
+      .get(migration.version) as { applied?: number } | undefined;
+    return !marked?.applied || !versioned?.applied || migrationNeedsRepair(database, migration.key);
+  }).map((migration) => migration.key);
+  return {
+    ready: missingMigrationKeys.length === 0,
+    expectedMigrationVersion: Math.max(...MIGRATIONS.map((migration) => migration.version)),
+    missingMigrationKeys,
+  };
+}
 
 export function openDatabase(config: RuntimeConfig): RewindDatabase {
   mkdirSync(config.dataDir, { recursive: true });
@@ -1130,17 +1159,26 @@ export function seedDatabase(database: RewindDatabase): void {
 }
 
 export function resetDatabase(config: RuntimeConfig): void {
-  // The path is resolved from the validated data directory. Reset removes the
-  // local DB plus server-owned temporary sources; migrations and retained
-  // processed output remain available for the next local run.
-  const stagingDir = resolve(config.dataDir, 'media', 'staging');
-  if (existsSync(stagingDir)) rmSync(stagingDir, { recursive: true, force: true });
+  // The path is resolved from the validated data directory. Reset removes
+  // Demo database and media data only; source code and migrations are never
+  // in this directory.
+  const mediaDir = resolve(config.dataDir, 'media');
+  clearMediaDirectory(mediaDir);
   for (const path of [
     config.databasePath,
     `${config.databasePath}-wal`,
     `${config.databasePath}-shm`,
   ]) {
     if (existsSync(path)) rmSync(path, { force: true });
+  }
+}
+
+/** Clear Demo artifacts without removing the media directory itself, which is
+ * a bind-mount target in the hosted container. */
+export function clearMediaDirectory(mediaDir: string): void {
+  if (!existsSync(mediaDir)) return;
+  for (const entry of readdirSync(mediaDir)) {
+    rmSync(resolve(mediaDir, entry), { recursive: true, force: true });
   }
 }
 

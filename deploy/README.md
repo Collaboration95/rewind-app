@@ -1,33 +1,89 @@
 # Hosted Demo deployment
 
 The hosted Sprint 2 shape is one non-root Node 22 container on the Lightsail
-instance. The container owns the HTTP runtime and FFmpeg; SQLite and media are
-bind-mounted from persistent instance storage. The service is exposed only on
+instance. SQLite and media are bind-mounted from persistent instance storage;
+the container itself is disposable. The service is exposed only on
 `127.0.0.1:8787` until a public HTTPS distribution/reverse proxy is configured.
 
-## Build and start
+## Persistent mounts and ownership
+
+The compose file maps these host directories:
+
+| Host path           | Container path          | Contents                                       |
+| ------------------- | ----------------------- | ---------------------------------------------- |
+| `/srv/rewind/data`  | `/var/lib/rewind`       | `rewind.sqlite` and SQLite `-wal`/`-shm` files |
+| `/srv/rewind/media` | `/var/lib/rewind/media` | server-owned staging and processed media       |
+
+The image runs as UID/GID `10001:10001` (`rewind`), with no root privileges,
+all Linux capabilities dropped, and a read-only container filesystem. Create
+the mount points before the first start and give them to that UID/GID. Do not
+put the database or media under the repository checkout, and do not point a
+mount at `/`, `/srv`, `/tmp`, or another broad system directory.
+
+```sh
+sudo install -d -o 10001 -g 10001 -m 0750 /srv/rewind/data /srv/rewind/media /srv/rewind/backups
+```
+
+`REWIND_DATA_HOST_DIR`, `REWIND_MEDIA_HOST_DIR`, and
+`REWIND_CONTAINER_NAME` are optional compose overrides used by the disposable
+verification sequence below. The normal host defaults remain the `/srv/rewind`
+paths shown above.
+
+## Build, migrate, and start
 
 From the repository root:
 
 ```sh
-cp deploy/rewind.env.example deploy/rewind.env
-docker compose --env-file deploy/rewind.env -f deploy/compose.yaml build
-docker compose --env-file deploy/rewind.env -f deploy/compose.yaml run --rm runtime migrate
-docker compose --env-file deploy/rewind.env -f deploy/compose.yaml up -d
+cp deploy/rewind.env.example /srv/rewind/rewind.env
+docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml build
+docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml run --rm runtime migrate
+docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
 curl --fail http://127.0.0.1:8787/health
 ```
 
-The migration command is idempotent and seeds the deterministic five-member
-Demo fixture. `server/dist`, migrations, and fixtures are compiled/copied into
-the image; no source checkout is required at runtime.
+The server owns the migration contract. `migrate` opens the configured
+database, creates any missing migration bookkeeping, applies only the
+versioned migrations that are not marked complete, repairs the known
+interrupted migration shapes, and seeds missing deterministic Demo rows. It
+is additive and idempotent as supplied by `server/src/db.ts`; deployment
+scripts do not edit schema files or manufacture migration state. Back up an
+existing database before running it:
 
-## Backup
+```sh
+cd /srv/rewind
+./deploy/migrate-with-backup.sh --confirm
+docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
+```
+
+The guarded workflow requires the runtime to be running for the online
+snapshot, uploads a database-and-media backup, stops the runtime, and only
+then runs `migrate`. It leaves the runtime stopped if migration succeeds or
+fails so an operator can inspect it before starting it again.
+
+## Backup before reset
+
+Reset is for the disposable Demo fixture, not for deleting production data.
+It first performs the same verified database-and-media backup and requires an
+explicit confirmation flag:
+
+```sh
+cd /srv/rewind
+./deploy/reset-with-backup.sh --confirm
+docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
+```
+
+The server reset contract removes the SQLite database, its WAL/SHM files, and
+all server-owned Demo media contents while preserving the bind-mount directory
+and migrations. The next server open recreates the deterministic five-member
+Demo fixture.
+
+## Backup and local restore
 
 `backup.sh` uses SQLite `VACUUM INTO` for a consistent online snapshot,
-archives persistent media separately, uploads both with server-side AES256
-encryption, and writes a checksum manifest. It removes local archives older
-than seven days. The S3 bucket is private and its lifecycle policy is the
-remote retention control.
+archives persistent media separately, writes a manifest containing SHA-256
+checksums and byte counts, uploads all three files with server-side AES256
+encryption, and keeps only the local recovery window. The S3 bucket is
+private; its lifecycle policy is the remote retention control.
 
 The systemd unit files are templates. Install them on the host only after the
 restricted backup AWS identity has been configured:
@@ -42,7 +98,30 @@ sudo systemctl enable --now rewind-backup.timer
 Do not put AWS access keys in this repository or in `rewind.env`; use the
 dedicated `AWS_PROFILE` credential store on the host. The intended policy is
 limited to listing the backup bucket and writing objects under the
-`rewind-demo/` prefix.
+`rewind-demo/` prefix. Backup and pause workflows refuse missing directories,
+missing Docker/AWS prerequisites, unsafe broad paths, and an absent existing
+database.
+
+To restore, copy the manifest, its matching `.sqlite.gz`, and its matching
+`.media.tar.gz` into the configured local `BACKUP_DIR`. The files must retain
+the names generated by `backup.sh`. Then run:
+
+```sh
+cd /srv/rewind
+./deploy/restore.sh --confirm \
+  /srv/rewind/backups/rewind-<timestamp>.manifest.json
+```
+
+The script does not download from S3 and does not require production
+credentials. It requires the manifest to be directly inside `BACKUP_DIR`,
+requires the archive names to match that manifest, checks byte counts and
+SHA-256 values, checks gzip integrity, and rejects unsafe media archive paths
+before stopping the runtime or changing live data. It moves the current
+SQLite files and media entries to a timestamped
+`rewind-pre-restore-<timestamp>` recovery directory, installs the verified
+artifact, restores ownership to UID/GID `10001:10001`, and leaves the runtime
+stopped for review. A failed installation attempts to move the previous files
+back. Review the recovery directory before removing it.
 
 ## Pause and resume
 
@@ -77,3 +156,43 @@ Stopping Lightsail does **not** stop its fixed monthly bundle charge. For
 near-zero recurring compute cost, make a verified backup and deliberately
 delete the instance and static IP through a separately reviewed Terraform
 teardown. S3 and CloudTrail storage remain as the small residual cost.
+
+## Repeatable disposable-Demo verification
+
+This sequence uses fresh local bind mounts and a separate container name. It
+does not upload data, use AWS credentials, or touch `/srv/rewind`. Run it from
+the repository root with Docker available:
+
+```sh
+DEMO_ROOT="$(mktemp -d /tmp/rewind-disposable.XXXXXX)"
+mkdir -p "$DEMO_ROOT/data" "$DEMO_ROOT/media" "$DEMO_ROOT/backups"
+cp deploy/rewind.env.example "$DEMO_ROOT/rewind.env"
+sudo chown -R 10001:10001 "$DEMO_ROOT/data" "$DEMO_ROOT/media"
+
+export REWIND_DATA_HOST_DIR="$DEMO_ROOT/data"
+export REWIND_MEDIA_HOST_DIR="$DEMO_ROOT/media"
+export REWIND_CONTAINER_NAME=rewind-disposable-runtime
+COMPOSE=(docker compose --env-file "$DEMO_ROOT/rewind.env" -f "$PWD/deploy/compose.yaml" -p rewind-disposable)
+
+"${COMPOSE[@]}" build
+"${COMPOSE[@]}" run --rm runtime migrate
+"${COMPOSE[@]}" run --rm runtime preflight --json > "$DEMO_ROOT/preflight.json"
+jq -e '.ok == true' "$DEMO_ROOT/preflight.json"
+"${COMPOSE[@]}" up -d
+curl --fail http://127.0.0.1:8787/health
+"${COMPOSE[@]}" exec -T runtime sh -c 'test "$(id -u)" = 10001'
+
+"${COMPOSE[@]}" stop runtime
+"${COMPOSE[@]}" run --rm runtime reset
+"${COMPOSE[@]}" up -d
+curl --fail http://127.0.0.1:8787/health
+"${COMPOSE[@]}" down
+rm -rf -- "$DEMO_ROOT"
+```
+
+The expected evidence is a successful preflight, HTTP 200 health response
+before and after reset, and a non-root runtime UID. If a check fails, inspect
+`$DEMO_ROOT/preflight.json` and the compose logs before cleaning up. The
+operator wrappers above additionally verify the backup/restore safety gates;
+this disposable sequence intentionally exercises the server’s additive
+migration and reset contract without needing a real backup bucket.

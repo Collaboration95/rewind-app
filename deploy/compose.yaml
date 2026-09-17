@@ -6,7 +6,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     image: rewind-demo:local
-    container_name: rewind-demo-runtime
+    container_name: ${REWIND_CONTAINER_NAME:-rewind-demo-runtime}
     restart: unless-stopped
     init: true
     read_only: true
@@ -22,8 +22,8 @@ services:
     ports:
       - '127.0.0.1:8787:8787'
     volumes:
-      - /srv/rewind/data:/var/lib/rewind
-      - /srv/rewind/media:/var/lib/rewind/media
+      - ${REWIND_DATA_HOST_DIR:-/srv/rewind/data}:/var/lib/rewind
+      - ${REWIND_MEDIA_HOST_DIR:-/srv/rewind/media}:/var/lib/rewind/media
     security_opt:
       - no-new-privileges:true
     cap_drop:

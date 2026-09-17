@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import test from 'node:test';
@@ -88,11 +90,13 @@ test('fresh migration, restart, and reset preserve or restore deterministic stat
 });
 
 test('health and typed fixture endpoints are reachable over the local service', async () => {
-  await withRuntime(async ({ baseUrl }) => {
+  await withRuntime(async ({ baseUrl, database }) => {
     const health = await fetch(`${baseUrl}/health`).then((response) => response.json());
     assert.equal(health.ok, true);
     assert.equal(health.service, 'rewind-local-runtime');
     assert.equal(health.ready, true);
+    assert.equal(health.checks.schema.ready, true);
+    assert.equal(health.checks.schema.expectedMigrationVersion, 12);
 
     const profiles = await fetch(`${baseUrl}/profiles`).then((response) => response.json());
     assert.equal(profiles.profiles.length, 5);
@@ -105,6 +109,15 @@ test('health and typed fixture endpoints are reachable over the local service', 
       (response) => response.json(),
     );
     assert.equal(cycle.cycle.id, 'demo-cycle');
+
+    database
+      .prepare('DELETE FROM schema_migration_markers WHERE migration_key = ?')
+      .run('chat-replies-reactions-v1');
+    const staleHealth = await fetch(`${baseUrl}/health`);
+    assert.equal(staleHealth.status, 503);
+    const staleBody = await staleHealth.json();
+    assert.equal(staleBody.ready, false);
+    assert.deepEqual(staleBody.checks.schema.missingMigrationKeys, ['chat-replies-reactions-v1']);
   });
 });
 
@@ -292,7 +305,7 @@ test('Demo session and group HTTP mutations preserve the selected group context'
 });
 
 test('local Demo reset endpoint restores the deterministic fixture and removes created groups', async () => {
-  await withRuntime(async ({ baseUrl, database }) => {
+  await withRuntime(async ({ baseUrl, config, database }) => {
     const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -309,6 +322,12 @@ test('local Demo reset endpoint restores the deterministic fixture and removes c
     );
     assert.equal(groupResponse.status, 201);
     assert.equal(fixtureSummary(database).groups, 2);
+    const stagedFile = resolve(config.dataDir, 'media', 'staging', 'partial.mp4');
+    const outputFile = resolve(config.dataDir, 'media', 'processed', 'film.mp4');
+    await mkdir(resolve(config.dataDir, 'media', 'staging'), { recursive: true });
+    await mkdir(resolve(config.dataDir, 'media', 'processed'), { recursive: true });
+    await writeFile(stagedFile, 'staged', { encoding: 'utf8', flag: 'w' });
+    await writeFile(outputFile, 'processed', { encoding: 'utf8', flag: 'w' });
 
     const reset = await fetch(`${baseUrl}/demo/reset?sessionId=${encodeURIComponent(session.id)}`, {
       method: 'POST',
@@ -326,5 +345,29 @@ test('local Demo reset endpoint restores the deterministic fixture and removes c
       messages: 1,
       reactions: 1,
     });
+    assert.equal(existsSync(stagedFile), false);
+    assert.equal(existsSync(outputFile), false);
+  });
+});
+
+test('local Demo reset endpoint refuses a valid non-owner session', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-2' }),
+    });
+    const { session } = await sessionResponse.json();
+    const reset = await fetch(`${baseUrl}/demo/reset?sessionId=${encodeURIComponent(session.id)}`, {
+      method: 'POST',
+    });
+    assert.equal(reset.status, 403);
+    assert.deepEqual(await reset.json(), {
+      allowed: false,
+      status: 403,
+      error: 'forbidden',
+      message: 'You do not have access to this resource.',
+    });
+    assert.equal(fixtureSummary(database).groups, 1);
   });
 });
