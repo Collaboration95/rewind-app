@@ -437,4 +437,25 @@ describe('LocalRuntimeClient', () => {
       }),
     );
   });
+
+  it('creates a fresh synthetic Demo contribution only through the session-bound route', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      response(201, {
+        upload: {
+          existing: false,
+          contribution: { id: 'contribution-1', durationSeconds: 2 },
+          job: { id: 'job-1', status: 'pending' },
+        },
+        synthetic: true,
+      }),
+    );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.createSyntheticDemoClip('session-1', 'group-1')).resolves.toMatchObject({
+      job: { id: 'job-1', status: 'pending' },
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://localhost:8787/demo/synthetic-clip?sessionId=session-1&groupId=group-1',
+      expect.objectContaining({ method: 'POST', headers: { Accept: 'application/json' } }),
+    );
+  });
 });

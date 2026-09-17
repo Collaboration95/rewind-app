@@ -129,6 +129,7 @@ export function VideoCaptureScreen({
     status: 'idle',
     percent: 0,
   });
+  const [creatingSyntheticClip, setCreatingSyntheticClip] = useState(false);
   const statusContext = useOptionalContributionStatus();
   const [localContributionStatus, setLocalContributionStatus] = useState<ContributionStatus | null>(
     null,
@@ -545,6 +546,40 @@ export function VideoCaptureScreen({
     }
   };
 
+  const createSyntheticDemoClip = async () => {
+    if (
+      !isCaptureActive() ||
+      platform.kind !== 'demo' ||
+      !runtimeClient?.createSyntheticDemoClip ||
+      !demoSession?.session ||
+      creatingSyntheticClip
+    )
+      return;
+    setCreatingSyntheticClip(true);
+    setError(null);
+    try {
+      const uploaded = await runtimeClient.createSyntheticDemoClip(
+        demoSession.session.id,
+        demoSession.session.groupId,
+      );
+      if (!isCaptureActive()) return;
+      const processed = await processUploaded(uploaded);
+      if (processed.status === 'ready') processingSucceededRef.current = true;
+    } catch (syntheticError) {
+      if (!isCaptureActive()) return;
+      const failure = classifyContributionFailure(syntheticError);
+      setContributionStatus({
+        createdAt: new Date().toISOString(),
+        ...failure,
+        retryable: false,
+        state: 'failed',
+      });
+      setError(failure.message);
+    } finally {
+      if (isCaptureActive()) setCreatingSyntheticClip(false);
+    }
+  };
+
   const cancelUpload = useCallback(async () => {
     if (!isCaptureActive() || !uploadSession || uploadProgress.status !== 'uploading') {
       return;
@@ -667,9 +702,26 @@ export function VideoCaptureScreen({
       ) : null}
       {access === 'unsupported' ? (
         <Panel
+          actionLabel={
+            platform.kind === 'demo' &&
+            runtimeClient?.createSyntheticDemoClip &&
+            demoSession?.session
+              ? creatingSyntheticClip
+                ? 'Preparing synthetic Demo clip…'
+                : 'Create synthetic Demo clip'
+              : undefined
+          }
+          disabled={creatingSyntheticClip}
+          onAction={createSyntheticDemoClip}
           testID="video-unsupported"
           title="Recording is not supported here"
-          body="Use a physical device with camera and microphone access. The simulator fixture does not claim to record a real clip."
+          body={
+            platform.kind === 'demo' &&
+            runtimeClient?.createSyntheticDemoClip &&
+            demoSession?.session
+              ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
+              : 'Use a physical device with camera and microphone access. The simulator fixture does not claim to record a real clip.'
+          }
         />
       ) : null}
       {access === 'permission' ? (
@@ -798,14 +850,6 @@ export function VideoCaptureScreen({
               </Text>
             </Pressable>
           )}
-          <ContributionStatusPanel
-            deleteLabel="Delete and replace"
-            onDelete={canDeleteContribution ? deleteContributionForReplacement : undefined}
-            onRetry={canRetryContribution ? () => void retryUpload() : undefined}
-            retryLabel="Retry upload"
-            status={contributionStatus}
-            testID="camera-contribution-status"
-          />
           {uploadProgress.status === 'uploading' ? (
             <Pressable
               accessibilityRole="button"
@@ -817,6 +861,14 @@ export function VideoCaptureScreen({
           ) : null}
         </View>
       ) : null}
+      <ContributionStatusPanel
+        deleteLabel="Delete and replace"
+        onDelete={canDeleteContribution ? deleteContributionForReplacement : undefined}
+        onRetry={canRetryContribution ? () => void retryUpload() : undefined}
+        retryLabel="Retry upload"
+        status={contributionStatus}
+        testID="camera-contribution-status"
+      />
       {error && access !== 'error' ? (
         <Text accessibilityRole="alert" style={styles.error}>
           {error}
@@ -829,12 +881,14 @@ export function VideoCaptureScreen({
 function Panel({
   actionLabel,
   body,
+  disabled = false,
   onAction,
   testID,
   title,
 }: {
   actionLabel?: string;
   body: string;
+  disabled?: boolean;
   onAction?: () => void | Promise<void>;
   testID?: string;
   title: string;
@@ -844,7 +898,12 @@ function Panel({
       <Text style={styles.panelTitle}>{title}</Text>
       <Text style={styles.body}>{body}</Text>
       {actionLabel && onAction ? (
-        <Pressable accessibilityRole="button" onPress={onAction} style={styles.outlineButton}>
+        <Pressable
+          accessibilityRole="button"
+          disabled={disabled}
+          onPress={onAction}
+          style={styles.outlineButton}
+        >
           <Text style={styles.outlineText}>{actionLabel}</Text>
         </Pressable>
       ) : null}

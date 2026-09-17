@@ -12,7 +12,7 @@ const { fixtureSummary, openDatabase, resetDatabase } = await import('../dist/db
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createGroup } = await import('../dist/groups/index.js');
 
-async function withRuntime(run) {
+async function withRuntime(run, options = {}) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-runtime-test-`);
   const config = parseConfig({
     REWIND_DATA_DIR: dataDir,
@@ -21,7 +21,7 @@ async function withRuntime(run) {
     REWIND_FFMPEG_BIN: 'ffmpeg',
   });
   const database = openDatabase(config);
-  const server = createRuntimeServer(config, database);
+  const server = createRuntimeServer(config, database, options);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -298,6 +298,40 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
     const revokedDownload = await fetch(`${baseUrl}${archive.archive.films[0].downloadPath}`);
     assert.equal(revokedDownload.status, 404);
   });
+});
+
+test('a session-authorized synthetic Demo clip enters the ordinary sealed processing path', async () => {
+  await withRuntime(
+    async ({ baseUrl, config }) => {
+      const denied = await fetch(`${baseUrl}/demo/synthetic-clip?groupId=demo-group`, {
+        method: 'POST',
+      });
+      assert.equal(denied.status, 401);
+      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-1' }),
+      });
+      const { session } = await sessionResponse.json();
+      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+      const created = await fetch(`${baseUrl}/demo/synthetic-clip?${query}`, { method: 'POST' });
+      const body = await created.json();
+      assert.equal(created.status, 201, JSON.stringify(body));
+      assert.equal(body.synthetic, true);
+      assert.equal(body.upload.job.status, 'pending');
+      assert.doesNotMatch(
+        JSON.stringify(body),
+        new RegExp(config.dataDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      );
+      const processed = await fetch(
+        `${baseUrl}/contributions/jobs/${encodeURIComponent(body.upload.job.id)}/process?${query}`,
+        { method: 'POST' },
+      );
+      assert.equal(processed.status, 200);
+      assert.equal((await processed.json()).job.status, 'ready');
+    },
+    { now: () => new Date('2026-09-10T12:00:00.000Z') },
+  );
 });
 
 test('malformed percent-encoded path segments return a client error for every route family', async () => {

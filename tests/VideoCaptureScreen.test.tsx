@@ -6,6 +6,7 @@ import { ClipUploadSession } from '../src/capture/clip-uploader';
 
 import { DemoSessionProvider, useOptionalDemoSession } from '../src/session/DemoSessionProvider';
 import { VideoCaptureScreen } from '../src/capture/VideoCaptureScreen';
+import { DemoCameraPlatform } from '../src/capture/platform';
 import type { DemoSession, DemoSessionStore } from '../src/domain/session';
 import type { PendingClipUpload, RecordedClip } from '../src/domain/video';
 import type { CameraPlatform, PermissionSnapshot } from '../src/capture/contracts';
@@ -202,6 +203,31 @@ describe('VideoCaptureScreen', () => {
     await result.findByTestId('video-live-preview');
     expect(result.getByTestId('video-record')).toBeEnabled();
     expect(platform.requestPermissions).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers an authenticated fresh synthetic clip only in the local Demo fixture', async () => {
+    const createSyntheticDemoClip = jest.fn().mockResolvedValue(upload);
+    const processClipJob = jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' as const });
+    const client = runtimeClient({ createSyntheticDemoClip, processClipJob });
+    const result = await render(
+      <DemoSessionProvider
+        clock={() => new Date('2026-09-11T12:00:00.000Z')}
+        runtimeClient={client}
+        store={demoSessionStore()}
+      >
+        <SessionReadyMarker />
+        <VideoCaptureScreen platform={new DemoCameraPlatform()} runtimeClient={client} />
+      </DemoSessionProvider>,
+    );
+
+    await result.findByTestId('demo-session-ready');
+    await result.findByTestId('video-unsupported');
+    expect(result.getByText(/fresh, non-sensitive synthetic clip/)).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Create synthetic Demo clip' }));
+
+    await result.findByTestId('camera-contribution-status-sealed');
+    expect(createSyntheticDemoClip).toHaveBeenCalledWith('demo-session-ui', 'demo-group');
+    expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
   });
 
   it('shows recording progress and transitions to clip review after stopping', async () => {

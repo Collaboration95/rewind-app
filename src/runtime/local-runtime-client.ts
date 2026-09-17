@@ -71,6 +71,7 @@ export interface RuntimeClient {
     idempotencyKey: string,
     base64: string,
   ): Promise<{ uri: string; byteLength: number }>;
+  createSyntheticDemoClip?(sessionId: string, groupId: string): Promise<PendingClipUpload>;
   cancelClipUpload?(sessionId: string, groupId: string, jobId: string): Promise<void>;
   processClipJob?(
     sessionId: string,
@@ -469,6 +470,15 @@ export class LocalRuntimeClient implements RuntimeClient {
       MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
     );
     return body.source;
+  }
+
+  async createSyntheticDemoClip(sessionId: string, groupId: string): Promise<PendingClipUpload> {
+    const body = await this.request<{ upload: PendingClipUpload }>(
+      `/demo/synthetic-clip?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      { method: 'POST' },
+      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+    );
+    return body.upload;
   }
 
   createChatDraft(body: string): ChatMessageDraft {

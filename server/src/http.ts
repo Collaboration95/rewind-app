@@ -1199,7 +1199,34 @@ export async function handleRequest(
           now(),
           { stagingDir, requireVerifiedMetadata: true },
         );
-        if (!upload.ok) return sendBadRequest(response, config);
+        if (!upload.ok) {
+          await rm(claim.source.sourcePath, { force: true }).catch(() => undefined);
+          resetStagedSourceClaim(
+            database,
+            sourceUri,
+            claim.source.sourcePath,
+            claim.source.claimGeneration,
+          );
+          if (upload.reason === 'quota_exceeded') {
+            sendJson(response, config, 409, {
+              error: 'contribution_quota_exceeded',
+              message: 'This member has reached the current cycle contribution limit.',
+            });
+            return;
+          }
+          if (upload.reason === 'not_found') {
+            sendJson(response, config, 409, {
+              error: 'contribution_window_closed',
+              message: 'The current cycle is not accepting contributions.',
+            });
+            return;
+          }
+          sendJson(response, config, 503, {
+            error: 'synthetic_clip_failed',
+            message: 'The synthetic Demo clip could not be prepared. Try again.',
+          });
+          return;
+        }
         sendJson(response, config, 201, { upload: upload.upload, synthetic: true });
       } catch {
         await rm(claim.source.sourcePath, { force: true }).catch(() => undefined);
