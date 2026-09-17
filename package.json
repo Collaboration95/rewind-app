@@ -18,6 +18,7 @@
     "server:reset": "npm run server:build && node server/dist/cli.js reset",
     "server:diagnostics": "npm run server:build && node server/dist/cli.js diagnostics",
     "server:test": "npm run server:build && node --test server/tests/*.test.mjs",
+    "test:full-cycle": "npm run server:build && node --test server/tests/full-cycle-scenario.test.mjs",
     "architecture:check": "node scripts/check-architecture.mjs",
     "lint": "eslint .",
     "format": "npm run format:write",

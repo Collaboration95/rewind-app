@@ -847,7 +847,7 @@ export async function handleRequest(
       });
       return;
     }
-    const moved = updateDemoSessionGroup(database, sessionId, result.group?.id ?? '');
+    const moved = updateDemoSessionGroup(database, sessionId, result.group?.id ?? '', now());
     if (!moved.ok) {
       sendJson(response, config, 500, {
         error: 'group_context_error',
@@ -925,7 +925,7 @@ export async function handleRequest(
       });
       return;
     }
-    const moved = updateDemoSessionGroup(database, sessionId, result.group.id);
+    const moved = updateDemoSessionGroup(database, sessionId, result.group.id, now());
     if (!moved.ok) {
       sendJson(response, config, 500, {
         error: 'invite_context_error',
