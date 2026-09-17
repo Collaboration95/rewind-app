@@ -8,7 +8,7 @@ import test from 'node:test';
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
-const { createCompilationJob, getCompilationJob, processCompilationJob } =
+const { createCompilationJob, getCompilationJob, MAX_COMPILATION_ATTEMPTS, processCompilationJob } =
   await import('../dist/jobs/index.js');
 const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
 
@@ -159,7 +159,7 @@ test('compiles chronological retained clips into a playable normalized-audio fil
   });
 });
 
-test('a missing retained input fails without publishing a partial film', async () => {
+test('a missing retained input exhausts bounded retries and never publishes a partial film', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     const outputDir = `${dataDir}/media/processed`;
     await mkdir(outputDir, { recursive: true });
@@ -171,15 +171,39 @@ test('a missing retained input fails without publishing a partial film', async (
     });
     const jobId = await createFilmJob(database);
 
-    const result = await processCompilationJob(database, {
+    for (let attempt = 1; attempt <= MAX_COMPILATION_ATTEMPTS; attempt += 1) {
+      const result = await processCompilationJob(database, {
+        jobId,
+        ffmpegBin: config.ffmpegBin,
+        outputDir,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 'failed');
+      assert.equal(
+        result.reason,
+        attempt === MAX_COMPILATION_ATTEMPTS ? 'retry_exhausted' : 'processing_failed',
+      );
+    }
+    const job = getCompilationJob(database, jobId);
+    assert.equal(job?.status, 'failed');
+    assert.equal(job?.outputPath, null);
+    assert.equal(job?.attemptCount, MAX_COMPILATION_ATTEMPTS);
+    assert.equal(job?.failureCategory, 'source_unavailable');
+    assert.equal(job?.retryable, false);
+    assert.equal(job?.delayed, true);
+
+    const exhausted = await processCompilationJob(database, {
       jobId,
       ffmpegBin: config.ffmpegBin,
       outputDir,
     });
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 'failed');
-    const job = getCompilationJob(database, jobId);
-    assert.equal(job?.status, 'failed');
-    assert.equal(job?.outputPath, null);
+    assert.deepEqual(exhausted, {
+      ok: false,
+      jobId,
+      status: 'failed',
+      reason: 'retry_exhausted',
+      message: 'The film is delayed after the maximum number of compile attempts.',
+    });
+    assert.equal(getCompilationJob(database, jobId)?.attemptCount, MAX_COMPILATION_ATTEMPTS);
   });
 });

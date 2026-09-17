@@ -99,6 +99,9 @@ export interface ProcessClipJobOptions {
 
 export type CompilationJobStatus = 'pending' | 'processing' | 'ready' | 'failed';
 
+/** Three explicit compile attempts prevent a broken cycle from retrying forever. */
+export const MAX_COMPILATION_ATTEMPTS = 3;
+
 export interface CompilationJobInput {
   groupId: string;
   cycleId: string;
@@ -115,6 +118,13 @@ export interface CompilationJobRecord {
   inputCount: number;
   completedCount: number;
   claimGeneration: number;
+  attemptCount: number;
+  /** A safe, stable category without FFmpeg or filesystem detail. */
+  failureCategory: string | null;
+  /** An intentional retry is allowed only before the durable attempt cap. */
+  retryable: boolean;
+  /** A failed, exhausted film must remain visibly delayed and unpublished. */
+  delayed: boolean;
   processingStartedAt: string | null;
   outputPath: string | null;
   createdAt: string;
@@ -131,7 +141,7 @@ export type CompilationJobClaimResult =
       action: 'claimed' | 'already_processing' | 'already_ready';
       job: CompilationJobRecord;
     }
-  | { ok: false; reason: 'not_found' | 'invalid_state' };
+  | { ok: false; reason: 'not_found' | 'invalid_state' | 'retry_exhausted' };
 
 export interface ClaimCompilationJobInput {
   jobId: string;
@@ -158,6 +168,8 @@ interface CompilationJobRow {
   inputCount: number;
   completedCount: number;
   claimGeneration: number;
+  attemptCount: number;
+  errorCode: string | null;
   processingStartedAt: string | null;
   outputPath: string | null;
   createdAt: string;
@@ -176,7 +188,8 @@ function readCompilationJob(
     .prepare(
       `SELECT id, group_id AS groupId, cycle_id AS cycleId, status,
               progress, input_count AS inputCount, completed_count AS completedCount,
-              claim_generation AS claimGeneration,
+              claim_generation AS claimGeneration, attempt_count AS attemptCount,
+              error_code AS errorCode,
               processing_started_at AS processingStartedAt,
               output_path AS outputPath, created_at AS createdAt
        FROM media_jobs
@@ -196,6 +209,9 @@ function readCompilationJob(
     row.status === 'processing' || row.status === 'ready' || row.status === 'failed'
       ? row.status
       : 'pending';
+  const attemptCount = Math.max(0, Number(row.attemptCount));
+  const retryable =
+    (status === 'pending' || status === 'failed') && attemptCount < MAX_COMPILATION_ATTEMPTS;
   return {
     id: row.id,
     groupId: row.groupId,
@@ -206,6 +222,10 @@ function readCompilationJob(
     inputCount: Number(row.inputCount),
     completedCount: Number(row.completedCount),
     claimGeneration: Number(row.claimGeneration),
+    attemptCount,
+    failureCategory: status === 'failed' && row.errorCode ? String(row.errorCode) : null,
+    retryable,
+    delayed: status === 'failed' && !retryable,
     processingStartedAt: row.processingStartedAt ?? null,
     outputPath: row.outputPath ?? null,
     createdAt: row.createdAt,
@@ -463,15 +483,23 @@ export function claimCompilationJob(
       database.exec('ROLLBACK');
       return { ok: false, reason: 'invalid_state' };
     }
+    if (job.status === 'failed' && job.attemptCount >= MAX_COMPILATION_ATTEMPTS) {
+      database.exec('COMMIT');
+      return { ok: false, reason: 'retry_exhausted' };
+    }
     const generation = job.claimGeneration + 1;
+    // A stale worker reclaim resumes the same attempt; only a pending/failed
+    // job starts an intentional new retry.
+    const startsNewAttempt = job.status === 'pending' || job.status === 'failed';
+    const attemptCount = job.attemptCount + (startsNewAttempt ? 1 : 0);
     database
       .prepare(
         `UPDATE media_jobs
          SET status = 'processing', error_code = NULL,
-             processing_started_at = ?, claim_generation = ?
+             processing_started_at = ?, claim_generation = ?, attempt_count = ?
          WHERE id = ? AND kind = 'film' AND status IN ('pending', 'failed', 'processing')`,
       )
-      .run(now.toISOString(), generation, job.id);
+      .run(now.toISOString(), generation, attemptCount, job.id);
     job = readCompilationJob(database, job.id, input.groupId);
     if (!job) {
       database.exec('ROLLBACK');
@@ -558,7 +586,7 @@ export type ProcessCompilationJobResult =
       ok: false;
       jobId: string;
       status: 'failed' | 'processing' | 'not_found';
-      reason: 'not_found' | 'already_processing' | 'processing_failed';
+      reason: 'not_found' | 'already_processing' | 'processing_failed' | 'retry_exhausted';
       message: string;
     };
 
@@ -688,15 +716,23 @@ export async function processCompilationJob(
 ): Promise<ProcessCompilationJobResult> {
   const claim = claimCompilationJob(database, { jobId: options.jobId, groupId: options.groupId });
   if (!claim.ok) {
+    const exhausted = claim.reason === 'retry_exhausted';
     return {
       ok: false,
       jobId: options.jobId,
       status: claim.reason === 'not_found' ? 'not_found' : 'failed',
-      reason: claim.reason === 'not_found' ? 'not_found' : 'processing_failed',
+      reason:
+        claim.reason === 'not_found'
+          ? 'not_found'
+          : exhausted
+            ? 'retry_exhausted'
+            : 'processing_failed',
       message:
         claim.reason === 'not_found'
           ? 'The film job was not found.'
-          : 'The film job cannot be processed in its current state.',
+          : exhausted
+            ? 'The film is delayed after the maximum number of compile attempts.'
+            : 'The film job cannot be processed in its current state.',
     };
   }
   if (claim.action === 'already_ready') return { ok: true, jobId: claim.job.id, status: 'ready' };
@@ -771,12 +807,15 @@ export async function processCompilationJob(
       const errorCode = error instanceof FfmpegProcessingError ? error.code : 'cleanup_failed';
       markCompilationFailed(database, claim.job.id, claim.job.claimGeneration, errorCode);
     }
+    const delayed = getCompilationJob(database, claim.job.id)?.delayed === true;
     return {
       ok: false,
       jobId: claim.job.id,
       status: 'failed',
-      reason: 'processing_failed',
-      message: 'The film could not be compiled. Retry the job.',
+      reason: delayed ? 'retry_exhausted' : 'processing_failed',
+      message: delayed
+        ? 'The film is delayed after the maximum number of compile attempts.'
+        : 'The film could not be compiled. Retry the job.',
     };
   }
 }

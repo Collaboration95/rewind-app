@@ -96,7 +96,7 @@ test('health and typed fixture endpoints are reachable over the local service', 
     assert.equal(health.service, 'rewind-local-runtime');
     assert.equal(health.ready, true);
     assert.equal(health.checks.schema.ready, true);
-    assert.equal(health.checks.schema.expectedMigrationVersion, 12);
+    assert.equal(health.checks.schema.expectedMigrationVersion, 13);
 
     const profiles = await fetch(`${baseUrl}/profiles`).then((response) => response.json());
     assert.equal(profiles.profiles.length, 5);

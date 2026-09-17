@@ -27,6 +27,7 @@ const MIGRATIONS = [
   // migration SQL for fresh installs and upgrades.
   { version: 11, key: 'realtime-messages-v1', fileName: '006-realtime-messages.sql' },
   { version: 12, key: 'chat-replies-reactions-v1', fileName: '007-chat-replies-reactions.sql' },
+  { version: 13, key: 'compilation-retry-v1', fileName: '013-compilation-retry.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -144,6 +145,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyContributionDeletionMigration(database);
       } else if (migration.key === 'chat-replies-reactions-v1') {
         applyChatRepliesReactionsMigration(database);
+      } else if (migration.key === 'compilation-retry-v1') {
+        applyCompilationRetryMigration(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -197,6 +200,7 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'cycle-lifecycle-v1') return cycleLifecycleMigrationNeedsRepair(database);
   if (key === 'contribution-deletion-v1') return !contributionDeletionSchemaReady(database);
   if (key === 'chat-replies-reactions-v1') return !chatRepliesReactionsSchemaReady(database);
+  if (key === 'compilation-retry-v1') return !compilationRetrySchemaReady(database);
   return false;
 }
 
@@ -262,6 +266,10 @@ function compilationJobsSchemaReady(database: RewindDatabase): boolean {
       'compilation_job_inputs',
     )
   );
+}
+
+function compilationRetrySchemaReady(database: RewindDatabase): boolean {
+  return hasColumns(database, 'media_jobs', ['attempt_count']);
 }
 
 interface CompilationInputForeignKey {
@@ -942,6 +950,15 @@ function applyCompilationJobsMigration(database: RewindDatabase): void {
            }`,
       );
     }
+  }
+}
+
+/** Repairable receipt for the bounded, explicit film retry policy. */
+function applyCompilationRetryMigration(database: RewindDatabase): void {
+  if (!tableColumns(database, 'media_jobs').has('attempt_count')) {
+    database.exec(
+      'ALTER TABLE media_jobs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0)',
+    );
   }
 }
 
