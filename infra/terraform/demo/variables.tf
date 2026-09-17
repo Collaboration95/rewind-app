@@ -53,3 +53,14 @@ variable "automatic_start_schedule_timezone" {
   description = "IANA timezone used only when an automatic-start schedule is enabled."
   default     = "Asia/Singapore"
 }
+
+variable "cost_safety_expected_instance_state" {
+  type        = string
+  description = "Expected Lightsail state for the periodic cost-safety audit; use stopped except during a deliberate hosted Demo window."
+  default     = "stopped"
+
+  validation {
+    condition     = contains(["running", "stopped"], var.cost_safety_expected_instance_state)
+    error_message = "cost_safety_expected_instance_state must be running or stopped."
+  }
+}

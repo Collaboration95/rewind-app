@@ -27,6 +27,10 @@ What is live
   after it verifies a fresh backup manifest in the private backup bucket.
   `wake-demo.sh` and `stop-demo.sh` invoke it; the stop input must be the
   manifest uploaded by the host backup workflow.
+- Issue #100 adds a separate read-only cost-safety audit every four hours. Its
+  default expected state is `stopped`; it reports a deliberate running Demo as
+  actionable until the reviewed Terraform input is temporarily changed. It has
+  no start, stop, delete, backup-object-read, or recovery permissions.
 
 Access model
 ------------
@@ -68,6 +72,12 @@ and media, then shut down the host. Use `infra/scripts/wake-demo.sh` when the
 demo is required again. Do not use a blind scheduled stop: it would bypass the
 backup verification gate. `automatic_start_schedule_expression` is deliberately
 unset, so no automatic startup schedule is active.
+
+The cost-safety audit checks the selected instance state, static-IP attachment,
+snapshot/distribution counts, and the backup bucket lifecycle rule. A failed
+audit sends a CloudWatch alarm through the configured email notification topic.
+It only observes: operators must create a fresh backup and use the approved
+backup-gated stop command to remediate an unexpected running instance.
 
 Still to set up before increasing usage
 ----------------------------------------
