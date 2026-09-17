@@ -106,7 +106,7 @@ data "aws_iam_policy_document" "operator_assume_role" {
 
     principals {
       type        = "AWS"
-      identifiers = ["arn:aws:iam::${var.account_id}:user/macos-m1"]
+      identifiers = ["arn:aws:iam::${var.account_id}:user/${var.operator_username}"]
     }
 
     actions = ["sts:AssumeRole"]

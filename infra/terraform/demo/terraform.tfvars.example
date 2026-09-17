@@ -1,4 +1,5 @@
 account_id              = "330599756236"
+operator_username       = "macos-m1"
 backup_bucket_name      = "rewind-demo-backups-330599756236"
 audit_bucket_name       = "rewind-audit-logs-330599756236"
 budget_email_recipients = ["your-email@example.com"]

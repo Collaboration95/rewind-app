@@ -10,6 +10,8 @@
 # Local agent state and machine-specific files.
 .claude/settings.local.json
 .codex/settings.local.json
+# Per-operator AWS safety skill lives in ~/.codex/skills; never commit a copy.
+skills/rewind-aws-operations/
 .DS_Store
 
 # Dependencies and generated local output.

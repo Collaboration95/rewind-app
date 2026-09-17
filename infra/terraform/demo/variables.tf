@@ -14,6 +14,12 @@ variable "account_id" {
   }
 }
 
+variable "operator_username" {
+  type        = string
+  description = "IAM user permitted to assume the demo power-operator role."
+  default     = "macos-m1"
+}
+
 variable "backup_bucket_name" {
   type        = string
   description = "Existing S3 bucket for encrypted demo backups and short-lived release bundles."
