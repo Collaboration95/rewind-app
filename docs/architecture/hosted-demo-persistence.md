@@ -21,7 +21,7 @@ Replacing the container must not replace either mount.
 ## Schema and migration contract
 
 `server/src/db.ts` is the authoritative additive migration runner. A healthy
-Sprint 2 database has migration versions 1 through 12 and matching durable
+Sprint 2 database has migration versions 1 through 13 and matching durable
 `schema_migration_markers` receipts. `/health` returns HTTP 503 with
 `ready: false` if any expected receipt is absent or a known partial schema
 shape needs repair.
