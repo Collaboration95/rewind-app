@@ -1,0 +1,6 @@
+# Copy to backend.hcl (ignored by Git) after the initial local import.
+bucket       = "rewind-terraform-state-330599756236"
+key          = "rewind/bootstrap/terraform.tfstate"
+region       = "ap-southeast-1"
+encrypt      = true
+use_lockfile = true

@@ -21,3 +21,21 @@ server/dist/
 playwright-report/
 test-results/
 .local-data/
+
+# Hosted demo secrets and generated backups.
+deploy/rewind.env
+deploy/rewind.env.*
+!deploy/rewind.env.example
+
+# Terraform downloads, state, plans, and per-operator configuration are local.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+backend.hcl
+
+# Generated Python Lambda bytecode.
+__pycache__/
+*.py[cod]
