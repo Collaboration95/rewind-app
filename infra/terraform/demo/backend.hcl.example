@@ -1,0 +1,6 @@
+# Copy to backend.hcl (ignored by Git) after bootstrap has migrated its state.
+bucket       = "rewind-terraform-state-330599756236"
+key          = "rewind/demo/terraform.tfstate"
+region       = "ap-southeast-1"
+encrypt      = true
+use_lockfile = true

@@ -1,0 +1,11 @@
+[Unit]
+Description=Rewind Demo SQLite backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/srv/rewind/deploy
+EnvironmentFile=-/srv/rewind/rewind.env
+ExecStart=/srv/rewind/deploy/backup.sh

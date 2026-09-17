@@ -16,16 +16,16 @@
 This plan uses fresh GitHub, repository, and local verification evidence rather
 than treating issue closure alone as completion.
 
-| Measure                                    |                                     Sprint 1 evidence | Planning interpretation                                                |
-| ------------------------------------------ | ----------------------------------------------------: | ---------------------------------------------------------------------- |
-| Direct Sprint 1 pull requests closed       |                                                     3 | All three merged: #79, #80, and #91.                                   |
-| Canonical Sprint 1 milestone issues closed |                                                    13 | #33–#43, #53, and #69.                                                 |
-| Additional Sprint 1 review defects closed  |                                                     9 | #81–#89; these were not milestone issues.                              |
-| Report-compatible closed deliverables      |                                                    22 | Useful for continuity, but nine were defects discovered during review. |
-| User stories among the 22 closures         |                                                     4 | #35, #36, #38, and #41.                                                |
-| Project priority distribution              |                               11 P0, 5 P1, 5 P2, 1 P3 | High-priority work dominated the increment.                            |
-| Project risk distribution                  |                             10 High, 10 Medium, 2 Low | The completed scope was technically substantial.                       |
-| Current `origin/main` verification         | 134 tests pass; web export and runtime preflight pass | Main is a sound local foundation.                                      |
+| Measure                                    |                                               Sprint 1 evidence | Planning interpretation                                                |
+| ------------------------------------------ | --------------------------------------------------------------: | ---------------------------------------------------------------------- |
+| Direct Sprint 1 pull requests closed       |                                                               3 | All three merged: #79, #80, and #91.                                   |
+| Canonical Sprint 1 milestone issues closed |                                                              13 | #33–#43, #53, and #69.                                                 |
+| Additional Sprint 1 review defects closed  |                                                               9 | #81–#89; these were not milestone issues.                              |
+| Report-compatible closed deliverables      |                                                              22 | Useful for continuity, but nine were defects discovered during review. |
+| User stories among the 22 closures         |                                                               4 | #35, #36, #38, and #41.                                                |
+| Project priority distribution              |                                         11 P0, 5 P1, 5 P2, 1 P3 | High-priority work dominated the increment.                            |
+| Project risk distribution                  |                                       10 High, 10 Medium, 2 Low | The completed scope was technically substantial.                       |
+| Current `main` verification                | Full quality gate passes: 4 Node, 84 server, and 178 Jest tests | Main is a sound local foundation.                                      |
 
 The completed effort was not small. It added the Node/SQLite/FFmpeg local
 runtime boundary, Demo sessions, groups and invitations, capture/review
@@ -45,10 +45,9 @@ test churn. These line counts show breadth, not business value.
   evidence exists, but the issue records are stale.
 - Physical-device recording required by #41/#89 is not proven. Simulator
   fixtures prove state handling, not real camera and microphone capture.
-- PR #92 is open and currently fails its quality workflow. Locally, formatting
-  fails in six imported planning files; isolated checks also expose one
-  date-sensitive server test and five video-screen test failures. Sprint 2 work
-  must not stack on an ungreen integration branch.
+- PR #92 merged on 12 September with a historical formatting failure; PR #93
+  and PR #96 subsequently passed their checks. Issue #90 is closed and the
+  current `main` quality gate passes, so this is no longer a release blocker.
 
 ## 2. Sprint goal
 
@@ -121,12 +120,12 @@ P0 is the Sprint commitment. If any P0 outcome is threatened, P1 and P2 stop.
 
 #### Release gate and decisions
 
-| Key                   | Outcome                                     | Estimate | Acceptance                                                                                                                                            |
-| --------------------- | ------------------------------------------- | -------: | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `s2-release-001`      | Restore PR #92 to green                     |      3 h | Formatting, date-independent cycle tests, video-screen tests, and full `npm run check` pass.                                                          |
-| `s2-release-002`      | Resolve #90 and merge or supersede PR #92   |      2 h | Review index has an authoritative disposition; merged code is on current `main`; no duplicate open integration PR remains.                            |
-| `s2-release-003`      | Reconcile Sprint 1 issue and Project status |      2 h | The 22 closed items have honest status and verification references; #41/#89 retain their physical-device proof caveat.                                |
-| `s2-architecture-001` | Record the hosted Demo appliance decision   |      2 h | The issue decision fixes AWS region, host, storage, HTTPS, CORS, synthetic-media boundary, backup, and rollback without claiming production security. |
+| Key                   | Outcome                                      | Estimate | Acceptance                                                                                                                                            |
+| --------------------- | -------------------------------------------- | -------: | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `s2-release-001`      | Confirm the current `main` release gate      |      1 h | Formatting, lint, architecture, type, and full test checks pass on current `main`.                                                                    |
+| `s2-release-002`      | Record the #90/PR #92 historical disposition |      1 h | PR #92's formatting failure, the succeeding green integrations, and #90 closure are referenced; no duplicate open integration PR remains.             |
+| `s2-release-003`      | Reconcile Sprint 1 issue and Project status  |      2 h | The 22 closed items have honest status and verification references; #41/#89 retain their physical-device proof caveat.                                |
+| `s2-architecture-001` | Record the hosted Demo appliance decision    |      2 h | The issue decision fixes AWS region, host, storage, HTTPS, CORS, synthetic-media boundary, backup, and rollback without claiming production security. |
 
 #### AWS backend and hosted frontend
 
@@ -134,12 +133,12 @@ P0 is the Sprint commitment. If any P0 outcome is threatened, P1 and P2 stop.
 | -------------- | ------------------------------------------------------- | -------: | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `s2-cloud-001` | Build a production-shaped runtime container             |      4 h | A pinned Node 22 image contains FFmpeg, runs as non-root, exposes health, and passes the existing preflight.                                       |
 | `s2-cloud-002` | Persist SQLite and processed Demo media                 |      3 h | Database and media directories live on persistent instance storage and survive container/process restart.                                          |
-| `s2-cloud-003` | Provision one AWS Lightsail instance                    |      4 h | A reproducible script or Terraform module creates the instance, static IP, least-open firewall, tags, and cost guard.                              |
+| `s2-cloud-003` | Provision one AWS Lightsail instance                    |      5 h | A reproducible script or Terraform module creates the instance, static IP, least-open firewall, tags, and cost guard.                              |
 | `s2-cloud-004` | Add the generated AWS HTTPS distribution                |      4 h | A Lightsail distribution serves the instance through its default `cloudfront.net` HTTPS address; API caching is disabled and SSH is IP-restricted. |
 | `s2-cloud-005` | Deploy the Expo web export                              |      3 h | `npm run build:web` deploys `dist` behind the same HTTPS distribution; SPA fallback works and `/api` reaches the runtime.                          |
-| `s2-cloud-006` | Automate backend deploy and rollback                    |      5 h | A green `main` artifact can deploy without editing the server; the previous image/config can be restored.                                          |
+| `s2-cloud-006` | Automate backend deploy and rollback                    |      6 h | A green `main` artifact can deploy without editing the server; the previous image/config can be restored.                                          |
 | `s2-cloud-007` | Add hosted migrate, seed, reset, and readiness commands |      3 h | An operator can initialise/reset only Demo data and readiness fails until migrations complete.                                                     |
-| `s2-cloud-008` | Add hosted health, safe logs, and budget alert          |      3 h | Health/version is visible; logs contain no media paths/codes/secrets; the AWS account has a small monthly alert.                                   |
+| `s2-cloud-008` | Add hosted health, safe logs, and budget alert          |      4 h | Health/version is visible; logs contain no media paths/codes/secrets; the AWS account has a small monthly alert.                                   |
 
 #### Hosted synthetic-media ingestion and sealed contribution
 
@@ -432,6 +431,7 @@ these answers on Day 1:
 
 ## 13. Baseline traceability
 
+- [AWS, IaC, and SCP execution plan](./aws-iac-scp-execution-plan.md)
 - [Sprint 0 plan](./sprint-0-plan.md)
 - [Sprint 0 extension and Sprint 1 plan](./sprint-0-plan-extension.md)
 - [Sprint 1 progress evidence](../sprint-1-progress-report-evidence.txt)
@@ -461,7 +461,8 @@ lands as a small reviewed increment on `main`.
 
 ### Phase 1 — local foundation and sealed contribution
 
-- Upgrade the supported baseline to Node 24 and update CI/container references.
+- Keep the supported baseline at Node 22 LTS; retain the existing CI and
+  container references rather than upgrading the toolchain during Sprint 2.
 - Build the production-shaped runtime container and persistent database/media
   directories (`s2-cloud-001` and `s2-cloud-002`).
 - Add local migrate, seed, reset, readiness, health, and safe-log behaviour

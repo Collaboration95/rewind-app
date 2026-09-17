@@ -1,0 +1,99 @@
+Rewind AWS setup — current operating guide
+Updated: 2026-09-17
+
+Purpose
+-------
+This is the small hosted-demo foundation, not a production AWS landing zone.
+Terraform is the source of truth for AWS resources. The files under
+infra/terraform/ recreate infrastructure; S3 backup objects are operational
+data and are intentionally not committed.
+
+What is live
+------------
+- Account 330599756236; default region ap-southeast-1; Lightsail host AZ
+  ap-southeast-1a. The account is standalone: AWS Organizations/SCPs do not
+  apply.
+- Existing `rewind-demo` Lightsail instance and static IP are Terraform
+  managed and protected with prevent_destroy. Its current bundle is
+  `micro_3_0`.
+- Private, encrypted, versioned S3 buckets exist for Terraform state, demo
+  backups, and CloudTrail management logs. Lifecycle retention limits backup
+  storage (30 days), release artifacts (3 days), audit logs (30 days), and
+  old Terraform-state versions (90 days).
+- CloudTrail management logging, a 7-day controller Lambda log group, and a
+  $15 monthly AWS Budget exist. Actual cost notifications go to the configured
+  recipients at $10 warning and $15 critical.
+- The AWS power controller Lambda can start `rewind-demo`, or stop it only
+  after it verifies a fresh backup manifest in the private backup bucket.
+  `wake-demo.sh` and `stop-demo.sh` invoke it; the stop input must be the
+  manifest uploaded by the host backup workflow.
+
+Access model
+------------
+Local profile names are aliases in each operator's ~/.aws/config; they are not
+stored in this repository. Role policies and trust relationships are AWS IAM
+resources defined in infra/terraform/bootstrap/access.tf and
+infra/terraform/demo/automation.tf.
+
+- `default`: the local source credential for IAM user `macos-m1`. It has no
+  direct AWS service permission; it only assumes approved roles. Never run a
+  coding agent with it.
+- `rewind-coding-agent`: read-only status/cost/log inspection. It cannot read
+  object contents, change IAM or billing settings, modify infrastructure, or
+  start/stop/delete Lightsail.
+- `rewind-demo-operator`: may invoke only the power-controller Lambda. It has
+  no direct Lightsail access.
+- `rewind-terraform-apply`: human-reviewed Terraform only. It has a broad
+  but explicit service allowlist for this foundation; it is not a coding-agent
+  profile.
+
+Use the least-privileged profile explicitly, for example:
+  AWS_PROFILE=rewind-coding-agent aws lightsail get-instance-state \\
+    --instance-name rewind-demo --region ap-southeast-1
+
+Before every AWS mutation: state the plan, use a reviewed Terraform change,
+run `terraform plan`, and apply only through `rewind-terraform-apply`.
+Credentials, backend.hcl, tfvars, and Terraform state stay local and ignored.
+
+Cost controls and their limits
+------------------------------
+The current controls reduce predictable spend but do NOT form a hard dollar
+cap: AWS Budgets notify after cost is observed, and a stopped Lightsail
+instance can still retain billable resources such as its static IP or disks.
+The safer rule is to add no new always-on AWS service until its steady and
+worst-case cost have been reviewed and recorded in Terraform/PR discussion.
+
+For the current demo, use the host's `deploy/pause-host.sh` to back up SQLite
+and media, then shut down the host. Use `infra/scripts/wake-demo.sh` when the
+demo is required again. Do not use a blind scheduled stop: it would bypass the
+backup verification gate. `automatic_start_schedule_expression` is deliberately
+unset, so no automatic startup schedule is active.
+
+Still to set up before increasing usage
+----------------------------------------
+1. Deploy the Docker runtime and configure the host's least-privileged S3
+   backup credential/role. The backup and pause scripts are committed, but the
+   hosted application is not yet deployed.
+2. Finish issue #97: define and migrate the hosted SQLite schema, seed/reset
+   flow, and prove backup restore. Only then rely on automatic safe shutdown.
+3. Decide and configure the actual demo operating schedule. If automatic
+   starts are wanted, set the Terraform schedule expression; retain a
+   backup-gated stop path rather than a timer that simply powers off compute.
+4. Before public hosting, implement the planned Lightsail HTTPS distribution
+   and firewall/deployment configuration. It adds a separate recurring cost;
+   it is intentionally not provisioned yet.
+5. Review AWS Free Tier/credits, billing contact preferences, and budget-email
+   subscription confirmations in the AWS console. Budgets cannot guarantee a
+   spend ceiling. For a stronger emergency response, add a separate, tested
+   Budget-action policy/automation only after deciding exactly which resources
+   it may stop and how it avoids data loss.
+6. Keep S3 lifecycle limits under review as media size and backup frequency
+   rise. Backups have a 30-day remote retention window, so this is the main
+   variable non-Lightsail storage cost.
+
+Recovery
+--------
+Terraform recreates AWS infrastructure; migrations recreate the SQLite schema;
+S3 backups restore database and media content. These are distinct layers.
+See infra/terraform/README.md for the Terraform adoption/recovery workflow and
+deploy/README.md for the host deployment and backup procedure.

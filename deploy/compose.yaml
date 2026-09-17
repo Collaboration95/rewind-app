@@ -1,0 +1,42 @@
+name: rewind-demo
+
+services:
+  runtime:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: rewind-demo:local
+    container_name: rewind-demo-runtime
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    environment:
+      NODE_ENV: production
+      REWIND_HOST: 0.0.0.0
+      REWIND_PORT: 8787
+      REWIND_DATA_DIR: /var/lib/rewind
+      REWIND_FFMPEG_BIN: ffmpeg
+      REWIND_ALLOW_ORIGIN: '${REWIND_ALLOW_ORIGIN:-*}'
+    ports:
+      - '127.0.0.1:8787:8787'
+    volumes:
+      - /srv/rewind/data:/var/lib/rewind
+      - /srv/rewind/media:/var/lib/rewind/media
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 768m
+    pids_limit: 128
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8787/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
