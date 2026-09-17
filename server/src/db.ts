@@ -89,12 +89,20 @@ export function schemaReadiness(database: RewindDatabase): SchemaReadiness {
   };
 }
 
-export function openDatabase(config: RuntimeConfig): RewindDatabase {
+export interface SeedDatabaseOptions {
+  /** Optional clock for the seeded cycle and synthetic record timestamps. */
+  seedNow?: Date | string;
+}
+
+export function openDatabase(
+  config: RuntimeConfig,
+  options: SeedDatabaseOptions = {},
+): RewindDatabase {
   mkdirSync(config.dataDir, { recursive: true });
   const database = new DatabaseSync(config.databasePath);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   migrateDatabase(database);
-  seedDatabase(database);
+  seedDatabase(database, options.seedNow);
   return database;
 }
 
@@ -1060,13 +1068,23 @@ function migrateLegacyStagedSources(database: RewindDatabase): void {
   database.exec('DROP TABLE staged_media_sources');
 }
 
-export function seedDatabase(database: RewindDatabase): void {
+/** Seed stable synthetic identities and a time-relative local Demo window. */
+export function seedDatabase(database: RewindDatabase, seedNow?: Date | string): void {
   const existing = database.prepare('SELECT COUNT(*) AS count FROM profiles').get() as {
     count: number;
   };
   if (Number(existing.count) > 0) return;
 
-  const now = FIXTURE.acceptedAt;
+  const nowDate = seedNow === undefined ? new Date(FIXTURE.acceptedAt) : new Date(seedNow);
+  if (!Number.isFinite(nowDate.getTime()))
+    throw new Error('The Demo fixture seed time is invalid.');
+  const now = nowDate.toISOString();
+  const fixtureDurationMs = Date.parse(FIXTURE.cycle.endsAt) - Date.parse(FIXTURE.cycle.startsAt);
+  if (!Number.isFinite(fixtureDurationMs) || fixtureDurationMs <= 0) {
+    throw new Error('The Demo fixture cycle window is invalid.');
+  }
+  const cycleStartsAt = now;
+  const cycleEndsAt = new Date(nowDate.getTime() + fixtureDurationMs).toISOString();
   database.exec('BEGIN');
   try {
     const profileInsert = database.prepare(
@@ -1089,8 +1107,8 @@ export function seedDatabase(database: RewindDatabase): void {
         FIXTURE.cycle.id,
         FIXTURE.group.id,
         FIXTURE.cycle.prompt,
-        FIXTURE.cycle.startsAt,
-        FIXTURE.cycle.endsAt,
+        cycleStartsAt,
+        cycleEndsAt,
         FIXTURE.cycle.status,
         FIXTURE.cycle.lockState,
         FIXTURE.cycle.maxCount,
@@ -1201,7 +1219,7 @@ export function clearMediaDirectory(mediaDir: string): void {
 
 /** Restore only the SQLite-backed local fixture. Source files and migrations
  * are never touched. This form is used by the in-process reset endpoint. */
-export function restoreFixture(database: RewindDatabase): void {
+export function restoreFixture(database: RewindDatabase, seedNow?: Date | string): void {
   database.exec('BEGIN');
   try {
     for (const table of [
@@ -1228,7 +1246,7 @@ export function restoreFixture(database: RewindDatabase): void {
     database.exec('ROLLBACK');
     throw error;
   }
-  seedDatabase(database);
+  seedDatabase(database, seedNow);
 }
 
 export function fixtureSummary(database: RewindDatabase): Record<string, number> {

@@ -20,8 +20,9 @@ async function withRuntime(run, options = {}) {
     REWIND_PORT: '0',
     REWIND_FFMPEG_BIN: 'ffmpeg',
   });
-  const database = openDatabase(config);
-  const server = createRuntimeServer(config, database, options);
+  const { seedNow, ...serverOptions } = options;
+  const database = openDatabase(config, seedNow === undefined ? undefined : { seedNow });
+  const server = createRuntimeServer(config, database, serverOptions);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -88,6 +89,20 @@ test('fresh migration, restart, and reset preserve or restore deterministic stat
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
+});
+
+test('a fresh runtime seeds a current Demo window while retaining fixed-clock test control', async () => {
+  const seedNow = new Date('2030-01-15T12:00:00.000Z');
+  await withRuntime(
+    async ({ database }) => {
+      const cycle = database
+        .prepare('SELECT starts_at AS startsAt, ends_at AS endsAt FROM cycles WHERE id = ?')
+        .get('demo-cycle');
+      assert.equal(cycle.startsAt, seedNow.toISOString());
+      assert.equal(Date.parse(cycle.endsAt) - Date.parse(cycle.startsAt), 11 * 24 * 60 * 60 * 1000);
+    },
+    { seedNow },
+  );
 });
 
 test('health and typed fixture endpoints are reachable over the local service', async () => {

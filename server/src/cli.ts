@@ -5,6 +5,10 @@ import { openDatabase, resetDatabase, fixtureSummary } from './db';
 import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 
+function openRuntimeDatabase(config: RuntimeConfig): ReturnType<typeof openDatabase> {
+  return openDatabase(config, { seedNow: new Date() });
+}
+
 export interface PreflightReport {
   ok: boolean;
   version: string;
@@ -18,7 +22,7 @@ async function serviceProbe(config: RuntimeConfig): Promise<PreflightReport['ser
   let database: ReturnType<typeof openDatabase> | null = null;
   let server: ReturnType<typeof createRuntimeServer> | null = null;
   try {
-    database = openDatabase({ ...config, port: 0 });
+    database = openRuntimeDatabase({ ...config, port: 0 });
     server = createRuntimeServer({ ...config, port: 0 }, database);
     server.listen(0, config.host);
     await once(server, 'listening');
@@ -53,7 +57,7 @@ export async function runPreflight(
   let sqlite: PreflightReport['sqlite'];
   let database: ReturnType<typeof openDatabase> | null = null;
   try {
-    database = openDatabase(config);
+    database = openRuntimeDatabase(config);
     const rows = fixtureSummary(database);
     sqlite = {
       ok: rows.profiles === 5 && rows.groups === 1 && rows.memberships === 5,
@@ -149,7 +153,7 @@ function printDiagnostics(events: AuditEvent[], json: boolean): void {
 }
 
 async function start(config: RuntimeConfig): Promise<void> {
-  const database = openDatabase(config);
+  const database = openRuntimeDatabase(config);
   const server = createRuntimeServer(config, database);
   const close = () => {
     server.close(() => database.close());
@@ -191,14 +195,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'migrate') {
-      const database = openDatabase(config);
+      const database = openRuntimeDatabase(config);
       console.log(`SQLite migrated and seeded at ${config.databasePath}.`);
       database.close();
       return;
     }
     if (command === 'reset') {
       resetDatabase(config);
-      const database = openDatabase(config);
+      const database = openRuntimeDatabase(config);
       console.log(
         `Local database reset to the deterministic five-member fixture at ${config.databasePath}.`,
       );
@@ -206,7 +210,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'diagnostics') {
-      const database = openDatabase(config);
+      const database = openRuntimeDatabase(config);
       try {
         printDiagnostics(listAuditEvents(database, parseDiagnosticsLimit(argv)), json);
       } finally {

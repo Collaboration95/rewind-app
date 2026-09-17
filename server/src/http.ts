@@ -579,7 +579,7 @@ export async function handleRequest(
     const releaseStagingLock = await acquireStagedSourceLock(stagingDir);
     try {
       await waitForStagedIntakesIdle();
-      restoreFixture(database);
+      restoreFixture(database, now());
       // The lock prevents a concurrent upload from recreating a staged file
       // while reset is clearing every Demo-owned media artifact. Keep the
       // directory itself because hosted Compose binds it as a mount target.

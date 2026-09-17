@@ -58,8 +58,8 @@ EXPO_PUBLIC_LOCAL_BASE_URL=http://127.0.0.1:8787 \
 EXPO_PUBLIC_CAMERA_MODE=demo npm run web
 ```
 
-Choose the owner member, create a local group from Settings, and use Camera →
-video → **Create synthetic Demo clip**. Return to Settings and use
+Choose the owner member and use Camera → video → **Create synthetic Demo clip**.
+Return to Settings and use
 **Start local reveal**, followed by **Compile and release**. The owner control
 advances the local Demo clock for this development-only journey; it still waits
 for a durable film output before publishing. Open Archive only after the
