@@ -61,8 +61,8 @@ import {
   type ClipUploadInput,
 } from './media';
 import { cleanupOrphanedStagedSources, processClipJob } from './jobs';
-import { isAbsolute, relative, resolve } from 'node:path';
-import { probeClipWithFfmpeg } from './ffmpeg';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { generateSyntheticDemoClip, probeClipWithFfmpeg } from './ffmpeg';
 
 export interface HealthPayload {
   ok: boolean;
@@ -1119,6 +1119,105 @@ export async function handleRequest(
       releaseActiveIntake = null;
       releaseStagingLock?.();
       releaseStagingLock = null;
+    }
+    return;
+  }
+
+  if (url.pathname === '/demo/synthetic-clip' && request.method === 'POST') {
+    const sessionId = url.searchParams.get('sessionId');
+    const groupId = url.searchParams.get('groupId');
+    if (!sessionId) return sendSessionRequired(response, config);
+    const session = validateDemoSession(database, sessionId, now());
+    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    if (!groupId) return sendDenied(response, config);
+    if (
+      !authorize(
+        database,
+        response,
+        config,
+        groupId,
+        session.session.actor.memberId,
+        'contribution',
+      )
+    )
+      return;
+    const stagingDir = resolve(config.dataDir, 'media', 'staging');
+    const releaseLock = await acquireStagedSourceLock(stagingDir);
+    try {
+      const idempotencyKey = `synthetic-${randomUUID()}`;
+      const sourceUri = `staged://${stagedSourceId(idempotencyKey)}`;
+      const sourcePath = stagedSourcePath(sourceUri, stagingDir, 1);
+      if (!sourcePath) return sendNotFound(response, config);
+      const claim = claimStagedSource(
+        database,
+        groupId,
+        session.session.actor.memberId,
+        idempotencyKey,
+        now(),
+        sourcePath,
+      );
+      if (!claim.ok || !claim.source.sourcePath) return sendDenied(response, config);
+      const releaseIntake = registerStagedIntake();
+      try {
+        await mkdir(dirname(claim.source.sourcePath), { recursive: true });
+        const metadata = await generateSyntheticDemoClip(config.ffmpegBin, claim.source.sourcePath);
+        database.exec('BEGIN');
+        try {
+          recordClipMediaMetadata(database, {
+            sourceUri,
+            ...metadata,
+            verifiedAt: now().toISOString(),
+          });
+          if (
+            !markStagedSourceReady(
+              database,
+              sourceUri,
+              metadata.byteLength,
+              claim.source.sourcePath,
+              claim.source.claimGeneration,
+            )
+          ) {
+            throw new Error('synthetic source claim was superseded');
+          }
+          database.exec('COMMIT');
+        } catch (error) {
+          database.exec('ROLLBACK');
+          throw error;
+        }
+        const upload = createClipUpload(
+          database,
+          groupId,
+          session.session.actor.memberId,
+          {
+            idempotencyKey,
+            sourceUri,
+            ...metadata,
+            mode: 'soft-focus',
+            trimStartSeconds: 0,
+            trimEndSeconds: metadata.durationSeconds,
+          },
+          now(),
+          { stagingDir, requireVerifiedMetadata: true },
+        );
+        if (!upload.ok) return sendBadRequest(response, config);
+        sendJson(response, config, 201, { upload: upload.upload, synthetic: true });
+      } catch {
+        await rm(claim.source.sourcePath, { force: true }).catch(() => undefined);
+        resetStagedSourceClaim(
+          database,
+          sourceUri,
+          claim.source.sourcePath,
+          claim.source.claimGeneration,
+        );
+        sendJson(response, config, 503, {
+          error: 'synthetic_clip_failed',
+          message: 'The synthetic Demo clip could not be prepared. Try again.',
+        });
+      } finally {
+        releaseIntake();
+      }
+    } finally {
+      releaseLock();
     }
     return;
   }
