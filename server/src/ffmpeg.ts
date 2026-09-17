@@ -44,6 +44,49 @@ export interface FfmpegMediaProbeResult {
   hasAudio: boolean;
 }
 
+/** Create a deterministic, non-sensitive portrait source for the local Demo.
+ * Callers still must place and stage the result through the normal capability
+ * boundary before it can become a contribution. */
+export async function generateSyntheticDemoClip(
+  ffmpegBin: string,
+  outputPath: string,
+): Promise<FfmpegMediaProbeResult> {
+  try {
+    await execFileAsync(ffmpegBin, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=180x320:rate=12:duration=2',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=880:sample_rate=44100:duration=2',
+      '-map',
+      '0:v:0',
+      '-map',
+      '1:a:0',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-shortest',
+      outputPath,
+    ]);
+    return await probeClipWithFfmpeg(ffmpegBin, outputPath);
+  } catch {
+    throw new FfmpegProcessingError(
+      'process_failed',
+      'The synthetic Demo clip could not be prepared.',
+    );
+  }
+}
+
 /**
  * Processing errors intentionally expose no command, source path, or output
  * path. The detailed stderr belongs in neither the database nor an HTTP body.

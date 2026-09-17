@@ -10,7 +10,7 @@ const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
 const { createCompilationJob, getCompilationJob, MAX_COMPILATION_ATTEMPTS, processCompilationJob } =
   await import('../dist/jobs/index.js');
-const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
+const { generateSyntheticDemoClip, probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
 
 async function withDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-film-compilation-test-`);
@@ -56,6 +56,19 @@ async function createProcessedClip(path, color, frequency) {
     path,
   ]);
 }
+
+test('creates a deterministic portrait synthetic clip with audio for the local Demo', async () => {
+  await withDatabase(async ({ config, dataDir }) => {
+    const outputDir = `${dataDir}/media/staging`;
+    await mkdir(outputDir, { recursive: true });
+    const media = await generateSyntheticDemoClip(config.ffmpegBin, `${outputDir}/synthetic.mp4`);
+    assert.equal(media.mimeType, 'video/mp4');
+    assert.equal(media.width, 180);
+    assert.equal(media.height, 320);
+    assert.equal(media.hasAudio, true);
+    assert.ok(media.durationSeconds > 1.5 && media.durationSeconds < 2.5);
+  });
+});
 
 async function frameAverage(path, seconds) {
   const { stdout } = await execFileAsync(
