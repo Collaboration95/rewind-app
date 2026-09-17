@@ -54,13 +54,14 @@ variable "automatic_start_schedule_timezone" {
   default     = "Asia/Singapore"
 }
 
-variable "cost_safety_expected_instance_state" {
-  type        = string
-  description = "Expected Lightsail state for the periodic cost-safety audit; use stopped except during a deliberate hosted Demo window."
-  default     = "stopped"
+variable "cost_safety_expected_snapshot_names" {
+  type        = set(string)
+  description = "Exact instance snapshot names allowed by the periodic cost-safety audit; an unlisted snapshot is an actionable finding."
+  default     = []
+}
 
-  validation {
-    condition     = contains(["running", "stopped"], var.cost_safety_expected_instance_state)
-    error_message = "cost_safety_expected_instance_state must be running or stopped."
-  }
+variable "cost_safety_expected_distributions" {
+  type        = map(string)
+  description = "Expected Lightsail distribution names mapped to their exact origin names; empty skips the global distribution API call."
+  default     = {}
 }

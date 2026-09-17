@@ -33,11 +33,19 @@ data "aws_iam_policy_document" "cost_safety_audit" {
     sid    = "ReadOnlyDemoSurface"
     effect = "Allow"
     actions = [
-      "lightsail:GetDistributions",
+      "lightsail:GetInstance",
       "lightsail:GetInstanceSnapshots",
-      "lightsail:GetInstanceState",
-      "lightsail:GetStaticIps",
+      "lightsail:GetStaticIp",
     ]
+    resources = ["*"]
+  }
+
+  # Distribution inventory is global and is read from us-east-1. Reading it
+  # even for an empty allowlist makes an unexpected distribution actionable.
+  statement {
+    sid       = "ReadGlobalDistributionInventory"
+    effect    = "Allow"
+    actions   = ["lightsail:GetDistributions"]
     resources = ["*"]
   }
 
@@ -77,11 +85,62 @@ resource "aws_lambda_function" "cost_safety_audit" {
       INSTANCE_NAME           = aws_lightsail_instance.rewind.name
       STATIC_IP_NAME          = aws_lightsail_static_ip.rewind.name
       BACKUP_BUCKET           = aws_s3_bucket.backups.id
-      EXPECTED_INSTANCE_STATE = var.cost_safety_expected_instance_state
+      EXPECTED_SNAPSHOT_NAMES = jsonencode(tolist(var.cost_safety_expected_snapshot_names))
+      EXPECTED_DISTRIBUTIONS  = jsonencode(var.cost_safety_expected_distributions)
     }
   }
 
   depends_on = [aws_iam_role_policy.cost_safety_audit]
+}
+
+data "aws_iam_policy_document" "cost_safety_audit_scheduler_assume_role" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["scheduler.amazonaws.com"]
+    }
+
+    actions = ["sts:AssumeRole"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:scheduler:${var.aws_region}:${var.account_id}:schedule/${aws_scheduler_schedule_group.rewind.name}/rewind-demo-cost-safety-audit"]
+    }
+  }
+}
+
+resource "aws_iam_role" "cost_safety_audit_scheduler" {
+  name               = "rewind-demo-cost-safety-audit-scheduler"
+  assume_role_policy = data.aws_iam_policy_document.cost_safety_audit_scheduler_assume_role.json
+  description        = "Invokes only the read-only Rewind Demo cost-safety audit."
+
+  tags = {
+    Environment = "demo"
+    AccessScope = "cost-safety-audit-scheduler"
+  }
+}
+
+resource "aws_iam_role_policy" "cost_safety_audit_scheduler" {
+  name = "rewind-demo-cost-safety-audit-invoke"
+  role = aws_iam_role.cost_safety_audit_scheduler.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = aws_lambda_function.cost_safety_audit.arn
+    }]
+  })
 }
 
 resource "aws_scheduler_schedule" "cost_safety_audit" {
@@ -98,7 +157,7 @@ resource "aws_scheduler_schedule" "cost_safety_audit" {
 
   target {
     arn      = aws_lambda_function.cost_safety_audit.arn
-    role_arn = aws_iam_role.scheduler.arn
+    role_arn = aws_iam_role.cost_safety_audit_scheduler.arn
     input    = jsonencode({ action = "audit" })
   }
 }

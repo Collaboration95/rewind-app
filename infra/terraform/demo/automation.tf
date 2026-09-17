@@ -181,12 +181,9 @@ resource "aws_iam_role_policy" "scheduler" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect = "Allow"
-      Action = "lambda:InvokeFunction"
-      Resource = [
-        aws_lambda_function.power_controller.arn,
-        aws_lambda_function.cost_safety_audit.arn,
-      ]
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = aws_lambda_function.power_controller.arn
     }]
   })
 }

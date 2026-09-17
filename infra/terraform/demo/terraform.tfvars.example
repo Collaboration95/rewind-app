@@ -6,5 +6,6 @@ budget_email_recipients = ["your-email@example.com"]
 ssh_cidr                = "YOUR.PUBLIC.IP.ADDRESS/32"
 # Leave null for manual starts. Example: "cron(0 9 ? * MON-FRI *)"
 automatic_start_schedule_expression = null
-# Keep the four-hour audit in its cost-safe default outside a deliberate demo.
-cost_safety_expected_instance_state = "stopped"
+# Empty means no snapshots or global distributions are currently expected.
+cost_safety_expected_snapshot_names = []
+cost_safety_expected_distributions  = {}
