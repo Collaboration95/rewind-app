@@ -24,6 +24,12 @@ playwright-report/
 test-results/
 .local-data/
 
+# Codex Excalidraw live-session state and validation previews.
+canvas/excalidraw/session.json
+canvas/excalidraw/selection.json
+canvas/excalidraw/checkpoints/
+canvas/excalidraw/exports/visual_validation_*.svg
+
 # Hosted demo secrets and generated backups.
 deploy/rewind.env
 deploy/rewind.env.*
