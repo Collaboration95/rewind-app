@@ -40,4 +40,6 @@ ENV_FILE="$ENV_FILE" COMPOSE_FILE="$COMPOSE_FILE" DATA_DIR="$DATA_DIR" \
 
 compose stop runtime
 compose run --rm runtime reset
+assert_persistent_tree_contract "$DATA_DIR" 'SQLite data' || die 'Reset did not preserve the SQLite ownership contract.'
+assert_persistent_tree_contract "$MEDIA_DIR" 'media' || die 'Reset did not preserve the media ownership contract.'
 printf '%s\n' 'Reset finished successfully. SQLite and all Demo-owned media contents were replaced by the deterministic Demo fixture. The runtime is still stopped.'

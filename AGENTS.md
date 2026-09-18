@@ -4,6 +4,16 @@
 backlog, and Sprint delivery. Do not use `rewind-v1` as evidence of current
 scope or delivery status.
 
+## Subagent delegation
+
+When the user asks to “launch”, “start”, “spawn”, or “use” a **subagent**,
+create an in-thread subagent with the subagent runtime (for example,
+`multi_agent_v1__spawn_agent`). Do **not** create a separate Codex task,
+thread, or chat as a substitute.
+
+Only create a separate task/thread when the user explicitly asks for a new
+task, thread, or chat.
+
 ## GitHub Issues
 
 - A GitHub Issue defines the intended outcome, acceptance criteria, and

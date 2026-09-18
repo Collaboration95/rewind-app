@@ -75,6 +75,14 @@ test('realtime client sends authenticated messages and decodes SSE events', asyn
   expect(source.closed).toBe(true);
 });
 
+test('realtime subscriptions accept the same-origin API prefix', () => {
+  const client = new RealtimeChatClient('/api', fetch, {
+    eventSourceFactory: () => new FakeEventSource(),
+  });
+
+  expect(client.baseUrl).toBe('/api');
+});
+
 test('reconnects from the last event without leaking another group', async () => {
   const first = new FakeEventSource();
   const second = new FakeEventSource();

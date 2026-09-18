@@ -17,6 +17,9 @@ test('scaffold identifies the Rewind app and exposes baseline quality commands',
   assert.equal(packageJson.scripts['architecture:check'], 'node scripts/check-architecture.mjs');
   assert.equal(packageJson.engines.node, '>=22.13.0');
   assert.match(packageJson.scripts['server:preflight'], /server\/dist\/cli\.js preflight/);
+  assert.match(packageJson.scripts['build:web'], /expo export --(?:clear )?--platform web/);
+  assert.match(packageJson.scripts['web:smoke-server'], /scripts\/web-smoke-server\.mjs/);
+  assert.match(packageJson.scripts['test:web-smoke'], /playwright test/);
   assert.match(packageJson.scripts.test, /jest --runInBand/);
   assert.match(packageJson.scripts.check, /format:check/);
   assert.match(packageJson.scripts.check, /lint/);

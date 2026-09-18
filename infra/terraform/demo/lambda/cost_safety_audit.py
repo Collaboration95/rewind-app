@@ -3,6 +3,142 @@
 import json
 import os
 
+from cost_safety_notification import (
+    delivery_record,
+    publisher_from_environment,
+    publish_failure,
+)
+
+
+AUDIT_EVENT = "rewind.demo.cost_safety_audit"
+
+# This is the policy contract consumed by ``evaluate``. It intentionally
+# describes states, not resource names, so reports can be shared safely.
+EXPECTED_STATE_MATRIX = {
+    "demo_off": {
+        "instance": "absent",
+        "static_ip": "absent_unless_explicitly_retained",
+        "snapshots": "configured_allowlist_only",
+        "distributions": "configured_allowlist_only",
+        "backup_lifecycle": "rewind_demo_retention_enabled",
+    },
+    "approved_active_demo": {
+        "instance": "present_stopped_and_tagged_demo",
+        "static_ip": "present_and_attached_to_demo_instance",
+        "snapshots": "configured_allowlist_only",
+        "distributions": "configured_allowlist_only",
+        "backup_lifecycle": "rewind_demo_retention_enabled",
+    },
+}
+
+# Findings contain no AWS names, bucket names, object keys, or exception text.
+# The remediation values are stable references for an operator or a later
+# notification adapter; this Lambda never performs the remediation itself.
+FINDING_DEFINITIONS = {
+    "instance_missing": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_instance",
+        "expected_state": "present_stopped_and_tagged_demo",
+        "remediation": "review-active-demo-terraform-state",
+    },
+    "instance_not_stopped": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_instance",
+        "expected_state": "present_stopped_and_tagged_demo",
+        "remediation": "review-active-demo-power-state",
+    },
+    "instance_not_tagged_demo": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_instance",
+        "expected_state": "present_stopped_and_tagged_demo",
+        "remediation": "review-active-demo-tags",
+    },
+    "instance_present_while_demo_off": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_instance",
+        "expected_state": "absent_no_billable_compute",
+        "remediation": "review-demo-off-terraform-state",
+    },
+    "static_ip_missing": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_static_ip",
+        "expected_state": "present_and_attached_to_demo_instance",
+        "remediation": "review-demo-static-ip",
+    },
+    "retained_static_ip_missing": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_static_ip",
+        "expected_state": "present_and_unattached_for_retention",
+        "remediation": "review-demo-off-static-ip-retention",
+    },
+    "static_ip_unattached_or_misattached": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_static_ip",
+        "expected_state": "present_and_attached_to_demo_instance",
+        "remediation": "review-demo-static-ip",
+    },
+    "static_ip_present_while_demo_off": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_static_ip",
+        "expected_state": "absent_unless_explicitly_retained",
+        "remediation": "review-demo-off-static-ip-retention",
+    },
+    "static_ip_attached_while_demo_off": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_static_ip",
+        "expected_state": "unattached_only_if_explicitly_retained",
+        "remediation": "review-demo-off-static-ip-retention",
+    },
+    "unexpected_snapshot": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_instance_snapshot",
+        "expected_state": "configured_allowlist_only",
+        "remediation": "review-cost-safety-snapshot-allowlist",
+    },
+    "expected_snapshot_missing": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_instance_snapshot",
+        "expected_state": "configured_allowlist_only",
+        "remediation": "review-cost-safety-snapshot-allowlist",
+    },
+    "unexpected_distribution": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_distribution",
+        "expected_state": "configured_allowlist_only",
+        "remediation": "review-cost-safety-distribution-allowlist",
+    },
+    "expected_distribution_missing": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_distribution",
+        "expected_state": "configured_allowlist_only",
+        "remediation": "review-cost-safety-distribution-allowlist",
+    },
+    "expected_distribution_disabled": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_distribution",
+        "expected_state": "enabled_with_expected_origin",
+        "remediation": "review-cost-safety-distribution-allowlist",
+    },
+    "distribution_origin_mismatch": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_distribution",
+        "expected_state": "enabled_with_expected_origin",
+        "remediation": "review-cost-safety-distribution-allowlist",
+    },
+    "backup_lifecycle_misconfigured": {
+        "severity": "error",
+        "resource_identifier_class": "s3_backup_bucket_lifecycle",
+        "expected_state": "rewind_demo_retention_enabled",
+        "remediation": "review-backup-retention-policy",
+    },
+    "audit_read_failed": {
+        "severity": "error",
+        "resource_identifier_class": "aws_inventory_read",
+        "expected_state": "all-configured-inventory-reads-succeed",
+        "remediation": "review-audit-read-permissions-or-availability",
+    },
+}
+
 
 def lifecycle_is_valid(rules):
     for rule in rules:
@@ -41,6 +177,30 @@ def paginated_distributions(lightsail):
             return distributions
 
 
+def _finding(code):
+    return {"code": code, **FINDING_DEFINITIONS[code]}
+
+
+def _add_finding(findings, code):
+    if not any(finding["code"] == code for finding in findings):
+        findings.append(_finding(code))
+
+
+def _is_demo_tagged(instance):
+    return any(
+        tag.get("key") == "Environment" and tag.get("value") == "demo"
+        for tag in instance.get("tags", [])
+    )
+
+
+def _is_attached_to_instance(static_ip, instance_name):
+    return bool(
+        static_ip
+        and static_ip.get("attachedTo") == instance_name
+        and static_ip.get("isAttached", False)
+    )
+
+
 def evaluate(
     instance,
     static_ip,
@@ -50,56 +210,93 @@ def evaluate(
     instance_name,
     expected_snapshot_names,
     expected_distributions,
+    instance_expected=True,
+    static_ip_expected=None,
 ):
-    """Return a compact report without backup contents, paths, or credentials."""
-    issues = []
-    if instance.get("state", {}).get("name") != "stopped":
-        issues.append("instance_not_stopped")
-    if not any(
-        tag.get("key") == "Environment" and tag.get("value") == "demo"
-        for tag in instance.get("tags", [])
-    ):
-        issues.append("instance_not_tagged_demo")
-    if static_ip is None:
-        issues.append("static_ip_missing")
-    elif static_ip.get("attachedTo") != instance_name or not static_ip.get("isAttached", False):
-        issues.append("static_ip_unattached_or_misattached")
+    """Return a deterministic, redacted report for the configured state."""
+    if static_ip_expected is None:
+        static_ip_expected = instance_expected
 
-    actual_snapshot_names = {snapshot.get("name") for snapshot in snapshots if snapshot.get("name")}
+    expected_state = "approved_active_demo" if instance_expected else "demo_off"
+    findings = []
+
+    if instance_expected:
+        if not instance:
+            _add_finding(findings, "instance_missing")
+        else:
+            if instance.get("state", {}).get("name") != "stopped":
+                _add_finding(findings, "instance_not_stopped")
+            if not _is_demo_tagged(instance):
+                _add_finding(findings, "instance_not_tagged_demo")
+
+        if static_ip is None:
+            _add_finding(findings, "static_ip_missing")
+        elif not _is_attached_to_instance(static_ip, instance_name):
+            _add_finding(findings, "static_ip_unattached_or_misattached")
+    else:
+        if instance:
+            _add_finding(findings, "instance_present_while_demo_off")
+
+        if static_ip_expected:
+            if static_ip is None:
+                _add_finding(findings, "retained_static_ip_missing")
+            elif static_ip.get("isAttached", False):
+                _add_finding(findings, "static_ip_attached_while_demo_off")
+        elif static_ip:
+            if static_ip.get("isAttached", False):
+                _add_finding(findings, "static_ip_attached_while_demo_off")
+            else:
+                _add_finding(findings, "static_ip_present_while_demo_off")
+
+    expected_snapshot_names = set(expected_snapshot_names)
+    actual_snapshot_names = {
+        snapshot.get("name") for snapshot in snapshots if snapshot.get("name")
+    }
+    if len(actual_snapshot_names) != len(snapshots):
+        _add_finding(findings, "unexpected_snapshot")
     if actual_snapshot_names - expected_snapshot_names:
-        issues.append("unexpected_snapshot")
+        _add_finding(findings, "unexpected_snapshot")
     if expected_snapshot_names - actual_snapshot_names:
-        issues.append("expected_snapshot_missing")
+        _add_finding(findings, "expected_snapshot_missing")
 
     actual_distributions = {
         distribution.get("name"): distribution
         for distribution in distributions
         if distribution.get("name")
     }
+    if len(actual_distributions) != len(distributions):
+        _add_finding(findings, "unexpected_distribution")
     if set(actual_distributions) - set(expected_distributions):
-        issues.append("unexpected_distribution")
-    for name, expected_origin in expected_distributions.items():
+        _add_finding(findings, "unexpected_distribution")
+    for name in sorted(expected_distributions):
+        expected_origin = expected_distributions[name]
         distribution = actual_distributions.get(name)
         if distribution is None:
-            issues.append("expected_distribution_missing")
+            _add_finding(findings, "expected_distribution_missing")
             continue
         if not distribution.get("isEnabled", False):
-            issues.append("expected_distribution_disabled")
+            _add_finding(findings, "expected_distribution_disabled")
         if distribution.get("origin", {}).get("name") != expected_origin:
-            issues.append("distribution_origin_mismatch")
+            _add_finding(findings, "distribution_origin_mismatch")
 
     if not lifecycle_is_valid(lifecycle_rules):
-        issues.append("backup_lifecycle_misconfigured")
+        _add_finding(findings, "backup_lifecycle_misconfigured")
+
+    instance_tagged_demo = _is_demo_tagged(instance) if instance else False
     return {
-        "event": "rewind.demo.cost_safety_audit",
-        "status": "pass" if not issues else "fail",
-        "issues": issues,
+        "event": AUDIT_EVENT,
+        "status": "pass" if not findings else "fail",
+        "expected_state": expected_state,
+        "issues": [finding["code"] for finding in findings],
+        "findings": findings,
         "resources": {
             "instance_state": instance.get("state", {}).get("name", "unknown"),
-            "instance_tagged_demo": "instance_not_tagged_demo" not in issues,
-            "static_ip_attached": static_ip is not None
-            and static_ip.get("attachedTo") == instance_name
-            and static_ip.get("isAttached", False),
+            "instance_expected": instance_expected,
+            "instance_present": bool(instance),
+            "instance_tagged_demo": instance_tagged_demo,
+            "static_ip_expected": static_ip_expected,
+            "static_ip_present": static_ip is not None,
+            "static_ip_attached": _is_attached_to_instance(static_ip, instance_name),
             "snapshot_count": len(snapshots),
             "distribution_count": len(distributions),
             "backup_lifecycle_valid": lifecycle_is_valid(lifecycle_rules),
@@ -125,9 +322,23 @@ def run_audit(
     backup_bucket,
     expected_snapshot_names,
     expected_distributions,
+    instance_expected=True,
+    static_ip_expected=None,
 ):
-    instance = lightsail.get_instance(instanceName=instance_name).get("instance", {})
-    static_ip = lightsail.get_static_ip(staticIpName=static_ip_name).get("staticIp")
+    try:
+        instance = lightsail.get_instance(instanceName=instance_name).get("instance", {})
+    except Exception as error:
+        if getattr(error, "response", {}).get("Error", {}).get("Code") in {"NotFound", "NoSuchResource"}:
+            instance = {}
+        else:
+            raise
+    try:
+        static_ip = lightsail.get_static_ip(staticIpName=static_ip_name).get("staticIp")
+    except Exception as error:
+        if getattr(error, "response", {}).get("Error", {}).get("Code") in {"NotFound", "NoSuchResource"}:
+            static_ip = None
+        else:
+            raise
     snapshots = paginated_instance_snapshots(lightsail)
     distributions = paginated_distributions(distribution_lightsail)
     return evaluate(
@@ -137,9 +348,28 @@ def run_audit(
         distributions,
         no_lifecycle_rules(s3, backup_bucket),
         instance_name,
-        set(expected_snapshot_names),
+        expected_snapshot_names,
         expected_distributions,
+        instance_expected,
+        static_ip_expected,
     )
+
+
+def read_failure_report():
+    finding = _finding("audit_read_failed")
+    return {
+        "event": AUDIT_EVENT,
+        "status": "fail",
+        "expected_state": "unknown",
+        "issues": [finding["code"]],
+        "findings": [finding],
+        "resources": {},
+    }
+
+
+def _env_bool(name, default):
+    default_value = "true" if default else "false"
+    return os.environ.get(name, default_value).strip().lower() == "true"
 
 
 def handler(_event, _context):
@@ -150,6 +380,8 @@ def handler(_event, _context):
     backup_bucket = os.environ["BACKUP_BUCKET"]
     expected_snapshot_names = json.loads(os.environ["EXPECTED_SNAPSHOT_NAMES"])
     expected_distributions = json.loads(os.environ["EXPECTED_DISTRIBUTIONS"])
+    instance_expected = _env_bool("INSTANCE_EXPECTED", True)
+    static_ip_expected = _env_bool("STATIC_IP_EXPECTED", instance_expected)
     try:
         report = run_audit(
             boto3.client("lightsail"),
@@ -160,14 +392,18 @@ def handler(_event, _context):
             backup_bucket,
             expected_snapshot_names,
             expected_distributions,
+            instance_expected,
+            static_ip_expected,
         )
     except Exception:
-        report = {
-            "event": "rewind.demo.cost_safety_audit",
-            "status": "fail",
-            "issues": ["audit_read_failed"],
-            "resources": {},
-        }
+        report = read_failure_report()
+    if report["status"] != "pass":
+        notification = publish_failure(
+            report,
+            publisher_from_environment(),
+            FINDING_DEFINITIONS,
+        )
+        report = {**report, "notification": delivery_record(notification)}
     print(json.dumps(report, separators=(",", ":"), sort_keys=True))
     if report["status"] != "pass":
         raise RuntimeError("cost-safety audit failed: " + ",".join(report["issues"]))

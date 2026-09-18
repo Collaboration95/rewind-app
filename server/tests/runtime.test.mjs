@@ -117,11 +117,18 @@ test('health and typed fixture endpoints are reachable over the local service', 
     const profiles = await fetch(`${baseUrl}/profiles`).then((response) => response.json());
     assert.equal(profiles.profiles.length, 5);
 
-    const group = await fetch(`${baseUrl}/groups/current?memberId=demo-1`).then((response) =>
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const sessionQuery = `sessionId=${encodeURIComponent(session.id)}`;
+    const group = await fetch(`${baseUrl}/groups/current?${sessionQuery}`).then((response) =>
       response.json(),
     );
     assert.equal(group.group.id, 'demo-group');
-    const cycle = await fetch(`${baseUrl}/cycles/current?groupId=demo-group&memberId=demo-1`).then(
+    const cycle = await fetch(`${baseUrl}/cycles/current?groupId=demo-group&${sessionQuery}`).then(
       (response) => response.json(),
     );
     assert.equal(cycle.cycle.id, 'demo-cycle');
@@ -137,7 +144,7 @@ test('health and typed fixture endpoints are reachable over the local service', 
   });
 });
 
-test('every protected endpoint category returns the same safe denial to a non-member', async () => {
+test('every protected endpoint category requires a session and ignores caller identity values', async () => {
   await withRuntime(async ({ baseUrl }) => {
     const paths = [
       '/groups/demo-group',
@@ -155,16 +162,22 @@ test('every protected endpoint category returns the same safe denial to a non-me
       }),
     );
     for (const result of responses) {
-      assert.equal(result.status, 403);
+      assert.equal(result.status, 401);
       assert.deepEqual(result.body, {
-        allowed: false,
-        status: 403,
-        error: 'forbidden',
-        message: 'You do not have access to this resource.',
+        error: 'session_required',
+        message: 'Choose Demo access before changing local Demo data.',
       });
     }
 
-    const allowed = await fetch(`${baseUrl}/films/demo-film?groupId=demo-group&memberId=demo-1`);
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const allowed = await fetch(
+      `${baseUrl}/films/demo-film?groupId=demo-group&memberId=demo-outsider&sessionId=${encodeURIComponent(session.id)}`,
+    );
     assert.equal(allowed.status, 200);
   });
 });
@@ -452,7 +465,15 @@ test('malformed percent-encoded path segments return a client error for every ro
       });
     }
 
-    const encodedValid = await fetch(`${baseUrl}/groups/%64emo-group?memberId=demo-1`);
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const encodedValid = await fetch(
+      `${baseUrl}/groups/%64emo-group?memberId=demo-outsider&sessionId=${encodeURIComponent(session.id)}`,
+    );
     assert.equal(encodedValid.status, 200);
     assert.equal((await encodedValid.json()).group.id, 'demo-group');
   });

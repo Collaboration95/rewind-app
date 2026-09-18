@@ -15,6 +15,12 @@ for (const screenSize of screenSizes) {
 
     const navigation = page.getByTestId('main-navigation');
     const lastHomeContent = page.getByTestId('home-content-end');
+    const entryChoice = page.getByTestId('demo-entry-demo-1');
+
+    // A clean browser context can either restore the offline Demo fixture or
+    // show the explicit chooser when stale local access was invalidated.
+    await expect(navigation.or(entryChoice)).toBeVisible();
+    if (await entryChoice.isVisible()) await entryChoice.click();
 
     await expect(navigation).toBeVisible();
     await lastHomeContent.scrollIntoViewIfNeeded();

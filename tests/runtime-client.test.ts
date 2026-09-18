@@ -30,6 +30,27 @@ describe('LocalRuntimeClient', () => {
     );
   });
 
+  it('supports a same-origin API prefix for the production web proxy', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      response(200, {
+        ok: true,
+        service: 'rewind-local-runtime',
+        version: '0.1.0',
+        ready: true,
+        checks: { sqlite: true, ffmpegConfigured: true },
+        addresses: { local: 'http://127.0.0.1:8787', lan: null },
+      }),
+    );
+    const client = new LocalRuntimeClient('/api', fetchImpl);
+
+    expect(client.baseUrl).toBe('/api');
+    await expect(client.getHealth()).resolves.toMatchObject({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/health',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    );
+  });
+
   it('maps a safe membership denial and not-found cycle without exposing transport details', async () => {
     const fetchImpl = jest
       .fn()
@@ -46,6 +67,32 @@ describe('LocalRuntimeClient', () => {
     await expect(client.getCurrentCycle('demo-group', 'demo-1')).resolves.toEqual({
       kind: 'NotFound',
     });
+  });
+
+  it('does not serialize caller member identity on hosted group or cycle requests', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(response(200, { group: { id: 'demo-group' } }))
+      .mockResolvedValueOnce(response(200, { cycle: { id: 'demo-cycle' } }))
+      .mockResolvedValueOnce(response(200, { cycle: { id: 'demo-cycle' } }));
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+
+    await client.getGroupForMember('demo-1', 'session-1');
+    await client.getCurrentCycle('demo-group', 'demo-1', 'session-1');
+    await client.advanceDemoCycle('demo-group', 'demo-1', 60, 'session-1');
+
+    for (const [input] of fetchImpl.mock.calls) {
+      expect(String(input)).not.toContain('memberId=');
+    }
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'http://localhost:8787/groups/current?sessionId=session-1',
+    );
+    expect(fetchImpl.mock.calls[1][0]).toBe(
+      'http://localhost:8787/cycles/current?groupId=demo-group&sessionId=session-1',
+    );
+    expect(fetchImpl.mock.calls[2][0]).toBe(
+      'http://localhost:8787/cycles/demo/advance?groupId=demo-group&advanceSeconds=60&sessionId=session-1',
+    );
   });
 
   it('returns an actionable error when the local service cannot be reached', async () => {
@@ -315,7 +362,7 @@ describe('LocalRuntimeClient', () => {
       id: 'demo-cycle',
     });
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://localhost:8787/cycles/demo/advance?groupId=demo-group&memberId=demo-1&advanceSeconds=3600',
+      'http://localhost:8787/cycles/demo/advance?groupId=demo-group&advanceSeconds=3600',
       expect.objectContaining({ method: 'POST', headers: { Accept: 'application/json' } }),
     );
   });

@@ -1,6 +1,6 @@
 data "archive_file" "cost_safety_audit" {
   type        = "zip"
-  source_file = "${path.module}/lambda/cost_safety_audit.py"
+  source_dir  = "${path.module}/lambda"
   output_path = "${path.module}/.terraform/cost-safety-audit.zip"
 }
 
@@ -9,9 +9,22 @@ resource "aws_cloudwatch_log_group" "cost_safety_audit" {
   retention_in_days = 7
 }
 
+data "aws_iam_policy_document" "cost_safety_audit_assume_role" {
+  statement {
+    sid     = "AllowLambdaService"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
 resource "aws_iam_role" "cost_safety_audit" {
   name               = "rewind-demo-cost-safety-audit"
-  assume_role_policy = data.aws_iam_policy_document.power_controller_assume_role.json
+  assume_role_policy = data.aws_iam_policy_document.cost_safety_audit_assume_role.json
   description        = "Read-only periodic cost-safety checks for the Rewind Demo."
 
   tags = {
@@ -21,6 +34,9 @@ resource "aws_iam_role" "cost_safety_audit" {
 }
 
 data "aws_iam_policy_document" "cost_safety_audit" {
+  # This is the complete AWS API surface used by cost_safety_audit.py. Keep
+  # each permission explicit: the audit observes inventory and reports it; it
+  # never remediates a finding.
   statement {
     sid       = "WriteAuditLogs"
     effect    = "Allow"
@@ -28,9 +44,10 @@ data "aws_iam_policy_document" "cost_safety_audit" {
     resources = ["${aws_cloudwatch_log_group.cost_safety_audit.arn}:*"]
   }
 
-  # Lightsail has no resource-level authorization for these read-only actions.
+  # Lightsail has no resource-level authorization for these read-only actions,
+  # so "*" is required here. No Lightsail write or delete action is granted.
   statement {
-    sid    = "ReadOnlyDemoSurface"
+    sid    = "ReadRegionalLightsailInventory"
     effect = "Allow"
     actions = [
       "lightsail:GetInstance",
@@ -42,6 +59,7 @@ data "aws_iam_policy_document" "cost_safety_audit" {
 
   # Distribution inventory is global and is read from us-east-1. Reading it
   # even for an empty allowlist makes an unexpected distribution actionable.
+  # Lightsail still requires "*" for this read-only inventory action.
   statement {
     sid       = "ReadGlobalDistributionInventory"
     effect    = "Allow"
@@ -49,11 +67,24 @@ data "aws_iam_policy_document" "cost_safety_audit" {
     resources = ["*"]
   }
 
+  # Lifecycle configuration is a bucket-level read; object contents and
+  # object mutation are intentionally outside the audit contract.
   statement {
     sid       = "ReadOnlyBackupRetention"
     effect    = "Allow"
     actions   = ["s3:GetLifecycleConfiguration"]
     resources = [aws_s3_bucket.backups.arn]
+  }
+
+  dynamic "statement" {
+    for_each = var.cost_safety_audit_notification_mode == "sns" && var.cost_safety_audit_notification_topic_arn != null ? [var.cost_safety_audit_notification_topic_arn] : []
+
+    content {
+      sid       = "PublishConfiguredAuditNotification"
+      effect    = "Allow"
+      actions   = ["sns:Publish"]
+      resources = [statement.value]
+    }
   }
 }
 
@@ -80,13 +111,24 @@ resource "aws_lambda_function" "cost_safety_audit" {
     log_group  = aws_cloudwatch_log_group.cost_safety_audit.name
   }
 
+  lifecycle {
+    precondition {
+      condition     = var.cost_safety_audit_notification_mode == "disabled" || var.cost_safety_audit_notification_topic_arn != null
+      error_message = "cost_safety_audit_notification_topic_arn is required when notification mode is sns."
+    }
+  }
+
   environment {
     variables = {
-      INSTANCE_NAME           = aws_lightsail_instance.rewind.name
-      STATIC_IP_NAME          = aws_lightsail_static_ip.rewind.name
-      BACKUP_BUCKET           = aws_s3_bucket.backups.id
-      EXPECTED_SNAPSHOT_NAMES = jsonencode(tolist(var.cost_safety_expected_snapshot_names))
-      EXPECTED_DISTRIBUTIONS  = jsonencode(var.cost_safety_expected_distributions)
+      INSTANCE_NAME                = local.instance_name
+      STATIC_IP_NAME               = local.static_ip_name
+      INSTANCE_EXPECTED            = tostring(var.demo_instance_enabled)
+      STATIC_IP_EXPECTED           = tostring(var.demo_instance_enabled || var.retain_static_ip_when_instance_deleted)
+      AUDIT_NOTIFICATION_MODE      = var.cost_safety_audit_notification_mode
+      AUDIT_NOTIFICATION_TOPIC_ARN = coalesce(var.cost_safety_audit_notification_topic_arn, "")
+      BACKUP_BUCKET                = aws_s3_bucket.backups.id
+      EXPECTED_SNAPSHOT_NAMES      = jsonencode(tolist(var.cost_safety_expected_snapshot_names))
+      EXPECTED_DISTRIBUTIONS       = jsonencode(var.cost_safety_expected_distributions)
     }
   }
 
@@ -95,6 +137,7 @@ resource "aws_lambda_function" "cost_safety_audit" {
 
 data "aws_iam_policy_document" "cost_safety_audit_scheduler_assume_role" {
   statement {
+    sid    = "AllowOnlyNamedAuditSchedule"
     effect = "Allow"
 
     principals {
@@ -111,10 +154,19 @@ data "aws_iam_policy_document" "cost_safety_audit_scheduler_assume_role" {
     }
 
     condition {
-      test     = "ArnLike"
+      test     = "ArnEquals"
       variable = "aws:SourceArn"
       values   = ["arn:aws:scheduler:${var.aws_region}:${var.account_id}:schedule/${aws_scheduler_schedule_group.rewind.name}/rewind-demo-cost-safety-audit"]
     }
+  }
+}
+
+data "aws_iam_policy_document" "cost_safety_audit_scheduler" {
+  statement {
+    sid       = "InvokeOnlyCostSafetyAudit"
+    effect    = "Allow"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [aws_lambda_function.cost_safety_audit.arn]
   }
 }
 
@@ -130,17 +182,9 @@ resource "aws_iam_role" "cost_safety_audit_scheduler" {
 }
 
 resource "aws_iam_role_policy" "cost_safety_audit_scheduler" {
-  name = "rewind-demo-cost-safety-audit-invoke"
-  role = aws_iam_role.cost_safety_audit_scheduler.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = "lambda:InvokeFunction"
-      Resource = aws_lambda_function.cost_safety_audit.arn
-    }]
-  })
+  name   = "rewind-demo-cost-safety-audit-invoke"
+  role   = aws_iam_role.cost_safety_audit_scheduler.id
+  policy = data.aws_iam_policy_document.cost_safety_audit_scheduler.json
 }
 
 resource "aws_scheduler_schedule" "cost_safety_audit" {
@@ -163,20 +207,23 @@ resource "aws_scheduler_schedule" "cost_safety_audit" {
 }
 
 resource "aws_sns_topic" "cost_safety_audit" {
+  count             = length(var.cost_safety_audit_email_recipients) > 0 ? 1 : 0
   name              = "rewind-demo-cost-safety-audit"
   display_name      = "Rewind Demo cost safety"
   kms_master_key_id = "alias/aws/sns"
 }
 
 resource "aws_sns_topic_subscription" "cost_safety_audit_email" {
-  for_each = var.budget_email_recipients
+  for_each = var.cost_safety_audit_email_recipients
 
-  topic_arn = aws_sns_topic.cost_safety_audit.arn
+  topic_arn = aws_sns_topic.cost_safety_audit[0].arn
   protocol  = "email"
   endpoint  = each.value
 }
 
 data "aws_iam_policy_document" "cost_safety_audit_notifications" {
+  count = length(var.cost_safety_audit_email_recipients) > 0 ? 1 : 0
+
   statement {
     sid    = "AllowAccountTopicAdministration"
     effect = "Allow"
@@ -187,7 +234,7 @@ data "aws_iam_policy_document" "cost_safety_audit_notifications" {
     }
 
     actions   = ["SNS:*"]
-    resources = [aws_sns_topic.cost_safety_audit.arn]
+    resources = [aws_sns_topic.cost_safety_audit[0].arn]
   }
 
   statement {
@@ -200,7 +247,7 @@ data "aws_iam_policy_document" "cost_safety_audit_notifications" {
     }
 
     actions   = ["sns:Publish"]
-    resources = [aws_sns_topic.cost_safety_audit.arn]
+    resources = [aws_sns_topic.cost_safety_audit[0].arn]
 
     condition {
       test     = "StringEquals"
@@ -217,8 +264,9 @@ data "aws_iam_policy_document" "cost_safety_audit_notifications" {
 }
 
 resource "aws_sns_topic_policy" "cost_safety_audit" {
-  arn    = aws_sns_topic.cost_safety_audit.arn
-  policy = data.aws_iam_policy_document.cost_safety_audit_notifications.json
+  count  = length(var.cost_safety_audit_email_recipients) > 0 ? 1 : 0
+  arn    = aws_sns_topic.cost_safety_audit[0].arn
+  policy = data.aws_iam_policy_document.cost_safety_audit_notifications[0].json
 }
 
 resource "aws_cloudwatch_metric_alarm" "cost_safety_audit" {
@@ -232,7 +280,7 @@ resource "aws_cloudwatch_metric_alarm" "cost_safety_audit" {
   statistic           = "Sum"
   threshold           = 1
   treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.cost_safety_audit.arn]
+  alarm_actions       = length(var.cost_safety_audit_email_recipients) > 0 ? [aws_sns_topic.cost_safety_audit[0].arn] : []
 
   dimensions = {
     FunctionName = aws_lambda_function.cost_safety_audit.function_name
@@ -240,6 +288,6 @@ resource "aws_cloudwatch_metric_alarm" "cost_safety_audit" {
 }
 
 output "cost_safety_audit_function_name" {
-  description = "Read-only Lambda that audits the expected stopped Demo state every four hours."
+  description = "Read-only Lambda that audits the active stopped or intentional hibernated Demo state every four hours."
   value       = aws_lambda_function.cost_safety_audit.function_name
 }

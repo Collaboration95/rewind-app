@@ -1,0 +1,504 @@
+Rewind autonomous coding backlog — 19 September 2026
+
+Purpose
+-------
+Fifteen substantial, code-and-test-focused child issues derived from the Sprint 2 hosted-Demo plan. They deliberately exclude AWS applies, alert subscriptions, physical-device proof, credentials, and unresolved product-policy choices. A coding agent may implement them in dependency order, but must work on one issue/PR at a time and preserve the existing uncommitted deployment work.
+
+Project: Rewind — Sprint 0 (#8)
+Parents: #106 host deployment, #97 persistence/recovery, #101 hosted lifecycle, #100 cost safety, #24 quality proof.
+
+Canonical GitHub issues
+-----------------------
+- s2-host-001: #107; s2-host-002: #108; s2-host-003: #109
+- s2-data-002: #110; s2-data-003: #111; s2-data-004: #112
+- s2-recovery-001: #113; s2-recovery-002: #114; s2-recovery-003: #115
+- s2-audit-001: #116; s2-audit-002: #118; s2-audit-003: #120
+- s2-web-001: #122; s2-security-001: #124; s2-quality-006: #126
+
+Ready now: #107, #110, #116, #122. All other canonical issues are Blocked
+only by the stated predecessor issues. A GitHub CLI timeout during creation
+also produced duplicate copies #117, #119, #121, #123, #125, and #127–#132.
+They are labelled `duplicate` and Blocked in Project #8; do not implement them.
+
+=== ISSUE: TASK: Make the hosted deployment bundle complete and idempotent ===
+Parent: #106
+Status: Ready
+Priority/Risk/Area: P0 / High / Deployment
+Stable key: agent-orchestration:issue-key=s2-host-001
+
+## Objective
+Make a clean host bootstrap install every runtime, operator, backup, pause, and systemd artifact required by the committed Demo appliance, and make a second invocation safe.
+
+## In scope
+- Turn the checked-in host bootstrap/cloud-init and deployment scripts into one repeatable bundle.
+- Install compose files, operator scripts, backup units/timer, persistent directories, and non-secret environment-file template handling.
+- Check ownership, executable modes, and idempotent re-runs with local fixture inputs.
+
+## Out of scope
+- Applying Terraform, connecting to AWS, creating credentials, or starting a real host.
+- Changing the chosen Demo-off lifecycle contract.
+
+## Acceptance criteria
+- A local fixture bootstrap creates all expected paths and artifacts, including pause-host.sh and backup units.
+- A second bootstrap run is a no-op or safe update and does not delete persistent data.
+- Missing required inputs fail with an actionable error and no partial "ready" marker.
+- Focused automated tests cover clean install, repeat install, and a failed prerequisite.
+
+## Relevant boundaries
+infra/terraform/demo/cloud-init.sh; deploy/; infra/scripts/wake-demo.sh; shell tests.
+
+## Dependencies and verification
+No external dependency. Run shell lint/format checks and the focused lifecycle tests plus npm run check where changed boundaries require it.
+
+## Stop condition
+Stop for a human decision if completing bootstrap requires committing a secret, private key, or a new cloud resource.
+
+=== ISSUE: TASK: Add a machine-readable hosted-runtime preflight gate ===
+Parent: #106
+Status: Blocked (by s2-host-001)
+Priority/Risk/Area: P0 / High / Deployment
+Stable key: agent-orchestration:issue-key=s2-host-002
+
+## Objective
+Provide one non-destructive preflight command that determines whether a host is eligible to be called Demo-ready before a backup, pause, or recovery operation.
+
+## In scope
+- Inspect configuration, persistent paths, runtime readiness, migration/schema state, backup tooling, pause script, and enabled backup timer.
+- Emit stable human text and JSON output suitable for scripts.
+- Cover missing or unhealthy prerequisites with tests.
+
+## Out of scope
+- Repairing a host automatically.
+- Running a backup, stopping a runtime, or calling AWS.
+
+## Acceptance criteria
+- Healthy fixture state returns a passing result with no secret values.
+- Each mandatory prerequisite has a named failed result and non-zero exit status.
+- JSON includes an overall boolean and per-check identifiers, not filesystem or credential contents.
+- Tests cover healthy, absent environment, stale/missing timer, failed health, and wrong ownership cases.
+
+## Relevant boundaries
+deploy/; server health/readiness commands; infra/scripts/.
+
+## Dependencies and verification
+Blocked by s2-host-001. Run focused preflight tests and npm run check.
+
+## Stop condition
+Stop if a proposed check would expose environment-file values, backup object names containing sensitive data, or cloud credentials.
+
+=== ISSUE: TASK: Build a disposable Compose host-lifecycle smoke harness ===
+Parent: #106
+Status: Blocked (by s2-host-002)
+Priority/Risk/Area: P0 / High / Quality
+Stable key: agent-orchestration:issue-key=s2-host-003
+
+## Objective
+Make the production-shaped local container lifecycle reproducible: migrate, seed, serve health, restart, reset, and preflight against disposable directories.
+
+## In scope
+- Add a hermetic command or test harness using temporary directories and an isolated Compose project.
+- Prove data/media survive restart and Demo reset removes only Demo data.
+- Collect redacted failure diagnostics suitable for CI.
+
+## Out of scope
+- Public URL testing, a real Lightsail host, or a full browser journey.
+
+## Acceptance criteria
+- One command exercises migrate, seed, health, restart persistence, owner reset, and post-reset health.
+- The harness never reads or writes a developer's normal data/media directories.
+- Failure output redacts paths, environment values, invitation codes, and media content.
+- It has a bounded timeout and cleans up even after an assertion failure.
+
+## Relevant boundaries
+deploy/compose.yaml; deploy/README.md; server scripts/tests.
+
+## Dependencies and verification
+Blocked by s2-host-002. Run the harness twice consecutively and npm run check.
+
+## Stop condition
+Stop if the harness needs Docker daemon changes, AWS access, or non-fixture media.
+
+=== ISSUE: TASK: Strictly validate backup manifests before restore or recovery ===
+Parent: #97
+Status: Ready
+Priority/Risk/Area: P0 / High / Persistence
+Stable key: agent-orchestration:issue-key=s2-data-002
+
+## Objective
+Centralise strict validation of a backup manifest so malformed, mismatched, stale, or prefix-escaping recovery inputs are rejected before archive download or restore.
+
+## In scope
+- Validate manifest structure, timestamp, archive naming relationship, checksums/byte metadata, and approved bucket/prefix rules.
+- Reuse the validator in backup, restore, and recovery selection paths where applicable.
+- Add adversarial fixtures and tests.
+
+## Out of scope
+- Changing remote retention policy or reading real backup contents.
+
+## Acceptance criteria
+- Valid fixture manifests are accepted only when both named archive records match the manifest contract.
+- Missing fields, invalid JSON, stale timestamps, path traversal, cross-prefix keys, and filename mismatches fail closed.
+- Errors are actionable without revealing credentials or arbitrary local paths.
+- Existing valid local backup/restore tests remain green.
+
+## Relevant boundaries
+deploy/backup.sh; deploy/restore.sh; infra/scripts/wake-demo.sh; shell/unit tests.
+
+## Dependencies and verification
+No external dependency. Run focused manifest tests and npm run check.
+
+## Stop condition
+Stop if compatibility with existing backup formats would require a retention/migration policy decision.
+
+=== ISSUE: TASK: Make restore atomic and recover safely from bad archives ===
+Parent: #97
+Status: Blocked (by s2-data-002)
+Priority/Risk/Area: P0 / High / Persistence
+Stable key: agent-orchestration:issue-key=s2-data-003
+
+## Objective
+Ensure a failed restore leaves the last known healthy SQLite database and media tree intact, with a deliberate rollback path and clear operator result.
+
+## In scope
+- Stage and validate database/media archives before replacing live data.
+- Preserve/recover the previous state when extraction, checksum, permission, or readiness checks fail.
+- Add failure-injection tests using disposable fixtures.
+
+## Out of scope
+- Restoring a live AWS host or changing remote backup retention.
+
+## Acceptance criteria
+- Corrupt database, corrupt media archive, checksum mismatch, extraction failure, and failed readiness each leave the original fixture usable.
+- A successful restore replaces database and media as one observable completed operation.
+- Temporary staging/rollback material is cleaned on success and safely retained or reported on failure.
+- Tests prove no partial film/media output becomes visible.
+
+## Relevant boundaries
+deploy/restore.sh; deploy/operator-common.sh; server health/readiness.
+
+## Dependencies and verification
+Blocked by s2-data-002. Run restore failure-injection tests and the disposable lifecycle harness when available.
+
+## Stop condition
+Stop if atomic replacement cannot be expressed safely on the supported host filesystem without a platform choice.
+
+=== ISSUE: TASK: Verify persistent-data ownership through backup and restore ===
+Parent: #97
+Status: Blocked (by s2-data-003)
+Priority/Risk/Area: P1 / High / Persistence
+Stable key: agent-orchestration:issue-key=s2-data-004
+
+## Objective
+Codify the runtime/operator ownership contract so SQLite and media remain readable/writable by the non-root runtime and usable by approved backup operations after every lifecycle transition.
+
+## In scope
+- Define ownership/mode expectations in executable checks.
+- Verify backup, restore, restart, and reset preserve them for database and nested media files.
+- Ensure diagnostics identify the failed contract rather than leaking host details.
+
+## Out of scope
+- Supporting arbitrary operating systems, user groups, or production multi-tenant storage.
+
+## Acceptance criteria
+- Fixture tests cover fresh data, nested media, restored data, and a deliberately incorrect mode/owner.
+- The runtime can read/write its data after restore without root execution.
+- The backup operator can archive required data without broad world-readable permissions.
+- Documentation names the contract without serialising host-specific paths or identities.
+
+## Relevant boundaries
+deploy/backup.sh; deploy/restore.sh; compose configuration; deployment documentation.
+
+## Dependencies and verification
+Blocked by s2-data-003. Run focused permission tests and the disposable lifecycle harness.
+
+## Stop condition
+Stop if a required permission model needs an IAM, OS-user, or host-image decision.
+
+=== ISSUE: TASK: Harden recovery-point selection and manifest download checks ===
+Parent: #101
+Status: Blocked (by s2-data-002)
+Priority/Risk/Area: P0 / High / Recovery
+Stable key: agent-orchestration:issue-key=s2-recovery-001
+
+## Objective
+Make the wake/recovery command select only a complete, approved recovery point and verify it before any infrastructure-changing phase begins.
+
+## In scope
+- Test latest-manifest ordering, archive presence, bucket/prefix allowlist, byte counts, and checksum handoff.
+- Refactor selection into testable functions or shell seams where practical.
+- Make invalid selection fail before Terraform plan/apply or host connection.
+
+## Out of scope
+- Executing Terraform, downloading real customer backups, or recovering a live host.
+
+## Acceptance criteria
+- Latest complete valid recovery point wins over newer incomplete/malformed candidates.
+- Explicit selection rejects another bucket, prefix, malformed URI, and mismatched archive names.
+- Validation failure performs no Terraform apply, SSH, SCP, or host mutation.
+- Deterministic tests cover all selection outcomes.
+
+## Relevant boundaries
+infra/scripts/wake-demo.sh; deploy restore/manifest helpers; shell tests.
+
+## Dependencies and verification
+Blocked by s2-data-002. Run focused script tests plus shell lint.
+
+## Stop condition
+Stop if a recovery selection rule would delete or overwrite remote backups.
+
+=== ISSUE: TASK: Prove destructive lifecycle guards fail closed ===
+Parent: #101
+Status: Blocked (by s2-recovery-001)
+Priority/Risk/Area: P0 / High / Recovery
+Stable key: agent-orchestration:issue-key=s2-recovery-002
+
+## Objective
+Test every destroy/recreate guard so an operator cannot accidentally remove a live Demo or bypass backup verification through malformed arguments or environment state.
+
+## In scope
+- Cover dry-run/default behaviour, explicit apply confirmation, instance identity checks, backup prerequisite checks, and refusal when an unexpected resource is present.
+- Ensure no direct stop/delete command can be reached from a rejected path.
+- Add clear operator-facing errors.
+
+## Out of scope
+- Running a real destroy, changing billing resources, or deciding whether destroy/recreate is the approved operating model.
+
+## Acceptance criteria
+- All invalid/partial invocations exit non-zero before cloud-mutating commands are called.
+- Tests prove guard order: identity and backup validation precede destructive command construction.
+- The only path eligible to reach an apply operation requires explicit operator intent and a validated recovery point.
+- Documentation distinguishes test/dry-run from execution.
+
+## Relevant boundaries
+infra/scripts/destroy-demo.sh; infra/scripts/stop-demo.sh; infra/scripts/wake-demo.sh.
+
+## Dependencies and verification
+Blocked by s2-recovery-001. Run mocked AWS-command tests and shell lint.
+
+## Stop condition
+Stop if testability requires using real AWS credentials or a real destructive action.
+
+=== ISSUE: TASK: Add a mocked recreate-and-restore recovery smoke test ===
+Parent: #101
+Status: Blocked (by s2-host-003, s2-recovery-001, s2-recovery-002)
+Priority/Risk/Area: P0 / High / Recovery
+Stable key: agent-orchestration:issue-key=s2-recovery-003
+
+## Objective
+Exercise the full recovery orchestration with mocked cloud and SSH boundaries, proving the intended command sequence and post-restore health gate without touching AWS.
+
+## In scope
+- Build fixtures for Terraform, AWS CLI, SSH/SCP/rsync, recovery archives, and host health.
+- Assert recreate plan, explicit apply branch, artifact transfer, restore, runtime start, and final health ordering.
+- Include injected failures at each external boundary.
+
+## Out of scope
+- Proof that AWS itself recreates a machine or that the production endpoint is healthy.
+
+## Acceptance criteria
+- Success fixture produces an auditable redacted transcript from recovery-point validation through health success.
+- Failed plan/apply, transfer, restore, and health each stop later stages and return non-zero.
+- No test calls an external network service or uses a real SSH key.
+- The suite can run repeatedly in CI on a clean checkout.
+
+## Relevant boundaries
+infra/scripts/wake-demo.sh; deploy/restore.sh; test fixtures and CI scripts.
+
+## Dependencies and verification
+Blocked by s2-host-003, s2-recovery-001, and s2-recovery-002. Run the new smoke suite twice and npm run check.
+
+## Stop condition
+Stop if the test can only be made credible by storing a private key, Terraform state, or AWS fixture data containing identifiers.
+
+=== ISSUE: TASK: Complete the cost-safety audit expected-state policy matrix ===
+Parent: #100
+Status: Ready
+Priority/Risk/Area: P1 / Medium / Operations
+Stable key: agent-orchestration:issue-key=s2-audit-001
+
+## Objective
+Expand the periodic audit into an explicit, tested policy for expected Demo-off, expected Demo-running, and unexpected billable-resource states.
+
+## In scope
+- Model the tagged instance, static IP, snapshots/distribution where configured, and backup retention observations.
+- Produce deterministic findings with severity, resource identifier class, expected state, and safe remediation reference.
+- Test normal and abnormal inventory matrices with mocked AWS responses.
+
+## Out of scope
+- Automatically stopping/deleting resources, billing-cap claims, or inspecting backup contents.
+
+## Acceptance criteria
+- Expected stopped and approved active Demo states report distinct non-error outcomes.
+- Running/orphaned/unattached/unexpected resources report actionable failures.
+- Output avoids credentials, object data, and unredacted backup names.
+- Test fixtures cover absent optional resources and AWS read errors.
+
+## Relevant boundaries
+infra/terraform/demo/lambda/cost_safety_audit.py; its tests; Terraform audit configuration.
+
+## Dependencies and verification
+No external dependency. Run focused Python tests and Terraform fmt/validate where available.
+
+## Stop condition
+Stop if an expected-state definition conflicts with the unresolved human decision about stop versus destroy/recreate.
+
+=== ISSUE: TASK: Isolate the cost-audit notification publisher behind a tested adapter ===
+Parent: #100
+Status: Blocked (by s2-audit-001)
+Priority/Risk/Area: P1 / Medium / Operations
+Stable key: agent-orchestration:issue-key=s2-audit-002
+
+## Objective
+Make audit notification delivery configurable and testable without embedding an email address, chat webhook, or operator identity in Terraform or code.
+
+## In scope
+- Define a minimal publisher interface and structured audit event payload.
+- Provide a disabled/no-op and a managed-notification implementation selected only by non-secret configuration.
+- Test success, delivery failure, disabled delivery, and payload redaction.
+
+## Out of scope
+- Choosing recipients, subscribing an endpoint, sending a real notification, or adding a third-party service.
+
+## Acceptance criteria
+- A failing audit produces one stable notification event when delivery is configured.
+- Publisher failure is visible in logs/metrics without masking the audit result.
+- Disabled configuration produces no false claim that an operator was notified.
+- Tests prove no contact address, webhook, or credential is committed.
+
+## Relevant boundaries
+cost_safety_audit.py; Terraform variables/outputs; unit tests.
+
+## Dependencies and verification
+Blocked by s2-audit-001. Run focused Python tests and Terraform fmt/validate.
+
+## Stop condition
+Stop for a human choice if a concrete notification destination is required to proceed.
+
+=== ISSUE: TASK: Enforce audit least privilege with Terraform and policy tests ===
+Parent: #100
+Status: Blocked (by s2-audit-001)
+Priority/Risk/Area: P1 / High / Security
+Stable key: agent-orchestration:issue-key=s2-audit-003
+
+## Objective
+Prove the audit scheduler can only read the intended Demo inventory and publish its configured finding; it must not mutate Lightsail, S3, or account state.
+
+## In scope
+- Tighten and test IAM action/resource conditions for the audit Lambda and scheduler.
+- Add static assertions for forbidden mutation actions and expected logging/notification permissions.
+- Keep policy inputs parameterised and inspectable in Terraform plans.
+
+## Out of scope
+- Applying IAM changes, creating an organisation/SCP, or granting CI credentials.
+
+## Acceptance criteria
+- Policy tests reject stop/delete/terminate/write permissions on compute, bucket objects, and IAM.
+- Required read/list/log/publish permissions are explicitly enumerated and scoped.
+- Terraform formatting and validation pass without an account apply.
+- Documentation states the audit observes and alerts; it never remediates.
+
+## Relevant boundaries
+infra/terraform/demo/cost-safety-audit.tf; automation.tf; tests and README.
+
+## Dependencies and verification
+Blocked by s2-audit-001. Run policy tests, terraform fmt -check, and terraform validate.
+
+## Stop condition
+Stop if policy scoping requires account IDs, an SNS topic ARN, or an organisation decision not represented by non-secret variables.
+
+=== ISSUE: TASK: Add a production-web artifact and same-origin routing smoke test ===
+Parent: #24
+Status: Ready
+Priority/Risk/Area: P1 / Medium / Web deployment
+Stable key: agent-orchestration:issue-key=s2-web-001
+
+## Objective
+Prove the exported Expo web artifact can be served with SPA fallback while API requests retain the intended same-origin path and never fall back to static HTML.
+
+## In scope
+- Build the web artifact in an isolated test workspace.
+- Serve it through the local production-shaped proxy/container arrangement.
+- Test deep-link fallback, static assets, API proxying, unavailable API, and cache-control boundaries.
+
+## Out of scope
+- Provisioning the Lightsail distribution or testing a public cloudfront.net URL.
+
+## Acceptance criteria
+- A deep application route returns the web shell, while an API route reaches the runtime and preserves its status code.
+- API failures do not return index.html or expose server paths.
+- Static asset and API cache headers match the documented Demo assumptions.
+- The test runs without AWS credentials or an external URL.
+
+## Relevant boundaries
+package scripts; web export configuration; deploy proxy/container configuration; responsive/browser tests.
+
+## Dependencies and verification
+No external dependency. Run build:web, the smoke suite, and npm run check.
+
+## Stop condition
+Stop if this requires a custom domain, public DNS, or a cloud distribution setting.
+
+=== ISSUE: TASK: Require session-only access in hosted-mode request handling ===
+Parent: #24
+Status: Blocked (by s2-web-001)
+Priority/Risk/Area: P0 / High / Authorisation
+Stable key: agent-orchestration:issue-key=s2-security-001
+
+## Objective
+Prevent every hosted protected route from accepting caller-supplied member identity as a fallback; access must come only from the valid Demo session context.
+
+## In scope
+- Identify protected routes and centralise hosted-mode identity extraction.
+- Reject absent, invalid, expired, and mismatched sessions uniformly.
+- Add regression tests for group, contribution, media, film, archive, reset, and owner-only paths.
+
+## Out of scope
+- Introducing Cognito/OIDC, changing local Demo authentication semantics, or public-user support.
+
+## Acceptance criteria
+- A request cannot gain access by adding memberId/groupId-like query/body/header values.
+- Valid session access still works for authorised members and owners.
+- Cross-group and pre-release denials do not disclose resource existence.
+- Regression suite covers every route class introduced by the hosted Demo path.
+
+## Relevant boundaries
+server/src routes, session/policy modules, server tests, client API boundary.
+
+## Dependencies and verification
+Blocked by s2-web-001 because it validates the deployed request shape. Run focused server tests and npm run check.
+
+## Stop condition
+Stop if implementation reveals a product decision about real authentication rather than the existing synthetic Demo session contract.
+
+=== ISSUE: TASK: Add a production-shaped local browser reset-to-reveal E2E suite ===
+Parent: #24
+Status: Blocked (by s2-host-003, s2-web-001, s2-security-001)
+Priority/Risk/Area: P0 / High / End-to-end quality
+Stable key: agent-orchestration:issue-key=s2-quality-006
+
+## Objective
+Give the team a repeatable browser-level proof of the Sprint 2 Demo journey against the built web artifact and production-shaped local runtime.
+
+## In scope
+- Start from a disposable reset state and use only the labelled server-owned synthetic clip.
+- Exercise Demo access, group/invite, contribution submission, sealed-before-release state, owner advance, authorised playback, and a cross-group denial.
+- Produce concise, redacted test artifacts on failure.
+
+## Out of scope
+- A public hosted smoke test, physical camera recording, real media upload, or visual-polish approval.
+
+## Acceptance criteria
+- The suite proves sealed metadata has no playable URI/control before release.
+- Exactly one released film becomes playable after the owner advance path.
+- A non-member/cross-group session receives the documented safe denial.
+- It runs twice from a clean reset without source edits or retained state.
+- It can run locally in CI with no cloud credentials.
+
+## Relevant boundaries
+web client; server fixtures and API; deploy/compose; existing happy-path and negative-access tests.
+
+## Dependencies and verification
+Blocked by s2-host-003, s2-web-001, and s2-security-001. Run E2E twice plus npm run check.
+
+## Stop condition
+Stop if the only feasible path uses a real device, a public endpoint, or personal media.

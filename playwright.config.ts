@@ -8,7 +8,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'npx expo serve dist --port 8082',
+    command: 'npm run web:smoke-server',
     reuseExistingServer: false,
     timeout: 120_000,
     url: 'http://127.0.0.1:8082',

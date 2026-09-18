@@ -158,8 +158,11 @@ export class LocalRuntimeError extends Error {
 
 function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/$/, '');
+  if (/^\/(?:[^/].*)?$/i.test(trimmed)) return trimmed || '/';
   if (!/^https?:\/\//i.test(trimmed)) {
-    throw new LocalRuntimeError('The local runtime URL must start with http:// or https://.');
+    throw new LocalRuntimeError(
+      'The local runtime URL must start with http://, https://, or a same-origin / path.',
+    );
   }
   return trimmed;
 }
@@ -201,14 +204,14 @@ export class LocalRuntimeClient implements RuntimeClient {
   }
 
   async getGroupForMember(
-    actingMemberId: MemberId,
+    _actingMemberId: MemberId,
     sessionId?: string,
   ): Promise<Group | MembershipDenied> {
     try {
-      const sessionQuery = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
-      const body = await this.request<{ group: Group }>(
-        `/groups/current?memberId=${encodeURIComponent(actingMemberId)}${sessionQuery}`,
-      );
+      // The server derives actor identity from the session. Keep the domain
+      // argument for the repository port, but never serialize it as authority.
+      const sessionQuery = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+      const body = await this.request<{ group: Group }>(`/groups/current${sessionQuery}`);
       return body.group;
     } catch (error) {
       if (error instanceof LocalRuntimeError && error.status === 403)
@@ -219,13 +222,13 @@ export class LocalRuntimeClient implements RuntimeClient {
 
   async getCurrentCycle(
     groupId: string,
-    actingMemberId: MemberId,
+    _actingMemberId: MemberId,
     sessionId?: string,
   ): Promise<CurrentCycleResult> {
     try {
       const sessionQuery = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
       const body = await this.request<{ cycle: Cycle }>(
-        `/cycles/current?groupId=${encodeURIComponent(groupId)}&memberId=${encodeURIComponent(actingMemberId)}${sessionQuery}`,
+        `/cycles/current?groupId=${encodeURIComponent(groupId)}${sessionQuery}`,
       );
       return body.cycle;
     } catch (error) {
@@ -238,14 +241,14 @@ export class LocalRuntimeClient implements RuntimeClient {
 
   async advanceDemoCycle(
     groupId: string,
-    actingMemberId: MemberId,
+    _actingMemberId: MemberId,
     advanceSeconds: number,
     sessionId?: string,
   ): Promise<CycleAdvanceResult> {
     try {
       const sessionQuery = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
       const body = await this.request<{ cycle: Cycle }>(
-        `/cycles/demo/advance?groupId=${encodeURIComponent(groupId)}&memberId=${encodeURIComponent(actingMemberId)}&advanceSeconds=${encodeURIComponent(String(advanceSeconds))}${sessionQuery}`,
+        `/cycles/demo/advance?groupId=${encodeURIComponent(groupId)}&advanceSeconds=${encodeURIComponent(String(advanceSeconds))}${sessionQuery}`,
         { method: 'POST' },
       );
       return body.cycle;

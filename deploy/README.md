@@ -1,33 +1,114 @@
 # Hosted Demo deployment
 
-The hosted Sprint 2 shape is one non-root Node 22 container on the Lightsail
-instance. SQLite and media are bind-mounted from persistent instance storage;
-the container itself is disposable. The service is exposed only on
-`127.0.0.1:8787` until a public HTTPS distribution/reverse proxy is configured.
+The hosted Sprint 2 shape is one non-root Node 22 container on the host. SQLite
+and media are bind-mounted from persistent instance storage;
+the container itself is disposable. The local production-shaped bundle
+exposes the static web shell and same-origin API proxy on `127.0.0.1:8080`; the
+Node runtime remains available on `127.0.0.1:8787` for operator checks. A public
+HTTPS distribution can use the web service as its origin without changing the
+browser request shape.
+
+The web container builds the Expo export with
+`EXPO_PUBLIC_LOCAL_BASE_URL=/api`. Requests under `/api/` are proxied to the
+runtime with the prefix removed, while extension-less routes use the SPA
+`index.html` fallback. Unknown API paths remain JSON errors with their original
+status, API responses are `Cache-Control: no-store`, and content-hashed Expo
+assets are immutable.
 
 ## Persistent mounts and ownership
 
-The compose file maps these host directories:
+The compose file maps two host directories below the deployment's persistent
+data root:
 
-| Host path           | Container path          | Contents                                       |
-| ------------------- | ----------------------- | ---------------------------------------------- |
-| `/srv/rewind/data`  | `/var/lib/rewind`       | `rewind.sqlite` and SQLite `-wal`/`-shm` files |
-| `/srv/rewind/media` | `/var/lib/rewind/media` | server-owned staging and processed media       |
+| Host path                 | Container path          | Contents                                       |
+| ------------------------- | ----------------------- | ---------------------------------------------- |
+| `<persistent-root>/data`  | `/var/lib/rewind`       | `rewind.sqlite` and SQLite `-wal`/`-shm` files |
+| `<persistent-root>/media` | `/var/lib/rewind/media` | server-owned staging and processed media       |
 
-The image runs as UID/GID `10001:10001` (`rewind`), with no root privileges,
-all Linux capabilities dropped, and a read-only container filesystem. Create
-the mount points before the first start and give them to that UID/GID. Do not
-put the database or media under the repository checkout, and do not point a
-mount at `/`, `/srv`, `/tmp`, or another broad system directory.
+The image runs as a fixed non-root runtime identity, with no root privileges,
+all Linux capabilities dropped, and a read-only container filesystem. The
+runtime owns the persistent data and media trees; the approved backup operator
+does not need those files to be world-readable. Do not put the database or
+media under the repository checkout or point a mount at a broad system
+directory.
 
 ```sh
-sudo install -d -o 10001 -g 10001 -m 0750 /srv/rewind/data /srv/rewind/media /srv/rewind/backups
+PERSISTENT_ROOT=/path/to/persistent-root
+sudo install -d -m 0750 "$PERSISTENT_ROOT/data" "$PERSISTENT_ROOT/media" "$PERSISTENT_ROOT/backups"
+```
+
+`deploy/operator-common.sh` is the executable ownership contract. Every
+persistent directory, including nested media directories, is runtime-owned and
+mode `0750`; every regular SQLite, WAL/SHM, and media file is runtime-owned
+and mode `0640`. Recovery staging and reset/migration transitions verify this
+contract before reporting success. Backup archives and manifests are private
+operator artifacts (`0600`), and media is streamed through the running runtime
+for backup so the host never needs a world-readable copy. The focused fixture
+covers fresh, restored, nested-media, runtime read/write, wrong-mode, and
+wrong-owner cases:
+
+```sh
+npm run test:ownership-contract
 ```
 
 `REWIND_DATA_HOST_DIR`, `REWIND_MEDIA_HOST_DIR`, and
 `REWIND_CONTAINER_NAME` are optional compose overrides used by the disposable
 verification sequence below. The normal host defaults remain the `/srv/rewind`
 paths shown above.
+
+## Host bootstrap bundle
+
+Terraform runs `infra/terraform/demo/cloud-init.sh` in two safe phases. The
+first pass installs the Docker/JQ/rsync prerequisites and creates the persistent
+`data`, `media`, and `backups` directories. It writes only
+`.host-bootstrap-prerequisites`; it cannot claim the host is ready before the
+repository bundle exists.
+
+After Terraform creates the instance, `infra/scripts/wake-demo.sh` transfers
+the checked-in repository and private `rewind.env`, then runs the same script
+with `--complete`. Completion installs the compose files, executable operator
+scripts (including `pause-host.sh` and `preflight.sh`), the backup service and timer, and a
+0600 copy of `rewind.env.example` only when no environment file exists. It
+reloads and enables the backup timer, and writes
+`.host-bootstrap-complete` atomically as the final step. Re-running it updates
+bundle files and modes without deleting persistent data or overwriting an
+existing environment file. Any failed prerequisite removes both markers and
+prints the failed action with a retry hint.
+
+The local fixture test covers the first pass, clean completion, repeat
+completion, persistence and a missing-bundle failure:
+
+```sh
+./deploy/tests/host-bootstrap.test.sh
+```
+
+## Hosted-runtime preflight
+
+Before a backup, pause, or recovery operation, run the read-only hosted gate
+from `/srv/rewind`:
+
+```sh
+./deploy/preflight.sh
+./deploy/preflight.sh --json
+```
+
+The command checks seven stable IDs: `config`, `persistent_paths`, `runtime`,
+`migration`, `backup_tooling`, `pause_script`, and `backup_timer`. Human output
+uses fixed `PASS`/`FAIL` lines; JSON contains only `version`, the overall
+`ok` boolean, and each check's `id`, `ok`, and safe `reason` code. It never
+serializes environment values, credentials, host paths, or backup object names.
+Any failed check returns a non-zero status. The command only reads files,
+Compose state, the runtime `/health` endpoint, and systemd timer state; it
+does not repair the host, start or stop containers, run migrations, create a
+backup, or call AWS.
+
+The fixture covers a healthy host plus absent configuration, a missing or
+inactive timer, failed runtime/schema health, and incorrect persistent-data
+ownership:
+
+```sh
+./tests/deploy/host-preflight.test.sh
+```
 
 ## Build, migrate, and start
 
@@ -38,8 +119,38 @@ cp deploy/rewind.env.example /srv/rewind/rewind.env
 docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml build
 docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml run --rm runtime migrate
 docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
-curl --fail http://127.0.0.1:8787/health
+curl --fail http://127.0.0.1:8080/
+curl --fail http://127.0.0.1:8080/api/health
 ```
+
+For a local artifact/proxy smoke test that uses a temporary Expo export and
+temporary SQLite directory, with no AWS credentials or external URL:
+
+```sh
+npm run build:web
+npm run test:web-smoke
+```
+
+The smoke suite proves a deep-link shell fallback, same-origin `/api` status
+preservation, JSON API failures, shell/asset cache headers, and loopback-only
+execution. It does not provision or contact cloud infrastructure.
+
+The browser-level reset-to-reveal proof uses the same local production-shaped
+boundary with `EXPO_PUBLIC_CAMERA_MODE=demo`. Each invocation resets a fresh
+temporary SQLite/media tree before opening the runtime, starts in Demo access
+entry mode, and drives the labelled server-owned synthetic clip control. It
+covers group invitation, sealed-before-release playback denial, owner advance,
+one released playable film, and a cross-group safe denial. The runner executes
+two independent Playwright runs; it strips cloud credential variables from
+child processes, captures no screenshots/video/traces, and writes only a small
+redacted failure summary when a test fails:
+
+```sh
+npm run test:production-e2e
+```
+
+The suite is local-only and does not use real camera media, public endpoints,
+developer data directories, or retained browser/runtime state.
 
 The server owns the migration contract. `migrate` opens the configured
 database, creates any missing migration bookkeeping, applies only the
@@ -85,6 +196,23 @@ checksums and byte counts, uploads all three files with server-side AES256
 encryption, and keeps only the local recovery window. The S3 bucket is
 private; its lifecycle policy is the remote retention control.
 
+The shared `deploy/backup-manifest.sh` validator requires exactly one database
+record and one media record. Their keys must be the generated archive names
+under the configured `REWIND_BACKUP_PREFIX`, with non-negative integer byte
+counts and 64-character SHA-256 checksums. `created_at` must match the UTC
+timestamp in the manifest filename, be a real timestamp, and be no more than
+seven days old by default (override the operator-side `BACKUP_MAX_AGE_SECONDS`
+only when the approved recovery window requires it). A five-minute future
+clock allowance is applied. Invalid JSON, stale timestamps, path traversal,
+cross-prefix keys, filename mismatches, or remote byte metadata mismatches stop
+the workflow before archive download; downloaded files are then checked for
+the recorded bytes and checksums before restore.
+
+The hibernation workflow invokes `./deploy/backup.sh --local-only` on the host;
+that creates the same verified artifacts without requiring AWS credentials on
+the host. The trusted operator then uploads the artifacts to S3 and verifies
+their presence before Terraform deletes compute.
+
 The systemd unit files are templates. Install them on the host only after the
 restricted backup AWS identity has been configured:
 
@@ -115,84 +243,177 @@ cd /srv/rewind
 The script does not download from S3 and does not require production
 credentials. It requires the manifest to be directly inside `BACKUP_DIR`,
 requires the archive names to match that manifest, checks byte counts and
-SHA-256 values, checks gzip integrity, and rejects unsafe media archive paths
-before stopping the runtime or changing live data. It moves the current
-SQLite files and media entries to a timestamped
-`rewind-pre-restore-<timestamp>` recovery directory, installs the verified
-artifact, restores ownership to UID/GID `10001:10001`, and leaves the runtime
-stopped for review. A failed installation attempts to move the previous files
-back. Review the recovery directory before removing it.
+SHA-256 values, checks gzip and SQLite integrity, rejects unsafe media archive
+paths, and extracts into private staging before stopping the runtime or
+changing live data. The host needs the `sqlite3` command for the offline
+integrity gate.
 
-## Pause and resume
+After staged ownership/readability checks pass, the runtime is stopped and the
+previous SQLite files plus the complete media tree are moved into a private
+rollback directory. The staged database and media are then installed, the
+runtime is restarted, and its container health check must become healthy before
+the rollback and staging directories are removed. A checksum, extraction,
+permission, replacement, or readiness failure removes partial output, moves
+the previous files back, stops the failed runtime, and reports whether cleanup
+completed. The successful operation leaves the runtime healthy and leaves no
+temporary restore material.
 
-Normal pause runs **on the Lightsail host**:
-
-```sh
-cd /srv/rewind
-./deploy/pause-host.sh
-```
-
-It backs up and verifies SQLite plus media in S3, stops Docker, and then powers
-off the host. A failed backup prevents shutdown. Resume from the trusted
-operator machine with:
+The disposable failure-injection harness covers corrupt database/media,
+checksum mismatch, extraction failure, ownership failure, readiness failure,
+successful replacement, and the absence of partial media output:
 
 ```sh
-./infra/scripts/wake-demo.sh
+npm run test:restore-atomic
 ```
 
-The local command assumes the restricted `rewind-demo-operator` AWS profile
-and invokes the controller Lambda; it has no direct Lightsail permission. To
-stop from the operator machine after a host backup, pass the uploaded manifest:
+## Hibernation and recovery
+
+The hosted Demo now uses delete-and-recreate hibernation. A stopped Lightsail
+instance still incurs its monthly bundle charge, so the normal lifecycle is:
+
+1. Back up SQLite and media on the live host.
+2. Verify the uploaded S3 manifest.
+3. Apply Terraform with `demo_instance_enabled=false` to delete only the
+   disposable compute resources.
+4. Recreate the instance with Terraform, rebuild the runtime, restore the
+   selected S3 recovery point, and start the service.
+
+The lifecycle scripts are read-only by default. Before either workflow reaches
+Terraform apply, they verify the configured AWS account identity, the exact
+Terraform-managed Demo tags and instance/static-IP inventory, and the absence
+of unexpected Rewind resources. Invalid flags, partial arguments, identity
+mismatches, and unsafe inventory states stop before SSH, SCP, rsync, S3 upload,
+or Terraform plan/apply construction.
+
+From the trusted operator machine, first run the read-only hibernation plan:
 
 ```sh
-./infra/scripts/stop-demo.sh rewind-demo/rewind-<timestamp>.manifest.json
+cd /path/to/rewind-app
+export TF_AWS_PROFILE=rewind-terraform-apply
+./infra/scripts/destroy-demo.sh --dry-run
 ```
 
-`infra/scripts/emergency-stop-demo.sh --i-have-a-current-s3-backup` is only
-for when the host cannot be reached; it deliberately requires acknowledgement
-because it cannot make the backup itself.
+The default invocation is equivalent to `--dry-run`; `--confirm` without
+`--apply` is also still read-only. Only after the identity, inventory, backup
+contract, and Terraform plan have passed may an operator request execution:
 
-Stopping Lightsail does **not** stop its fixed monthly bundle charge. For
-near-zero recurring compute cost, make a verified backup and deliberately
-delete the instance and static IP through a separately reviewed Terraform
-teardown. S3 and CloudTrail storage remain as the small residual cost.
+```sh
+./infra/scripts/destroy-demo.sh --apply --confirm
+```
+
+The apply path then asks the host to create a consistent local snapshot, copies
+the manifest and matching archives to the trusted operator machine, validates
+the manifest and checksums, uploads them to S3, and verifies all three objects
+before Terraform is allowed to delete compute. This means a recreated host
+does not need the old host's AWS CLI credentials. The default hibernation also
+deletes the static IP to remove its residual charge, so the next wake may
+receive a new IP. Set `retain_static_ip_when_instance_deleted=true` in the
+reviewed Terraform variables only when endpoint stability is worth that
+charge.
+
+To recreate the host from the newest backup, keep a private local copy of
+`deploy/rewind.env` in `REWIND_ENV_FILE`, then review and apply:
+
+```sh
+export REWIND_ENV_FILE=/private/path/rewind.env
+./infra/scripts/wake-demo.sh --latest
+./infra/scripts/wake-demo.sh --latest --apply --confirm
+```
+
+You can select an exact recovery point with
+`--manifest s3://rewind-demo-backups-.../rewind-demo/rewind-<timestamp>.manifest.json`.
+Before Terraform plan or any host connection, the wake script verifies both AWS
+identities, refuses an existing or unexpected Rewind resource, and validates
+the selected manifest and both matching S3 archives. `--latest` scans all manifest-shaped
+objects, rejects malformed, incomplete, cross-prefix, byte-mismatched, and
+checksum-mismatched candidates, and then chooses the greatest validated
+manifest timestamp; S3 listing order and object modification time are not
+trusted. Explicit `--manifest` selections use the same bucket, prefix, name,
+archive-size, and checksum checks. A failed selection performs no Terraform
+plan/apply, SSH, SCP, rsync, or host mutation. The only historical-recovery
+execution form is `--apply --confirm`; the default and `--dry-run` forms stop
+after the reviewed plan.
+
+The wake script then creates the new host, waits for cloud-init, copies the
+runtime bundle, transfers the already-verified recovery point, restores it
+through `restore.sh`, and checks `/health` before reporting success. Run the
+hermetic selection tests with `npm run test:wake-recovery-selection`.
+
+The higher-level recreate-and-restore smoke suite runs the unchanged wake
+orchestrator with local fakes for AWS, Terraform, SSH, SCP, rsync, and Docker.
+It executes the real `deploy/restore.sh` against a disposable fixture host and
+prints a redacted stage transcript covering recovery-point validation, plan,
+apply, transfer, restore, runtime start, and final health. Separate runs inject
+failures at plan, apply, recovery transfer, restore start, and final health;
+each asserts that no later stage runs. It never contacts a network, reads an
+SSH key, uses AWS credentials, or writes Terraform state:
+
+```sh
+npm run test:recovery-smoke
+```
+
+Run it twice when changing recovery orchestration to prove the fixture is
+repeatable on a clean temporary directory. The transcript intentionally uses
+stage labels instead of command arguments, paths, object names, or command
+output so it remains auditable without exposing environment-specific data.
+
+Because this account's former instance was deleted before a complete recovery
+point existed, first installation can use the explicit seed path:
+
+```sh
+./infra/scripts/wake-demo.sh --seed
+./infra/scripts/wake-demo.sh --seed --apply --confirm
+```
+
+Seed mode creates the deterministic Demo and runs migrations; it is not a
+historical restore or a substitute for a verified recovery point. It is the
+explicit first-install exception to the recovery-point guard and must never be
+used to replace an existing host. Run a full host backup afterward and verify
+that the S3 manifest, SQLite archive, and media archive all exist before using
+`destroy-demo.sh`.
+
+`infra/scripts/stop-demo.sh` is retained only as a compatibility name and now
+delegates to the same guarded, backup-gated hibernation workflow. It inherits
+the read-only default and requires `--apply --confirm` for execution. The
+emergency stop script is not a recovery workflow: it remains an incident-only
+last resort when the host cannot be reached and cannot create a backup itself.
+
+Run the mocked lifecycle guard suite to exercise confirmation ordering,
+identity mismatches, unexpected resources, dry-run behavior, and backup-gate
+failures without AWS credentials or a real host:
+
+```sh
+npm run test:lifecycle-guards
+```
 
 ## Repeatable disposable-Demo verification
 
-This sequence uses fresh local bind mounts and a separate container name. It
-does not upload data, use AWS credentials, or touch `/srv/rewind`. Run it from
-the repository root with Docker available:
+Run the hermetic host-lifecycle harness from the repository root with Docker
+available:
 
 ```sh
-DEMO_ROOT="$(mktemp -d /tmp/rewind-disposable.XXXXXX)"
-mkdir -p "$DEMO_ROOT/data" "$DEMO_ROOT/media" "$DEMO_ROOT/backups"
-cp deploy/rewind.env.example "$DEMO_ROOT/rewind.env"
-sudo chown -R 10001:10001 "$DEMO_ROOT/data" "$DEMO_ROOT/media"
-
-export REWIND_DATA_HOST_DIR="$DEMO_ROOT/data"
-export REWIND_MEDIA_HOST_DIR="$DEMO_ROOT/media"
-export REWIND_CONTAINER_NAME=rewind-disposable-runtime
-COMPOSE=(docker compose --env-file "$DEMO_ROOT/rewind.env" -f "$PWD/deploy/compose.yaml" -p rewind-disposable)
-
-"${COMPOSE[@]}" build
-"${COMPOSE[@]}" run --rm runtime migrate
-"${COMPOSE[@]}" run --rm runtime preflight --json > "$DEMO_ROOT/preflight.json"
-jq -e '.ok == true' "$DEMO_ROOT/preflight.json"
-"${COMPOSE[@]}" up -d
-curl --fail http://127.0.0.1:8787/health
-"${COMPOSE[@]}" exec -T runtime sh -c 'test "$(id -u)" = 10001'
-
-"${COMPOSE[@]}" stop runtime
-"${COMPOSE[@]}" run --rm runtime reset
-"${COMPOSE[@]}" up -d
-curl --fail http://127.0.0.1:8787/health
-"${COMPOSE[@]}" down
-rm -rf -- "$DEMO_ROOT"
+npm run test:host-lifecycle
 ```
 
-The expected evidence is a successful preflight, HTTP 200 health response
-before and after reset, and a non-root runtime UID. If a check fails, inspect
-`$DEMO_ROOT/preflight.json` and the compose logs before cleaning up. The
-operator wrappers above additionally verify the backup/restore safety gates;
-this disposable sequence intentionally exercises the server’s additive
-migration and reset contract without needing a real backup bucket.
+The command creates fresh temporary `data`, `media`, and Compose environment
+directories, chooses loopback ports, and uses a unique Compose project. It
+builds only the runtime image, runs migration/seed, checks health, creates an
+owner session, writes fixture-only persistence sentinels, stops and restarts
+the runtime, verifies the session and media survived, performs the owner reset,
+then verifies post-reset health, restored Demo rows, removal of Demo media, and
+preservation of a non-Demo sentinel. It always runs `compose down --volumes
+--remove-orphans` and removes the temporary root, including after an assertion
+or timeout failure.
+
+The harness never reads or writes `/srv/rewind`, a checkout data directory, AWS,
+or a public URL. Failure output is limited to redacted Compose status/log
+diagnostics; paths, environment values, invitation codes, and media content
+are not emitted. The default wall-clock bound is five minutes and can be
+adjusted for a slower local Docker engine with
+`--timeout-seconds 15..900`.
+
+The Docker-free contract and redaction tests are:
+
+```sh
+node --test tests/deploy/host-lifecycle-smoke.test.mjs
+```
