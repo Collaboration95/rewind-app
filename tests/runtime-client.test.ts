@@ -30,6 +30,27 @@ describe('LocalRuntimeClient', () => {
     );
   });
 
+  it('supports a same-origin API prefix for the production web proxy', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      response(200, {
+        ok: true,
+        service: 'rewind-local-runtime',
+        version: '0.1.0',
+        ready: true,
+        checks: { sqlite: true, ffmpegConfigured: true },
+        addresses: { local: 'http://127.0.0.1:8787', lan: null },
+      }),
+    );
+    const client = new LocalRuntimeClient('/api', fetchImpl);
+
+    expect(client.baseUrl).toBe('/api');
+    await expect(client.getHealth()).resolves.toMatchObject({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      '/api/health',
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    );
+  });
+
   it('maps a safe membership denial and not-found cycle without exposing transport details', async () => {
     const fetchImpl = jest
       .fn()
@@ -46,6 +67,32 @@ describe('LocalRuntimeClient', () => {
     await expect(client.getCurrentCycle('demo-group', 'demo-1')).resolves.toEqual({
       kind: 'NotFound',
     });
+  });
+
+  it('does not serialize caller member identity on hosted group or cycle requests', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(response(200, { group: { id: 'demo-group' } }))
+      .mockResolvedValueOnce(response(200, { cycle: { id: 'demo-cycle' } }))
+      .mockResolvedValueOnce(response(200, { cycle: { id: 'demo-cycle' } }));
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+
+    await client.getGroupForMember('demo-1', 'session-1');
+    await client.getCurrentCycle('demo-group', 'demo-1', 'session-1');
+    await client.advanceDemoCycle('demo-group', 'demo-1', 60, 'session-1');
+
+    for (const [input] of fetchImpl.mock.calls) {
+      expect(String(input)).not.toContain('memberId=');
+    }
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      'http://localhost:8787/groups/current?sessionId=session-1',
+    );
+    expect(fetchImpl.mock.calls[1][0]).toBe(
+      'http://localhost:8787/cycles/current?groupId=demo-group&sessionId=session-1',
+    );
+    expect(fetchImpl.mock.calls[2][0]).toBe(
+      'http://localhost:8787/cycles/demo/advance?groupId=demo-group&advanceSeconds=60&sessionId=session-1',
+    );
   });
 
   it('returns an actionable error when the local service cannot be reached', async () => {
@@ -112,6 +159,88 @@ describe('LocalRuntimeClient', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('maps a ready premiere path to a runtime URL without inventing one before release', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(response(200, { premiere: { state: 'locked', cycleId: 'cycle-1' } }))
+      .mockResolvedValueOnce(
+        response(200, {
+          premiere: {
+            state: 'ready',
+            cycleId: 'cycle-1',
+            filmId: 'film-1',
+            playbackPath: '/films/film-1/play?groupId=group-1&sessionId=session-1',
+          },
+        }),
+      );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.getPremiere('session-1', 'group-1', 'cycle-1')).resolves.toEqual({
+      state: 'locked',
+      cycleId: 'cycle-1',
+    });
+    await expect(client.getPremiere('session-1', 'group-1', 'cycle-1')).resolves.toEqual({
+      state: 'ready',
+      cycleId: 'cycle-1',
+      filmId: 'film-1',
+      playbackUrl: 'http://localhost:8787/films/film-1/play?groupId=group-1&sessionId=session-1',
+    });
+    expect(fetchImpl.mock.calls[0][0]).toContain(
+      '/cycles/cycle-1/premiere?groupId=group-1&sessionId=session-1',
+    );
+  });
+
+  it('maps released archive download paths to runtime URLs without exposing server paths', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      response(200, {
+        archive: {
+          films: [
+            {
+              id: 'film-1',
+              cycleId: 'cycle-1',
+              publishedAt: '2026-09-18T00:00:00.000Z',
+              downloadPath: '/films/film-1/download?groupId=group-1&sessionId=session-1',
+            },
+          ],
+          clips: [
+            {
+              id: 'clip-1',
+              contributionId: 'contribution-1',
+              cycleId: 'cycle-1',
+              createdAt: '2026-09-12T00:00:00.000Z',
+              downloadPath: '/clips/clip-1/download?groupId=group-1&sessionId=session-1',
+            },
+          ],
+        },
+      }),
+    );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.getReleasedArchive('session-1', 'group-1')).resolves.toEqual({
+      films: [
+        {
+          id: 'film-1',
+          cycleId: 'cycle-1',
+          publishedAt: '2026-09-18T00:00:00.000Z',
+          downloadUrl:
+            'http://localhost:8787/films/film-1/download?groupId=group-1&sessionId=session-1',
+        },
+      ],
+      clips: [
+        {
+          id: 'clip-1',
+          contributionId: 'contribution-1',
+          cycleId: 'cycle-1',
+          createdAt: '2026-09-12T00:00:00.000Z',
+          downloadUrl:
+            'http://localhost:8787/clips/clip-1/download?groupId=group-1&sessionId=session-1',
+        },
+      ],
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://localhost:8787/archive?groupId=group-1&sessionId=session-1',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it('uploads captured bytes to the server-owned staging endpoint', async () => {
@@ -233,7 +362,25 @@ describe('LocalRuntimeClient', () => {
       id: 'demo-cycle',
     });
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://localhost:8787/cycles/demo/advance?groupId=demo-group&memberId=demo-1&advanceSeconds=3600',
+      'http://localhost:8787/cycles/demo/advance?groupId=demo-group&advanceSeconds=3600',
+      expect.objectContaining({ method: 'POST', headers: { Accept: 'application/json' } }),
+    );
+  });
+
+  it('progresses the owner-only local reveal through a session-bound route', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValue(
+        response(200, { reveal: { state: 'compiling', cycleId: 'cycle-1', jobId: 'film-1' } }),
+      );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.revealDemoCycle('session-1', 'group-1')).resolves.toEqual({
+      state: 'compiling',
+      cycleId: 'cycle-1',
+      jobId: 'film-1',
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://localhost:8787/demo/reveal?sessionId=session-1&groupId=group-1',
       expect.objectContaining({ method: 'POST', headers: { Accept: 'application/json' } }),
     );
   });
@@ -353,6 +500,27 @@ describe('LocalRuntimeClient', () => {
         headers: { Accept: 'application/json', 'Content-Type': 'video/mp4' },
         method: 'POST',
       }),
+    );
+  });
+
+  it('creates a fresh synthetic Demo contribution only through the session-bound route', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      response(201, {
+        upload: {
+          existing: false,
+          contribution: { id: 'contribution-1', durationSeconds: 2 },
+          job: { id: 'job-1', status: 'pending' },
+        },
+        synthetic: true,
+      }),
+    );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.createSyntheticDemoClip('session-1', 'group-1')).resolves.toMatchObject({
+      job: { id: 'job-1', status: 'pending' },
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://localhost:8787/demo/synthetic-clip?sessionId=session-1&groupId=group-1',
+      expect.objectContaining({ method: 'POST', headers: { Accept: 'application/json' } }),
     );
   });
 });

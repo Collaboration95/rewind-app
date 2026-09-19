@@ -24,6 +24,17 @@ export interface FfmpegProcessResult {
   durationSeconds: number;
 }
 
+export interface FfmpegFilmCompilationInput {
+  /** Already-processed, server-owned portrait clips in chronological order. */
+  inputPaths: string[];
+  outputPath: string;
+}
+
+export interface FfmpegFilmCompilationResult {
+  outputPath: string;
+  durationSeconds: number;
+}
+
 export interface FfmpegMediaProbeResult {
   mimeType: 'video/mp4';
   byteLength: number;
@@ -31,6 +42,49 @@ export interface FfmpegMediaProbeResult {
   width: number;
   height: number;
   hasAudio: boolean;
+}
+
+/** Create a deterministic, non-sensitive portrait source for the local Demo.
+ * Callers still must place and stage the result through the normal capability
+ * boundary before it can become a contribution. */
+export async function generateSyntheticDemoClip(
+  ffmpegBin: string,
+  outputPath: string,
+): Promise<FfmpegMediaProbeResult> {
+  try {
+    await execFileAsync(ffmpegBin, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=180x320:rate=12:duration=2',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=880:sample_rate=44100:duration=2',
+      '-map',
+      '0:v:0',
+      '-map',
+      '1:a:0',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-shortest',
+      outputPath,
+    ]);
+    return await probeClipWithFfmpeg(ffmpegBin, outputPath);
+  } catch {
+    throw new FfmpegProcessingError(
+      'process_failed',
+      'The synthetic Demo clip could not be prepared.',
+    );
+  }
 }
 
 /**
@@ -183,6 +237,87 @@ export async function processClipWithFfmpeg(
       code === 'source_unavailable'
         ? 'The temporary media source is unavailable.'
         : 'FFmpeg could not process the clip. Retry the job.',
+    );
+  }
+}
+
+/**
+ * Concatenate retained clips without a shell. Each input is normalized before
+ * concat so a valid but differently encoded processed clip cannot make the
+ * final MP4 unplayable. Loudness is normalized once across the complete film.
+ */
+export async function compileFilmWithFfmpeg(
+  ffmpegBin: string,
+  input: FfmpegFilmCompilationInput,
+): Promise<FfmpegFilmCompilationResult> {
+  if (
+    !input.outputPath ||
+    input.inputPaths.length === 0 ||
+    input.inputPaths.some((path) => !path)
+  ) {
+    throw new FfmpegProcessingError(
+      'invalid_metadata',
+      'The film compilation metadata is invalid.',
+    );
+  }
+  const videoFilters = input.inputPaths.map(
+    (_, index) =>
+      `[${index}:v:0]scale=180:320:force_original_aspect_ratio=decrease,` +
+      `pad=180:320:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS[v${index}]`,
+  );
+  const audioFilters = input.inputPaths.map(
+    (_, index) =>
+      `[${index}:a:0]aformat=sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a${index}]`,
+  );
+  const concatInputs = input.inputPaths
+    .flatMap((_, index) => [`[v${index}]`, `[a${index}]`])
+    .join('');
+  const filterComplex = [
+    ...videoFilters,
+    ...audioFilters,
+    `${concatInputs}concat=n=${input.inputPaths.length}:v=1:a=1[video][audio]`,
+    '[audio]loudnorm=I=-16:TP=-1.5:LRA=11[normalizedAudio]',
+  ].join(';');
+  try {
+    await execFileAsync(
+      ffmpegBin,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        ...input.inputPaths.flatMap((path) => ['-i', path]),
+        '-filter_complex',
+        filterComplex,
+        '-map',
+        '[video]',
+        '-map',
+        '[normalizedAudio]',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-bf',
+        '0',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-ar',
+        '44100',
+        '-movflags',
+        '+faststart',
+        input.outputPath,
+      ],
+      { timeout: 120_000, maxBuffer: 2_000_000 },
+    );
+    const output = await probeClipWithFfmpeg(ffmpegBin, input.outputPath);
+    return { outputPath: input.outputPath, durationSeconds: output.durationSeconds };
+  } catch (error) {
+    if (error instanceof FfmpegProcessingError) throw error;
+    throw new FfmpegProcessingError(
+      'process_failed',
+      'FFmpeg could not compile the film. Retry the job.',
     );
   }
 }

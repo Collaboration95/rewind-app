@@ -1,5 +1,6 @@
 import type { RewindDatabase } from './db';
 import { isMember, isOwner } from './db';
+import type { DemoRequestIdentity } from './session/request';
 
 export type ProtectedResource = 'group' | 'message' | 'contribution' | 'clip' | 'film' | 'download';
 
@@ -40,4 +41,27 @@ export function authorizeOwner(
 ): MembershipDecision {
   if (!actingMemberId || !isOwner(database, groupId, actingMemberId)) return SAFE_DENIAL;
   return { allowed: true };
+}
+
+/**
+ * Hosted-route policy: bind both the actor and the selected group to the
+ * validated Demo session before evaluating resource membership.
+ */
+export function authorizeSessionMember(
+  database: RewindDatabase,
+  groupId: string,
+  identity: DemoRequestIdentity | null | undefined,
+  resource: ProtectedResource,
+): MembershipDecision {
+  if (!identity || identity.groupId !== groupId) return SAFE_DENIAL;
+  return authorizeMember(database, groupId, identity.memberId, resource);
+}
+
+export function authorizeSessionOwner(
+  database: RewindDatabase,
+  groupId: string,
+  identity: DemoRequestIdentity | null | undefined,
+): MembershipDecision {
+  if (!identity || identity.groupId !== groupId) return SAFE_DENIAL;
+  return authorizeOwner(database, groupId, identity.memberId);
 }

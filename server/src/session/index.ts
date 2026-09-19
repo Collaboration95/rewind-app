@@ -202,10 +202,11 @@ export function updateDemoSessionGroup(
   database: RewindDatabase,
   sessionId: string,
   groupId: string,
+  now = new Date(),
 ): UpdateDemoSessionGroupResult {
   const session = getDemoSession(database, sessionId);
   if (!session) return { ok: false, reason: 'missing' };
-  if (session.invalidatedAt || classifyDemoSession(session.expiresAt, null) !== 'valid') {
+  if (session.invalidatedAt || classifyDemoSession(session.expiresAt, null, now) !== 'valid') {
     return { ok: false, reason: 'inactive' };
   }
   if (

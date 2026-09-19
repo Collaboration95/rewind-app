@@ -13,9 +13,10 @@ What is live
 - Account 330599756236; default region ap-southeast-1; Lightsail host AZ
   ap-southeast-1a. The account is standalone: AWS Organizations/SCPs do not
   apply.
-- Existing `rewind-demo` Lightsail instance and static IP are Terraform
-  managed and protected with prevent_destroy. Its current bundle is
-  `micro_3_0`.
+- The `rewind-demo` Lightsail instance and static IP are Terraform managed.
+  The instance is disposable: `demo_instance_enabled=false` deliberately
+  hibernates it after a verified backup, deleting the static IP by default as
+  well. Its bundle is `micro_3_0`.
 - Private, encrypted, versioned S3 buckets exist for Terraform state, demo
   backups, and CloudTrail management logs. Lifecycle retention limits backup
   storage (30 days), release artifacts (3 days), audit logs (30 days), and
@@ -23,10 +24,19 @@ What is live
 - CloudTrail management logging, a 7-day controller Lambda log group, and a
   $15 monthly AWS Budget exist. Actual cost notifications go to the configured
   recipients at $10 warning and $15 critical.
-- The AWS power controller Lambda can start `rewind-demo`, or stop it only
-  after it verifies a fresh backup manifest in the private backup bucket.
-  `wake-demo.sh` and `stop-demo.sh` invoke it; the stop input must be the
-  manifest uploaded by the host backup workflow.
+- The normal lifecycle is Terraform hibernation: a verified host backup is
+  followed by `infra/scripts/destroy-demo.sh`, which sets
+  `demo_instance_enabled=false` and deletes the disposable instance. The
+  recovery script recreates the instance, downloads a selected S3 recovery
+  point, restores it, and starts the runtime. The old power controller is only
+  retained for an already-existing instance.
+- Issue #100 adds a separate read-only cost-safety audit every four hours. Its
+  expected state is configured explicitly as `demo_off`, `expected_stopped`,
+  or `approved_active_demo`. The default is a stopped active Demo; a running
+  Demo is non-error only when `cost_safety_expected_instance_state=running`
+  is explicitly approved. An unconfigured running/present state remains
+  actionable.
+  It has no start, stop, delete, backup-object-read, or recovery permissions.
 
 Access model
 ------------
@@ -63,19 +73,35 @@ instance can still retain billable resources such as its static IP or disks.
 The safer rule is to add no new always-on AWS service until its steady and
 worst-case cost have been reviewed and recorded in Terraform/PR discussion.
 
-For the current demo, use the host's `deploy/pause-host.sh` to back up SQLite
-and media, then shut down the host. Use `infra/scripts/wake-demo.sh` when the
-demo is required again. Do not use a blind scheduled stop: it would bypass the
-backup verification gate. `automatic_start_schedule_expression` is deliberately
-unset, so no automatic startup schedule is active.
+For the current demo, use `infra/scripts/destroy-demo.sh --dry-run` (or no
+arguments) to create and review the read-only hibernation plan, then execute
+only with `--apply --confirm`. Use `infra/scripts/wake-demo.sh --latest` to
+create and review the recovery plan, then use `--latest --apply --confirm` to
+recreate and restore the host. Both scripts verify the AWS account identity,
+Terraform-managed resource identity, and unexpected-resource inventory before
+any execution stage. Do not use a blind scheduled stop: it would bypass the
+backup verification gate.
+`automatic_start_schedule_expression` remains unset because recreation and
+restore require an explicit recovery point.
+
+The cost-safety audit checks the configured Demo power state: a stopped
+`Environment=demo` instance by default, an explicitly approved running
+instance when configured, or the intentional hibernated state where the
+instance is absent. It also checks exact snapshot/distribution allowlists and
+the backup bucket lifecycle rule. Lightsail distributions are read in
+`us-east-1`, including when the allowlist is empty so an unexpected
+distribution is actionable. Audit delivery is disabled by default; when the
+managed SNS publisher is explicitly enabled with a non-secret topic ARN, one
+redacted failure event is sent. Delivery failures remain visible without
+replacing the audit result.
 
 Still to set up before increasing usage
 ----------------------------------------
 1. Deploy the Docker runtime and configure the host's least-privileged S3
-   backup credential/role. The backup and pause scripts are committed, but the
-   hosted application is not yet deployed.
+   backup credential/role. The backup and recreate scripts are committed, but
+   the hosted application still needs a first end-to-end rehearsal.
 2. Finish issue #97: define and migrate the hosted SQLite schema, seed/reset
-   flow, and prove backup restore. Only then rely on automatic safe shutdown.
+   flow, and prove the new-instance backup restore path.
 3. Decide and configure the actual demo operating schedule. If automatic
    starts are wanted, set the Terraform schedule expression; retain a
    backup-gated stop path rather than a timer that simply powers off compute.

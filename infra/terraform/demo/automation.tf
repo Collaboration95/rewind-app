@@ -4,6 +4,31 @@ data "archive_file" "power_controller" {
   output_path = "${path.module}/.terraform/power-controller.zip"
 }
 
+moved {
+  from = aws_iam_role.power_controller
+  to   = aws_iam_role.power_controller[0]
+}
+
+moved {
+  from = aws_iam_role_policy.power_controller
+  to   = aws_iam_role_policy.power_controller[0]
+}
+
+moved {
+  from = aws_lambda_function.power_controller
+  to   = aws_lambda_function.power_controller[0]
+}
+
+moved {
+  from = aws_iam_role_policy.operator
+  to   = aws_iam_role_policy.operator[0]
+}
+
+moved {
+  from = aws_iam_role_policy.scheduler
+  to   = aws_iam_role_policy.scheduler[0]
+}
+
 resource "aws_cloudwatch_log_group" "power_controller" {
   name              = "/aws/lambda/rewind-demo-power-controller"
   retention_in_days = 7
@@ -23,9 +48,10 @@ data "aws_iam_policy_document" "power_controller_assume_role" {
 }
 
 resource "aws_iam_role" "power_controller" {
+  count              = var.demo_instance_enabled ? 1 : 0
   name               = "rewind-demo-power-controller"
   assume_role_policy = data.aws_iam_policy_document.power_controller_assume_role.json
-  description        = "Runs only Rewind demo start and backup-verified stop operations."
+  description        = "Legacy power control for an existing Rewind demo instance; hibernation uses reviewed Terraform instead."
 
   tags = {
     Environment = "demo"
@@ -45,7 +71,7 @@ data "aws_iam_policy_document" "power_controller" {
     sid       = "ControlOnlyTheRewindDemo"
     effect    = "Allow"
     actions   = ["lightsail:StartInstance", "lightsail:StopInstance"]
-    resources = [aws_lightsail_instance.rewind.arn]
+    resources = var.demo_instance_enabled ? [aws_lightsail_instance.rewind[0].arn] : ["arn:aws:lightsail:${var.aws_region}:${var.account_id}:Instance/${local.instance_name}"]
   }
 
   # Lightsail does not support resource-level authorization for this read-only
@@ -66,14 +92,16 @@ data "aws_iam_policy_document" "power_controller" {
 }
 
 resource "aws_iam_role_policy" "power_controller" {
+  count  = var.demo_instance_enabled ? 1 : 0
   name   = "rewind-demo-power-controller"
-  role   = aws_iam_role.power_controller.id
+  role   = aws_iam_role.power_controller[0].id
   policy = data.aws_iam_policy_document.power_controller.json
 }
 
 resource "aws_lambda_function" "power_controller" {
+  count            = var.demo_instance_enabled ? 1 : 0
   function_name    = "rewind-demo-power-controller"
-  description      = "Starts Rewind or stops it only after validating a backup manifest."
+  description      = "Starts or stops an existing Rewind demo instance after the legacy backup gate."
   filename         = data.archive_file.power_controller.output_path
   source_code_hash = data.archive_file.power_controller.output_base64sha256
   handler          = "power_controller.handler"
@@ -81,7 +109,7 @@ resource "aws_lambda_function" "power_controller" {
   architectures    = ["arm64"]
   memory_size      = 128
   timeout          = 15
-  role             = aws_iam_role.power_controller.arn
+  role             = aws_iam_role.power_controller[0].arn
 
   logging_config {
     log_format = "JSON"
@@ -90,7 +118,7 @@ resource "aws_lambda_function" "power_controller" {
 
   environment {
     variables = {
-      INSTANCE_NAME          = aws_lightsail_instance.rewind.name
+      INSTANCE_NAME          = local.instance_name
       BACKUP_BUCKET          = aws_s3_bucket.backups.id
       BACKUP_PREFIX          = "rewind-demo"
       MAX_BACKUP_AGE_MINUTES = "60"
@@ -128,11 +156,12 @@ data "aws_iam_policy_document" "operator" {
   statement {
     effect    = "Allow"
     actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.power_controller.arn]
+    resources = var.demo_instance_enabled ? [aws_lambda_function.power_controller[0].arn] : ["arn:aws:lambda:${var.aws_region}:${var.account_id}:function:rewind-demo-power-controller"]
   }
 }
 
 resource "aws_iam_role_policy" "operator" {
+  count  = var.demo_instance_enabled ? 1 : 0
   name   = "rewind-demo-operator-invoke"
   role   = aws_iam_role.operator.id
   policy = data.aws_iam_policy_document.operator.json
@@ -175,15 +204,16 @@ resource "aws_iam_role" "scheduler" {
 }
 
 resource "aws_iam_role_policy" "scheduler" {
-  name = "rewind-demo-scheduler-invoke"
-  role = aws_iam_role.scheduler.id
+  count = var.demo_instance_enabled ? 1 : 0
+  name  = "rewind-demo-scheduler-invoke"
+  role  = aws_iam_role.scheduler.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Allow"
       Action   = "lambda:InvokeFunction"
-      Resource = aws_lambda_function.power_controller.arn
+      Resource = try(aws_lambda_function.power_controller[0].arn, null)
     }]
   })
 }
@@ -193,7 +223,7 @@ resource "aws_scheduler_schedule_group" "rewind" {
 }
 
 resource "aws_scheduler_schedule" "automatic_start" {
-  count = var.automatic_start_schedule_expression == null ? 0 : 1
+  count = var.demo_instance_enabled && var.automatic_start_schedule_expression != null ? 1 : 0
 
   name                         = "rewind-demo-automatic-start"
   group_name                   = aws_scheduler_schedule_group.rewind.name
@@ -207,7 +237,7 @@ resource "aws_scheduler_schedule" "automatic_start" {
   }
 
   target {
-    arn      = aws_lambda_function.power_controller.arn
+    arn      = aws_lambda_function.power_controller[0].arn
     role_arn = aws_iam_role.scheduler.arn
     input    = jsonencode({ action = "start" })
   }
@@ -215,7 +245,7 @@ resource "aws_scheduler_schedule" "automatic_start" {
 
 output "power_controller_function_name" {
   description = "Invoke this Lambda with action=start or action=stop plus a backup manifest key."
-  value       = aws_lambda_function.power_controller.function_name
+  value       = try(aws_lambda_function.power_controller[0].function_name, null)
 }
 
 output "operator_role_arn" {

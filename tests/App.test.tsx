@@ -59,6 +59,53 @@ function cycleRepository(
   };
 }
 
+function runtimeClientWithPremiere(
+  premiere:
+    | { state: 'locked' | 'processing' | 'delayed'; cycleId: string }
+    | {
+        state: 'ready';
+        cycleId: string;
+        filmId: string;
+        playbackUrl: string;
+      },
+) {
+  return {
+    baseUrl: 'http://localhost:8787',
+    getHealth: jest.fn().mockResolvedValue({
+      ok: true,
+      service: 'rewind-local-runtime',
+      version: '0.1.0',
+      ready: true,
+      checks: { sqlite: true, ffmpegConfigured: true },
+      addresses: { local: 'http://localhost:8787', lan: null },
+    }),
+    getGroupForMember: jest.fn().mockResolvedValue({
+      id: 'demo-group',
+      name: 'Weekend People',
+      memberIds: ['demo-1'],
+      currentCycleId: 'demo-cycle',
+      actingMemberRole: 'owner',
+    }),
+    getCurrentCycle: jest.fn().mockResolvedValue(cycleFixture({ status: 'revealing' })),
+    advanceDemoCycle: jest.fn().mockResolvedValue({
+      id: 'demo-cycle',
+      groupId: 'demo-group',
+      prompt: 'Prompt',
+      startsAt: '2026-09-01T00:00:00.000Z',
+      endsAt: '2026-09-12T00:00:00.000Z',
+      status: 'collecting',
+      lockState: 'locked',
+      quota: { maxCount: 5, maxSeconds: 30 },
+      contributionUsage: { countUsed: 0, secondsUsed: 0 },
+    }),
+    revealDemoCycle: jest
+      .fn()
+      .mockResolvedValue({ state: 'compiling', cycleId: 'demo-cycle', jobId: 'demo-film' }),
+    getPremiere: jest.fn().mockResolvedValue(premiere),
+    getReleasedArchive: jest.fn().mockResolvedValue({ films: [], clips: [] }),
+  };
+}
+
 describe('Rewind Home start screen', () => {
   it('keeps the application inside the device safe area', async () => {
     const result = await render(<App />);
@@ -98,6 +145,8 @@ describe('Rewind Home start screen', () => {
 
       if (area.key === 'camera') {
         expect(await result.findByRole('header', { name: 'Add a still moment' })).toBeTruthy();
+      } else if (area.key === 'archive') {
+        expect(await result.findByRole('header', { name: 'Premiere unavailable' })).toBeTruthy();
       } else {
         expect(result.getByRole('header', { name: area.label })).toBeTruthy();
       }
@@ -127,11 +176,74 @@ describe('Rewind Home start screen', () => {
     expect(await result.findByTestId('chat-unavailable')).toBeTruthy();
 
     await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
-    expect(
-      result.getByText(
-        'Archive playback is not implemented. Locked moments remain unavailable until reveal.',
-      ),
-    ).toBeTruthy();
+    expect(await result.findByTestId('archive-unavailable')).toBeTruthy();
+  });
+
+  it('renders a player only for a server-published premiere', async () => {
+    const client = runtimeClientWithPremiere({
+      state: 'ready',
+      cycleId: 'demo-cycle',
+      filmId: 'demo-film',
+      playbackUrl: 'http://localhost:8787/films/demo-film/play?sessionId=demo',
+    });
+    const result = await render(<App runtimeClient={client} />);
+    await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
+    expect(await result.findByTestId('archive-video-player')).toBeTruthy();
+    expect(result.queryByTestId('archive-locked')).toBeNull();
+  });
+
+  it('shows the owner-only local reveal control and keeps its lifecycle truthful', async () => {
+    const runtime = runtimeClientWithPremiere({
+      state: 'locked',
+      cycleId: 'demo-cycle',
+    });
+    const result = await render(<App runtimeClient={runtime} />);
+    await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await result.findByTestId('settings-local-reveal');
+    await fireEvent.press(result.getByTestId('progress-local-reveal'));
+    await result.findByText(/durable film job is ready to compile/);
+    expect(runtime.advanceDemoCycle).toHaveBeenCalledWith(
+      'demo-group',
+      'demo-1',
+      24 * 60 * 60,
+      expect.any(String),
+    );
+    expect(runtime.revealDemoCycle).toHaveBeenCalledWith(expect.any(String), 'demo-group');
+    expect(result.getByRole('button', { name: 'Compile and release' })).toBeTruthy();
+  });
+
+  it('keeps the archive player absent while a premiere is locked or delayed', async () => {
+    const client = runtimeClientWithPremiere({ state: 'delayed', cycleId: 'demo-cycle' });
+    const result = await render(<App runtimeClient={client} />);
+    await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
+    expect(await result.findByTestId('archive-delayed')).toBeTruthy();
+    expect(result.getByText('Film delayed')).toBeTruthy();
+    expect(result.queryByTestId('archive-video-player')).toBeNull();
+  });
+
+  it('lists only released media and presents explicit archive empty states', async () => {
+    const client = runtimeClientWithPremiere({ state: 'locked', cycleId: 'demo-cycle' });
+    client.getReleasedArchive.mockResolvedValue({
+      films: [
+        {
+          id: 'film-1',
+          cycleId: 'old-cycle',
+          publishedAt: '2026-09-18T00:00:00.000Z',
+          downloadUrl: 'http://localhost:8787/films/film-1/download?sessionId=demo',
+        },
+      ],
+      clips: [],
+    });
+    const result = await render(<App runtimeClient={client} />);
+    await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
+    expect(await result.findByTestId('archive-released-media')).toBeTruthy();
+    expect(result.getByText('Group film')).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Download released group film' })).toBeTruthy();
+    expect(result.getByTestId('archive-empty-clips')).toBeTruthy();
   });
 
   it('keeps sample moments sealed and routes Add a moment to Camera', async () => {

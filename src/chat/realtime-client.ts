@@ -92,8 +92,11 @@ export class RealtimeChatError extends Error {
 
 function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/$/, '');
+  if (/^\/(?:[^/].*)?$/i.test(trimmed)) return trimmed || '/';
   if (!/^https?:\/\//i.test(trimmed)) {
-    throw new RealtimeChatError('The local realtime URL must start with http:// or https://.');
+    throw new RealtimeChatError(
+      'The local realtime URL must start with http://, https://, or a same-origin / path.',
+    );
   }
   return trimmed;
 }

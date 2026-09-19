@@ -42,5 +42,18 @@ outcomes. They do not fall back to the profile picker and do not create a
 secure authentication claim. `invalidateDemoSession` is terminal for that
 session; a new local Demo access session must be created explicitly.
 
+## Hosted request boundary
+
+Every hosted protected route resolves its actor through the persisted
+`sessionId`. The server ignores `memberId`-like query, body, and header values;
+the request's `groupId` is only a resource selector and must match the session
+group before membership or owner policy runs. Missing, unknown, expired, and
+invalidated sessions return the same session-required response. A valid
+session aimed at another group returns the shared safe denial without probing
+that group's resources.
+
+The web client keeps member ids at the Demo entry/session-creation boundary and
+does not serialize them as authority on hosted group or cycle requests.
+
 The contract deliberately excludes OIDC, passwords, secure tokens, claims,
 external identity providers, and account recovery.

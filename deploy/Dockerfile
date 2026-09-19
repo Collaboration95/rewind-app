@@ -38,5 +38,8 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:8787/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-ENTRYPOINT ["node", "server/dist/cli.js"]
+# Keep runtime-created SQLite, WAL/SHM, and nested media entries inside the
+# same private contract that restore.sh enforces: directories 0750, files 0640.
+# The exec preserves signals and applies to start, migrate, and reset alike.
+ENTRYPOINT ["/bin/sh", "-c", "umask 027; exec node server/dist/cli.js \"$@\"", "rewind-runtime"]
 CMD ["start"]

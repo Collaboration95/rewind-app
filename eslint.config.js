@@ -14,4 +14,12 @@ module.exports = defineConfig([
       'import/no-unresolved': 'off',
     },
   },
+  {
+    files: ['scripts/production-e2e-server.mjs', 'scripts/web-smoke-server.mjs'],
+    rules: {
+      // These harnesses import server/dist after the server TypeScript build;
+      // lint runs before that generated directory exists in clean CI.
+      'import/no-unresolved': 'off',
+    },
+  },
 ]);

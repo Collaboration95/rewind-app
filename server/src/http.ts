@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createWriteStream, existsSync } from 'node:fs';
-import { mkdir, rename, rm } from 'node:fs/promises';
+import { createReadStream, createWriteStream, existsSync } from 'node:fs';
+import { mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import { once } from 'node:events';
@@ -12,10 +12,15 @@ import {
   getCurrentCycle,
   getGroup,
   getMediaJob,
+  getPremiereFilm,
+  getReleasedFilmDownload,
+  getReleasedOwnClipDownload,
   getMessage,
   isMember,
+  listReleasedArchive,
   listProfiles,
   restoreFixture,
+  schemaReadiness,
   type RewindDatabase,
 } from './db';
 import {
@@ -25,9 +30,14 @@ import {
   toggleChatReaction,
 } from './chat';
 import { encodeSseEvent, RealtimeHub } from './realtime';
-import { advanceDemoCycle } from './cycles';
+import { advanceCycleLifecycle, advanceDemoCycle, publishCycleRelease } from './cycles';
 import { classifyDemoSession } from './session/contract';
-import { authorizeMember, SAFE_DENIAL, type ProtectedResource } from './policy';
+import {
+  authorizeSessionMember,
+  authorizeSessionOwner,
+  SAFE_DENIAL,
+  type ProtectedResource,
+} from './policy';
 import {
   createDemoSession,
   getDemoSession,
@@ -35,6 +45,7 @@ import {
   updateDemoSessionGroup,
   validateDemoSession,
 } from './session';
+import { extractDemoRequestIdentity, type DemoRequestIdentity } from './session/request';
 import { createGroup } from './groups';
 import { acceptInvite, createInvite } from './invites';
 import { deleteContribution } from './contributions';
@@ -55,16 +66,25 @@ import {
   waitForStagedIntakesIdle,
   type ClipUploadInput,
 } from './media';
-import { cleanupOrphanedStagedSources, processClipJob } from './jobs';
-import { resolve } from 'node:path';
-import { probeClipWithFfmpeg } from './ffmpeg';
+import {
+  cleanupOrphanedStagedSources,
+  getCompilationJob,
+  processClipJob,
+  processCompilationJob,
+} from './jobs';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { generateSyntheticDemoClip, probeClipWithFfmpeg } from './ffmpeg';
 
 export interface HealthPayload {
-  ok: true;
+  ok: boolean;
   service: 'rewind-local-runtime';
   version: string;
-  ready: true;
-  checks: { sqlite: true; ffmpegConfigured: boolean };
+  ready: boolean;
+  checks: {
+    sqlite: true;
+    ffmpegConfigured: boolean;
+    schema: ReturnType<typeof schemaReadiness>;
+  };
   addresses: { local: string; lan: string | null };
 }
 
@@ -191,24 +211,171 @@ function writeRealtimeAccessDenied(
   );
 }
 
-function actingMember(url: URL): string | null {
-  return url.searchParams.get('memberId');
+function requireSessionIdentity(
+  database: RewindDatabase,
+  url: URL,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  now: Date,
+): DemoRequestIdentity | null {
+  const identity = extractDemoRequestIdentity(database, url, now);
+  if (!identity.ok) {
+    sendSessionRequired(response, config);
+    return null;
+  }
+  return identity.identity;
 }
 
-function sessionMember(database: RewindDatabase, url: URL, now = new Date()): string | null {
-  const sessionId = url.searchParams.get('sessionId');
-  if (!sessionId) return actingMember(url);
-  const result = validateDemoSession(database, sessionId, now);
-  return result.status === 'valid' ? result.session.actor.memberId : null;
+/**
+ * Authorise one group-scoped route using only the persisted session context.
+ * The requested group is a resource selector, never an alternate identity.
+ */
+function requireAuthorisedGroup(
+  database: RewindDatabase,
+  url: URL,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  now: Date,
+  groupId: string | null,
+  resource: ProtectedResource,
+): DemoRequestIdentity | null {
+  const identity = requireSessionIdentity(database, url, response, config, now);
+  if (!identity) return null;
+  if (
+    !groupId ||
+    identity.groupId !== groupId ||
+    !authorizeSessionMember(database, groupId, identity, resource).allowed
+  ) {
+    sendDenied(response, config);
+    return null;
+  }
+  return identity;
 }
 
-function sessionScope(database: RewindDatabase, url: URL, now = new Date()) {
-  const sessionId = url.searchParams.get('sessionId');
-  if (!sessionId) return { memberId: actingMember(url), groupId: null };
-  const result = validateDemoSession(database, sessionId, now);
-  return result.status === 'valid'
-    ? { memberId: result.session.actor.memberId, groupId: result.session.groupId }
-    : { memberId: null, groupId: null };
+function requireAuthorisedOwner(
+  database: RewindDatabase,
+  url: URL,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  now: Date,
+  groupId: string | null,
+): DemoRequestIdentity | null {
+  const identity = requireSessionIdentity(database, url, response, config, now);
+  if (!identity) return null;
+  if (
+    !groupId ||
+    identity.groupId !== groupId ||
+    !authorizeSessionOwner(database, groupId, identity).allowed
+  ) {
+    sendDenied(response, config);
+    return null;
+  }
+  return identity;
+}
+
+type PremiereState = 'locked' | 'processing' | 'delayed' | 'ready';
+
+function premiereState(film: ReturnType<typeof getPremiereFilm>): PremiereState {
+  if (!film) return 'locked';
+  if (film.filmStatus === 'failed' && film.attemptCount >= 3) return 'delayed';
+  if (
+    film.releaseStatus === 'published' &&
+    film.filmStatus === 'ready' &&
+    film.outputPath &&
+    film.filmId
+  ) {
+    return 'ready';
+  }
+  if (film.cycleStatus === 'revealing' || film.cycleStatus === 'archived') return 'processing';
+  return 'locked';
+}
+
+function cycleCompilationJob(database: RewindDatabase, groupId: string, cycleId: string) {
+  const row = database
+    .prepare(
+      `SELECT id FROM media_jobs
+       WHERE group_id = ? AND cycle_id = ? AND kind = 'film'
+       ORDER BY created_at ASC, id ASC LIMIT 1`,
+    )
+    .get(groupId, cycleId) as { id?: string } | undefined;
+  return row?.id ? getCompilationJob(database, row.id, groupId) : null;
+}
+
+async function resolveOwnedProcessedPath(
+  outputPath: string,
+  dataDir: string,
+): Promise<string | null> {
+  try {
+    const processedDir = resolve(dataDir, 'media', 'processed');
+    const [film, processed] = await Promise.all([realpath(outputPath), realpath(processedDir)]);
+    const remainder = relative(processed, film);
+    if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) return null;
+    const details = await stat(film);
+    return details.isFile() && details.size > 0 ? film : null;
+  } catch {
+    return null;
+  }
+}
+
+function streamMp4(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  path: string,
+  size: number,
+  attachmentName?: string,
+): void {
+  const range = request.headers.range;
+  let start = 0;
+  let end = size - 1;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!match) {
+      response.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      response.end();
+      return;
+    }
+    if (!match[1] && !match[2]) {
+      response.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      response.end();
+      return;
+    }
+    if (!match[1]) {
+      const suffixLength = Number(match[2]);
+      start = Math.max(0, size - suffixLength);
+      end = size - 1;
+    } else {
+      start = Number(match[1]);
+      end = match[2] ? Number(match[2]) : end;
+    }
+    if (
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end < start ||
+      start >= size
+    ) {
+      response.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      response.end();
+      return;
+    }
+    end = Math.min(end, size - 1);
+  }
+  const status = range ? 206 : 200;
+  response.writeHead(status, {
+    'Accept-Ranges': 'bytes',
+    'Access-Control-Allow-Origin': config.allowOrigin,
+    'Cache-Control': 'no-store',
+    'Content-Length': String(end - start + 1),
+    'Content-Type': 'video/mp4',
+    ...(attachmentName
+      ? { 'Content-Disposition': `attachment; filename="${attachmentName}"` }
+      : {}),
+    ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
+  });
+  createReadStream(path, { start, end })
+    .on('error', () => response.destroy())
+    .pipe(response);
 }
 
 export interface RuntimeServerOptions {
@@ -276,41 +443,16 @@ async function stageSourceBody(
   }
 }
 
-function authorize(
-  database: RewindDatabase,
-  response: ServerResponse,
-  config: RuntimeConfig,
-  groupId: string,
-  memberId: string | null,
-  resource: ProtectedResource,
-): boolean {
-  const decision = authorizeMember(database, groupId, memberId, resource);
-  if (!decision.allowed) {
-    sendDenied(response, config);
-    return false;
-  }
-  return true;
-}
-
-function groupForMember(database: RewindDatabase, memberId: string | null) {
-  if (!memberId) return null;
-  const row = database
-    .prepare(
-      'SELECT group_id AS groupId FROM memberships WHERE member_id = ? ORDER BY group_id LIMIT 1',
-    )
-    .get(memberId) as { groupId?: string } | undefined;
-  return row?.groupId ? getGroup(database, row.groupId) : null;
-}
-
-function healthPayload(config: RuntimeConfig): HealthPayload {
+function healthPayload(config: RuntimeConfig, database: RewindDatabase): HealthPayload {
   const localHost = config.host === '0.0.0.0' || config.host === '::' ? '127.0.0.1' : config.host;
   const lan = getLanAddress();
+  const schema = schemaReadiness(database);
   return {
-    ok: true,
+    ok: schema.ready,
     service: 'rewind-local-runtime',
     version: SERVICE_VERSION,
-    ready: true,
-    checks: { sqlite: true, ffmpegConfigured: Boolean(config.ffmpegBin) },
+    ready: schema.ready,
+    checks: { sqlite: true, ffmpegConfigured: Boolean(config.ffmpegBin), schema },
     addresses: {
       local: `http://${localHost}:${config.port}`,
       lan: lan ? `http://${lan}:${config.port}` : null,
@@ -345,7 +487,8 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/health' || url.pathname === '/version') {
-    sendJson(response, config, 200, healthPayload(config));
+    const health = healthPayload(config, database);
+    sendJson(response, config, health.ready ? 200 : 503, health);
     return;
   }
 
@@ -418,22 +561,25 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/demo/reset' && request.method === 'POST') {
-    const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId || validateDemoSession(database, sessionId, now()).status !== 'valid') {
-      sendJson(response, config, 401, {
-        error: 'session_required',
-        message: 'Choose Demo access before resetting local Demo data.',
-      });
+    const identity = requireSessionIdentity(database, url, response, config, now());
+    if (!identity) return;
+    if (!authorizeSessionOwner(database, identity.groupId, identity).allowed) {
+      sendDenied(response, config);
       return;
     }
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
     const releaseStagingLock = await acquireStagedSourceLock(stagingDir);
     try {
       await waitForStagedIntakesIdle();
-      restoreFixture(database);
-      // Reset removes database claims first, then safely removes all final and
-      // partial staged files that are no longer protected by an active job.
-      await cleanupOrphanedStagedSources(database, stagingDir, 100, 0);
+      restoreFixture(database, now());
+      // The lock prevents a concurrent upload from recreating a staged file
+      // while reset is clearing every Demo-owned media artifact. Keep the
+      // directory itself because hosted Compose binds it as a mount target.
+      const mediaDir = resolve(config.dataDir, 'media');
+      for (const entry of await readdir(mediaDir).catch(() => [])) {
+        await rm(resolve(mediaDir, entry), { recursive: true, force: true });
+      }
+      await mkdir(stagingDir, { recursive: true });
       sendJson(response, config, 200, { reset: true });
     } finally {
       releaseStagingLock();
@@ -445,8 +591,8 @@ export async function handleRequest(
   if (realtimeEventsMatch && request.method === 'GET') {
     const groupId = decodePathSegment(realtimeEventsMatch[1], response, config);
     if (groupId === null) return;
-    const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) {
+    const identity = extractDemoRequestIdentity(database, url, now());
+    if (!identity.ok) {
       if (
         !sendRealtimeAccessDenied(
           request,
@@ -460,23 +606,10 @@ export async function handleRequest(
       }
       return;
     }
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') {
-      if (
-        !sendRealtimeAccessDenied(
-          request,
-          response,
-          config,
-          401,
-          'Choose Demo access before joining chat.',
-        )
-      ) {
-        sendSessionRequired(response, config);
-      }
-      return;
-    }
-    const access = authorizeMember(database, groupId, session.session.actor.memberId, 'message');
-    if (!access.allowed) {
+    if (
+      identity.identity.groupId !== groupId ||
+      !authorizeSessionMember(database, groupId, identity.identity, 'message').allowed
+    ) {
       if (!sendRealtimeAccessDenied(request, response, config)) sendDenied(response, config);
       return;
     }
@@ -512,10 +645,11 @@ export async function handleRequest(
     };
     let unsubscribe = () => {};
     const streamIsAuthorised = () => {
-      const currentSession = getDemoSession(database, session.session.id);
+      const currentSession = getDemoSession(database, identity.identity.sessionId);
       return Boolean(
         currentSession &&
-        currentSession.actor.memberId === session.session.actor.memberId &&
+        currentSession.actor.memberId === identity.identity.memberId &&
+        currentSession.groupId === groupId &&
         classifyDemoSession(currentSession.expiresAt, currentSession.invalidatedAt, now()) ===
           'valid' &&
         isMember(database, groupId, currentSession.actor.memberId),
@@ -555,20 +689,21 @@ export async function handleRequest(
   if (realtimeMessagesMatch && request.method === 'POST') {
     const groupId = decodePathSegment(realtimeMessagesMatch[1], response, config);
     if (groupId === null) return;
-    const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') return sendSessionRequired(response, config);
-    if (
-      !authorize(database, response, config, groupId, session.session.actor.memberId, 'message')
-    ) {
-      return;
-    }
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'message',
+    );
+    if (!identity) return;
     const body = await requestBody(request);
     const result = createChatMessage(database, {
       groupId,
-      memberId: session.session.actor.memberId,
-      sessionId: session.session.id,
+      memberId: identity.memberId,
+      sessionId: identity.sessionId,
       body: typeof body?.body === 'string' ? body.body : '',
       messageId: typeof body?.messageId === 'string' ? body.messageId : undefined,
       replyToMessageId:
@@ -616,15 +751,16 @@ export async function handleRequest(
       ? decodePathSegment(realtimeReactionMatch[3], response, config)
       : undefined;
     if (groupId === null || messageId === null || pathEmoji === null) return;
-    const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') return sendSessionRequired(response, config);
-    if (
-      !authorize(database, response, config, groupId, session.session.actor.memberId, 'message')
-    ) {
-      return;
-    }
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'message',
+    );
+    if (!identity) return;
     if (request.method === 'GET') {
       const message = getMessage(database, groupId, messageId);
       if (!message) return sendNotFound(response, config);
@@ -648,8 +784,8 @@ export async function handleRequest(
               : undefined;
     const result = toggleChatReaction(database, {
       groupId,
-      memberId: session.session.actor.memberId,
-      sessionId: session.session.id,
+      memberId: identity.memberId,
+      sessionId: identity.sessionId,
       messageId,
       emoji,
       active,
@@ -672,21 +808,10 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/groups' && request.method === 'POST') {
-    const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) {
-      sendDenied(response, config);
-      return;
-    }
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') {
-      sendJson(response, config, 401, {
-        error: 'session_required',
-        message: 'Choose active Demo access before creating a group.',
-      });
-      return;
-    }
+    const identity = requireSessionIdentity(database, url, response, config, now());
+    if (!identity) return;
     const body = await requestBody(request);
-    const result = createGroup(database, session.session.actor.memberId, {
+    const result = createGroup(database, identity.memberId, {
       name: typeof body?.name === 'string' ? body.name : '',
       prompt: typeof body?.prompt === 'string' ? body.prompt : '',
       now: now(),
@@ -709,7 +834,12 @@ export async function handleRequest(
       });
       return;
     }
-    const moved = updateDemoSessionGroup(database, sessionId, result.group?.id ?? '');
+    const moved = updateDemoSessionGroup(
+      database,
+      identity.sessionId,
+      result.group?.id ?? '',
+      now(),
+    );
     if (!moved.ok) {
       sendJson(response, config, 500, {
         error: 'group_context_error',
@@ -726,12 +856,9 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/invites' && request.method === 'POST') {
-    const sessionId = url.searchParams.get('sessionId');
     const groupId = url.searchParams.get('groupId');
-    if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') return sendSessionRequired(response, config);
-    if (!groupId) return sendDenied(response, config);
+    const identity = requireAuthorisedOwner(database, url, response, config, now(), groupId);
+    if (!identity) return;
     const body = await requestBody(request);
     const ttlSeconds =
       typeof body?.expiresInSeconds === 'number'
@@ -739,13 +866,7 @@ export async function handleRequest(
         : typeof body?.expiresInSeconds === 'string'
           ? Number(body.expiresInSeconds)
           : undefined;
-    const result = createInvite(
-      database,
-      session.session.actor.memberId,
-      groupId,
-      ttlSeconds,
-      now(),
-    );
+    const result = createInvite(database, identity.memberId, identity.groupId, ttlSeconds, now());
     if (!result.ok) {
       if (result.reason === 'forbidden') return sendDenied(response, config);
       sendJson(response, config, 400, {
@@ -759,15 +880,13 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/invites/accept' && request.method === 'POST') {
-    const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') return sendSessionRequired(response, config);
+    const identity = requireSessionIdentity(database, url, response, config, now());
+    if (!identity) return;
     const body = await requestBody(request);
     const code = typeof body?.code === 'string' ? body.code : (url.searchParams.get('code') ?? '');
     const result = acceptInvite(
       database,
-      session.session.actor.memberId,
+      identity.memberId,
       code,
       url.searchParams.get('groupId') ?? undefined,
       now(),
@@ -787,7 +906,7 @@ export async function handleRequest(
       });
       return;
     }
-    const moved = updateDemoSessionGroup(database, sessionId, result.group.id);
+    const moved = updateDemoSessionGroup(database, identity.sessionId, result.group.id, now());
     if (!moved.ok) {
       sendJson(response, config, 500, {
         error: 'invite_context_error',
@@ -804,24 +923,18 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/contributions/upload/source' && request.method === 'POST') {
-    const sessionId = url.searchParams.get('sessionId');
     const groupId = url.searchParams.get('groupId');
     const idempotencyKey = url.searchParams.get('idempotencyKey') ?? '';
-    if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') return sendSessionRequired(response, config);
-    if (!groupId) return sendDenied(response, config);
-    if (
-      !authorize(
-        database,
-        response,
-        config,
-        groupId,
-        session.session.actor.memberId,
-        'contribution',
-      )
-    )
-      return;
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'contribution',
+    );
+    if (!identity) return;
     if (!/^[A-Za-z0-9_-]{8,100}$/.test(idempotencyKey)) {
       sendJson(response, config, 400, {
         error: 'upload_invalid_key',
@@ -854,8 +967,8 @@ export async function handleRequest(
       if (!sourcePath) return sendNotFound(response, config);
       const claim = claimStagedSource(
         database,
-        groupId,
-        session.session.actor.memberId,
+        identity.groupId,
+        identity.memberId,
         idempotencyKey,
         now(),
         sourcePath,
@@ -903,8 +1016,8 @@ export async function handleRequest(
         // fencing any stale body/probe callback from the old request.
         const reclaimed = reclaimStagedSource(
           database,
-          groupId,
-          session.session.actor.memberId,
+          identity.groupId,
+          identity.memberId,
           idempotencyKey,
           stagedSourcePath(sourceUri, stagingDir, claimGeneration + 1) ?? sourcePath,
           now(),
@@ -985,13 +1098,138 @@ export async function handleRequest(
     return;
   }
 
-  if (url.pathname === '/contributions/upload' && request.method === 'POST') {
-    const sessionId = url.searchParams.get('sessionId');
+  if (url.pathname === '/demo/synthetic-clip' && request.method === 'POST') {
     const groupId = url.searchParams.get('groupId');
-    if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') return sendSessionRequired(response, config);
-    if (!groupId) return sendDenied(response, config);
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'contribution',
+    );
+    if (!identity) return;
+    const stagingDir = resolve(config.dataDir, 'media', 'staging');
+    const releaseLock = await acquireStagedSourceLock(stagingDir);
+    try {
+      const idempotencyKey = `synthetic-${randomUUID()}`;
+      const sourceUri = `staged://${stagedSourceId(idempotencyKey)}`;
+      const sourcePath = stagedSourcePath(sourceUri, stagingDir, 1);
+      if (!sourcePath) return sendNotFound(response, config);
+      const claim = claimStagedSource(
+        database,
+        identity.groupId,
+        identity.memberId,
+        idempotencyKey,
+        now(),
+        sourcePath,
+      );
+      if (!claim.ok || !claim.source.sourcePath) return sendDenied(response, config);
+      const releaseIntake = registerStagedIntake();
+      try {
+        await mkdir(dirname(claim.source.sourcePath), { recursive: true });
+        const metadata = await generateSyntheticDemoClip(config.ffmpegBin, claim.source.sourcePath);
+        database.exec('BEGIN');
+        try {
+          recordClipMediaMetadata(database, {
+            sourceUri,
+            ...metadata,
+            verifiedAt: now().toISOString(),
+          });
+          if (
+            !markStagedSourceReady(
+              database,
+              sourceUri,
+              metadata.byteLength,
+              claim.source.sourcePath,
+              claim.source.claimGeneration,
+            )
+          ) {
+            throw new Error('synthetic source claim was superseded');
+          }
+          database.exec('COMMIT');
+        } catch (error) {
+          database.exec('ROLLBACK');
+          throw error;
+        }
+        const upload = createClipUpload(
+          database,
+          identity.groupId,
+          identity.memberId,
+          {
+            idempotencyKey,
+            sourceUri,
+            ...metadata,
+            mode: 'soft-focus',
+            trimStartSeconds: 0,
+            trimEndSeconds: metadata.durationSeconds,
+          },
+          now(),
+          { stagingDir, requireVerifiedMetadata: true },
+        );
+        if (!upload.ok) {
+          await rm(claim.source.sourcePath, { force: true }).catch(() => undefined);
+          resetStagedSourceClaim(
+            database,
+            sourceUri,
+            claim.source.sourcePath,
+            claim.source.claimGeneration,
+          );
+          if (upload.reason === 'quota_exceeded') {
+            sendJson(response, config, 409, {
+              error: 'contribution_quota_exceeded',
+              message: 'This member has reached the current cycle contribution limit.',
+            });
+            return;
+          }
+          if (upload.reason === 'not_found') {
+            sendJson(response, config, 409, {
+              error: 'contribution_window_closed',
+              message: 'The current cycle is not accepting contributions.',
+            });
+            return;
+          }
+          sendJson(response, config, 503, {
+            error: 'synthetic_clip_failed',
+            message: 'The synthetic Demo clip could not be prepared. Try again.',
+          });
+          return;
+        }
+        sendJson(response, config, 201, { upload: upload.upload, synthetic: true });
+      } catch {
+        await rm(claim.source.sourcePath, { force: true }).catch(() => undefined);
+        resetStagedSourceClaim(
+          database,
+          sourceUri,
+          claim.source.sourcePath,
+          claim.source.claimGeneration,
+        );
+        sendJson(response, config, 503, {
+          error: 'synthetic_clip_failed',
+          message: 'The synthetic Demo clip could not be prepared. Try again.',
+        });
+      } finally {
+        releaseIntake();
+      }
+    } finally {
+      releaseLock();
+    }
+    return;
+  }
+
+  if (url.pathname === '/contributions/upload' && request.method === 'POST') {
+    const groupId = url.searchParams.get('groupId');
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'contribution',
+    );
+    if (!identity) return;
     const body = await requestBody(request);
     const input: ClipUploadInput = {
       idempotencyKey: typeof body?.idempotencyKey === 'string' ? body.idempotencyKey : '',
@@ -1020,17 +1258,10 @@ export async function handleRequest(
         ? { sourceDurationSeconds: body.sourceDurationSeconds }
         : {}),
     };
-    const result = createClipUpload(
-      database,
-      groupId,
-      session.session.actor.memberId,
-      input,
-      now(),
-      {
-        stagingDir: resolve(config.dataDir, 'media', 'staging'),
-        requireVerifiedMetadata: true,
-      },
-    );
+    const result = createClipUpload(database, identity.groupId, identity.memberId, input, now(), {
+      stagingDir: resolve(config.dataDir, 'media', 'staging'),
+      requireVerifiedMetadata: true,
+    });
     if (!result.ok) {
       if (result.reason === 'not_found') return sendNotFound(response, config);
       // Key validation happens before capability ownership is established. Do
@@ -1062,25 +1293,19 @@ export async function handleRequest(
   if (uploadCancelMatch && request.method === 'DELETE') {
     const jobId = decodePathSegment(uploadCancelMatch[1], response, config);
     if (jobId === null) return;
-    const sessionId = url.searchParams.get('sessionId');
     const groupId = url.searchParams.get('groupId');
-    if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') return sendSessionRequired(response, config);
-    if (!groupId) return sendDenied(response, config);
-    if (
-      !authorize(
-        database,
-        response,
-        config,
-        groupId,
-        session.session.actor.memberId,
-        'contribution',
-      )
-    )
-      return;
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'contribution',
+    );
+    if (!identity) return;
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
-    const result = cancelClipUpload(database, groupId, session.session.actor.memberId, jobId, {
+    const result = cancelClipUpload(database, identity.groupId, identity.memberId, jobId, {
       stagingDir,
     });
     if (!result.ok) return sendNotFound(response, config);
@@ -1092,30 +1317,24 @@ export async function handleRequest(
   if (processJobMatch && request.method === 'POST') {
     const jobId = decodePathSegment(processJobMatch[1], response, config);
     if (jobId === null) return;
-    const sessionId = url.searchParams.get('sessionId');
     const groupId = url.searchParams.get('groupId');
-    if (!sessionId) return sendSessionRequired(response, config);
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') return sendSessionRequired(response, config);
-    if (!groupId) return sendDenied(response, config);
-    if (
-      !authorize(
-        database,
-        response,
-        config,
-        groupId,
-        session.session.actor.memberId,
-        'contribution',
-      )
-    )
-      return;
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'contribution',
+    );
+    if (!identity) return;
     const result = await processClipJob(database, {
       jobId,
-      groupId,
+      groupId: identity.groupId,
       ffmpegBin: config.ffmpegBin,
       stagingDir: resolve(config.dataDir, 'media', 'staging'),
       outputDir: resolve(config.dataDir, 'media', 'processed'),
-      actorMemberId: session.session.actor.memberId,
+      actorMemberId: identity.memberId,
     });
     if (!result.ok && result.reason === 'not_found') return sendNotFound(response, config);
     if (!result.ok && result.reason === 'already_processing') {
@@ -1141,28 +1360,87 @@ export async function handleRequest(
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/demo/reveal') {
+    const groupId = url.searchParams.get('groupId');
+    const identity = requireAuthorisedOwner(database, url, response, config, now(), groupId);
+    if (!identity) return;
+
+    const lifecycle = advanceCycleLifecycle(database, { groupId: identity.groupId, clock: now });
+    if (!lifecycle.ok) return sendNotFound(response, config);
+    if (lifecycle.action === 'waiting_for_boundary') {
+      sendJson(response, config, 200, {
+        reveal: { state: 'collecting', cycleId: lifecycle.cycle.id },
+      });
+      return;
+    }
+    if (lifecycle.action === 'revealing') {
+      const job = cycleCompilationJob(database, identity.groupId, lifecycle.cycle.id);
+      if (!job) return sendNotFound(response, config);
+      sendJson(response, config, 200, {
+        reveal: { state: 'compiling', cycleId: lifecycle.cycle.id, jobId: job.id },
+      });
+      return;
+    }
+    if (lifecycle.action === 'archived' || lifecycle.action === 'already_archived') {
+      sendJson(response, config, 200, {
+        reveal: { state: 'released', cycleId: lifecycle.cycle.id },
+      });
+      return;
+    }
+
+    const job = cycleCompilationJob(database, identity.groupId, lifecycle.cycle.id);
+    if (!job) return sendNotFound(response, config);
+    if (job.status === 'processing') {
+      sendJson(response, config, 200, {
+        reveal: { state: 'compiling', cycleId: lifecycle.cycle.id, jobId: job.id },
+      });
+      return;
+    }
+    const compiled = await processCompilationJob(database, {
+      jobId: job.id,
+      groupId: identity.groupId,
+      ffmpegBin: config.ffmpegBin,
+      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      actorMemberId: identity.memberId,
+    });
+    if (!compiled.ok) {
+      sendJson(response, config, 200, {
+        reveal: { state: 'delayed', cycleId: lifecycle.cycle.id, jobId: job.id },
+      });
+      return;
+    }
+    const published = publishCycleRelease(database, {
+      groupId: identity.groupId,
+      cycleId: lifecycle.cycle.id,
+      clock: now,
+    });
+    if (!published.ok) {
+      sendJson(response, config, 200, {
+        reveal: { state: 'delayed', cycleId: lifecycle.cycle.id, jobId: job.id },
+      });
+      return;
+    }
+    const archived = advanceCycleLifecycle(database, {
+      groupId: identity.groupId,
+      cycleId: lifecycle.cycle.id,
+      clock: now,
+    });
+    if (!archived.ok) return sendNotFound(response, config);
+    sendJson(response, config, 200, {
+      reveal: { state: 'released', cycleId: lifecycle.cycle.id },
+    });
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/cycles/demo/advance') {
     const groupId = url.searchParams.get('groupId');
-    const sessionId = url.searchParams.get('sessionId');
-    if (!sessionId) {
-      sendSessionRequired(response, config);
-      return;
-    }
-    const session = validateDemoSession(database, sessionId, now());
-    if (session.status !== 'valid') {
-      sendSessionRequired(response, config);
-      return;
-    }
-    const memberId = session.session.actor.memberId;
+    const identity = requireAuthorisedOwner(database, url, response, config, now(), groupId);
+    if (!identity) return;
     const advanceSecondsValue = url.searchParams.get('advanceSeconds');
     const advanceSeconds = advanceSecondsValue ? Number(advanceSecondsValue) : Number.NaN;
-    if (!groupId) {
-      sendDenied(response, config);
-      return;
-    }
     const result = advanceDemoCycle(database, {
-      groupId,
-      actingMemberId: memberId,
+      groupId: identity.groupId,
+      actingMemberId: identity.memberId,
       advanceSeconds,
     });
     if ('allowed' in result) {
@@ -1183,18 +1461,16 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/groups/current') {
-    const scope = sessionScope(database, url, now());
-    const memberId = scope.memberId;
-    const group =
-      (scope.groupId ? getGroup(database, scope.groupId, memberId ?? undefined) : null) ??
-      groupForMember(database, memberId);
-    if (!group) {
+    const identity = requireSessionIdentity(database, url, response, config, now());
+    if (!identity) return;
+    if (!authorizeSessionMember(database, identity.groupId, identity, 'group').allowed) {
       sendDenied(response, config);
       return;
     }
-    if (!authorize(database, response, config, group.id, memberId, 'group')) return;
+    const group = getGroup(database, identity.groupId, identity.memberId);
+    if (!group) return sendDenied(response, config);
     sendJson(response, config, 200, {
-      group: getGroup(database, group.id, memberId ?? undefined) ?? group,
+      group,
     });
     return;
   }
@@ -1203,9 +1479,17 @@ export async function handleRequest(
   if (groupMatch) {
     const groupId = decodePathSegment(groupMatch[1], response, config);
     if (groupId === null) return;
-    const memberId = sessionMember(database, url, now());
-    if (!authorize(database, response, config, groupId, memberId, 'group')) return;
-    const group = getGroup(database, groupId, memberId ?? undefined);
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'group',
+    );
+    if (!identity) return;
+    const group = getGroup(database, groupId, identity.memberId);
     if (!group) return sendNotFound(response, config);
     sendJson(response, config, 200, { group });
     return;
@@ -1213,20 +1497,17 @@ export async function handleRequest(
 
   if (url.pathname === '/cycles/current') {
     const groupId = url.searchParams.get('groupId');
-    if (!groupId) {
-      sendDenied(response, config);
-      return;
-    }
-    if (
-      !authorize(database, response, config, groupId, sessionMember(database, url, now()), 'group')
-    )
-      return;
-    const cycle = getCurrentCycle(
+    const identity = requireAuthorisedGroup(
       database,
-      groupId,
-      sessionMember(database, url, now()) ?? undefined,
+      url,
+      response,
+      config,
       now(),
+      groupId,
+      'group',
     );
+    if (!identity) return;
+    const cycle = getCurrentCycle(database, identity.groupId, identity.memberId, now());
     if (!cycle) return sendNotFound(response, config);
     sendJson(response, config, 200, { cycle });
     return;
@@ -1237,22 +1518,17 @@ export async function handleRequest(
     const messageId = decodePathSegment(messageMatch[1], response, config);
     if (messageId === null) return;
     const groupId = url.searchParams.get('groupId');
-    if (!groupId) {
-      sendDenied(response, config);
-      return;
-    }
-    if (
-      !authorize(
-        database,
-        response,
-        config,
-        groupId,
-        sessionMember(database, url, now()),
-        'message',
-      )
-    )
-      return;
-    const message = getMessage(database, groupId, messageId);
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'message',
+    );
+    if (!identity) return;
+    const message = getMessage(database, identity.groupId, messageId);
     if (!message) return sendNotFound(response, config);
     sendJson(response, config, 200, { message });
     return;
@@ -1263,30 +1539,21 @@ export async function handleRequest(
     const contributionId = decodePathSegment(contributionMatch[1], response, config);
     if (contributionId === null) return;
     const groupId = url.searchParams.get('groupId');
-    if (!groupId) {
-      sendDenied(response, config);
-      return;
-    }
-    if (
-      !authorize(
-        database,
-        response,
-        config,
-        groupId,
-        sessionMember(database, url, now()),
-        'contribution',
-      )
-    )
-      return;
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'contribution',
+    );
+    if (!identity) return;
     if (request.method === 'DELETE') {
-      const sessionId = url.searchParams.get('sessionId');
-      if (!sessionId) return sendSessionRequired(response, config);
-      const session = validateDemoSession(database, sessionId, now());
-      if (session.status !== 'valid') return sendSessionRequired(response, config);
       const result = deleteContribution(
         database,
-        groupId,
-        session.session.actor.memberId,
+        identity.groupId,
+        identity.memberId,
         contributionId,
         now(),
         {
@@ -1313,9 +1580,147 @@ export async function handleRequest(
       sendJson(response, config, 200, { deleted: true, ...result });
       return;
     }
-    const contribution = getContribution(database, groupId, contributionId);
+    const contribution = getContribution(database, identity.groupId, contributionId);
     if (!contribution) return sendNotFound(response, config);
     sendJson(response, config, 200, { contribution });
+    return;
+  }
+
+  const premiereMatch = url.pathname.match(/^\/cycles\/([^/]+)\/premiere$/);
+  if (premiereMatch && request.method === 'GET') {
+    const cycleId = decodePathSegment(premiereMatch[1], response, config);
+    if (cycleId === null) return;
+    const groupId = url.searchParams.get('groupId');
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'film',
+    );
+    if (!identity) return;
+    const film = getPremiereFilm(database, identity.groupId, cycleId);
+    if (!film) return sendNotFound(response, config);
+    const state = premiereState(film);
+    sendJson(response, config, 200, {
+      premiere:
+        state === 'ready'
+          ? {
+              state,
+              cycleId,
+              filmId: film.filmId,
+              playbackPath: `/films/${encodeURIComponent(film.filmId!)}/play?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+            }
+          : { state, cycleId },
+    });
+    return;
+  }
+
+  const playbackMatch = url.pathname.match(/^\/films\/([^/]+)\/play$/);
+  if (playbackMatch && request.method === 'GET') {
+    const filmId = decodePathSegment(playbackMatch[1], response, config);
+    if (filmId === null) return;
+    const groupId = url.searchParams.get('groupId');
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'film',
+    );
+    if (!identity) return;
+    const film = database
+      .prepare(
+        `SELECT cycle_id AS cycleId FROM media_jobs
+         WHERE id = ? AND group_id = ? AND kind = 'film'`,
+      )
+      .get(filmId, identity.groupId) as { cycleId?: string } | undefined;
+    if (!film?.cycleId) return sendNotFound(response, config);
+    const premiere = getPremiereFilm(database, identity.groupId, film.cycleId);
+    if (
+      !premiere ||
+      premiere.filmId !== filmId ||
+      premiereState(premiere) !== 'ready' ||
+      !premiere.outputPath
+    ) {
+      return sendNotFound(response, config);
+    }
+    const path = await resolveOwnedProcessedPath(premiere.outputPath, config.dataDir);
+    if (!path) return sendNotFound(response, config);
+    const details = await stat(path).catch(() => null);
+    if (!details || !details.isFile() || details.size <= 0) return sendNotFound(response, config);
+    streamMp4(request, response, config, path, details.size);
+    return;
+  }
+
+  if (url.pathname === '/archive' && request.method === 'GET') {
+    const groupId = url.searchParams.get('groupId');
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'download',
+    );
+    if (!identity) return;
+    const archive = listReleasedArchive(database, identity.groupId, identity.memberId);
+    sendJson(response, config, 200, {
+      archive: {
+        films: archive.films.map((film) => ({
+          ...film,
+          downloadPath: `/films/${encodeURIComponent(film.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+        })),
+        clips: archive.clips.map((clip) => ({
+          ...clip,
+          downloadPath: `/clips/${encodeURIComponent(clip.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+        })),
+      },
+    });
+    return;
+  }
+
+  const filmDownloadMatch = url.pathname.match(/^\/films\/([^/]+)\/download$/);
+  const clipDownloadMatch = url.pathname.match(/^\/clips\/([^/]+)\/download$/);
+  if ((filmDownloadMatch || clipDownloadMatch) && request.method === 'GET') {
+    const resourceId = decodePathSegment(
+      (filmDownloadMatch ?? clipDownloadMatch)![1],
+      response,
+      config,
+    );
+    if (resourceId === null) return;
+    const groupId = url.searchParams.get('groupId');
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'download',
+    );
+    if (!identity) return;
+    const media = filmDownloadMatch
+      ? getReleasedFilmDownload(database, identity.groupId, resourceId)
+      : getReleasedOwnClipDownload(database, identity.groupId, identity.memberId, resourceId);
+    if (!media) return sendNotFound(response, config);
+    const path = await resolveOwnedProcessedPath(media.outputPath, config.dataDir);
+    if (!path) return sendNotFound(response, config);
+    const details = await stat(path).catch(() => null);
+    if (!details || !details.isFile() || details.size <= 0) return sendNotFound(response, config);
+    streamMp4(
+      request,
+      response,
+      config,
+      path,
+      details.size,
+      filmDownloadMatch ? 'rewind-group-film.mp4' : 'rewind-my-clip.mp4',
+    );
     return;
   }
 
@@ -1325,22 +1730,17 @@ export async function handleRequest(
       const resourceId = decodePathSegment(match[1], response, config);
       if (resourceId === null) return;
       const groupId = url.searchParams.get('groupId');
-      if (!groupId) {
-        sendDenied(response, config);
-        return;
-      }
-      if (
-        !authorize(
-          database,
-          response,
-          config,
-          groupId,
-          sessionMember(database, url, now()),
-          resource,
-        )
-      )
-        return;
-      const job = getMediaJob(database, groupId, resourceId, resource);
+      const identity = requireAuthorisedGroup(
+        database,
+        url,
+        response,
+        config,
+        now(),
+        groupId,
+        resource,
+      );
+      if (!identity) return;
+      const job = getMediaJob(database, identity.groupId, resourceId, resource);
       if (!job) return sendNotFound(response, config);
       sendJson(response, config, 200, { [resource]: job });
       return;

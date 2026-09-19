@@ -63,34 +63,38 @@ async function withSecondGroup(run) {
   }
 }
 
-const resourceCases = [
-  { name: 'groups', path: '/groups/demo-group?memberId=demo-6', key: 'group' },
-  {
-    name: 'cycles',
-    path: '/cycles/current?groupId=demo-group&memberId=demo-6',
-    key: 'cycle',
-  },
-  {
-    name: 'messages',
-    path: '/messages/demo-message?groupId=demo-group&memberId=demo-6',
-    key: 'message',
-  },
-  {
-    name: 'contributions',
-    path: '/contributions/demo-contribution?groupId=demo-group&memberId=demo-6',
-    key: 'contribution',
-  },
-  { name: 'clips', path: '/clips/demo-clip?groupId=demo-group&memberId=demo-6', key: 'clip' },
-  { name: 'films', path: '/films/demo-film?groupId=demo-group&memberId=demo-6', key: 'film' },
-  {
-    name: 'downloads',
-    path: '/downloads/demo-download?groupId=demo-group&memberId=demo-6',
-    key: 'download',
-  },
-];
+async function createSession(baseUrl, memberId, groupId) {
+  const response = await fetch(`${baseUrl}/sessions/demo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberId, groupId }),
+  });
+  assert.equal(response.status, 201);
+  return (await response.json()).session;
+}
 
 test('every exposed protected category denies a member of another group without content', async () => {
   await withSecondGroup(async ({ baseUrl }) => {
+    const session = await createSession(baseUrl, 'demo-6', 'other-group');
+    const sessionQuery = `&sessionId=${encodeURIComponent(session.id)}`;
+    const resourceCases = [
+      { name: 'groups', path: `/groups/demo-group?memberId=demo-1${sessionQuery}` },
+      { name: 'cycles', path: `/cycles/current?groupId=demo-group&memberId=demo-1${sessionQuery}` },
+      {
+        name: 'messages',
+        path: `/messages/demo-message?groupId=demo-group&memberId=demo-1${sessionQuery}`,
+      },
+      {
+        name: 'contributions',
+        path: `/contributions/demo-contribution?groupId=demo-group&memberId=demo-1${sessionQuery}`,
+      },
+      { name: 'clips', path: `/clips/demo-clip?groupId=demo-group&memberId=demo-1${sessionQuery}` },
+      { name: 'films', path: `/films/demo-film?groupId=demo-group&memberId=demo-1${sessionQuery}` },
+      {
+        name: 'downloads',
+        path: `/downloads/demo-download?groupId=demo-group&memberId=demo-1${sessionQuery}`,
+      },
+    ];
     for (const resource of resourceCases) {
       const response = await fetch(`${baseUrl}${resource.path}`);
       assert.equal(response.status, 403, resource.name);
@@ -101,14 +105,16 @@ test('every exposed protected category denies a member of another group without 
 
 test('each protected category remains readable for the member of its own group', async () => {
   await withSecondGroup(async ({ baseUrl }) => {
+    const session = await createSession(baseUrl, 'demo-6', 'other-group');
+    const suffix = `&sessionId=${encodeURIComponent(session.id)}&memberId=demo-1`;
     const ownPaths = [
-      '/groups/other-group?memberId=demo-6',
-      '/cycles/current?groupId=other-group&memberId=demo-6',
-      '/messages/other-message?groupId=other-group&memberId=demo-6',
-      '/contributions/other-contribution?groupId=other-group&memberId=demo-6',
-      '/clips/other-clip?groupId=other-group&memberId=demo-6',
-      '/films/other-film?groupId=other-group&memberId=demo-6',
-      '/downloads/other-download?groupId=other-group&memberId=demo-6',
+      `/groups/other-group?${suffix.slice(1)}`,
+      `/cycles/current?groupId=other-group${suffix}`,
+      `/messages/other-message?groupId=other-group${suffix}`,
+      `/contributions/other-contribution?groupId=other-group${suffix}`,
+      `/clips/other-clip?groupId=other-group${suffix}`,
+      `/films/other-film?groupId=other-group${suffix}`,
+      `/downloads/other-download?groupId=other-group${suffix}`,
     ];
     for (const path of ownPaths) {
       const response = await fetch(`${baseUrl}${path}`);
@@ -141,15 +147,64 @@ test('a member of another group cannot use the owner-only cycle control', async 
   });
 });
 
-test('invitations are documented as out of this route contract rather than given false coverage', async () => {
+test('a session from another group cannot inspect or play a group premiere', async () => {
   await withSecondGroup(async ({ baseUrl }) => {
-    const response = await fetch(
-      `${baseUrl}/invites/other-invite?groupId=demo-group&memberId=demo-6`,
-    );
-    assert.equal(response.status, 404);
-    assert.deepEqual(await response.json(), {
-      error: 'not_found',
-      message: 'The requested resource was not found.',
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-6', groupId: 'other-group' }),
     });
+    const { session } = await sessionResponse.json();
+    const response = await fetch(
+      `${baseUrl}/cycles/demo-cycle/premiere?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`,
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), SAFE_DENIAL);
+  });
+});
+
+test('a session from another group cannot operate the local Demo reveal control', async () => {
+  await withSecondGroup(async ({ baseUrl }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-6', groupId: 'other-group' }),
+    });
+    const { session } = await sessionResponse.json();
+    const response = await fetch(
+      `${baseUrl}/demo/reveal?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`,
+      { method: 'POST' },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), SAFE_DENIAL);
+  });
+});
+
+test('a session from another group cannot create a synthetic Demo contribution', async () => {
+  await withSecondGroup(async ({ baseUrl }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-6', groupId: 'other-group' }),
+    });
+    const { session } = await sessionResponse.json();
+    const response = await fetch(
+      `${baseUrl}/demo/synthetic-clip?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`,
+      { method: 'POST' },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), SAFE_DENIAL);
+  });
+});
+
+test('invite creation binds the requested group to the session context', async () => {
+  await withSecondGroup(async ({ baseUrl }) => {
+    const session = await createSession(baseUrl, 'demo-6', 'other-group');
+    const response = await fetch(
+      `${baseUrl}/invites?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`,
+      { method: 'POST' },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), SAFE_DENIAL);
   });
 });

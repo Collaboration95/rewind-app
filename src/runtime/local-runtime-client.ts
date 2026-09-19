@@ -1,4 +1,9 @@
-import type { CurrentCycleResult, Cycle, CycleAdvanceResult } from '../domain/cycles';
+import type {
+  CurrentCycleResult,
+  Cycle,
+  CycleAdvanceResult,
+  DemoRevealState,
+} from '../domain/cycles';
 import type { InviteAcceptance, LocalInvite } from '../domain/invites';
 import type { ClipUploadInput, PendingClipUpload } from '../domain/video';
 import type {
@@ -9,6 +14,8 @@ import type {
   MembershipDenied,
 } from '../domain/profiles';
 import type { DemoSession } from '../domain/session';
+import type { Premiere } from '../domain/premiere';
+import type { ReleasedArchive } from '../domain/archive';
 import {
   RealtimeChatClient,
   type ChatMessage,
@@ -47,6 +54,7 @@ export interface RuntimeClient {
     advanceSeconds: number,
     sessionId?: string,
   ): Promise<CycleAdvanceResult>;
+  revealDemoCycle?(sessionId: string, groupId: string): Promise<DemoRevealState>;
   getDemoSession?(sessionId: string): Promise<DemoSession>;
   createDemoSession?(memberId: MemberId, groupId?: string): Promise<DemoSession>;
   invalidateDemoSession?(sessionId: string): Promise<DemoSession>;
@@ -69,12 +77,15 @@ export interface RuntimeClient {
     idempotencyKey: string,
     base64: string,
   ): Promise<{ uri: string; byteLength: number }>;
+  createSyntheticDemoClip?(sessionId: string, groupId: string): Promise<PendingClipUpload>;
   cancelClipUpload?(sessionId: string, groupId: string, jobId: string): Promise<void>;
   processClipJob?(
     sessionId: string,
     groupId: string,
     jobId: string,
   ): Promise<PendingClipUpload['job']>;
+  getPremiere?(sessionId: string, groupId: string, cycleId: string): Promise<Premiere>;
+  getReleasedArchive?(sessionId: string, groupId: string): Promise<ReleasedArchive>;
   deleteContribution?(
     sessionId: string,
     groupId: string,
@@ -147,8 +158,11 @@ export class LocalRuntimeError extends Error {
 
 function normalizeBaseUrl(value: string): string {
   const trimmed = value.trim().replace(/\/$/, '');
+  if (/^\/(?:[^/].*)?$/i.test(trimmed)) return trimmed || '/';
   if (!/^https?:\/\//i.test(trimmed)) {
-    throw new LocalRuntimeError('The local runtime URL must start with http:// or https://.');
+    throw new LocalRuntimeError(
+      'The local runtime URL must start with http://, https://, or a same-origin / path.',
+    );
   }
   return trimmed;
 }
@@ -190,14 +204,14 @@ export class LocalRuntimeClient implements RuntimeClient {
   }
 
   async getGroupForMember(
-    actingMemberId: MemberId,
+    _actingMemberId: MemberId,
     sessionId?: string,
   ): Promise<Group | MembershipDenied> {
     try {
-      const sessionQuery = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
-      const body = await this.request<{ group: Group }>(
-        `/groups/current?memberId=${encodeURIComponent(actingMemberId)}${sessionQuery}`,
-      );
+      // The server derives actor identity from the session. Keep the domain
+      // argument for the repository port, but never serialize it as authority.
+      const sessionQuery = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+      const body = await this.request<{ group: Group }>(`/groups/current${sessionQuery}`);
       return body.group;
     } catch (error) {
       if (error instanceof LocalRuntimeError && error.status === 403)
@@ -208,13 +222,13 @@ export class LocalRuntimeClient implements RuntimeClient {
 
   async getCurrentCycle(
     groupId: string,
-    actingMemberId: MemberId,
+    _actingMemberId: MemberId,
     sessionId?: string,
   ): Promise<CurrentCycleResult> {
     try {
       const sessionQuery = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
       const body = await this.request<{ cycle: Cycle }>(
-        `/cycles/current?groupId=${encodeURIComponent(groupId)}&memberId=${encodeURIComponent(actingMemberId)}${sessionQuery}`,
+        `/cycles/current?groupId=${encodeURIComponent(groupId)}${sessionQuery}`,
       );
       return body.cycle;
     } catch (error) {
@@ -227,14 +241,14 @@ export class LocalRuntimeClient implements RuntimeClient {
 
   async advanceDemoCycle(
     groupId: string,
-    actingMemberId: MemberId,
+    _actingMemberId: MemberId,
     advanceSeconds: number,
     sessionId?: string,
   ): Promise<CycleAdvanceResult> {
     try {
       const sessionQuery = sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : '';
       const body = await this.request<{ cycle: Cycle }>(
-        `/cycles/demo/advance?groupId=${encodeURIComponent(groupId)}&memberId=${encodeURIComponent(actingMemberId)}&advanceSeconds=${encodeURIComponent(String(advanceSeconds))}${sessionQuery}`,
+        `/cycles/demo/advance?groupId=${encodeURIComponent(groupId)}&advanceSeconds=${encodeURIComponent(String(advanceSeconds))}${sessionQuery}`,
         { method: 'POST' },
       );
       return body.cycle;
@@ -245,6 +259,15 @@ export class LocalRuntimeClient implements RuntimeClient {
       if (error.status === 400) return { kind: 'InvalidRequest' };
       return { kind: 'RecoverableFailure' };
     }
+  }
+
+  async revealDemoCycle(sessionId: string, groupId: string): Promise<DemoRevealState> {
+    const body = await this.request<{ reveal: DemoRevealState }>(
+      `/demo/reveal?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      { method: 'POST' },
+      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+    );
+    return body.reveal;
   }
 
   async getDemoSession(sessionId: string): Promise<DemoSession> {
@@ -383,6 +406,50 @@ export class LocalRuntimeClient implements RuntimeClient {
     }
   }
 
+  async getPremiere(sessionId: string, groupId: string, cycleId: string): Promise<Premiere> {
+    const body = await this.request<{
+      premiere:
+        | { state: 'locked' | 'processing' | 'delayed'; cycleId: string }
+        | { state: 'ready'; cycleId: string; filmId: string; playbackPath: string };
+    }>(
+      `/cycles/${encodeURIComponent(cycleId)}/premiere?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId)}`,
+      {},
+      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+    );
+    if (body.premiere.state !== 'ready') return body.premiere;
+    const { playbackPath, ...premiere } = body.premiere;
+    return { ...premiere, playbackUrl: `${this.baseUrl}${playbackPath}` };
+  }
+
+  async getReleasedArchive(sessionId: string, groupId: string): Promise<ReleasedArchive> {
+    const body = await this.request<{
+      archive: {
+        films: { id: string; cycleId: string; publishedAt: string; downloadPath: string }[];
+        clips: {
+          id: string;
+          contributionId: string;
+          cycleId: string;
+          createdAt: string;
+          downloadPath: string;
+        }[];
+      };
+    }>(
+      `/archive?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId)}`,
+      {},
+      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+    );
+    return {
+      films: body.archive.films.map(({ downloadPath, ...film }) => ({
+        ...film,
+        downloadUrl: `${this.baseUrl}${downloadPath}`,
+      })),
+      clips: body.archive.clips.map(({ downloadPath, ...clip }) => ({
+        ...clip,
+        downloadUrl: `${this.baseUrl}${downloadPath}`,
+      })),
+    };
+  }
+
   async deleteContribution(
     sessionId: string,
     groupId: string,
@@ -421,6 +488,15 @@ export class LocalRuntimeClient implements RuntimeClient {
       MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
     );
     return body.source;
+  }
+
+  async createSyntheticDemoClip(sessionId: string, groupId: string): Promise<PendingClipUpload> {
+    const body = await this.request<{ upload: PendingClipUpload }>(
+      `/demo/synthetic-clip?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
+      { method: 'POST' },
+      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
+    );
+    return body.upload;
   }
 
   createChatDraft(body: string): ChatMessageDraft {

@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import type { RuntimeConfig } from './config';
@@ -27,6 +27,7 @@ const MIGRATIONS = [
   // migration SQL for fresh installs and upgrades.
   { version: 11, key: 'realtime-messages-v1', fileName: '006-realtime-messages.sql' },
   { version: 12, key: 'chat-replies-reactions-v1', fileName: '007-chat-replies-reactions.sql' },
+  { version: 13, key: 'compilation-retry-v1', fileName: '013-compilation-retry.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -59,12 +60,49 @@ export interface DemoFixture {
 
 export type RewindDatabase = DatabaseSync;
 
-export function openDatabase(config: RuntimeConfig): RewindDatabase {
+export interface SchemaReadiness {
+  ready: boolean;
+  expectedMigrationVersion: number;
+  missingMigrationKeys: string[];
+}
+
+/**
+ * The durable migration marker and version receipts are the hosted Demo's
+ * schema contract. Startup applies this contract before accepting traffic;
+ * health checks repeat it so an interrupted or manually damaged migration is
+ * never reported as ready.
+ */
+export function schemaReadiness(database: RewindDatabase): SchemaReadiness {
+  const missingMigrationKeys = MIGRATIONS.filter((migration) => {
+    const marked = database
+      .prepare('SELECT 1 AS applied FROM schema_migration_markers WHERE migration_key = ?')
+      .get(migration.key) as { applied?: number } | undefined;
+    const versioned = database
+      .prepare('SELECT 1 AS applied FROM schema_migrations WHERE version = ?')
+      .get(migration.version) as { applied?: number } | undefined;
+    return !marked?.applied || !versioned?.applied || migrationNeedsRepair(database, migration.key);
+  }).map((migration) => migration.key);
+  return {
+    ready: missingMigrationKeys.length === 0,
+    expectedMigrationVersion: Math.max(...MIGRATIONS.map((migration) => migration.version)),
+    missingMigrationKeys,
+  };
+}
+
+export interface SeedDatabaseOptions {
+  /** Optional clock for the seeded cycle and synthetic record timestamps. */
+  seedNow?: Date | string;
+}
+
+export function openDatabase(
+  config: RuntimeConfig,
+  options: SeedDatabaseOptions = {},
+): RewindDatabase {
   mkdirSync(config.dataDir, { recursive: true });
   const database = new DatabaseSync(config.databasePath);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   migrateDatabase(database);
-  seedDatabase(database);
+  seedDatabase(database, options.seedNow);
   return database;
 }
 
@@ -115,6 +153,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyContributionDeletionMigration(database);
       } else if (migration.key === 'chat-replies-reactions-v1') {
         applyChatRepliesReactionsMigration(database);
+      } else if (migration.key === 'compilation-retry-v1') {
+        applyCompilationRetryMigration(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -168,6 +208,7 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'cycle-lifecycle-v1') return cycleLifecycleMigrationNeedsRepair(database);
   if (key === 'contribution-deletion-v1') return !contributionDeletionSchemaReady(database);
   if (key === 'chat-replies-reactions-v1') return !chatRepliesReactionsSchemaReady(database);
+  if (key === 'compilation-retry-v1') return !compilationRetrySchemaReady(database);
   return false;
 }
 
@@ -233,6 +274,10 @@ function compilationJobsSchemaReady(database: RewindDatabase): boolean {
       'compilation_job_inputs',
     )
   );
+}
+
+function compilationRetrySchemaReady(database: RewindDatabase): boolean {
+  return hasColumns(database, 'media_jobs', ['attempt_count']);
 }
 
 interface CompilationInputForeignKey {
@@ -916,6 +961,15 @@ function applyCompilationJobsMigration(database: RewindDatabase): void {
   }
 }
 
+/** Repairable receipt for the bounded, explicit film retry policy. */
+function applyCompilationRetryMigration(database: RewindDatabase): void {
+  if (!tableColumns(database, 'media_jobs').has('attempt_count')) {
+    database.exec(
+      'ALTER TABLE media_jobs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0)',
+    );
+  }
+}
+
 function markMigration(database: RewindDatabase, key: string): void {
   database
     .prepare(
@@ -1014,13 +1068,23 @@ function migrateLegacyStagedSources(database: RewindDatabase): void {
   database.exec('DROP TABLE staged_media_sources');
 }
 
-export function seedDatabase(database: RewindDatabase): void {
+/** Seed stable synthetic identities and a time-relative local Demo window. */
+export function seedDatabase(database: RewindDatabase, seedNow?: Date | string): void {
   const existing = database.prepare('SELECT COUNT(*) AS count FROM profiles').get() as {
     count: number;
   };
   if (Number(existing.count) > 0) return;
 
-  const now = FIXTURE.acceptedAt;
+  const nowDate = seedNow === undefined ? new Date(FIXTURE.acceptedAt) : new Date(seedNow);
+  if (!Number.isFinite(nowDate.getTime()))
+    throw new Error('The Demo fixture seed time is invalid.');
+  const now = nowDate.toISOString();
+  const fixtureDurationMs = Date.parse(FIXTURE.cycle.endsAt) - Date.parse(FIXTURE.cycle.startsAt);
+  if (!Number.isFinite(fixtureDurationMs) || fixtureDurationMs <= 0) {
+    throw new Error('The Demo fixture cycle window is invalid.');
+  }
+  const cycleStartsAt = now;
+  const cycleEndsAt = new Date(nowDate.getTime() + fixtureDurationMs).toISOString();
   database.exec('BEGIN');
   try {
     const profileInsert = database.prepare(
@@ -1043,8 +1107,8 @@ export function seedDatabase(database: RewindDatabase): void {
         FIXTURE.cycle.id,
         FIXTURE.group.id,
         FIXTURE.cycle.prompt,
-        FIXTURE.cycle.startsAt,
-        FIXTURE.cycle.endsAt,
+        cycleStartsAt,
+        cycleEndsAt,
         FIXTURE.cycle.status,
         FIXTURE.cycle.lockState,
         FIXTURE.cycle.maxCount,
@@ -1130,11 +1194,11 @@ export function seedDatabase(database: RewindDatabase): void {
 }
 
 export function resetDatabase(config: RuntimeConfig): void {
-  // The path is resolved from the validated data directory. Reset removes the
-  // local DB plus server-owned temporary sources; migrations and retained
-  // processed output remain available for the next local run.
-  const stagingDir = resolve(config.dataDir, 'media', 'staging');
-  if (existsSync(stagingDir)) rmSync(stagingDir, { recursive: true, force: true });
+  // The path is resolved from the validated data directory. Reset removes
+  // Demo database and media data only; source code and migrations are never
+  // in this directory.
+  const mediaDir = resolve(config.dataDir, 'media');
+  clearMediaDirectory(mediaDir);
   for (const path of [
     config.databasePath,
     `${config.databasePath}-wal`,
@@ -1144,9 +1208,18 @@ export function resetDatabase(config: RuntimeConfig): void {
   }
 }
 
+/** Clear Demo artifacts without removing the media directory itself, which is
+ * a bind-mount target in the hosted container. */
+export function clearMediaDirectory(mediaDir: string): void {
+  if (!existsSync(mediaDir)) return;
+  for (const entry of readdirSync(mediaDir)) {
+    rmSync(resolve(mediaDir, entry), { recursive: true, force: true });
+  }
+}
+
 /** Restore only the SQLite-backed local fixture. Source files and migrations
  * are never touched. This form is used by the in-process reset endpoint. */
-export function restoreFixture(database: RewindDatabase): void {
+export function restoreFixture(database: RewindDatabase, seedNow?: Date | string): void {
   database.exec('BEGIN');
   try {
     for (const table of [
@@ -1173,7 +1246,7 @@ export function restoreFixture(database: RewindDatabase): void {
     database.exec('ROLLBACK');
     throw error;
   }
-  seedDatabase(database);
+  seedDatabase(database, seedNow);
 }
 
 export function fixtureSummary(database: RewindDatabase): Record<string, number> {
@@ -1404,5 +1477,136 @@ export function getMediaJob(
     kind: base.kind,
     status: base.status,
     createdAt: base.createdAt,
+  };
+}
+
+export interface PremiereFilmRecord {
+  cycleId: string;
+  cycleStatus: string;
+  releaseStatus: 'unpublished' | 'published';
+  filmId: string | null;
+  filmStatus: string | null;
+  outputPath: string | null;
+  attemptCount: number;
+}
+
+export interface ReleasedArchiveRecord {
+  films: { id: string; cycleId: string; publishedAt: string }[];
+  clips: { id: string; contributionId: string; cycleId: string; createdAt: string }[];
+}
+
+/** List only ready, released media. Filesystem paths stay server-side. */
+export function listReleasedArchive(
+  database: RewindDatabase,
+  groupId: string,
+  memberId: string,
+): ReleasedArchiveRecord {
+  const films = database
+    .prepare(
+      `SELECT f.id, c.id AS cycleId, c.release_published_at AS publishedAt
+       FROM media_jobs f
+       JOIN cycles c ON c.id = f.cycle_id AND c.group_id = f.group_id
+       WHERE f.group_id = ? AND f.kind = 'film' AND f.status = 'ready'
+         AND f.output_path IS NOT NULL AND c.release_status = 'published'
+       ORDER BY c.release_published_at DESC, f.created_at DESC, f.id DESC`,
+    )
+    .all(groupId) as Record<string, unknown>[];
+  const clips = database
+    .prepare(
+      `SELECT clip.id, contribution.id AS contributionId, cycle.id AS cycleId,
+              contribution.created_at AS createdAt
+       FROM media_jobs clip
+       JOIN contributions contribution ON contribution.id = clip.contribution_id
+       JOIN cycles cycle ON cycle.id = contribution.cycle_id
+       WHERE clip.group_id = ? AND clip.kind = 'clip' AND clip.status = 'ready'
+         AND clip.output_path IS NOT NULL AND contribution.member_id = ?
+         AND cycle.group_id = ? AND cycle.release_status = 'published'
+         AND clip.deleted_at IS NULL
+       ORDER BY contribution.created_at DESC, clip.id DESC`,
+    )
+    .all(groupId, memberId, groupId) as Record<string, unknown>[];
+  return {
+    films: films.map((film) => ({
+      id: String(film.id),
+      cycleId: String(film.cycleId),
+      publishedAt: String(film.publishedAt),
+    })),
+    clips: clips.map((clip) => ({
+      id: String(clip.id),
+      contributionId: String(clip.contributionId),
+      cycleId: String(clip.cycleId),
+      createdAt: String(clip.createdAt),
+    })),
+  };
+}
+
+export function getReleasedFilmDownload(
+  database: RewindDatabase,
+  groupId: string,
+  filmId: string,
+): { outputPath: string } | null {
+  const row = database
+    .prepare(
+      `SELECT f.output_path AS outputPath
+       FROM media_jobs f
+       JOIN cycles c ON c.id = f.cycle_id AND c.group_id = f.group_id
+       WHERE f.id = ? AND f.group_id = ? AND f.kind = 'film' AND f.status = 'ready'
+         AND f.output_path IS NOT NULL AND c.release_status = 'published'
+       LIMIT 1`,
+    )
+    .get(filmId, groupId) as Record<string, unknown> | undefined;
+  return row?.outputPath ? { outputPath: String(row.outputPath) } : null;
+}
+
+export function getReleasedOwnClipDownload(
+  database: RewindDatabase,
+  groupId: string,
+  memberId: string,
+  clipId: string,
+): { outputPath: string } | null {
+  const row = database
+    .prepare(
+      `SELECT clip.output_path AS outputPath
+       FROM media_jobs clip
+       JOIN contributions contribution ON contribution.id = clip.contribution_id
+       JOIN cycles cycle ON cycle.id = contribution.cycle_id
+       WHERE clip.id = ? AND clip.group_id = ? AND clip.kind = 'clip' AND clip.status = 'ready'
+         AND clip.output_path IS NOT NULL AND contribution.member_id = ?
+         AND cycle.group_id = ? AND cycle.release_status = 'published'
+         AND clip.deleted_at IS NULL
+       LIMIT 1`,
+    )
+    .get(clipId, groupId, memberId, groupId) as Record<string, unknown> | undefined;
+  return row?.outputPath ? { outputPath: String(row.outputPath) } : null;
+}
+
+/** The HTTP layer decides which safe premiere state to expose. This query
+ * deliberately retains the output path only for its server-side stream gate. */
+export function getPremiereFilm(
+  database: RewindDatabase,
+  groupId: string,
+  cycleId: string,
+): PremiereFilmRecord | null {
+  const row = database
+    .prepare(
+      `SELECT c.id AS cycleId, c.status AS cycleStatus, c.release_status AS releaseStatus,
+              f.id AS filmId, f.status AS filmStatus, f.output_path AS outputPath,
+              f.attempt_count AS attemptCount
+       FROM cycles c
+       LEFT JOIN media_jobs f
+         ON f.cycle_id = c.id AND f.group_id = c.group_id AND f.kind = 'film'
+       WHERE c.id = ? AND c.group_id = ?
+       ORDER BY f.created_at DESC, f.id DESC LIMIT 1`,
+    )
+    .get(cycleId, groupId) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    cycleId: String(row.cycleId),
+    cycleStatus: String(row.cycleStatus),
+    releaseStatus: row.releaseStatus === 'published' ? 'published' : 'unpublished',
+    filmId: row.filmId ? String(row.filmId) : null,
+    filmStatus: row.filmStatus ? String(row.filmStatus) : null,
+    outputPath: row.outputPath ? String(row.outputPath) : null,
+    attemptCount: Math.max(0, Number(row.attemptCount ?? 0)),
   };
 }

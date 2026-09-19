@@ -6,7 +6,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile
     image: rewind-demo:local
-    container_name: rewind-demo-runtime
+    container_name: ${REWIND_CONTAINER_NAME:-rewind-demo-runtime}
     restart: unless-stopped
     init: true
     read_only: true
@@ -20,10 +20,10 @@ services:
       REWIND_FFMPEG_BIN: ffmpeg
       REWIND_ALLOW_ORIGIN: '${REWIND_ALLOW_ORIGIN:-*}'
     ports:
-      - '127.0.0.1:8787:8787'
+      - '127.0.0.1:${REWIND_RUNTIME_PORT:-8787}:8787'
     volumes:
-      - /srv/rewind/data:/var/lib/rewind
-      - /srv/rewind/media:/var/lib/rewind/media
+      - ${REWIND_DATA_HOST_DIR:-/srv/rewind/data}:/var/lib/rewind
+      - ${REWIND_MEDIA_HOST_DIR:-/srv/rewind/media}:/var/lib/rewind/media
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -39,4 +39,40 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 10s
+      retries: 3
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    image: rewind-demo-web:local
+    container_name: ${REWIND_WEB_CONTAINER_NAME:-rewind-demo-web}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=32m,mode=1777
+      - /var/run:size=1m,mode=1777
+    depends_on:
+      runtime:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${REWIND_WEB_PORT:-8080}:80'
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 128m
+    pids_limit: 64
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1/
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
       retries: 3

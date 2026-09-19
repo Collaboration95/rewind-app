@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { Buffer } from 'node:buffer';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import test from 'node:test';
@@ -9,7 +12,7 @@ const { fixtureSummary, openDatabase, resetDatabase } = await import('../dist/db
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createGroup } = await import('../dist/groups/index.js');
 
-async function withRuntime(run) {
+async function withRuntime(run, options = {}) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-runtime-test-`);
   const config = parseConfig({
     REWIND_DATA_DIR: dataDir,
@@ -17,8 +20,9 @@ async function withRuntime(run) {
     REWIND_PORT: '0',
     REWIND_FFMPEG_BIN: 'ffmpeg',
   });
-  const database = openDatabase(config);
-  const server = createRuntimeServer(config, database);
+  const { seedNow, ...serverOptions } = options;
+  const database = openDatabase(config, seedNow === undefined ? undefined : { seedNow });
+  const server = createRuntimeServer(config, database, serverOptions);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -87,28 +91,60 @@ test('fresh migration, restart, and reset preserve or restore deterministic stat
   }
 });
 
+test('a fresh runtime seeds a current Demo window while retaining fixed-clock test control', async () => {
+  const seedNow = new Date('2030-01-15T12:00:00.000Z');
+  await withRuntime(
+    async ({ database }) => {
+      const cycle = database
+        .prepare('SELECT starts_at AS startsAt, ends_at AS endsAt FROM cycles WHERE id = ?')
+        .get('demo-cycle');
+      assert.equal(cycle.startsAt, seedNow.toISOString());
+      assert.equal(Date.parse(cycle.endsAt) - Date.parse(cycle.startsAt), 11 * 24 * 60 * 60 * 1000);
+    },
+    { seedNow },
+  );
+});
+
 test('health and typed fixture endpoints are reachable over the local service', async () => {
-  await withRuntime(async ({ baseUrl }) => {
+  await withRuntime(async ({ baseUrl, database }) => {
     const health = await fetch(`${baseUrl}/health`).then((response) => response.json());
     assert.equal(health.ok, true);
     assert.equal(health.service, 'rewind-local-runtime');
     assert.equal(health.ready, true);
+    assert.equal(health.checks.schema.ready, true);
+    assert.equal(health.checks.schema.expectedMigrationVersion, 13);
 
     const profiles = await fetch(`${baseUrl}/profiles`).then((response) => response.json());
     assert.equal(profiles.profiles.length, 5);
 
-    const group = await fetch(`${baseUrl}/groups/current?memberId=demo-1`).then((response) =>
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const sessionQuery = `sessionId=${encodeURIComponent(session.id)}`;
+    const group = await fetch(`${baseUrl}/groups/current?${sessionQuery}`).then((response) =>
       response.json(),
     );
     assert.equal(group.group.id, 'demo-group');
-    const cycle = await fetch(`${baseUrl}/cycles/current?groupId=demo-group&memberId=demo-1`).then(
+    const cycle = await fetch(`${baseUrl}/cycles/current?groupId=demo-group&${sessionQuery}`).then(
       (response) => response.json(),
     );
     assert.equal(cycle.cycle.id, 'demo-cycle');
+
+    database
+      .prepare('DELETE FROM schema_migration_markers WHERE migration_key = ?')
+      .run('chat-replies-reactions-v1');
+    const staleHealth = await fetch(`${baseUrl}/health`);
+    assert.equal(staleHealth.status, 503);
+    const staleBody = await staleHealth.json();
+    assert.equal(staleBody.ready, false);
+    assert.deepEqual(staleBody.checks.schema.missingMigrationKeys, ['chat-replies-reactions-v1']);
   });
 });
 
-test('every protected endpoint category returns the same safe denial to a non-member', async () => {
+test('every protected endpoint category requires a session and ignores caller identity values', async () => {
   await withRuntime(async ({ baseUrl }) => {
     const paths = [
       '/groups/demo-group',
@@ -126,17 +162,285 @@ test('every protected endpoint category returns the same safe denial to a non-me
       }),
     );
     for (const result of responses) {
-      assert.equal(result.status, 403);
+      assert.equal(result.status, 401);
       assert.deepEqual(result.body, {
-        allowed: false,
-        status: 403,
-        error: 'forbidden',
-        message: 'You do not have access to this resource.',
+        error: 'session_required',
+        message: 'Choose Demo access before changing local Demo data.',
       });
     }
 
-    const allowed = await fetch(`${baseUrl}/films/demo-film?groupId=demo-group&memberId=demo-1`);
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const allowed = await fetch(
+      `${baseUrl}/films/demo-film?groupId=demo-group&memberId=demo-outsider&sessionId=${encodeURIComponent(session.id)}`,
+    );
     assert.equal(allowed.status, 200);
+  });
+});
+
+test('released archive downloads are session-bound, owner-scoped, release-gated, and never expose paths', async () => {
+  await withRuntime(async ({ baseUrl, config, database }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+
+    const locked = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+    assert.equal(locked.status, 200);
+    assert.deepEqual(await locked.json(), {
+      premiere: { state: 'locked', cycleId: 'demo-cycle' },
+    });
+    const noSession = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?groupId=demo-group`);
+    assert.equal(noSession.status, 401);
+    const noArchiveSession = await fetch(`${baseUrl}/archive?groupId=demo-group`);
+    assert.equal(noArchiveSession.status, 401);
+    const noDownloadSession = await fetch(`${baseUrl}/films/demo-film/download?groupId=demo-group`);
+    assert.equal(noDownloadSession.status, 401);
+
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'failed', attempt_count = 3, output_path = NULL,
+           cycle_id = ? WHERE id = 'demo-film' AND kind = 'film'`,
+      )
+      .run('demo-cycle');
+    database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();
+    const delayed = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+    assert.deepEqual(await delayed.json(), {
+      premiere: { state: 'delayed', cycleId: 'demo-cycle' },
+    });
+
+    const processedDir = resolve(config.dataDir, 'media', 'processed');
+    const outputPath = resolve(processedDir, 'demo-film.mp4');
+    const clipOutputPath = resolve(processedDir, 'demo-clip.mp4');
+    await mkdir(processedDir, { recursive: true });
+    await writeFile(outputPath, Buffer.from('synthetic playable bytes'));
+    await writeFile(clipOutputPath, Buffer.from('synthetic clip bytes'));
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'ready', cycle_id = ?, output_path = ?
+         WHERE id = 'demo-film' AND kind = 'film'`,
+      )
+      .run('demo-cycle', outputPath);
+    database
+      .prepare(`UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = 'demo-clip'`)
+      .run(clipOutputPath);
+    database
+      .prepare(
+        `UPDATE cycles SET status = 'revealing', release_status = 'published',
+           release_published_at = ? WHERE id = 'demo-cycle'`,
+      )
+      .run(new Date().toISOString());
+
+    const ready = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+    assert.equal(ready.status, 200);
+    const readyBody = await ready.json();
+    assert.equal(readyBody.premiere.state, 'ready');
+    assert.equal(readyBody.premiere.filmId, 'demo-film');
+    assert.match(readyBody.premiere.playbackPath, /^\/films\/demo-film\/play\?/);
+    assert.doesNotMatch(
+      JSON.stringify(readyBody),
+      new RegExp(config.dataDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+
+    const archiveResponse = await fetch(`${baseUrl}/archive?${query}`);
+    assert.equal(archiveResponse.status, 200);
+    const archive = await archiveResponse.json();
+    assert.equal(archive.archive.films.length, 1);
+    assert.equal(archive.archive.clips.length, 1);
+    assert.match(archive.archive.films[0].downloadPath, /^\/films\/demo-film\/download\?/);
+    assert.match(archive.archive.clips[0].downloadPath, /^\/clips\/demo-clip\/download\?/);
+    assert.doesNotMatch(
+      JSON.stringify(archive),
+      new RegExp(config.dataDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    );
+
+    const filmDownload = await fetch(`${baseUrl}${archive.archive.films[0].downloadPath}`);
+    assert.equal(filmDownload.status, 200);
+    assert.equal(
+      filmDownload.headers.get('content-disposition'),
+      'attachment; filename="rewind-group-film.mp4"',
+    );
+    assert.deepEqual(
+      Buffer.from(await filmDownload.arrayBuffer()),
+      Buffer.from('synthetic playable bytes'),
+    );
+    const clipDownload = await fetch(`${baseUrl}${archive.archive.clips[0].downloadPath}`);
+    assert.equal(clipDownload.status, 200);
+    assert.equal(
+      clipDownload.headers.get('content-disposition'),
+      'attachment; filename="rewind-my-clip.mp4"',
+    );
+    assert.deepEqual(
+      Buffer.from(await clipDownload.arrayBuffer()),
+      Buffer.from('synthetic clip bytes'),
+    );
+
+    const otherMemberResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-2', groupId: 'demo-group' }),
+    });
+    const { session: otherMemberSession } = await otherMemberResponse.json();
+    const otherMemberArchive = await fetch(
+      `${baseUrl}/archive?groupId=demo-group&sessionId=${encodeURIComponent(otherMemberSession.id)}`,
+    ).then((response) => response.json());
+    assert.equal(otherMemberArchive.archive.films.length, 1);
+    assert.equal(otherMemberArchive.archive.clips.length, 0);
+    const otherMemberClip = await fetch(
+      `${baseUrl}/clips/demo-clip/download?groupId=demo-group&sessionId=${encodeURIComponent(otherMemberSession.id)}`,
+    );
+    assert.equal(otherMemberClip.status, 404);
+
+    const playback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
+    assert.equal(playback.status, 200);
+    assert.equal(playback.headers.get('content-type'), 'video/mp4');
+    assert.deepEqual(
+      Buffer.from(await playback.arrayBuffer()),
+      Buffer.from('synthetic playable bytes'),
+    );
+    const rangedPlayback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`, {
+      headers: { Range: 'bytes=10-18' },
+    });
+    assert.equal(rangedPlayback.status, 206);
+    assert.equal(rangedPlayback.headers.get('content-range'), 'bytes 10-18/24');
+    assert.deepEqual(Buffer.from(await rangedPlayback.arrayBuffer()), Buffer.from('playable '));
+
+    database
+      .prepare(
+        "UPDATE cycles SET release_status = 'unpublished', release_published_at = NULL WHERE id = ?",
+      )
+      .run('demo-cycle');
+    const afterUnpublish = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
+    assert.equal(afterUnpublish.status, 404);
+    const archiveAfterUnpublish = await fetch(`${baseUrl}/archive?${query}`).then((response) =>
+      response.json(),
+    );
+    assert.deepEqual(archiveAfterUnpublish.archive, { films: [], clips: [] });
+    const revokedDownload = await fetch(`${baseUrl}${archive.archive.films[0].downloadPath}`);
+    assert.equal(revokedDownload.status, 404);
+  });
+});
+
+test('a session-authorized synthetic Demo clip enters the ordinary sealed processing path', async () => {
+  await withRuntime(
+    async ({ baseUrl, config }) => {
+      const denied = await fetch(`${baseUrl}/demo/synthetic-clip?groupId=demo-group`, {
+        method: 'POST',
+      });
+      assert.equal(denied.status, 401);
+      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-1' }),
+      });
+      const { session } = await sessionResponse.json();
+      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+      const created = await fetch(`${baseUrl}/demo/synthetic-clip?${query}`, { method: 'POST' });
+      const body = await created.json();
+      assert.equal(created.status, 201, JSON.stringify(body));
+      assert.equal(body.synthetic, true);
+      assert.equal(body.upload.job.status, 'pending');
+      assert.doesNotMatch(
+        JSON.stringify(body),
+        new RegExp(config.dataDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      );
+      const processed = await fetch(
+        `${baseUrl}/contributions/jobs/${encodeURIComponent(body.upload.job.id)}/process?${query}`,
+        { method: 'POST' },
+      );
+      assert.equal(processed.status, 200);
+      assert.equal((await processed.json()).job.status, 'ready');
+
+      const memberSessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-2' }),
+      });
+      const { session: memberSession } = await memberSessionResponse.json();
+      const memberCreated = await fetch(
+        `${baseUrl}/demo/synthetic-clip?groupId=demo-group&sessionId=${encodeURIComponent(memberSession.id)}`,
+        { method: 'POST' },
+      );
+      assert.equal(memberCreated.status, 201);
+      assert.equal((await memberCreated.json()).synthetic, true);
+    },
+    { now: () => new Date('2026-09-10T12:00:00.000Z') },
+  );
+});
+
+test('the owner reveal control reports collecting while the cycle is still open', async () => {
+  await withRuntime(
+    async ({ baseUrl }) => {
+      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-1' }),
+      });
+      const { session } = await sessionResponse.json();
+      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+
+      const collecting = await fetch(`${baseUrl}/demo/reveal?${query}`, { method: 'POST' });
+      assert.equal(collecting.status, 200);
+      assert.deepEqual(await collecting.json(), {
+        reveal: { state: 'collecting', cycleId: 'demo-cycle' },
+      });
+    },
+    { now: () => new Date('2026-09-10T12:00:00.000Z') },
+  );
+});
+
+test('the owner reveal control reports a durable compile failure as delayed without a player', async () => {
+  await withRuntime(async ({ baseUrl }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+
+    const compiling = await fetch(`${baseUrl}/demo/reveal?${query}`, { method: 'POST' });
+    assert.equal(compiling.status, 200);
+    assert.equal((await compiling.json()).reveal.state, 'compiling');
+    const delayed = await fetch(`${baseUrl}/demo/reveal?${query}`, { method: 'POST' });
+    assert.equal(delayed.status, 200);
+    const delayedBody = await delayed.json();
+    assert.equal(delayedBody.reveal.state, 'delayed');
+    const premiere = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+    assert.equal(premiere.status, 200);
+    assert.deepEqual((await premiere.json()).premiere, {
+      state: 'processing',
+      cycleId: 'demo-cycle',
+    });
+  });
+});
+
+test('a non-owner Demo member cannot operate the reveal control', async () => {
+  await withRuntime(async ({ baseUrl }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-2' }),
+    });
+    const { session } = await sessionResponse.json();
+    const response = await fetch(
+      `${baseUrl}/demo/reveal?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`,
+      { method: 'POST' },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), {
+      allowed: false,
+      status: 403,
+      error: 'forbidden',
+      message: 'You do not have access to this resource.',
+    });
   });
 });
 
@@ -161,7 +465,15 @@ test('malformed percent-encoded path segments return a client error for every ro
       });
     }
 
-    const encodedValid = await fetch(`${baseUrl}/groups/%64emo-group?memberId=demo-1`);
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const encodedValid = await fetch(
+      `${baseUrl}/groups/%64emo-group?memberId=demo-outsider&sessionId=${encodeURIComponent(session.id)}`,
+    );
     assert.equal(encodedValid.status, 200);
     assert.equal((await encodedValid.json()).group.id, 'demo-group');
   });
@@ -292,7 +604,7 @@ test('Demo session and group HTTP mutations preserve the selected group context'
 });
 
 test('local Demo reset endpoint restores the deterministic fixture and removes created groups', async () => {
-  await withRuntime(async ({ baseUrl, database }) => {
+  await withRuntime(async ({ baseUrl, config, database }) => {
     const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -309,6 +621,12 @@ test('local Demo reset endpoint restores the deterministic fixture and removes c
     );
     assert.equal(groupResponse.status, 201);
     assert.equal(fixtureSummary(database).groups, 2);
+    const stagedFile = resolve(config.dataDir, 'media', 'staging', 'partial.mp4');
+    const outputFile = resolve(config.dataDir, 'media', 'processed', 'film.mp4');
+    await mkdir(resolve(config.dataDir, 'media', 'staging'), { recursive: true });
+    await mkdir(resolve(config.dataDir, 'media', 'processed'), { recursive: true });
+    await writeFile(stagedFile, 'staged', { encoding: 'utf8', flag: 'w' });
+    await writeFile(outputFile, 'processed', { encoding: 'utf8', flag: 'w' });
 
     const reset = await fetch(`${baseUrl}/demo/reset?sessionId=${encodeURIComponent(session.id)}`, {
       method: 'POST',
@@ -326,5 +644,29 @@ test('local Demo reset endpoint restores the deterministic fixture and removes c
       messages: 1,
       reactions: 1,
     });
+    assert.equal(existsSync(stagedFile), false);
+    assert.equal(existsSync(outputFile), false);
+  });
+});
+
+test('local Demo reset endpoint refuses a valid non-owner session', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-2' }),
+    });
+    const { session } = await sessionResponse.json();
+    const reset = await fetch(`${baseUrl}/demo/reset?sessionId=${encodeURIComponent(session.id)}`, {
+      method: 'POST',
+    });
+    assert.equal(reset.status, 403);
+    assert.deepEqual(await reset.json(), {
+      allowed: false,
+      status: 403,
+      error: 'forbidden',
+      message: 'You do not have access to this resource.',
+    });
+    assert.equal(fixtureSummary(database).groups, 1);
   });
 });

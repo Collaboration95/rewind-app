@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="5534" height="656" viewBox="-32 -32 5534 656">
+<defs>
+  <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+    <polygon points="0 0, 10 3.5, 0 7" fill="#1f2937"/>
+  </marker>
+</defs>
+<rect x="-32" y="-32" width="5534" height="656" fill="#fbfbfa"/>
+<text x="0" y="30" fill="#0f172a" font-family="Virgil, Arial, sans-serif" font-size="30"><tspan x="0" dy="0">Rewind hosted Demo hardening</tspan></text>
+<text x="0" y="111" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="0" dy="0">Before → after: all 15 canonical Sprint 2 issues organized as one safe d</tspan><tspan x="0" dy="22.5">eployment and recovery path</tspan></text>
+<rect x="5105" y="280" width="365" height="144" rx="10" fill="#ecfdf5" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="4716" y="288" width="365" height="144" rx="10" fill="#eff6ff" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="4327" y="296" width="365" height="144" rx="10" fill="#fffbeb" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="3938" y="304" width="365" height="144" rx="10" fill="#f5f3ff" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="3549" y="304" width="365" height="144" rx="10" fill="#fdf2f8" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="3160" y="304" width="365" height="144" rx="10" fill="#f0fdfa" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="2771" y="320" width="365" height="120" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="2382" y="328" width="365" height="120" rx="10" fill="#ecfdf5" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="1993" y="328" width="365" height="144" rx="10" fill="#eff6ff" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="1604" y="336" width="365" height="160" rx="10" fill="#fffbeb" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="1215" y="360" width="365" height="160" rx="10" fill="#f5f3ff" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="826" y="392" width="365" height="144" rx="10" fill="#fdf2f8" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="437" y="416" width="365" height="144" rx="10" fill="#f0fdfa" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<rect x="48" y="432" width="365" height="160" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.5" opacity="1"/>
+<polyline points="1651.241002300816,349.5 1769.6161795655626,350.5" fill="none" stroke="#ef4444" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="1531.5105435044943,362.1780868552105 1650.241002300816,363.1780868552105" fill="none" stroke="#ef4444" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="1411.5055203456036,371.06500784302534 1530.5105435044943,372.06500784302534" fill="none" stroke="#ef4444" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="1291.4221894796578,374.9316644109201 1410.5055203456036,375.9316644109201" fill="none" stroke="#ef4444" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="1171.320643781717,375.0084728965908 1290.4221894796578,376.0084728965908" fill="none" stroke="#ef4444" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="1051.2661793151383,375.51480793607925 1170.320643781717,376.51480793607925" fill="none" stroke="#22c55e" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="931.4033653334294,379.5257456092984 1050.2661793151383,380.5257456092984" fill="none" stroke="#22c55e" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="811.8787189473345,387.6337878862646 930.4033653334294,388.6337878862646" fill="none" stroke="#22c55e" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="692.8284933361994,399.8262814630825 810.8787189473345,400.8262814630825" fill="none" stroke="#22c55e" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="574.3756357583742,416.0141963636015 691.8284933361994,417.0141963636015" fill="none" stroke="#22c55e" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="456.6152963087965,436.072723315071 573.3756357583742,437.072723315071" fill="none" stroke="#22c55e" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="339.55199269857746,459.78711738316474 455.6152963087965,460.78711738316474" fill="none" stroke="#22c55e" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<polyline points="222.5,486.62418226081445 338.55199269857746,487.62418226081445" fill="none" stroke="#22c55e" stroke-width="2" opacity="1" marker-end="url(#arrowhead)"/>
+<text x="5176.971054077148" y="325" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="5176.971054077148" dy="0">BEFORE · Runtime + web</tspan><tspan x="5176.971054077148" dy="22.5"> shell</tspan><tspan x="5176.971054077148" dy="22.5">Separate origins; rout</tspan><tspan x="5176.971054077148" dy="22.5">ing assumptions</tspan></text>
+<text x="4788.529067993164" y="333" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="4788.529067993164" dy="0">BEFORE · Manual host o</tspan><tspan x="4788.529067993164" dy="22.5">perations</tspan><tspan x="4788.529067993164" dy="22.5">Partial bootstrap; wea</tspan><tspan x="4788.529067993164" dy="22.5">k preflight</tspan></text>
+<text x="4399.844055175781" y="341" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="4399.844055175781" dy="0">BEFORE · Backup / rest</tspan><tspan x="4399.844055175781" dy="22.5">ore</tspan><tspan x="4399.844055175781" dy="22.5">Implicit selection; no</tspan><tspan x="4399.844055175781" dy="22.5">n-atomic paths</tspan></text>
+<text x="4012.365058898926" y="349" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="4012.365058898926" dy="0">BEFORE · Identity cont</tspan><tspan x="4012.365058898926" dy="22.5">rols</tspan><tspan x="4012.365058898926" dy="22.5">Caller identity could </tspan><tspan x="4012.365058898926" dy="22.5">cross boundaries</tspan></text>
+<text x="3617.2000579833984" y="349" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="3617.2000579833984" dy="0">BEFORE · AWS demo reso</tspan><tspan x="3617.2000579833984" dy="22.5">urces</tspan><tspan x="3617.2000579833984" dy="22.5">Safety and IAM evidenc</tspan><tspan x="3617.2000579833984" dy="22.5">e incomplete</tspan></text>
+<text x="3231.152069091797" y="349" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="3231.152069091797" dy="0">AFTER · #107 Host bund</tspan><tspan x="3231.152069091797" dy="22.5">le</tspan><tspan x="3231.152069091797" dy="22.5">Cloud-init, Compose, N</tspan><tspan x="3231.152069091797" dy="22.5">ginx, systemd</tspan></text>
+<text x="2847.7680587768555" y="364.25" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="2847.7680587768555" dy="0">#108 Preflight gates</tspan><tspan x="2847.7680587768555" dy="22.5">Stable JSON + human se</tspan><tspan x="2847.7680587768555" dy="22.5">rvice checks</tspan></text>
+<text x="2468.2810668945312" y="372.25" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="2468.2810668945312" dy="0">#110 Strict manifests</tspan><tspan x="2468.2810668945312" dy="22.5">Bucket, prefix, time, </tspan><tspan x="2468.2810668945312" dy="22.5">size, SHA-256</tspan></text>
+<text x="2072.8280715942383" y="373" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="2072.8280715942383" dy="0">#111 + #112 Safe resto</tspan><tspan x="2072.8280715942383" dy="22.5">re</tspan><tspan x="2072.8280715942383" dy="22.5">Staging, rollback, own</tspan><tspan x="2072.8280715942383" dy="22.5">ership + modes</tspan></text>
+<text x="1680.2280883789062" y="377.75" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="1680.2280883789062" dy="0">#113–#115 Recovery loo</tspan><tspan x="1680.2280883789062" dy="22.5">p</tspan><tspan x="1680.2280883789062" dy="22.5">Selection, lifecycle g</tspan><tspan x="1680.2280883789062" dy="22.5">uards, failure injecti</tspan><tspan x="1680.2280883789062" dy="22.5">on</tspan></text>
+<text x="1289.5360794067383" y="401.75" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="1289.5360794067383" dy="0">#116 + #118 + #120 Cos</tspan><tspan x="1289.5360794067383" dy="22.5">t safety</tspan><tspan x="1289.5360794067383" dy="22.5">Policy matrix, redacte</tspan><tspan x="1289.5360794067383" dy="22.5">d notification, IAM al</tspan><tspan x="1289.5360794067383" dy="22.5">lowlists</tspan></text>
+<text x="900.1400756835938" y="437" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="900.1400756835938" dy="0">#122 Production web bo</tspan><tspan x="900.1400756835938" dy="22.5">undary</tspan><tspan x="900.1400756835938" dy="22.5">Same-origin /api, SPA </tspan><tspan x="900.1400756835938" dy="22.5">fallback, cache rules</tspan></text>
+<text x="516.4860763549805" y="461" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="516.4860763549805" dy="0">#124 Session-only auth</tspan><tspan x="516.4860763549805" dy="22.5">orization</tspan><tspan x="516.4860763549805" dy="22.5">Actor derived from val</tspan><tspan x="516.4860763549805" dy="22.5">id hosted session</tspan></text>
+<text x="121.57307434082031" y="473.75" fill="#64748b" font-family="Virgil, Arial, sans-serif" font-size="18"><tspan x="121.57307434082031" dy="0">#126 Production E2E pr</tspan><tspan x="121.57307434082031" dy="22.5">oof</tspan><tspan x="121.57307434082031" dy="22.5">Reset → invite → seal </tspan><tspan x="121.57307434082031" dy="22.5">→ reveal → playback → </tspan><tspan x="121.57307434082031" dy="22.5">denial</tspan></text>
+<text x="1156.4714761399648" y="381.761640416335" fill="#ef4444" font-family="Virgil, Arial, sans-serif" font-size="16"><tspan x="1156.4714761399648" dy="0">hardening boundary</tspan></text>
+<text x="1056.513458545498" y="384.0202767726888" fill="#22c55e" font-family="Virgil, Arial, sans-serif" font-size="16"><tspan x="1056.513458545498" dy="0">verified gates</tspan></text>
+<text x="684.5496586930365" y="414.420238913342" fill="#22c55e" font-family="Virgil, Arial, sans-serif" font-size="16"><tspan x="684.5496586930365" dy="0">bounded recovery</tspan></text>
+<text x="214.28605189128092" y="506.47750602607107" fill="#22c55e" font-family="Virgil, Arial, sans-serif" font-size="16"><tspan x="214.28605189128092" dy="0">authorized proof</tspan></text>
+</svg>

@@ -13,7 +13,8 @@
           "microphonePermission": "Allow Rewind to use your microphone for capture readiness.",
           "recordAudioAndroid": true
         }
-      ]
+      ],
+      "expo-video"
     ]
   }
 }
