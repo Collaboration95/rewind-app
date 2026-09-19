@@ -31,8 +31,11 @@ What is live
   point, restores it, and starts the runtime. The old power controller is only
   retained for an already-existing instance.
 - Issue #100 adds a separate read-only cost-safety audit every four hours. Its
-  expected state is either a stopped active Demo or an intentionally absent
-  hibernated Demo; every unexpected running/present state remains actionable.
+  expected state is configured explicitly as `demo_off`, `expected_stopped`,
+  or `approved_active_demo`. The default is a stopped active Demo; a running
+  Demo is non-error only when `cost_safety_expected_instance_state=running`
+  is explicitly approved. An unconfigured running/present state remains
+  actionable.
   It has no start, stop, delete, backup-object-read, or recovery permissions.
 
 Access model
@@ -81,8 +84,9 @@ backup verification gate.
 `automatic_start_schedule_expression` remains unset because recreation and
 restore require an explicit recovery point.
 
-The cost-safety audit checks either the active instance's `Environment=demo`
-tag and static-IP attachment, or the intentional hibernated state where the
+The cost-safety audit checks the configured Demo power state: a stopped
+`Environment=demo` instance by default, an explicitly approved running
+instance when configured, or the intentional hibernated state where the
 instance is absent. It also checks exact snapshot/distribution allowlists and
 the backup bucket lifecycle rule. Lightsail distributions are read in
 `us-east-1`, including when the allowlist is empty so an unexpected

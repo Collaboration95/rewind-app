@@ -6,6 +6,10 @@ const costSafetyTerraform = await readFile(
   new URL('../../infra/terraform/demo/cost-safety-audit.tf', import.meta.url),
   'utf8',
 );
+const demoVariables = await readFile(
+  new URL('../../infra/terraform/demo/variables.tf', import.meta.url),
+  'utf8',
+);
 
 function extractBlock(source, header) {
   const headerStart = source.indexOf(header);
@@ -153,4 +157,15 @@ test('scheduler trust is scoped to this account and this exact schedule', () => 
     /arn:aws:scheduler:\$\{var\.aws_region\}:\$\{var\.account_id\}:schedule\/\$\{aws_scheduler_schedule_group\.rewind\.name\}\/rewind-demo-cost-safety-audit/,
   );
   assert.doesNotMatch(schedulerTrust, /\*/);
+});
+
+test('audit expected power state is explicit and distinct from instance existence', () => {
+  assert.match(demoVariables, /variable "cost_safety_expected_instance_state"/);
+  assert.match(
+    demoVariables,
+    /contains\(\["stopped", "running"\], var\.cost_safety_expected_instance_state\)/,
+  );
+  assert.match(costSafetyTerraform, /EXPECTED_STATE\s+=\s+local\.cost_safety_expected_state/);
+  assert.match(costSafetyTerraform, /"approved_active_demo"/);
+  assert.match(costSafetyTerraform, /"expected_stopped"/);
 });

@@ -13,7 +13,12 @@ NOTIFICATION_SCHEMA_VERSION = 1
 DISABLED_MODE = "disabled"
 SNS_MODE = "sns"
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
-_SAFE_EXPECTED_STATES = {"approved_active_demo", "demo_off", "unknown"}
+_SAFE_EXPECTED_STATES = {
+    "approved_active_demo",
+    "expected_stopped",
+    "demo_off",
+    "unknown",
+}
 
 
 class Publisher(Protocol):

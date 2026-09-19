@@ -34,15 +34,15 @@ def failing_report():
     return {
         "event": "rewind.demo.cost_safety_audit",
         "status": "fail",
-        "expected_state": "approved_active_demo",
+        "expected_state": "expected_stopped",
         "issues": ["instance_not_stopped"],
         "findings": [
             {
                 "code": "instance_not_stopped",
                 "severity": "error",
                 "resource_identifier_class": "lightsail_instance",
-                "expected_state": "present_stopped_and_tagged_demo",
-                "remediation": "review-active-demo-power-state",
+                "expected_state": "expected_stopped",
+                "remediation": "review-demo-power-state",
             }
         ],
         "resources": {"instance_name": "private-resource-name"},
@@ -53,8 +53,8 @@ FINDING_DEFINITIONS = {
     "instance_not_stopped": {
         "severity": "error",
         "resource_identifier_class": "lightsail_instance",
-        "expected_state": "present_stopped_and_tagged_demo",
-        "remediation": "review-active-demo-power-state",
+        "expected_state": "expected_stopped",
+        "remediation": "review-demo-power-state",
     }
 }
 

@@ -90,6 +90,17 @@ variable "demo_instance_enabled" {
   default     = true
 }
 
+variable "cost_safety_expected_instance_state" {
+  type        = string
+  description = "Expected Lightsail power state when the disposable Demo instance exists. Use stopped for the normal idle Demo or running only when an active Demo is explicitly approved."
+  default     = "stopped"
+
+  validation {
+    condition     = contains(["stopped", "running"], var.cost_safety_expected_instance_state)
+    error_message = "cost_safety_expected_instance_state must be stopped or running."
+  }
+}
+
 variable "retain_static_ip_when_instance_deleted" {
   type        = bool
   description = "Keep the Rewind static IPv4 address while the disposable instance is hibernated. Keeping it preserves the endpoint but has a small recurring charge."

@@ -28,6 +28,10 @@ VALID_INSTANCE = {
     "state": {"name": "stopped"},
     "tags": [{"key": "Environment", "value": "demo"}],
 }
+RUNNING_INSTANCE = {
+    "state": {"name": "running"},
+    "tags": [{"key": "Environment", "value": "demo"}],
+}
 VALID_IP = {"name": "rewind-demo-ip", "attachedTo": "rewind-demo", "isAttached": True}
 
 
@@ -116,28 +120,34 @@ class CostSafetyAuditTest(unittest.TestCase):
         return audit.evaluate(**values)
 
     def test_expected_state_matrix_has_distinct_non_error_outcomes(self):
-        active = self.report()
+        stopped = self.report(expected_state="expected_stopped")
+        active = self.report(
+            instance=RUNNING_INSTANCE,
+            expected_state="approved_active_demo",
+        )
         demo_off = self.report(
             instance={},
             static_ip=None,
-            instance_expected=False,
+            expected_state="demo_off",
             static_ip_expected=False,
         )
 
+        self.assertEqual(stopped["status"], "pass")
+        self.assertEqual(stopped["expected_state"], "expected_stopped")
         self.assertEqual(active["status"], "pass")
         self.assertEqual(active["expected_state"], "approved_active_demo")
         self.assertEqual(demo_off["status"], "pass")
         self.assertEqual(demo_off["expected_state"], "demo_off")
         self.assertEqual(
             set(audit.EXPECTED_STATE_MATRIX),
-            {"demo_off", "approved_active_demo"},
+            {"demo_off", "expected_stopped", "approved_active_demo"},
         )
 
     def test_demo_off_allows_an_explicitly_retained_unattached_static_ip(self):
         report = self.report(
             instance={},
             static_ip={"name": "rewind-demo-ip", "attachedTo": None, "isAttached": False},
-            instance_expected=False,
+            expected_state="demo_off",
             static_ip_expected=True,
         )
 
@@ -149,7 +159,7 @@ class CostSafetyAuditTest(unittest.TestCase):
         report = self.report(
             instance={},
             static_ip=None,
-            instance_expected=False,
+            expected_state="demo_off",
             static_ip_expected=True,
         )
 
@@ -163,7 +173,7 @@ class CostSafetyAuditTest(unittest.TestCase):
         report = self.report(
             instance=VALID_INSTANCE,
             static_ip={"name": "rewind-demo-ip", "attachedTo": None, "isAttached": False},
-            instance_expected=False,
+            expected_state="demo_off",
             static_ip_expected=False,
         )
 
@@ -179,7 +189,7 @@ class CostSafetyAuditTest(unittest.TestCase):
 
     def test_hibernated_demo_rejects_attached_static_ip(self):
         report = self.report(
-            instance_expected=False,
+            expected_state="demo_off",
             static_ip_expected=False,
         )
         self.assertEqual(
@@ -191,6 +201,19 @@ class CostSafetyAuditTest(unittest.TestCase):
         report = self.report(instance={"state": {"name": "running"}, "tags": []})
         self.assertEqual(report["status"], "fail")
         self.assertEqual(report["issues"], ["instance_not_stopped", "instance_not_tagged_demo"])
+
+    def test_approved_active_running_demo_is_a_non_error_state(self):
+        report = self.report(
+            instance=RUNNING_INSTANCE,
+            expected_state="approved_active_demo",
+        )
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["issues"], [])
+
+    def test_approved_active_demo_rejects_a_stopped_instance(self):
+        report = self.report(expected_state="approved_active_demo")
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["issues"], ["instance_not_running"])
 
     def test_unexpected_snapshot_distribution_and_bad_origin_fail(self):
         report = self.report(
@@ -273,7 +296,7 @@ class CostSafetyAuditTest(unittest.TestCase):
             "backup-bucket",
             [],
             {},
-            instance_expected=False,
+            expected_state="demo_off",
             static_ip_expected=False,
         )
         self.assertEqual(report["status"], "pass")
@@ -433,7 +456,7 @@ class CostSafetyAuditTest(unittest.TestCase):
         with patch.dict(sys.modules, {"boto3": fake_boto3}), patch.dict(os.environ, environment, clear=True):
             report = audit.handler({}, None)
         self.assertEqual(report["status"], "pass")
-        self.assertEqual(report["expected_state"], "approved_active_demo")
+        self.assertEqual(report["expected_state"], "expected_stopped")
         self.assertEqual(
             calls,
             [("lightsail", {}), ("lightsail", {"region_name": "us-east-1"}), ("s3", {})],

@@ -67,14 +67,21 @@ records those objects in Terraform state; it does **not** recreate them.
   30-day/7-day retention. Superseded Terraform state versions expire after
   90 days; the current state is retained.
 
-The read-only cost-safety audit evaluates one of two explicit expected states:
+The read-only cost-safety audit evaluates one of three explicit expected states:
 
 - `demo_off`: no disposable instance and no static IP unless retention was
   explicitly enabled; configured snapshots and distributions are still the
   complete allowlist.
-- `approved_active_demo`: one stopped, `Environment=demo` instance with its
-  static IP attached; configured snapshots and distributions remain the
-  complete allowlist.
+- `expected_stopped`: one stopped, `Environment=demo` instance with its static
+  IP attached; this is the default idle state.
+- `approved_active_demo`: one running, `Environment=demo` instance with its
+  static IP attached; this is allowed only when
+  `cost_safety_expected_instance_state = "running"` is explicitly configured.
+
+`demo_instance_enabled` controls whether Terraform creates the instance; it
+does not describe its power state. When the instance exists, the audit's
+expected power state is configured independently with
+`cost_safety_expected_instance_state`.
 
 Unexpected compute, orphaned or unattached networking, unapproved snapshots or
 distributions, and missing backup retention produce redacted findings with a

@@ -4,6 +4,12 @@ data "archive_file" "cost_safety_audit" {
   output_path = "${path.module}/.terraform/cost-safety-audit.zip"
 }
 
+locals {
+  cost_safety_expected_state = var.demo_instance_enabled ? (
+    var.cost_safety_expected_instance_state == "running" ? "approved_active_demo" : "expected_stopped"
+  ) : "demo_off"
+}
+
 resource "aws_cloudwatch_log_group" "cost_safety_audit" {
   name              = "/aws/lambda/rewind-demo-cost-safety-audit"
   retention_in_days = 7
@@ -122,7 +128,7 @@ resource "aws_lambda_function" "cost_safety_audit" {
     variables = {
       INSTANCE_NAME                = local.instance_name
       STATIC_IP_NAME               = local.static_ip_name
-      INSTANCE_EXPECTED            = tostring(var.demo_instance_enabled)
+      EXPECTED_STATE               = local.cost_safety_expected_state
       STATIC_IP_EXPECTED           = tostring(var.demo_instance_enabled || var.retain_static_ip_when_instance_deleted)
       AUDIT_NOTIFICATION_MODE      = var.cost_safety_audit_notification_mode
       AUDIT_NOTIFICATION_TOPIC_ARN = coalesce(var.cost_safety_audit_notification_topic_arn, "")
@@ -288,6 +294,6 @@ resource "aws_cloudwatch_metric_alarm" "cost_safety_audit" {
 }
 
 output "cost_safety_audit_function_name" {
-  description = "Read-only Lambda that audits the active stopped or intentional hibernated Demo state every four hours."
+  description = "Read-only Lambda that audits the configured stopped, approved active/running, or Demo-off state every four hours."
   value       = aws_lambda_function.cost_safety_audit.function_name
 }

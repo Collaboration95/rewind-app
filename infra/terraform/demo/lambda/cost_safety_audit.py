@@ -22,8 +22,15 @@ EXPECTED_STATE_MATRIX = {
         "distributions": "configured_allowlist_only",
         "backup_lifecycle": "rewind_demo_retention_enabled",
     },
-    "approved_active_demo": {
+    "expected_stopped": {
         "instance": "present_stopped_and_tagged_demo",
+        "static_ip": "present_and_attached_to_demo_instance",
+        "snapshots": "configured_allowlist_only",
+        "distributions": "configured_allowlist_only",
+        "backup_lifecycle": "rewind_demo_retention_enabled",
+    },
+    "approved_active_demo": {
+        "instance": "present_running_and_tagged_demo",
         "static_ip": "present_and_attached_to_demo_instance",
         "snapshots": "configured_allowlist_only",
         "distributions": "configured_allowlist_only",
@@ -38,20 +45,26 @@ FINDING_DEFINITIONS = {
     "instance_missing": {
         "severity": "error",
         "resource_identifier_class": "lightsail_instance",
-        "expected_state": "present_stopped_and_tagged_demo",
+        "expected_state": "configured_demo_instance_state",
         "remediation": "review-active-demo-terraform-state",
     },
     "instance_not_stopped": {
         "severity": "error",
         "resource_identifier_class": "lightsail_instance",
-        "expected_state": "present_stopped_and_tagged_demo",
-        "remediation": "review-active-demo-power-state",
+        "expected_state": "expected_stopped",
+        "remediation": "review-demo-power-state",
+    },
+    "instance_not_running": {
+        "severity": "error",
+        "resource_identifier_class": "lightsail_instance",
+        "expected_state": "approved_active_demo",
+        "remediation": "review-demo-power-state",
     },
     "instance_not_tagged_demo": {
         "severity": "error",
         "resource_identifier_class": "lightsail_instance",
-        "expected_state": "present_stopped_and_tagged_demo",
-        "remediation": "review-active-demo-tags",
+        "expected_state": "configured_demo_instance_state",
+        "remediation": "review-demo-tags",
     },
     "instance_present_while_demo_off": {
         "severity": "error",
@@ -210,22 +223,33 @@ def evaluate(
     instance_name,
     expected_snapshot_names,
     expected_distributions,
-    instance_expected=True,
+    expected_state="expected_stopped",
     static_ip_expected=None,
 ):
     """Return a deterministic, redacted report for the configured state."""
+    if expected_state not in EXPECTED_STATE_MATRIX:
+        raise ValueError("expected_state must be a known cost-safety state")
+
+    instance_expected = expected_state != "demo_off"
     if static_ip_expected is None:
         static_ip_expected = instance_expected
 
-    expected_state = "approved_active_demo" if instance_expected else "demo_off"
     findings = []
 
     if instance_expected:
+        expected_power_state = (
+            "running" if expected_state == "approved_active_demo" else "stopped"
+        )
         if not instance:
             _add_finding(findings, "instance_missing")
         else:
-            if instance.get("state", {}).get("name") != "stopped":
-                _add_finding(findings, "instance_not_stopped")
+            if instance.get("state", {}).get("name") != expected_power_state:
+                _add_finding(
+                    findings,
+                    "instance_not_running"
+                    if expected_power_state == "running"
+                    else "instance_not_stopped",
+                )
             if not _is_demo_tagged(instance):
                 _add_finding(findings, "instance_not_tagged_demo")
 
@@ -322,7 +346,7 @@ def run_audit(
     backup_bucket,
     expected_snapshot_names,
     expected_distributions,
-    instance_expected=True,
+    expected_state="expected_stopped",
     static_ip_expected=None,
 ):
     try:
@@ -350,7 +374,7 @@ def run_audit(
         instance_name,
         expected_snapshot_names,
         expected_distributions,
-        instance_expected,
+        expected_state,
         static_ip_expected,
     )
 
@@ -380,8 +404,10 @@ def handler(_event, _context):
     backup_bucket = os.environ["BACKUP_BUCKET"]
     expected_snapshot_names = json.loads(os.environ["EXPECTED_SNAPSHOT_NAMES"])
     expected_distributions = json.loads(os.environ["EXPECTED_DISTRIBUTIONS"])
-    instance_expected = _env_bool("INSTANCE_EXPECTED", True)
-    static_ip_expected = _env_bool("STATIC_IP_EXPECTED", instance_expected)
+    expected_state = os.environ.get("EXPECTED_STATE", "expected_stopped").strip()
+    static_ip_expected = _env_bool(
+        "STATIC_IP_EXPECTED", expected_state != "demo_off"
+    )
     try:
         report = run_audit(
             boto3.client("lightsail"),
@@ -392,7 +418,7 @@ def handler(_event, _context):
             backup_bucket,
             expected_snapshot_names,
             expected_distributions,
-            instance_expected,
+            expected_state,
             static_ip_expected,
         )
     except Exception:

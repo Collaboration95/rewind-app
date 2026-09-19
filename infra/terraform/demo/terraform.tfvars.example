@@ -19,6 +19,9 @@ cost_safety_expected_snapshot_names = []
 cost_safety_expected_distributions  = {}
 # The lifecycle scripts override this for reviewed hibernation/recovery plans.
 demo_instance_enabled = true
+# The audit expects a stopped instance by default. Set this to "running" only
+# when an active Demo is explicitly approved for the current Terraform state.
+cost_safety_expected_instance_state = "stopped"
 # Delete the static IP too while hibernated to remove its residual charge.
 # Set true only if preserving the endpoint is more important than cost.
 retain_static_ip_when_instance_deleted = false
