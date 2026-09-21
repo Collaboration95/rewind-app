@@ -131,7 +131,7 @@ resource "aws_lambda_function" "cost_safety_audit" {
       EXPECTED_STATE               = local.cost_safety_expected_state
       STATIC_IP_EXPECTED           = tostring(var.demo_instance_enabled || var.retain_static_ip_when_instance_deleted)
       AUDIT_NOTIFICATION_MODE      = var.cost_safety_audit_notification_mode
-      AUDIT_NOTIFICATION_TOPIC_ARN = coalesce(var.cost_safety_audit_notification_topic_arn, "")
+      AUDIT_NOTIFICATION_TOPIC_ARN = var.cost_safety_audit_notification_topic_arn != null ? var.cost_safety_audit_notification_topic_arn : ""
       BACKUP_BUCKET                = aws_s3_bucket.backups.id
       EXPECTED_SNAPSHOT_NAMES      = jsonencode(tolist(var.cost_safety_expected_snapshot_names))
       EXPECTED_DISTRIBUTIONS       = jsonencode(var.cost_safety_expected_distributions)

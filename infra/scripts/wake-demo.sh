@@ -147,7 +147,7 @@ validate_recreate_plan() {
   jq -e '
     any(.resource_changes[]?;
       .address == "aws_lightsail_instance.rewind[0]" and
-      ((.change.actions // []) | index("create") != null)
+      (.change.actions // []) == ["create"]
     )
   ' "$json_path" >/dev/null || {
     lifecycle_guard_reject 'the Terraform plan does not create the disposable Demo instance.'
@@ -155,34 +155,50 @@ validate_recreate_plan() {
   }
 
   if ! jq -e '
-    [(.resource_changes // [])[]
-      | select((.change.actions // []) != ["no-op"])
-      | select(
-          .address != "aws_lightsail_instance.rewind[0]" and
-          .address != "aws_lightsail_static_ip.rewind[0]" and
-          .address != "aws_lightsail_static_ip_attachment.rewind[0]" and
-          .address != "aws_lightsail_instance_public_ports.rewind[0]"
-        )
-    ] | length == 0
+    all((.resource_changes // [])[];
+      .mode == "data" or
+      (.change.actions // []) == ["no-op"] or
+      (
+        .address as $address |
+        .change.actions as $actions |
+        (
+          [
+            "aws_lightsail_instance.rewind[0]",
+            "aws_lightsail_static_ip.rewind[0]",
+            "aws_lightsail_static_ip_attachment.rewind[0]",
+            "aws_lightsail_instance_public_ports.rewind[0]",
+            "aws_iam_role.power_controller[0]",
+            "aws_iam_role_policy.power_controller[0]",
+            "aws_iam_role_policy.operator[0]",
+            "aws_iam_role_policy.scheduler[0]",
+            "aws_lambda_function.power_controller[0]",
+            "aws_scheduler_schedule.automatic_start[0]"
+          ] | index($address)
+        ) != null and $actions == ["create"]
+      ) or
+      (
+        .address as $address |
+        .change.actions as $actions |
+        (
+          [
+            "aws_iam_role.cost_safety_audit",
+            "aws_iam_role.cost_safety_audit_scheduler",
+            "aws_iam_role_policy.cost_safety_audit",
+            "aws_iam_role_policy.cost_safety_audit_scheduler",
+            "aws_lambda_function.cost_safety_audit"
+          ] | index($address)
+        ) != null and $actions == ["update"]
+      )
+    )
   ' "$json_path" >/dev/null; then
     lifecycle_guard_reject 'the Terraform plan contains an unexpected resource change; refusing recreation.'
     return 1
   fi
 
-  if ! jq -e '
-    [(.resource_changes // [])[]
-      | select((.change.actions // []) != ["no-op"])
-      | .change.actions[]?
-      | select(. != "create")
-    ] | length == 0
-  ' "$json_path" >/dev/null; then
-    lifecycle_guard_reject 'the recreation plan contains a delete, update, or replacement; refusing to apply it.'
-    return 1
-  fi
 }
 
-plan_file="$(mktemp "${TMPDIR:-/tmp}/rewind-wake.XXXXXX.tfplan")"
-plan_json="$(mktemp "${TMPDIR:-/tmp}/rewind-wake.XXXXXX.json")"
+plan_file="$(mktemp "${TMPDIR:-/tmp}/rewind-wake.XXXXXX")"
+plan_json="$(mktemp "${TMPDIR:-/tmp}/rewind-wake.XXXXXX")"
 if ! AWS_PROFILE="$TF_AWS_PROFILE" terraform -chdir="$TF_DIR" plan \
   -var-file="$TFVARS_FILE" \
   -var='demo_instance_enabled=true' \
@@ -197,7 +213,7 @@ fi
 validate_recreate_plan "$plan_json"
 
 if [[ "$APPLY" == 0 ]]; then
-  printf 'Dry-run passed: the plan is eligible to create only the disposable Demo compute.\n'
+  printf 'Dry-run passed: the plan is eligible to recreate disposable Demo compute/network and its controller bindings.\n'
   printf '%s\n' 'No Terraform apply, SSH, SCP, or rsync was performed.'
   exit 0
 fi

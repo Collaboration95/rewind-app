@@ -273,8 +273,10 @@ instance still incurs its monthly bundle charge, so the normal lifecycle is:
 
 1. Back up SQLite and media on the live host.
 2. Verify the uploaded S3 manifest.
-3. Apply Terraform with `demo_instance_enabled=false` to delete only the
-   disposable compute resources.
+3. Apply Terraform with `demo_instance_enabled=false` to delete the
+   disposable compute/network resources and disable their legacy controller
+   bindings, while preserving the backup bucket, recovery roles, and audit
+   infrastructure.
 4. Recreate the instance with Terraform, rebuild the runtime, restore the
    selected S3 recovery point, and start the service.
 
@@ -305,11 +307,10 @@ The apply path then asks the host to create a consistent local snapshot, copies
 the manifest and matching archives to the trusted operator machine, validates
 the manifest and checksums, uploads them to S3, and verifies all three objects
 before Terraform is allowed to delete compute. This means a recreated host
-does not need the old host's AWS CLI credentials. The default hibernation also
+does not need the old host's AWS CLI credentials. The default hibernation
 deletes the static IP to remove its residual charge, so the next wake may
-receive a new IP. Set `retain_static_ip_when_instance_deleted=true` in the
-reviewed Terraform variables only when endpoint stability is worth that
-charge.
+receive a new IP. Static-IP retention is intentionally out of scope for this
+sprint and can be revisited later.
 
 To recreate the host from the newest backup, keep a private local copy of
 `deploy/rewind.env` in `REWIND_ENV_FILE`, then review and apply:

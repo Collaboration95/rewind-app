@@ -169,3 +169,14 @@ test('audit expected power state is explicit and distinct from instance existenc
   assert.match(costSafetyTerraform, /"approved_active_demo"/);
   assert.match(costSafetyTerraform, /"expected_stopped"/);
 });
+
+test('disabled audit notifications tolerate a null topic ARN during planning', () => {
+  assert.match(
+    costSafetyTerraform,
+    /AUDIT_NOTIFICATION_TOPIC_ARN\s*=\s*var\.cost_safety_audit_notification_topic_arn != null \? var\.cost_safety_audit_notification_topic_arn : ""/,
+  );
+  assert.doesNotMatch(
+    costSafetyTerraform,
+    /coalesce\(var\.cost_safety_audit_notification_topic_arn/,
+  );
+});
