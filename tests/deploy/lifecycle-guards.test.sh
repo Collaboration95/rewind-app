@@ -20,10 +20,21 @@ printf 'fixture-only environment\n' > "$REWIND_ENV_FILE"
 
 cat > "$PLAN_JSON" <<'JSON'
 {"resource_changes":[
+  {"address":"data.aws_iam_policy_document.operator","mode":"data","change":{"actions":["read"]}},
   {"address":"aws_lightsail_instance.rewind[0]","change":{"actions":["delete"]}},
   {"address":"aws_lightsail_static_ip.rewind[0]","change":{"actions":["delete"]}},
   {"address":"aws_lightsail_static_ip_attachment.rewind[0]","change":{"actions":["delete"]}},
-  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["delete"]}}
+  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["delete"]}},
+  {"address":"aws_iam_role.power_controller[0]","change":{"actions":["delete"]}},
+  {"address":"aws_iam_role_policy.power_controller[0]","change":{"actions":["delete"]}},
+  {"address":"aws_iam_role_policy.operator[0]","change":{"actions":["delete"]}},
+  {"address":"aws_iam_role_policy.scheduler[0]","change":{"actions":["delete"]}},
+  {"address":"aws_lambda_function.power_controller[0]","change":{"actions":["delete"]}},
+  {"address":"aws_iam_role.cost_safety_audit","change":{"actions":["update"]}},
+  {"address":"aws_iam_role.cost_safety_audit_scheduler","change":{"actions":["update"]}},
+  {"address":"aws_iam_role_policy.cost_safety_audit","change":{"actions":["update"]}},
+  {"address":"aws_iam_role_policy.cost_safety_audit_scheduler","change":{"actions":["update"]}},
+  {"address":"aws_lambda_function.cost_safety_audit","change":{"actions":["update"]}}
 ]}
 JSON
 

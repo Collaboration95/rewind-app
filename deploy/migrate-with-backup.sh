@@ -40,6 +40,6 @@ ENV_FILE="$ENV_FILE" COMPOSE_FILE="$COMPOSE_FILE" DATA_DIR="$DATA_DIR" \
 
 compose stop runtime
 compose run --rm runtime migrate
-assert_persistent_tree_contract "$DATA_DIR" 'SQLite data' || die 'Migration did not preserve the SQLite ownership contract.'
+assert_persistent_tree_contract "$DATA_DIR" 'SQLite data' "$DATA_DIR/media" || die 'Migration did not preserve the SQLite ownership contract.'
 assert_persistent_tree_contract "$MEDIA_DIR" 'media' || die 'Migration did not preserve the media ownership contract.'
 printf '%s\n' 'Migration finished successfully. The runtime is still stopped; inspect the result and start it explicitly with compose up -d.'

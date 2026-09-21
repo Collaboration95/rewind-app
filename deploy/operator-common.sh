@@ -118,6 +118,7 @@ validate_runtime_identity() {
 assert_persistent_tree_contract() {
   local root="$1"
   local label="$2"
+  local excluded_root="${3:-}"
   local entry actual expected_mode
 
   validate_runtime_identity || return 1
@@ -129,7 +130,11 @@ assert_persistent_tree_contract() {
   # Restore archives may not introduce symlinks, devices, FIFOs, or other
   # entries whose ownership/mode semantics differ from the runtime contract.
   local unsupported
-  unsupported="$(find "$root" ! -type d ! -type f -print -quit 2>/dev/null || true)"
+  if [[ -n "$excluded_root" ]]; then
+    unsupported="$(find "$root" -path "$excluded_root" -prune -o ! -type d ! -type f -print -quit 2>/dev/null || true)"
+  else
+    unsupported="$(find "$root" ! -type d ! -type f -print -quit 2>/dev/null || true)"
+  fi
   if [[ -n "$unsupported" ]]; then
     persistent_contract_failure "$label contains an unsupported entry"
     return 1
@@ -149,7 +154,13 @@ assert_persistent_tree_contract() {
         return 1
         ;;
     esac
-  done < <(find "$root" -print0 2>/dev/null)
+  done < <(
+    if [[ -n "$excluded_root" ]]; then
+      find "$root" -path "$excluded_root" -prune -o -print0 2>/dev/null
+    else
+      find "$root" -print0 2>/dev/null
+    fi
+  )
 }
 
 prepare_persistent_tree() {
@@ -249,10 +260,11 @@ run_privileged() {
 
 run_as_runtime() {
   local runtime_uid="${RUNTIME_UID:?RUNTIME_UID must be set}"
+  local runtime_user="${RUNTIME_USER:-rewind}"
   if [[ "$(id -u)" == "$runtime_uid" ]]; then
     "$@"
   elif [[ "$(id -u)" == 0 ]] && command -v runuser >/dev/null 2>&1; then
-    runuser -u "#$runtime_uid" -- "$@"
+    runuser -u "$runtime_user" -- "$@"
   else
     sudo -n -u "#$runtime_uid" -- "$@"
   fi

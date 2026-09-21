@@ -218,7 +218,7 @@ FAIL_TAR=1 run_restore_failure | grep -q 'extraction failed'
 assert_previous_state
 
 create_fixture permissions
-FAIL_CHOWN=1 run_restore_failure | grep -q 'ownership or permissions'
+FAIL_CHOWN=1 run_restore_failure | grep -q 'staging ownership\|ownership or permissions'
 assert_previous_state
 
 create_fixture readiness

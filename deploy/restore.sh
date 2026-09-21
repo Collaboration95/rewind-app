@@ -87,7 +87,19 @@ if [[ "$(id -u)" != 0 ]]; then
   sudo -n -v >/dev/null 2>&1 || die 'Restore requires the approved host privilege for the persistent ownership contract.'
 fi
 
-restore_tmp="$(mktemp -d "$BACKUP_DIR/.rewind-restore.XXXXXX")"
+restore_tmp="$(run_privileged mktemp -d "$DATA_DIR/.rewind-restore.XXXXXX")"
+# The runtime identity must be able to traverse the private staging parent
+# during the pre-swap readability checks. Keep the operator as the directory
+# owner so cleanup remains possible for non-root invocations, and grant only
+# the runtime group access to the temporary recovery tree.
+if ! run_privileged chown "$(id -u):$(runtime_gid)" "$restore_tmp"; then
+  run_privileged rm -rf -- "$restore_tmp" || true
+  die 'Could not prepare the restore staging ownership.'
+fi
+if ! run_privileged chmod 0770 "$restore_tmp"; then
+  run_privileged rm -rf -- "$restore_tmp" || true
+  die 'Could not prepare the restore staging permissions.'
+fi
 stage_media="$restore_tmp/media"
 rollback_dir=""
 restore_started=0
@@ -104,7 +116,7 @@ restore_failure_cleanup() {
   set +e
 
   if [[ "$restore_complete" == 1 ]]; then
-    rm -rf -- "$restore_tmp" || true
+    run_privileged rm -rf -- "$restore_tmp" || true
     exit "$status"
   fi
 
@@ -175,7 +187,7 @@ restore_failure_cleanup() {
     fi
   fi
 
-  rm -rf -- "$restore_tmp" || {
+  run_privileged rm -rf -- "$restore_tmp" || {
     rollback_ok=0
     rollback_note='could not remove the staging directory'
   }
@@ -242,12 +254,14 @@ move_children "$MEDIA_DIR" "$rollback_dir/media" || die "Could not stage the pre
 replacement_started=1
 mv -- "$restore_tmp/rewind.sqlite" "$DATA_DIR/rewind.sqlite" || die "Could not install the staged database."
 move_children "$stage_media" "$MEDIA_DIR" || die "Could not install the staged media tree."
+run_privileged rmdir "$stage_media" || die "Could not remove the empty staged media directory."
+run_privileged rmdir "$restore_tmp" || die "Could not remove the empty restore staging directory."
 
 run_as_runtime test -r "$DATA_DIR/rewind.sqlite" || die "Restored database readiness failed after replacement."
 run_as_runtime test -w "$DATA_DIR" || die "Restored database directory is not writable by the runtime."
 run_as_runtime test -r "$MEDIA_DIR" || die "Restored media readiness failed after replacement."
 run_as_runtime test -w "$MEDIA_DIR" || die "Restored media write readiness failed after replacement."
-assert_persistent_tree_contract "$DATA_DIR" 'SQLite data' || die 'Restored SQLite ownership contract failed.'
+assert_persistent_tree_contract "$DATA_DIR" 'SQLite data' "$DATA_DIR/media" || die 'Restored SQLite ownership contract failed.'
 assert_persistent_tree_contract "$MEDIA_DIR" 'media' || die 'Restored media ownership contract failed.'
 
 runtime_start_attempted=1
@@ -260,7 +274,7 @@ if ! rm -rf -- "$rollback_dir"; then
   exit 1
 fi
 rollback_dir=''
-if ! rm -rf -- "$restore_tmp"; then
+if ! run_privileged rm -rf -- "$restore_tmp"; then
   printf 'Restore is healthy, but staging cleanup failed; staging copy: %s\n' "$restore_tmp" >&2
   exit 1
 fi

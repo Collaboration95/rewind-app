@@ -57,8 +57,8 @@ records those objects in Terraform state; it does **not** recreate them.
 ## Intentional cost safeguards
 
 - The active Demo uses one `micro_3_0` Lightsail instance. Hibernated state has
-  no instance or static IP by default; retaining the static IP is an explicit
-  opt-in for endpoint stability.
+  no instance or static IP; static-IP retention is intentionally out of scope
+  for the current sprint and may be revisited later.
 - No RDS, NAT gateway, load balancer, ECR, distribution, or extra compute is
   declared here.
 - The $10 actual-cost warning and $15 actual-cost critical alert are code.

@@ -55,7 +55,7 @@ if [[ "$LOCAL_ONLY" == 0 ]]; then
 fi
 require_runtime_running
 require_regular_file "SQLite database" "$DATA_DIR/rewind.sqlite"
-assert_persistent_tree_contract "$DATA_DIR" 'SQLite data' || exit 1
+assert_persistent_tree_contract "$DATA_DIR" 'SQLite data' "$DATA_DIR/media" || exit 1
 assert_persistent_tree_contract "$MEDIA_DIR" 'media' || exit 1
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"

@@ -15,7 +15,9 @@ HOST_GROUP=${REWIND_HOST_GROUP:-ubuntu}
 SYSTEMD_OWNER=${REWIND_SYSTEMD_OWNER:-root}
 SYSTEMD_GROUP=${REWIND_SYSTEMD_GROUP:-root}
 RUNTIME_OWNER=${REWIND_RUNTIME_OWNER:-10001}
-RUNTIME_GROUP=${REWIND_RUNTIME_GROUP:-ubuntu}
+RUNTIME_GROUP=${REWIND_RUNTIME_GROUP:-10001}
+RUNTIME_USER=${REWIND_RUNTIME_USER:-rewind}
+RUNTIME_IDENTITY_SETUP=${REWIND_RUNTIME_IDENTITY_SETUP:-1}
 SKIP_APT=${REWIND_BOOTSTRAP_SKIP_APT:-0}
 READY_MARKER=${REWIND_READY_MARKER:-$HOST_ROOT/.host-bootstrap-complete}
 PREREQUISITE_MARKER=${REWIND_PREREQUISITE_MARKER:-$HOST_ROOT/.host-bootstrap-prerequisites}
@@ -82,20 +84,38 @@ require_command rm
 require_command mv
 require_command chmod
 
+if [ "$RUNTIME_IDENTITY_SETUP" = 1 ]; then
+  require_command getent
+  require_command groupadd
+  require_command useradd
+fi
+
 if [ "$SKIP_APT" != 1 ]; then
   require_command apt-get
   run_step 'apt-get update' apt-get update
   if ! DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
-    ca-certificates curl docker.io docker-compose-v2 jq rsync; then
-    fail 'installing ca-certificates, curl, docker.io, docker-compose-v2, jq, and rsync failed; fix apt sources or network access and retry'
+    ca-certificates curl docker.io docker-compose-v2 jq rsync sqlite3; then
+    fail 'installing ca-certificates, curl, docker.io, docker-compose-v2, jq, rsync, and sqlite3 failed; fix apt sources or network access and retry'
   fi
 fi
 
-for command_name in curl docker jq rsync usermod systemctl; do
+for command_name in curl docker jq rsync sqlite3 usermod systemctl; do
   require_command "$command_name"
 done
 if ! docker compose version >/dev/null 2>&1; then
   fail 'Docker Compose is unavailable; install the docker-compose-v2 package and retry'
+fi
+
+if [ "$RUNTIME_IDENTITY_SETUP" = 1 ]; then
+  if ! getent group "$RUNTIME_GROUP" >/dev/null 2>&1; then
+    groupadd --system --gid "$RUNTIME_GROUP" "$RUNTIME_USER" ||
+      fail "could not create the runtime group with GID '$RUNTIME_GROUP'; fix the host identity configuration and retry"
+  fi
+  if ! getent passwd "$RUNTIME_OWNER" >/dev/null 2>&1; then
+    useradd --system --uid "$RUNTIME_OWNER" --gid "$RUNTIME_GROUP" \
+      --home-dir /nonexistent --shell /usr/sbin/nologin "$RUNTIME_USER" ||
+      fail "could not create the runtime user with UID '$RUNTIME_OWNER'; fix the host identity configuration and retry"
+  fi
 fi
 
 if ! id "$HOST_USER" >/dev/null 2>&1; then
@@ -109,7 +129,7 @@ if ! systemctl enable --now docker; then
 fi
 
 run_step "create host root '$HOST_ROOT'" \
-  install -d -o "$HOST_OWNER" -g "$HOST_GROUP" -m 0750 "$HOST_ROOT"
+  install -d -o "$HOST_OWNER" -g "$RUNTIME_GROUP" -m 0750 "$HOST_ROOT"
 run_step "create persistent data directory '$HOST_ROOT/data'" \
   install -d -o "$RUNTIME_OWNER" -g "$RUNTIME_GROUP" -m 0750 "$HOST_ROOT/data"
 run_step "create persistent media directory '$HOST_ROOT/media'" \

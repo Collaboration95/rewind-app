@@ -20,6 +20,9 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$FAKE_BIN" "$SYSTEMD_DIR"
+grep -Fq 'docker-compose-v2 jq rsync sqlite3' "$BOOTSTRAP"
+grep -Fq 'groupadd --system --gid' "$BOOTSTRAP"
+grep -Fq 'useradd --system --uid' "$BOOTSTRAP"
 cat > "$FAKE_BIN/usermod" <<'EOF'
 #!/bin/sh
 printf 'usermod %s\n' "$*" >> "$REWIND_SYSTEMCTL_LOG"
@@ -49,6 +52,7 @@ bootstrap() {
       REWIND_SYSTEMD_GROUP="$TEST_GID" \
       REWIND_RUNTIME_OWNER="$TEST_UID" \
       REWIND_RUNTIME_GROUP="$TEST_GID" \
+      REWIND_RUNTIME_IDENTITY_SETUP=0 \
       REWIND_BOOTSTRAP_SKIP_APT=1 \
       REWIND_SYSTEMCTL_LOG="$SYSTEMCTL_LOG" \
       PATH="$FAKE_BIN:$ORIGINAL_PATH" \
@@ -65,6 +69,7 @@ bootstrap() {
       REWIND_SYSTEMD_GROUP="$TEST_GID" \
       REWIND_RUNTIME_OWNER="$TEST_UID" \
       REWIND_RUNTIME_GROUP="$TEST_GID" \
+      REWIND_RUNTIME_IDENTITY_SETUP=0 \
       REWIND_BOOTSTRAP_SKIP_APT=1 \
       REWIND_SYSTEMCTL_LOG="$SYSTEMCTL_LOG" \
       PATH="$FAKE_BIN:$ORIGINAL_PATH" \
