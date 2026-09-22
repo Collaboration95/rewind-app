@@ -110,6 +110,17 @@ async function downloadNativeMedia(url: string, filename: string): Promise<Archi
   await FileSystem.makeDirectoryAsync(archiveDirectory, { intermediates: true });
   const destination = `${archiveDirectory}/${filename}`;
   const result = await FileSystem.downloadAsync(url, destination);
+  const succeeded = result.status >= 200 && result.status < 300;
+  if (!succeeded) {
+    try {
+      await FileSystem.deleteAsync(destination, { idempotent: true });
+    } catch {
+      // Keep the HTTP failure authoritative when best-effort cleanup is unavailable.
+    }
+    throw new ArchiveDownloadError(
+      `The authorized media download failed with HTTP ${result.status}.`,
+    );
+  }
   return { filename, method: 'native', uri: result.uri };
 }
 

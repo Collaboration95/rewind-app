@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import {
+  ArchiveDownloadError,
   createArchiveDownloadQueue,
   downloadReleasedArchiveMedia,
 } from '../src/archive/archive-download';
@@ -106,6 +107,59 @@ describe('archive download naming and delivery', () => {
       'file:///cache/rewind-archive/rewind-personal-clip-cycle-2026-09-18-2026-09-18-clip-1.mp4',
       'file:///cache/rewind-archive/rewind-personal-clip-cycle-2026-09-25-2026-09-25-clip-2.mp4',
     ]);
+  });
+
+  it('rejects a native non-success response and removes its downloaded error body', async () => {
+    jest.replaceProperty(Platform, 'OS', 'ios');
+    Object.defineProperty(FileSystem, 'cacheDirectory', {
+      configurable: true,
+      value: 'file:///cache/',
+    });
+    jest.spyOn(FileSystem, 'makeDirectoryAsync').mockResolvedValue(undefined);
+    const destination =
+      'file:///cache/rewind-archive/rewind-group-film-cycle-2026-09-18-2026-09-18-film-1.mp4';
+    jest.spyOn(FileSystem, 'downloadAsync').mockResolvedValue({
+      headers: {},
+      mimeType: 'application/json',
+      status: 403,
+      uri: destination,
+      md5: undefined,
+    });
+    const deleteAsync = jest.spyOn(FileSystem, 'deleteAsync').mockResolvedValue(undefined);
+
+    const download = downloadReleasedArchiveMedia(films[0]);
+    await expect(download).rejects.toBeInstanceOf(ArchiveDownloadError);
+    await expect(download).rejects.toThrow('The authorized media download failed with HTTP 403.');
+    expect(deleteAsync).toHaveBeenCalledWith(destination, { idempotent: true });
+  });
+
+  it('preserves the native HTTP failure when error-body cleanup also fails', async () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    Object.defineProperty(FileSystem, 'cacheDirectory', {
+      configurable: true,
+      value: 'file:///cache/',
+    });
+    jest.spyOn(FileSystem, 'makeDirectoryAsync').mockResolvedValue(undefined);
+    jest.spyOn(FileSystem, 'downloadAsync').mockResolvedValue({
+      headers: {},
+      mimeType: 'text/plain',
+      status: 500,
+      uri: 'file:///cache/rewind-archive/error-response',
+      md5: undefined,
+    });
+    const cleanupFailure = new Error('cleanup failed');
+    const deleteAsync = jest.spyOn(FileSystem, 'deleteAsync').mockRejectedValue(cleanupFailure);
+
+    await expect(downloadReleasedArchiveMedia(clips[0])).rejects.toEqual(
+      expect.objectContaining({
+        message: 'The authorized media download failed with HTTP 500.',
+        name: 'ArchiveDownloadError',
+      }),
+    );
+    expect(deleteAsync).toHaveBeenCalledWith(
+      `file:///cache/rewind-archive/${getReleasedArchiveFilename(clips[0])}`,
+      { idempotent: true },
+    );
   });
 
   it('uses an anchor download on the browser', async () => {
