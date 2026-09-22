@@ -53,6 +53,7 @@ import {
   claimStagedSource,
   acquireStagedSourceLock,
   cleanupStagedSource,
+  cleanupStagedSourcePath,
   createClipUpload,
   findStagedSource,
   markStagedSourceReady,
@@ -653,26 +654,90 @@ async function stageSourceBody(
   }
   await mkdir(stagingDir, { recursive: true });
   const partialPath = `${sourcePath}.${randomUUID()}.part`;
-  const output = createWriteStream(partialPath, { flags: 'wx' });
+  let output: ReturnType<typeof createWriteStream> | null = null;
+  let outputError: Error | null = null;
+  let committed = false;
+  const onOutputError = (error: Error) => {
+    outputError = error;
+  };
   try {
+    output = createWriteStream(partialPath, { flags: 'wx' });
+    // Keep an error listener attached for the entire stream lifetime. Without
+    // it, an asynchronous filesystem exception after a successful write can
+    // escape the request promise and leave the intake claim behind.
+    output.on('error', onOutputError);
     const bytes = await consumeRequestBody(request, {
       maxBytes: MAX_STAGED_SOURCE_BYTES,
       idleTimeoutMs: config.httpIdleTimeoutMs,
       totalTimeoutMs: config.uploadTimeoutMs,
       tooLargeMessage: 'The clip source must be 50 MiB or smaller.',
-      onChunk: (buffer) => writeStagedChunk(output, buffer),
+      onChunk: async (buffer) => {
+        if (outputError || !output) throw outputError ?? new Error('staged source output closed');
+        await writeStagedChunk(output, buffer);
+        if (outputError) throw outputError;
+      },
     });
+    if (outputError || !output) throw outputError ?? new Error('staged source output closed');
+    const stream = output;
     await new Promise<void>((resolvePromise, reject) => {
-      output.once('error', reject);
-      output.end(() => resolvePromise());
+      const onFinish = () => {
+        cleanup();
+        resolvePromise();
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      const cleanup = () => {
+        stream.removeListener('finish', onFinish);
+        stream.removeListener('error', onError);
+      };
+      stream.once('finish', onFinish);
+      stream.once('error', onError);
+      stream.end();
     });
+    if (outputError) throw outputError;
     if (bytes <= 0) throw new Error('empty source');
     await rename(partialPath, sourcePath);
+    committed = true;
     return bytes;
-  } catch (error) {
-    output.destroy();
-    await rm(partialPath, { force: true });
-    throw error;
+  } finally {
+    if (!committed) {
+      // Keep the error listener attached while destroying a failed stream;
+      // destroy() may report its filesystem error on a later turn.
+      output?.destroy();
+      cleanupStagedSourcePath(partialPath, stagingDir);
+      await rm(partialPath, { force: true }).catch(() => undefined);
+    } else {
+      output?.removeListener('error', onOutputError);
+      output?.destroy();
+    }
+  }
+}
+
+function cleanupFailedStagedClaim(
+  database: RewindDatabase,
+  sourceUri: string,
+  sourcePath: string,
+  claimGeneration: number,
+  stagingDir: string,
+): void {
+  let reset = false;
+  try {
+    reset = resetStagedSourceClaim(database, sourceUri, sourcePath, claimGeneration);
+  } finally {
+    const current = findStagedSource(database, sourceUri);
+    // A failed request may lose its generation fence to a reclaim while its
+    // body/probe callback is still unwinding. Only remove the old physical
+    // path when the current row no longer owns that exact generation/path.
+    if (
+      reset ||
+      !current ||
+      current.claimGeneration !== claimGeneration ||
+      current.sourcePath !== sourcePath
+    ) {
+      cleanupStagedSourcePath(sourcePath, stagingDir);
+    }
   }
 }
 
@@ -1322,8 +1387,13 @@ export async function handleRequest(
           source: { id: sourceId, uri: sourceUri, byteLength: probed.byteLength },
         });
       } catch (error) {
-        await rm(claimedSourcePath, { force: true }).catch(() => undefined);
-        resetStagedSourceClaim(database, sourceUri, claimedSourcePath, claimGeneration);
+        cleanupFailedStagedClaim(
+          database,
+          sourceUri,
+          claimedSourcePath,
+          claimGeneration,
+          stagingDir,
+        );
         if (error instanceof RequestPolicyError) throw error;
         sendJson(response, config, 400, {
           error: 'upload_staging_failed',
@@ -1418,12 +1488,12 @@ export async function handleRequest(
           { stagingDir, requireVerifiedMetadata: true },
         );
         if (!upload.ok) {
-          await rm(claim.source.sourcePath, { force: true }).catch(() => undefined);
-          resetStagedSourceClaim(
+          cleanupFailedStagedClaim(
             database,
             sourceUri,
             claim.source.sourcePath,
             claim.source.claimGeneration,
+            stagingDir,
           );
           if (upload.reason === 'quota_exceeded') {
             sendJson(response, config, 409, {
@@ -1447,12 +1517,12 @@ export async function handleRequest(
         }
         sendJson(response, config, 201, { upload: upload.upload, synthetic: true });
       } catch {
-        await rm(claim.source.sourcePath, { force: true }).catch(() => undefined);
-        resetStagedSourceClaim(
+        cleanupFailedStagedClaim(
           database,
           sourceUri,
           claim.source.sourcePath,
           claim.source.claimGeneration,
+          stagingDir,
         );
         sendJson(response, config, 503, {
           error: 'synthetic_clip_failed',

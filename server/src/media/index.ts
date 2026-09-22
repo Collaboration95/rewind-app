@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { rmSync } from 'node:fs';
-import { relative, resolve, isAbsolute } from 'node:path';
+import { realpathSync, rmSync } from 'node:fs';
+import { dirname, relative, resolve, isAbsolute } from 'node:path';
 
 import { cyclePhase } from '../cycles/engine';
 import { releaseContributionAllowance, reserveContributionAllowance } from '../contributions';
@@ -522,15 +522,26 @@ export function cleanupStagedSource(
   database: RewindDatabase,
   sourceUri: string,
   stagingDir: string,
-): void {
+  options: StagedSourceCleanupOptions = {},
+): boolean {
   beginImmediateWithRetry(database);
   try {
     const source = findStagedSource(database, sourceUri);
+    if (
+      !source ||
+      (options.expectedSourcePath !== undefined &&
+        source.sourcePath !== options.expectedSourcePath) ||
+      (options.expectedClaimGeneration !== undefined &&
+        source.claimGeneration !== options.expectedClaimGeneration)
+    ) {
+      database.exec('COMMIT');
+      return false;
+    }
     // Invalid upload metadata must never clean up a body that another request
     // currently owns. A lease expiry allows bounded crash recovery.
-    if (!source || stagedClaimIsActive(source)) {
+    if (stagedClaimIsActive(source)) {
       database.exec('COMMIT');
-      return;
+      return false;
     }
     // A durable job binding owns this capability even after its intake lease
     // expires. Cleanup must never remove a source that a retry/finalizer can
@@ -544,18 +555,31 @@ export function cleanupStagedSource(
       .get(sourceUri, source.sourcePath ?? null);
     if (job) {
       database.exec('COMMIT');
-      return;
+      return false;
     }
     const sourcePath =
       source.sourcePath ?? stagedSourcePath(sourceUri, stagingDir, source.claimGeneration);
     if (sourcePath) cleanupStagedSourcePath(sourcePath, stagingDir);
     database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
-    database.prepare('DELETE FROM staged_sources WHERE source_uri = ?').run(sourceUri);
+    const deleted = database
+      .prepare(
+        `DELETE FROM staged_sources
+         WHERE source_uri = ? AND claim_generation = ? AND source_path IS ?`,
+      )
+      .run(sourceUri, source.claimGeneration, source.sourcePath);
     database.exec('COMMIT');
+    return Number(deleted.changes) === 1;
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
   }
+}
+
+export interface StagedSourceCleanupOptions {
+  /** Cleanup is allowed only if the row still owns this physical path. */
+  expectedSourcePath?: string | null;
+  /** Cleanup is allowed only if the row still belongs to this generation. */
+  expectedClaimGeneration?: number;
 }
 
 /** Remove an unclaimed staging file while holding the DB writer lock. */
@@ -564,15 +588,72 @@ export function cleanupUnclaimedStagedPath(
   sourcePath: string,
   stagingDir: string,
   protectedPath = sourcePath,
+  options: { releaseExpiredPendingClaim?: boolean } = {},
 ): boolean {
   beginImmediateWithRetry(database);
   try {
     const claimed = database
-      .prepare('SELECT 1 FROM staged_sources WHERE source_path = ? LIMIT 1')
+      .prepare(
+        `SELECT source_uri AS sourceUri, source_path AS sourcePath,
+                claim_generation AS claimGeneration, status, claim_expires_at AS claimExpiresAt
+         FROM staged_sources WHERE source_path = ? LIMIT 1`,
+      )
       .get(protectedPath);
     if (claimed) {
+      const row = claimed as {
+        sourceUri: string;
+        sourcePath: string;
+        claimGeneration: number;
+        status: string;
+        claimExpiresAt: string | null;
+      };
+      const pendingLeaseActive =
+        row.status === 'pending' &&
+        row.claimExpiresAt !== null &&
+        Date.parse(row.claimExpiresAt) > Date.now();
+      const isPartialPath = sourcePath !== protectedPath;
+      if (row.status === 'staged' && isPartialPath) {
+        // A random-suffix .part file is never a job input. It can be removed
+        // without disturbing the completed capability or its final source.
+        cleanupStagedSourcePath(sourcePath, stagingDir);
+        database.exec('COMMIT');
+        return true;
+      }
+      if (!options.releaseExpiredPendingClaim || pendingLeaseActive || !isPartialPath) {
+        database.exec('COMMIT');
+        return false;
+      }
+      const activeJob = database
+        .prepare(
+          `SELECT 1 FROM media_jobs
+           WHERE kind = 'clip' AND status IN ('pending', 'failed', 'processing')
+             AND (source_uri = ? OR source_path = ?)
+           LIMIT 1`,
+        )
+        .get(row.sourceUri, row.sourcePath);
+      if (activeJob) {
+        if (isPartialPath) {
+          cleanupStagedSourcePath(sourcePath, stagingDir);
+          database.exec('COMMIT');
+          return true;
+        }
+        database.exec('COMMIT');
+        return false;
+      }
+      // The pending claim and both physical artifacts are one recoverable
+      // generation. Delete only this exact row/path while holding the writer
+      // lock; a reclaim of a newer generation cannot be touched by this call.
+      cleanupStagedSourcePath(sourcePath, stagingDir);
+      cleanupStagedSourcePath(protectedPath, stagingDir);
+      database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(row.sourceUri);
+      const deleted = database
+        .prepare(
+          `DELETE FROM staged_sources
+           WHERE source_uri = ? AND claim_generation = ? AND source_path = ?`,
+        )
+        .run(row.sourceUri, row.claimGeneration, row.sourcePath);
       database.exec('COMMIT');
-      return false;
+      return Number(deleted.changes) === 1;
     }
     cleanupStagedSourcePath(sourcePath, stagingDir);
     database.exec('COMMIT');
@@ -584,9 +665,40 @@ export function cleanupUnclaimedStagedPath(
 }
 
 export function cleanupStagedSourcePath(sourcePath: string, stagingDir: string): void {
-  const remainder = relative(resolve(stagingDir), resolve(sourcePath));
+  const managedDir = resolve(stagingDir);
+  const candidate = resolve(sourcePath);
+  const remainder = relative(managedDir, candidate);
   if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) return;
-  rmSync(resolve(sourcePath), { force: true });
+
+  // Lexical containment is not enough when a caller supplies a path below a
+  // symlinked directory. Resolve the existing parent and file before removal;
+  // a missing or broken leaf is still safe to unlink once its parent is
+  // physically inside the managed staging directory.
+  let realManagedDir: string;
+  let realParent: string;
+  try {
+    realManagedDir = realpathSync(managedDir);
+    realParent = realpathSync(dirname(candidate));
+  } catch {
+    return;
+  }
+  const parentRemainder = relative(realManagedDir, realParent);
+  if (parentRemainder.startsWith('..') || isAbsolute(parentRemainder)) return;
+  try {
+    const realCandidate = realpathSync(candidate);
+    const candidateRemainder = relative(realManagedDir, realCandidate);
+    if (
+      !candidateRemainder ||
+      candidateRemainder.startsWith('..') ||
+      isAbsolute(candidateRemainder)
+    ) {
+      return;
+    }
+  } catch {
+    // The leaf may already be gone or be a broken symlink. Its parent has
+    // already passed the physical staging boundary check above.
+  }
+  rmSync(candidate, { force: true });
 }
 
 export function recordClipMediaMetadata(

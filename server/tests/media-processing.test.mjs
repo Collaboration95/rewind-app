@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
@@ -17,6 +17,7 @@ const { copyFile, utimes } = await import('node:fs/promises');
 const {
   claimStagedSource,
   cancelClipUpload,
+  cleanupStagedSourcePath,
   createClipUpload,
   markStagedSourceReady,
   reclaimStagedSource,
@@ -622,6 +623,94 @@ test('cleanup preserves a live leased intake claim even when its file is old', a
     assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 25, 0), 0);
     await access(sourcePath);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 1);
+  });
+});
+
+test('restart cleanup removes stale partial intake state and permits an immediate retry', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'restart-partial-cleanup-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const sourcePath = stagedSourcePath(sourceUri, stagingDir, 1);
+    assert.ok(sourcePath);
+    const partialPath = `${sourcePath}.deadbeef.part`;
+    await mkdir(stagingDir, { recursive: true });
+    await writeFile(partialPath, 'interrupted upload');
+    const interruptedAt = new Date('2026-09-10T12:00:00.000Z');
+    await utimes(partialPath, interruptedAt, interruptedAt);
+    assert.equal(
+      claimStagedSource(database, 'demo-group', 'demo-1', key, interruptedAt, sourcePath).ok,
+      true,
+    );
+
+    assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 25, 0), 1);
+    await assert.rejects(access(partialPath));
+    assert.equal(database.prepare('SELECT 1 FROM staged_sources').get(), undefined);
+
+    const retry = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:01:00.000Z'),
+      sourcePath,
+    );
+    assert.equal(retry.ok, true);
+    assert.equal(retry.ok && retry.source.claimGeneration, 1);
+  });
+});
+
+test('orphan cleanup never deletes a reclaimed generation or escapes a staging symlink', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'reclaimed-generation-cleanup-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const firstPath = stagedSourcePath(sourceUri, stagingDir, 1);
+    const secondPath = stagedSourcePath(sourceUri, stagingDir, 2);
+    assert.ok(firstPath);
+    assert.ok(secondPath);
+    await mkdir(stagingDir, { recursive: true });
+    await writeFile(firstPath, 'old generation');
+    await writeFile(secondPath, 'active generation');
+    const oldAt = new Date('2026-09-10T12:00:00.000Z');
+    await utimes(firstPath, oldAt, oldAt);
+    await utimes(secondPath, oldAt, oldAt);
+    assert.equal(
+      claimStagedSource(database, 'demo-group', 'demo-1', key, oldAt, firstPath).ok,
+      true,
+    );
+    assert.equal(markStagedSourceReady(database, sourceUri, 100, firstPath, 1), true);
+    const reclaimed = reclaimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      secondPath,
+      new Date(),
+    );
+    assert.equal(reclaimed.ok, true);
+    assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 25, 0), 1);
+    await assert.rejects(access(firstPath));
+    await access(secondPath);
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            'SELECT source_path AS sourcePath, claim_generation AS claimGeneration FROM staged_sources WHERE source_uri = ?',
+          )
+          .get(sourceUri),
+      },
+      { sourcePath: secondPath, claimGeneration: 2 },
+    );
+
+    const outsideDir = `${dataDir}/outside`;
+    const outsideFile = `${outsideDir}/secret.mp4`;
+    const symlinkedDir = `${stagingDir}/linked-directory`;
+    await mkdir(outsideDir, { recursive: true });
+    await writeFile(outsideFile, 'must survive');
+    await symlink(outsideDir, symlinkedDir, 'dir');
+    cleanupStagedSourcePath(`${symlinkedDir}/secret.mp4`, stagingDir);
+    assert.equal(await readFile(outsideFile, 'utf8'), 'must survive');
   });
 });
 
