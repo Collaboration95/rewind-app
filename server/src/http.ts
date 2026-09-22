@@ -3,7 +3,6 @@ import { createReadStream, createWriteStream, existsSync } from 'node:fs';
 import { mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
-import { once } from 'node:events';
 import { URL } from 'node:url';
 
 import { SERVICE_VERSION, type RuntimeConfig } from './config';
@@ -382,17 +381,220 @@ export interface RuntimeServerOptions {
   now?: () => Date;
   realtimeHub?: RealtimeHub;
   realtimeHeartbeatIntervalMs?: number;
+  requestLimiters?: RequestLimiters;
 }
 
-async function requestBody(request: IncomingMessage): Promise<Record<string, unknown> | null> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-    size += buffer.byteLength;
-    if (size > 64 * 1024) return null;
-    chunks.push(buffer);
+interface RequestLimiters {
+  intake: ConcurrencyLimiter;
+  processing: ConcurrencyLimiter;
+}
+
+class ConcurrencyLimiter {
+  private active = 0;
+
+  constructor(private readonly limit: number) {}
+
+  tryAcquire(): (() => void) | null {
+    if (this.active >= this.limit) return null;
+    this.active += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.active = Math.max(0, this.active - 1);
+    };
   }
+}
+
+function createRequestLimiters(config: RuntimeConfig): RequestLimiters {
+  return {
+    intake: new ConcurrencyLimiter(config.maxConcurrentIntakes),
+    processing: new ConcurrencyLimiter(config.maxConcurrentProcessing),
+  };
+}
+
+function acquireRequestCapacity(
+  limiter: ConcurrencyLimiter,
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: RuntimeConfig,
+): (() => void) | null {
+  const release = limiter.tryAcquire();
+  if (release) return release;
+  sendJson(response, config, 429, {
+    error: 'concurrency_limit',
+    message: 'The server is at its configured concurrency limit. Retry the request.',
+  });
+  finishRejectedRequest(request, response);
+  return null;
+}
+
+const MAX_JSON_BODY_BYTES = 64 * 1024;
+
+type RequestPolicyCode = 'request_timeout' | 'payload_too_large' | 'request_aborted';
+
+class RequestPolicyError extends Error {
+  constructor(
+    readonly status: 408 | 413,
+    readonly code: RequestPolicyCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'RequestPolicyError';
+  }
+}
+
+function requestTimeoutError(scope: 'request' | 'upload'): RequestPolicyError {
+  return new RequestPolicyError(
+    408,
+    'request_timeout',
+    scope === 'upload'
+      ? 'The upload did not complete within the configured timeout.'
+      : 'The request body did not arrive within the configured idle timeout.',
+  );
+}
+
+function requestAbortedError(): RequestPolicyError {
+  return new RequestPolicyError(
+    408,
+    'request_aborted',
+    'The request was aborted before it completed.',
+  );
+}
+
+function payloadTooLargeError(message: string): RequestPolicyError {
+  return new RequestPolicyError(413, 'payload_too_large', message);
+}
+
+function sendRequestPolicyError(
+  response: ServerResponse,
+  config: RuntimeConfig,
+  error: RequestPolicyError,
+): void {
+  if (response.headersSent || response.destroyed || response.writableEnded) return;
+  sendJson(response, config, error.status, { error: error.code, message: error.message });
+}
+
+function finishRejectedRequest(request: IncomingMessage, response: ServerResponse): void {
+  if (request.complete || request.destroyed) return;
+  response.once('finish', () => {
+    if (!request.destroyed) request.destroy();
+  });
+}
+
+interface ConsumeRequestBodyOptions {
+  maxBytes: number;
+  idleTimeoutMs: number;
+  totalTimeoutMs?: number;
+  tooLargeMessage: string;
+  onChunk: (chunk: Buffer) => Promise<void> | void;
+}
+
+async function consumeRequestBody(
+  request: IncomingMessage,
+  options: ConsumeRequestBodyOptions,
+): Promise<number> {
+  const contentLength = Number(request.headers['content-length'] ?? Number.NaN);
+  if (Number.isFinite(contentLength) && contentLength > options.maxBytes) {
+    throw payloadTooLargeError(options.tooLargeMessage);
+  }
+
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let totalTimer: ReturnType<typeof setTimeout> | undefined;
+  let terminalError: RequestPolicyError | undefined;
+  let rejectTimeout!: (error: RequestPolicyError) => void;
+  let rejectAbort!: (error: RequestPolicyError) => void;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    rejectTimeout = reject;
+  });
+  const abortPromise = new Promise<never>((_, reject) => {
+    rejectAbort = reject;
+  });
+
+  const failWith = (reject: (error: RequestPolicyError) => void, error: RequestPolicyError) => {
+    if (terminalError) return;
+    terminalError = error;
+    reject(error);
+  };
+  const resetIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(
+      () => failWith(rejectTimeout, requestTimeoutError('request')),
+      options.idleTimeoutMs,
+    );
+  };
+  const onAborted = () => failWith(rejectAbort, requestAbortedError());
+  const onClose = () => {
+    if (!request.complete) onAborted();
+  };
+  const onError = () => onAborted();
+  request.once('aborted', onAborted);
+  request.once('close', onClose);
+  request.once('error', onError);
+  resetIdleTimer();
+  if (options.totalTimeoutMs !== undefined) {
+    totalTimer = setTimeout(
+      () => failWith(rejectTimeout, requestTimeoutError('upload')),
+      options.totalTimeoutMs,
+    );
+  }
+
+  const bodyPromise = (async () => {
+    try {
+      let bytes = 0;
+      for await (const chunk of request) {
+        if (terminalError) throw terminalError;
+        resetIdleTimer();
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+        bytes += buffer.byteLength;
+        if (bytes > options.maxBytes) throw payloadTooLargeError(options.tooLargeMessage);
+        await options.onChunk(buffer);
+        if (terminalError) throw terminalError;
+      }
+      if (
+        request.aborted ||
+        (request as IncomingMessage & { readableAborted?: boolean }).readableAborted
+      ) {
+        throw requestAbortedError();
+      }
+      if (!request.complete) throw requestAbortedError();
+      return bytes;
+    } catch (error) {
+      if (
+        request.aborted ||
+        (request as IncomingMessage & { readableAborted?: boolean }).readableAborted
+      ) {
+        throw requestAbortedError();
+      }
+      throw error;
+    }
+  })();
+
+  try {
+    return await Promise.race([bodyPromise, timeoutPromise, abortPromise]);
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (totalTimer) clearTimeout(totalTimer);
+    request.removeListener('aborted', onAborted);
+    request.removeListener('close', onClose);
+    request.removeListener('error', onError);
+    void bodyPromise.catch(() => undefined);
+  }
+}
+
+async function requestBody(
+  request: IncomingMessage,
+  config: RuntimeConfig,
+): Promise<Record<string, unknown> | null> {
+  const chunks: Buffer[] = [];
+  const size = await consumeRequestBody(request, {
+    maxBytes: MAX_JSON_BODY_BYTES,
+    idleTimeoutMs: config.httpIdleTimeoutMs,
+    tooLargeMessage: 'The JSON request body must be 64 KiB or smaller.',
+    onChunk: (chunk) => {
+      chunks.push(chunk);
+    },
+  });
   if (!size) return {};
   try {
     const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -406,29 +608,60 @@ async function requestBody(request: IncomingMessage): Promise<Record<string, unk
 
 const MAX_STAGED_SOURCE_BYTES = 50 * 1024 * 1024;
 
+async function writeStagedChunk(
+  output: ReturnType<typeof createWriteStream>,
+  chunk: Buffer,
+): Promise<void> {
+  if (output.destroyed) throw new Error('staged source output closed');
+  if (output.write(chunk)) return;
+  await new Promise<void>((resolvePromise, reject) => {
+    const cleanup = () => {
+      output.removeListener('drain', onDrain);
+      output.removeListener('error', onError);
+      output.removeListener('close', onClose);
+    };
+    const onDrain = () => {
+      cleanup();
+      resolvePromise();
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error('staged source output closed'));
+    };
+    output.once('drain', onDrain);
+    output.once('error', onError);
+    output.once('close', onClose);
+  });
+}
+
 async function stageSourceBody(
   request: IncomingMessage,
   stagingDir: string,
   sourcePath: string,
+  config: RuntimeConfig,
 ): Promise<number> {
   const contentLength = Number(request.headers['content-length'] ?? Number.NaN);
   if (Number.isFinite(contentLength) && contentLength <= 0) {
     throw new Error('empty source');
   }
   if (Number.isFinite(contentLength) && contentLength > MAX_STAGED_SOURCE_BYTES) {
-    throw new Error('source too large');
+    throw payloadTooLargeError('The clip source must be 50 MiB or smaller.');
   }
   await mkdir(stagingDir, { recursive: true });
   const partialPath = `${sourcePath}.${randomUUID()}.part`;
   const output = createWriteStream(partialPath, { flags: 'wx' });
-  let bytes = 0;
   try {
-    for await (const chunk of request) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-      bytes += buffer.byteLength;
-      if (bytes > MAX_STAGED_SOURCE_BYTES) throw new Error('source too large');
-      if (!output.write(buffer)) await once(output, 'drain');
-    }
+    const bytes = await consumeRequestBody(request, {
+      maxBytes: MAX_STAGED_SOURCE_BYTES,
+      idleTimeoutMs: config.httpIdleTimeoutMs,
+      totalTimeoutMs: config.uploadTimeoutMs,
+      tooLargeMessage: 'The clip source must be 50 MiB or smaller.',
+      onChunk: (buffer) => writeStagedChunk(output, buffer),
+    });
     await new Promise<void>((resolvePromise, reject) => {
       output.once('error', reject);
       output.end(() => resolvePromise());
@@ -468,6 +701,7 @@ export async function handleRequest(
   options: RuntimeServerOptions = {},
 ): Promise<void> {
   const now = options.now ?? (() => new Date());
+  const requestLimiters = options.requestLimiters ?? createRequestLimiters(config);
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
@@ -493,7 +727,7 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/sessions/demo' && request.method === 'POST') {
-    const body = await requestBody(request);
+    const body = await requestBody(request, config);
     if (!body || typeof body.memberId !== 'string') {
       sendJson(response, config, 400, {
         error: 'invalid_demo_access',
@@ -699,7 +933,7 @@ export async function handleRequest(
       'message',
     );
     if (!identity) return;
-    const body = await requestBody(request);
+    const body = await requestBody(request, config);
     const result = createChatMessage(database, {
       groupId,
       memberId: identity.memberId,
@@ -767,7 +1001,7 @@ export async function handleRequest(
       sendJson(response, config, 200, { message });
       return;
     }
-    const body = await requestBody(request);
+    const body = await requestBody(request, config);
     const emoji =
       pathEmoji ??
       (typeof body?.emoji === 'string' ? body.emoji : url.searchParams.get('emoji')) ??
@@ -810,7 +1044,7 @@ export async function handleRequest(
   if (url.pathname === '/groups' && request.method === 'POST') {
     const identity = requireSessionIdentity(database, url, response, config, now());
     if (!identity) return;
-    const body = await requestBody(request);
+    const body = await requestBody(request, config);
     const result = createGroup(database, identity.memberId, {
       name: typeof body?.name === 'string' ? body.name : '',
       prompt: typeof body?.prompt === 'string' ? body.prompt : '',
@@ -859,7 +1093,7 @@ export async function handleRequest(
     const groupId = url.searchParams.get('groupId');
     const identity = requireAuthorisedOwner(database, url, response, config, now(), groupId);
     if (!identity) return;
-    const body = await requestBody(request);
+    const body = await requestBody(request, config);
     const ttlSeconds =
       typeof body?.expiresInSeconds === 'number'
         ? body.expiresInSeconds
@@ -882,7 +1116,7 @@ export async function handleRequest(
   if (url.pathname === '/invites/accept' && request.method === 'POST') {
     const identity = requireSessionIdentity(database, url, response, config, now());
     if (!identity) return;
-    const body = await requestBody(request);
+    const body = await requestBody(request, config);
     const code = typeof body?.code === 'string' ? body.code : (url.searchParams.get('code') ?? '');
     const result = acceptInvite(
       database,
@@ -952,6 +1186,13 @@ export async function handleRequest(
       });
       return;
     }
+    const releaseIntakeCapacity = acquireRequestCapacity(
+      requestLimiters.intake,
+      request,
+      response,
+      config,
+    );
+    if (!releaseIntakeCapacity) return;
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
     let releaseStagingLock: (() => void) | null = await acquireStagedSourceLock(stagingDir);
     let releaseActiveIntake: (() => void) | null = null;
@@ -1049,7 +1290,7 @@ export async function handleRequest(
       releaseStagingLock();
       releaseStagingLock = null;
       try {
-        await stageSourceBody(request, stagingDir, claimedSourcePath);
+        await stageSourceBody(request, stagingDir, claimedSourcePath, config);
         const probed = await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
         database.exec('BEGIN');
         try {
@@ -1083,13 +1324,14 @@ export async function handleRequest(
       } catch (error) {
         await rm(claimedSourcePath, { force: true }).catch(() => undefined);
         resetStagedSourceClaim(database, sourceUri, claimedSourcePath, claimGeneration);
-        const message =
-          error instanceof Error && error.message === 'source too large'
-            ? 'The clip is larger than 50 MB.'
-            : 'The clip source could not be staged. Try again.';
-        sendJson(response, config, 400, { error: 'upload_staging_failed', message });
+        if (error instanceof RequestPolicyError) throw error;
+        sendJson(response, config, 400, {
+          error: 'upload_staging_failed',
+          message: 'The clip source could not be staged. Try again.',
+        });
       }
     } finally {
+      releaseIntakeCapacity();
       releaseActiveIntake?.();
       releaseActiveIntake = null;
       releaseStagingLock?.();
@@ -1110,6 +1352,13 @@ export async function handleRequest(
       'contribution',
     );
     if (!identity) return;
+    const releaseIntakeCapacity = acquireRequestCapacity(
+      requestLimiters.intake,
+      request,
+      response,
+      config,
+    );
+    if (!releaseIntakeCapacity) return;
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
     const releaseLock = await acquireStagedSourceLock(stagingDir);
     try {
@@ -1213,6 +1462,7 @@ export async function handleRequest(
         releaseIntake();
       }
     } finally {
+      releaseIntakeCapacity();
       releaseLock();
     }
     return;
@@ -1230,7 +1480,7 @@ export async function handleRequest(
       'contribution',
     );
     if (!identity) return;
-    const body = await requestBody(request);
+    const body = await requestBody(request, config);
     const input: ClipUploadInput = {
       idempotencyKey: typeof body?.idempotencyKey === 'string' ? body.idempotencyKey : '',
       sourceUri: typeof body?.sourceUri === 'string' ? body.sourceUri : '',
@@ -1328,14 +1578,26 @@ export async function handleRequest(
       'contribution',
     );
     if (!identity) return;
-    const result = await processClipJob(database, {
-      jobId,
-      groupId: identity.groupId,
-      ffmpegBin: config.ffmpegBin,
-      stagingDir: resolve(config.dataDir, 'media', 'staging'),
-      outputDir: resolve(config.dataDir, 'media', 'processed'),
-      actorMemberId: identity.memberId,
-    });
+    const releaseProcessingCapacity = acquireRequestCapacity(
+      requestLimiters.processing,
+      request,
+      response,
+      config,
+    );
+    if (!releaseProcessingCapacity) return;
+    let result: Awaited<ReturnType<typeof processClipJob>>;
+    try {
+      result = await processClipJob(database, {
+        jobId,
+        groupId: identity.groupId,
+        ffmpegBin: config.ffmpegBin,
+        stagingDir: resolve(config.dataDir, 'media', 'staging'),
+        outputDir: resolve(config.dataDir, 'media', 'processed'),
+        actorMemberId: identity.memberId,
+      });
+    } finally {
+      releaseProcessingCapacity();
+    }
     if (!result.ok && result.reason === 'not_found') return sendNotFound(response, config);
     if (!result.ok && result.reason === 'already_processing') {
       sendJson(response, config, 409, {
@@ -1396,13 +1658,25 @@ export async function handleRequest(
       });
       return;
     }
-    const compiled = await processCompilationJob(database, {
-      jobId: job.id,
-      groupId: identity.groupId,
-      ffmpegBin: config.ffmpegBin,
-      outputDir: resolve(config.dataDir, 'media', 'processed'),
-      actorMemberId: identity.memberId,
-    });
+    const releaseProcessingCapacity = acquireRequestCapacity(
+      requestLimiters.processing,
+      request,
+      response,
+      config,
+    );
+    if (!releaseProcessingCapacity) return;
+    let compiled: Awaited<ReturnType<typeof processCompilationJob>>;
+    try {
+      compiled = await processCompilationJob(database, {
+        jobId: job.id,
+        groupId: identity.groupId,
+        ffmpegBin: config.ffmpegBin,
+        outputDir: resolve(config.dataDir, 'media', 'processed'),
+        actorMemberId: identity.memberId,
+      });
+    } finally {
+      releaseProcessingCapacity();
+    }
     if (!compiled.ok) {
       sendJson(response, config, 200, {
         reveal: { state: 'delayed', cycleId: lifecycle.cycle.id, jobId: job.id },
@@ -1756,19 +2030,27 @@ export function createRuntimeServer(
   options: RuntimeServerOptions = {},
 ): Server {
   const realtimeHub = options.realtimeHub ?? new RealtimeHub();
+  const requestLimiters = options.requestLimiters ?? createRequestLimiters(config);
   return createServer((request, response) => {
-    void handleRequest(request, response, config, database, { ...options, realtimeHub }).catch(
-      (error: unknown) => {
-        if (!response.headersSent) {
-          sendJson(response, config, 500, {
-            error: 'internal_error',
-            message: 'The local runtime could not complete the request.',
-          });
-        } else {
-          response.destroy();
-        }
-        console.error('[rewind-local-runtime]', error);
-      },
-    );
+    void handleRequest(request, response, config, database, {
+      ...options,
+      realtimeHub,
+      requestLimiters,
+    }).catch((error: unknown) => {
+      if (error instanceof RequestPolicyError) {
+        sendRequestPolicyError(response, config, error);
+        finishRejectedRequest(request, response);
+        return;
+      }
+      if (!response.headersSent) {
+        sendJson(response, config, 500, {
+          error: 'internal_error',
+          message: 'The local runtime could not complete the request.',
+        });
+      } else {
+        response.destroy();
+      }
+      console.error('[rewind-local-runtime]', error);
+    });
   });
 }

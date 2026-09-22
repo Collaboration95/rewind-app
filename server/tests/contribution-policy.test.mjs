@@ -38,7 +38,7 @@ async function withDatabase(run) {
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
   const database = openDatabase(config);
   try {
-    return await run({ config, database });
+    return await run({ config, database, dataDir });
   } finally {
     database.close();
     await rm(dataDir, { recursive: true, force: true });

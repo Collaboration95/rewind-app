@@ -56,6 +56,17 @@ When this variable is absent, the app remains on the offline synthetic Demo.
 If the runtime is unavailable, the app keeps an explicit retryable state rather
 than claiming the service is connected.
 
+The HTTP boundary has bounded defaults in both local CLI and Compose runtime
+modes: 30 seconds of request-body idle time, 120 seconds per media upload, two
+concurrent media intakes, and one concurrent media processor. Override them
+with `REWIND_HTTP_IDLE_TIMEOUT_MS`, `REWIND_HTTP_UPLOAD_TIMEOUT_MS`,
+`REWIND_HTTP_MAX_CONCURRENT_INTAKES`, and
+`REWIND_HTTP_MAX_CONCURRENT_PROCESSING` when a trusted runtime needs different
+bounds. JSON bodies remain capped at 64 KiB and staged media at 50 MiB.
+Slow or aborted bodies use a deterministic 408 response when the connection
+is still writable, oversized bodies use 413, and capacity rejections use 429;
+there is no distributed rate limiter.
+
 ## Current scope and limits
 
 - The Demo has five synthetic members and local-only session state.
