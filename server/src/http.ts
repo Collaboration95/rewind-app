@@ -727,15 +727,25 @@ function cleanupFailedStagedClaim(
     reset = resetStagedSourceClaim(database, sourceUri, sourcePath, claimGeneration);
   } finally {
     const current = findStagedSource(database, sourceUri);
-    // A failed request may lose its generation fence to a reclaim while its
-    // body/probe callback is still unwinding. Only remove the old physical
-    // path when the current row no longer owns that exact generation/path.
     if (
+      !reset &&
+      current?.status === 'staged' &&
+      current.claimGeneration === claimGeneration &&
+      current.sourcePath === sourcePath
+    ) {
+      cleanupStagedSource(database, sourceUri, stagingDir, {
+        expectedSourcePath: sourcePath,
+        expectedClaimGeneration: claimGeneration,
+      });
+    } else if (
       reset ||
       !current ||
       current.claimGeneration !== claimGeneration ||
       current.sourcePath !== sourcePath
     ) {
+      // A failed request may lose its generation fence to a reclaim while its
+      // body/probe callback is still unwinding. Only remove the old physical
+      // path when the current row no longer owns that exact generation/path.
       cleanupStagedSourcePath(sourcePath, stagingDir);
     }
   }

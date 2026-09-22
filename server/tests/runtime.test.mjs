@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -34,6 +34,39 @@ async function withRuntime(run, options = {}) {
     database.close();
     await rm(dataDir, { recursive: true, force: true });
   }
+}
+
+async function demoContributionQuery(baseUrl, memberId = 'demo-1') {
+  const response = await fetch(`${baseUrl}/sessions/demo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberId }),
+  });
+  assert.equal(response.status, 201);
+  const { session } = await response.json();
+  return `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+}
+
+async function assertNoSyntheticStagingLeak(database, config, expectedJobCount) {
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 0);
+  assert.equal(
+    database
+      .prepare("SELECT COUNT(*) AS count FROM media_metadata WHERE source_uri LIKE 'staged://%'")
+      .get().count,
+    0,
+  );
+  assert.equal(
+    database.prepare("SELECT COUNT(*) AS count FROM media_jobs WHERE kind = 'clip'").get().count,
+    expectedJobCount,
+  );
+  const entries = await readdir(resolve(config.dataDir, 'media', 'staging')).catch((error) => {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  });
+  assert.deepEqual(
+    entries.filter((entry) => entry.endsWith('.mp4') || entry.includes('.part-')),
+    [],
+  );
 }
 
 test('configuration rejects an unsafe bind address with an actionable hint', async () => {
@@ -372,6 +405,131 @@ test('a session-authorized synthetic Demo clip enters the ordinary sealed proces
       assert.equal((await memberCreated.json()).synthetic, true);
     },
     { now: () => new Date('2026-09-10T12:00:00.000Z') },
+  );
+});
+
+test('synthetic quota rejection removes its staged capability and permits an immediate retry', async () => {
+  const fixedNow = new Date('2026-09-10T12:00:00.000Z');
+  await withRuntime(
+    async ({ baseUrl, config, database }) => {
+      const query = await demoContributionQuery(baseUrl);
+      database
+        .prepare('DELETE FROM contribution_quota_windows WHERE cycle_id = ? AND member_id = ?')
+        .run('demo-cycle', 'demo-1');
+      database
+        .prepare(
+          `INSERT INTO contribution_quota_windows
+           (id, cycle_id, member_id, window_start_at, window_end_at,
+            max_count, max_seconds, count_used, seconds_used)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'synthetic-quota-test',
+          'demo-cycle',
+          'demo-1',
+          fixedNow.toISOString(),
+          '2026-09-17T12:00:00.000Z',
+          1,
+          30,
+          1,
+          2,
+        );
+      const jobsBefore = database
+        .prepare("SELECT COUNT(*) AS count FROM media_jobs WHERE kind = 'clip'")
+        .get().count;
+
+      const rejected = await fetch(`${baseUrl}/demo/synthetic-clip?${query}`, { method: 'POST' });
+      assert.equal(rejected.status, 409);
+      assert.deepEqual(await rejected.json(), {
+        error: 'contribution_quota_exceeded',
+        message: 'This member has reached the current cycle contribution limit.',
+      });
+      await assertNoSyntheticStagingLeak(database, config, jobsBefore);
+
+      database
+        .prepare(
+          `UPDATE contribution_quota_windows
+           SET count_used = 0, seconds_used = 0
+           WHERE id = ?`,
+        )
+        .run('synthetic-quota-test');
+      const retry = await fetch(`${baseUrl}/demo/synthetic-clip?${query}`, { method: 'POST' });
+      assert.equal(retry.status, 201, JSON.stringify(await retry.clone().json()));
+      assert.equal((await retry.json()).synthetic, true);
+    },
+    { now: () => fixedNow, seedNow: fixedNow },
+  );
+});
+
+test('synthetic closed-window rejection removes its staged capability and permits an immediate retry', async () => {
+  const fixedNow = new Date('2026-09-10T12:00:00.000Z');
+  await withRuntime(
+    async ({ baseUrl, config, database }) => {
+      const query = await demoContributionQuery(baseUrl);
+      database
+        .prepare('UPDATE cycles SET ends_at = ? WHERE id = ?')
+        .run(fixedNow.toISOString(), 'demo-cycle');
+      const jobsBefore = database
+        .prepare("SELECT COUNT(*) AS count FROM media_jobs WHERE kind = 'clip'")
+        .get().count;
+
+      const rejected = await fetch(`${baseUrl}/demo/synthetic-clip?${query}`, { method: 'POST' });
+      assert.equal(rejected.status, 409);
+      assert.deepEqual(await rejected.json(), {
+        error: 'contribution_window_closed',
+        message: 'The current cycle is not accepting contributions.',
+      });
+      await assertNoSyntheticStagingLeak(database, config, jobsBefore);
+
+      database
+        .prepare('UPDATE cycles SET ends_at = ? WHERE id = ?')
+        .run('2026-09-21T12:00:00.000Z', 'demo-cycle');
+      const retry = await fetch(`${baseUrl}/demo/synthetic-clip?${query}`, { method: 'POST' });
+      assert.equal(retry.status, 201, JSON.stringify(await retry.clone().json()));
+      assert.equal((await retry.json()).synthetic, true);
+    },
+    { now: () => fixedNow, seedNow: fixedNow },
+  );
+});
+
+test('synthetic post-ready exception removes its exact staged capability with a redacted retryable error', async () => {
+  const fixedNow = new Date('2026-09-10T12:00:00.000Z');
+  await withRuntime(
+    async ({ baseUrl, config, database }) => {
+      const query = await demoContributionQuery(baseUrl);
+      const jobsBefore = database
+        .prepare("SELECT COUNT(*) AS count FROM media_jobs WHERE kind = 'clip'")
+        .get().count;
+      database.exec(
+        `CREATE TRIGGER fail_synthetic_clip_job
+         BEFORE INSERT ON media_jobs
+         WHEN NEW.kind = 'clip'
+         BEGIN
+           SELECT RAISE(ABORT, 'forced post-ready failure');
+         END`,
+      );
+
+      const rejected = await fetch(`${baseUrl}/demo/synthetic-clip?${query}`, { method: 'POST' });
+      assert.equal(rejected.status, 503);
+      const rejectedBody = await rejected.json();
+      assert.deepEqual(rejectedBody, {
+        error: 'synthetic_clip_failed',
+        message: 'The synthetic Demo clip could not be prepared. Try again.',
+      });
+      const serialized = JSON.stringify(rejectedBody);
+      assert.doesNotMatch(serialized, /forced post-ready failure|media_jobs/i);
+      assert.doesNotMatch(
+        serialized,
+        new RegExp(config.dataDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      );
+      await assertNoSyntheticStagingLeak(database, config, jobsBefore);
+
+      database.exec('DROP TRIGGER fail_synthetic_clip_job');
+      const retry = await fetch(`${baseUrl}/demo/synthetic-clip?${query}`, { method: 'POST' });
+      assert.equal(retry.status, 201, JSON.stringify(await retry.clone().json()));
+      assert.equal((await retry.json()).synthetic, true);
+    },
+    { now: () => fixedNow, seedNow: fixedNow },
   );
 });
 

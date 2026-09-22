@@ -9,6 +9,7 @@ import { once } from 'node:events';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
+import { DatabaseSync } from 'node:sqlite';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
@@ -378,6 +379,188 @@ test('stale intake callbacks cannot complete or reset a reclaimed generation', a
         sourcePath: secondPath,
         claimGeneration: 2,
       },
+    );
+  });
+});
+
+test('claim reset and fenced metadata deletion exclude a concurrent generation-two writer', async () => {
+  await withDatabase(async ({ database, config, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'reset-metadata-writer-race-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const firstPath = stagedSourcePath(sourceUri, stagingDir, 1);
+    const secondPath = stagedSourcePath(sourceUri, stagingDir, 2);
+    assert.ok(firstPath);
+    assert.ok(secondPath);
+    const first = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:00:00.000Z'),
+      firstPath,
+    );
+    assert.equal(first.ok, true);
+    recordClipMediaMetadata(database, {
+      sourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+      verifiedAt: '2026-09-10T12:00:00.000Z',
+    });
+
+    const gateBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+    const gate = new Int32Array(gateBuffer);
+    const worker = new Worker(
+      `(async () => {
+         const { parentPort, workerData } = require('node:worker_threads');
+         const { DatabaseSync } = require('node:sqlite');
+         const gate = new Int32Array(workerData.gateBuffer);
+         const db = new DatabaseSync(workerData.databasePath);
+         const wrapped = {
+           exec: db.exec.bind(db),
+           prepare(sql) {
+             const statement = db.prepare(sql);
+             if (!/UPDATE staged_sources[\\s\\S]*SET source_path = NULL/.test(sql)) return statement;
+             return new Proxy(statement, {
+               get(target, property) {
+                 if (property === 'run') {
+                   return (...args) => {
+                     const result = target.run(...args);
+                     Atomics.store(gate, 0, 1);
+                     Atomics.notify(gate, 0);
+                     Atomics.wait(gate, 1, 0);
+                     return result;
+                   };
+                 }
+                 const value = Reflect.get(target, property, target);
+                 return typeof value === 'function' ? value.bind(target) : value;
+               },
+             });
+           },
+         };
+         try {
+           const { resetStagedSourceClaim } = await import(workerData.mediaModuleUrl);
+           const reset = resetStagedSourceClaim(
+             wrapped,
+             workerData.sourceUri,
+             workerData.firstPath,
+             1,
+           );
+           parentPort.postMessage({ reset });
+         } catch (error) {
+           parentPort.postMessage({ error: String(error && error.stack ? error.stack : error) });
+         } finally {
+           db.close();
+         }
+       })();`,
+      {
+        eval: true,
+        workerData: {
+          databasePath: config.databasePath,
+          firstPath,
+          gateBuffer,
+          mediaModuleUrl: new URL('../dist/media/index.js', import.meta.url).href,
+          sourceUri,
+        },
+      },
+    );
+    const completion = new Promise((resolve, reject) => {
+      worker.once('message', resolve);
+      worker.once('error', reject);
+    });
+    const deadline = Date.now() + 5_000;
+    while (Atomics.load(gate, 0) !== 1) {
+      if (Date.now() >= deadline) throw new Error('reset worker did not reach its update fence');
+      await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    }
+
+    const second = new DatabaseSync(config.databasePath);
+    second.exec('PRAGMA busy_timeout = 1');
+    let concurrentError;
+    try {
+      const concurrent = claimStagedSource(
+        second,
+        'demo-group',
+        'demo-1',
+        key,
+        new Date('2026-09-10T12:01:00.000Z'),
+        secondPath,
+      );
+      if (concurrent.ok) {
+        recordClipMediaMetadata(second, {
+          sourceUri,
+          mimeType: 'video/mp4',
+          byteLength: 2000,
+          durationSeconds: 2,
+          width: 180,
+          height: 320,
+          hasAudio: true,
+          verifiedAt: '2026-09-10T12:01:00.000Z',
+        });
+        markStagedSourceReady(second, sourceUri, 2000, secondPath, 2);
+      }
+    } catch (error) {
+      concurrentError = error;
+    } finally {
+      Atomics.store(gate, 1, 1);
+      Atomics.notify(gate, 1);
+    }
+    const resetResult = await completion;
+    assert.deepEqual(resetResult, { reset: true });
+    assert.match(String(concurrentError), /database is locked|SQLITE_BUSY/i);
+
+    const secondClaim = claimStagedSource(
+      second,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:01:00.000Z'),
+      secondPath,
+    );
+    assert.equal(secondClaim.ok, true);
+    assert.equal(secondClaim.source.claimGeneration, 2);
+    second.exec('BEGIN');
+    try {
+      recordClipMediaMetadata(second, {
+        sourceUri,
+        mimeType: 'video/mp4',
+        byteLength: 2000,
+        durationSeconds: 2,
+        width: 180,
+        height: 320,
+        hasAudio: true,
+        verifiedAt: '2026-09-10T12:01:00.000Z',
+      });
+      assert.equal(markStagedSourceReady(second, sourceUri, 2000, secondPath, 2), true);
+      second.exec('COMMIT');
+    } catch (error) {
+      second.exec('ROLLBACK');
+      throw error;
+    } finally {
+      second.close();
+      await worker.terminate();
+    }
+
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `SELECT source_path AS sourcePath, claim_generation AS claimGeneration, status
+             FROM staged_sources WHERE source_uri = ?`,
+          )
+          .get(sourceUri),
+      },
+      { sourcePath: secondPath, claimGeneration: 2, status: 'staged' },
+    );
+    assert.equal(
+      database
+        .prepare('SELECT byte_length AS byteLength FROM media_metadata WHERE source_uri = ?')
+        .get(sourceUri).byteLength,
+      2000,
     );
   });
 });

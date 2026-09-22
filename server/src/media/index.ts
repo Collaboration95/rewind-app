@@ -349,20 +349,51 @@ export function resetStagedSourceClaim(
   sourcePath: string,
   claimGeneration?: number,
 ): boolean {
-  const result = database
-    .prepare(
-      `UPDATE staged_sources
-       SET source_path = NULL, byte_length = NULL, status = 'pending',
-           claim_generation = claim_generation + 1, claim_expires_at = NULL
-       WHERE source_uri = ? AND source_path = ? AND status = 'pending'
-         AND (? IS NULL OR claim_generation = ?)`,
-    )
-    .run(sourceUri, sourcePath, claimGeneration ?? null, claimGeneration ?? null);
-  if (Number(result.changes) === 1) {
-    database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
+  let started = false;
+  try {
+    beginImmediateWithRetry(database);
+    started = true;
+    const expectedGeneration = claimGeneration ?? null;
+    const claimed = database
+      .prepare(
+        `SELECT 1 FROM staged_sources
+         WHERE source_uri = ? AND source_path = ? AND status = 'pending'
+           AND (? IS NULL OR claim_generation = ?)`,
+      )
+      .get(sourceUri, sourcePath, expectedGeneration, expectedGeneration);
+    if (!claimed) {
+      database.exec('COMMIT');
+      return false;
+    }
+    database
+      .prepare(
+        `DELETE FROM media_metadata
+         WHERE source_uri = ?
+           AND EXISTS (
+             SELECT 1 FROM staged_sources
+             WHERE source_uri = ? AND source_path = ? AND status = 'pending'
+               AND (? IS NULL OR claim_generation = ?)
+           )`,
+      )
+      .run(sourceUri, sourceUri, sourcePath, expectedGeneration, expectedGeneration);
+    const result = database
+      .prepare(
+        `UPDATE staged_sources
+         SET source_path = NULL, byte_length = NULL, status = 'pending',
+             claim_generation = claim_generation + 1, claim_expires_at = NULL
+         WHERE source_uri = ? AND source_path = ? AND status = 'pending'
+           AND (? IS NULL OR claim_generation = ?)`,
+      )
+      .run(sourceUri, sourcePath, expectedGeneration, expectedGeneration);
+    if (Number(result.changes) !== 1) {
+      throw new Error('staged source claim changed during reset');
+    }
+    database.exec('COMMIT');
     return true;
+  } catch (error) {
+    if (started) database.exec('ROLLBACK');
+    throw error;
   }
-  return false;
 }
 
 /** Reclaim a staged capability whose final file disappeared after a crash. */
