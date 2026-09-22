@@ -10,6 +10,48 @@ const projectRoot = process.cwd();
 const expoCli = join(projectRoot, 'node_modules/expo/bin/cli');
 const seedNow = new Date('2026-09-01T00:00:00.000Z');
 const demoNow = new Date('2026-09-11T12:00:01.000Z');
+const crossGroupBootstrapGroupId = 'production-e2e-bootstrap-group';
+const crossGroupBootstrapCycleId = 'production-e2e-bootstrap-cycle';
+
+function seedCrossGroupBootstrap(database) {
+  const startsAt = seedNow.toISOString();
+  const endsAt = new Date(seedNow.getTime() + 11 * 24 * 60 * 60 * 1000).toISOString();
+  database.exec('BEGIN');
+  try {
+    database
+      .prepare(
+        'INSERT INTO profiles (id, display_name, avatar_label, is_synthetic) VALUES (?, ?, ?, 1)',
+      )
+      .run('demo-6', 'Fable', 'Fable, second-group member');
+    database
+      .prepare('INSERT INTO groups (id, name, current_cycle_id) VALUES (?, ?, ?)')
+      .run(crossGroupBootstrapGroupId, 'Production E2E Bootstrap', crossGroupBootstrapCycleId);
+    database
+      .prepare(
+        `INSERT INTO cycles
+          (id, group_id, prompt, starts_at, ends_at, status, lock_state,
+           max_count, max_seconds, count_used, seconds_used)
+         VALUES (?, ?, ?, ?, ?, 'collecting', 'locked', 5, 30, 0, 0)`,
+      )
+      .run(
+        crossGroupBootstrapCycleId,
+        crossGroupBootstrapGroupId,
+        'A private bootstrap prompt for production E2E.',
+        startsAt,
+        endsAt,
+      );
+    database
+      .prepare(
+        `INSERT INTO memberships (group_id, member_id, role, accepted_at)
+         VALUES (?, ?, 'owner', ?)`,
+      )
+      .run(crossGroupBootstrapGroupId, 'demo-6', startsAt);
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 function localOnlyEnv(overrides = {}) {
   const env = { ...process.env, ...overrides };
@@ -106,6 +148,7 @@ try {
   // with no retained SQLite, WAL/SHM, media, or browser-owned state.
   resetDatabase(config);
   database = openDatabase(config, { seedNow });
+  seedCrossGroupBootstrap(database);
   runtimeServer = createRuntimeServer(config, database, { now: () => demoNow });
   const runtimePort = await listen(runtimeServer);
   webServer = createProductionWebServer({
