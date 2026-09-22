@@ -14,6 +14,7 @@ const dockerfile = await readFile(new URL('../deploy/web.Dockerfile', import.met
 
 test('production web proxy keeps API and SPA routing boundaries explicit', () => {
   assert.match(nginx, /location \^~ \/api\//);
+  assert.match(nginx, /location = \/api/);
   assert.match(nginx, /proxy_pass http:\/\/rewind_runtime\//);
   assert.match(nginx, /proxy_intercept_errors on/);
   assert.match(nginx, /proxy_hide_header Cache-Control/);
