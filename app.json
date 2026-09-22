@@ -6,6 +6,20 @@
     "scheme": "rewind",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "web": {
+      "output": "single",
+      "favicon": "./public/icons/rewind-icon-512.png",
+      "name": "Rewind",
+      "shortName": "Rewind",
+      "lang": "en",
+      "scope": "/",
+      "startUrl": "/",
+      "themeColor": "#1D1B1E",
+      "backgroundColor": "#252326",
+      "display": "standalone",
+      "orientation": "portrait-primary",
+      "description": "A local-first time capsule for shared moments."
+    },
     "plugins": [
       [
         "expo-camera",

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Rewind</title>
+  <rect width="512" height="512" rx="112" fill="#1D1B1E" />
+  <path d="M155 176a142 142 0 1 1-17 149" fill="none" stroke="#FFA572" stroke-linecap="round" stroke-width="42" />
+  <path d="m137 112 3 106 103-25" fill="none" stroke="#FFA572" stroke-linecap="round" stroke-linejoin="round" stroke-width="42" />
+  <circle cx="298" cy="290" r="29" fill="#F9EBD5" />
+  <circle cx="376" cy="290" r="29" fill="#F9EBD5" />
+</svg>
