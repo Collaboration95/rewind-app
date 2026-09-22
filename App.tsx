@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
 import {
@@ -75,6 +75,7 @@ const ROUTES = [
 
 type RouteKey = (typeof ROUTES)[number]['key'];
 type UnavailableRouteKey = Exclude<RouteKey, 'home' | 'settings' | 'camera' | 'archive'>;
+type InviteLinkIntent = InviteLinkParseResult & { intentId: number };
 
 const unavailableScreens: Record<UnavailableRouteKey, { description: string; title: string }> = {
   chat: {
@@ -127,8 +128,9 @@ export default function App({
   );
 }
 
-function useInviteLinkIntent(): InviteLinkParseResult | null {
-  const [inviteLink, setInviteLink] = useState<InviteLinkParseResult | null>(null);
+function useInviteLinkIntent(): InviteLinkIntent | null {
+  const [inviteLink, setInviteLink] = useState<InviteLinkIntent | null>(null);
+  const intentSequence = useRef(0);
 
   useEffect(() => {
     let mounted = true;
@@ -136,7 +138,7 @@ function useInviteLinkIntent(): InviteLinkParseResult | null {
       if (!mounted || !url || !isInviteLinkCandidate(url)) return;
       const parsed = parseInviteLink(url);
       if (parsed.kind === 'valid' || parsed.reason === 'expired' || parsed.reason === 'malformed') {
-        setInviteLink(parsed);
+        setInviteLink({ ...parsed, intentId: ++intentSequence.current });
       }
     };
 
@@ -171,7 +173,7 @@ function SessionGate({
   clock: () => number;
   cycleRepository?: CycleRepository;
   groupRepository?: GroupRepository | AsyncGroupRepository;
-  inviteLink: InviteLinkParseResult | null;
+  inviteLink: InviteLinkIntent | null;
   runtimeClient: RuntimeClient | null;
   cameraPlatform?: CameraPlatform;
 }) {
@@ -206,12 +208,9 @@ function SessionGate({
   );
 }
 
-function inviteLinkKey(inviteLink: InviteLinkParseResult | null): string {
+function inviteLinkKey(inviteLink: InviteLinkIntent | null): string {
   if (!inviteLink) return 'no-invite-link';
-  if (inviteLink.kind === 'valid') {
-    return `invite-link-${inviteLink.code}-${inviteLink.expiresAt}`;
-  }
-  return `invite-link-${inviteLink.reason}`;
+  return `invite-link-intent-${inviteLink.intentId}`;
 }
 
 function SessionLoadingScreen() {
@@ -253,7 +252,7 @@ function ActiveAppShell({
   cameraPlatform,
 }: {
   clock: () => number;
-  inviteLink: InviteLinkParseResult | null;
+  inviteLink: InviteLinkIntent | null;
   runtimeClient: RuntimeClient | null;
   cameraPlatform?: CameraPlatform;
 }) {
@@ -405,7 +404,7 @@ function SettingsScreen({
   onCreateGroup,
   runtimeClient,
 }: {
-  inviteLink: InviteLinkParseResult | null;
+  inviteLink: InviteLinkIntent | null;
   onCreateGroup: () => void;
   runtimeClient: RuntimeClient | null;
 }) {
@@ -625,7 +624,7 @@ function InvitePanel({
   runtimeClient,
 }: {
   groupId: string;
-  inviteLink: InviteLinkParseResult | null;
+  inviteLink: InviteLinkIntent | null;
   runtimeClient: RuntimeClient | null;
 }) {
   const { session, updateGroup } = useDemoSession();
