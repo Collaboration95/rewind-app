@@ -90,6 +90,12 @@ variable "demo_instance_enabled" {
   default     = true
 }
 
+variable "public_https_distribution_enabled" {
+  type        = bool
+  description = "Whether to create the approved low-cost public HTTPS Lightsail distribution for the Demo web/API origin."
+  default     = false
+}
+
 variable "cost_safety_expected_instance_state" {
   type        = string
   description = "Expected Lightsail power state when the disposable Demo instance exists. Use stopped for the normal idle Demo or running only when an active Demo is explicitly approved."
