@@ -3,6 +3,9 @@ import type { Group } from './profiles';
 
 export const INVITE_CODE_LENGTH = 8;
 export const INVITE_CODE_PATTERN = /^[A-Z0-9]{8}$/;
+export const INVITE_LINK_SCHEME = 'rewind';
+export const INVITE_LINK_HOST = 'invite';
+export const INVITE_LINK_WEB_PATH = '/invite';
 
 /**
  * Invite codes are commonly copied with surrounding or grouping whitespace.

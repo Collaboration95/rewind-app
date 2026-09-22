@@ -1,7 +1,18 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { DemoProfilePicker } from './src/profiles/DemoProfilePicker';
@@ -41,6 +52,13 @@ import {
   validateGroupInput,
 } from './src/domain/groups';
 import { isValidInviteCode, normalizeInviteCode } from './src/domain/invites';
+import {
+  createInviteLink,
+  inviteLinkErrorMessage,
+  isInviteLinkCandidate,
+  parseInviteLink,
+  type InviteLinkParseResult,
+} from './src/invites/deep-links';
 import { ChatScreen } from './src/chat/ChatScreen';
 import { ArchiveScreen } from './src/archive/ArchiveScreen';
 import { ReminderSettings } from './src/reminders/ReminderSettings';
@@ -57,6 +75,7 @@ const ROUTES = [
 
 type RouteKey = (typeof ROUTES)[number]['key'];
 type UnavailableRouteKey = Exclude<RouteKey, 'home' | 'settings' | 'camera' | 'archive'>;
+type InviteLinkIntent = InviteLinkParseResult & { intentId: number };
 
 const unavailableScreens: Record<UnavailableRouteKey, { description: string; title: string }> = {
   chat: {
@@ -81,6 +100,7 @@ export default function App({
   runtimeClient,
   cameraPlatform,
 }: AppProps = {}) {
+  const inviteLink = useInviteLinkIntent();
   const configuredRuntime = useMemo(
     () =>
       runtimeClient === undefined
@@ -98,6 +118,7 @@ export default function App({
             clock={clock}
             cycleRepository={cycleRepository}
             groupRepository={groupRepository}
+            inviteLink={inviteLink}
             runtimeClient={configuredRuntime?.client ?? null}
             cameraPlatform={cameraPlatform}
           />
@@ -107,16 +128,52 @@ export default function App({
   );
 }
 
+function useInviteLinkIntent(): InviteLinkIntent | null {
+  const [inviteLink, setInviteLink] = useState<InviteLinkIntent | null>(null);
+  const intentSequence = useRef(0);
+
+  useEffect(() => {
+    let mounted = true;
+    const receive = (url: string | null) => {
+      if (!mounted || !url || !isInviteLinkCandidate(url)) return;
+      const parsed = parseInviteLink(url);
+      if (parsed.kind === 'valid' || parsed.reason === 'expired' || parsed.reason === 'malformed') {
+        setInviteLink({ ...parsed, intentId: ++intentSequence.current });
+      }
+    };
+
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      receive(window.location.href);
+      return () => {
+        mounted = false;
+      };
+    }
+
+    void Linking.getInitialURL()
+      .then(receive)
+      .catch(() => undefined);
+    const subscription = Linking.addEventListener('url', ({ url }) => receive(url));
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  return inviteLink;
+}
+
 function SessionGate({
   clock,
   cycleRepository,
   groupRepository,
+  inviteLink,
   runtimeClient,
   cameraPlatform,
 }: {
   clock: () => number;
   cycleRepository?: CycleRepository;
   groupRepository?: GroupRepository | AsyncGroupRepository;
+  inviteLink: InviteLinkIntent | null;
   runtimeClient: RuntimeClient | null;
   cameraPlatform?: CameraPlatform;
 }) {
@@ -140,13 +197,20 @@ function SessionGate({
         cycleRepository={cycleRepository ?? sessionRepositories?.cycleRepository}
       >
         <ActiveAppShell
+          key={inviteLinkKey(inviteLink)}
           cameraPlatform={cameraPlatform}
           clock={clock}
+          inviteLink={inviteLink}
           runtimeClient={runtimeClient}
         />
       </CapsuleProvider>
     </ContributionStatusProvider>
   );
+}
+
+function inviteLinkKey(inviteLink: InviteLinkIntent | null): string {
+  if (!inviteLink) return 'no-invite-link';
+  return `invite-link-intent-${inviteLink.intentId}`;
 }
 
 function SessionLoadingScreen() {
@@ -183,14 +247,18 @@ function SafeAreaFrame({ children }: { children: ReactNode }) {
 
 function ActiveAppShell({
   clock,
+  inviteLink,
   runtimeClient,
   cameraPlatform,
 }: {
   clock: () => number;
+  inviteLink: InviteLinkIntent | null;
   runtimeClient: RuntimeClient | null;
   cameraPlatform?: CameraPlatform;
 }) {
-  const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group' | 'video'>('home');
+  const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group' | 'video'>(() =>
+    inviteLink ? 'settings' : 'home',
+  );
   const { retry: refreshCapsule } = useCapsule();
   const resolvedCameraPlatform = useMemo(() => {
     if (cameraPlatform) return cameraPlatform;
@@ -218,6 +286,7 @@ function ActiveAppShell({
         ) : activeRoute === 'settings' ? (
           <SettingsScreen
             onCreateGroup={() => setActiveRoute('create-group')}
+            inviteLink={inviteLink}
             runtimeClient={runtimeClient}
           />
         ) : activeRoute === 'create-group' ? (
@@ -331,9 +400,11 @@ function DemoAccessEntry() {
 }
 
 function SettingsScreen({
+  inviteLink,
   onCreateGroup,
   runtimeClient,
 }: {
+  inviteLink: InviteLinkIntent | null;
   onCreateGroup: () => void;
   runtimeClient: RuntimeClient | null;
 }) {
@@ -364,7 +435,11 @@ function SettingsScreen({
         <Text style={styles.bodyText}>{role === 'owner' ? 'Owner' : 'Member'} · local group</Text>
       </View>
       <ReminderSettings />
-      <InvitePanel groupId={session.groupId} runtimeClient={runtimeClient} />
+      <InvitePanel
+        groupId={session.groupId}
+        inviteLink={inviteLink}
+        runtimeClient={runtimeClient}
+      />
       <DemoRevealPanel groupId={session.groupId} runtimeClient={runtimeClient} />
       {error ? (
         <Text accessibilityRole="alert" style={styles.errorText}>
@@ -545,9 +620,11 @@ function DemoRevealPanel({
 
 function InvitePanel({
   groupId,
+  inviteLink,
   runtimeClient,
 }: {
   groupId: string;
+  inviteLink: InviteLinkIntent | null;
   runtimeClient: RuntimeClient | null;
 }) {
   const { session, updateGroup } = useDemoSession();
@@ -555,10 +632,19 @@ function InvitePanel({
   const [invite, setInvite] = useState<Awaited<
     ReturnType<NonNullable<RuntimeClient['createInvite']>>
   > | null>(null);
-  const [code, setCode] = useState('');
+  const initialLinkedCode = inviteLink?.kind === 'valid' ? inviteLink.code : null;
+  const initialLinkedExpiry = inviteLink?.kind === 'valid' ? inviteLink.expiresAt : null;
+  const initialFeedback = inviteLink
+    ? inviteLink.kind === 'valid'
+      ? 'Invite link ready. Review it below and accept the invitation.'
+      : inviteLinkErrorMessage(inviteLink.reason)
+    : null;
+  const [code, setCode] = useState(initialLinkedCode ?? '');
   const [pending, setPending] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(initialFeedback);
   const [codeError, setCodeError] = useState<string | null>(null);
+  const [linkedCode, setLinkedCode] = useState<string | null>(initialLinkedCode);
+  const [linkedExpiry, setLinkedExpiry] = useState<string | null>(initialLinkedExpiry);
   const owner = state.group?.actingMemberRole === 'owner';
 
   const generate = async () => {
@@ -589,11 +675,66 @@ function InvitePanel({
     }
   };
 
+  const copyLink = async () => {
+    if (!inviteLinkUrl) return;
+    try {
+      await Clipboard.setStringAsync(inviteLinkUrl);
+      setFeedback('Invitation link copied.');
+    } catch {
+      setFeedback('Copy is unavailable here; use Share or select the invite link locally.');
+    }
+  };
+
+  const openLink = () => {
+    if (!inviteLinkUrl || typeof window === 'undefined') {
+      setFeedback('The invitation link could not be opened here. Copy it to open elsewhere.');
+      return;
+    }
+    const opened = window.open(inviteLinkUrl, '_blank', 'noopener,noreferrer');
+    setFeedback(
+      opened
+        ? 'Invitation link opened in a new tab.'
+        : 'The invitation link was blocked. Copy it to open elsewhere.',
+    );
+  };
+
+  const shareLink = async () => {
+    if (!inviteLinkUrl) {
+      setFeedback('The invitation link could not be prepared. Use the invite code instead.');
+      return;
+    }
+    try {
+      await Share.share({
+        message: `Join my Rewind group with this invitation link: ${inviteLinkUrl}`,
+        url: inviteLinkUrl,
+      });
+      setFeedback('Invitation link ready to share.');
+    } catch {
+      setFeedback('Share is unavailable here; copy the invitation link to share it locally.');
+    }
+  };
+
+  const webOrigin =
+    Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : undefined;
+  const inviteLinkUrl = invite
+    ? createInviteLink(invite, {
+        platform: Platform.OS === 'web' ? 'web' : 'native',
+        webOrigin,
+      })
+    : null;
+
   const accept = async () => {
     const normalizedCode = normalizeInviteCode(code);
     if (!isValidInviteCode(normalizedCode)) {
       setCodeError('Enter the eight-character invite code using letters and numbers.');
       setFeedback(null);
+      return;
+    }
+    if (linkedCode === normalizedCode && linkedExpiry && Date.parse(linkedExpiry) <= Date.now()) {
+      setCode('');
+      setLinkedCode(null);
+      setLinkedExpiry(null);
+      setFeedback(inviteLinkErrorMessage('expired'));
       return;
     }
     if (!runtimeClient?.acceptInvite || !session) {
@@ -610,6 +751,8 @@ function InvitePanel({
       await updateGroup(result.session.groupId);
       retry();
       setCode('');
+      setLinkedCode(null);
+      setLinkedExpiry(null);
       setFeedback(`Joined ${result.group.name}. The code is now used.`);
     } catch (error) {
       setFeedback(
@@ -654,6 +797,42 @@ function InvitePanel({
               >
                 <Text style={styles.outlineButtonText}>Copy invite code</Text>
               </Pressable>
+              {inviteLinkUrl ? (
+                <>
+                  <Text selectable style={styles.inviteLink} testID="invite-link">
+                    {inviteLinkUrl}
+                  </Text>
+                  {Platform.OS === 'web' ? (
+                    <>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => void copyLink()}
+                        style={styles.outlineButton}
+                        testID="copy-invite-link"
+                      >
+                        <Text style={styles.outlineButtonText}>Copy invite link</Text>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={openLink}
+                        style={styles.outlineButton}
+                        testID="open-invite-link"
+                      >
+                        <Text style={styles.outlineButtonText}>Open invite link</Text>
+                      </Pressable>
+                    </>
+                  ) : (
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => void shareLink()}
+                      style={styles.primaryButton}
+                      testID="share-invite-link"
+                    >
+                      <Text style={styles.primaryButtonText}>Share invite link</Text>
+                    </Pressable>
+                  )}
+                </>
+              ) : null}
             </>
           ) : null}
         </>
@@ -667,6 +846,8 @@ function InvitePanel({
         maxLength={32}
         onChangeText={(value) => {
           setCode(normalizeInviteCode(value));
+          setLinkedCode(null);
+          setLinkedExpiry(null);
           setCodeError(null);
           setFeedback(null);
         }}
@@ -1245,6 +1426,7 @@ const styles = StyleSheet.create({
     letterSpacing: 4,
     paddingVertical: 8,
   },
+  inviteLink: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
   outlineButton: {
     alignItems: 'center',
     backgroundColor: COLORS.paper,
