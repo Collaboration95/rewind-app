@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { existsSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
-import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { once } from 'node:events';
 import test from 'node:test';
 
@@ -11,8 +13,36 @@ const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { generateSyntheticDemoClip } = await import('../dist/ffmpeg.js');
 
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const serialTest = (name, fn) => test(name, { concurrency: false }, fn);
+
+async function waitForCondition(predicate, message, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+function controlledBody(firstChunk, finalChunk = Buffer.alloc(0)) {
+  let release;
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  return {
+    started,
+    release,
+    body: (async function* () {
+      yield firstChunk;
+      markStarted();
+      await held;
+      if (finalChunk.byteLength > 0) yield finalChunk;
+    })(),
+  };
+}
 
 async function withRuntime(run, overrides = {}) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-http-limits-`);
@@ -27,7 +57,9 @@ async function withRuntime(run, overrides = {}) {
     REWIND_HTTP_MAX_CONCURRENT_PROCESSING: String(overrides.maxConcurrentProcessing ?? 1),
   });
   const database = openDatabase(config);
-  const server = createRuntimeServer(config, database);
+  const server = createRuntimeServer(config, database, {
+    now: () => new Date('2026-09-10T12:00:00.000Z'),
+  });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -49,13 +81,6 @@ async function createSession(baseUrl) {
   });
   assert.equal(response.status, 201);
   return (await response.json()).session;
-}
-
-async function* delayedBody(chunks, delayMs) {
-  for (const [index, chunk] of chunks.entries()) {
-    yield chunk;
-    if (index < chunks.length - 1) await sleep(delayMs);
-  }
 }
 
 function readRawResponse(request) {
@@ -108,19 +133,56 @@ serialTest('HTTP policy configuration is bounded and has documented defaults', (
 serialTest('slow JSON bodies return a stable 408 contract', async () => {
   await withRuntime(
     async ({ baseUrl }) => {
-      const response = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: delayedBody([Buffer.from('{"memberId":"demo-1"'), Buffer.from('}')], 100),
-        duplex: 'half',
-      });
-      assert.equal(response.status, 408);
-      assert.deepEqual(await response.json(), {
-        error: 'request_timeout',
-        message: 'The request body did not arrive within the configured idle timeout.',
-      });
+      const controlled = controlledBody(Buffer.from('{"memberId":"demo-1"'), Buffer.from('}'));
+      try {
+        const responsePromise = fetch(`${baseUrl}/sessions/demo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: controlled.body,
+          duplex: 'half',
+        });
+        await controlled.started;
+        const response = await responsePromise;
+        assert.equal(response.status, 408);
+        assert.deepEqual(await response.json(), {
+          error: 'request_timeout',
+          message: 'The request body did not arrive within the configured idle timeout.',
+        });
+      } finally {
+        controlled.release();
+      }
     },
     { idleTimeoutMs: 30 },
+  );
+});
+
+serialTest('an upload that exceeds its total deadline returns a stable 408 contract', async () => {
+  await withRuntime(
+    async ({ baseUrl }) => {
+      const session = await createSession(baseUrl);
+      const controlled = controlledBody(Buffer.from('partial'), Buffer.from('tail'));
+      try {
+        const responsePromise = fetch(
+          `${baseUrl}/contributions/upload/source?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}&idempotencyKey=total-deadline`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'video/mp4' },
+            body: controlled.body,
+            duplex: 'half',
+          },
+        );
+        await controlled.started;
+        const response = await responsePromise;
+        assert.equal(response.status, 408);
+        assert.deepEqual(await response.json(), {
+          error: 'request_timeout',
+          message: 'The upload did not complete within the configured timeout.',
+        });
+      } finally {
+        controlled.release();
+      }
+    },
+    { idleTimeoutMs: 1_000, uploadTimeoutMs: 30 },
   );
 });
 
@@ -213,28 +275,38 @@ serialTest('a second media intake receives a stable 429 while the first is activ
 });
 
 serialTest('aborted media intake returns to a retryable staged state', async () => {
-  await withRuntime(async ({ baseUrl, database, dataDir }) => {
+  await withRuntime(async ({ baseUrl, config, database, dataDir }) => {
     const session = await createSession(baseUrl);
     const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}&idempotencyKey=abort-key`;
+    const retrySourcePath = join(dataDir, 'abort-retry.mp4');
+    await generateSyntheticDemoClip(config.ffmpegBin, retrySourcePath);
+    const retryBody = await readFile(retrySourcePath);
     const request = httpRequest(`${baseUrl}/contributions/upload/source?${query}`, {
       method: 'POST',
       headers: { 'Content-Type': 'video/mp4', 'Content-Length': '1000' },
     });
     const resultPromise = readRawResponse(request);
     request.write(Buffer.from('partial'));
-    await sleep(20);
+    await waitForCondition(() => {
+      const source = database.prepare('SELECT source_path AS sourcePath FROM staged_sources').get();
+      return typeof source?.sourcePath === 'string';
+    }, 'aborted upload never established its staged-source claim');
     request.destroy();
     await resultPromise;
-    await sleep(100);
+    await waitForCondition(() => {
+      const source = database
+        .prepare('SELECT status, source_path AS sourcePath FROM staged_sources')
+        .get();
+      return source?.status === 'pending' && source.sourcePath === null;
+    }, 'aborted upload claim was not cleaned up');
 
-    const source = database
-      .prepare(
-        'SELECT status, source_path AS sourcePath, byte_length AS byteLength FROM staged_sources',
-      )
-      .get();
-    assert.equal(source.status, 'pending');
-    assert.equal(source.sourcePath, null);
-    assert.equal(source.byteLength, null);
+    const retry = await fetch(`${baseUrl}/contributions/upload/source?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'video/mp4' },
+      body: retryBody,
+    });
+    assert.equal(retry.status, 201);
+    assert.equal((await retry.json()).source.byteLength, retryBody.byteLength);
     const stagingEntries = await readdir(`${dataDir}/media/staging`).catch(() => []);
     assert.equal(
       stagingEntries.some((entry) => entry.endsWith('.part')),
@@ -242,6 +314,111 @@ serialTest('aborted media intake returns to a retryable staged state', async () 
     );
   });
 });
+
+serialTest(
+  'processing concurrency returns stable 429 and releases capacity for retry',
+  async () => {
+    await withRuntime(
+      async ({ baseUrl, config, dataDir }) => {
+        const session = await createSession(baseUrl);
+        const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+        const sourcePath = join(dataDir, 'processing-limit-source.mp4');
+        const metadata = await generateSyntheticDemoClip(config.ffmpegBin, sourcePath);
+        const stagedResponse = await fetch(
+          `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=processing-limit-source`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'video/mp4' },
+            body: await readFile(sourcePath),
+          },
+        );
+        assert.equal(stagedResponse.status, 201);
+        const { source } = await stagedResponse.json();
+        const uploadResponse = await fetch(`${baseUrl}/contributions/upload?${query}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            idempotencyKey: 'processing-limit-source',
+            sourceUri: source.uri,
+            ...metadata,
+            mode: 'soft-focus',
+            trimStartSeconds: 0,
+            trimEndSeconds: metadata.durationSeconds,
+            sourceDurationSeconds: metadata.durationSeconds,
+          }),
+        });
+        const uploadBody = await uploadResponse.json();
+        assert.equal(uploadResponse.status, 201, JSON.stringify(uploadBody));
+        const { upload } = uploadBody;
+
+        const startedPath = join(dataDir, 'processing-started');
+        const releasePath = join(dataDir, 'processing-release');
+        const blockedFfmpeg = join(dataDir, 'blocked-media-bin');
+        await writeFile(
+          blockedFfmpeg,
+          `#!/usr/bin/env node
+const { existsSync, watch, writeFileSync } = require('node:fs');
+const { dirname } = require('node:path');
+const { spawnSync } = require('node:child_process');
+const startedPath = ${JSON.stringify(startedPath)};
+const releasePath = ${JSON.stringify(releasePath)};
+function waitForRelease() {
+  if (existsSync(releasePath)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const watcher = watch(dirname(releasePath), () => {
+      if (!existsSync(releasePath)) return;
+      watcher.close();
+      resolve();
+    });
+    if (existsSync(releasePath)) {
+      watcher.close();
+      resolve();
+    }
+  });
+}
+async function main() {
+  writeFileSync(startedPath, 'started');
+  await waitForRelease();
+  const result = spawnSync('ffmpeg', process.argv.slice(2), { stdio: 'inherit' });
+  process.exit(result.status ?? 1);
+}
+void main();
+`,
+          { mode: 0o755 },
+        );
+        await chmod(blockedFfmpeg, 0o755);
+        config.ffmpegBin = blockedFfmpeg;
+        const processUrl = `${baseUrl}/contributions/jobs/${encodeURIComponent(upload.job.id)}/process?${query}`;
+        const firstPromise = fetch(processUrl, { method: 'POST' });
+        await waitForCondition(
+          () => existsSync(startedPath),
+          'processing request never reached the controlled FFmpeg boundary',
+          5_000,
+        );
+
+        const saturated = await fetch(processUrl, { method: 'POST' });
+        assert.equal(saturated.status, 429);
+        assert.deepEqual(await saturated.json(), {
+          error: 'concurrency_limit',
+          message: 'The server is at its configured concurrency limit. Retry the request.',
+        });
+
+        await writeFile(releasePath, 'release');
+        const first = await firstPromise;
+        assert.equal(first.status, 200);
+        assert.deepEqual(await first.json(), {
+          job: { id: upload.job.id, status: 'ready' },
+        });
+        const retry = await fetch(processUrl, { method: 'POST' });
+        assert.equal(retry.status, 200);
+        assert.deepEqual(await retry.json(), {
+          job: { id: upload.job.id, status: 'ready' },
+        });
+      },
+      { maxConcurrentProcessing: 1 },
+    );
+  },
+);
 
 serialTest('a normal bounded media upload remains successful', async () => {
   await withRuntime(async ({ baseUrl, config, dataDir }) => {

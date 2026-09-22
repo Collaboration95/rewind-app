@@ -1,12 +1,58 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { access, chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import test from 'node:test';
+import { promisify } from 'node:util';
 
 import { redactDiagnostics, runLifecycleSmoke } from '../../deploy/lifecycle-smoke.mjs';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../..');
+const execFileAsync = promisify(execFile);
+
+test('resolved Compose preserves explicit HTTP request bounds', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'rewind-compose-http-limits-'));
+  const envFile = join(root, 'rewind.env');
+  await writeFile(
+    envFile,
+    [
+      'REWIND_HTTP_IDLE_TIMEOUT_MS=11001',
+      'REWIND_HTTP_UPLOAD_TIMEOUT_MS=22002',
+      'REWIND_HTTP_MAX_CONCURRENT_INTAKES=3',
+      'REWIND_HTTP_MAX_CONCURRENT_PROCESSING=4',
+      '',
+    ].join('\n'),
+  );
+  try {
+    const { stdout } = await execFileAsync(
+      'docker',
+      [
+        'compose',
+        '--env-file',
+        envFile,
+        '-f',
+        join(REPO_ROOT, 'deploy/compose.yaml'),
+        'config',
+        '--format',
+        'json',
+      ],
+      { cwd: REPO_ROOT },
+    );
+    const resolved = JSON.parse(stdout);
+    assert.deepEqual(
+      {
+        idle: resolved.services.runtime.environment.REWIND_HTTP_IDLE_TIMEOUT_MS,
+        upload: resolved.services.runtime.environment.REWIND_HTTP_UPLOAD_TIMEOUT_MS,
+        intake: resolved.services.runtime.environment.REWIND_HTTP_MAX_CONCURRENT_INTAKES,
+        processing: resolved.services.runtime.environment.REWIND_HTTP_MAX_CONCURRENT_PROCESSING,
+      },
+      { idle: '11001', upload: '22002', intake: '3', processing: '4' },
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('lifecycle smoke contract is disposable, bounded, and Compose-isolated', async () => {
   const [script, compose, readme, packageJson] = await Promise.all([
