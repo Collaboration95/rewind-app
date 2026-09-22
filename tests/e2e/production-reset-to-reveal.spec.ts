@@ -6,6 +6,7 @@ const SAFE_DENIAL = {
   error: 'forbidden',
   message: 'You do not have access to this resource.',
 };
+const CROSS_GROUP_BOOTSTRAP_GROUP_ID = 'production-e2e-bootstrap-group';
 
 let stage = 'start';
 const apiEvents: string[] = [];
@@ -80,6 +81,12 @@ async function runtimeJson(page: Page, path: string) {
   const response = await page.request.get(path);
   expect(response.status()).toBe(200);
   return response.json();
+}
+
+async function expectSafeDenial(page: Page, path: string): Promise<void> {
+  const response = await page.request.get(path);
+  expect(response.status(), path).toBe(SAFE_DENIAL.status);
+  expect(await response.json(), path).toEqual(SAFE_DENIAL);
 }
 
 test.afterEach(async ({ page }, testInfo) => {
@@ -177,6 +184,8 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   const syntheticBody = await syntheticResponse.json();
   expect(syntheticBody.synthetic).toBe(true);
   expect(syntheticBody.upload?.contribution?.memberId).toBe('demo-2');
+  const clipJobId = syntheticBody.upload?.job?.id;
+  expect(clipJobId).toEqual(expect.any(String));
   await expect(page.getByText('Contribution sealed', { exact: true })).toBeVisible({
     timeout: 90_000,
   });
@@ -230,29 +239,108 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   );
   expect(archive.archive.films).toHaveLength(1);
   expect(archive.archive.films[0].downloadPath).toEqual(expect.any(String));
+  expect(archive.archive.clips).toHaveLength(0);
   const premiere = await runtimeJson(
     page,
     `/api/cycles/${encodeURIComponent(cycleId)}/premiere?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
   );
   expect(premiere.premiere.state).toBe('ready');
   expect(premiere.premiere.playbackPath).toEqual(expect.any(String));
+  const filmId = premiere.premiere.filmId;
+  expect(filmId).toEqual(expect.any(String));
   const playback = await page.request.get(`/api${premiere.premiere.playbackPath}`);
   expect(playback.status()).toBe(200);
   expect(playback.headers()['content-type']).toContain('video/mp4');
   expect(Number(playback.headers()['content-length'] ?? 0)).toBeGreaterThan(0);
 
-  stage = 'cross-group safe denial';
+  const processedClip = await runtimeJson(
+    page,
+    `/api/clips/${encodeURIComponent(clipJobId)}?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
+  );
+  expect(processedClip.clip).toMatchObject({ id: clipJobId, status: 'ready' });
+  const film = await runtimeJson(
+    page,
+    `/api/films/${encodeURIComponent(filmId)}?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
+  );
+  expect(film.film).toMatchObject({ id: filmId, kind: 'film', status: 'ready' });
+  const downloadJob = await runtimeJson(
+    page,
+    `/api/downloads/demo-download?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
+  );
+  expect(downloadJob.download).toMatchObject({ id: 'demo-download', kind: 'download' });
+  const filmDownload = await page.request.get(
+    `/api/films/${filmId}/download?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
+  );
+  expect(filmDownload.status()).toBe(200);
+  expect(filmDownload.headers()['content-type']).toContain('video/mp4');
+
+  const releasedMemberSessionResponse = await page.request.post('/api/sessions/demo', {
+    data: { memberId: 'demo-2', groupId },
+  });
+  const releasedMemberSessionBody = await expectJson<{
+    session: { id: string; groupId: string; actor: { memberId: string } };
+  }>(releasedMemberSessionResponse, 201);
+  const releasedMemberSessionId = releasedMemberSessionBody.session.id;
+  expect(releasedMemberSessionBody.session).toMatchObject({
+    groupId,
+    actor: { memberId: 'demo-2' },
+  });
+  const memberArchive = await runtimeJson(
+    page,
+    `/api/archive?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(releasedMemberSessionId)}`,
+  );
+  expect(memberArchive.archive.films).toHaveLength(1);
+  expect(memberArchive.archive.clips).toHaveLength(1);
+  expect(memberArchive.archive.clips[0].id).toBe(clipJobId);
+  const clipDownload = await page.request.get(
+    `/api/clips/${clipJobId}/download?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(releasedMemberSessionId)}`,
+  );
+  expect(clipDownload.status()).toBe(200);
+  expect(clipDownload.headers()['content-type']).toContain('video/mp4');
+
+  stage = 'cross-group fixture session';
+  const secondMemberSessionResponse = await page.request.post('/api/sessions/demo', {
+    data: { memberId: 'demo-6', groupId: CROSS_GROUP_BOOTSTRAP_GROUP_ID },
+  });
+  const secondMemberSessionBody = await expectJson<{
+    session: { id: string; groupId: string; actor: { memberId: string } };
+  }>(secondMemberSessionResponse, 201);
+  const secondMemberSessionId = secondMemberSessionBody.session.id;
+  expect(secondMemberSessionBody.session.actor.memberId).toBe('demo-6');
+  expect(secondMemberSessionBody.session.groupId).toBe(CROSS_GROUP_BOOTSTRAP_GROUP_ID);
+
   const otherGroupResponse = await page.request.post(
-    `/api/groups?sessionId=${encodeURIComponent(ownerSessionId)}`,
+    `/api/groups?sessionId=${encodeURIComponent(secondMemberSessionId)}`,
     {
       data: { name: 'E2E denial group', prompt: 'A separate safe-denial check.' },
     },
   );
-  const otherGroupBody = await expectJson<{ group: { id: string } }>(otherGroupResponse, 201);
+  const otherGroupBody = await expectJson<{
+    group: { id: string; memberIds: string[]; actingMemberRole: string };
+    session: { id: string; groupId: string; actor: { memberId: string } };
+  }>(otherGroupResponse, 201);
   expect(otherGroupBody.group.id).not.toBe(groupId);
-  const denial = await page.request.get(
-    `/api/cycles/${encodeURIComponent(cycleId)}/premiere?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
-  );
-  expect(denial.status()).toBe(403);
-  expect(await denial.json()).toEqual(SAFE_DENIAL);
+  expect(otherGroupBody.group.memberIds).toEqual(['demo-6']);
+  expect(otherGroupBody.group.actingMemberRole).toBe('owner');
+  const otherGroupId = otherGroupBody.group.id;
+  expect(otherGroupBody.session).toMatchObject({
+    id: secondMemberSessionId,
+    groupId: otherGroupId,
+    actor: { memberId: 'demo-6' },
+  });
+
+  stage = 'cross-group safe denial';
+  const originalGroupQuery = `groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(secondMemberSessionId)}`;
+  const deniedPaths = [
+    `/api/groups/${encodeURIComponent(groupId)}?sessionId=${encodeURIComponent(secondMemberSessionId)}`,
+    `/api/clips/${encodeURIComponent(clipJobId)}?${originalGroupQuery}`,
+    `/api/films/${encodeURIComponent(filmId)}?${originalGroupQuery}`,
+    `/api/cycles/${encodeURIComponent(cycleId)}/premiere?${originalGroupQuery}`,
+    `/api/archive?${originalGroupQuery}`,
+    `/api/downloads/demo-download?${originalGroupQuery}`,
+    `/api/films/${encodeURIComponent(filmId)}/play?${originalGroupQuery}`,
+    `/api/films/${encodeURIComponent(filmId)}/download?${originalGroupQuery}`,
+    `/api/clips/${encodeURIComponent(clipJobId)}/download?${originalGroupQuery}`,
+  ];
+  for (const path of deniedPaths) await expectSafeDenial(page, path);
 });
