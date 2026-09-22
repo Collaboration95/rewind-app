@@ -20,6 +20,7 @@ node_modules/
 coverage/
 dist/
 server/dist/
+ios/
 playwright-report/
 test-results/
 .local-data/

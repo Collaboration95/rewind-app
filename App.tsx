@@ -43,6 +43,7 @@ import {
 import { isValidInviteCode, normalizeInviteCode } from './src/domain/invites';
 import { ChatScreen } from './src/chat/ChatScreen';
 import { ArchiveScreen } from './src/archive/ArchiveScreen';
+import { ReminderSettings } from './src/reminders/ReminderSettings';
 
 const lockedMoments = [1, 2, 3];
 
@@ -358,6 +359,7 @@ function SettingsScreen({
         <Text style={styles.panelTitle}>{groupName}</Text>
         <Text style={styles.bodyText}>{role === 'owner' ? 'Owner' : 'Member'} · local group</Text>
       </View>
+      <ReminderSettings />
       <InvitePanel groupId={session.groupId} runtimeClient={runtimeClient} />
       <DemoRevealPanel groupId={session.groupId} runtimeClient={runtimeClient} />
       {error ? (
