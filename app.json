@@ -3,6 +3,7 @@
     "name": "Rewind",
     "slug": "rewind-app",
     "version": "0.1.0",
+    "scheme": "rewind",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "plugins": [
