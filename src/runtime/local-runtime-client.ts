@@ -194,13 +194,16 @@ export class LocalRuntimeClient implements RuntimeClient {
     options: LocalRuntimeClientOptions = {},
   ) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
-    this.fetchImpl = fetchImpl;
+    // Browser `window.fetch` throws "Illegal invocation" when it is later
+    // called as an object method. Keep a lexical wrapper so both the native
+    // fetch and injected test doubles are always invoked as plain functions.
+    this.fetchImpl = (input, init) => fetchImpl(input, init);
     const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_RUNTIME_REQUEST_TIMEOUT_MS;
     if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
       throw new LocalRuntimeError('The local runtime request timeout must be greater than zero.');
     }
     this.requestTimeoutMs = requestTimeoutMs;
-    this.realtimeChatClient = new RealtimeChatClient(baseUrl, fetchImpl as typeof fetch, {
+    this.realtimeChatClient = new RealtimeChatClient(baseUrl, this.fetchImpl as typeof fetch, {
       sendTimeoutMs: requestTimeoutMs,
     });
   }

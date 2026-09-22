@@ -188,7 +188,9 @@ describe('VideoCaptureScreen', () => {
     expect(platform.pickVideoFile).toHaveBeenCalledTimes(1);
     expect(result.getByText(/FILE FALLBACK · selected locally/)).toBeTruthy();
     expect(
-      result.getByText(/Selected MP4 8.0 seconds · 720 × 1280 portrait · audio verified/),
+      result.getByText(
+        /Selected MP4 8.0 seconds · 720 × 1280 portrait · audio track detected; server verifies/,
+      ),
     ).toBeTruthy();
   });
 

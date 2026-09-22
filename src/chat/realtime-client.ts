@@ -154,7 +154,10 @@ export class RealtimeChatClient {
     options: RealtimeChatClientOptions = {},
   ) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
-    this.fetchImpl = fetchImpl;
+    // `window.fetch` requires a Window receiver in browsers. A lexical
+    // wrapper prevents class-method invocation from rebinding it to this
+    // client instance while preserving injected fetch doubles.
+    this.fetchImpl = (input, init) => fetchImpl(input, init);
     this.eventSourceFactory = options.eventSourceFactory ?? defaultEventSourceFactory;
     const reconnectDelayMs = options.reconnectDelayMs ?? 1_000;
     if (!Number.isFinite(reconnectDelayMs) || reconnectDelayMs < 0) {

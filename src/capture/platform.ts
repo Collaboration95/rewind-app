@@ -28,6 +28,127 @@ export interface BrowserVideoMetadata {
   width: number;
 }
 
+export interface BrowserVideoContainerMetadata {
+  hasAudio: boolean;
+  hasVideo: boolean;
+  isMp4: boolean;
+}
+
+interface Mp4Box {
+  dataStart: number;
+  end: number;
+  type: string;
+}
+
+const MP4_BRANDS = new Set([
+  'avc1',
+  'cmfc',
+  'dash',
+  'iso2',
+  'iso3',
+  'iso4',
+  'iso5',
+  'iso6',
+  'isom',
+  'M4A ',
+  'M4V ',
+  'mp41',
+  'mp42',
+  'MSNV',
+]);
+
+function ascii(bytes: Uint8Array, start: number, length: number): string {
+  return String.fromCharCode(...bytes.subarray(start, start + length));
+}
+
+/**
+ * Parse ISO BMFF boxes without trusting a filename or File.type. The parser
+ * intentionally validates boundaries and the MP4 ftyp/moov/track structure;
+ * the browser still owns codec playback and FFprobe remains the upload
+ * authority on the server.
+ */
+function parseMp4Boxes(bytes: Uint8Array, start: number, end: number): Mp4Box[] | null {
+  if (start < 0 || end > bytes.byteLength || start > end) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const boxes: Mp4Box[] = [];
+  let offset = start;
+  while (offset < end) {
+    if (end - offset < 8) return null;
+    const size32 = view.getUint32(offset);
+    const type = ascii(bytes, offset + 4, 4);
+    let headerSize = 8;
+    let size = size32;
+    if (size32 === 1) {
+      if (end - offset < 16) return null;
+      size = view.getUint32(offset + 8) * 0x1_0000_0000 + view.getUint32(offset + 12);
+      headerSize = 16;
+    } else if (size32 === 0) {
+      size = end - offset;
+    }
+    if (!Number.isSafeInteger(size) || size < headerSize || offset + size > end) return null;
+    boxes.push({ dataStart: offset + headerSize, end: offset + size, type });
+    offset += size;
+  }
+  return boxes;
+}
+
+function childBoxes(bytes: Uint8Array, box: Mp4Box): Mp4Box[] | null {
+  return parseMp4Boxes(bytes, box.dataStart, box.end);
+}
+
+function sampleDescriptionExists(bytes: Uint8Array, stsd: Mp4Box): boolean {
+  // FullBox version/flags plus entry_count precede the sample entries.
+  if (stsd.end - stsd.dataStart < 8) return false;
+  const entries = parseMp4Boxes(bytes, stsd.dataStart + 8, stsd.end);
+  return entries !== null && entries.length > 0;
+}
+
+function parseMp4Container(bytes: Uint8Array): BrowserVideoContainerMetadata {
+  const invalid = { hasAudio: false, hasVideo: false, isMp4: false };
+  if (bytes.byteLength < 16) return invalid;
+
+  const topLevel = parseMp4Boxes(bytes, 0, bytes.byteLength);
+  const fileType = topLevel?.find((box) => box.type === 'ftyp');
+  const movie = topLevel?.find((box) => box.type === 'moov');
+  if (!topLevel || !fileType || !movie || fileType.end - fileType.dataStart < 8) return invalid;
+
+  const brands = [ascii(bytes, fileType.dataStart, 4)];
+  for (let offset = fileType.dataStart + 8; offset + 4 <= fileType.end; offset += 4) {
+    brands.push(ascii(bytes, offset, 4));
+  }
+  if (!brands.some((brand) => MP4_BRANDS.has(brand))) return invalid;
+
+  const movieChildren = childBoxes(bytes, movie);
+  if (!movieChildren) return invalid;
+  let hasAudio = false;
+  let hasVideo = false;
+  for (const track of movieChildren.filter((box) => box.type === 'trak')) {
+    const trackChildren = childBoxes(bytes, track);
+    const media = trackChildren?.find((box) => box.type === 'mdia');
+    const mediaChildren = media ? childBoxes(bytes, media) : null;
+    const handler = mediaChildren?.find((box) => box.type === 'hdlr');
+    const mediaInfo = mediaChildren?.find((box) => box.type === 'minf');
+    const mediaInfoChildren = mediaInfo ? childBoxes(bytes, mediaInfo) : null;
+    const sampleTable = mediaInfoChildren?.find((box) => box.type === 'stbl');
+    const sampleTableChildren = sampleTable ? childBoxes(bytes, sampleTable) : null;
+    const sampleDescription = sampleTableChildren?.find((box) => box.type === 'stsd');
+    if (!handler || handler.end - handler.dataStart < 12 || !sampleDescription) continue;
+    if (!sampleDescriptionExists(bytes, sampleDescription)) continue;
+    const handlerType = ascii(bytes, handler.dataStart + 8, 4);
+    if (handlerType === 'soun') hasAudio = true;
+    if (handlerType === 'vide') hasVideo = true;
+  }
+
+  return { hasAudio, hasVideo, isMp4: hasVideo };
+}
+
+async function readMp4Container(file: File): Promise<BrowserVideoContainerMetadata> {
+  if (typeof file.arrayBuffer !== 'function') {
+    throw new Error('This browser cannot inspect the selected video.');
+  }
+  return parseMp4Container(new Uint8Array(await file.arrayBuffer()));
+}
+
 async function chooseBrowserFile(accept: string): Promise<File> {
   if (Platform.OS !== 'web' || typeof document === 'undefined') {
     throw new Error('File fallback is available in a browser only.');
@@ -193,6 +314,7 @@ export interface ExpoCameraPlatformOptions {
   browserFilePicker?: (accept: string) => Promise<File>;
   browserImageDimensionsReader?: (uri: string) => Promise<{ height: number; width: number }>;
   browserObjectUrlFactory?: (file: File) => string;
+  browserVideoContainerReader?: (file: File) => Promise<BrowserVideoContainerMetadata>;
   browserVideoMetadataReader?: (uri: string) => Promise<BrowserVideoMetadata>;
 }
 
@@ -317,7 +439,8 @@ export class ExpoCameraPlatform implements CameraPlatform {
 
   async pickVideoFile(): Promise<RecordedClip> {
     const file = await (this.options.browserFilePicker ?? chooseBrowserFile)('.mp4,video/mp4');
-    if (file.type.toLowerCase() !== 'video/mp4') {
+    const container = await (this.options.browserVideoContainerReader ?? readMp4Container)(file);
+    if (!container.isMp4 || !container.hasVideo) {
       throw new Error('Choose an MP4 video file.');
     }
     const sourceUri = (this.options.browserObjectUrlFactory ?? createBrowserObjectUrl)(file);
@@ -337,12 +460,13 @@ export class ExpoCameraPlatform implements CameraPlatform {
       ) {
         throw new Error('Choose a portrait MP4 video.');
       }
-      if (metadata.hasAudio !== true) {
-        throw new Error(
-          metadata.hasAudio === false
-            ? 'Choose an MP4 video that includes audio.'
-            : 'This browser could not verify audio in that MP4. Choose another file or use a physical device.',
-        );
+      // Chromium's webkitAudioDecodedByteCount is a post-decode counter and
+      // is commonly zero at loadedmetadata. Treat null as unknown here and
+      // use the actual MP4 sound track as the local signal. The staged upload
+      // is still verified authoritatively by server-side FFprobe.
+      const hasAudio = container.hasAudio && metadata.hasAudio !== false;
+      if (!hasAudio) {
+        throw new Error('Choose an MP4 video that includes an audio track readable by the server.');
       }
       return {
         byteLength: file.size,

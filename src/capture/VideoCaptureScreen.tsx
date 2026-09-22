@@ -527,7 +527,9 @@ export function VideoCaptureScreen({
       return;
     }
     if (!clip.hasAudio || clip.mimeType !== 'video/mp4') {
-      setError('The selected clip must be a verified MP4 with audio.');
+      setError(
+        'The selected clip must be an MP4 with an audio track; the server verifies it before accepting the upload.',
+      );
       return;
     }
     const reviewMetadata = review.getReview();
@@ -824,7 +826,7 @@ export function VideoCaptureScreen({
             demoSession?.session
               ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
               : platform.supportsFileFallback && platform.pickVideoFile
-                ? 'Live recording is not supported here. Choose a portrait MP4 no longer than 15 seconds with verifiable audio; it remains labelled as a file contribution.'
+                ? 'Live recording is not supported here. Choose a portrait MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
                 : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.'
           }
         />
@@ -931,7 +933,7 @@ export function VideoCaptureScreen({
           <Text style={styles.panelTitle}>Review your clip</Text>
           <Text style={styles.body}>
             {clip.source === 'file'
-              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio verified`
+              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio track detected; server verifies`
               : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio included`}
           </Text>
           {clip.source === 'file' ? (
