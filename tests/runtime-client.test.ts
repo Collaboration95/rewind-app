@@ -1,4 +1,8 @@
-import { LocalRuntimeClient, LocalRuntimeError } from '../src/runtime/local-runtime-client';
+import {
+  LocalRuntimeClient,
+  LocalRuntimeError,
+  RUNTIME_OFFLINE_MESSAGE,
+} from '../src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from '../src/runtime/runtime-repositories';
 
 function response(status: number, body: unknown): Response {
@@ -103,6 +107,25 @@ describe('LocalRuntimeClient', () => {
     await expect(client.getHealth()).rejects.toThrow(
       'Could not reach the local runtime at http://localhost:8787',
     );
+  });
+
+  it('does not attempt server-backed work while the browser is offline', async () => {
+    const previousOnline = navigator.onLine;
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    const fetchImpl = jest.fn();
+    try {
+      const client = new LocalRuntimeClient('/api', fetchImpl);
+      await expect(client.getHealth()).rejects.toMatchObject({
+        code: 'runtime_offline',
+        message: RUNTIME_OFFLINE_MESSAGE,
+      });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, 'onLine', {
+        configurable: true,
+        value: previousOnline,
+      });
+    }
   });
 
   it('bounds an unresponsive request and aborts the underlying fetch', async () => {

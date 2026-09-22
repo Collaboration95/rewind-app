@@ -28,8 +28,14 @@ test('scaffold identifies the Rewind app and exposes baseline quality commands',
   assert.match(packageJson.scripts.check, /test/);
 });
 
-test('quality workflow runs the same baseline check as local development', () => {
+test('quality workflow validates main pushes and PRs against any stacked base', () => {
   assert.match(workflow, /npm ci/);
   assert.match(workflow, /npm run check/);
-  assert.match(workflow, /pull_request:\n    branches: \[main\]/);
+  assert.match(workflow, /push:\n    branches: \[main\]/);
+  const pullRequestBlock = workflow.match(/  pull_request:\n((?:    .*\n)*)/)?.[1] ?? '';
+  assert.match(pullRequestBlock, /types: \[opened, synchronize, reopened, ready_for_review\]/);
+  assert.doesNotMatch(pullRequestBlock, /branches:/);
+  assert.doesNotMatch(workflow, /pull_request_target:/);
+  assert.match(workflow, /permissions:\n  contents: read/);
+  assert.match(workflow, /cancel-in-progress: true/);
 });
