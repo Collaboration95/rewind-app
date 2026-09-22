@@ -14,7 +14,11 @@
           "recordAudioAndroid": true
         }
       ],
-      "expo-video"
-    ]
+      "expo-video",
+      "expo-notifications"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.anonymous.rewind-app"
+    }
   }
 }

@@ -26,6 +26,7 @@ import type { MemberProfile } from '../domain/profiles';
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { createOfflineDemoSession, demoSessionStore } from './session-store';
 import { resetCaptureData } from '../capture';
+import { reminderService } from '../reminders/reminder-service';
 
 export type DemoAccessStatus = 'loading' | 'entry' | 'active' | 'error';
 
@@ -47,6 +48,14 @@ const defaultSessionClock = () => new Date();
 
 function safeError(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+async function clearLocalReminder(): Promise<void> {
+  try {
+    await reminderService.clear();
+  } catch {
+    // Reminder cleanup is best effort and must not prevent session recovery.
+  }
 }
 
 /**
@@ -91,6 +100,7 @@ export function DemoSessionProvider({
       const entryMode =
         typeof process !== 'undefined' && process.env.EXPO_PUBLIC_DEMO_ACCESS === 'entry';
       if (entryMode) {
+        await clearLocalReminder();
         await store.clear();
         if (mounted.current) {
           setSession(null);
@@ -123,6 +133,7 @@ export function DemoSessionProvider({
       }
       const localResult = validateStoredDemoSession(stored, clock());
       if (localResult.status !== 'valid') {
+        await clearLocalReminder();
         await store.clear();
         if (mounted.current) setStatus('entry');
         return;
@@ -140,6 +151,7 @@ export function DemoSessionProvider({
           restoreError instanceof LocalRuntimeError &&
           (restoreError.status === 401 || restoreError.status === 404)
         ) {
+          await clearLocalReminder();
           await store.clear();
           setStatus('entry');
           setError('The saved Demo access is no longer active. Choose a member to start again.');
@@ -222,6 +234,7 @@ export function DemoSessionProvider({
         }
       }
       try {
+        await clearLocalReminder();
         await store.clear();
         if (mounted.current) {
           setSession(null);
@@ -257,6 +270,7 @@ export function DemoSessionProvider({
         }
       }
       try {
+        await clearLocalReminder();
         await resetCaptureData();
         await resetLocalDemoData();
         await localGroupStore.clear();
