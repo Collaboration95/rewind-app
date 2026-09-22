@@ -66,6 +66,30 @@ test('the exported shell exposes install metadata and an honest offline API fall
   }
 });
 
+test('the installed shell reloads root and starts a deep SPA route offline', async ({
+  context,
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
+  await expect(page.locator('#root')).toContainText('REWIND');
+
+  let deepPage: Awaited<ReturnType<typeof context.newPage>> | undefined;
+  await context.setOffline(true);
+  try {
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#root')).toContainText('REWIND');
+
+    deepPage = await context.newPage();
+    await deepPage.goto('/groups/demo-group/capsule', { waitUntil: 'domcontentloaded' });
+    expect(new URL(deepPage.url()).pathname).toBe('/groups/demo-group/capsule');
+    await expect(deepPage.locator('#root')).toContainText('REWIND');
+  } finally {
+    await deepPage?.close();
+    await context.setOffline(false);
+  }
+});
+
 test('the shell is uncached while Expo assets are immutable', async ({ request }) => {
   const shell = await request.get('/');
   expect(shell.status()).toBe(200);

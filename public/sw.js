@@ -100,9 +100,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(event.request).catch(() => apiUnavailableResponse()));
     return;
   }
-  if (!isShellAsset(url)) return;
 
-  if (event.request.mode === 'navigate') {
+  if (url.origin === self.location.origin && event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
         .then(async (response) =>
@@ -112,6 +111,7 @@ self.addEventListener('fetch', (event) => {
     );
     return;
   }
+  if (!isShellAsset(url)) return;
 
   event.respondWith(
     caches.match(event.request).then((cached) => {

@@ -37,6 +37,12 @@ test('the web shell registers a bounded offline fallback without offline sync', 
   assert.match(serviceWorker, /runtime_unavailable/);
   assert.match(serviceWorker, /Never cache server-backed responses/);
   assert.match(serviceWorker, /caches\.match\('\/index\.html'\)/);
+  const apiGuardIndex = serviceWorker.indexOf('if (isApiRequest(url))');
+  const navigationGuardIndex = serviceWorker.indexOf("event.request.mode === 'navigate'");
+  const shellAssetGuardIndex = serviceWorker.indexOf('if (!isShellAsset(url)) return;');
+  assert.ok(apiGuardIndex >= 0);
+  assert.ok(navigationGuardIndex > apiGuardIndex);
+  assert.ok(shellAssetGuardIndex > navigationGuardIndex);
   assert.match(offline, /Server-backed actions are unavailable offline/);
   assert.match(offline, /Captured media is not synchronized offline/);
 });

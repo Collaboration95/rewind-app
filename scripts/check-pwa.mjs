@@ -51,6 +51,15 @@ assert.match(serviceWorker, /Server-backed actions are unavailable offline/);
 assert.match(serviceWorker, /Never cache server-backed responses/);
 assert.match(serviceWorker, /caches\.match\('\/index\.html'\)/);
 assert.doesNotMatch(serviceWorker, /cache\.put\([^\n]*\/api/);
+const apiGuardIndex = serviceWorker.indexOf('if (isApiRequest(url))');
+const navigationGuardIndex = serviceWorker.indexOf("event.request.mode === 'navigate'");
+const shellAssetGuardIndex = serviceWorker.indexOf('if (!isShellAsset(url)) return;');
+assert.ok(apiGuardIndex >= 0, 'service worker has no API guard');
+assert.ok(navigationGuardIndex > apiGuardIndex, 'navigation must remain behind the API guard');
+assert.ok(
+  shellAssetGuardIndex > navigationGuardIndex,
+  'same-origin navigation must be handled before shell-asset filtering',
+);
 assert.match(offline, /Captured media is not synchronized offline/);
 
 console.log(`PWA export valid: ${distDir}`);
