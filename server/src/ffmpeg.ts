@@ -1,6 +1,7 @@
+import { Buffer } from 'node:buffer';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { mkdtemp, realpath, rm, stat } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
@@ -27,12 +28,63 @@ export interface FfmpegProcessResult {
 export interface FfmpegFilmCompilationInput {
   /** Already-processed, server-owned portrait clips in chronological order. */
   inputPaths: string[];
+  /** The one prior-cycle clip that must be visibly identified, when present. */
+  archiveFillerIndex?: number;
   outputPath: string;
 }
 
 export interface FfmpegFilmCompilationResult {
   outputPath: string;
   durationSeconds: number;
+}
+
+export const ARCHIVE_FILLER_LABEL = 'From the archive';
+
+const ARCHIVE_LABEL_FONT: Readonly<Record<string, readonly string[]>> = {
+  A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
+  C: ['01111', '10000', '10000', '10000', '10000', '10000', '01111'],
+  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+  F: ['11111', '10000', '10000', '11110', '10000', '10000', '10000'],
+  H: ['10001', '10001', '10001', '11111', '10001', '10001', '10001'],
+  I: ['11111', '00100', '00100', '00100', '00100', '00100', '11111'],
+  M: ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
+  O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
+  R: ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
+  T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
+  V: ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
+};
+
+/** Build the label without relying on a host font or FFmpeg's optional drawtext filter. */
+function archiveLabelPpm(): Buffer {
+  const width = 172;
+  const height = 48;
+  const pixels = Buffer.alloc(width * height * 3);
+  const lines = ARCHIVE_FILLER_LABEL.toUpperCase().split(' ');
+  const scale = 2;
+  const characterAdvance = 12;
+  for (const [lineIndex, line] of lines.entries()) {
+    const yOffset = 3 + lineIndex * 15;
+    for (const [characterIndex, character] of [...line].entries()) {
+      const glyph = ARCHIVE_LABEL_FONT[character];
+      if (!glyph) continue;
+      for (const [glyphY, row] of glyph.entries()) {
+        for (const [glyphX, value] of [...row].entries()) {
+          if (value !== '1') continue;
+          for (let y = 0; y < scale; y += 1) {
+            for (let x = 0; x < scale; x += 1) {
+              const pixelX = 4 + characterIndex * characterAdvance + glyphX * scale + x;
+              const pixelY = yOffset + glyphY * scale + y;
+              const offset = (pixelY * width + pixelX) * 3;
+              pixels[offset] = 255;
+              pixels[offset + 1] = 255;
+              pixels[offset + 2] = 255;
+            }
+          }
+        }
+      }
+    }
+  }
+  return Buffer.concat([Buffer.from(`P6\n${width} ${height}\n255\n`), pixels]);
 }
 
 export interface FfmpegMediaProbeResult {
@@ -253,18 +305,31 @@ export async function compileFilmWithFfmpeg(
   if (
     !input.outputPath ||
     input.inputPaths.length === 0 ||
-    input.inputPaths.some((path) => !path)
+    input.inputPaths.some((path) => !path) ||
+    (input.archiveFillerIndex !== undefined &&
+      (!Number.isInteger(input.archiveFillerIndex) ||
+        input.archiveFillerIndex < 0 ||
+        input.archiveFillerIndex >= input.inputPaths.length))
   ) {
     throw new FfmpegProcessingError(
       'invalid_metadata',
       'The film compilation metadata is invalid.',
     );
   }
-  const videoFilters = input.inputPaths.map(
-    (_, index) =>
+  const labelPath =
+    input.archiveFillerIndex === undefined ? null : `${input.outputPath}.archive-label.ppm`;
+  const videoFilters = input.inputPaths.map((_, index) => {
+    const normalized =
       `[${index}:v:0]scale=180:320:force_original_aspect_ratio=decrease,` +
-      `pad=180:320:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS[v${index}]`,
-  );
+      `pad=180:320:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS`;
+    if (index !== input.archiveFillerIndex) return `${normalized}[v${index}]`;
+    const labelInputIndex = input.inputPaths.length;
+    return (
+      `${normalized}[archiveBase];` +
+      `[archiveBase][${labelInputIndex}:v:0]overlay=4:4:shortest=1,` +
+      `setpts=PTS-STARTPTS[v${index}]`
+    );
+  });
   const audioFilters = input.inputPaths.map(
     (_, index) =>
       `[${index}:a:0]aformat=sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a${index}]`,
@@ -279,6 +344,7 @@ export async function compileFilmWithFfmpeg(
     '[audio]loudnorm=I=-16:TP=-1.5:LRA=11[normalizedAudio]',
   ].join(';');
   try {
+    if (labelPath) await writeFile(labelPath, archiveLabelPpm());
     await execFileAsync(
       ffmpegBin,
       [
@@ -287,6 +353,7 @@ export async function compileFilmWithFfmpeg(
         'error',
         '-y',
         ...input.inputPaths.flatMap((path) => ['-i', path]),
+        ...(labelPath ? ['-loop', '1', '-framerate', '12', '-i', labelPath] : []),
         '-filter_complex',
         filterComplex,
         '-map',
@@ -319,6 +386,8 @@ export async function compileFilmWithFfmpeg(
       'process_failed',
       'FFmpeg could not compile the film. Retry the job.',
     );
+  } finally {
+    if (labelPath) await rm(labelPath, { force: true }).catch(() => undefined);
   }
 }
 

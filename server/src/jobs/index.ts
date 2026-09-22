@@ -102,6 +102,9 @@ export type CompilationJobStatus = 'pending' | 'processing' | 'ready' | 'failed'
 /** Three explicit compile attempts prevent a broken cycle from retrying forever. */
 export const MAX_COMPILATION_ATTEMPTS = 3;
 
+/** A one-clip cycle gets one clearly labelled clip from its own group's archive. */
+export const ARCHIVE_FILLER_MINIMUM_CLIP_COUNT = 2;
+
 export interface CompilationJobInput {
   groupId: string;
   cycleId: string;
@@ -263,9 +266,11 @@ function reconcileCompilationJobInputsLocked(
               i.position AS position,
               CASE WHEN c.id IS NOT NULL
                     AND c.deleted_at IS NULL
-                    AND c.cycle_id = film.cycle_id
-                    AND cy.id = film.cycle_id
                     AND cy.group_id = film.group_id
+                    AND (c.cycle_id = film.cycle_id
+                      OR (c.cycle_id <> film.cycle_id
+                        AND cy.status = 'archived'
+                        AND cy.release_status = 'published'))
                     AND clip.id IS NOT NULL
                     AND clip.group_id = film.group_id
                     AND clip.kind = 'clip'
@@ -365,7 +370,7 @@ export function ensureCompilationJob(
     .get(input.cycleId, input.groupId) as { id?: string } | undefined;
   if (existingId?.id) return readCompilationJob(database, existingId.id, input.groupId);
 
-  const eligible = database
+  const currentCycleClips = database
     .prepare(
       `SELECT clip.id AS clipJobId, c.id AS contributionId
        FROM contributions c
@@ -384,6 +389,31 @@ export function ensureCompilationJob(
        ORDER BY c.created_at ASC, c.id ASC, clip.id ASC`,
     )
     .all(input.groupId, input.cycleId) as { clipJobId: string; contributionId: string }[];
+  const archiveFiller =
+    currentCycleClips.length > 0 && currentCycleClips.length < ARCHIVE_FILLER_MINIMUM_CLIP_COUNT
+      ? (database
+          .prepare(
+            `SELECT clip.id AS clipJobId, c.id AS contributionId
+             FROM contributions c
+             JOIN cycles cy ON cy.id = c.cycle_id AND cy.group_id = ?
+             JOIN media_jobs clip
+               ON clip.contribution_id = c.id AND clip.group_id = cy.group_id
+              AND clip.kind = 'clip' AND clip.status = 'ready'
+              AND clip.deleted_at IS NULL
+             WHERE c.cycle_id <> ?
+               AND cy.status = 'archived'
+               AND cy.release_status = 'published'
+               AND cy.release_published_at IS NOT NULL
+               AND c.deleted_at IS NULL
+               AND clip.source_path IS NULL
+               AND clip.output_path IS NOT NULL
+             ORDER BY cy.release_published_at DESC, c.created_at DESC, c.id DESC, clip.id DESC
+             LIMIT 1`,
+          )
+          .get(input.groupId, input.cycleId) as
+          { clipJobId: string; contributionId: string } | undefined)
+      : undefined;
+  const eligible = archiveFiller ? [...currentCycleClips, archiveFiller] : currentCycleClips;
   const createdAt = new Date(input.createdAt ?? new Date());
   if (!Number.isFinite(createdAt.getTime())) return null;
   const jobId = compilationJobId(input.groupId, input.cycleId);
@@ -602,6 +632,7 @@ export interface ProcessCompilationJobOptions {
 interface CompilationInputOutput {
   clipJobId: string;
   outputPath: string;
+  isArchiveFiller: boolean;
 }
 
 function filmOutputName(jobId: string): string {
@@ -615,9 +646,12 @@ function readCompilationInputOutputs(
 ): CompilationInputOutput[] {
   return database
     .prepare(
-      `SELECT i.clip_job_id AS clipJobId, clip.output_path AS outputPath
+      `SELECT i.clip_job_id AS clipJobId, clip.output_path AS outputPath,
+              CASE WHEN contribution.cycle_id <> film.cycle_id THEN 1 ELSE 0 END AS isArchiveFiller
        FROM compilation_job_inputs i
+       JOIN media_jobs film ON film.id = i.job_id
        JOIN media_jobs clip ON clip.id = i.clip_job_id
+       JOIN contributions contribution ON contribution.id = i.contribution_id
        WHERE i.job_id = ?
          AND clip.kind = 'clip' AND clip.status = 'ready'
          AND clip.source_path IS NULL AND clip.output_path IS NOT NULL
@@ -628,6 +662,7 @@ function readCompilationInputOutputs(
     .map((row) => ({
       clipJobId: String((row as { clipJobId: string }).clipJobId),
       outputPath: String((row as { outputPath: string }).outputPath),
+      isArchiveFiller: Number((row as { isArchiveFiller: number }).isArchiveFiller) === 1,
     }));
 }
 
@@ -774,12 +809,22 @@ export async function processCompilationJob(
     const inputPaths = await Promise.all(
       inputs.map((input) => resolveProcessedMediaPath(input.outputPath, outputDir)),
     );
+    const archiveFillerIndexes = inputs.flatMap((input, index) =>
+      input.isArchiveFiller ? [index] : [],
+    );
+    if (archiveFillerIndexes.length > 1) {
+      throw new FfmpegProcessingError(
+        'invalid_metadata',
+        'The film has an invalid archive filler snapshot.',
+      );
+    }
     await runAuditedJob(database, {
       jobId: claim.job.id,
       actorMemberId: options.actorMemberId,
       run: async () => {
         await compileFilmWithFfmpeg(options.ffmpegBin, {
           inputPaths,
+          archiveFillerIndex: archiveFillerIndexes[0],
           outputPath: temporaryOutputPath,
         });
         await probeClipWithFfmpeg(options.ffmpegBin, temporaryOutputPath);

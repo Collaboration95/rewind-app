@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { Buffer } from 'node:buffer';
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { once } from 'node:events';
+import { access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import test from 'node:test';
@@ -9,9 +9,10 @@ import test from 'node:test';
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
+const { createRuntimeServer } = await import('../dist/http.js');
 const { createCompilationJob, getCompilationJob, MAX_COMPILATION_ATTEMPTS, processCompilationJob } =
   await import('../dist/jobs/index.js');
-const { compileFilmWithFfmpeg, generateSyntheticDemoClip, probeClipWithFfmpeg } =
+const { ARCHIVE_FILLER_LABEL, generateSyntheticDemoClip, probeClipWithFfmpeg } =
   await import('../dist/ffmpeg.js');
 
 async function withDatabase(run) {
@@ -30,82 +31,16 @@ async function withDatabase(run) {
   }
 }
 
-const LABEL_FONT = {
-  A: ['01110', '10001', '10001', '11111', '10001', '10001', '10001'],
-  C: ['01111', '10000', '10000', '10000', '10000', '10000', '01111'],
-  E: ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
-  F: ['11111', '10000', '10000', '11110', '10000', '10000', '10000'],
-  H: ['10001', '10001', '10001', '11111', '10001', '10001', '10001'],
-  I: ['11111', '00100', '00100', '00100', '00100', '00100', '11111'],
-  M: ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
-  O: ['01110', '10001', '10001', '10001', '10001', '10001', '01110'],
-  R: ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
-  T: ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
-  V: ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
-};
-
-function labelledPpm(label) {
-  const width = 180;
-  const height = 320;
-  const pixels = Buffer.alloc(width * height * 3);
-  for (let offset = 0; offset < pixels.length; offset += 3) {
-    pixels[offset] = 128;
-    pixels[offset + 1] = 0;
-    pixels[offset + 2] = 128;
-  }
-  const lines = label.toUpperCase().split(' ');
-  const scale = 2;
-  const charAdvance = 12;
-  const lineHeight = 18;
-  const maxLineWidth = Math.max(...lines.map((line) => line.length * charAdvance));
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex];
-    const yOffset = 3 + lineIndex * lineHeight;
-    for (let y = 0; y < 11; y += 1) {
-      for (let x = 2; x < maxLineWidth + 4; x += 1) {
-        const pixel = (yOffset + y) * width + x;
-        pixels[pixel * 3] = 0;
-        pixels[pixel * 3 + 1] = 0;
-        pixels[pixel * 3 + 2] = 0;
-      }
-    }
-    for (let characterIndex = 0; characterIndex < line.length; characterIndex += 1) {
-      const glyph = LABEL_FONT[line[characterIndex]];
-      if (!glyph) continue;
-      for (let glyphY = 0; glyphY < glyph.length; glyphY += 1) {
-        for (let glyphX = 0; glyphX < glyph[glyphY].length; glyphX += 1) {
-          if (glyph[glyphY][glyphX] !== '1') continue;
-          for (let scaledY = 0; scaledY < scale; scaledY += 1) {
-            for (let scaledX = 0; scaledX < scale; scaledX += 1) {
-              const x = 4 + characterIndex * charAdvance + glyphX * scale + scaledX;
-              const y = yOffset + glyphY * scale + scaledY;
-              const pixel = y * width + x;
-              pixels[pixel * 3] = 255;
-              pixels[pixel * 3 + 1] = 255;
-              pixels[pixel * 3 + 2] = 255;
-            }
-          }
-        }
-      }
-    }
-  }
-  return Buffer.concat([Buffer.from(`P6\n${width} ${height}\n255\n`), pixels]);
-}
-
-async function createProcessedClip(
-  path,
-  { color, frequency, volume = 1, label = null, duration = 1 },
-) {
-  let labelFramePath = null;
-  const args = ['-hide_banner', '-loglevel', 'error', '-y'];
-  if (label) {
-    labelFramePath = `${path}.label.ppm`;
-    await writeFile(labelFramePath, labelledPpm(label));
-    args.push('-loop', '1', '-i', labelFramePath);
-  } else {
-    args.push('-f', 'lavfi', '-i', `color=c=${color}:size=180x320:rate=12:duration=${duration}`);
-  }
-  args.push(
+async function createProcessedClip(path, { color, frequency, volume = 1, duration = 1 }) {
+  const args = [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    `color=c=${color}:size=180x320:rate=12:duration=${duration}`,
     '-f',
     'lavfi',
     '-i',
@@ -124,12 +59,8 @@ async function createProcessedClip(
     `volume=${volume}`,
     '-shortest',
     path,
-  );
-  try {
-    await execFileAsync('ffmpeg', args);
-  } finally {
-    if (labelFramePath) await rm(labelFramePath, { force: true });
-  }
+  ];
+  await execFileAsync('ffmpeg', args);
 }
 
 test('creates a deterministic portrait synthetic clip with audio for the local Demo', async () => {
@@ -177,21 +108,30 @@ async function frameAverage(path, seconds) {
 
 function insertReadyClip(
   database,
-  { id, contributionId, acceptedAt, jobCreatedAt = acceptedAt, outputPath },
+  {
+    id,
+    contributionId,
+    acceptedAt,
+    jobCreatedAt = acceptedAt,
+    outputPath,
+    groupId = 'demo-group',
+    cycleId = 'demo-cycle',
+    memberId = 'demo-2',
+  },
 ) {
   database
     .prepare(
       `INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
-       VALUES (?, 'demo-cycle', 'demo-2', 1, ?)`,
+       VALUES (?, ?, ?, 1, ?)`,
     )
-    .run(contributionId, acceptedAt);
+    .run(contributionId, cycleId, memberId, acceptedAt);
   database
     .prepare(
       `INSERT INTO media_jobs
         (id, group_id, contribution_id, kind, status, output_path, created_at, source_path)
-       VALUES (?, 'demo-group', ?, 'clip', 'ready', ?, ?, NULL)`,
+       VALUES (?, ?, ?, 'clip', 'ready', ?, ?, NULL)`,
     )
-    .run(id, contributionId, outputPath, jobCreatedAt);
+    .run(id, groupId, contributionId, outputPath, jobCreatedAt);
 }
 
 async function assertPlayableWithFfmpeg(path) {
@@ -266,6 +206,26 @@ function changedPixelFraction(left, right) {
     if (Math.abs(left[index] - right[index]) > 20) changed += 1;
   }
   return changed / left.length;
+}
+
+function pixelFractionAbove(frame, threshold) {
+  let matching = 0;
+  for (const pixel of frame) {
+    if (pixel > threshold) matching += 1;
+  }
+  return matching / frame.length;
+}
+
+function insertArchivedCycle(database, { id, groupId, publishedAt }) {
+  database
+    .prepare(
+      `INSERT INTO cycles
+        (id, group_id, prompt, starts_at, ends_at, status, lock_state,
+         max_count, max_seconds, count_used, seconds_used, release_status, release_published_at)
+       VALUES (?, ?, 'An earlier prompt', '2026-09-01T00:00:00.000Z',
+         '2026-09-02T00:00:00.000Z', 'archived', 'locked', 5, 30, 1, 1, 'published', ?)`,
+    )
+    .run(id, groupId, publishedAt);
 }
 
 async function createFilmJob(database) {
@@ -349,54 +309,134 @@ test('compiles chronological retained clips into a playable normalized-audio fil
   });
 });
 
-test('compiled archive-filler output retains its visible From the archive label', async () => {
-  await withDatabase(async ({ config, dataDir }) => {
-    const outputDir = `${dataDir}/media/processed`;
-    await mkdir(outputDir, { recursive: true });
-    const plainClip = `${outputDir}/plain-reference.mp4`;
-    const fillerClip = `${outputDir}/archive-filler.mp4`;
-    const plainFilm = `${outputDir}/plain-reference-film.mp4`;
-    const fillerFilm = `${outputDir}/archive-filler-film.mp4`;
-    const fixture = { color: 'purple', frequency: 550, volume: 0.4 };
-    await createProcessedClip(plainClip, fixture);
-    await createProcessedClip(fillerClip, { ...fixture, label: 'From the archive' });
-    await compileFilmWithFfmpeg(config.ffmpegBin, {
-      inputPaths: [plainClip],
-      outputPath: plainFilm,
-    });
-    await compileFilmWithFfmpeg(config.ffmpegBin, {
-      inputPaths: [fillerClip],
-      outputPath: fillerFilm,
-    });
-
-    const plainLabelRegion = await frameCrop(plainFilm, 0.25, 'crop=172:48:4:4');
-    const fillerLabelRegion = await frameCrop(fillerFilm, 0.25, 'crop=172:48:4:4');
-    assert.ok(
-      changedPixelFraction(plainLabelRegion, fillerLabelRegion) > 0.08,
-      'the rendered archive label did not survive film compilation',
-    );
-    await assertPlayableWithFfmpeg(fillerFilm);
-    const metadata = await probeClipWithFfmpeg(config.ffmpegBin, fillerFilm);
-    assert.equal(metadata.hasAudio, true);
-  });
-});
-
-test('a missing retained input exhausts bounded retries and never publishes a partial film', async () => {
+test('production selection appends and visibly labels same-group archive filler', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     const outputDir = `${dataDir}/media/processed`;
     await mkdir(outputDir, { recursive: true });
+    const currentClip = `${outputDir}/current-red.mp4`;
+    const archiveClip = `${outputDir}/same-group-archive-purple.mp4`;
+    const foreignClip = `${outputDir}/foreign-archive-orange.mp4`;
+    await createProcessedClip(currentClip, { color: 'red', frequency: 440, volume: 0.4 });
+    await createProcessedClip(archiveClip, { color: 'purple', frequency: 550, volume: 0.4 });
+    await createProcessedClip(foreignClip, { color: 'orange', frequency: 660, volume: 0.4 });
+
+    insertArchivedCycle(database, {
+      id: 'same-group-archive-cycle',
+      groupId: 'demo-group',
+      publishedAt: '2026-09-08T00:00:00.000Z',
+    });
+    database
+      .prepare(
+        "INSERT INTO groups (id, name, current_cycle_id) VALUES ('foreign-group', 'Foreign', NULL)",
+      )
+      .run();
+    insertArchivedCycle(database, {
+      id: 'foreign-archive-cycle',
+      groupId: 'foreign-group',
+      // This is deliberately newer; group scoping must still exclude it.
+      publishedAt: '2026-09-09T00:00:00.000Z',
+    });
     insertReadyClip(database, {
-      id: 'missing-clip',
-      contributionId: 'missing-contribution',
+      id: 'same-group-archive-clip',
+      contributionId: 'same-group-archive-contribution',
+      acceptedAt: '2026-09-02T00:00:00.000Z',
+      outputPath: archiveClip,
+      cycleId: 'same-group-archive-cycle',
+    });
+    insertReadyClip(database, {
+      id: 'foreign-archive-clip',
+      contributionId: 'foreign-archive-contribution',
+      acceptedAt: '2026-09-02T01:00:00.000Z',
+      outputPath: foreignClip,
+      groupId: 'foreign-group',
+      cycleId: 'foreign-archive-cycle',
+    });
+    insertReadyClip(database, {
+      id: 'current-cycle-clip',
+      contributionId: 'current-cycle-contribution',
       acceptedAt: '2026-09-10T01:00:00.000Z',
-      outputPath: `${outputDir}/gone.mp4`,
+      outputPath: currentClip,
+    });
+
+    const jobId = await createFilmJob(database);
+    assert.deepEqual(getCompilationJob(database, jobId)?.clipJobIds, [
+      'current-cycle-clip',
+      'same-group-archive-clip',
+    ]);
+    const result = await processCompilationJob(database, {
+      jobId,
+      ffmpegBin: config.ffmpegBin,
+      outputDir,
+    });
+    assert.deepEqual(result, { ok: true, jobId, status: 'ready' });
+    const film = getCompilationJob(database, jobId);
+    assert.ok(film?.outputPath);
+
+    const [firstRed, , firstBlue] = await frameAverage(film.outputPath, 0.25);
+    const [archiveRed, archiveGreen, archiveBlue] = await frameAverage(film.outputPath, 1.25);
+    assert.ok(firstRed > firstBlue * 1.5, 'current-cycle clip was not first');
+    assert.ok(
+      archiveRed > archiveGreen * 1.5 &&
+        archiveBlue > archiveGreen * 1.5 &&
+        archiveRed / archiveBlue > 0.7 &&
+        archiveRed / archiveBlue < 1.4,
+      'selected archive filler was not the same-group purple fixture',
+    );
+
+    const plainLabelRegion = await frameCrop(archiveClip, 0.25, 'crop=172:48:4:4');
+    const fillerLabelRegion = await frameCrop(film.outputPath, 1.25, 'crop=172:48:4:4');
+    assert.equal(ARCHIVE_FILLER_LABEL, 'From the archive');
+    assert.ok(
+      changedPixelFraction(plainLabelRegion, fillerLabelRegion) > 0.08,
+      'production compilation did not render the archive label region',
+    );
+    assert.ok(
+      pixelFractionAbove(fillerLabelRegion, 220) > 0.04,
+      'the visible white From the archive lettering was not present',
+    );
+    await assertPlayableWithFfmpeg(film.outputPath);
+    const metadata = await probeClipWithFfmpeg(config.ffmpegBin, film.outputPath);
+    assert.equal(metadata.hasAudio, true);
+    assert.ok(metadata.durationSeconds > 1.8 && metadata.durationSeconds < 2.4);
+  });
+});
+
+test('a write-then-fail FFmpeg run removes partial output and keeps playback unavailable', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const outputDir = `${dataDir}/media/processed`;
+    await mkdir(outputDir, { recursive: true });
+    const sourceClip = `${outputDir}/failure-source.mp4`;
+    await createProcessedClip(sourceClip, { color: 'blue', frequency: 880, volume: 0.4 });
+    insertReadyClip(database, {
+      id: 'failure-source-clip',
+      contributionId: 'failure-source-contribution',
+      acceptedAt: '2026-09-10T01:00:00.000Z',
+      outputPath: sourceClip,
     });
     const jobId = await createFilmJob(database);
+    const markerPath = `${dataDir}/ffmpeg-wrote-output.marker`;
+    const failingFfmpeg = `${dataDir}/write-then-fail.cjs`;
+    await writeFile(
+      failingFfmpeg,
+      `#!/usr/bin/env node
+const { spawnSync } = require('node:child_process');
+const { existsSync, statSync, writeFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+const outputPath = args.at(-1);
+const result = spawnSync(${JSON.stringify(config.ffmpegBin)}, args, { stdio: 'inherit' });
+if (result.error) throw result.error;
+if (result.status !== 0) process.exit(result.status ?? 90);
+if (!outputPath || !existsSync(outputPath) || statSync(outputPath).size === 0) process.exit(92);
+writeFileSync(${JSON.stringify(markerPath)}, outputPath);
+process.exit(91);
+`,
+    );
+    await chmod(failingFfmpeg, 0o755);
 
     for (let attempt = 1; attempt <= MAX_COMPILATION_ATTEMPTS; attempt += 1) {
       const result = await processCompilationJob(database, {
         jobId,
-        ffmpegBin: config.ffmpegBin,
+        ffmpegBin: failingFfmpeg,
         outputDir,
       });
       assert.equal(result.ok, false);
@@ -405,25 +445,24 @@ test('a missing retained input exhausts bounded retries and never publishes a pa
         result.reason,
         attempt === MAX_COMPILATION_ATTEMPTS ? 'retry_exhausted' : 'processing_failed',
       );
+      await access(markerPath);
+      assert.deepEqual(
+        await readdir(outputDir),
+        ['failure-source.mp4'],
+        'failed compilation must remove its written temp and any final film artifact',
+      );
     }
     const job = getCompilationJob(database, jobId);
     assert.equal(job?.status, 'failed');
     assert.equal(job?.outputPath, null);
     assert.equal(job?.attemptCount, MAX_COMPILATION_ATTEMPTS);
-    assert.equal(job?.failureCategory, 'source_unavailable');
+    assert.equal(job?.failureCategory, 'process_failed');
     assert.equal(job?.retryable, false);
     assert.equal(job?.delayed, true);
 
-    const outputNames = await readdir(outputDir);
-    assert.deepEqual(
-      outputNames,
-      [],
-      'failed compilation must leave no final or temporary film artifact behind',
-    );
-
     const exhausted = await processCompilationJob(database, {
       jobId,
-      ffmpegBin: config.ffmpegBin,
+      ffmpegBin: failingFfmpeg,
       outputDir,
     });
     assert.deepEqual(exhausted, {
@@ -434,5 +473,35 @@ test('a missing retained input exhausts bounded retries and never publishes a pa
       message: 'The film is delayed after the maximum number of compile attempts.',
     });
     assert.equal(getCompilationJob(database, jobId)?.attemptCount, MAX_COMPILATION_ATTEMPTS);
+
+    const server = createRuntimeServer(config, database);
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId: 'demo-1' }),
+      });
+      assert.equal(sessionResponse.status, 201);
+      const session = await sessionResponse.json();
+      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+      const expectedNotFound = {
+        error: 'not_found',
+        message: 'The requested resource was not found.',
+      };
+      const playback = await fetch(`${baseUrl}/films/${encodeURIComponent(jobId)}/play?${query}`);
+      assert.equal(playback.status, 404);
+      assert.deepEqual(await playback.json(), expectedNotFound);
+      const download = await fetch(
+        `${baseUrl}/films/${encodeURIComponent(jobId)}/download?${query}`,
+      );
+      assert.equal(download.status, 404);
+      assert.deepEqual(await download.json(), expectedNotFound);
+    } finally {
+      await new Promise((close) => server.close(close));
+    }
   });
 });
