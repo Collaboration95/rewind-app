@@ -1,14 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import * as FileSystem from 'expo-file-system/legacy';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
-import type { ReleasedArchive } from '../domain/archive';
+import type { ReleasedArchive, ReleasedArchiveMedia } from '../domain/archive';
 import type { Premiere } from '../domain/premiere';
 import { useCapsule } from '../capsule/CapsuleProvider';
 import { useDemoSession } from '../session/DemoSessionProvider';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { COLORS } from '../theme';
+import { createArchiveDownloadQueue } from './archive-download';
 
 type ArchiveState =
   | { status: 'loading' }
@@ -68,7 +68,7 @@ function ArchiveEntries({
   notice,
 }: {
   archive: ReleasedArchive;
-  download: (url: string, name: string) => void;
+  download: (media: ReleasedArchiveMedia) => void;
   notice: string | null;
 }) {
   return (
@@ -91,7 +91,7 @@ function ArchiveEntries({
             <Pressable
               accessibilityLabel="Download released group film"
               accessibilityRole="button"
-              onPress={() => download(film.downloadUrl, 'rewind-group-film.mp4')}
+              onPress={() => download(film)}
               style={styles.downloadButton}
             >
               <Text style={styles.downloadText}>Download film</Text>
@@ -111,7 +111,7 @@ function ArchiveEntries({
             <Pressable
               accessibilityLabel="Download your released clip"
               accessibilityRole="button"
-              onPress={() => download(clip.downloadUrl, 'rewind-my-clip.mp4')}
+              onPress={() => download(clip)}
               style={styles.downloadButton}
             >
               <Text style={styles.downloadText}>Download clip</Text>
@@ -133,6 +133,7 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
   const { state: capsuleState, retry: retryCapsule } = useCapsule();
   const [state, setState] = useState<ArchiveState>({ status: 'loading' });
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const downloadQueue = useRef(createArchiveDownloadQueue()).current;
   const cycle = capsuleState.status === 'ready' ? capsuleState.cycle : null;
   const group = capsuleState.status === 'ready' ? capsuleState.group : null;
 
@@ -168,16 +169,14 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, cycle?.id, group?.id, runtimeClient]);
 
-  const download = (url: string, name: string) => {
-    const cacheDirectory = FileSystem.cacheDirectory;
-    if (!cacheDirectory) {
-      setDownloadNotice('Downloads are unavailable on this device.');
-      return;
-    }
+  const download = (media: ReleasedArchiveMedia) => {
     setDownloadNotice('Saving your authorized media…');
-    void FileSystem.makeDirectoryAsync(`${cacheDirectory}rewind-archive`, { intermediates: true })
-      .then(() => FileSystem.downloadAsync(url, `${cacheDirectory}rewind-archive/${name}`))
-      .then(() => setDownloadNotice('Saved to this device.'))
+    void downloadQueue(media)
+      .then((result) =>
+        setDownloadNotice(
+          result.method === 'browser' ? 'Opened the authorized media.' : 'Saved to this device.',
+        ),
+      )
       .catch(() =>
         setDownloadNotice(
           'The download could not be saved. Try again while the runtime is available.',
