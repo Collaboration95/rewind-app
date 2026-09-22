@@ -5,6 +5,13 @@ import { openDatabase, resetDatabase, fixtureSummary } from './db';
 import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 import { cleanupOrphanedStagedSources } from './jobs';
+import {
+  listQueueJobs,
+  parseQueueKind,
+  parseQueueLimit,
+  parseQueueStatus,
+  QueueQueryError,
+} from './jobs/queue';
 import { resolve } from 'node:path';
 
 function openRuntimeDatabase(config: RuntimeConfig): ReturnType<typeof openDatabase> {
@@ -154,6 +161,59 @@ function printDiagnostics(events: AuditEvent[], json: boolean): void {
   }
 }
 
+function readOption(argv: string[], names: string[]): string | undefined {
+  for (const name of names) {
+    const inline = argv.find((argument) => argument.startsWith(`${name}=`));
+    if (inline) return inline.slice(name.length + 1);
+    const index = argv.indexOf(name);
+    if (index !== -1) {
+      const value = argv[index + 1];
+      if (!value || value.startsWith('--')) {
+        throw new ConfigError(`Missing value for ${name}.`, `Use ${name} with a value.`);
+      }
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function parseJobsOptions(argv: string[]) {
+  const groupId = readOption(argv, ['--group', '--group-id', '--groupId']);
+  if (!groupId) {
+    throw new ConfigError(
+      'The jobs command requires a group.',
+      'Use jobs --group demo-group [--kind clip|film] [--status pending|processing|failed].',
+    );
+  }
+  try {
+    return {
+      groupId,
+      kind: parseQueueKind(readOption(argv, ['--kind'])),
+      status: parseQueueStatus(readOption(argv, ['--status'])),
+      limit: parseQueueLimit(readOption(argv, ['--limit'])),
+      cursor: readOption(argv, ['--cursor']) ?? null,
+    };
+  } catch (error) {
+    if (!(error instanceof QueueQueryError)) throw error;
+    throw new ConfigError(error.message, 'Use bounded jobs filters and pagination values.');
+  }
+}
+
+function printJobs(page: ReturnType<typeof listQueueJobs>, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ version: SERVICE_VERSION, ...page }, null, 2));
+    return;
+  }
+  console.log(`Rewind queue (${page.jobs.length} job${page.jobs.length === 1 ? '' : 's'})`);
+  for (const job of page.jobs) {
+    console.log(
+      `${job.createdAt} ${job.kind} ${job.status} id=${job.id} attempts=${job.attempts} progress=${job.progress}% retryable=${job.retryable}`,
+    );
+  }
+  if (page.pagination.hasMore)
+    console.log('More jobs are available; pass --cursor from JSON output.');
+}
+
 async function start(config: RuntimeConfig): Promise<void> {
   const database = openRuntimeDatabase(config);
   await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
@@ -221,10 +281,19 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       }
       return;
     }
+    if (command === 'jobs' || command === 'queue') {
+      const database = openRuntimeDatabase(config);
+      try {
+        printJobs(listQueueJobs(database, parseJobsOptions(argv)), json);
+      } finally {
+        database.close();
+      }
+      return;
+    }
     if (command !== 'start') {
       throw new ConfigError(
         `Unknown local runtime command ${JSON.stringify(command)}.`,
-        'Use start, preflight, migrate, or reset.',
+        'Use start, preflight, migrate, reset, diagnostics, or jobs.',
       );
     }
     await start(config);

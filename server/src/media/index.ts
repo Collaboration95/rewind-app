@@ -1131,8 +1131,8 @@ export function createClipUpload(
         `INSERT INTO media_jobs
           (id, group_id, contribution_id, kind, status, output_path, created_at, idempotency_key,
            source_uri, source_generation, source_path, trim_start_seconds, trim_end_seconds,
-           mode, error_code)
-         VALUES (?, ?, ?, 'clip', 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+           mode, error_code, updated_at)
+         VALUES (?, ?, ?, 'clip', 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
       )
       .run(
         jobId,
@@ -1146,6 +1146,7 @@ export function createClipUpload(
         processing.trimStartSeconds,
         processing.trimEndSeconds,
         processing.mode,
+        createdAt,
       );
     database
       .prepare('UPDATE contributions SET media_job_id = ? WHERE id = ?')

@@ -422,10 +422,17 @@ export function ensureCompilationJob(
       `INSERT INTO media_jobs
         (id, group_id, contribution_id, kind, status, output_path, created_at,
          idempotency_key, cycle_id, progress, input_count, completed_count,
-         claim_generation, processing_started_at)
-       VALUES (?, ?, NULL, 'film', 'pending', NULL, ?, NULL, ?, 0, ?, 0, 0, NULL)`,
+         claim_generation, processing_started_at, updated_at)
+       VALUES (?, ?, NULL, 'film', 'pending', NULL, ?, NULL, ?, 0, ?, 0, 0, NULL, ?)`,
     )
-    .run(jobId, input.groupId, createdAt.toISOString(), input.cycleId, eligible.length);
+    .run(
+      jobId,
+      input.groupId,
+      createdAt.toISOString(),
+      input.cycleId,
+      eligible.length,
+      createdAt.toISOString(),
+    );
   const insertInput = database.prepare(
     `INSERT INTO compilation_job_inputs (job_id, clip_job_id, contribution_id, position)
      VALUES (?, ?, ?, ?)`,
@@ -526,10 +533,11 @@ export function claimCompilationJob(
       .prepare(
         `UPDATE media_jobs
          SET status = 'processing', error_code = NULL,
-             processing_started_at = ?, claim_generation = ?, attempt_count = ?
+             processing_started_at = ?, claim_generation = ?, attempt_count = ?,
+             updated_at = ?, failed_at = NULL
          WHERE id = ? AND kind = 'film' AND status IN ('pending', 'failed', 'processing')`,
       )
-      .run(now.toISOString(), generation, attemptCount, job.id);
+      .run(now.toISOString(), generation, attemptCount, now.toISOString(), job.id);
     job = readCompilationJob(database, job.id, input.groupId);
     if (!job) {
       database.exec('ROLLBACK');
@@ -588,11 +596,18 @@ export function updateCompilationJobProgress(
     const result = database
       .prepare(
         `UPDATE media_jobs
-         SET completed_count = ?, progress = ?, processing_started_at = ?
+         SET completed_count = ?, progress = ?, processing_started_at = ?, updated_at = ?
          WHERE id = ? AND kind = 'film' AND status = 'processing'
            AND claim_generation = ?`,
       )
-      .run(completedCount, progress, now.toISOString(), input.jobId, input.claimGeneration);
+      .run(
+        completedCount,
+        progress,
+        now.toISOString(),
+        now.toISOString(),
+        input.jobId,
+        input.claimGeneration,
+      );
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
       return null;
@@ -688,13 +703,15 @@ function markCompilationFailed(
   claimGeneration: number,
   errorCode: string,
 ): void {
+  const failedAt = new Date().toISOString();
   database
     .prepare(
       `UPDATE media_jobs
-       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL
+       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL,
+           updated_at = ?, failed_at = ?
        WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
     )
-    .run(errorCode, jobId, claimGeneration);
+    .run(errorCode, failedAt, failedAt, jobId, claimGeneration);
 }
 
 /**
@@ -728,10 +745,10 @@ function publishCompilationOutput(
       .prepare(
         `UPDATE media_jobs
          SET status = 'ready', output_path = ?, completed_count = input_count, progress = 100,
-             error_code = NULL, processing_started_at = NULL
+             error_code = NULL, processing_started_at = NULL, updated_at = ?, failed_at = NULL
          WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
       )
-      .run(finalOutputPath, job.id, job.claimGeneration);
+      .run(finalOutputPath, new Date().toISOString(), job.id, job.claimGeneration);
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
       return false;
@@ -963,11 +980,11 @@ function markOutputPrepared(
     }
     database
       .prepare(
-        `UPDATE media_jobs SET output_path = ?, error_code = NULL
+        `UPDATE media_jobs SET output_path = ?, error_code = NULL, updated_at = ?
          WHERE id = ? AND kind = 'clip' AND status = 'processing'
            AND (output_path IS NULL OR output_path = ?)`,
       )
-      .run(outputPath, row.id, outputPath);
+      .run(outputPath, new Date().toISOString(), row.id, outputPath);
     database.exec('COMMIT');
     return true;
   } catch (error) {
@@ -1029,11 +1046,11 @@ function finalizePreparedOutput(
       .prepare(
         `UPDATE media_jobs
          SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL,
-             processing_started_at = NULL
+             processing_started_at = NULL, updated_at = ?, failed_at = NULL
          WHERE id = ? AND kind = 'clip' AND status = 'processing'
            AND output_path = ?`,
       )
-      .run(outputPath, row.id, outputPath);
+      .run(outputPath, new Date().toISOString(), row.id, outputPath);
     database.exec('COMMIT');
     return true;
   } catch (error) {
@@ -1069,25 +1086,22 @@ function claimClipJob(database: RewindDatabase, row: ClipJobRow): ClipJobRow | n
       database.exec('ROLLBACK');
       return null;
     }
+    const startedAt = new Date().toISOString();
     const result = database
       .prepare(
         `UPDATE media_jobs SET status = 'processing', error_code = NULL,
-             processing_started_at = ?
+             processing_started_at = ?, updated_at = ?, failed_at = NULL,
+             attempt_count = attempt_count + CASE WHEN status IN ('pending', 'failed') THEN 1 ELSE 0 END
          WHERE id = ? AND kind = 'clip' AND status IN ('pending', 'failed', 'processing')
            AND (processing_started_at IS ? OR processing_started_at = ?)`,
       )
-      .run(
-        new Date().toISOString(),
-        locked.id,
-        locked.processingStartedAt,
-        locked.processingStartedAt,
-      );
+      .run(startedAt, startedAt, locked.id, locked.processingStartedAt, locked.processingStartedAt);
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
       return null;
     }
     database.exec('COMMIT');
-    return { ...locked, status: 'processing', processingStartedAt: new Date().toISOString() };
+    return { ...locked, status: 'processing', processingStartedAt: startedAt };
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
@@ -1100,13 +1114,15 @@ function safeOutputName(jobId: string): string {
 }
 
 function markFailed(database: RewindDatabase, jobId: string, errorCode: string): void {
+  const failedAt = new Date().toISOString();
   database
     .prepare(
       `UPDATE media_jobs
-       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL
+       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL,
+           updated_at = ?, failed_at = ?
        WHERE id = ? AND kind = 'clip' AND status = 'processing'`,
     )
-    .run(errorCode, jobId);
+    .run(errorCode, failedAt, failedAt, jobId);
 }
 
 /**

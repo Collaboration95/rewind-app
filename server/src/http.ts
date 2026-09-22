@@ -72,6 +72,13 @@ import {
   processClipJob,
   processCompilationJob,
 } from './jobs';
+import {
+  listQueueJobs,
+  parseQueueKind,
+  parseQueueLimit,
+  parseQueueStatus,
+  QueueQueryError,
+} from './jobs/queue';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { generateSyntheticDemoClip, probeClipWithFfmpeg } from './ffmpeg';
 
@@ -1699,6 +1706,29 @@ export async function handleRequest(
 
   if (url.pathname === '/profiles') {
     sendJson(response, config, 200, { profiles: listProfiles(database) });
+    return;
+  }
+
+  if (url.pathname === '/jobs' && request.method === 'GET') {
+    const groupId = url.searchParams.get('groupId');
+    const identity = requireAuthorisedGroup(database, url, response, config, now(), groupId, 'job');
+    if (!identity) return;
+    try {
+      const jobs = listQueueJobs(database, {
+        groupId: identity.groupId,
+        kind: parseQueueKind(url.searchParams.get('kind')),
+        status: parseQueueStatus(url.searchParams.get('status')),
+        limit: parseQueueLimit(url.searchParams.get('limit')),
+        cursor: url.searchParams.get('cursor'),
+      });
+      sendJson(response, config, 200, jobs);
+    } catch (error) {
+      if (!(error instanceof QueueQueryError)) throw error;
+      sendJson(response, config, 400, {
+        error: 'invalid_jobs_request',
+        message: error.message,
+      });
+    }
     return;
   }
 
