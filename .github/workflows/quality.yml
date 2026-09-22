@@ -3,8 +3,14 @@ name: Quality checks
 on:
   push:
     branches: [main]
+  # PR checks intentionally have no base-branch filter so stacked PRs run the
+  # same validation. Feature-branch pushes stay excluded to avoid duplicate runs.
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
