@@ -6,7 +6,7 @@ import type { ReleasedArchive, ReleasedArchiveMedia } from '../domain/archive';
 import type { Premiere } from '../domain/premiere';
 import { useCapsule } from '../capsule/CapsuleProvider';
 import { useDemoSession } from '../session/DemoSessionProvider';
-import type { RuntimeClient } from '../runtime/local-runtime-client';
+import { RUNTIME_OFFLINE_MESSAGE, type RuntimeClient } from '../runtime/local-runtime-client';
 import { COLORS } from '../theme';
 import { createArchiveDownloadQueue } from './archive-download';
 
@@ -141,7 +141,7 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
     if (!session || !cycle || !group || !runtimeClient?.getPremiere) {
       setState({
         status: 'unavailable',
-        message: 'Connect the local runtime to check this group premiere.',
+        message: 'Server-backed archive actions are unavailable without the local runtime.',
       });
       return;
     }
@@ -153,11 +153,10 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
         : Promise.resolve(EMPTY_ARCHIVE),
     ])
       .then(([premiere, archive]) => setState({ status: 'ready', premiere, archive }))
-      .catch(() =>
+      .catch((error: unknown) =>
         setState({
           status: 'unavailable',
-          message:
-            'The group premiere could not be checked. Retry when the local runtime is ready.',
+          message: error instanceof Error ? error.message : RUNTIME_OFFLINE_MESSAGE,
         }),
       );
   };
@@ -170,6 +169,10 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
   }, [session?.id, cycle?.id, group?.id, runtimeClient]);
 
   const download = (media: ReleasedArchiveMedia) => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setDownloadNotice(RUNTIME_OFFLINE_MESSAGE);
+      return;
+    }
     setDownloadNotice('Saving your authorized media…');
     void downloadQueue(media)
       .then((result) =>

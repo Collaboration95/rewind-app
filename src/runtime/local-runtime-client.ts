@@ -132,6 +132,12 @@ export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promis
  */
 export const DEFAULT_RUNTIME_REQUEST_TIMEOUT_MS = 10_000;
 export const MEDIA_RUNTIME_REQUEST_TIMEOUT_MS = 75_000;
+export const RUNTIME_OFFLINE_MESSAGE =
+  'Server-backed actions are unavailable offline. Reconnect to the local runtime to continue.';
+
+function isBrowserOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
+}
 
 export interface LocalRuntimeClientOptions {
   requestTimeoutMs?: number;
@@ -549,6 +555,9 @@ export class LocalRuntimeClient implements RuntimeClient {
     init: RequestInit = {},
     timeoutMs = this.requestTimeoutMs,
   ): Promise<T> {
+    if (isBrowserOffline()) {
+      throw new LocalRuntimeError(RUNTIME_OFFLINE_MESSAGE, undefined, 'runtime_offline');
+    }
     let response: Response;
     let payload: unknown = null;
     let timedOut = false;

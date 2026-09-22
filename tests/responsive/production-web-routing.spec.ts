@@ -29,6 +29,43 @@ test('same-origin API proxy reaches the runtime and preserves its status', async
   expect(missingBody).not.toContain('/app/');
 });
 
+test('the exported shell exposes install metadata and an honest offline API fallback', async ({
+  context,
+  page,
+  request,
+}) => {
+  const manifestResponse = await request.get('/manifest.json');
+  expect(manifestResponse.status()).toBe(200);
+  expect(manifestResponse.headers()['content-type']).toContain('application/json');
+  await expect(manifestResponse.json()).resolves.toMatchObject({
+    display: 'standalone',
+    name: 'Rewind',
+    start_url: '/',
+    theme_color: '#1D1B1E',
+  });
+
+  const serviceWorkerResponse = await request.get('/sw.js');
+  expect(serviceWorkerResponse.status()).toBe(200);
+  expect(await serviceWorkerResponse.text()).toContain(
+    'Server-backed actions are unavailable offline',
+  );
+
+  await page.goto('/');
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
+  await context.setOffline(true);
+  try {
+    const offlineHealth = await page.evaluate(async () => {
+      const response = await fetch('/api/health');
+      return { body: await response.json(), status: response.status };
+    });
+    expect(offlineHealth.status).toBe(503);
+    expect(offlineHealth.body).toMatchObject({ error: 'runtime_unavailable' });
+    expect(offlineHealth.body.message).toContain('unavailable offline');
+  } finally {
+    await context.setOffline(false);
+  }
+});
+
 test('the shell is uncached while Expo assets are immutable', async ({ request }) => {
   const shell = await request.get('/');
   expect(shell.status()).toBe(200);

@@ -1,23 +1,56 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { RuntimeClient, RuntimeHealth } from './local-runtime-client';
+import {
+  RUNTIME_OFFLINE_MESSAGE,
+  type RuntimeClient,
+  type RuntimeHealth,
+} from './local-runtime-client';
 import { COLORS } from '../theme';
 
 type RuntimeStatus =
   | { kind: 'demo' }
   | { kind: 'loading' }
   | { kind: 'connected'; health: RuntimeHealth }
+  | { kind: 'offline' }
   | { kind: 'disconnected'; message: string };
+
+function readBrowserOnline(): boolean {
+  return typeof navigator === 'undefined' || navigator.onLine !== false;
+}
 
 export function RuntimeStatusCard({ client }: { client: RuntimeClient | null }) {
   const [status, setStatus] = useState<RuntimeStatus>(
     client ? { kind: 'loading' } : { kind: 'demo' },
   );
   const [attempt, setAttempt] = useState(0);
+  const [browserOnline, setBrowserOnline] = useState(readBrowserOnline);
+
+  useEffect(() => {
+    if (
+      !client ||
+      Platform.OS !== 'web' ||
+      typeof window === 'undefined' ||
+      typeof window.addEventListener !== 'function' ||
+      typeof window.removeEventListener !== 'function'
+    )
+      return;
+    const update = () => {
+      const online = readBrowserOnline();
+      setBrowserOnline(online);
+      if (online) setAttempt((value) => value + 1);
+    };
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, [client]);
 
   useEffect(() => {
     if (!client) return;
+    if (!browserOnline) return;
     let cancelled = false;
     void client.getHealth().then(
       (health) => {
@@ -36,7 +69,7 @@ export function RuntimeStatusCard({ client }: { client: RuntimeClient | null }) 
     return () => {
       cancelled = true;
     };
-  }, [attempt, client]);
+  }, [attempt, browserOnline, client]);
 
   if (!client) {
     return (
@@ -55,14 +88,16 @@ export function RuntimeStatusCard({ client }: { client: RuntimeClient | null }) 
     );
   }
 
+  const displayedStatus: RuntimeStatus = !browserOnline ? { kind: 'offline' } : status;
+
   return (
     <View
-      accessibilityLabel={`Local runtime ${status.kind === 'connected' ? 'connected' : status.kind}`}
+      accessibilityLabel={`Local runtime ${displayedStatus.kind === 'connected' ? 'connected' : displayedStatus.kind}`}
       style={styles.card}
       testID="runtime-status"
     >
       <Text style={styles.label}>LOCAL RUNTIME</Text>
-      {status.kind === 'loading' && (
+      {displayedStatus.kind === 'loading' && (
         <>
           <Text accessibilityLiveRegion="polite" style={styles.title}>
             Connecting…
@@ -70,23 +105,45 @@ export function RuntimeStatusCard({ client }: { client: RuntimeClient | null }) 
           <Text style={styles.body}>Checking the local service and SQLite readiness.</Text>
         </>
       )}
-      {status.kind === 'connected' && (
+      {displayedStatus.kind === 'connected' && (
         <>
           <Text accessibilityLiveRegion="polite" style={styles.title}>
-            Connected · v{status.health.version}
+            Connected · v{displayedStatus.health.version}
           </Text>
           <Text style={styles.body}>
-            SQLite ready · FFmpeg {status.health.checks.ffmpegConfigured ? 'configured' : 'missing'}
+            SQLite ready · FFmpeg{' '}
+            {displayedStatus.health.checks.ffmpegConfigured ? 'configured' : 'missing'}
           </Text>
           <Text style={styles.endpoint}>Local service reachable</Text>
         </>
       )}
-      {status.kind === 'disconnected' && (
+      {displayedStatus.kind === 'offline' && (
+        <>
+          <Text accessibilityLiveRegion="assertive" style={styles.title}>
+            Server-backed actions unavailable offline
+          </Text>
+          <Text style={styles.body}>
+            {RUNTIME_OFFLINE_MESSAGE} Capture sync is not supported offline.
+          </Text>
+          <Pressable
+            accessibilityHint="Checks the local runtime again"
+            accessibilityRole="button"
+            onPress={() => {
+              setStatus({ kind: 'loading' });
+              setAttempt((value) => value + 1);
+            }}
+            style={styles.retry}
+          >
+            <Text style={styles.retryText}>Retry connection</Text>
+          </Pressable>
+        </>
+      )}
+      {displayedStatus.kind === 'disconnected' && (
         <>
           <Text accessibilityLiveRegion="assertive" style={styles.title}>
             Runtime unavailable
           </Text>
-          <Text style={styles.body}>{status.message}</Text>
+          <Text style={styles.body}>{displayedStatus.message}</Text>
           <Pressable
             accessibilityHint="Checks the local runtime again"
             accessibilityRole="button"

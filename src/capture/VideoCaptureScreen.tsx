@@ -434,7 +434,9 @@ export function VideoCaptureScreen({
   const upload = async () => {
     if (!isCaptureActive()) return;
     if (!review || !clip || !uploadSession) {
-      setError('Connect the local runtime and an active Demo session before uploading.');
+      setError(
+        'Server-backed clip upload is unavailable without the local runtime. Captured media is not synchronized offline.',
+      );
       return;
     }
     const reviewMetadata = review.getReview();

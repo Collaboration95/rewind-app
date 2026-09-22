@@ -46,4 +46,19 @@ describe('RuntimeStatusCard', () => {
     await result.findByText('Connected · v0.1.0');
     expect(getHealth).toHaveBeenCalledTimes(2);
   });
+
+  it('labels server-backed work unavailable when the browser is offline', async () => {
+    const previousOnline = navigator.onLine;
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    try {
+      const result = await render(<RuntimeStatusCard client={clientWithHealth(jest.fn())} />);
+      await result.findByText('Server-backed actions unavailable offline');
+      expect(result.getByText(/Capture sync is not supported offline/)).toBeTruthy();
+    } finally {
+      Object.defineProperty(navigator, 'onLine', {
+        configurable: true,
+        value: previousOnline,
+      });
+    }
+  });
 });
