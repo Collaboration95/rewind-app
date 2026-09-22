@@ -40,6 +40,13 @@ export class StillImageCaptureSession {
   async capture(): Promise<ActiveStillImage> {
     await this.cleanupActive();
     const image = await this.options.platform.captureStill();
+    return this.captureImage(image);
+  }
+
+  async captureImage(
+    image: Awaited<ReturnType<CameraPlatform['captureStill']>>,
+  ): Promise<ActiveStillImage> {
+    await this.cleanupActive();
     const id = this.createId();
     const managed = await this.options.fileStore.copyToManagedCache(image, id);
 

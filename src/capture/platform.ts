@@ -15,6 +15,85 @@ import type { RecordedClip } from '../domain/video';
 
 export const VIDEO_CACHE_FOLDER = 'rewind-clips';
 
+type BrowserVideoElement = HTMLVideoElement & {
+  audioTracks?: { length: number };
+};
+
+async function chooseBrowserFile(accept: string): Promise<File> {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') {
+    throw new Error('File fallback is available in a browser only.');
+  }
+  return new Promise<File>((resolve, reject) => {
+    const input = document.createElement('input');
+    input.accept = accept;
+    input.type = 'file';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (file) resolve(file);
+      else reject(new Error('No file was selected.'));
+    };
+    input.click();
+  });
+}
+
+function createBrowserObjectUrl(file: File): string {
+  if (typeof URL.createObjectURL !== 'function') {
+    throw new Error('This browser cannot open a local file fallback.');
+  }
+  return URL.createObjectURL(file);
+}
+
+async function readImageDimensions(uri: string): Promise<{ height: number; width: number }> {
+  if (typeof Image === 'undefined') return { height: 1280, width: 720 };
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ height: image.naturalHeight, width: image.naturalWidth });
+    image.onerror = () => reject(new Error('The selected image could not be opened.'));
+    image.src = uri;
+  });
+}
+
+async function readVideoMetadata(
+  uri: string,
+): Promise<{ durationSeconds: number; hasAudio: boolean; height: number; width: number }> {
+  if (typeof document === 'undefined') {
+    return { durationSeconds: 1, hasAudio: true, height: 1280, width: 720 };
+  }
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video') as BrowserVideoElement;
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      const durationSeconds = Number.isFinite(video.duration) ? video.duration : 0;
+      const hasAudio = video.audioTracks ? video.audioTracks.length > 0 : true;
+      if (durationSeconds <= 0) {
+        reject(new Error('The selected video has no usable duration.'));
+        return;
+      }
+      resolve({
+        durationSeconds,
+        hasAudio,
+        height: video.videoHeight || 1280,
+        width: video.videoWidth || 720,
+      });
+    };
+    video.onerror = () => reject(new Error('The selected video could not be opened.'));
+    video.src = uri;
+  });
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  if (typeof btoa === 'function') return btoa(binary);
+  const buffer = (
+    globalThis as typeof globalThis & {
+      Buffer?: { from(value: Uint8Array): { toString(encoding: string): string } };
+    }
+  ).Buffer;
+  if (buffer) return buffer.from(bytes).toString('base64');
+  throw new Error('This browser cannot read the selected file.');
+}
+
 function managedVideoId(): string {
   return `clip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -56,6 +135,10 @@ async function moveVideoToManagedCache(sourceUri: string): Promise<{
 
 export async function removeManagedRecordedClip(uri: string): Promise<void> {
   const cacheDirectory = FileSystem.cacheDirectory;
+  if (uri.startsWith('blob:') && typeof URL.revokeObjectURL === 'function') {
+    URL.revokeObjectURL(uri);
+    return;
+  }
   if (!cacheDirectory || !uri.startsWith(`${cacheDirectory}${VIDEO_CACHE_FOLDER}/`)) return;
   await FileSystem.deleteAsync(uri, { idempotent: true });
 }
@@ -63,6 +146,11 @@ export async function removeManagedRecordedClip(uri: string): Promise<void> {
 /** Read a managed capture only for the server-owned binary upload boundary. */
 export async function readManagedRecordedClipBase64(uri: string): Promise<string> {
   const cacheDirectory = FileSystem.cacheDirectory;
+  if (uri.startsWith('blob:')) {
+    const response = await fetch(uri);
+    if (!response.ok) throw new Error('The selected clip is no longer available.');
+    return bytesToBase64(new Uint8Array(await response.arrayBuffer()));
+  }
   if (!cacheDirectory || !uri.startsWith(`${cacheDirectory}${VIDEO_CACHE_FOLDER}/`)) {
     throw new Error('The captured clip is no longer available in local storage.');
   }
@@ -92,6 +180,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
   readonly kind = 'expo' as const;
   readonly supportsLivePreview = true;
   readonly supportsVideoRecording = Platform.OS !== 'web';
+  readonly supportsFileFallback = Platform.OS === 'web';
 
   constructor(private readonly options: ExpoCameraPlatformOptions) {}
 
@@ -178,6 +267,45 @@ export class ExpoCameraPlatform implements CameraPlatform {
       source: 'camera',
       width: picture.width,
     };
+  }
+
+  async pickStillFile(): Promise<PlatformStillImage> {
+    const file = await chooseBrowserFile('image/*');
+    const sourceUri = createBrowserObjectUrl(file);
+    try {
+      const dimensions = await readImageDimensions(sourceUri);
+      return {
+        format: file.type === 'image/png' ? 'png' : 'jpg',
+        height: dimensions.height,
+        source: 'file',
+        sourceUri,
+        width: dimensions.width,
+      };
+    } catch (error) {
+      if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(sourceUri);
+      throw error;
+    }
+  }
+
+  async pickVideoFile(): Promise<RecordedClip> {
+    const file = await chooseBrowserFile('video/mp4,video/*');
+    const sourceUri = createBrowserObjectUrl(file);
+    try {
+      const metadata = await readVideoMetadata(sourceUri);
+      return {
+        byteLength: file.size,
+        durationSeconds: Math.min(15, metadata.durationSeconds),
+        format: 'mp4',
+        hasAudio: metadata.hasAudio,
+        height: metadata.height,
+        source: 'file',
+        sourceUri,
+        width: metadata.width,
+      };
+    } catch (error) {
+      if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(sourceUri);
+      throw error;
+    }
   }
 
   async recordClip(maxDurationSeconds = 15): Promise<RecordedClip> {

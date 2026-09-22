@@ -7,12 +7,12 @@ describe('camera capability and permission matrix', () => {
     [
       'camera capability undecided',
       { ...supported, camera: 'undecided' as const },
-      'capability-undecided',
+      'temporarily-unavailable',
     ],
     [
       'microphone capability undecided',
       { ...supported, microphone: 'undecided' as const },
-      'capability-undecided',
+      'temporarily-unavailable',
     ],
     ['camera unsupported', { ...supported, camera: 'unsupported' as const }, 'unsupported'],
     ['microphone unsupported', { ...supported, microphone: 'unsupported' as const }, 'unsupported'],

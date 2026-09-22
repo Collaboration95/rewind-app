@@ -21,7 +21,7 @@ export interface PermissionSnapshot {
   microphone: PermissionState;
 }
 
-export type StillImageSource = 'camera' | 'demo-fixture';
+export type StillImageSource = 'camera' | 'demo-fixture' | 'file';
 
 export interface PlatformStillImage {
   sourceUri: string;
@@ -101,12 +101,18 @@ export interface CameraPlatform {
   readonly supportsLivePreview: boolean;
   /** Whether this adapter can record video in addition to still images. */
   readonly supportsVideoRecording?: boolean;
+  /** Whether this adapter exposes a local file fallback. */
+  readonly supportsFileFallback?: boolean;
 
   getCapabilities(): Promise<CapabilitySnapshot>;
   getPermissions(): Promise<PermissionSnapshot>;
   requestPermissions(): Promise<PermissionSnapshot>;
   openSettings(): Promise<void>;
   captureStill(): Promise<PlatformStillImage>;
+  /** Browser-only fallback when a live camera cannot be used. */
+  pickStillFile?(): Promise<PlatformStillImage>;
+  /** Browser-only fallback when native video recording is unavailable. */
+  pickVideoFile?(): Promise<import('../domain/video').RecordedClip>;
 }
 
 export interface ActiveStillImage {

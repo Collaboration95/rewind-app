@@ -27,7 +27,14 @@ import {
 import type { CameraPlatform } from './contracts';
 
 type AccessStatus =
-  'checking' | 'ready' | 'unsupported' | 'permission' | 'permission-blocked' | 'error';
+  | 'checking'
+  | 'ready'
+  | 'unsupported'
+  | 'temporarily-unavailable'
+  | 'permission-undecided'
+  | 'permission-denied'
+  | 'permission-blocked'
+  | 'error';
 
 export interface VideoCaptureScreenProps {
   platform?: CameraPlatform;
@@ -217,19 +224,26 @@ export function VideoCaptureScreen({
         platform.getPermissions(),
       ]);
       if (!isCaptureActive()) return;
-      if (capabilities.camera !== 'supported' || capabilities.microphone !== 'supported') {
+      if (capabilities.camera === 'undecided' || capabilities.microphone === 'undecided') {
+        setAccess('temporarily-unavailable');
+      } else if (capabilities.camera !== 'supported' || capabilities.microphone !== 'supported') {
         setAccess('unsupported');
       } else if (permissions.camera === 'blocked' || permissions.microphone === 'blocked') {
         setAccess('permission-blocked');
-      } else if (permissions.camera !== 'granted' || permissions.microphone !== 'granted') {
-        setAccess('permission');
+      } else if (
+        permissions.camera === 'undetermined' ||
+        permissions.microphone === 'undetermined'
+      ) {
+        setAccess('permission-undecided');
+      } else if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
+        setAccess('permission-denied');
       } else {
         setAccess('ready');
       }
     } catch {
       if (!isCaptureActive()) return;
-      setAccess('error');
-      setError('We could not check recording access. Try again.');
+      setAccess('temporarily-unavailable');
+      setError('We could not check recording access yet. Try again.');
     }
   }, [isCaptureActive, platform, recorder]);
 
@@ -255,7 +269,8 @@ export function VideoCaptureScreen({
       if (isCaptureActive()) await refresh();
     } catch {
       if (!isCaptureActive()) return;
-      setError('Camera access could not be requested. Open Settings and try again.');
+      setAccess('temporarily-unavailable');
+      setError('Camera access could not be checked right now. Try again or open Settings.');
     }
   }, [isCaptureActive, platform, refresh]);
 
@@ -310,6 +325,26 @@ export function VideoCaptureScreen({
         recordingError instanceof Error
           ? recordingError.message
           : 'The clip could not be recorded.',
+      );
+    }
+  };
+
+  const chooseVideoFile = async () => {
+    if (!isCaptureActive() || !platform.pickVideoFile) return;
+    setError(null);
+    try {
+      const selected = await platform.pickVideoFile();
+      if (!isCaptureActive()) return;
+      const nextReview = new ClipReviewSession(selected, reviewStore);
+      setClip(selected);
+      setReview(nextReview);
+      setStartText('0');
+      setEndText(String(selected.durationSeconds));
+      setMode('soft-focus');
+    } catch (fileError) {
+      if (!isCaptureActive()) return;
+      setError(
+        fileError instanceof Error ? fileError.message : 'The video file could not be used.',
       );
     }
   };
@@ -711,10 +746,20 @@ export function VideoCaptureScreen({
               ? creatingSyntheticClip
                 ? 'Preparing synthetic Demo clip…'
                 : 'Create synthetic Demo clip'
-              : undefined
+              : platform.supportsFileFallback && platform.pickVideoFile
+                ? 'Choose a video file'
+                : undefined
           }
           disabled={creatingSyntheticClip}
-          onAction={createSyntheticDemoClip}
+          onAction={
+            platform.kind === 'demo' &&
+            runtimeClient?.createSyntheticDemoClip &&
+            demoSession?.session
+              ? createSyntheticDemoClip
+              : platform.supportsFileFallback && platform.pickVideoFile
+                ? chooseVideoFile
+                : undefined
+          }
           testID="video-unsupported"
           title="Recording is not supported here"
           body={
@@ -722,17 +767,51 @@ export function VideoCaptureScreen({
             runtimeClient?.createSyntheticDemoClip &&
             demoSession?.session
               ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
-              : 'Use a physical device with camera and microphone access. The simulator fixture does not claim to record a real clip.'
+              : platform.supportsFileFallback && platform.pickVideoFile
+                ? 'Live recording is not supported here. Choose a video file with microphone audio; it remains labelled as a file contribution.'
+                : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.'
           }
         />
       ) : null}
-      {access === 'permission' ? (
+      {access === 'temporarily-unavailable' ? (
+        <Panel
+          actionLabel={
+            platform.supportsFileFallback && platform.pickVideoFile
+              ? 'Choose a video file'
+              : 'Check again'
+          }
+          onAction={
+            platform.supportsFileFallback && platform.pickVideoFile ? chooseVideoFile : refresh
+          }
+          testID="video-temporarily-unavailable"
+          title="Recording is temporarily unavailable"
+          body={error ?? 'The device capability check is not ready yet. Try again shortly.'}
+        />
+      ) : null}
+      {access === 'permission-undecided' ? (
         <Panel
           actionLabel="Allow camera and microphone"
           onAction={requestAccess}
           testID="video-permission"
           title="Allow access to record"
           body="Both camera and microphone permissions are required before recording."
+        />
+      ) : null}
+      {access === 'permission-denied' ? (
+        <Panel
+          actionLabel={
+            platform.supportsFileFallback && platform.pickVideoFile
+              ? 'Choose a video file'
+              : 'Try again'
+          }
+          onAction={
+            platform.supportsFileFallback && platform.pickVideoFile
+              ? chooseVideoFile
+              : requestAccess
+          }
+          testID="video-permission-denied"
+          title="Camera or microphone access is denied"
+          body="Recording needs both permissions. Try again or choose a labelled video file fallback when it is available."
         />
       ) : null}
       {access === 'permission-blocked' ? (
@@ -795,8 +874,15 @@ export function VideoCaptureScreen({
         <View style={styles.reviewPanel} testID="video-review">
           <Text style={styles.panelTitle}>Review your clip</Text>
           <Text style={styles.body}>
-            Recorded {clip.durationSeconds.toFixed(1)} seconds · portrait · audio included
+            {clip.source === 'file'
+              ? `Selected file ${clip.durationSeconds.toFixed(1)} seconds · portrait · audio included`
+              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · portrait · audio included`}
           </Text>
+          {clip.source === 'file' ? (
+            <Text style={styles.body}>
+              FILE FALLBACK · selected locally, not recorded in Rewind
+            </Text>
+          ) : null}
           <Text style={styles.fieldLabel}>Start seconds</Text>
           <TextInput
             keyboardType="decimal-pad"

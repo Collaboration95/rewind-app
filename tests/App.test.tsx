@@ -169,7 +169,7 @@ describe('Rewind Home start screen', () => {
     const result = await render(<App />);
 
     await fireEvent.press(result.getByRole('tab', { name: 'Camera' }));
-    expect(await result.findByTestId('camera-capability-undecided')).toBeTruthy();
+    expect(await result.findByTestId('camera-temporarily-unavailable')).toBeTruthy();
 
     await fireEvent.press(result.getByRole('tab', { name: 'Chat' }));
     expect(result.getByRole('header', { name: 'Chat' })).toBeTruthy();
@@ -190,6 +190,7 @@ describe('Rewind Home start screen', () => {
     await result.findByTestId('capsule-ready');
     await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
     expect(await result.findByTestId('archive-video-player')).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Play group film' })).toBeTruthy();
     expect(result.queryByTestId('archive-locked')).toBeNull();
   });
 
@@ -221,6 +222,7 @@ describe('Rewind Home start screen', () => {
     await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
     expect(await result.findByTestId('archive-delayed')).toBeTruthy();
     expect(result.getByText('Film delayed')).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Check premiere again' })).toBeTruthy();
     expect(result.queryByTestId('archive-video-player')).toBeNull();
   });
 

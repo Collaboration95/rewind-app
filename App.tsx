@@ -20,6 +20,7 @@ import { DemoProfileProvider } from './src/profiles/DemoProfileProvider';
 import { CapsuleProvider, useCapsule } from './src/capsule/CapsuleProvider';
 import { CapsuleSummary } from './src/capsule/CapsuleSummary';
 import type { CycleRepository, DemoRevealState } from './src/domain/cycles';
+import { revealStateForCycle } from './src/domain/reveal-education';
 import type {
   AsyncGroupRepository,
   CreateGroupInput,
@@ -259,7 +260,9 @@ function ActiveAppShell({
   const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group' | 'video'>(() =>
     inviteLink ? 'settings' : 'home',
   );
-  const { retry: refreshCapsule } = useCapsule();
+  const { retry: refreshCapsule, state: capsuleState } = useCapsule();
+  const revealState =
+    capsuleState.status === 'ready' ? revealStateForCycle(capsuleState.cycle) : 'locked';
   const resolvedCameraPlatform = useMemo(() => {
     if (cameraPlatform) return cameraPlatform;
     if (typeof process !== 'undefined') {
@@ -281,6 +284,7 @@ function ActiveAppShell({
           <HomeScreen
             clock={clock}
             onAddMoment={() => setActiveRoute('camera')}
+            onOpenArchive={() => setActiveRoute('archive')}
             runtimeClient={runtimeClient}
           />
         ) : activeRoute === 'settings' ? (
@@ -298,6 +302,8 @@ function ActiveAppShell({
         ) : activeRoute === 'camera' ? (
           <CameraCaptureScreen
             onRecordClip={() => setActiveRoute('video')}
+            onOpenArchive={() => setActiveRoute('archive')}
+            revealState={revealState}
             platform={resolvedCameraPlatform}
           />
         ) : activeRoute === 'video' ? (
@@ -1091,10 +1097,12 @@ function GroupCreateScreen({
 function HomeScreen({
   clock,
   onAddMoment,
+  onOpenArchive,
   runtimeClient,
 }: {
   clock: () => number;
   onAddMoment: () => void;
+  onOpenArchive: () => void;
   runtimeClient: RuntimeClient | null;
 }) {
   return (
@@ -1110,7 +1118,7 @@ function HomeScreen({
 
       <DemoProfilePicker />
 
-      <CapsuleSummary clock={clock} />
+      <CapsuleSummary clock={clock} onAddMoment={onAddMoment} onOpenArchive={onOpenArchive} />
 
       <View style={styles.section}>
         <Text style={styles.label}>SEALED MOMENTS</Text>
@@ -1128,14 +1136,6 @@ function HomeScreen({
         </View>
       </View>
 
-      <Pressable
-        accessibilityLabel="Add a moment"
-        accessibilityRole="button"
-        onPress={onAddMoment}
-        style={styles.primaryButton}
-      >
-        <Text style={styles.primaryButtonText}>Add a moment</Text>
-      </Pressable>
       <Text style={styles.helperText} testID="home-content-end">
         Camera capture stays local. Choose a capture type on the Camera screen.
       </Text>

@@ -1,6 +1,6 @@
 export const MAX_CLIP_DURATION_SECONDS = 15;
 
-export type ClipSource = 'camera' | 'demo-fixture';
+export type ClipSource = 'camera' | 'demo-fixture' | 'file';
 
 export interface RecordedClip {
   sourceUri: string;

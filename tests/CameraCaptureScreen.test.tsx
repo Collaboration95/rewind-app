@@ -61,6 +61,35 @@ async function screen(
 }
 
 describe('CameraCaptureScreen', () => {
+  it('offers a labelled image file fallback when live camera support is unavailable', async () => {
+    const platform: CameraPlatform = {
+      captureStill: jest.fn(),
+      getCapabilities: jest
+        .fn()
+        .mockResolvedValue({ camera: 'unsupported', microphone: 'supported' }),
+      getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      kind: 'expo',
+      openSettings: jest.fn().mockResolvedValue(undefined),
+      pickStillFile: jest.fn().mockResolvedValue({
+        format: 'jpg',
+        height: 900,
+        source: 'file' as const,
+        sourceUri: 'blob:test-image',
+        width: 1200,
+      }),
+      requestPermissions: jest.fn(),
+      supportsFileFallback: true,
+      supportsLivePreview: true,
+    };
+    const result = await screen(platform);
+
+    await result.findByTestId('camera-unsupported');
+    expect(result.queryByRole('button', { name: 'Take still image' })).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Choose an image file' }));
+    await result.findByTestId('camera-preview-panel');
+    expect(platform.pickStillFile).toHaveBeenCalledTimes(1);
+  });
+
   it('shows the ready state, then fixture preview and metadata-only acceptance', async () => {
     const files = new InMemoryCaptureFileStore();
     const metadata = new InMemoryImageMetadataStore();
@@ -106,11 +135,11 @@ describe('CameraCaptureScreen', () => {
 
   it.each([
     [
-      'capability-undecided',
+      'temporarily-unavailable',
       { camera: 'undecided' as const, microphone: 'supported' as const },
       { camera: 'granted' as const, microphone: 'granted' as const },
-      'camera-capability-undecided',
-      'Camera availability needs checking',
+      'camera-temporarily-unavailable',
+      'Camera is temporarily unavailable',
     ],
     [
       'unsupported',

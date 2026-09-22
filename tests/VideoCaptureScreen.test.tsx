@@ -62,6 +62,20 @@ function videoPlatform(permissions: PermissionSnapshot): TestVideoPlatform {
   };
 }
 
+function fileFallbackPlatform(
+  permissions: PermissionSnapshot = { camera: 'granted', microphone: 'granted' },
+): TestVideoPlatform {
+  return {
+    ...videoPlatform(permissions),
+    getCapabilities: jest
+      .fn()
+      .mockResolvedValue({ camera: 'unsupported', microphone: 'unsupported' }),
+    pickVideoFile: jest.fn().mockResolvedValue({ ...clip, source: 'file' as const }),
+    supportsFileFallback: true,
+    supportsVideoRecording: false,
+  };
+}
+
 const demoSession: DemoSession = {
   accessKind: 'demo',
   actor: { displayName: 'Amber', isSynthetic: true, memberId: 'demo-1' },
@@ -145,6 +159,35 @@ async function renderReviewWithRuntime(videoPlatform: TestVideoPlatform, client:
 }
 
 describe('VideoCaptureScreen', () => {
+  it('distinguishes denied access from a temporary capability outage', async () => {
+    const denied = await render(
+      <VideoCaptureScreen platform={videoPlatform({ camera: 'denied', microphone: 'granted' })} />,
+    );
+    await denied.findByTestId('video-permission-denied');
+    expect(denied.queryByTestId('video-record')).toBeNull();
+
+    const temporary = videoPlatform({ camera: 'granted', microphone: 'granted' });
+    (temporary.getCapabilities as jest.Mock).mockResolvedValue({
+      camera: 'undecided',
+      microphone: 'supported',
+    });
+    const temporaryResult = await render(<VideoCaptureScreen platform={temporary} />);
+    await temporaryResult.findByTestId('video-temporarily-unavailable');
+    expect(temporaryResult.queryByTestId('video-record')).toBeNull();
+  });
+
+  it('offers a labelled video file fallback without exposing unsupported recording', async () => {
+    const platform = fileFallbackPlatform();
+    const result = await render(<VideoCaptureScreen platform={platform} />);
+
+    await result.findByTestId('video-unsupported');
+    expect(result.queryByTestId('video-record')).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
+    await result.findByTestId('video-review');
+    expect(platform.pickVideoFile).toHaveBeenCalledTimes(1);
+    expect(result.getByText(/FILE FALLBACK · selected locally/)).toBeTruthy();
+  });
+
   it('offers Open Settings for permanently blocked camera or microphone access', async () => {
     const platform = videoPlatform({ camera: 'blocked', microphone: 'granted' });
     const result = await render(<VideoCaptureScreen platform={platform} />);

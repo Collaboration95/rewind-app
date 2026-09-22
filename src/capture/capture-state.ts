@@ -8,7 +8,7 @@ import type {
 
 export type CaptureStatus =
   | 'checking'
-  | 'capability-undecided'
+  | 'temporarily-unavailable'
   | 'unsupported'
   | 'permission-undecided'
   | 'permission-denied'
@@ -49,7 +49,7 @@ export function cameraAccessStatus(
 > {
   const capabilityStatus = firstCapabilityStatus(capabilities.camera, capabilities.microphone);
   if (capabilityStatus === 'unsupported') return 'unsupported';
-  if (capabilityStatus === 'undecided') return 'capability-undecided';
+  if (capabilityStatus === 'undecided') return 'temporarily-unavailable';
 
   const permissionStatus = firstPermissionStatus(permissions.camera, permissions.microphone);
   if (permissionStatus === 'blocked') return 'permission-blocked';
