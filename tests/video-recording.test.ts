@@ -9,6 +9,7 @@ import type { RecordedClip } from '../src/domain/video';
 const clip: RecordedClip = {
   durationSeconds: 12,
   format: 'mp4',
+  mimeType: 'video/mp4',
   hasAudio: true,
   height: 1280,
   source: 'camera',

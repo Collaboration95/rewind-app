@@ -17,7 +17,11 @@ import {
   useOptionalContributionStatus,
   type ContributionStatus,
 } from './contribution-status';
-import { BoundedVideoRecordingSession, type VideoRecordingPlatform } from './video-recording';
+import {
+  BoundedVideoRecordingSession,
+  validateRecordedClip,
+  type VideoRecordingPlatform,
+} from './video-recording';
 import { ClipReviewSession, InMemoryPendingClipMetadataStore } from './video-review';
 import {
   ExpoCameraPlatform,
@@ -172,8 +176,8 @@ export function VideoCaptureScreen({
   const recorderRef = useRef(recorder);
   const uploadSessionRef = useRef(uploadSession);
   const clipRef = useRef<RecordedClip | null>(clip);
+  const reviewRef = useRef<ClipReviewSession | null>(review);
   const activeUploadRef = useRef(false);
-  const processingSucceededRef = useRef(false);
   const mountedRef = useRef(true);
   const captureLeftRef = useRef(false);
   useEffect(() => {
@@ -185,8 +189,57 @@ export function VideoCaptureScreen({
   useEffect(() => {
     clipRef.current = clip;
   }, [clip]);
+  useEffect(() => {
+    reviewRef.current = review;
+  }, [review]);
 
   const isCaptureActive = useCallback(() => mountedRef.current && !captureLeftRef.current, []);
+  const releaseOwnedClip = useCallback(async (ownedClip: RecordedClip | null): Promise<void> => {
+    if (!ownedClip) return;
+    if (clipRef.current?.sourceUri === ownedClip.sourceUri) clipRef.current = null;
+    await removeManagedRecordedClip(ownedClip.sourceUri);
+  }, []);
+
+  const replaceClip = useCallback(
+    async (selected: RecordedClip): Promise<boolean> => {
+      try {
+        validateRecordedClip(selected);
+      } catch (validationError) {
+        await removeManagedRecordedClip(selected.sourceUri).catch(() => undefined);
+        throw validationError;
+      }
+      if (!isCaptureActive()) {
+        await removeManagedRecordedClip(selected.sourceUri);
+        return false;
+      }
+
+      const previousClip = clipRef.current;
+      try {
+        await reviewRef.current?.retake();
+        if (previousClip && previousClip.sourceUri !== selected.sourceUri) {
+          await releaseOwnedClip(previousClip);
+        }
+      } catch (cleanupError) {
+        await removeManagedRecordedClip(selected.sourceUri).catch(() => undefined);
+        throw cleanupError;
+      }
+      if (!isCaptureActive()) {
+        await removeManagedRecordedClip(selected.sourceUri);
+        return false;
+      }
+
+      const nextReview = new ClipReviewSession(selected, reviewStore);
+      clipRef.current = selected;
+      reviewRef.current = nextReview;
+      setClip(selected);
+      setReview(nextReview);
+      setStartText('0');
+      setEndText(String(selected.durationSeconds));
+      setMode('soft-focus');
+      return true;
+    },
+    [isCaptureActive, releaseOwnedClip, reviewStore],
+  );
   const cancelActiveWork = useCallback((): Promise<void> => {
     if (captureLeftRef.current) return Promise.resolve();
     captureLeftRef.current = true;
@@ -201,11 +254,12 @@ export function VideoCaptureScreen({
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      const currentClip = clipRef.current;
+      clipRef.current = null;
+      reviewRef.current = null;
       void cancelActiveWork().finally(() => {
-        const sourceUri = clipRef.current?.sourceUri;
-        if (sourceUri && processingSucceededRef.current) {
-          void removeManagedRecordedClip(sourceUri).catch(() => undefined);
-        }
+        if (currentClip)
+          void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
       });
     };
   }, [cancelActiveWork]);
@@ -308,13 +362,7 @@ export function VideoCaptureScreen({
     setElapsedSeconds(0);
     try {
       const recorded = await recorder.start();
-      if (!isCaptureActive()) return;
-      const nextReview = new ClipReviewSession(recorded, reviewStore);
-      setClip(recorded);
-      setReview(nextReview);
-      setStartText('0');
-      setEndText(String(recorded.durationSeconds));
-      setMode('soft-focus');
+      if (!(await replaceClip(recorded))) return;
       setRecording(false);
       setRecordingStartedAt(null);
     } catch (recordingError) {
@@ -334,13 +382,7 @@ export function VideoCaptureScreen({
     setError(null);
     try {
       const selected = await platform.pickVideoFile();
-      if (!isCaptureActive()) return;
-      const nextReview = new ClipReviewSession(selected, reviewStore);
-      setClip(selected);
-      setReview(nextReview);
-      setStartText('0');
-      setEndText(String(selected.durationSeconds));
-      setMode('soft-focus');
+      await replaceClip(selected);
     } catch (fileError) {
       if (!isCaptureActive()) return;
       setError(
@@ -379,7 +421,7 @@ export function VideoCaptureScreen({
     await review?.retake();
     if (!isCaptureActive()) return;
     try {
-      if (currentClip) await removeManagedRecordedClip(currentClip.sourceUri);
+      if (currentClip) await releaseOwnedClip(currentClip);
     } catch {
       setError('The clip could not be removed from local storage. Try again.');
       return;
@@ -474,14 +516,28 @@ export function VideoCaptureScreen({
       );
       return;
     }
+    try {
+      validateRecordedClip(clip);
+    } catch (validationError) {
+      setError(
+        validationError instanceof Error
+          ? validationError.message
+          : 'The selected clip metadata could not be verified.',
+      );
+      return;
+    }
+    if (!clip.hasAudio || clip.mimeType !== 'video/mp4') {
+      setError('The selected clip must be a verified MP4 with audio.');
+      return;
+    }
     const reviewMetadata = review.getReview();
     const input: ClipUploadInput = {
       byteLength: clip.byteLength ?? 0,
       durationSeconds: reviewMetadata.endSeconds - reviewMetadata.startSeconds,
-      hasAudio: true,
+      hasAudio: clip.hasAudio,
       height: clip.height,
       idempotencyKey: `clip-${Date.now()}`,
-      mimeType: 'video/mp4',
+      mimeType: clip.mimeType,
       mode: reviewMetadata.mode,
       sourceUri: clip.sourceUri,
       sourceDurationSeconds: reviewMetadata.durationSeconds,
@@ -509,9 +565,8 @@ export function VideoCaptureScreen({
       });
       const processed = await processUploaded(uploaded);
       if (processed.status === 'ready') {
-        processingSucceededRef.current = true;
         try {
-          await removeManagedRecordedClip(clip.sourceUri);
+          await releaseOwnedClip(clip);
         } catch {
           setError('The clip is processed, but its local cache file could not be removed.');
         }
@@ -551,10 +606,9 @@ export function VideoCaptureScreen({
       if (retried) {
         const processed = await processUploaded(retried);
         if (processed.status === 'ready') {
-          processingSucceededRef.current = true;
           if (clip) {
             try {
-              await removeManagedRecordedClip(clip.sourceUri);
+              await releaseOwnedClip(clip);
             } catch {
               setError('The clip is sealed, but its local cache file could not be removed.');
             }
@@ -600,8 +654,7 @@ export function VideoCaptureScreen({
         demoSession.session.groupId,
       );
       if (!isCaptureActive()) return;
-      const processed = await processUploaded(uploaded);
-      if (processed.status === 'ready') processingSucceededRef.current = true;
+      await processUploaded(uploaded);
     } catch (syntheticError) {
       if (!isCaptureActive()) return;
       const failure = classifyContributionFailure(syntheticError);
@@ -644,6 +697,8 @@ export function VideoCaptureScreen({
 
   const leaveCapture = useCallback(() => {
     const currentClip = clipRef.current;
+    clipRef.current = null;
+    reviewRef.current = null;
     void cancelActiveWork().finally(() => {
       if (currentClip) void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
     });
@@ -677,7 +732,7 @@ export function VideoCaptureScreen({
         contributionStatus.contributionId,
       );
       const currentClip = clipRef.current;
-      if (currentClip) await removeManagedRecordedClip(currentClip.sourceUri);
+      if (currentClip) await releaseOwnedClip(currentClip);
       recorder?.reset();
       setClip(null);
       setReview(null);
@@ -715,6 +770,7 @@ export function VideoCaptureScreen({
     isCaptureActive,
     onContributionDeleted,
     recorder,
+    releaseOwnedClip,
     runtimeClient,
     setContributionStatus,
   ]);
@@ -768,7 +824,7 @@ export function VideoCaptureScreen({
             demoSession?.session
               ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
               : platform.supportsFileFallback && platform.pickVideoFile
-                ? 'Live recording is not supported here. Choose a video file with microphone audio; it remains labelled as a file contribution.'
+                ? 'Live recording is not supported here. Choose a portrait MP4 no longer than 15 seconds with verifiable audio; it remains labelled as a file contribution.'
                 : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.'
           }
         />
@@ -875,8 +931,8 @@ export function VideoCaptureScreen({
           <Text style={styles.panelTitle}>Review your clip</Text>
           <Text style={styles.body}>
             {clip.source === 'file'
-              ? `Selected file ${clip.durationSeconds.toFixed(1)} seconds · portrait · audio included`
-              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · portrait · audio included`}
+              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio verified`
+              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio included`}
           </Text>
           {clip.source === 'file' ? (
             <Text style={styles.body}>

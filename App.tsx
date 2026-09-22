@@ -20,7 +20,11 @@ import { DemoProfileProvider } from './src/profiles/DemoProfileProvider';
 import { CapsuleProvider, useCapsule } from './src/capsule/CapsuleProvider';
 import { CapsuleSummary } from './src/capsule/CapsuleSummary';
 import type { CycleRepository, DemoRevealState } from './src/domain/cycles';
-import { revealStateForCycle } from './src/domain/reveal-education';
+import {
+  revealStateForCycle,
+  revealStateForPremiere,
+  type RevealEducationState,
+} from './src/domain/reveal-education';
 import type {
   AsyncGroupRepository,
   CreateGroupInput,
@@ -261,8 +265,46 @@ function ActiveAppShell({
     inviteLink ? 'settings' : 'home',
   );
   const { retry: refreshCapsule, state: capsuleState } = useCapsule();
-  const revealState =
+  const { session } = useDemoSession();
+  const cycleRevealState =
     capsuleState.status === 'ready' ? revealStateForCycle(capsuleState.cycle) : 'locked';
+  const cycle = capsuleState.status === 'ready' ? capsuleState.cycle : null;
+  const group = capsuleState.status === 'ready' ? capsuleState.group : null;
+  const [premiereEducation, setPremiereEducation] = useState<{
+    cycleId: string;
+    state: RevealEducationState;
+  } | null>(null);
+  const revealState =
+    runtimeClient?.getPremiere &&
+    session &&
+    cycle &&
+    group &&
+    premiereEducation?.cycleId === cycle.id
+      ? premiereEducation.state
+      : cycleRevealState;
+
+  useEffect(() => {
+    const routeUsesRevealEducation =
+      activeRoute === 'home' || activeRoute === 'camera' || activeRoute === 'archive';
+    if (!routeUsesRevealEducation || !runtimeClient?.getPremiere || !session || !cycle || !group) {
+      return;
+    }
+
+    let cancelled = false;
+    void runtimeClient
+      .getPremiere(session.id, group.id, cycle.id)
+      .then((premiere) => {
+        if (!cancelled) {
+          setPremiereEducation({ cycleId: cycle.id, state: revealStateForPremiere(premiere) });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPremiereEducation(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRoute, cycle, group, runtimeClient, session]);
   const resolvedCameraPlatform = useMemo(() => {
     if (cameraPlatform) return cameraPlatform;
     if (typeof process !== 'undefined') {
@@ -285,6 +327,7 @@ function ActiveAppShell({
             clock={clock}
             onAddMoment={() => setActiveRoute('camera')}
             onOpenArchive={() => setActiveRoute('archive')}
+            revealState={revealState}
             runtimeClient={runtimeClient}
           />
         ) : activeRoute === 'settings' ? (
@@ -1098,11 +1141,13 @@ function HomeScreen({
   clock,
   onAddMoment,
   onOpenArchive,
+  revealState,
   runtimeClient,
 }: {
   clock: () => number;
   onAddMoment: () => void;
   onOpenArchive: () => void;
+  revealState: RevealEducationState;
   runtimeClient: RuntimeClient | null;
 }) {
   return (
@@ -1118,7 +1163,12 @@ function HomeScreen({
 
       <DemoProfilePicker />
 
-      <CapsuleSummary clock={clock} onAddMoment={onAddMoment} onOpenArchive={onOpenArchive} />
+      <CapsuleSummary
+        clock={clock}
+        onAddMoment={onAddMoment}
+        onOpenArchive={onOpenArchive}
+        revealState={revealState}
+      />
 
       <View style={styles.section}>
         <Text style={styles.label}>SEALED MOMENTS</Text>

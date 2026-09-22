@@ -17,7 +17,16 @@ export const VIDEO_CACHE_FOLDER = 'rewind-clips';
 
 type BrowserVideoElement = HTMLVideoElement & {
   audioTracks?: { length: number };
+  mozHasAudio?: boolean;
+  webkitAudioDecodedByteCount?: number;
 };
+
+export interface BrowserVideoMetadata {
+  durationSeconds: number;
+  hasAudio: boolean | null;
+  height: number;
+  width: number;
+}
 
 async function chooseBrowserFile(accept: string): Promise<File> {
   if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -44,7 +53,9 @@ function createBrowserObjectUrl(file: File): string {
 }
 
 async function readImageDimensions(uri: string): Promise<{ height: number; width: number }> {
-  if (typeof Image === 'undefined') return { height: 1280, width: 720 };
+  if (typeof Image === 'undefined') {
+    throw new Error('This browser cannot inspect the selected image.');
+  }
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve({ height: image.naturalHeight, width: image.naturalWidth });
@@ -53,18 +64,23 @@ async function readImageDimensions(uri: string): Promise<{ height: number; width
   });
 }
 
-async function readVideoMetadata(
-  uri: string,
-): Promise<{ durationSeconds: number; hasAudio: boolean; height: number; width: number }> {
+async function readVideoMetadata(uri: string): Promise<BrowserVideoMetadata> {
   if (typeof document === 'undefined') {
-    return { durationSeconds: 1, hasAudio: true, height: 1280, width: 720 };
+    throw new Error('This browser cannot inspect the selected video.');
   }
   return new Promise((resolve, reject) => {
     const video = document.createElement('video') as BrowserVideoElement;
     video.preload = 'metadata';
     video.onloadedmetadata = () => {
       const durationSeconds = Number.isFinite(video.duration) ? video.duration : 0;
-      const hasAudio = video.audioTracks ? video.audioTracks.length > 0 : true;
+      const hasAudio = video.audioTracks
+        ? video.audioTracks.length > 0
+        : typeof video.mozHasAudio === 'boolean'
+          ? video.mozHasAudio
+          : typeof video.webkitAudioDecodedByteCount === 'number' &&
+              video.webkitAudioDecodedByteCount > 0
+            ? true
+            : null;
       if (durationSeconds <= 0) {
         reject(new Error('The selected video has no usable duration.'));
         return;
@@ -72,8 +88,8 @@ async function readVideoMetadata(
       resolve({
         durationSeconds,
         hasAudio,
-        height: video.videoHeight || 1280,
-        width: video.videoWidth || 720,
+        height: video.videoHeight,
+        width: video.videoWidth,
       });
     };
     video.onerror = () => reject(new Error('The selected video could not be opened.'));
@@ -173,6 +189,11 @@ export interface ExpoCameraPlatformOptions {
   getCameraRef: () => CameraViewHandle | null;
   /** Allows deterministic capability responses for simulator/device probes. */
   capabilityProbe?: () => Promise<CapabilitySnapshot>;
+  /** Browser media seams keep file validation deterministic in adapter tests. */
+  browserFilePicker?: (accept: string) => Promise<File>;
+  browserImageDimensionsReader?: (uri: string) => Promise<{ height: number; width: number }>;
+  browserObjectUrlFactory?: (file: File) => string;
+  browserVideoMetadataReader?: (uri: string) => Promise<BrowserVideoMetadata>;
 }
 
 /** Expo SDK 57 adapter. No Expo or React Native types cross the capture port. */
@@ -270,10 +291,17 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async pickStillFile(): Promise<PlatformStillImage> {
-    const file = await chooseBrowserFile('image/*');
-    const sourceUri = createBrowserObjectUrl(file);
+    const file = await (this.options.browserFilePicker ?? chooseBrowserFile)(
+      '.jpg,.jpeg,.png,image/jpeg,image/png',
+    );
+    if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
+      throw new Error('Choose a JPEG or PNG image file.');
+    }
+    const sourceUri = (this.options.browserObjectUrlFactory ?? createBrowserObjectUrl)(file);
     try {
-      const dimensions = await readImageDimensions(sourceUri);
+      const dimensions = await (this.options.browserImageDimensionsReader ?? readImageDimensions)(
+        sourceUri,
+      );
       return {
         format: file.type === 'image/png' ? 'png' : 'jpg',
         height: dimensions.height,
@@ -288,16 +316,41 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async pickVideoFile(): Promise<RecordedClip> {
-    const file = await chooseBrowserFile('video/mp4,video/*');
-    const sourceUri = createBrowserObjectUrl(file);
+    const file = await (this.options.browserFilePicker ?? chooseBrowserFile)('.mp4,video/mp4');
+    if (file.type.toLowerCase() !== 'video/mp4') {
+      throw new Error('Choose an MP4 video file.');
+    }
+    const sourceUri = (this.options.browserObjectUrlFactory ?? createBrowserObjectUrl)(file);
     try {
-      const metadata = await readVideoMetadata(sourceUri);
+      const metadata = await (this.options.browserVideoMetadataReader ?? readVideoMetadata)(
+        sourceUri,
+      );
+      if (metadata.durationSeconds > 15) {
+        throw new Error('Choose an MP4 video that is 15 seconds or shorter.');
+      }
+      if (
+        !Number.isInteger(metadata.width) ||
+        !Number.isInteger(metadata.height) ||
+        metadata.width <= 0 ||
+        metadata.height <= 0 ||
+        metadata.width >= metadata.height
+      ) {
+        throw new Error('Choose a portrait MP4 video.');
+      }
+      if (metadata.hasAudio !== true) {
+        throw new Error(
+          metadata.hasAudio === false
+            ? 'Choose an MP4 video that includes audio.'
+            : 'This browser could not verify audio in that MP4. Choose another file or use a physical device.',
+        );
+      }
       return {
         byteLength: file.size,
-        durationSeconds: Math.min(15, metadata.durationSeconds),
+        durationSeconds: metadata.durationSeconds,
         format: 'mp4',
-        hasAudio: metadata.hasAudio,
+        hasAudio: true,
         height: metadata.height,
+        mimeType: 'video/mp4',
         source: 'file',
         sourceUri,
         width: metadata.width,
@@ -326,6 +379,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
     return {
       sourceUri: managed.uri,
       format: 'mp4',
+      mimeType: 'video/mp4',
       width: video.width ?? 720,
       height: video.height ?? 1280,
       durationSeconds: Math.min(maxDurationSeconds, video.duration ?? measuredDuration),

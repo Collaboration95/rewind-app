@@ -5,6 +5,7 @@ export type ClipSource = 'camera' | 'demo-fixture' | 'file';
 export interface RecordedClip {
   sourceUri: string;
   format: 'mp4';
+  mimeType: 'video/mp4';
   width: number;
   height: number;
   durationSeconds: number;

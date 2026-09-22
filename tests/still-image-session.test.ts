@@ -155,4 +155,110 @@ describe('still image session lifecycle', () => {
     expect(files.has(preview.previewUri)).toBe(false);
     expect(session.getActivePreview()).toBeNull();
   });
+
+  it('releases the original browser file URL after making the managed still copy', async () => {
+    const revokeObjectURL = jest.fn();
+    const previousRevoke = URL.revokeObjectURL;
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    const session = new StillImageCaptureSession({
+      createId: () => 'file-original',
+      fileStore: new InMemoryCaptureFileStore(),
+      metadataStore: new InMemoryImageMetadataStore(),
+      platform: platform(),
+    });
+
+    try {
+      await session.captureImage({
+        format: 'jpg',
+        height: 1280,
+        source: 'file',
+        sourceUri: 'blob:selected-still',
+        width: 720,
+      });
+
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:selected-still');
+    } finally {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: previousRevoke,
+      });
+    }
+  });
+
+  it('releases the original browser file URL when the managed still copy fails', async () => {
+    const revokeObjectURL = jest.fn();
+    const previousRevoke = URL.revokeObjectURL;
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    const files = new InMemoryCaptureFileStore();
+    jest.spyOn(files, 'copyToManagedCache').mockRejectedValue(new Error('copy failed'));
+    const session = new StillImageCaptureSession({
+      fileStore: files,
+      metadataStore: new InMemoryImageMetadataStore(),
+      platform: platform(),
+    });
+
+    try {
+      await expect(
+        session.captureImage({
+          format: 'png',
+          height: 1280,
+          source: 'file',
+          sourceUri: 'blob:failed-still',
+          width: 720,
+        }),
+      ).rejects.toThrow('copy failed');
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:failed-still');
+    } finally {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: previousRevoke,
+      });
+    }
+  });
+
+  it('releases original and managed browser URLs when disposal races a file selection', async () => {
+    const revokeObjectURL = jest.fn();
+    const previousRevoke = URL.revokeObjectURL;
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    const files = new InMemoryCaptureFileStore();
+    let finishCopy!: () => void;
+    const copy = jest.spyOn(files, 'copyToManagedCache').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishCopy = () => resolve({ byteLength: 12, uri: 'blob:managed-still' });
+        }),
+    );
+    const remove = jest.spyOn(files, 'remove');
+    const session = new StillImageCaptureSession({
+      fileStore: files,
+      metadataStore: new InMemoryImageMetadataStore(),
+      platform: platform(),
+    });
+
+    try {
+      const selection = session.captureImage({
+        format: 'jpg',
+        height: 1280,
+        source: 'file',
+        sourceUri: 'blob:original-still',
+        width: 720,
+      });
+      await Promise.resolve();
+      expect(copy).toHaveBeenCalledTimes(1);
+      await session.dispose();
+      finishCopy();
+
+      await expect(selection).rejects.toThrow('cancelled before preview');
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:original-still');
+      expect(remove).toHaveBeenCalledWith('blob:managed-still');
+      expect(session.getActivePreview()).toBeNull();
+    } finally {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: previousRevoke,
+      });
+    }
+  });
 });

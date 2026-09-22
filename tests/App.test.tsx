@@ -8,6 +8,7 @@ import { SELECTION_KEY } from '../src/data/selection-store';
 import type { SelectionStore } from '../src/domain/profiles';
 import { DemoProfilePicker } from '../src/profiles/DemoProfilePicker';
 import { DemoProfileProvider } from '../src/profiles/DemoProfileProvider';
+import { DemoCameraPlatform } from '../src/capture/platform';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
@@ -225,6 +226,49 @@ describe('Rewind Home start screen', () => {
     expect(result.getByRole('button', { name: 'Check premiere again' })).toBeTruthy();
     expect(result.queryByTestId('archive-video-player')).toBeNull();
   });
+
+  it.each([
+    {
+      archiveTestId: 'archive-delayed',
+      educationState: 'delayed',
+      premiere: { state: 'delayed' as const, cycleId: 'demo-cycle' },
+      released: false,
+    },
+    {
+      archiveTestId: 'archive-premiere-ready',
+      educationState: 'released',
+      premiere: {
+        state: 'ready' as const,
+        cycleId: 'demo-cycle',
+        filmId: 'demo-film',
+        playbackUrl: 'http://localhost:8787/films/demo-film/play?sessionId=demo',
+      },
+      released: true,
+    },
+  ])(
+    'drives Home and Capture $educationState education from the actual premiere route state',
+    async ({ archiveTestId, educationState, premiere, released }) => {
+      const client = runtimeClientWithPremiere(premiere);
+      const result = await render(
+        <App cameraPlatform={new DemoCameraPlatform()} runtimeClient={client} />,
+      );
+
+      await result.findByTestId(`home-reveal-${educationState}`);
+      expect(result.getByRole('button', { name: 'Open Archive' })).toBeTruthy();
+      expect(result.queryByTestId('archive-video-player')).toBeNull();
+      expect(result.queryAllByRole('image')).toHaveLength(0);
+
+      await fireEvent.press(result.getByRole('tab', { name: 'Camera' }));
+      await result.findByTestId(`capture-reveal-${educationState}`);
+      expect(result.getByRole('button', { name: 'Open Archive' })).toBeTruthy();
+      expect(result.queryByTestId('archive-video-player')).toBeNull();
+
+      await fireEvent.press(result.getByRole('button', { name: 'Open Archive' }));
+      await result.findByTestId(archiveTestId);
+      if (released) expect(result.getByTestId('archive-video-player')).toBeTruthy();
+      else expect(result.queryByTestId('archive-video-player')).toBeNull();
+    },
+  );
 
   it('lists only released media and presents explicit archive empty states', async () => {
     const client = runtimeClientWithPremiere({ state: 'locked', cycleId: 'demo-cycle' });

@@ -38,6 +38,7 @@ const clip: RecordedClip = {
   byteLength: 2048,
   durationSeconds: 8,
   format: 'mp4',
+  mimeType: 'video/mp4',
   hasAudio: true,
   height: 1280,
   source: 'camera',
@@ -186,6 +187,110 @@ describe('VideoCaptureScreen', () => {
     await result.findByTestId('video-review');
     expect(platform.pickVideoFile).toHaveBeenCalledTimes(1);
     expect(result.getByText(/FILE FALLBACK · selected locally/)).toBeTruthy();
+    expect(
+      result.getByText(/Selected MP4 8.0 seconds · 720 × 1280 portrait · audio verified/),
+    ).toBeTruthy();
+  });
+
+  it('releases the previous browser video on replacement and the current one on unmount', async () => {
+    const previousRevoke = URL.revokeObjectURL;
+    const revokeObjectURL = jest.fn();
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    const platform = fileFallbackPlatform();
+    (platform.pickVideoFile as jest.Mock)
+      .mockResolvedValueOnce({ ...clip, source: 'file', sourceUri: 'blob:selected-one' })
+      .mockResolvedValueOnce({ ...clip, source: 'file', sourceUri: 'blob:selected-two' });
+
+    try {
+      const result = await render(<VideoCaptureScreen platform={platform} />);
+      await result.findByTestId('video-unsupported');
+      await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
+      await result.findByTestId('video-review');
+      await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
+      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:selected-one'));
+      expect(revokeObjectURL).not.toHaveBeenCalledWith('blob:selected-two');
+
+      await result.unmount();
+      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:selected-two'));
+      expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: previousRevoke,
+      });
+    }
+  });
+
+  it('releases a selected browser video when defensive validation fails', async () => {
+    const previousRevoke = URL.revokeObjectURL;
+    const revokeObjectURL = jest.fn();
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    const platform = fileFallbackPlatform();
+    (platform.pickVideoFile as jest.Mock).mockResolvedValue({
+      ...clip,
+      hasAudio: false,
+      source: 'file',
+      sourceUri: 'blob:invalid-selected-video',
+    });
+
+    try {
+      const result = await render(<VideoCaptureScreen platform={platform} />);
+      await result.findByTestId('video-unsupported');
+      await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
+      await result.findByText('Microphone audio is required for a clip.');
+      expect(result.queryByTestId('video-review')).toBeNull();
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:invalid-selected-video');
+    } finally {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: previousRevoke,
+      });
+    }
+  });
+
+  it('retains a failed file for retry, then releases it when the route unmounts', async () => {
+    const previousRevoke = URL.revokeObjectURL;
+    const revokeObjectURL = jest.fn();
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    const platform = fileFallbackPlatform();
+    (platform.pickVideoFile as jest.Mock).mockResolvedValue({
+      ...clip,
+      source: 'file',
+      sourceUri: 'blob:failed-upload-video',
+    });
+    const client = runtimeClient({
+      uploadClip: jest.fn().mockRejectedValue(new Error('runtime temporarily unavailable')),
+    });
+
+    try {
+      const result = await render(
+        <DemoSessionProvider
+          clock={() => new Date('2026-09-11T12:00:00.000Z')}
+          runtimeClient={client}
+          store={demoSessionStore()}
+        >
+          <SessionReadyMarker />
+          <VideoCaptureScreen platform={platform} runtimeClient={client} />
+        </DemoSessionProvider>,
+      );
+      await result.findByTestId('demo-session-ready');
+      await result.findByTestId('video-unsupported');
+      await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
+      await result.findByTestId('video-review');
+      await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+      await result.findByText('runtime temporarily unavailable');
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+
+      await result.unmount();
+      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:failed-upload-video'));
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: previousRevoke,
+      });
+    }
   });
 
   it('offers Open Settings for permanently blocked camera or microphone access', async () => {
@@ -290,7 +395,9 @@ describe('VideoCaptureScreen', () => {
     resolveRecording(clip);
 
     await result.findByTestId('video-review');
-    expect(result.getByText('Recorded 8.0 seconds · portrait · audio included')).toBeTruthy();
+    expect(
+      result.getByText('Recorded 8.0 seconds · 720 × 1280 portrait · audio included'),
+    ).toBeTruthy();
     expect(platform.recordClip).toHaveBeenCalledWith(15);
   });
 
@@ -332,10 +439,14 @@ describe('VideoCaptureScreen', () => {
       'demo-group',
       expect.objectContaining({
         durationSeconds: 4,
+        hasAudio: true,
+        height: 1280,
+        mimeType: 'video/mp4',
         mode: 'high-contrast',
         sourceDurationSeconds: 8,
         trimEndSeconds: 5,
         trimStartSeconds: 1,
+        width: 720,
       }),
     );
     expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');

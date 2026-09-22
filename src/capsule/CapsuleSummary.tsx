@@ -4,7 +4,7 @@ import { useCapsule } from './CapsuleProvider';
 import { useCycleCountdown } from './cycle-time';
 import { RevealEducationPanel } from './RevealEducationPanel';
 import type { Cycle } from '../domain/cycles';
-import { revealStateForCycle } from '../domain/reveal-education';
+import { revealStateForCycle, type RevealEducationState } from '../domain/reveal-education';
 import { COLORS } from '../theme';
 import {
   ContributionStatusPanel,
@@ -16,10 +16,12 @@ export function CapsuleSummary({
   clock = Date.now,
   onAddMoment,
   onOpenArchive,
+  revealState,
 }: {
   clock?: () => number;
   onAddMoment?: () => void;
   onOpenArchive?: () => void;
+  revealState?: RevealEducationState;
 }) {
   const { state, retry } = useCapsule();
   const contributionStatus = useOptionalContributionStatus()?.status ?? null;
@@ -88,6 +90,7 @@ export function CapsuleSummary({
       groupName={state.group.name}
       onAddMoment={onAddMoment}
       onOpenArchive={onOpenArchive}
+      revealState={revealState}
     />
   );
 }
@@ -99,6 +102,7 @@ function ReadyCapsuleSummary({
   groupName,
   onAddMoment,
   onOpenArchive,
+  revealState: revealStateProp,
 }: {
   clock: () => number;
   contributionStatus: ContributionStatus | null;
@@ -106,9 +110,10 @@ function ReadyCapsuleSummary({
   groupName: string;
   onAddMoment?: () => void;
   onOpenArchive?: () => void;
+  revealState?: RevealEducationState;
 }) {
   const countdown = useCycleCountdown(cycle, clock);
-  const revealState = revealStateForCycle(cycle);
+  const revealState = revealStateProp ?? revealStateForCycle(cycle);
 
   const { countUsed, secondsUsed } = cycle.contributionUsage;
   const remainingCount = Math.max(0, cycle.quota.maxCount - countUsed);
