@@ -2,7 +2,8 @@ import type { RewindDatabase } from './db';
 import { isMember, isOwner } from './db';
 import type { DemoRequestIdentity } from './session/request';
 
-export type ProtectedResource = 'group' | 'message' | 'contribution' | 'clip' | 'film' | 'download';
+export type ProtectedResource =
+  'group' | 'message' | 'contribution' | 'clip' | 'film' | 'download' | 'job';
 
 export interface AllowedDecision {
   allowed: true;

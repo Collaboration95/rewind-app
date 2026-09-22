@@ -28,6 +28,7 @@ const MIGRATIONS = [
   { version: 11, key: 'realtime-messages-v1', fileName: '006-realtime-messages.sql' },
   { version: 12, key: 'chat-replies-reactions-v1', fileName: '007-chat-replies-reactions.sql' },
   { version: 13, key: 'compilation-retry-v1', fileName: '013-compilation-retry.sql' },
+  { version: 14, key: 'queue-observability-v1', fileName: '014-queue-observability.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -155,6 +156,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyChatRepliesReactionsMigration(database);
       } else if (migration.key === 'compilation-retry-v1') {
         applyCompilationRetryMigration(database);
+      } else if (migration.key === 'queue-observability-v1') {
+        applyQueueObservabilityMigration(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -209,6 +212,7 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'contribution-deletion-v1') return !contributionDeletionSchemaReady(database);
   if (key === 'chat-replies-reactions-v1') return !chatRepliesReactionsSchemaReady(database);
   if (key === 'compilation-retry-v1') return !compilationRetrySchemaReady(database);
+  if (key === 'queue-observability-v1') return !queueObservabilitySchemaReady(database);
   return false;
 }
 
@@ -278,6 +282,18 @@ function compilationJobsSchemaReady(database: RewindDatabase): boolean {
 
 function compilationRetrySchemaReady(database: RewindDatabase): boolean {
   return hasColumns(database, 'media_jobs', ['attempt_count']);
+}
+
+function queueObservabilitySchemaReady(database: RewindDatabase): boolean {
+  if (!hasColumns(database, 'media_jobs', ['updated_at', 'failed_at'])) return false;
+  return [
+    ['media_jobs_queue_group_idx', ['group_id', 'created_at', 'id']],
+    ['media_jobs_queue_group_kind_idx', ['group_id', 'kind', 'created_at', 'id']],
+    ['media_jobs_queue_group_status_idx', ['group_id', 'status', 'created_at', 'id']],
+    ['media_jobs_queue_group_kind_status_idx', ['group_id', 'kind', 'status', 'created_at', 'id']],
+  ].every(([name, columns]) =>
+    indexMatches(database, String(name), false, columns as string[], 'none', 'media_jobs'),
+  );
 }
 
 interface CompilationInputForeignKey {
@@ -970,6 +986,38 @@ function applyCompilationRetryMigration(database: RewindDatabase): void {
   }
 }
 
+/** Apply queue read-model timestamps and filter/order indexes defensively. */
+function applyQueueObservabilityMigration(database: RewindDatabase): void {
+  const columns = tableColumns(database, 'media_jobs');
+  if (!columns.has('updated_at'))
+    database.exec('ALTER TABLE media_jobs ADD COLUMN updated_at TEXT');
+  if (!columns.has('failed_at')) database.exec('ALTER TABLE media_jobs ADD COLUMN failed_at TEXT');
+  database.exec(
+    `UPDATE media_jobs
+        SET updated_at = COALESCE(updated_at, processing_started_at, created_at)
+      WHERE updated_at IS NULL`,
+  );
+  database.exec(
+    `UPDATE media_jobs
+        SET failed_at = COALESCE(failed_at, updated_at, created_at)
+      WHERE status = 'failed' AND failed_at IS NULL`,
+  );
+
+  const indexes = [
+    ['media_jobs_queue_group_idx', ['group_id', 'created_at', 'id']],
+    ['media_jobs_queue_group_kind_idx', ['group_id', 'kind', 'created_at', 'id']],
+    ['media_jobs_queue_group_status_idx', ['group_id', 'status', 'created_at', 'id']],
+    ['media_jobs_queue_group_kind_status_idx', ['group_id', 'kind', 'status', 'created_at', 'id']],
+  ] as const;
+  for (const [name, columnsToIndex] of indexes) {
+    if (indexMatches(database, name, false, [...columnsToIndex], 'none', 'media_jobs')) continue;
+    database.exec(`DROP INDEX IF EXISTS ${quoteIdentifier(name)}`);
+    database.exec(
+      `CREATE INDEX ${quoteIdentifier(name)} ON media_jobs (${columnsToIndex.join(', ')})`,
+    );
+  }
+}
+
 function markMigration(database: RewindDatabase, key: string): void {
   database
     .prepare(
@@ -1154,19 +1202,36 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
         FIXTURE.contribution.durationSeconds,
         now,
       );
-    const mediaInsert = database.prepare(
-      'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, output_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    );
+    const mediaInsert = tableColumns(database, 'media_jobs').has('updated_at')
+      ? database.prepare(
+          'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, output_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+      : database.prepare(
+          'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, output_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        );
     for (const job of FIXTURE.mediaJobs) {
-      mediaInsert.run(
-        job.id,
-        FIXTURE.group.id,
-        job.kind === 'clip' ? FIXTURE.contribution.id : null,
-        job.kind,
-        'ready',
-        null,
-        now,
-      );
+      if (tableColumns(database, 'media_jobs').has('updated_at')) {
+        mediaInsert.run(
+          job.id,
+          FIXTURE.group.id,
+          job.kind === 'clip' ? FIXTURE.contribution.id : null,
+          job.kind,
+          'ready',
+          null,
+          now,
+          now,
+        );
+      } else {
+        mediaInsert.run(
+          job.id,
+          FIXTURE.group.id,
+          job.kind === 'clip' ? FIXTURE.contribution.id : null,
+          job.kind,
+          'ready',
+          null,
+          now,
+        );
+      }
     }
     database
       .prepare(
