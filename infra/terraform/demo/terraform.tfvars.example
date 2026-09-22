@@ -13,12 +13,17 @@ cost_safety_audit_notification_topic_arn = null
 ssh_cidr                = "YOUR.PUBLIC.IP.ADDRESS/32"
 # Leave null for manual starts. Example: "cron(0 9 ? * MON-FRI *)"
 automatic_start_schedule_expression = null
-# Empty means no snapshots or global distributions are currently expected;
-# the audit still checks inventory for unexpected resources.
+# Keep the distribution allowlist empty while the optional public HTTPS
+# surface is disabled. If it is enabled, use:
+# { "rewind-demo-web" = "rewind-demo" }
+# The audit still checks inventory for unexpected resources.
 cost_safety_expected_snapshot_names = []
 cost_safety_expected_distributions  = {}
 # The lifecycle scripts override this for reviewed hibernation/recovery plans.
 demo_instance_enabled = true
+# Optional public HTTPS surface. Keep disabled unless the distribution is
+# explicitly approved; when enabled, also allowlist rewind-demo-web below.
+public_https_distribution_enabled = false
 # The audit expects a stopped instance by default. Set this to "running" only
 # when an active Demo is explicitly approved for the current Terraform state.
 cost_safety_expected_instance_state = "stopped"

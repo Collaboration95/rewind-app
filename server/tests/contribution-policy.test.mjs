@@ -38,7 +38,7 @@ async function withDatabase(run) {
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
   const database = openDatabase(config);
   try {
-    return await run({ config, database });
+    return await run({ config, database, dataDir });
   } finally {
     database.close();
     await rm(dataDir, { recursive: true, force: true });
@@ -115,7 +115,7 @@ test('upgrading a v005 database backfills the cycle-start quota ledger', async (
           .prepare('SELECT version FROM schema_migrations ORDER BY version')
           .all()
           .map((row) => row.version),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
       );
       const rows = upgraded
         .prepare(
@@ -242,7 +242,7 @@ test('a legacy media-only v6 is repaired without losing its media schema', async
           .prepare('SELECT version FROM schema_migrations ORDER BY version')
           .all()
           .map((row) => row.version),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
       );
     } finally {
       upgraded.close();

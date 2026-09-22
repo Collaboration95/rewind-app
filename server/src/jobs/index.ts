@@ -102,6 +102,9 @@ export type CompilationJobStatus = 'pending' | 'processing' | 'ready' | 'failed'
 /** Three explicit compile attempts prevent a broken cycle from retrying forever. */
 export const MAX_COMPILATION_ATTEMPTS = 3;
 
+/** A one-clip cycle gets one clearly labelled clip from its own group's archive. */
+export const ARCHIVE_FILLER_MINIMUM_CLIP_COUNT = 2;
+
 export interface CompilationJobInput {
   groupId: string;
   cycleId: string;
@@ -263,9 +266,11 @@ function reconcileCompilationJobInputsLocked(
               i.position AS position,
               CASE WHEN c.id IS NOT NULL
                     AND c.deleted_at IS NULL
-                    AND c.cycle_id = film.cycle_id
-                    AND cy.id = film.cycle_id
                     AND cy.group_id = film.group_id
+                    AND (c.cycle_id = film.cycle_id
+                      OR (c.cycle_id <> film.cycle_id
+                        AND cy.status = 'archived'
+                        AND cy.release_status = 'published'))
                     AND clip.id IS NOT NULL
                     AND clip.group_id = film.group_id
                     AND clip.kind = 'clip'
@@ -365,7 +370,7 @@ export function ensureCompilationJob(
     .get(input.cycleId, input.groupId) as { id?: string } | undefined;
   if (existingId?.id) return readCompilationJob(database, existingId.id, input.groupId);
 
-  const eligible = database
+  const currentCycleClips = database
     .prepare(
       `SELECT clip.id AS clipJobId, c.id AS contributionId
        FROM contributions c
@@ -384,6 +389,31 @@ export function ensureCompilationJob(
        ORDER BY c.created_at ASC, c.id ASC, clip.id ASC`,
     )
     .all(input.groupId, input.cycleId) as { clipJobId: string; contributionId: string }[];
+  const archiveFiller =
+    currentCycleClips.length > 0 && currentCycleClips.length < ARCHIVE_FILLER_MINIMUM_CLIP_COUNT
+      ? (database
+          .prepare(
+            `SELECT clip.id AS clipJobId, c.id AS contributionId
+             FROM contributions c
+             JOIN cycles cy ON cy.id = c.cycle_id AND cy.group_id = ?
+             JOIN media_jobs clip
+               ON clip.contribution_id = c.id AND clip.group_id = cy.group_id
+              AND clip.kind = 'clip' AND clip.status = 'ready'
+              AND clip.deleted_at IS NULL
+             WHERE c.cycle_id <> ?
+               AND cy.status = 'archived'
+               AND cy.release_status = 'published'
+               AND cy.release_published_at IS NOT NULL
+               AND c.deleted_at IS NULL
+               AND clip.source_path IS NULL
+               AND clip.output_path IS NOT NULL
+             ORDER BY cy.release_published_at DESC, c.created_at DESC, c.id DESC, clip.id DESC
+             LIMIT 1`,
+          )
+          .get(input.groupId, input.cycleId) as
+          { clipJobId: string; contributionId: string } | undefined)
+      : undefined;
+  const eligible = archiveFiller ? [...currentCycleClips, archiveFiller] : currentCycleClips;
   const createdAt = new Date(input.createdAt ?? new Date());
   if (!Number.isFinite(createdAt.getTime())) return null;
   const jobId = compilationJobId(input.groupId, input.cycleId);
@@ -392,10 +422,17 @@ export function ensureCompilationJob(
       `INSERT INTO media_jobs
         (id, group_id, contribution_id, kind, status, output_path, created_at,
          idempotency_key, cycle_id, progress, input_count, completed_count,
-         claim_generation, processing_started_at)
-       VALUES (?, ?, NULL, 'film', 'pending', NULL, ?, NULL, ?, 0, ?, 0, 0, NULL)`,
+         claim_generation, processing_started_at, updated_at)
+       VALUES (?, ?, NULL, 'film', 'pending', NULL, ?, NULL, ?, 0, ?, 0, 0, NULL, ?)`,
     )
-    .run(jobId, input.groupId, createdAt.toISOString(), input.cycleId, eligible.length);
+    .run(
+      jobId,
+      input.groupId,
+      createdAt.toISOString(),
+      input.cycleId,
+      eligible.length,
+      createdAt.toISOString(),
+    );
   const insertInput = database.prepare(
     `INSERT INTO compilation_job_inputs (job_id, clip_job_id, contribution_id, position)
      VALUES (?, ?, ?, ?)`,
@@ -496,10 +533,11 @@ export function claimCompilationJob(
       .prepare(
         `UPDATE media_jobs
          SET status = 'processing', error_code = NULL,
-             processing_started_at = ?, claim_generation = ?, attempt_count = ?
+             processing_started_at = ?, claim_generation = ?, attempt_count = ?,
+             updated_at = ?, failed_at = NULL
          WHERE id = ? AND kind = 'film' AND status IN ('pending', 'failed', 'processing')`,
       )
-      .run(now.toISOString(), generation, attemptCount, job.id);
+      .run(now.toISOString(), generation, attemptCount, now.toISOString(), job.id);
     job = readCompilationJob(database, job.id, input.groupId);
     if (!job) {
       database.exec('ROLLBACK');
@@ -558,11 +596,18 @@ export function updateCompilationJobProgress(
     const result = database
       .prepare(
         `UPDATE media_jobs
-         SET completed_count = ?, progress = ?, processing_started_at = ?
+         SET completed_count = ?, progress = ?, processing_started_at = ?, updated_at = ?
          WHERE id = ? AND kind = 'film' AND status = 'processing'
            AND claim_generation = ?`,
       )
-      .run(completedCount, progress, now.toISOString(), input.jobId, input.claimGeneration);
+      .run(
+        completedCount,
+        progress,
+        now.toISOString(),
+        now.toISOString(),
+        input.jobId,
+        input.claimGeneration,
+      );
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
       return null;
@@ -602,6 +647,7 @@ export interface ProcessCompilationJobOptions {
 interface CompilationInputOutput {
   clipJobId: string;
   outputPath: string;
+  isArchiveFiller: boolean;
 }
 
 function filmOutputName(jobId: string): string {
@@ -615,9 +661,12 @@ function readCompilationInputOutputs(
 ): CompilationInputOutput[] {
   return database
     .prepare(
-      `SELECT i.clip_job_id AS clipJobId, clip.output_path AS outputPath
+      `SELECT i.clip_job_id AS clipJobId, clip.output_path AS outputPath,
+              CASE WHEN contribution.cycle_id <> film.cycle_id THEN 1 ELSE 0 END AS isArchiveFiller
        FROM compilation_job_inputs i
+       JOIN media_jobs film ON film.id = i.job_id
        JOIN media_jobs clip ON clip.id = i.clip_job_id
+       JOIN contributions contribution ON contribution.id = i.contribution_id
        WHERE i.job_id = ?
          AND clip.kind = 'clip' AND clip.status = 'ready'
          AND clip.source_path IS NULL AND clip.output_path IS NOT NULL
@@ -628,6 +677,7 @@ function readCompilationInputOutputs(
     .map((row) => ({
       clipJobId: String((row as { clipJobId: string }).clipJobId),
       outputPath: String((row as { outputPath: string }).outputPath),
+      isArchiveFiller: Number((row as { isArchiveFiller: number }).isArchiveFiller) === 1,
     }));
 }
 
@@ -653,13 +703,15 @@ function markCompilationFailed(
   claimGeneration: number,
   errorCode: string,
 ): void {
+  const failedAt = new Date().toISOString();
   database
     .prepare(
       `UPDATE media_jobs
-       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL
+       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL,
+           updated_at = ?, failed_at = ?
        WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
     )
-    .run(errorCode, jobId, claimGeneration);
+    .run(errorCode, failedAt, failedAt, jobId, claimGeneration);
 }
 
 /**
@@ -693,10 +745,10 @@ function publishCompilationOutput(
       .prepare(
         `UPDATE media_jobs
          SET status = 'ready', output_path = ?, completed_count = input_count, progress = 100,
-             error_code = NULL, processing_started_at = NULL
+             error_code = NULL, processing_started_at = NULL, updated_at = ?, failed_at = NULL
          WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
       )
-      .run(finalOutputPath, job.id, job.claimGeneration);
+      .run(finalOutputPath, new Date().toISOString(), job.id, job.claimGeneration);
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
       return false;
@@ -774,12 +826,22 @@ export async function processCompilationJob(
     const inputPaths = await Promise.all(
       inputs.map((input) => resolveProcessedMediaPath(input.outputPath, outputDir)),
     );
+    const archiveFillerIndexes = inputs.flatMap((input, index) =>
+      input.isArchiveFiller ? [index] : [],
+    );
+    if (archiveFillerIndexes.length > 1) {
+      throw new FfmpegProcessingError(
+        'invalid_metadata',
+        'The film has an invalid archive filler snapshot.',
+      );
+    }
     await runAuditedJob(database, {
       jobId: claim.job.id,
       actorMemberId: options.actorMemberId,
       run: async () => {
         await compileFilmWithFfmpeg(options.ffmpegBin, {
           inputPaths,
+          archiveFillerIndex: archiveFillerIndexes[0],
           outputPath: temporaryOutputPath,
         });
         await probeClipWithFfmpeg(options.ffmpegBin, temporaryOutputPath);
@@ -918,11 +980,11 @@ function markOutputPrepared(
     }
     database
       .prepare(
-        `UPDATE media_jobs SET output_path = ?, error_code = NULL
+        `UPDATE media_jobs SET output_path = ?, error_code = NULL, updated_at = ?
          WHERE id = ? AND kind = 'clip' AND status = 'processing'
            AND (output_path IS NULL OR output_path = ?)`,
       )
-      .run(outputPath, row.id, outputPath);
+      .run(outputPath, new Date().toISOString(), row.id, outputPath);
     database.exec('COMMIT');
     return true;
   } catch (error) {
@@ -984,11 +1046,11 @@ function finalizePreparedOutput(
       .prepare(
         `UPDATE media_jobs
          SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL,
-             processing_started_at = NULL
+             processing_started_at = NULL, updated_at = ?, failed_at = NULL
          WHERE id = ? AND kind = 'clip' AND status = 'processing'
            AND output_path = ?`,
       )
-      .run(outputPath, row.id, outputPath);
+      .run(outputPath, new Date().toISOString(), row.id, outputPath);
     database.exec('COMMIT');
     return true;
   } catch (error) {
@@ -1024,25 +1086,22 @@ function claimClipJob(database: RewindDatabase, row: ClipJobRow): ClipJobRow | n
       database.exec('ROLLBACK');
       return null;
     }
+    const startedAt = new Date().toISOString();
     const result = database
       .prepare(
         `UPDATE media_jobs SET status = 'processing', error_code = NULL,
-             processing_started_at = ?
+             processing_started_at = ?, updated_at = ?, failed_at = NULL,
+             attempt_count = attempt_count + CASE WHEN status IN ('pending', 'failed') THEN 1 ELSE 0 END
          WHERE id = ? AND kind = 'clip' AND status IN ('pending', 'failed', 'processing')
            AND (processing_started_at IS ? OR processing_started_at = ?)`,
       )
-      .run(
-        new Date().toISOString(),
-        locked.id,
-        locked.processingStartedAt,
-        locked.processingStartedAt,
-      );
+      .run(startedAt, startedAt, locked.id, locked.processingStartedAt, locked.processingStartedAt);
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
       return null;
     }
     database.exec('COMMIT');
-    return { ...locked, status: 'processing', processingStartedAt: new Date().toISOString() };
+    return { ...locked, status: 'processing', processingStartedAt: startedAt };
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
@@ -1055,13 +1114,15 @@ function safeOutputName(jobId: string): string {
 }
 
 function markFailed(database: RewindDatabase, jobId: string, errorCode: string): void {
+  const failedAt = new Date().toISOString();
   database
     .prepare(
       `UPDATE media_jobs
-       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL
+       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL,
+           updated_at = ?, failed_at = ?
        WHERE id = ? AND kind = 'clip' AND status = 'processing'`,
     )
-    .run(errorCode, jobId);
+    .run(errorCode, failedAt, failedAt, jobId);
 }
 
 /**
@@ -1223,14 +1284,19 @@ export async function cleanupOrphanedStagedSources(
     if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) continue;
     const details = await stat(sourcePath).catch(() => null);
     if (!details || Date.now() - details.mtimeMs < maxAgeMs) continue;
-    const sourceId = (sourceMatch ?? partialMatch)?.[1];
-    const staged = sourceId ? findStagedSource(database, `staged://${sourceId}`) : null;
+    const matched = sourceMatch ?? partialMatch;
+    const sourceId = matched?.[1];
+    const sourceUri = sourceId ? `staged://${sourceId}` : null;
+    const generation = matched?.[2] ? Number(matched[2]) : undefined;
+    const staged = sourceUri ? findStagedSource(database, sourceUri) : null;
+    const protectedPath = partialMatch ? sourcePath.replace(/\.[a-f0-9-]+\.part$/, '') : sourcePath;
     // A live intake lease protects both its final path and any random-suffix
     // partial path. Cleanup may remove an expired claim, but its generation
     // fence prevents the old request from touching a later reclaim.
     if (
       staged &&
       staged.status === 'pending' &&
+      staged.sourcePath === protectedPath &&
       staged.claimExpiresAt &&
       Date.parse(staged.claimExpiresAt) > Date.now()
     ) {
@@ -1243,27 +1309,39 @@ export async function cleanupOrphanedStagedSources(
         .prepare(
           `SELECT 1 FROM media_jobs
            WHERE kind = 'clip' AND status IN ('pending', 'failed', 'processing')
-             AND (source_path = ? OR source_uri = ?)
+             AND source_path = ?
            LIMIT 1`,
         )
-        .get(sourcePath, sourceId ? `staged://${sourceId}` : null);
+        .get(sourcePath);
       if (active) continue;
     }
-    if (sourceMatch && staged) {
-      // This helper takes the writer lock, verifies the current row, and
-      // removes the capability and path as one mutation. It is intentionally
-      // generation/lease-aware instead of deleting by URI blindly.
+    if (sourceMatch && staged && sourceUri) {
+      // Do not clean by URI alone. An old generation can remain on disk after
+      // reclaim has moved the capability to a new physical path; deleting by
+      // URI in that case would remove the current generation instead.
+      if (staged.sourcePath !== sourcePath) {
+        const removedFile = cleanupUnclaimedStagedPath(database, sourcePath, stagingDir);
+        if (removedFile) removed += 1;
+        continue;
+      }
       const before = await stat(sourcePath).catch(() => null);
-      cleanupStagedSource(database, `staged://${sourceId}`, stagingDir);
+      cleanupStagedSource(database, sourceUri, stagingDir, {
+        expectedSourcePath: sourcePath,
+        ...(generation === undefined ? {} : { expectedClaimGeneration: generation }),
+      });
       const after = await stat(sourcePath).catch(() => null);
       if (before && !after) removed += 1;
       continue;
     }
-    const protectedPath = partialMatch ? sourcePath.replace(/\.[a-f0-9-]+\.part$/, '') : sourcePath;
-    const removedFile = cleanupUnclaimedStagedPath(database, sourcePath, stagingDir, protectedPath);
+    const removedFile = cleanupUnclaimedStagedPath(
+      database,
+      sourcePath,
+      stagingDir,
+      protectedPath,
+      partialMatch ? { releaseExpiredPendingClaim: true } : undefined,
+    );
     if (!removedFile) continue;
-    if (sourceMatch) {
-      const sourceUri = `staged://${sourceMatch[1]}`;
+    if (sourceMatch && !staged && sourceUri) {
       database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(sourceUri);
       removeStagedSource(database, sourceUri);
     }
@@ -1274,18 +1352,27 @@ export async function cleanupOrphanedStagedSources(
   const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
   const stale = database
     .prepare(
-      `SELECT source_uri AS sourceUri FROM staged_sources
+      `SELECT source_uri AS sourceUri, source_path AS sourcePath,
+              claim_generation AS claimGeneration
+       FROM staged_sources
        WHERE status = 'pending' AND created_at < ?
          AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
          AND NOT EXISTS (
            SELECT 1 FROM media_jobs WHERE media_jobs.source_path = staged_sources.source_path
          )`,
     )
-    .all(cutoff, new Date().toISOString()) as { sourceUri?: string }[];
+    .all(cutoff, new Date().toISOString()) as {
+    sourceUri?: string;
+    sourcePath?: string | null;
+    claimGeneration?: number;
+  }[];
   for (const row of stale) {
     if (removed >= boundedLimit || !row.sourceUri) break;
     const before = findStagedSource(database, row.sourceUri);
-    cleanupStagedSource(database, row.sourceUri, stagingDir);
+    cleanupStagedSource(database, row.sourceUri, stagingDir, {
+      expectedSourcePath: row.sourcePath ?? null,
+      expectedClaimGeneration: Number(row.claimGeneration ?? 0),
+    });
     if (!findStagedSource(database, row.sourceUri) && before) removed += 1;
   }
   return removed;

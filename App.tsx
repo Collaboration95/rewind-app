@@ -247,7 +247,11 @@ function ActiveAppShell({
         )}
         <MainNavigation
           activeRoute={
-            activeRoute === 'create-group' || activeRoute === 'video' ? 'camera' : activeRoute
+            activeRoute === 'create-group'
+              ? 'settings'
+              : activeRoute === 'video'
+                ? 'camera'
+                : activeRoute
           }
           onNavigate={setActiveRoute}
         />
