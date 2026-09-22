@@ -8,6 +8,8 @@ import { createProductionWebServer, assertStaticArtifact } from './production-we
 
 const projectRoot = process.cwd();
 const expoCli = join(projectRoot, 'node_modules/expo/bin/cli');
+const seedNow = new Date('2026-09-01T00:00:00.000Z');
+const smokeNow = new Date('2026-09-11T12:00:01.000Z');
 
 function run(command, args, env = process.env) {
   return new Promise((resolve, reject) => {
@@ -62,13 +64,18 @@ async function main() {
 
   try {
     await run(process.env.npm_execpath || 'npm', ['run', 'server:build']);
+    const webExportEnv = {
+      ...process.env,
+      EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
+    };
+    // Responsive/browser smoke coverage must exercise the real web adapter.
+    // A caller's simulator fixture setting must not leak into this production
+    // web artifact; production E2E has its own explicitly demo-mode server.
+    delete webExportEnv.EXPO_PUBLIC_CAMERA_MODE;
     await run(
       process.execPath,
-      [expoCli, 'export', '--platform', 'web', '--output-dir', artifactDir],
-      {
-        ...process.env,
-        EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
-      },
+      [expoCli, 'export', '--clear', '--platform', 'web', '--output-dir', artifactDir],
+      webExportEnv,
     );
     await assertStaticArtifact(artifactDir);
 
@@ -81,8 +88,8 @@ async function main() {
       REWIND_PORT: '0',
       REWIND_FFMPEG_BIN: 'ffmpeg',
     });
-    database = openDatabase(config);
-    runtimeServer = createRuntimeServer(config, database);
+    database = openDatabase(config, { seedNow });
+    runtimeServer = createRuntimeServer(config, database, { now: () => smokeNow });
     const runtimePort = await listen(runtimeServer);
     webServer = createProductionWebServer({
       staticDir: artifactDir,

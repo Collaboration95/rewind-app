@@ -15,6 +15,7 @@ jest.mock('react-native-safe-area-context', () => mockSafeAreaContext);
 const recordedClip: RecordedClip = {
   sourceUri: 'file://navigation-test-clip.mp4',
   format: 'mp4',
+  mimeType: 'video/mp4',
   width: 720,
   height: 1280,
   durationSeconds: 8,

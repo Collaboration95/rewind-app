@@ -23,6 +23,9 @@ export class VideoRecordingError extends Error {
 export function validateRecordedClip(clip: RecordedClip): void {
   if (!clip.sourceUri) throw new VideoRecordingError('The recorded clip has no local file.');
   if (clip.format !== 'mp4') throw new VideoRecordingError('The clip must be an MP4 video.');
+  if (clip.mimeType !== 'video/mp4') {
+    throw new VideoRecordingError('The clip must use the video/mp4 MIME type.');
+  }
   if (!Number.isFinite(clip.durationSeconds) || clip.durationSeconds <= 0) {
     throw new VideoRecordingError('The recorded clip has no valid duration.');
   }

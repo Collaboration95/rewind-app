@@ -5,7 +5,9 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import type { ReleasedArchive, ReleasedArchiveMedia } from '../domain/archive';
 import type { Premiere } from '../domain/premiere';
 import { useCapsule } from '../capsule/CapsuleProvider';
+import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
 import { useDemoSession } from '../session/DemoSessionProvider';
+import { revealStateForPremiere } from '../domain/reveal-education';
 import { RUNTIME_OFFLINE_MESSAGE, type RuntimeClient } from '../runtime/local-runtime-client';
 import { COLORS } from '../theme';
 import { createArchiveDownloadQueue } from './archive-download';
@@ -17,31 +19,18 @@ type ArchiveState =
 
 const EMPTY_ARCHIVE: ReleasedArchive = { films: [], clips: [] };
 
-function readyCopy(state: Exclude<Premiere['state'], 'ready'>): { title: string; body: string } {
-  if (state === 'delayed') {
-    return {
-      title: 'Film delayed',
-      body: 'The group film needs attention before it can be released. No playback is available yet.',
-    };
-  }
-  if (state === 'processing') {
-    return {
-      title: 'Preparing your group film',
-      body: 'Your accepted moments are compiling. Playback will appear here only after the release is published.',
-    };
-  }
-  return {
-    title: 'Sealed until reveal',
-    body: 'This group film has not been released. Playback and media links remain unavailable.',
-  };
-}
-
 function PublishedPlayer({ premiere }: { premiere: Extract<Premiere, { state: 'ready' }> }) {
   const player = useVideoPlayer(premiere.playbackUrl, (instance) => {
     instance.loop = false;
   });
   return (
     <View style={styles.panel} testID="archive-premiere-ready">
+      <RevealEducationPanel
+        onAction={() => player.play()}
+        state="released"
+        surface="archive"
+        testID="archive-reveal-released"
+      />
       <Text style={styles.label}>GROUP PREMIERE</Text>
       <Text accessibilityRole="header" style={styles.title}>
         Your capsule film
@@ -243,20 +232,14 @@ function PremiereStatus({
   premiere: Exclude<Premiere, { state: 'ready' }>;
   reload: () => void;
 }) {
-  const copy = readyCopy(premiere.state);
+  const state = revealStateForPremiere(premiere);
   return (
-    <View style={styles.panel} testID={`archive-${premiere.state}`}>
-      <Text style={styles.label}>ARCHIVE</Text>
-      <Text accessibilityRole="header" style={styles.title}>
-        {copy.title}
-      </Text>
-      <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
-        {copy.body}
-      </Text>
-      <Pressable accessibilityRole="button" onPress={reload} style={styles.retryButton}>
-        <Text style={styles.retryText}>Check premiere again</Text>
-      </Pressable>
-    </View>
+    <RevealEducationPanel
+      onAction={reload}
+      state={state}
+      surface="archive"
+      testID={`archive-${premiere.state}`}
+    />
   );
 }
 

@@ -12,6 +12,7 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 const clip: RecordedClip = {
   durationSeconds: 12,
   format: 'mp4',
+  mimeType: 'video/mp4',
   hasAudio: true,
   height: 1280,
   source: 'camera',

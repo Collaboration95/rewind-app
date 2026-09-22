@@ -2,7 +2,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useCapsule } from './CapsuleProvider';
 import { useCycleCountdown } from './cycle-time';
+import { RevealEducationPanel } from './RevealEducationPanel';
 import type { Cycle } from '../domain/cycles';
+import { revealStateForCycle, type RevealEducationState } from '../domain/reveal-education';
 import { COLORS } from '../theme';
 import {
   ContributionStatusPanel,
@@ -10,7 +12,17 @@ import {
   type ContributionStatus,
 } from '../capture/contribution-status';
 
-export function CapsuleSummary({ clock = Date.now }: { clock?: () => number }) {
+export function CapsuleSummary({
+  clock = Date.now,
+  onAddMoment,
+  onOpenArchive,
+  revealState,
+}: {
+  clock?: () => number;
+  onAddMoment?: () => void;
+  onOpenArchive?: () => void;
+  revealState?: RevealEducationState;
+}) {
   const { state, retry } = useCapsule();
   const contributionStatus = useOptionalContributionStatus()?.status ?? null;
 
@@ -76,6 +88,9 @@ export function CapsuleSummary({ clock = Date.now }: { clock?: () => number }) {
       contributionStatus={contributionStatus}
       cycle={state.cycle}
       groupName={state.group.name}
+      onAddMoment={onAddMoment}
+      onOpenArchive={onOpenArchive}
+      revealState={revealState}
     />
   );
 }
@@ -85,14 +100,20 @@ function ReadyCapsuleSummary({
   contributionStatus,
   cycle,
   groupName,
+  onAddMoment,
+  onOpenArchive,
+  revealState: revealStateProp,
 }: {
   clock: () => number;
   contributionStatus: ContributionStatus | null;
   cycle: Cycle;
   groupName: string;
+  onAddMoment?: () => void;
+  onOpenArchive?: () => void;
+  revealState?: RevealEducationState;
 }) {
   const countdown = useCycleCountdown(cycle, clock);
-  if (!countdown) return null;
+  const revealState = revealStateProp ?? revealStateForCycle(cycle);
 
   const { countUsed, secondsUsed } = cycle.contributionUsage;
   const remainingCount = Math.max(0, cycle.quota.maxCount - countUsed);
@@ -109,18 +130,20 @@ function ReadyCapsuleSummary({
         <Text style={styles.mutedText}>Shared capsule · Sample group</Text>
       </View>
 
-      <View
-        accessible
-        accessibilityLabel={`Current capsule. ${countdown.label}.`}
-        style={styles.panel}
-        testID="cycle-countdown-panel"
-      >
-        <Text style={styles.label}>CURRENT CAPSULE</Text>
-        <Text style={styles.panelTitle}>Collection is open</Text>
-        <Text accessibilityLiveRegion="polite" style={styles.countdown} testID="cycle-countdown">
-          {countdown.label}
-        </Text>
-      </View>
+      {countdown ? (
+        <View
+          accessible
+          accessibilityLabel={`Current capsule. ${countdown.label}.`}
+          style={styles.panel}
+          testID="cycle-countdown-panel"
+        >
+          <Text style={styles.label}>CURRENT CAPSULE</Text>
+          <Text style={styles.panelTitle}>Collection is open</Text>
+          <Text accessibilityLiveRegion="polite" style={styles.countdown} testID="cycle-countdown">
+            {countdown.label}
+          </Text>
+        </View>
+      ) : null}
 
       <ContributionStatusPanel status={contributionStatus} testID="home-contribution-status" />
 
@@ -150,18 +173,16 @@ function ReadyCapsuleSummary({
         </Text>
       </View>
 
-      <View
-        accessible
-        accessibilityLabel="Contributions are collecting and locked. Unrevealed media and sharing are unavailable."
-        style={styles.lockedPanel}
-        testID="locked-state"
-      >
-        <Text style={styles.lockedLabel}>SEALED UNTIL REVEAL</Text>
-        <Text style={styles.bodyText}>
-          Contributions are locked while this cycle collects. Unrevealed media and sharing are
-          unavailable.
-        </Text>
-      </View>
+      <RevealEducationPanel
+        onAction={
+          revealState === 'locked'
+            ? (onAddMoment ?? (() => undefined))
+            : (onOpenArchive ?? (() => undefined))
+        }
+        state={revealState}
+        surface="home"
+        testID={`home-reveal-${revealState}`}
+      />
     </View>
   );
 }

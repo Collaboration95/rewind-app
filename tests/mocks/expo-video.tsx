@@ -9,5 +9,5 @@ export function VideoView({ testID, ...props }: MockVideoViewProps) {
 }
 
 export function useVideoPlayer(source: string) {
-  return { source, loop: false };
+  return { play: () => undefined, source, loop: false };
 }

@@ -222,6 +222,7 @@ describe('Expo camera adapter contract', () => {
       byteLength: 42_000,
       durationSeconds: MAX_CLIP_DURATION_SECONDS,
       format: 'mp4',
+      mimeType: 'video/mp4',
       hasAudio: true,
       height: 1080,
       source: 'camera',
@@ -253,6 +254,7 @@ describe('Expo camera adapter contract', () => {
       byteLength: undefined,
       durationSeconds: 9,
       format: 'mp4',
+      mimeType: 'video/mp4',
       hasAudio: true,
       height: 1280,
       source: 'camera',
@@ -311,6 +313,129 @@ describe('Expo camera adapter contract', () => {
     } finally {
       platformOs.restore();
     }
+  });
+
+  it('accepts only a verified portrait MP4 fallback and preserves its true metadata', async () => {
+    const file = { size: 42_000, type: 'video/mp4' } as File;
+    const platform = new ExpoCameraPlatform({
+      browserFilePicker: jest.fn().mockResolvedValue(file),
+      browserObjectUrlFactory: jest.fn().mockReturnValue('blob:verified-video'),
+      browserVideoContainerReader: jest.fn().mockResolvedValue({
+        hasAudio: true,
+        hasVideo: true,
+        isMp4: true,
+      }),
+      browserVideoMetadataReader: jest.fn().mockResolvedValue({
+        durationSeconds: 12.75,
+        hasAudio: true,
+        height: 1280,
+        width: 720,
+      }),
+      getCameraRef: () => null,
+    });
+
+    await expect(platform.pickVideoFile()).resolves.toEqual({
+      byteLength: 42_000,
+      durationSeconds: 12.75,
+      format: 'mp4',
+      hasAudio: true,
+      height: 1280,
+      mimeType: 'video/mp4',
+      source: 'file',
+      sourceUri: 'blob:verified-video',
+      width: 720,
+    });
+  });
+
+  it('rejects a non-MP4 browser fallback before creating an object URL', async () => {
+    const createObjectUrl = jest.fn();
+    const platform = new ExpoCameraPlatform({
+      browserFilePicker: jest.fn().mockResolvedValue({ size: 42_000, type: 'video/webm' } as File),
+      browserObjectUrlFactory: createObjectUrl,
+      browserVideoContainerReader: jest.fn().mockResolvedValue({
+        hasAudio: false,
+        hasVideo: false,
+        isMp4: false,
+      }),
+      getCameraRef: () => null,
+    });
+
+    await expect(platform.pickVideoFile()).rejects.toThrow('Choose an MP4 video file.');
+    expect(createObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'longer than 15 seconds',
+      { durationSeconds: 15.01, hasAudio: true, height: 1280, width: 720 },
+      '15 seconds or shorter',
+    ],
+    [
+      'landscape',
+      { durationSeconds: 10, hasAudio: true, height: 720, width: 1280 },
+      'portrait MP4',
+    ],
+    [
+      'without audio',
+      { durationSeconds: 10, hasAudio: false, height: 1280, width: 720 },
+      'audio track',
+    ],
+  ] as const)(
+    'rejects a browser MP4 %s and releases its URL',
+    async (_label, metadata, message) => {
+      const previousRevoke = URL.revokeObjectURL;
+      const revokeObjectURL = jest.fn();
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+      const platform = new ExpoCameraPlatform({
+        browserFilePicker: jest.fn().mockResolvedValue({ size: 42_000, type: 'video/mp4' } as File),
+        browserObjectUrlFactory: jest.fn().mockReturnValue('blob:invalid-video'),
+        browserVideoContainerReader: jest.fn().mockResolvedValue({
+          hasAudio: metadata.hasAudio,
+          hasVideo: true,
+          isMp4: true,
+        }),
+        browserVideoMetadataReader: jest.fn().mockResolvedValue(metadata),
+        getCameraRef: () => null,
+      });
+
+      try {
+        await expect(platform.pickVideoFile()).rejects.toThrow(message);
+        expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+        expect(revokeObjectURL).toHaveBeenCalledWith('blob:invalid-video');
+      } finally {
+        Object.defineProperty(URL, 'revokeObjectURL', {
+          configurable: true,
+          value: previousRevoke,
+        });
+      }
+    },
+  );
+
+  it('accepts a sound track when Chromium has not decoded audio at loadedmetadata', async () => {
+    const platform = new ExpoCameraPlatform({
+      browserFilePicker: jest.fn().mockResolvedValue({ size: 42_000, type: 'video/mp4' } as File),
+      browserObjectUrlFactory: jest.fn().mockReturnValue('blob:chromium-audio'),
+      browserVideoContainerReader: jest.fn().mockResolvedValue({
+        hasAudio: true,
+        hasVideo: true,
+        isMp4: true,
+      }),
+      browserVideoMetadataReader: jest.fn().mockResolvedValue({
+        durationSeconds: 2.25,
+        hasAudio: null,
+        height: 1280,
+        width: 720,
+      }),
+      getCameraRef: () => null,
+    });
+
+    await expect(platform.pickVideoFile()).resolves.toMatchObject({
+      durationSeconds: 2.25,
+      hasAudio: true,
+      height: 1280,
+      source: 'file',
+      width: 720,
+    });
   });
 
   it.each([

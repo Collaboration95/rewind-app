@@ -3,11 +3,14 @@ import { CameraView } from 'expo-camera';
 import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { COLORS } from '../theme';
+import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
+import type { RevealEducationState } from '../domain/reveal-education';
 import {
   CaptureFileLifecycleError,
   type CameraPlatform,
   type CaptureFileStore,
   type ImageMetadataStore,
+  type PlatformStillImage,
 } from './contracts';
 import {
   accessState,
@@ -30,7 +33,9 @@ export interface CameraCaptureScreenProps {
   onAccepted?: (
     metadata: Awaited<ReturnType<StillImageCaptureSession['accept']>>['metadata'],
   ) => void;
+  onOpenArchive?: () => void;
   onRecordClip?: () => void;
+  revealState?: RevealEducationState;
 }
 
 /**
@@ -43,8 +48,10 @@ export function CameraCaptureScreen({
   metadataStore,
   now,
   onAccepted,
+  onOpenArchive,
   onRecordClip,
   platform: platformProp,
+  revealState = 'locked',
 }: CameraCaptureScreenProps = {}) {
   const cameraRef = useRef<CameraView>(null);
   const platform = useMemo(
@@ -104,7 +111,7 @@ export function CameraCaptureScreen({
     } catch {
       setState((current) => ({
         ...current,
-        status: 'capability-undecided',
+        status: 'temporarily-unavailable',
         errorMessage: 'We could not check this device yet. Try again.',
       }));
     }
@@ -132,8 +139,8 @@ export function CameraCaptureScreen({
     } catch {
       setState((current) => ({
         ...current,
-        status: 'permission-denied',
-        errorMessage: 'Camera access could not be requested. Try again or open Settings.',
+        status: 'temporarily-unavailable',
+        errorMessage: 'Camera access could not be checked right now. Try again or open Settings.',
       }));
     }
   }, [platform]);
@@ -152,51 +159,95 @@ export function CameraCaptureScreen({
     }
   }, [platform, refreshAccess]);
 
+  const captureImage = useCallback(
+    async (getImage: () => Promise<PlatformStillImage>, requireAccess: boolean) => {
+      if (
+        (requireAccess && !isCaptureReady(state)) ||
+        (requireAccess && platform.supportsLivePreview && !cameraReady)
+      )
+        return;
+      setState((current) => ({ ...current, status: 'capturing', errorMessage: null }));
+      try {
+        const activePreview = await session.captureImage(await getImage());
+        setState((current) => ({
+          ...current,
+          status: 'preview',
+          activePreview: { metadata: activePreview.metadata, uri: activePreview.previewUri },
+          errorMessage: null,
+        }));
+      } catch (error) {
+        setState((current) => ({
+          ...current,
+          status: error instanceof CaptureFileLifecycleError ? 'write-failed' : 'capture-failed',
+          errorMessage:
+            error instanceof Error
+              ? error.message
+              : 'The still image could not be captured. Try again.',
+        }));
+      }
+    },
+    [cameraReady, platform, session, state],
+  );
+
   const capture = useCallback(async () => {
-    if (!isCaptureReady(state) || (platform.supportsLivePreview && !cameraReady)) return;
-    setState((current) => ({ ...current, status: 'capturing', errorMessage: null }));
-    try {
-      const activePreview = await session.capture();
-      setState((current) => ({
-        ...current,
-        status: 'preview',
-        activePreview: { metadata: activePreview.metadata, uri: activePreview.previewUri },
-        errorMessage: null,
-      }));
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        status: error instanceof CaptureFileLifecycleError ? 'write-failed' : 'capture-failed',
-        errorMessage:
-          error instanceof Error
-            ? error.message
-            : 'The still image could not be captured. Try again.',
-      }));
-    }
-  }, [cameraReady, platform.supportsLivePreview, session, state]);
+    await captureImage(() => platform.captureStill(), true);
+  }, [captureImage, platform]);
 
   const retryCapture = useCallback(async () => {
-    setState((current) => ({ ...current, status: 'ready', errorMessage: null }));
-    if (platform.supportsLivePreview && !cameraReady) return;
-    setState((current) => ({ ...current, status: 'capturing', errorMessage: null }));
-    try {
-      const activePreview = await session.capture();
-      setState((current) => ({
-        ...current,
-        status: 'preview',
-        activePreview: { metadata: activePreview.metadata, uri: activePreview.previewUri },
-      }));
-    } catch (error) {
-      setState((current) => ({
-        ...current,
-        status: error instanceof CaptureFileLifecycleError ? 'write-failed' : 'capture-failed',
-        errorMessage:
-          error instanceof Error
-            ? error.message
-            : 'The still image could not be captured. Try again.',
-      }));
+    await captureImage(() => platform.captureStill(), true);
+  }, [captureImage, platform]);
+
+  const useSyntheticStill = useCallback(async () => {
+    await captureImage(() => platform.captureStill(), false);
+  }, [captureImage, platform]);
+
+  const pickStillFile = useCallback(async () => {
+    if (!platform.pickStillFile) return;
+    await captureImage(() => platform.pickStillFile!(), false);
+  }, [captureImage, platform]);
+
+  const fallbackAction = platform.kind === 'demo' ? useSyntheticStill : pickStillFile;
+  const fallbackLabel =
+    platform.kind === 'demo' ? 'Use synthetic still fixture' : 'Choose an image file';
+  const hasFileFallback = platform.supportsFileFallback === true && Boolean(platform.pickStillFile);
+  const hasFallback = platform.kind === 'demo' || hasFileFallback;
+
+  const handleRevealAction = useCallback(() => {
+    if (revealState === 'locked') {
+      if (isCaptureReady(state) && (!platform.supportsLivePreview || cameraReady)) {
+        void capture();
+      } else if (state.status === 'permission-blocked') {
+        void openSettings();
+      } else if (state.status === 'unsupported' && hasFallback) {
+        void fallbackAction();
+      } else if (state.status === 'permission-undecided' || state.status === 'permission-denied') {
+        void requestAccess();
+      } else {
+        void refreshAccess();
+      }
+      return;
     }
-  }, [cameraReady, platform.supportsLivePreview, session]);
+    onOpenArchive?.();
+  }, [
+    cameraReady,
+    capture,
+    fallbackAction,
+    hasFallback,
+    onOpenArchive,
+    openSettings,
+    platform.supportsLivePreview,
+    refreshAccess,
+    requestAccess,
+    revealState,
+    state,
+  ]);
+  const revealActionLabel =
+    revealState === 'locked' && state.status === 'unsupported' && hasFallback
+      ? fallbackLabel
+      : revealState === 'locked' &&
+          (!isCaptureReady(state) || (platform.supportsLivePreview && !cameraReady))
+        ? 'Check capture access'
+        : undefined;
 
   const retake = useCallback(async () => {
     await session.retake();
@@ -248,6 +299,15 @@ export function CameraCaptureScreen({
           Camera and microphone access stay on this device. Nothing is uploaded from this screen.
         </Text>
       </View>
+      {state.status === 'ready' || state.status === 'preview' || state.status === 'saved' ? (
+        <RevealEducationPanel
+          actionLabel={revealActionLabel}
+          onAction={handleRevealAction}
+          state={revealState}
+          surface="capture"
+          testID={`capture-reveal-${revealState}`}
+        />
+      ) : null}
       {onRecordClip ? (
         <Pressable
           accessibilityRole="button"
@@ -255,7 +315,13 @@ export function CameraCaptureScreen({
           style={styles.videoButton}
           testID="camera-record-clip"
         >
-          <Text style={styles.videoButtonText}>Record a 15-second clip</Text>
+          <Text style={styles.videoButtonText}>
+            {state.status === 'ready' && platform.supportsVideoRecording !== false
+              ? 'Record a 15-second clip'
+              : platform.kind === 'demo'
+                ? 'Open synthetic clip fallback'
+                : 'Open clip capture options'}
+          </Text>
         </Pressable>
       ) : null}
 
@@ -280,7 +346,7 @@ export function CameraCaptureScreen({
           title="Checking camera access…"
           body="We are checking device capability and both required permissions."
         />
-      ) : state.status === 'capability-undecided' ? (
+      ) : state.status === 'temporarily-unavailable' ? (
         <StatusPanel
           actionLabel="Check again"
           body={
@@ -288,12 +354,22 @@ export function CameraCaptureScreen({
             'Camera availability needs to be checked before capture can begin.'
           }
           onAction={refreshAccess}
-          testID="camera-capability-undecided"
-          title="Camera availability needs checking"
+          onSecondaryAction={hasFallback ? fallbackAction : undefined}
+          secondaryActionLabel={hasFallback ? fallbackLabel : undefined}
+          testID="camera-temporarily-unavailable"
+          title="Camera is temporarily unavailable"
         />
       ) : state.status === 'unsupported' ? (
         <StatusPanel
-          body="This device cannot provide the camera and microphone needed for a still moment. Use a physical device or the explicit simulator demo fixture."
+          actionLabel={hasFallback ? fallbackLabel : undefined}
+          body={
+            hasFallback
+              ? platform.kind === 'demo'
+                ? 'This simulator cannot provide a physical camera. The labelled synthetic fixture is available for the local Demo.'
+                : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
+              : 'This device cannot provide the camera needed for a still moment. Use a physical device with camera access.'
+          }
+          onAction={hasFallback ? fallbackAction : undefined}
           testID="camera-unsupported"
           title="Camera capture is not supported here"
         />
@@ -307,13 +383,13 @@ export function CameraCaptureScreen({
         />
       ) : state.status === 'permission-denied' ? (
         <StatusPanel
-          actionLabel="Try again"
+          actionLabel={hasFileFallback ? fallbackLabel : 'Try again'}
           secondaryActionLabel="Open Settings"
           body={
             state.errorMessage ??
             'Camera or microphone access is off. Try again, or allow both permissions in Settings.'
           }
-          onAction={requestAccess}
+          onAction={hasFileFallback ? fallbackAction : requestAccess}
           onSecondaryAction={openSettings}
           testID="camera-permission-denied"
           title="Camera access is off"
@@ -473,6 +549,11 @@ function PreviewPanel({
           style={[styles.stillPreview, styles.previewImage]}
         />
       )}
+      {metadata.source === 'file' ? (
+        <Text style={styles.previewMeta}>
+          FILE FALLBACK · selected locally, not camera-captured
+        </Text>
+      ) : null}
       <Text style={styles.previewMeta}>
         {metadata.width} × {metadata.height} · {metadata.format.toUpperCase()}
       </Text>

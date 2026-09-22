@@ -26,6 +26,8 @@ export class StillImageCaptureSession {
   private readonly createId: () => string;
   private active: ActiveStillImage | null = null;
   private accepted = false;
+  private disposed = false;
+  private readonly pendingFiles = new Set<string>();
 
   constructor(private readonly options: StillImageCaptureSessionOptions) {
     this.now = options.now ?? (() => new Date());
@@ -40,18 +42,41 @@ export class StillImageCaptureSession {
   async capture(): Promise<ActiveStillImage> {
     await this.cleanupActive();
     const image = await this.options.platform.captureStill();
+    return this.captureImage(image);
+  }
+
+  async captureImage(
+    image: Awaited<ReturnType<CameraPlatform['captureStill']>>,
+  ): Promise<ActiveStillImage> {
+    await this.cleanupActive();
+    if (this.disposed) {
+      this.releaseOriginalFile(image);
+      throw new CaptureFileLifecycleError('The still selection was cancelled before preview.');
+    }
     const id = this.createId();
-    const managed = await this.options.fileStore.copyToManagedCache(image, id);
+    let managed: Awaited<ReturnType<CaptureFileStore['copyToManagedCache']>>;
+    try {
+      managed = await this.options.fileStore.copyToManagedCache(image, id);
+    } finally {
+      this.releaseOriginalFile(image);
+    }
+    this.pendingFiles.add(managed.uri);
 
     try {
+      if (this.disposed) {
+        throw new CaptureFileLifecycleError('The still selection was cancelled before preview.');
+      }
       const verified = await this.options.fileStore.exists(managed.uri);
-      if (!verified) {
+      if (!verified || this.disposed) {
         await this.options.fileStore.remove(managed.uri);
         throw new CaptureFileLifecycleError(
-          'The captured image could not be verified in app storage. Try taking it again.',
+          this.disposed
+            ? 'The still selection was cancelled before preview.'
+            : 'The captured image could not be verified in app storage. Try taking it again.',
         );
       }
     } catch (error) {
+      this.pendingFiles.delete(managed.uri);
       await this.options.fileStore.remove(managed.uri).catch(() => undefined);
       if (error instanceof CaptureFileLifecycleError) throw error;
       throw new CaptureFileLifecycleError(
@@ -69,6 +94,7 @@ export class StillImageCaptureSession {
       byteLength: managed.byteLength,
       source: image.source,
     };
+    this.pendingFiles.delete(managed.uri);
     this.active = { previewUri: managed.uri, metadata };
     this.accepted = false;
     return this.getActivePreview()!;
@@ -111,10 +137,16 @@ export class StillImageCaptureSession {
    * must not erase accepted metadata; an explicit app/demo reset uses reset().
    */
   async dispose(): Promise<void> {
+    this.disposed = true;
     // Once accepted, metadata is intentionally retained across route changes;
     // only the transient preview file is released. Unaccepted previews are
     // discarded completely.
     await this.cleanupActive(!this.accepted);
+    const pendingFiles = [...this.pendingFiles];
+    this.pendingFiles.clear();
+    await Promise.all(
+      pendingFiles.map((uri) => this.options.fileStore.remove(uri).catch(() => undefined)),
+    );
   }
 
   private async cleanupActive(removeMetadata = true): Promise<void> {
@@ -131,5 +163,15 @@ export class StillImageCaptureSession {
 
   isAccepted(): boolean {
     return this.accepted;
+  }
+
+  private releaseOriginalFile(image: Awaited<ReturnType<CameraPlatform['captureStill']>>): void {
+    if (
+      image.source === 'file' &&
+      image.sourceUri.startsWith('blob:') &&
+      typeof URL.revokeObjectURL === 'function'
+    ) {
+      URL.revokeObjectURL(image.sourceUri);
+    }
   }
 }
