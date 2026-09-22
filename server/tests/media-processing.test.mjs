@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
+import { DatabaseSync } from 'node:sqlite';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
@@ -17,6 +18,7 @@ const { copyFile, utimes } = await import('node:fs/promises');
 const {
   claimStagedSource,
   cancelClipUpload,
+  cleanupStagedSourcePath,
   createClipUpload,
   markStagedSourceReady,
   reclaimStagedSource,
@@ -381,6 +383,188 @@ test('stale intake callbacks cannot complete or reset a reclaimed generation', a
   });
 });
 
+test('claim reset and fenced metadata deletion exclude a concurrent generation-two writer', async () => {
+  await withDatabase(async ({ database, config, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'reset-metadata-writer-race-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const firstPath = stagedSourcePath(sourceUri, stagingDir, 1);
+    const secondPath = stagedSourcePath(sourceUri, stagingDir, 2);
+    assert.ok(firstPath);
+    assert.ok(secondPath);
+    const first = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:00:00.000Z'),
+      firstPath,
+    );
+    assert.equal(first.ok, true);
+    recordClipMediaMetadata(database, {
+      sourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+      verifiedAt: '2026-09-10T12:00:00.000Z',
+    });
+
+    const gateBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+    const gate = new Int32Array(gateBuffer);
+    const worker = new Worker(
+      `(async () => {
+         const { parentPort, workerData } = require('node:worker_threads');
+         const { DatabaseSync } = require('node:sqlite');
+         const gate = new Int32Array(workerData.gateBuffer);
+         const db = new DatabaseSync(workerData.databasePath);
+         const wrapped = {
+           exec: db.exec.bind(db),
+           prepare(sql) {
+             const statement = db.prepare(sql);
+             if (!/UPDATE staged_sources[\\s\\S]*SET source_path = NULL/.test(sql)) return statement;
+             return new Proxy(statement, {
+               get(target, property) {
+                 if (property === 'run') {
+                   return (...args) => {
+                     const result = target.run(...args);
+                     Atomics.store(gate, 0, 1);
+                     Atomics.notify(gate, 0);
+                     Atomics.wait(gate, 1, 0);
+                     return result;
+                   };
+                 }
+                 const value = Reflect.get(target, property, target);
+                 return typeof value === 'function' ? value.bind(target) : value;
+               },
+             });
+           },
+         };
+         try {
+           const { resetStagedSourceClaim } = await import(workerData.mediaModuleUrl);
+           const reset = resetStagedSourceClaim(
+             wrapped,
+             workerData.sourceUri,
+             workerData.firstPath,
+             1,
+           );
+           parentPort.postMessage({ reset });
+         } catch (error) {
+           parentPort.postMessage({ error: String(error && error.stack ? error.stack : error) });
+         } finally {
+           db.close();
+         }
+       })();`,
+      {
+        eval: true,
+        workerData: {
+          databasePath: config.databasePath,
+          firstPath,
+          gateBuffer,
+          mediaModuleUrl: new URL('../dist/media/index.js', import.meta.url).href,
+          sourceUri,
+        },
+      },
+    );
+    const completion = new Promise((resolve, reject) => {
+      worker.once('message', resolve);
+      worker.once('error', reject);
+    });
+    const deadline = Date.now() + 5_000;
+    while (Atomics.load(gate, 0) !== 1) {
+      if (Date.now() >= deadline) throw new Error('reset worker did not reach its update fence');
+      await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    }
+
+    const second = new DatabaseSync(config.databasePath);
+    second.exec('PRAGMA busy_timeout = 1');
+    let concurrentError;
+    try {
+      const concurrent = claimStagedSource(
+        second,
+        'demo-group',
+        'demo-1',
+        key,
+        new Date('2026-09-10T12:01:00.000Z'),
+        secondPath,
+      );
+      if (concurrent.ok) {
+        recordClipMediaMetadata(second, {
+          sourceUri,
+          mimeType: 'video/mp4',
+          byteLength: 2000,
+          durationSeconds: 2,
+          width: 180,
+          height: 320,
+          hasAudio: true,
+          verifiedAt: '2026-09-10T12:01:00.000Z',
+        });
+        markStagedSourceReady(second, sourceUri, 2000, secondPath, 2);
+      }
+    } catch (error) {
+      concurrentError = error;
+    } finally {
+      Atomics.store(gate, 1, 1);
+      Atomics.notify(gate, 1);
+    }
+    const resetResult = await completion;
+    assert.deepEqual(resetResult, { reset: true });
+    assert.match(String(concurrentError), /database is locked|SQLITE_BUSY/i);
+
+    const secondClaim = claimStagedSource(
+      second,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:01:00.000Z'),
+      secondPath,
+    );
+    assert.equal(secondClaim.ok, true);
+    assert.equal(secondClaim.source.claimGeneration, 2);
+    second.exec('BEGIN');
+    try {
+      recordClipMediaMetadata(second, {
+        sourceUri,
+        mimeType: 'video/mp4',
+        byteLength: 2000,
+        durationSeconds: 2,
+        width: 180,
+        height: 320,
+        hasAudio: true,
+        verifiedAt: '2026-09-10T12:01:00.000Z',
+      });
+      assert.equal(markStagedSourceReady(second, sourceUri, 2000, secondPath, 2), true);
+      second.exec('COMMIT');
+    } catch (error) {
+      second.exec('ROLLBACK');
+      throw error;
+    } finally {
+      second.close();
+      await worker.terminate();
+    }
+
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `SELECT source_path AS sourcePath, claim_generation AS claimGeneration, status
+             FROM staged_sources WHERE source_uri = ?`,
+          )
+          .get(sourceUri),
+      },
+      { sourcePath: secondPath, claimGeneration: 2, status: 'staged' },
+    );
+    assert.equal(
+      database
+        .prepare('SELECT byte_length AS byteLength FROM media_metadata WHERE source_uri = ?')
+        .get(sourceUri).byteLength,
+      2000,
+    );
+  });
+});
+
 test('expired pending intake claims can be reclaimed to a new generation', async () => {
   await withDatabase(async ({ database, dataDir }) => {
     const stagingDir = `${dataDir}/media/staging`;
@@ -622,6 +806,94 @@ test('cleanup preserves a live leased intake claim even when its file is old', a
     assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 25, 0), 0);
     await access(sourcePath);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 1);
+  });
+});
+
+test('restart cleanup removes stale partial intake state and permits an immediate retry', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'restart-partial-cleanup-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const sourcePath = stagedSourcePath(sourceUri, stagingDir, 1);
+    assert.ok(sourcePath);
+    const partialPath = `${sourcePath}.deadbeef.part`;
+    await mkdir(stagingDir, { recursive: true });
+    await writeFile(partialPath, 'interrupted upload');
+    const interruptedAt = new Date('2026-09-10T12:00:00.000Z');
+    await utimes(partialPath, interruptedAt, interruptedAt);
+    assert.equal(
+      claimStagedSource(database, 'demo-group', 'demo-1', key, interruptedAt, sourcePath).ok,
+      true,
+    );
+
+    assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 25, 0), 1);
+    await assert.rejects(access(partialPath));
+    assert.equal(database.prepare('SELECT 1 FROM staged_sources').get(), undefined);
+
+    const retry = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      new Date('2026-09-10T12:01:00.000Z'),
+      sourcePath,
+    );
+    assert.equal(retry.ok, true);
+    assert.equal(retry.ok && retry.source.claimGeneration, 1);
+  });
+});
+
+test('orphan cleanup never deletes a reclaimed generation or escapes a staging symlink', async () => {
+  await withDatabase(async ({ database, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    const key = 'reclaimed-generation-cleanup-key';
+    const sourceUri = `staged://${stagedSourceId(key)}`;
+    const firstPath = stagedSourcePath(sourceUri, stagingDir, 1);
+    const secondPath = stagedSourcePath(sourceUri, stagingDir, 2);
+    assert.ok(firstPath);
+    assert.ok(secondPath);
+    await mkdir(stagingDir, { recursive: true });
+    await writeFile(firstPath, 'old generation');
+    await writeFile(secondPath, 'active generation');
+    const oldAt = new Date('2026-09-10T12:00:00.000Z');
+    await utimes(firstPath, oldAt, oldAt);
+    await utimes(secondPath, oldAt, oldAt);
+    assert.equal(
+      claimStagedSource(database, 'demo-group', 'demo-1', key, oldAt, firstPath).ok,
+      true,
+    );
+    assert.equal(markStagedSourceReady(database, sourceUri, 100, firstPath, 1), true);
+    const reclaimed = reclaimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      key,
+      secondPath,
+      new Date(),
+    );
+    assert.equal(reclaimed.ok, true);
+    assert.equal(await cleanupOrphanedStagedSources(database, stagingDir, 25, 0), 1);
+    await assert.rejects(access(firstPath));
+    await access(secondPath);
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            'SELECT source_path AS sourcePath, claim_generation AS claimGeneration FROM staged_sources WHERE source_uri = ?',
+          )
+          .get(sourceUri),
+      },
+      { sourcePath: secondPath, claimGeneration: 2 },
+    );
+
+    const outsideDir = `${dataDir}/outside`;
+    const outsideFile = `${outsideDir}/secret.mp4`;
+    const symlinkedDir = `${stagingDir}/linked-directory`;
+    await mkdir(outsideDir, { recursive: true });
+    await writeFile(outsideFile, 'must survive');
+    await symlink(outsideDir, symlinkedDir, 'dir');
+    cleanupStagedSourcePath(`${symlinkedDir}/secret.mp4`, stagingDir);
+    assert.equal(await readFile(outsideFile, 'utf8'), 'must survive');
   });
 });
 

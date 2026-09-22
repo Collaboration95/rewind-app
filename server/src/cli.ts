@@ -4,6 +4,8 @@ import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from '.
 import { openDatabase, resetDatabase, fixtureSummary } from './db';
 import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
+import { cleanupOrphanedStagedSources } from './jobs';
+import { resolve } from 'node:path';
 
 function openRuntimeDatabase(config: RuntimeConfig): ReturnType<typeof openDatabase> {
   return openDatabase(config, { seedNow: new Date() });
@@ -154,6 +156,7 @@ function printDiagnostics(events: AuditEvent[], json: boolean): void {
 
 async function start(config: RuntimeConfig): Promise<void> {
   const database = openRuntimeDatabase(config);
+  await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
   const server = createRuntimeServer(config, database);
   const close = () => {
     server.close(() => database.close());

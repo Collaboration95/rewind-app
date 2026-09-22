@@ -158,7 +158,7 @@ serialTest('slow JSON bodies return a stable 408 contract', async () => {
 
 serialTest('an upload that exceeds its total deadline returns a stable 408 contract', async () => {
   await withRuntime(
-    async ({ baseUrl }) => {
+    async ({ baseUrl, database, dataDir }) => {
       const session = await createSession(baseUrl);
       const controlled = controlledBody(Buffer.from('partial'), Buffer.from('tail'));
       try {
@@ -178,6 +178,17 @@ serialTest('an upload that exceeds its total deadline returns a stable 408 contr
           error: 'request_timeout',
           message: 'The upload did not complete within the configured timeout.',
         });
+        await waitForCondition(() => {
+          const source = database
+            .prepare('SELECT status, source_path AS sourcePath FROM staged_sources')
+            .get();
+          return source?.status === 'pending' && source.sourcePath === null;
+        }, 'timed-out upload claim was not released');
+        const stagingEntries = await readdir(`${dataDir}/media/staging`).catch(() => []);
+        assert.equal(
+          stagingEntries.some((entry) => entry.endsWith('.part')),
+          false,
+        );
       } finally {
         controlled.release();
       }
@@ -185,6 +196,52 @@ serialTest('an upload that exceeds its total deadline returns a stable 408 contr
     { idleTimeoutMs: 1_000, uploadTimeoutMs: 30 },
   );
 });
+
+serialTest(
+  'staging exceptions remove the final source, release the claim, and allow retry',
+  async () => {
+    await withRuntime(async ({ baseUrl, config, database, dataDir }) => {
+      const session = await createSession(baseUrl);
+      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}&idempotencyKey=exception-cleanup-key`;
+      const failed = await fetch(`${baseUrl}/contributions/upload/source?${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'video/mp4' },
+        body: Buffer.from('not an mp4'),
+      });
+      assert.equal(failed.status, 400);
+      assert.deepEqual(await failed.json(), {
+        error: 'upload_staging_failed',
+        message: 'The clip source could not be staged. Try again.',
+      });
+      assert.deepEqual(
+        {
+          ...database.prepare('SELECT status, source_path AS sourcePath FROM staged_sources').get(),
+        },
+        { status: 'pending', sourcePath: null },
+      );
+      const failedEntries = await readdir(`${dataDir}/media/staging`).catch(() => []);
+      assert.equal(
+        failedEntries.some((entry) => entry.endsWith('.part')),
+        false,
+      );
+
+      const retrySourcePath = join(dataDir, 'exception-retry.mp4');
+      await generateSyntheticDemoClip(config.ffmpegBin, retrySourcePath);
+      const retry = await fetch(`${baseUrl}/contributions/upload/source?${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'video/mp4' },
+        body: await readFile(retrySourcePath),
+      });
+      assert.equal(retry.status, 201);
+      assert.equal((await retry.json()).source.byteLength > 0, true);
+      const retryEntries = await readdir(`${dataDir}/media/staging`).catch(() => []);
+      assert.equal(
+        retryEntries.some((entry) => entry.endsWith('.part')),
+        false,
+      );
+    });
+  },
+);
 
 serialTest('JSON bodies above the existing 64 KiB cap return a stable 413 contract', async () => {
   await withRuntime(async ({ baseUrl }) => {
@@ -227,7 +284,7 @@ serialTest('media bodies above the existing 50 MiB cap return a stable 413 contr
 
 serialTest('a second media intake receives a stable 429 while the first is active', async () => {
   await withRuntime(
-    async ({ baseUrl }) => {
+    async ({ baseUrl, database }) => {
       const session = await createSession(baseUrl);
       const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
       let releaseFirst;
@@ -253,6 +310,10 @@ serialTest('a second media intake receives a stable 429 while the first is activ
         },
       );
       await firstChunk;
+      await waitForCondition(
+        () => database.prepare('SELECT 1 FROM staged_sources LIMIT 1').get() !== undefined,
+        'first media intake did not establish its staged claim',
+      );
       const second = await fetch(
         `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=limit-second`,
         {
