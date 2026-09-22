@@ -110,9 +110,19 @@ describe('archive download naming and delivery', () => {
 
   it('uses an anchor download on the browser', async () => {
     jest.replaceProperty(Platform, 'OS', 'web');
+    const mediaBlob = new Blob(['film'], { type: 'video/mp4' });
+    const fetchMedia = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      blob: jest.fn().mockResolvedValue(mediaBlob),
+      ok: true,
+      status: 200,
+    } as unknown as Response);
+    const createObjectURL = jest
+      .spyOn(URL, 'createObjectURL')
+      .mockReturnValue('blob:rewind-film-1');
+    const revokeObjectURL = jest.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     const click = jest.fn();
     const remove = jest.fn();
-    const anchor = { click, download: '', remove, style: {} };
+    const anchor = { click, download: '', href: '', remove, style: {} };
     const appendChild = jest.fn();
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
@@ -132,14 +142,87 @@ describe('archive download naming and delivery', () => {
       filename: getReleasedArchiveFilename(films[0]),
     });
 
+    expect(fetchMedia).toHaveBeenCalledWith(films[0].downloadUrl);
+    expect(createObjectURL).toHaveBeenCalledWith(mediaBlob);
     expect(click).toHaveBeenCalledTimes(1);
     expect(appendChild).toHaveBeenCalledWith(anchor);
     expect(remove).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:rewind-film-1');
+    expect(anchor.href).toBe('blob:rewind-film-1');
     expect(anchor.download).toBe(getReleasedArchiveFilename(films[0]));
+  });
+
+  it('rejects non-success HTTP responses without opening the authorized URL', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web');
+    const fetchMedia = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      blob: jest.fn(),
+      ok: false,
+      status: 403,
+    } as unknown as Response);
+    const createObjectURL = jest.spyOn(URL, 'createObjectURL');
+    const click = jest.fn();
+    const remove = jest.fn();
+    const open = jest.fn().mockReturnValue({});
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: {
+        body: { appendChild: jest.fn() },
+        createElement: jest.fn(() => ({ click, download: '', remove, style: {} })),
+      },
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { open },
+    });
+
+    await expect(downloadReleasedArchiveMedia(films[0])).rejects.toThrow(
+      'The authorized media download failed with HTTP 403.',
+    );
+
+    expect(fetchMedia).toHaveBeenCalledWith(films[0].downloadUrl);
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(click).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it('removes the anchor and revokes the object URL when triggering the download fails', async () => {
+    jest.replaceProperty(Platform, 'OS', 'web');
+    const mediaBlob = new Blob(['clip'], { type: 'video/mp4' });
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      blob: jest.fn().mockResolvedValue(mediaBlob),
+      ok: true,
+      status: 200,
+    } as unknown as Response);
+    jest.spyOn(URL, 'createObjectURL').mockReturnValue('blob:rewind-clip-1');
+    const revokeObjectURL = jest.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const clickFailure = new Error('download click failed');
+    const click = jest.fn(() => {
+      throw clickFailure;
+    });
+    const remove = jest.fn();
+    const anchor = { click, download: '', remove, style: {} };
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: {
+        body: { appendChild: jest.fn() },
+        createElement: jest.fn(() => anchor),
+      },
+    });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { open: jest.fn() },
+    });
+
+    await expect(downloadReleasedArchiveMedia(clips[0])).rejects.toBe(clickFailure);
+    expect(anchor.download).toBe(getReleasedArchiveFilename(clips[0]));
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:rewind-clip-1');
   });
 
   it('opens the authorized URL when browser download attributes are unavailable', async () => {
     jest.replaceProperty(Platform, 'OS', 'web');
+    const fetchMedia = jest.spyOn(globalThis, 'fetch');
     const fallbackAnchor = { click: jest.fn() };
     const open = jest.fn().mockReturnValue({});
     Object.defineProperty(globalThis, 'document', {
@@ -156,6 +239,7 @@ describe('archive download naming and delivery', () => {
       uri: clips[0].downloadUrl,
     });
     expect(open).toHaveBeenCalledWith(clips[0].downloadUrl, '_blank', 'noopener,noreferrer');
+    expect(fetchMedia).not.toHaveBeenCalled();
     expect(fallbackAnchor.click).not.toHaveBeenCalled();
   });
 

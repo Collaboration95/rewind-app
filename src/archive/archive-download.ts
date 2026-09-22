@@ -24,12 +24,11 @@ interface BrowserAnchor {
   href?: string;
   rel?: string;
   style?: { display?: string };
-  target?: string;
   remove?: () => void;
 }
 
 interface BrowserDocument {
-  body?: { appendChild: (element: BrowserAnchor) => void };
+  body?: { appendChild?: (element: BrowserAnchor) => void };
   createElement: (tagName: string) => BrowserAnchor;
 }
 
@@ -45,33 +44,59 @@ function browserWindow(): BrowserWindow | null {
   return typeof window === 'undefined' ? null : window;
 }
 
-function openBrowserMedia(url: string, filename: string): void {
-  const documentRef = browserDocument();
-  const anchor = documentRef?.createElement('a');
-
-  if (
-    documentRef &&
-    anchor &&
-    typeof anchor.click === 'function' &&
-    typeof anchor.download === 'string'
-  ) {
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.rel = 'noreferrer';
-    anchor.target = '_blank';
-    if (anchor.style) anchor.style.display = 'none';
-    documentRef.body?.appendChild(anchor);
-    try {
-      anchor.click();
-    } finally {
-      anchor.remove?.();
-    }
-    return;
-  }
-
+function openBrowserFallback(url: string): void {
   const opened = browserWindow()?.open?.(url, '_blank', 'noopener,noreferrer');
   if (opened === null || opened === undefined) {
     throw new ArchiveDownloadError('The browser could not open this authorized media.');
+  }
+}
+
+async function downloadBrowserMedia(url: string, filename: string): Promise<void> {
+  const documentRef = browserDocument();
+  let anchor: BrowserAnchor | null = null;
+  try {
+    anchor = documentRef?.createElement('a') ?? null;
+  } catch {
+    openBrowserFallback(url);
+    return;
+  }
+
+  if (
+    !documentRef ||
+    !anchor ||
+    typeof anchor.click !== 'function' ||
+    typeof anchor.download !== 'string' ||
+    !documentRef.body ||
+    typeof documentRef.body.appendChild !== 'function' ||
+    typeof fetch !== 'function' ||
+    typeof URL === 'undefined' ||
+    typeof URL.createObjectURL !== 'function' ||
+    typeof URL.revokeObjectURL !== 'function'
+  ) {
+    openBrowserFallback(url);
+    return;
+  }
+
+  let objectUrl: string | null = null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new ArchiveDownloadError(
+        `The authorized media download failed with HTTP ${response.status}.`,
+      );
+    }
+
+    const blob = await response.blob();
+    objectUrl = URL.createObjectURL(blob);
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.rel = 'noreferrer';
+    if (anchor.style) anchor.style.display = 'none';
+    documentRef.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    anchor.remove?.();
+    if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
   }
 }
 
@@ -93,7 +118,7 @@ export async function downloadReleasedArchiveMedia(
 ): Promise<ArchiveDownloadResult> {
   const filename = getReleasedArchiveFilename(media);
   if (Platform.OS === 'web') {
-    openBrowserMedia(media.downloadUrl, filename);
+    await downloadBrowserMedia(media.downloadUrl, filename);
     return { filename, method: 'browser', uri: media.downloadUrl };
   }
   return downloadNativeMedia(media.downloadUrl, filename);
