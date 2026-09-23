@@ -16,6 +16,12 @@ operate inside the already-provisioned host rather than create cloud resources.
   creates the host and `false` hibernates it after a verified backup. The
   reviewed `infra/scripts/destroy-demo.sh` workflow is the only documented
   teardown path; the backup bucket and recovery IAM remain managed.
+- Instance `user_data` is creation-time bootstrap: its drift alone is ignored
+  so edits to `cloud-init.sh` do not replace a running host. Newly created or
+  intentionally recreated hosts still receive the current script. Updating
+  the script does not update an existing host; use application deployment or
+  the backup-gated hibernation/wake workflow as appropriate. No other instance
+  fields are ignored, and this rule does not prevent intentional teardown.
 - The S3 backend's contents are state, not source code. State is private,
   encrypted, versioned, and ignored by Git; the `.tf` files and provider lock
   file belong in Git.
