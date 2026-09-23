@@ -28,7 +28,11 @@ test('production web proxy keeps API and SPA routing boundaries explicit', () =>
 test('Compose starts the web proxy only after the healthy runtime', () => {
   assert.match(compose, /dockerfile: deploy\/web\.Dockerfile/);
   assert.match(compose, /condition: service_healthy/);
-  assert.match(compose, /127\.0\.0\.1:\$\{REWIND_WEB_PORT:-8080\}:80/);
+  assert.match(
+    compose,
+    /\$\{REWIND_WEB_BIND_ADDRESS:-127\.0\.0\.1\}:\$\{REWIND_WEB_PORT:-8080\}:80/,
+  );
+  assert.match(compose, /127\.0\.0\.1:\$\{REWIND_RUNTIME_PORT:-8787\}:8787/);
   assert.match(compose, /rewind-demo-web/);
 });
 
