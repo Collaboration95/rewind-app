@@ -2,11 +2,14 @@
 
 The hosted Sprint 2 shape is one non-root Node 22 container on the host. SQLite
 and media are bind-mounted from persistent instance storage;
-the container itself is disposable. The local production-shaped bundle
-exposes the static web shell and same-origin API proxy on `127.0.0.1:8080`; the
-Node runtime remains available on `127.0.0.1:8787` for operator checks. A public
-HTTPS distribution can use the web service as its origin without changing the
-browser request shape.
+the container itself is disposable. Compose defaults expose the static web
+shell and same-origin API proxy on `127.0.0.1:8080`. The hosted
+`rewind.env.example` explicitly sets `REWIND_WEB_BIND_ADDRESS=0.0.0.0` and
+`REWIND_WEB_PORT=80`, publishing the web container on all host IPv4 interfaces
+so the Lightsail HTTPS distribution can reach its HTTP origin on port 80.
+The Lightsail firewall must allow that port; no host-installed Nginx is needed.
+The Node runtime's host binding remains `127.0.0.1:8787` in both modes, with
+the web container reaching it over the internal Compose network.
 
 The web container builds the Expo export with
 `EXPO_PUBLIC_LOCAL_BASE_URL=/api`. Requests under `/api/` are proxied to the
@@ -119,9 +122,23 @@ cp deploy/rewind.env.example /srv/rewind/rewind.env
 docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml build
 docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml run --rm runtime migrate
 docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
-curl --fail http://127.0.0.1:8080/
-curl --fail http://127.0.0.1:8080/api/health
+curl --fail http://127.0.0.1/
+curl --fail http://127.0.0.1/api/health
 ```
+
+Existing private environment files are preserved by bootstrap. To adopt this
+hosted binding, set both web variables above in the host's existing environment
+file and recreate the web service with
+`docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d --no-deps web`.
+Then verify the public HTTPS URL and `/api/health` through the distribution;
+successful loopback checks alone do not prove origin reachability. Port 80 also
+permits direct HTTP access to the web origin wherever the firewall allows it;
+the distribution's HTTPS redirect applies to distribution requests.
+
+For local Compose use, omit the hosted web overrides or explicitly set
+`REWIND_WEB_BIND_ADDRESS=127.0.0.1` and `REWIND_WEB_PORT=8080`. The disposable
+`npm run test:host-lifecycle` runner always forces loopback and a temporary web
+port, even when its parent shell contains hosted values.
 
 For a local artifact/proxy smoke test that uses a temporary Expo export and
 temporary SQLite directory, with no AWS credentials or external URL:

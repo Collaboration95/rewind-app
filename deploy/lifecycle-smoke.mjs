@@ -306,6 +306,8 @@ async function createContext(timeoutMs, baseEnv = process.env) {
       REWIND_CONTAINER_NAME: `${projectName}-runtime`,
       REWIND_WEB_CONTAINER_NAME: `${projectName}-web`,
       REWIND_RUNTIME_PORT: String(runtimePort),
+      // Never inherit a public hosted bind address in this disposable local proof.
+      REWIND_WEB_BIND_ADDRESS: '127.0.0.1',
       REWIND_WEB_PORT: String(webPort),
     };
     await writeFile(

@@ -61,7 +61,7 @@ services:
       runtime:
         condition: service_healthy
     ports:
-      - '127.0.0.1:${REWIND_WEB_PORT:-8080}:80'
+      - '${REWIND_WEB_BIND_ADDRESS:-127.0.0.1}:${REWIND_WEB_PORT:-8080}:80'
     security_opt:
       - no-new-privileges:true
     cap_drop:

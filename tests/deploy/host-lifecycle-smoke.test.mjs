@@ -11,6 +11,39 @@ import { redactDiagnostics, runLifecycleSmoke } from '../../deploy/lifecycle-smo
 const REPO_ROOT = resolve(import.meta.dirname, '../..');
 const execFileAsync = promisify(execFile);
 
+test('resolved Compose keeps local ports private and exposes only the hosted web origin', async () => {
+  // Resolve only checked-in examples/defaults, without inherited deployment overrides.
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !/^(REWIND_|COMPOSE_)/.test(key)),
+  );
+  for (const [envFile, hostIp, port] of [
+    ['/dev/null', '127.0.0.1', '8080'],
+    [join(REPO_ROOT, 'deploy/rewind.env.example'), '0.0.0.0', '80'],
+  ]) {
+    const { stdout } = await execFileAsync(
+      'docker',
+      [
+        'compose',
+        '--env-file',
+        envFile,
+        '-f',
+        join(REPO_ROOT, 'deploy/compose.yaml'),
+        'config',
+        '--format',
+        'json',
+      ],
+      { cwd: REPO_ROOT, env },
+    );
+    const { services } = JSON.parse(stdout);
+    const ports = (service) =>
+      service.ports.map(({ host_ip, published, target }) => ({ host_ip, published, target }));
+    assert.deepEqual(ports(services.web), [{ host_ip: hostIp, published: port, target: 80 }]);
+    assert.deepEqual(ports(services.runtime), [
+      { host_ip: '127.0.0.1', published: '8787', target: 8787 },
+    ]);
+  }
+});
+
 test('resolved Compose preserves explicit HTTP request bounds', async () => {
   const root = await mkdtemp(join(tmpdir(), 'rewind-compose-http-limits-'));
   const envFile = join(root, 'rewind.env');
@@ -114,6 +147,7 @@ test('a failed Compose assertion still removes its project and emits only redact
     fakeDocker,
     `#!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+printf 'WEB_BIND=%s WEB_PORT=%s\\n' "$REWIND_WEB_BIND_ADDRESS" "$REWIND_WEB_PORT" >> "$FAKE_DOCKER_LOG"
 case "$*" in
   *" compose version"*) exit 0 ;;
   *" build runtime"*)
@@ -140,6 +174,8 @@ esac
         ...process.env,
         PATH: `${fakeBin}:${process.env.PATH ?? ''}`,
         FAKE_DOCKER_LOG: logPath,
+        REWIND_WEB_BIND_ADDRESS: '0.0.0.0',
+        REWIND_WEB_PORT: '80',
       }),
       /status 42/,
     );
@@ -156,6 +192,8 @@ esac
   assert.match(printed, /REDACTED_PATH|REDACTED_VALUE|REDACTED_CODE|REDACTED_MEDIA/);
 
   const log = await readFile(logPath, 'utf8');
+  assert.match(log, /WEB_BIND=127\.0\.0\.1 WEB_PORT=\d+/);
+  assert.doesNotMatch(log, /WEB_BIND=0\.0\.0\.0|WEB_PORT=80(?:\s|$)/);
   assert.match(log, /down .*--volumes .*--remove-orphans/);
   const envFileMatch = log.match(/--env-file (\S+)/);
   assert.ok(envFileMatch, 'fake Compose should receive the disposable env file');
