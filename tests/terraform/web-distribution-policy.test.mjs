@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
+
+const demoDirectory = new URL('../../infra/terraform/demo/', import.meta.url);
+const providerTerraform = await readFile(new URL('providers.tf', demoDirectory), 'utf8');
+const demoSources = await Promise.all(
+  (await readdir(demoDirectory))
+    .filter((name) => name.endsWith('.tf'))
+    .map((name) => readFile(new URL(name, demoDirectory), 'utf8')),
+);
 
 const lightsailTerraform = await readFile(
   new URL('../../infra/terraform/demo/lightsail.tf', import.meta.url),
@@ -29,6 +37,50 @@ const terraformRunbook = await readFile(
   new URL('../../infra/terraform/README.md', import.meta.url),
   'utf8',
 );
+
+test('distribution provider uses us-east-1 while the default provider stays regional', () => {
+  const providers = [...providerTerraform.matchAll(/^provider "aws" \{\n[\s\S]*?^\}/gm)].map(
+    (match) => match[0],
+  );
+  assert.equal(providers.length, 2);
+  const regional = providers.find((block) => !/\balias\s*=/.test(block));
+  const distribution = providers.find((block) =>
+    /alias\s*=\s*"lightsail_distribution"/.test(block),
+  );
+  assert.ok(regional, 'missing default regional provider');
+  assert.ok(distribution, 'missing distribution provider alias');
+  assert.match(regional, /region\s*=\s*var\.aws_region/);
+  assert.match(distribution, /region\s*=\s*"us-east-1"/);
+  for (const provider of providers) {
+    assert.match(provider, /Project\s*=\s*"rewind"/);
+    assert.match(provider, /Owner\s*=\s*"team"/);
+    assert.match(provider, /ManagedBy\s*=\s*"terraform"/);
+  }
+});
+
+test('only the Lightsail distribution selects an aliased AWS provider', () => {
+  const routedResources = demoSources.flatMap((source) =>
+    [...source.matchAll(/^(?:resource|data) "([^"]+)" "([^"]+)" \{\n[\s\S]*?^\}/gm)]
+      .filter((match) => /^\s*provider\s*=/m.test(match[0]))
+      .map((match) => ({
+        address: `${match[1]}.${match[2]}`,
+        provider: match[0].match(/^\s*provider\s*=\s*(\S+)/m)[1],
+      })),
+  );
+  assert.deepEqual(routedResources, [
+    { address: 'aws_lightsail_distribution.web', provider: 'aws.lightsail_distribution' },
+  ]);
+});
+
+test('distribution origin remains rewind-demo in ap-southeast-1', () => {
+  assert.match(lightsailTerraform, /instance_name\s*=\s*"rewind-demo"/);
+  assert.match(demoVariables, /variable "aws_region" \{[^}]*default\s*=\s*"ap-southeast-1"/);
+  assert.match(instanceTerraform, /availability_zone\s*=\s*"ap-southeast-1a"/);
+  assert.match(
+    distributionTerraform,
+    /origin\s*\{\s*name\s*=\s*local\.instance_name\s+region_name\s*=\s*var\.aws_region\s+protocol_policy\s*=\s*"http-only"\s*\}/,
+  );
+});
 
 test('existing hosts ignore only creation-time user_data drift', () => {
   const instanceWithoutComments = instanceTerraform.replace(/#[^\n]*/g, '');

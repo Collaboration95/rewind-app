@@ -6,7 +6,8 @@ locals {
 # charge even when the disposable Demo instance is hibernated, so the default
 # Terraform state remains distribution-free.
 resource "aws_lightsail_distribution" "web" {
-  count = var.public_https_distribution_enabled ? 1 : 0
+  provider = aws.lightsail_distribution
+  count    = var.public_https_distribution_enabled ? 1 : 0
 
   name            = local.public_https_distribution_name
   bundle_id       = "small_1_0"
