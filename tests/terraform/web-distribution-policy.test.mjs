@@ -120,6 +120,12 @@ test('public HTTPS distribution is explicitly opt-in with a safe default', () =>
   assert.match(demoExample, /cost_safety_expected_distributions\s+=\s*\{\}/);
 });
 
+test('distribution uses the canonical Lightsail full HTTP method enum', () => {
+  const allowedMethods = distributionTerraform.match(/allowed_http_methods\s*=\s*"([^"]*)"/);
+  assert.ok(allowedMethods, 'missing allowed_http_methods');
+  assert.equal(allowedMethods[1], 'GET,HEAD,OPTIONS,PUT,PATCH,POST,DELETE');
+});
+
 test('distribution uses the web origin and preserves same-origin API routing', () => {
   assert.match(
     distributionTerraform,

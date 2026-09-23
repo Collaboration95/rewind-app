@@ -44,7 +44,7 @@ resource "aws_lightsail_distribution" "web" {
   }
 
   cache_behavior_settings {
-    allowed_http_methods = "GET,HEAD,OPTIONS,POST,PUT,DELETE,PATCH"
+    allowed_http_methods = "GET,HEAD,OPTIONS,PUT,PATCH,POST,DELETE"
     cached_http_methods  = "GET,HEAD"
     default_ttl          = 86400
     maximum_ttl          = 31536000
