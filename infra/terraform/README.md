@@ -20,6 +20,37 @@ operate inside the already-provisioned host rather than create cloud resources.
   encrypted, versioned, and ignored by Git; the `.tf` files and provider lock
   file belong in Git.
 
+## Accepted live-Demo ownership and operating model
+
+The live-Demo owners accepted the following operating model on 23 September
+2026:
+
+- Guruprasath is the Terraform apply owner and break-glass owner. Andrew is the
+  required plan/apply reviewer.
+- Guruprasath owns both the `$10` actual-cost warning and `$15` actual-cost
+  critical response. Subscriber addresses remain in private Terraform inputs
+  and AWS, not in this repository.
+- The approved location is `ap-southeast-1`, availability zone
+  `ap-southeast-1a`.
+- Recovery uses CIDR-restricted SSH from the trusted operator machine.
+- Pausing is manual backup-gated hibernation through
+  `infra/scripts/destroy-demo.sh`; scheduled starts and direct stop/delete
+  operations remain disabled.
+- A failed backup or manifest verification leaves the instance running. No
+  disposable compute is deleted without a fresh verified recovery point. A
+  failed restore preserves every recovery artifact and does not replace
+  known-good data.
+- Public acceptance uses the provider-generated HTTPS hostname and no custom
+  domain. To minimize recurring cost, the optional distribution is retained
+  only while the public Demo is required, then removed before the normal
+  backup-gated hibernation. A later wake may therefore receive a different
+  generated hostname and static IP.
+- Andrew owns the non-author acceptance run for the hosted journey.
+
+An apply still requires Andrew to review the exact Terraform plan. These
+ownership decisions do not replace the plan, backup, identity, inventory, or
+rollback gates below.
+
 ## One-time adoption of existing AWS resources
 
 The AWS account already contains the state bucket and demo resources. Importing
