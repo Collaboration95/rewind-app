@@ -35,7 +35,7 @@
     "format:write": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs && npm run server:test && jest --runInBand",
+    "test": "node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs && npm run server:test && jest --runInBand",
     "test:web-smoke": "playwright test tests/responsive/production-web-routing.spec.ts",
     "test:production-e2e": "node scripts/run-production-e2e.mjs",
     "test:responsive": "npm run build:web && playwright test",

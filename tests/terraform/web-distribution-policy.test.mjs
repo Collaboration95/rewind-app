@@ -2,6 +2,17 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+const lightsailTerraform = await readFile(
+  new URL('../../infra/terraform/demo/lightsail.tf', import.meta.url),
+  'utf8',
+);
+// Terraform fmt leaves resource closing braces at column zero. Scope the
+// assertions to the instance, not a lifecycle on another resource.
+const instanceTerraform = lightsailTerraform.match(
+  /^resource "aws_lightsail_instance" "rewind" \{\n[\s\S]*?^\}/m,
+)?.[0];
+assert.ok(instanceTerraform, 'missing Demo instance resource');
+
 const distributionTerraform = await readFile(
   new URL('../../infra/terraform/demo/web-distribution.tf', import.meta.url),
   'utf8',
@@ -18,6 +29,28 @@ const terraformRunbook = await readFile(
   new URL('../../infra/terraform/README.md', import.meta.url),
   'utf8',
 );
+
+test('existing hosts ignore only creation-time user_data drift', () => {
+  const instanceWithoutComments = instanceTerraform.replace(/#[^\n]*/g, '');
+  const lifecycles = [...instanceWithoutComments.matchAll(/\blifecycle\s*\{([^{}]*)\}/g)];
+  assert.equal(lifecycles.length, 1, 'the instance must have one explicit lifecycle');
+  assert.match(lifecycles[0][1], /^\s*ignore_changes\s*=\s*\[\s*user_data\s*\]\s*$/);
+});
+
+test('new hosts keep current bootstrap and the HTTPS origin attachment chain', () => {
+  assert.match(instanceTerraform, /user_data\s*=\s*file\("\$\{path\.module\}\/cloud-init\.sh"\)/);
+  assert.match(instanceTerraform, /count\s*=\s*var\.demo_instance_enabled\s*\?\s*1\s*:\s*0/);
+  const attachment = lightsailTerraform.match(
+    /^resource "aws_lightsail_static_ip_attachment" "rewind" \{\n[\s\S]*?^\}/m,
+  )?.[0];
+  assert.ok(attachment, 'missing HTTPS origin static IP attachment');
+  assert.match(attachment, /instance_name\s*=\s*aws_lightsail_instance\.rewind\[0\]\.name/);
+  assert.match(attachment, /static_ip_name\s*=\s*aws_lightsail_static_ip\.rewind\[0\]\.name/);
+  assert.match(
+    distributionTerraform,
+    /depends_on\s*=\s*\[aws_lightsail_static_ip_attachment\.rewind\]/,
+  );
+});
 
 test('public HTTPS distribution is explicitly opt-in with a safe default', () => {
   assert.match(demoVariables, /variable "public_https_distribution_enabled"/);

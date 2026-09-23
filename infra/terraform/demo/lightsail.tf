@@ -39,6 +39,11 @@ resource "aws_lightsail_instance" "rewind" {
     Environment = "demo"
   }
 
+  lifecycle {
+    # Bootstrap runs only on creation. Keep existing hosts when the script
+    # changes; intentional recreations still use the current cloud-init.sh.
+    ignore_changes = [user_data]
+  }
 }
 
 resource "aws_lightsail_static_ip" "rewind" {
