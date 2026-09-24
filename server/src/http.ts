@@ -942,6 +942,7 @@ export async function handleRequest(
       url.searchParams.get('startFromLatest') === 'true' &&
       lastEventValue === null &&
       !url.searchParams.has('sinceEventId');
+    const metadataOnly = url.searchParams.get('metadataOnly') === 'true';
     const hub = options.realtimeHub;
     if (!hub) {
       sendJson(response, config, 500, {
@@ -962,7 +963,9 @@ export async function handleRequest(
     response.write(': connected\n\n');
 
     const writeEvent = (event: Parameters<typeof encodeSseEvent>[0]) => {
-      if (!response.writableEnded && !response.destroyed) response.write(encodeSseEvent(event));
+      if (!response.writableEnded && !response.destroyed) {
+        response.write(encodeSseEvent(event, { metadataOnly }));
+      }
     };
     let unsubscribe = () => {};
     const streamIsAuthorised = () => {
@@ -1003,12 +1006,39 @@ export async function handleRequest(
       }
       priming = false;
     } else {
-      // Register before replay so a message sent during reconnect is either
-      // observed live or present in the replay query.
-      unsubscribe = hub.subscribe(groupId, writeAuthorisedEvent);
-      for (const event of listChatEvents(database, groupId, sinceEventId)) {
+      // Buffer live events while draining the persisted log through a fixed
+      // watermark. Events committed after that watermark are flushed once the
+      // replay is complete; events at or below it are covered by replay.
+      let priming = true;
+      const pending: Parameters<typeof encodeSseEvent>[0][] = [];
+      let lastDeliveredEventId = sinceEventId;
+      const deliverOnce = (event: Parameters<typeof encodeSseEvent>[0]) => {
+        if (event.eventId <= lastDeliveredEventId) return;
         writeAuthorisedEvent(event);
+        lastDeliveredEventId = event.eventId;
+      };
+      unsubscribe = hub.subscribe(groupId, (event) => {
+        if (priming) pending.push(event);
+        else deliverOnce(event);
+      });
+      const watermark = latestChatEventId(database, groupId);
+      while (lastDeliveredEventId < watermark) {
+        const page = listChatEvents(database, groupId, lastDeliveredEventId, 100);
+        let progressed = false;
+        for (const event of page) {
+          if (event.eventId > watermark) break;
+          deliverOnce(event);
+          progressed = true;
+        }
+        if (!progressed || lastDeliveredEventId >= watermark) break;
+        // Let concurrent message requests publish while replay continues. Their
+        // events remain buffered until the captured watermark has been drained.
+        await new Promise<void>((resolve) => setImmediate(resolve));
       }
+      for (const event of pending.sort((left, right) => left.eventId - right.eventId)) {
+        if (event.eventId > watermark) deliverOnce(event);
+      }
+      priming = false;
     }
     const heartbeat = setInterval(() => {
       if (response.writableEnded || response.destroyed || endUnauthorisedStream()) return;

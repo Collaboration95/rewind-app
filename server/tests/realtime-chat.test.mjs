@@ -8,6 +8,7 @@ import test from 'node:test';
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
 const { createGroup } = await import('../dist/groups/index.js');
+const { createChatMessage } = await import('../dist/chat/index.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { RealtimeHub } = await import('../dist/realtime/index.js');
 
@@ -419,6 +420,155 @@ test('a zero checkpoint cursor replays messages after an unread stream replaceme
       await resumedReader.cancel();
     }
   } finally {
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
+test('reconnect replay drains every page and delivers events committed during the drain once', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-replay-pages-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const hub = new RealtimeHub();
+  let injectedEvent;
+  let injectionError;
+  let resolveInjection;
+  const injectionComplete = new Promise((resolve) => {
+    resolveInjection = resolve;
+  });
+  const subscribe = hub.subscribe.bind(hub);
+  hub.subscribe = (groupId, writer) => {
+    const unsubscribe = subscribe(groupId, writer);
+    if (!injectedEvent) {
+      setImmediate(() => {
+        try {
+          const created = createChatMessage(database, {
+            groupId: 'demo-group',
+            memberId: 'demo-2',
+            body: 'arrived while replay was draining',
+          });
+          assert.equal(created.ok, true);
+          injectedEvent = created.event;
+          hub.publish(injectedEvent);
+        } catch (error) {
+          injectionError = error;
+        } finally {
+          resolveInjection();
+        }
+      });
+    }
+    return unsubscribe;
+  };
+  const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
+  const session = await createSession(baseUrl, 'demo-1');
+  const persistedEvents = [];
+  for (let index = 0; index < 205; index += 1) {
+    const created = createChatMessage(database, {
+      groupId: 'demo-group',
+      memberId: 'demo-2',
+      body: `replay backlog ${index}`,
+    });
+    assert.equal(created.ok, true);
+    persistedEvents.push(created.event);
+  }
+
+  try {
+    const response = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=0`,
+    );
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    try {
+      await injectionComplete;
+      assert.equal(injectionError, undefined);
+      const expected = database
+        .prepare('SELECT id FROM realtime_events WHERE group_id = ? ORDER BY id')
+        .all('demo-group')
+        .map((row) => Number(row.id));
+      const received = [];
+      let pending = '';
+      for (let index = 0; index < expected.length; index += 1) {
+        const result = await readSseEvent(reader, pending);
+        pending = result.pending;
+        received.push(result.event.eventId);
+      }
+      assert.deepEqual(received, expected);
+      assert.equal(new Set(received).size, received.length);
+    } finally {
+      await reader.cancel();
+    }
+  } finally {
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
+test('metadata-only unread SSE omits message and reply bodies while timeline SSE keeps them', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-metadata-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const hub = new RealtimeHub();
+  const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
+  const sender = await createSession(baseUrl, 'demo-1');
+  const observer = await createSession(baseUrl, 'demo-2');
+  const unreadResponse = await fetch(
+    `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(observer.id)}&startFromLatest=true&metadataOnly=true`,
+  );
+  assert.equal(unreadResponse.status, 200);
+  const unreadReader = unreadResponse.body.getReader();
+  let timelineReader;
+
+  async function send(body, replyToMessageId) {
+    const response = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(sender.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body, ...(replyToMessageId ? { replyToMessageId } : {}) }),
+      },
+    );
+    assert.equal(response.status, 201);
+    return (await response.json()).event;
+  }
+
+  try {
+    const checkpoint = await readSseEvent(unreadReader);
+    assert.equal(checkpoint.eventName, 'checkpoint');
+    assert.equal(Number.isSafeInteger(checkpoint.event.eventId), true);
+    const timelineResponse = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(observer.id)}&sinceEventId=${checkpoint.event.eventId}`,
+    );
+    assert.equal(timelineResponse.status, 200);
+    timelineReader = timelineResponse.body.getReader();
+
+    const parent = await send('private parent text', undefined);
+    const [unreadParent, timelineParent] = await Promise.all([
+      readSseEvent(unreadReader),
+      readSseEvent(timelineReader),
+    ]);
+    assert.deepEqual(unreadParent.event, {
+      eventId: parent.eventId,
+      type: 'message',
+      message: { groupId: 'demo-group', memberId: 'demo-1' },
+    });
+    assert.equal(JSON.stringify(unreadParent.event).includes('private parent text'), false);
+    assert.equal(timelineParent.event.message.body, 'private parent text');
+
+    const reply = await send('private reply text', parent.message.id);
+    const [unreadReply, timelineReply] = await Promise.all([
+      readSseEvent(unreadReader),
+      readSseEvent(timelineReader),
+    ]);
+    assert.deepEqual(unreadReply.event, {
+      eventId: reply.eventId,
+      type: 'message',
+      message: { groupId: 'demo-group', memberId: 'demo-1' },
+    });
+    assert.equal(JSON.stringify(unreadReply.event).includes('private reply text'), false);
+    assert.equal(JSON.stringify(unreadReply.event).includes('private parent text'), false);
+    assert.equal(timelineReply.event.message.body, 'private reply text');
+    assert.equal(timelineReply.event.message.replyTo.body, 'private parent text');
+  } finally {
+    await unreadReader.cancel();
+    if (timelineReader) await timelineReader.cancel();
     await closeRuntime(server, database, dataDir);
   }
 });

@@ -21,6 +21,8 @@ export type ChatConnectionState =
 export interface ChatUnreadState {
   connectionState: ChatConnectionState;
   unreadCount: number;
+  /** Session/group whose count and connection state are represented here. */
+  scopeKey: string | null;
 }
 
 export interface ChatUnreadSubscription {
@@ -33,10 +35,18 @@ export type ChatUnreadSubscribe = (
   options: SubscribeOptions,
 ) => ChatUnreadSubscription;
 
-const UNAVAILABLE_STATE: ChatUnreadState = { connectionState: 'unavailable', unreadCount: 0 };
+const UNAVAILABLE_STATE: ChatUnreadState = {
+  connectionState: 'unavailable',
+  unreadCount: 0,
+  scopeKey: null,
+};
 
 function sameState(left: ChatUnreadState, right: ChatUnreadState): boolean {
-  return left.connectionState === right.connectionState && left.unreadCount === right.unreadCount;
+  return (
+    left.connectionState === right.connectionState &&
+    left.unreadCount === right.unreadCount &&
+    left.scopeKey === right.scopeKey
+  );
 }
 
 function isAccessDeniedError(error: unknown): boolean {
@@ -157,6 +167,7 @@ export class ChatUnreadOwner {
     try {
       const subscription = subscribeChat(scope.sessionId, scope.groupId, {
         startFromLatest: true,
+        metadataOnly: true,
         ...(this.snapshot.hasCheckpoint ? { sinceEventId: this.snapshot.lastEventId } : {}),
         onEvent: (event) => {
           // A revoked scope stops being a recipient; it must not keep counting.
@@ -219,9 +230,10 @@ export class ChatUnreadOwner {
     subscription?.close();
   }
 
-  private publish(next: ChatUnreadState): void {
-    if (sameState(this.state, next)) return;
-    this.state = next;
+  private publish(next: Omit<ChatUnreadState, 'scopeKey'>): void {
+    const scoped = { ...next, scopeKey: this.currentKey };
+    if (sameState(this.state, scoped)) return;
+    this.state = scoped;
     for (const listener of [...this.listeners]) listener();
   }
 }

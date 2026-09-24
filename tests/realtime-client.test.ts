@@ -50,7 +50,7 @@ test('realtime client sends authenticated messages and decodes SSE events', asyn
       ),
   );
   const source = new FakeEventSource();
-  const factory = jest.fn(() => source);
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => source);
   const client = new RealtimeChatClient('http://127.0.0.1:8787', fetchImpl, {
     eventSourceFactory: factory,
   });
@@ -217,6 +217,37 @@ test('forwards and resumes from a valid zero checkpoint', async () => {
 
   expect(factory.mock.calls[1][0]).toContain('&sinceEventId=0');
   expect(factory.mock.calls[1][0]).not.toContain('&startFromLatest=true');
+  subscription.close();
+});
+
+test('requests and decodes metadata-only unread events', () => {
+  const source = new FakeEventSource();
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => source);
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: factory,
+  });
+  const received: unknown[] = [];
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    startFromLatest: true,
+    metadataOnly: true,
+    onEvent: (event) => received.push(event),
+  });
+
+  expect(factory.mock.calls[0][0]).toContain('&startFromLatest=true&metadataOnly=true');
+  source.emit('message', {
+    data: JSON.stringify({
+      eventId: 4,
+      type: 'message',
+      message: { groupId: 'demo-group', memberId: 'demo-2' },
+    }),
+  });
+  expect(received).toEqual([
+    {
+      eventId: 4,
+      type: 'message',
+      message: { groupId: 'demo-group', memberId: 'demo-2' },
+    },
+  ]);
   subscription.close();
 });
 

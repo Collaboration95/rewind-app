@@ -1,4 +1,5 @@
 import { act, render, waitFor } from '@testing-library/react-native';
+import { useLayoutEffect } from 'react';
 import { Text, View } from 'react-native';
 
 import { ChatUnreadProvider, useChatUnread } from '../src/chat/ChatUnreadProvider';
@@ -113,6 +114,7 @@ describe('ChatUnreadProvider', () => {
     expect(runtime.subscribeChat.mock.calls[0][0]).toBe('session-a');
     expect(runtime.subscribeChat.mock.calls[0][1]).toBe('demo-group');
     expect(runtime.subscribeChat.mock.calls[0][2].startFromLatest).toBe(true);
+    expect(runtime.subscribeChat.mock.calls[0][2].metadataOnly).toBe(true);
   });
 
   it('counts an off-tab message and does not resubscribe when chat becomes visible', async () => {
@@ -292,6 +294,40 @@ describe('ChatUnreadProvider', () => {
     await waitFor(() => expect(runtime.subscribeChat).toHaveBeenCalledTimes(2));
     expect(runtime.subscribeChat.mock.calls[1][1]).toBe('other-group');
     expect(runtime.subscribeChat.mock.calls[0][2].onEvent).toBeDefined();
+  });
+
+  it('hides the old scope count on the first committed render after a scope change', async () => {
+    const runtime = runtimeMock();
+    const committedCounts: number[] = [];
+    function CommitProbe() {
+      const { unreadCount } = useChatUnread();
+      useLayoutEffect(() => {
+        committedCounts.push(unreadCount);
+      });
+      return <Text testID="commit-unread">{String(unreadCount)}</Text>;
+    }
+
+    const result = await render(
+      <ChatUnreadProvider activeGroupId={null} runtimeClient={runtime.client} session={sessionA}>
+        <CommitProbe />
+      </ChatUnreadProvider>,
+    );
+    await waitFor(() => expect(runtime.subscribeChat).toHaveBeenCalledTimes(1));
+    await act(async () => runtime.latest().options.onEvent(message(8, 'demo-2')));
+    expect(runtime.latest().options.metadataOnly).toBe(true);
+    committedCounts.length = 0;
+
+    await act(async () =>
+      result.rerender(
+        <ChatUnreadProvider activeGroupId={null} runtimeClient={runtime.client} session={sessionB}>
+          <CommitProbe />
+        </ChatUnreadProvider>,
+      ),
+    );
+
+    expect(committedCounts[0]).toBe(0);
+    expect(result.getByTestId('commit-unread')).toHaveTextContent('0');
+    expect(runtime.subscribeChat).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the scope watermark through a temporary group lookup refresh', async () => {

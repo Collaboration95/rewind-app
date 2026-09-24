@@ -33,6 +33,13 @@ export interface ChatMessageEvent {
   occurredAt: string;
 }
 
+/** Message metadata sent to observers that only maintain unread counts. */
+export interface ChatUnreadMessageEvent {
+  eventId: number;
+  type: 'message';
+  message: Pick<ChatMessage, 'groupId' | 'memberId'>;
+}
+
 /** A draft keeps its client id alongside text so a retry is idempotent. */
 export interface ChatMessageDraft {
   body: string;
@@ -67,11 +74,12 @@ export interface RealtimeChatClientOptions {
   sendTimeoutMs?: number;
 }
 
-export interface SubscribeOptions {
+interface SubscribeOptionsBase {
   sinceEventId?: number;
   /** Start a fresh observer at the current end of the persisted event log. */
   startFromLatest?: boolean;
-  onEvent(event: ChatMessageEvent): void;
+  /** Ask the server to omit message and reply bodies from this stream. */
+  metadataOnly?: boolean;
   /** Persisted cursor delivered before live events on a startFromLatest stream. */
   onCheckpoint?(eventId: number): void;
   onError?(error: unknown): void;
@@ -81,6 +89,12 @@ export interface SubscribeOptions {
   reconnect?: boolean;
   reconnectDelayMs?: number;
 }
+
+export type SubscribeOptions = SubscribeOptionsBase &
+  (
+    | { metadataOnly: true; onEvent(event: ChatUnreadMessageEvent): void }
+    | { metadataOnly?: false; onEvent(event: ChatMessageEvent): void }
+  );
 
 export class RealtimeChatError extends Error {
   constructor(
@@ -388,10 +402,11 @@ export class RealtimeChatClient {
           ? `&sinceEventId=${encodeURIComponent(String(lastEventId))}`
           : '';
       const startFromLatest = startingFromLatest ? '&startFromLatest=true' : '';
+      const metadataOnly = options.metadataOnly ? '&metadataOnly=true' : '';
       let nextSource: RealtimeEventSource;
       try {
         nextSource = this.eventSourceFactory(
-          `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(sessionId)}${since}${startFromLatest}`,
+          `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(sessionId)}${since}${startFromLatest}${metadataOnly}`,
         );
       } catch (error) {
         failWithError(error);
@@ -416,6 +431,20 @@ export class RealtimeChatClient {
             throw new Error('The realtime message event has an invalid shape.');
           }
           const eventId = Number((parsed as { eventId: unknown }).eventId);
+          if (options.metadataOnly) {
+            const metadata = parsed as ChatUnreadMessageEvent;
+            if (
+              !Number.isSafeInteger(eventId) ||
+              eventId <= 0 ||
+              metadata.type !== 'message' ||
+              typeof metadata.message.memberId !== 'string'
+            ) {
+              throw new Error('The unread realtime event has an invalid shape.');
+            }
+            if (eventId > lastEventId) lastEventId = eventId;
+            options.onEvent(metadata);
+            return;
+          }
           if (Number.isSafeInteger(eventId) && eventId > lastEventId) lastEventId = eventId;
           options.onEvent(parsed as ChatMessageEvent);
         } catch (error) {

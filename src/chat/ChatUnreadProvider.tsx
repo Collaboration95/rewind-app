@@ -11,7 +11,7 @@ import {
 import type { DemoSession } from '../domain/session';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { ChatUnreadOwner, type ChatConnectionState, type ChatUnreadState } from './unread-owner';
-import type { ChatUnreadScope } from './unread-store';
+import { chatScopeKey, type ChatUnreadScope } from './unread-store';
 
 export type { ChatConnectionState } from './unread-owner';
 export { chatConnectionLabel } from './unread-owner';
@@ -68,6 +68,7 @@ export function ChatUnreadProvider({
         : null,
     [groupId, session],
   );
+  const currentScopeKey = chatScopeKey(scope);
   // A stable instance without reading a ref during render: the lazy initializer
   // runs once and later renders reuse the created owner.
   const [createdOwner] = useState(() => new ChatUnreadOwner());
@@ -117,14 +118,17 @@ export function ChatUnreadProvider({
   }, []);
 
   const state = useSyncExternalStore(store.subscribe, store.getState, store.getState);
+  // Effects bind the new scope after commit. Hide the previous scope's count
+  // during the render that precedes that reset.
+  const unreadCount = state.scopeKey === currentScopeKey ? state.unreadCount : 0;
 
   const value = useMemo<ChatUnreadContextValue>(
     () => ({
       connectionState: browserOnline ? state.connectionState : 'offline',
       markRead: () => store.markRead(),
-      unreadCount: state.unreadCount,
+      unreadCount,
     }),
-    [browserOnline, state.connectionState, state.unreadCount, store],
+    [browserOnline, state.connectionState, store, unreadCount],
   );
 
   return <ChatUnreadContext.Provider value={value}>{children}</ChatUnreadContext.Provider>;
