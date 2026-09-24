@@ -72,6 +72,8 @@ export interface SubscribeOptions {
   /** Start a fresh observer at the current end of the persisted event log. */
   startFromLatest?: boolean;
   onEvent(event: ChatMessageEvent): void;
+  /** Persisted cursor delivered before live events on a startFromLatest stream. */
+  onCheckpoint?(eventId: number): void;
   onError?(error: unknown): void;
   onConnectionStateChange?(state: RealtimeConnectionState): void;
   /** Alias useful to UI consumers that call the lifecycle a status. */
@@ -454,6 +456,7 @@ export class RealtimeChatClient {
           if (Number.isSafeInteger(eventId) && eventId >= 0) {
             lastEventId = Math.max(lastEventId, eventId);
             latestCheckpointReceived = true;
+            options.onCheckpoint?.(eventId);
           }
         } catch {
           options.onError?.(new RealtimeChatError('The realtime event checkpoint was invalid.'));

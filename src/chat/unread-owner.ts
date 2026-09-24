@@ -157,7 +157,7 @@ export class ChatUnreadOwner {
     try {
       const subscription = subscribeChat(scope.sessionId, scope.groupId, {
         startFromLatest: true,
-        ...(this.snapshot.lastEventId > 0 ? { sinceEventId: this.snapshot.lastEventId } : {}),
+        ...(this.snapshot.hasCheckpoint ? { sinceEventId: this.snapshot.lastEventId } : {}),
         onEvent: (event) => {
           // A revoked scope stops being a recipient; it must not keep counting.
           if (generation !== this.generation || this.denied) return;
@@ -174,6 +174,13 @@ export class ChatUnreadOwner {
             connectionState: this.state.connectionState,
             unreadCount: result.snapshot.unreadCount,
           });
+        },
+        onCheckpoint: (eventId) => {
+          if (generation !== this.generation || this.denied) return;
+          if (!Number.isSafeInteger(eventId) || eventId < 0) return;
+          const lastEventId = Math.max(this.snapshot.lastEventId, eventId);
+          if (this.snapshot.hasCheckpoint && lastEventId === this.snapshot.lastEventId) return;
+          this.snapshot = { ...this.snapshot, lastEventId, hasCheckpoint: true };
         },
         onConnectionStateChange: (state) => {
           if (generation !== this.generation) return;

@@ -23,11 +23,17 @@ export interface ChatUnreadEvent {
 
 export interface ChatUnreadSnapshot {
   unreadCount: number;
-  /** Highest applied persisted event id in this scope, used for dedupe. */
+  /** Highest applied event id or server checkpoint, used for replay and dedupe. */
   lastEventId: number;
+  /** Distinguishes a valid zero checkpoint from a scope with no cursor yet. */
+  hasCheckpoint: boolean;
 }
 
-export const INITIAL_CHAT_UNREAD: ChatUnreadSnapshot = { unreadCount: 0, lastEventId: 0 };
+export const INITIAL_CHAT_UNREAD: ChatUnreadSnapshot = {
+  unreadCount: 0,
+  lastEventId: 0,
+  hasCheckpoint: false,
+};
 
 /** Session and group together form the security boundary for unread state. */
 export function chatScopeKey(scope: ChatUnreadScope | null): string | null {
@@ -63,7 +69,7 @@ function withWatermark(
   eventId: number,
   applied: ChatUnreadApplication,
 ): ChatUnreadRecordResult {
-  return { snapshot: { ...snapshot, lastEventId: eventId }, applied };
+  return { snapshot: { ...snapshot, lastEventId: eventId, hasCheckpoint: true }, applied };
 }
 
 /**
@@ -94,10 +100,21 @@ export function recordChatUnreadEvent(
     return withWatermark(snapshot, event.eventId, 'ignored_own');
   }
   if (options.chatActive) {
-    return { snapshot: { unreadCount: 0, lastEventId: event.eventId }, applied: 'read' };
+    return {
+      snapshot: {
+        unreadCount: 0,
+        lastEventId: event.eventId,
+        hasCheckpoint: true,
+      },
+      applied: 'read',
+    };
   }
   return {
-    snapshot: { unreadCount: snapshot.unreadCount + 1, lastEventId: event.eventId },
+    snapshot: {
+      unreadCount: snapshot.unreadCount + 1,
+      lastEventId: event.eventId,
+      hasCheckpoint: true,
+    },
     applied: 'counted',
   };
 }
@@ -108,5 +125,9 @@ export function recordChatUnreadEvent(
  */
 export function markChatScopeRead(snapshot: ChatUnreadSnapshot): ChatUnreadSnapshot {
   if (snapshot.unreadCount === 0) return snapshot;
-  return { unreadCount: 0, lastEventId: snapshot.lastEventId };
+  return {
+    unreadCount: 0,
+    lastEventId: snapshot.lastEventId,
+    hasCheckpoint: snapshot.hasCheckpoint,
+  };
 }

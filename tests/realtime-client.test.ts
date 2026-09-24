@@ -157,6 +157,7 @@ test('starts a new observer at the persisted high-water mark and reconnects from
   const sources = [first, second];
   const factory = jest.fn<RealtimeEventSource, [string]>(() => sources.shift()!);
   const received: number[] = [];
+  const checkpoints: number[] = [];
   const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
     eventSourceFactory: factory,
     reconnectDelayMs: 0,
@@ -164,11 +165,13 @@ test('starts a new observer at the persisted high-water mark and reconnects from
   const subscription = client.subscribe('session-1', 'demo-group', {
     startFromLatest: true,
     onEvent: (event) => received.push(event.eventId),
+    onCheckpoint: (eventId) => checkpoints.push(eventId),
   });
 
   expect(factory.mock.calls[0][0]).toContain('&startFromLatest=true');
   first.emit('checkpoint', { data: JSON.stringify({ eventId: 21 }) });
   expect(received).toEqual([]);
+  expect(checkpoints).toEqual([21]);
 
   first.onerror?.({});
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -188,6 +191,32 @@ test('starts a new observer at the persisted high-water mark and reconnects from
     }),
   });
   expect(received).toEqual([22]);
+  subscription.close();
+});
+
+test('forwards and resumes from a valid zero checkpoint', async () => {
+  const first = new FakeEventSource();
+  const second = new FakeEventSource();
+  const sources = [first, second];
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => sources.shift()!);
+  const checkpoints: number[] = [];
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: factory,
+    reconnectDelayMs: 0,
+  });
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    startFromLatest: true,
+    onEvent: () => undefined,
+    onCheckpoint: (eventId) => checkpoints.push(eventId),
+  });
+
+  first.emit('checkpoint', { data: JSON.stringify({ eventId: 0 }) });
+  expect(checkpoints).toEqual([0]);
+  first.onerror?.({});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=0');
+  expect(factory.mock.calls[1][0]).not.toContain('&startFromLatest=true');
   subscription.close();
 });
 

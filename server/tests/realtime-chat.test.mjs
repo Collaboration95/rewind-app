@@ -7,6 +7,7 @@ import test from 'node:test';
 
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
+const { createGroup } = await import('../dist/groups/index.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { RealtimeHub } = await import('../dist/realtime/index.js');
 
@@ -364,6 +365,61 @@ test('persisted message events replay after the runtime and database are reopene
   } finally {
     await reader.cancel();
     await closeRuntime(secondRuntime.server, reopened, dataDir);
+  }
+});
+
+test('a zero checkpoint cursor replays messages after an unread stream replacement', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-zero-checkpoint-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const { server, baseUrl } = await startRuntime(config, database);
+  const created = createGroup(database, 'demo-1', {
+    name: 'Zero checkpoint test',
+    prompt: 'What is worth keeping?',
+  });
+  assert.equal(created.ok, true);
+  const groupId = created.group.id;
+  const session = await createSession(baseUrl, 'demo-1', groupId);
+  try {
+    const initial = await fetch(
+      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(session.id)}&startFromLatest=true`,
+    );
+    assert.equal(initial.status, 200);
+    const initialReader = initial.body.getReader();
+    try {
+      const checkpoint = await readSseEvent(initialReader);
+      assert.equal(checkpoint.eventName, 'checkpoint');
+      assert.equal(checkpoint.event.eventId, 0);
+    } finally {
+      await initialReader.cancel();
+    }
+
+    const sent = await fetch(
+      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages?sessionId=${encodeURIComponent(session.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'arrived during the replacement gap' }),
+      },
+    );
+    assert.equal(sent.status, 201);
+    const sentPayload = await sent.json();
+
+    const resumed = await fetch(
+      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=0`,
+    );
+    assert.equal(resumed.status, 200);
+    const resumedReader = resumed.body.getReader();
+    try {
+      const replayed = await readSseEvent(resumedReader);
+      assert.equal(replayed.eventName, 'message');
+      assert.equal(replayed.event.eventId, sentPayload.event.eventId);
+      assert.equal(replayed.event.message.body, 'arrived during the replacement gap');
+    } finally {
+      await resumedReader.cancel();
+    }
+  } finally {
+    await closeRuntime(server, database, dataDir);
   }
 });
 

@@ -31,13 +31,13 @@ describe('chat unread store', () => {
       chatActive: false,
     });
     expect(first.applied).toBe('counted');
-    expect(first.snapshot).toEqual({ unreadCount: 1, lastEventId: 7 });
+    expect(first.snapshot).toEqual({ unreadCount: 1, lastEventId: 7, hasCheckpoint: true });
 
     const second = recordChatUnreadEvent(first.snapshot, incoming(8), {
       scope,
       chatActive: false,
     });
-    expect(second.snapshot).toEqual({ unreadCount: 2, lastEventId: 8 });
+    expect(second.snapshot).toEqual({ unreadCount: 2, lastEventId: 8, hasCheckpoint: true });
   });
 
   it('does not double count a replayed event after a reconnect', () => {
@@ -62,7 +62,7 @@ describe('chat unread store', () => {
       chatActive: false,
     });
     expect(own.applied).toBe('ignored_own');
-    expect(own.snapshot).toEqual({ unreadCount: 0, lastEventId: 4 });
+    expect(own.snapshot).toEqual({ unreadCount: 0, lastEventId: 4, hasCheckpoint: true });
 
     // The advanced watermark stops this event counting if it is replayed.
     const replay = recordChatUnreadEvent(own.snapshot, incoming(4, 'demo-1'), {
@@ -103,7 +103,7 @@ describe('chat unread store', () => {
       chatActive: true,
     });
     expect(visible.applied).toBe('read');
-    expect(visible.snapshot).toEqual({ unreadCount: 0, lastEventId: 5 });
+    expect(visible.snapshot).toEqual({ unreadCount: 0, lastEventId: 5, hasCheckpoint: true });
 
     const accumulated = recordChatUnreadEvent(INITIAL_CHAT_UNREAD, incoming(5), {
       scope,
@@ -113,7 +113,11 @@ describe('chat unread store', () => {
       scope,
       chatActive: true,
     });
-    expect(readWhileVisible.snapshot).toEqual({ unreadCount: 0, lastEventId: 6 });
+    expect(readWhileVisible.snapshot).toEqual({
+      unreadCount: 0,
+      lastEventId: 6,
+      hasCheckpoint: true,
+    });
   });
 
   it('clears the count when the group is opened but keeps the watermark', () => {
@@ -122,7 +126,7 @@ describe('chat unread store', () => {
       chatActive: false,
     }).snapshot;
     const read = markChatScopeRead(counted);
-    expect(read).toEqual({ unreadCount: 0, lastEventId: 11 });
+    expect(read).toEqual({ unreadCount: 0, lastEventId: 11, hasCheckpoint: true });
 
     // Opening the chat must not resurrect a replay of the already-seen event.
     const replay = recordChatUnreadEvent(read, incoming(11), { scope, chatActive: false });
@@ -170,7 +174,7 @@ describe('chat unread store', () => {
       chatActive: false,
     });
     expect(result.applied).toBe('counted');
-    expect(result.snapshot).toEqual({ unreadCount: 1, lastEventId: 21 });
+    expect(result.snapshot).toEqual({ unreadCount: 1, lastEventId: 21, hasCheckpoint: true });
     expect(JSON.stringify(result.snapshot)).not.toContain('Secret');
   });
 });

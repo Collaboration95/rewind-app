@@ -329,6 +329,44 @@ describe('ChatUnreadProvider', () => {
     expect(result.getByTestId('unread')).toHaveTextContent('1');
   });
 
+  it('replays the gap from a zero checkpoint when the stream is replaced before a message', async () => {
+    const runtime = runtimeMock();
+    const result = await renderOwner({ runtimeClient: runtime.client });
+    await result.findByTestId('unread');
+
+    await act(async () => runtime.latest().options.onCheckpoint?.(0));
+    expect(result.getByTestId('unread')).toHaveTextContent('0');
+
+    await act(async () =>
+      result.rerender(
+        <ChatUnreadProvider
+          activeGroupId={null}
+          enabled={false}
+          runtimeClient={runtime.client}
+          session={sessionA}
+        >
+          <Probe />
+        </ChatUnreadProvider>,
+      ),
+    );
+    expect(runtime.latest().close).toHaveBeenCalled();
+
+    await act(async () =>
+      result.rerender(
+        <ChatUnreadProvider activeGroupId={null} runtimeClient={runtime.client} session={sessionA}>
+          <Probe />
+        </ChatUnreadProvider>,
+      ),
+    );
+    expect(runtime.subscribeChat).toHaveBeenCalledTimes(2);
+    expect(runtime.latest().options.sinceEventId).toBe(0);
+
+    await act(async () => runtime.latest().options.onEvent(message(1, 'demo-2')));
+    expect(result.getByTestId('unread')).toHaveTextContent('1');
+    await act(async () => runtime.latest().options.onEvent(message(1, 'demo-2')));
+    expect(result.getByTestId('unread')).toHaveTextContent('1');
+  });
+
   it('marks the current scope read on demand', async () => {
     const runtime = runtimeMock();
     const result = await renderOwner({ runtimeClient: runtime.client });
