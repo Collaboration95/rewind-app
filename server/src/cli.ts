@@ -286,7 +286,7 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
   const groupId = readOption(argv, ['--group', '--group-id', '--groupId']);
   const idleMs = parseWorkerMsOption(argv, '--idle-ms');
   const maxJobs = parseWorkerMaxJobs(argv);
-  const database = openRuntimeDatabase(config);
+  const database = await openRuntimeDatabase(config);
   const workerOptions = {
     ffmpegBin: config.ffmpegBin,
     stagingDir: resolve(config.dataDir, 'media', 'staging'),
