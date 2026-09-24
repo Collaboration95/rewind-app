@@ -568,15 +568,21 @@ test('legacy backfill releases writer locks while hashing and resumes after rest
       backfillMediaIntegrity(database, dataDir, {
         hashOutput: async (path) => {
           hashCalls += 1;
-          const integrity = await hashFileWithIdentity(path);
           if (hashCalls === 1) {
-            // A separate connection must be able to commit while the media
-            // bytes are being hashed. This fails with SQLITE_BUSY if the
-            // migration holds BEGIN IMMEDIATE across the file read.
+            // Hold a competing writer lock during the media read. This fails
+            // with SQLITE_BUSY if the migration already holds BEGIN IMMEDIATE.
             competingWriter.exec('BEGIN IMMEDIATE');
-            competingWriter.prepare("UPDATE groups SET name = name WHERE id = 'demo-group'").run();
-            competingWriter.exec('COMMIT');
-            return integrity;
+            try {
+              competingWriter
+                .prepare("UPDATE groups SET name = name WHERE id = 'demo-group'")
+                .run();
+              const integrity = await hashFileWithIdentity(path);
+              competingWriter.exec('COMMIT');
+              return integrity;
+            } catch (error) {
+              competingWriter.exec('ROLLBACK');
+              throw error;
+            }
           }
           throw new Error('simulated interruption after one committed receipt');
         },
