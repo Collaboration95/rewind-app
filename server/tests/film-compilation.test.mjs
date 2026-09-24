@@ -281,7 +281,7 @@ test('compiles chronological retained clips into a playable normalized-audio fil
       ffmpegBin: config.ffmpegBin,
       outputDir,
     });
-    assert.deepEqual(result, { ok: true, jobId, status: 'ready' });
+    assert.deepEqual(result, { ok: true, jobId, status: 'ready', claimed: true });
     const job = getCompilationJob(database, jobId);
     assert.equal(job?.status, 'ready');
     assert.equal(job?.progress, 100);
@@ -368,7 +368,7 @@ test('production selection appends and visibly labels same-group archive filler'
       ffmpegBin: config.ffmpegBin,
       outputDir,
     });
-    assert.deepEqual(result, { ok: true, jobId, status: 'ready' });
+    assert.deepEqual(result, { ok: true, jobId, status: 'ready', claimed: true });
     const film = getCompilationJob(database, jobId);
     assert.ok(film?.outputPath);
 
@@ -471,6 +471,7 @@ process.exit(91);
       status: 'failed',
       reason: 'retry_exhausted',
       message: 'The film is delayed after the maximum number of compile attempts.',
+      claimed: false,
     });
     assert.equal(getCompilationJob(database, jobId)?.attemptCount, MAX_COMPILATION_ATTEMPTS);
 

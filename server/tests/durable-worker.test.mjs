@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { promisify } from 'node:util';
@@ -123,6 +123,46 @@ function jobRow(database, jobId) {
         'FROM media_jobs WHERE id = ?',
     )
     .get(jobId);
+}
+
+function interleaveAfterCandidateSelection(database, interleave) {
+  let waiting = true;
+  return {
+    exec: (...args) => database.exec(...args),
+    prepare(sql) {
+      const statement = database.prepare(sql);
+      if (!waiting || !sql.includes('ORDER BY created_at ASC, id ASC')) return statement;
+      return new Proxy(statement, {
+        get(target, property) {
+          if (property === 'all') {
+            return (...args) => {
+              const rows = target.all(...args);
+              if (waiting) {
+                waiting = false;
+                interleave(rows);
+              }
+              return rows;
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    },
+  };
+}
+
+async function waitForFile(path) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  throw new Error('Timed out waiting for the worker FFmpeg wrapper.');
 }
 
 test('duplicate workers produce exactly one result for the same clip job', async () => {
@@ -251,6 +291,43 @@ test('automatic clip retries stop at the cap while request retries remain availa
   });
 });
 
+test('worker claim enforces the automatic clip cap after candidate selection', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const missingSource = dataDir + '/media/staging/worker-cap-race.mp4';
+    const jobId = await enqueueClip(database, missingSource, 'worker-cap-race-key');
+    database
+      .prepare('UPDATE media_jobs SET status = ?, attempt_count = ? WHERE id = ?')
+      .run('failed', 2, jobId);
+    let interleaved = false;
+    const racingDatabase = interleaveAfterCandidateSelection(database, (candidates) => {
+      assert.equal(candidates.length, 1);
+      assert.equal(candidates[0].id, jobId);
+      assert.equal(candidates[0].attempts, 2);
+      interleaved = true;
+      // Another worker claims and fails attempt three after this worker's
+      // candidate snapshot but before its writer-locked claim.
+      database
+        .prepare('UPDATE media_jobs SET status = ?, attempt_count = ? WHERE id = ?')
+        .run('failed', 3, jobId);
+    });
+
+    const tick = await runWorkerTick(racingDatabase, workerOptions(config, dataDir));
+    assert.equal(interleaved, true);
+    assert.deepEqual(tick, { claimed: false, reason: 'idle' });
+    assert.equal(jobRow(database, jobId).attempts, WORKER_MAX_CLIP_ATTEMPTS);
+    assert.equal(jobRow(database, jobId).status, 'failed');
+
+    // The cap is worker-only; a request-driven retry remains allowed.
+    const manual = await processClipJob(database, {
+      jobId,
+      groupId: 'demo-group',
+      ...workerOptions(config, dataDir),
+    });
+    assert.equal(manual.claimed, true);
+    assert.equal(jobRow(database, jobId).attempts, WORKER_MAX_CLIP_ATTEMPTS + 1);
+  });
+});
+
 test('an exhausted film job is terminal and never claimed again', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();
@@ -312,6 +389,85 @@ test('graceful shutdown stops claiming and leaves work for the request-driven pa
   });
 });
 
+test('graceful shutdown waits for in-flight FFmpeg and skips the next claim', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    await mkdir(dataDir + '/media/staging', { recursive: true });
+    const firstSource = dataDir + '/media/staging/in-flight-first.mp4';
+    const nextSource = dataDir + '/media/staging/in-flight-next.mp4';
+    await createSyntheticSource(firstSource);
+    await createSyntheticSource(nextSource);
+    const firstJobId = await enqueueClip(database, firstSource, 'in-flight-first-key');
+    const nextJobId = await enqueueClip(database, nextSource, 'in-flight-next-key');
+
+    const realFfmpeg = (await execFileAsync('which', ['ffmpeg'])).stdout.trim();
+    const wrapperPath = dataDir + '/rewind-worker-ffmpeg-wrapper';
+    const startedPath = dataDir + '/ffmpeg-wrapper-started';
+    const releasePath = dataDir + '/ffmpeg-wrapper-release';
+    await writeFile(
+      wrapperPath,
+      [
+        '#!/bin/sh',
+        'printf started > "$REWIND_WORKER_TEST_STARTED"',
+        'while [ ! -f "$REWIND_WORKER_TEST_RELEASE" ]; do sleep 0.01; done',
+        'exec "$REWIND_WORKER_TEST_REAL_FFMPEG" "$@"',
+        '',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+
+    const envKeys = [
+      'REWIND_WORKER_TEST_STARTED',
+      'REWIND_WORKER_TEST_RELEASE',
+      'REWIND_WORKER_TEST_REAL_FFMPEG',
+    ];
+    const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+    process.env.REWIND_WORKER_TEST_STARTED = startedPath;
+    process.env.REWIND_WORKER_TEST_RELEASE = releasePath;
+    process.env.REWIND_WORKER_TEST_REAL_FFMPEG = realFfmpeg;
+
+    let handle;
+    const records = [];
+    try {
+      handle = startWorkerLoop(
+        database,
+        workerOptions(config, dataDir, {
+          ffmpegBin: wrapperPath,
+          idleMs: 50,
+          onResult: (record) => records.push(record),
+        }),
+      );
+      await waitForFile(startedPath);
+      assert.equal(jobRow(database, firstJobId).status, 'processing');
+
+      let stopResolved = false;
+      const stopping = handle.stop().then(() => {
+        stopResolved = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(stopResolved, false, 'stop resolved while FFmpeg was still blocked');
+      assert.equal(handle.completed(), 0);
+
+      await writeFile(releasePath, 'continue');
+      await stopping;
+      assert.equal(jobRow(database, firstJobId).status, 'ready');
+      assert.equal(jobRow(database, nextJobId).status, 'pending');
+      assert.equal(handle.completed(), 1);
+      assert.deepEqual(
+        records.map((record) => record.jobId),
+        [firstJobId],
+      );
+    } finally {
+      await writeFile(releasePath, 'continue').catch(() => undefined);
+      if (handle) await handle.stop();
+      for (const key of envKeys) {
+        const value = previousEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
+
 test('repeated idle waits do not retain callbacks for elapsed ticks', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     const nativeSetTimeout = globalThis.setTimeout;
@@ -356,6 +512,63 @@ test('repeated idle waits do not retain callbacks for elapsed ticks', async () =
       globalThis.setTimeout = nativeSetTimeout;
       globalThis.clearTimeout = nativeClearTimeout;
     }
+  });
+});
+
+test('stale ready clip and film candidates do not consume the worker job limit', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    await mkdir(dataDir + '/media/staging', { recursive: true });
+    const sourcePath = dataDir + '/media/staging/remaining-claim.mp4';
+    await createSyntheticSource(sourcePath);
+    const actualClipId = await enqueueClip(database, sourcePath, 'remaining-claim-key');
+
+    const staleClipId = 'worker-stale-ready-clip';
+    database
+      .prepare(
+        'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, created_at) ' +
+          'VALUES (?, ?, NULL, ?, ?, ?)',
+      )
+      .run(staleClipId, 'demo-group', 'clip', 'pending', '2026-09-10T00:00:00.000Z');
+    database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();
+    const createdFilm = createCompilationJob(database, {
+      groupId: 'demo-group',
+      cycleId: 'demo-cycle',
+      createdAt: '2026-09-10T01:00:00.000Z',
+    });
+    assert.equal(createdFilm.ok, true);
+
+    let interleaved = false;
+    const racingDatabase = interleaveAfterCandidateSelection(database, (candidates) => {
+      assert.deepEqual(
+        candidates.map((candidate) => candidate.id),
+        [staleClipId, createdFilm.job.id, actualClipId],
+      );
+      interleaved = true;
+      database
+        .prepare("UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = ?")
+        .run('completed-by-another-clip-worker.mp4', staleClipId);
+      database
+        .prepare("UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = ?")
+        .run('completed-by-another-film-worker.mp4', createdFilm.job.id);
+    });
+    const records = [];
+    const handle = startWorkerLoop(
+      racingDatabase,
+      workerOptions(config, dataDir, {
+        maxJobs: 1,
+        onResult: (record) => records.push(record),
+      }),
+    );
+
+    await handle.done;
+    assert.equal(interleaved, true);
+    assert.equal(handle.completed(), 1);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].jobId, actualClipId);
+    assert.equal(records[0].status, 'ready');
+    assert.equal(jobRow(database, staleClipId).status, 'ready');
+    assert.equal(jobRow(database, createdFilm.job.id).status, 'ready');
+    assert.equal(jobRow(database, actualClipId).status, 'ready');
   });
 });
 

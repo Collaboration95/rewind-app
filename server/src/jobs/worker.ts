@@ -282,11 +282,11 @@ export async function runWorkerTick(
             stagingDir: options.stagingDir,
             outputDir: options.outputDir,
             actorMemberId: options.actorMemberId ?? null,
+            workerAttemptCap: cap,
           });
-    // A live claim owned by another worker is not this loop's result. Skip it
-    // so one tick can still serve other work and duplicate workers never
-    // report a second outcome for the same job.
-    if (!result.ok && result.reason === 'already_processing') continue;
+    // Only report work this invocation actually claimed. Candidate snapshots
+    // can become ready, exhausted, or claimed by another worker before here.
+    if (!result.claimed) continue;
     const state = readWorkerJobState(database, candidate.id);
     return { claimed: true, record: toRecord(candidate, state, cap) };
   }

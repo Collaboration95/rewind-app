@@ -171,7 +171,7 @@ for (const mode of ['soft-focus', 'high-contrast']) {
         stagingDir,
         outputDir: `${dataDir}/processed`,
       });
-      assert.deepEqual(result, { ok: true, jobId, status: 'ready' });
+      assert.deepEqual(result, { ok: true, jobId, status: 'ready', claimed: true });
       await assert.rejects(access(stagedSourcePath));
       const row = database
         .prepare(
@@ -774,7 +774,12 @@ test('a worker restart finalizes a durable output marker after raw deletion', as
       stagingDir,
       outputDir,
     });
-    assert.deepEqual(result, { ok: true, jobId: upload.upload.job.id, status: 'ready' });
+    assert.deepEqual(result, {
+      ok: true,
+      jobId: upload.upload.job.id,
+      status: 'ready',
+      claimed: false,
+    });
     assert.equal(
       database.prepare('SELECT status FROM media_jobs WHERE id = ?').get(upload.upload.job.id)
         .status,
@@ -940,7 +945,7 @@ test('processing failure is recoverable and never discloses media paths', async 
       stagingDir: `${dataDir}/media/staging`,
       outputDir: `${dataDir}/processed`,
     });
-    assert.deepEqual(retry, { ok: true, jobId, status: 'ready' });
+    assert.deepEqual(retry, { ok: true, jobId, status: 'ready', claimed: true });
     await assert.rejects(access(stagedSourcePath));
   });
 });
@@ -965,7 +970,7 @@ test('a stale processing claim is recoverable after a worker restart', async () 
       stagingDir,
       outputDir: `${dataDir}/processed`,
     });
-    assert.deepEqual(result, { ok: true, jobId, status: 'ready' });
+    assert.deepEqual(result, { ok: true, jobId, status: 'ready', claimed: true });
     assert.equal(
       database
         .prepare('SELECT processing_started_at AS startedAt FROM media_jobs WHERE id = ?')

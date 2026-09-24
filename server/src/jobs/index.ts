@@ -95,6 +95,8 @@ export interface ProcessClipJobOptions {
   /** Directory for retained processed media. It must be server-owned. */
   outputDir?: string;
   actorMemberId?: string | null;
+  /** Automatic worker retries are capped; request-driven retries omit this. */
+  workerAttemptCap?: number;
 }
 
 export type CompilationJobStatus = 'pending' | 'processing' | 'ready' | 'failed';
@@ -626,13 +628,14 @@ export function updateCompilationJobProgress(
 }
 
 export type ProcessCompilationJobResult =
-  | { ok: true; jobId: string; status: 'ready' }
+  | { ok: true; jobId: string; status: 'ready'; claimed: boolean }
   | {
       ok: false;
       jobId: string;
       status: 'failed' | 'processing' | 'not_found';
       reason: 'not_found' | 'already_processing' | 'processing_failed' | 'retry_exhausted';
       message: string;
+      claimed: boolean;
     };
 
 export interface ProcessCompilationJobOptions {
@@ -785,9 +788,11 @@ export async function processCompilationJob(
           : exhausted
             ? 'The film is delayed after the maximum number of compile attempts.'
             : 'The film job cannot be processed in its current state.',
+      claimed: false,
     };
   }
-  if (claim.action === 'already_ready') return { ok: true, jobId: claim.job.id, status: 'ready' };
+  if (claim.action === 'already_ready')
+    return { ok: true, jobId: claim.job.id, status: 'ready', claimed: false };
   if (claim.action === 'already_processing') {
     return {
       ok: false,
@@ -795,6 +800,7 @@ export async function processCompilationJob(
       status: 'processing',
       reason: 'already_processing',
       message: 'The film job is already processing.',
+      claimed: false,
     };
   }
 
@@ -861,7 +867,7 @@ export async function processCompilationJob(
         }
       },
     });
-    return { ok: true, jobId: claim.job.id, status: 'ready' };
+    return { ok: true, jobId: claim.job.id, status: 'ready', claimed: true };
   } catch (error) {
     await rm(temporaryOutputPath, { force: true }).catch(() => undefined);
     if (getCompilationJob(database, claim.job.id)?.status !== 'ready') {
@@ -878,6 +884,7 @@ export async function processCompilationJob(
       message: delayed
         ? 'The film is delayed after the maximum number of compile attempts.'
         : 'The film could not be compiled. Retry the job.',
+      claimed: true,
     };
   }
 }
@@ -886,13 +893,14 @@ export async function processCompilationJob(
 export const PROCESSING_CLAIM_LEASE_MS = 15 * 60 * 1000;
 
 export type ProcessClipJobResult =
-  | { ok: true; jobId: string; status: 'ready' }
+  | { ok: true; jobId: string; status: 'ready'; claimed: boolean }
   | {
       ok: false;
       jobId: string;
       status: 'failed' | 'processing' | 'not_found';
-      reason: 'not_found' | 'already_processing' | 'processing_failed';
+      reason: 'not_found' | 'already_processing' | 'processing_failed' | 'retry_exhausted';
       message: string;
+      claimed: boolean;
     };
 
 interface ClipJobRow {
@@ -906,7 +914,15 @@ interface ClipJobRow {
   trimEndSeconds: number | null;
   mode: string | null;
   processingStartedAt: string | null;
+  attemptCount: number;
 }
+
+type ClipJobClaimResult =
+  | { claimed: true; row: ClipJobRow }
+  | {
+      claimed: false;
+      reason: 'not_found' | 'already_processing' | 'not_claimable' | 'retry_exhausted';
+    };
 
 function readClipJob(database: RewindDatabase, jobId: string, groupId?: string): ClipJobRow | null {
   const row = database
@@ -915,7 +931,8 @@ function readClipJob(database: RewindDatabase, jobId: string, groupId?: string):
               source_generation AS sourceGeneration, source_path AS sourcePath,
               trim_start_seconds AS trimStartSeconds,
               trim_end_seconds AS trimEndSeconds, mode,
-              processing_started_at AS processingStartedAt
+              processing_started_at AS processingStartedAt,
+              attempt_count AS attemptCount
        FROM media_jobs
        WHERE id = ? AND kind = 'clip' ${groupId ? 'AND group_id = ?' : ''}`,
     )
@@ -1059,13 +1076,17 @@ function finalizePreparedOutput(
   }
 }
 
-function claimClipJob(database: RewindDatabase, row: ClipJobRow): ClipJobRow | null {
+function claimClipJob(
+  database: RewindDatabase,
+  row: ClipJobRow,
+  workerAttemptCap?: number,
+): ClipJobClaimResult {
   beginJobTransaction(database);
   try {
     const locked = readClipJob(database, row.id);
     if (!locked) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'not_found' };
     }
     const processingStartedAt = locked.processingStartedAt
       ? Date.parse(locked.processingStartedAt)
@@ -1076,17 +1097,27 @@ function claimClipJob(database: RewindDatabase, row: ClipJobRow): ClipJobRow | n
         Date.now() - processingStartedAt >= PROCESSING_CLAIM_LEASE_MS);
     if (locked.status === 'processing' && !stale) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'already_processing' };
     }
     if (!['pending', 'failed', 'processing'].includes(locked.status)) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'not_claimable' };
+    }
+    if (
+      Number.isSafeInteger(workerAttemptCap) &&
+      Number(workerAttemptCap) >= 1 &&
+      locked.status !== 'processing' &&
+      locked.attemptCount >= Number(workerAttemptCap)
+    ) {
+      database.exec('ROLLBACK');
+      return { claimed: false, reason: 'retry_exhausted' };
     }
     if (!stagedBindingMatches(database, locked)) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'not_claimable' };
     }
     const startedAt = new Date().toISOString();
+    const startsNewAttempt = locked.status === 'pending' || locked.status === 'failed';
     const result = database
       .prepare(
         `UPDATE media_jobs SET status = 'processing', error_code = NULL,
@@ -1098,10 +1129,18 @@ function claimClipJob(database: RewindDatabase, row: ClipJobRow): ClipJobRow | n
       .run(startedAt, startedAt, locked.id, locked.processingStartedAt, locked.processingStartedAt);
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'already_processing' };
     }
     database.exec('COMMIT');
-    return { ...locked, status: 'processing', processingStartedAt: startedAt };
+    return {
+      claimed: true,
+      row: {
+        ...locked,
+        status: 'processing',
+        processingStartedAt: startedAt,
+        attemptCount: locked.attemptCount + (startsNewAttempt ? 1 : 0),
+      },
+    };
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
@@ -1142,9 +1181,10 @@ export async function processClipJob(
       status: 'not_found',
       reason: 'not_found',
       message: 'The media job was not found.',
+      claimed: false,
     };
   }
-  if (row.status === 'ready') return { ok: true, jobId: row.id, status: 'ready' };
+  if (row.status === 'ready') return { ok: true, jobId: row.id, status: 'ready', claimed: false };
   const processingStartedAt = row.processingStartedAt
     ? Date.parse(row.processingStartedAt)
     : Number.NaN;
@@ -1159,6 +1199,7 @@ export async function processClipJob(
       status: 'processing',
       reason: 'already_processing',
       message: 'The media job is already processing.',
+      claimed: false,
     };
   }
   if (!['pending', 'failed', 'processing'].includes(row.status)) {
@@ -1168,6 +1209,7 @@ export async function processClipJob(
       status: 'failed',
       reason: 'processing_failed',
       message: 'The media job cannot be processed in its current state.',
+      claimed: false,
     };
   }
 
@@ -1183,22 +1225,54 @@ export async function processClipJob(
       existsSync(row.outputPath) &&
       finalizePreparedOutput(database, row, stagingDir, row.outputPath)
     ) {
-      return { ok: true, jobId: row.id, status: 'ready' };
+      return { ok: true, jobId: row.id, status: 'ready', claimed: false };
     }
     row = readClipJob(database, options.jobId, options.groupId);
-    if (!row || row.status === 'ready') return { ok: true, jobId: options.jobId, status: 'ready' };
+    if (!row || row.status === 'ready')
+      return { ok: true, jobId: options.jobId, status: 'ready', claimed: false };
   }
-  const claim = claimClipJob(database, row);
-  if (!claim) {
+  const claim = claimClipJob(database, row, options.workerAttemptCap);
+  if (!claim.claimed) {
+    if (claim.reason === 'retry_exhausted') {
+      return {
+        ok: false,
+        jobId: row.id,
+        status: 'failed',
+        reason: 'retry_exhausted',
+        message: 'The clip is exhausted for automatic worker retries.',
+        claimed: false,
+      };
+    }
+    if (claim.reason === 'not_found') {
+      return {
+        ok: false,
+        jobId: row.id,
+        status: 'not_found',
+        reason: 'not_found',
+        message: 'The media job was not found.',
+        claimed: false,
+      };
+    }
+    if (claim.reason === 'not_claimable') {
+      return {
+        ok: false,
+        jobId: row.id,
+        status: 'failed',
+        reason: 'processing_failed',
+        message: 'The media job cannot be processed in its current state.',
+        claimed: false,
+      };
+    }
     return {
       ok: false,
       jobId: row.id,
       status: 'processing',
       reason: 'already_processing',
       message: 'The media job is already processing.',
+      claimed: false,
     };
   }
-  row = claim;
+  row = claim.row;
   const outputPath = row.outputPath ?? resolve(outputDir, safeOutputName(row.id));
   try {
     if (!row.sourcePath || row.trimStartSeconds === null || row.trimEndSeconds === null) {
@@ -1240,7 +1314,7 @@ export async function processClipJob(
         }
       },
     });
-    return { ok: true, jobId: row.id, status: 'ready' };
+    return { ok: true, jobId: row.id, status: 'ready', claimed: true };
   } catch (error) {
     // A competing stale worker may have completed the durable finalization
     // after this worker observed a binding change. Never delete an output
@@ -1256,6 +1330,7 @@ export async function processClipJob(
       status: 'failed',
       reason: 'processing_failed',
       message: 'The clip could not be processed. Retry the job.',
+      claimed: true,
     };
   }
 }
