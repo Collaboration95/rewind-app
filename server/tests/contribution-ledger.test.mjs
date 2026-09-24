@@ -330,6 +330,20 @@ test('deletion stays deleted until an explicit accepted replacement links it', (
     assert.equal(replacement.ok, true);
     if (!replacement.ok) return;
 
+    // A normal accepted upload does not identify a deleted target. Until an
+    // explicit replacement acceptance links these two rows, the old row must
+    // remain deleted even when the new row was submitted in the same window.
+    const unlinked = listContributionLedger(database, {
+      groupId: 'demo-group',
+      memberId: 'demo-1',
+      now,
+    });
+    assert.equal(
+      unlinked.entries.find((entry) => entry.contributionId === original.upload.contribution.id)
+        .state,
+      'deleted',
+    );
+
     const link = linkContributionReplacement(
       database,
       'demo-group',
@@ -581,5 +595,39 @@ test('ledger allowance impact tracks the current window and cycle phase', () => 
     // Media stays metadata-only in every phase, including after the boundary.
     assert.equal(closed.entries[0].state, 'sealed');
     assert.doesNotMatch(JSON.stringify(closed), /private|output_path|source_uri|download|share/i);
+  });
+});
+
+test('current-week allowance does not inherit usage or correction from the previous week', () => {
+  return withLedgerDatabase(async ({ database }) => {
+    const cycle = database
+      .prepare('SELECT starts_at AS startsAt FROM cycles WHERE id = ?')
+      .get('demo-cycle');
+    const start = new Date(cycle.startsAt);
+    const lastWeek = start.toISOString();
+    const lastWeekEnd = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const current = new Date(start.getTime() + 8 * 24 * 60 * 60 * 1000);
+    database
+      .prepare(
+        `INSERT INTO contribution_quota_windows
+          (id, cycle_id, member_id, window_start_at, window_end_at,
+           max_count, max_seconds, count_used, seconds_used, deletions_used)
+         VALUES ('prior-week', 'demo-cycle', 'demo-4', ?, ?, 5, 30, 4, 26, 1)`,
+      )
+      .run(lastWeek, lastWeekEnd);
+
+    const page = listContributionLedger(database, {
+      groupId: 'demo-group',
+      memberId: 'demo-4',
+      now: current,
+    });
+    assert.deepEqual(page.allowance, {
+      maxCount: 5,
+      maxSeconds: 30,
+      countUsed: 0,
+      secondsUsed: 0,
+      deletionsUsed: 0,
+      deletionAvailability: 'available',
+    });
   });
 });

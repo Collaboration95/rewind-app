@@ -7,7 +7,12 @@ export type ContributionLedgerView =
   | { status: 'loading' }
   | { status: 'denied' }
   | { status: 'error' }
-  | { status: 'ready'; page: ContributionLedgerPage; loadingMore?: boolean };
+  | {
+      status: 'ready';
+      page: ContributionLedgerPage;
+      loadingMore?: boolean;
+      loadMoreError?: boolean;
+    };
 
 const stateCopy: Record<ContributionLedgerEntry['state'], string> = {
   queued: 'Queued',
@@ -151,6 +156,11 @@ export function ContributionLedger({
           <LedgerRow entry={entry} key={entry.contributionId} position={position} />
         ))
       )}
+      {view.loadMoreError ? (
+        <Text accessibilityLiveRegion="assertive" style={styles.body}>
+          More contributions could not be loaded. Try again.
+        </Text>
+      ) : null}
       {page.pagination.hasMore ? (
         onLoadMore ? (
           <Pressable

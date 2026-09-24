@@ -1,5 +1,6 @@
 import type { RewindDatabase } from '../db';
 import { cyclePhase } from '../cycles/engine';
+import { contributionQuotaWindow, MAX_CONTRIBUTION_COUNT, MAX_CONTRIBUTION_SECONDS } from './index';
 
 /**
  * Metadata-only contribution ledger for one member inside the group's current
@@ -282,12 +283,15 @@ interface CurrentCycle {
   startsAt: string;
   endsAt: string;
   status: string;
+  maxCount: number;
+  maxSeconds: number;
 }
 
 function currentCycle(database: RewindDatabase, groupId: string): CurrentCycle | null {
   const row = database
     .prepare(
-      `SELECT id, starts_at AS startsAt, ends_at AS endsAt, status FROM cycles
+      `SELECT id, starts_at AS startsAt, ends_at AS endsAt, status,
+              max_count AS maxCount, max_seconds AS maxSeconds FROM cycles
        WHERE group_id = ? AND (
              id = (SELECT current_cycle_id FROM groups WHERE id = ?)
           OR NOT EXISTS (
@@ -299,13 +303,23 @@ function currentCycle(database: RewindDatabase, groupId: string): CurrentCycle |
        LIMIT 1`,
     )
     .get(groupId, groupId, groupId, groupId, groupId) as
-    { id?: unknown; startsAt?: unknown; endsAt?: unknown; status?: unknown } | undefined;
+    | {
+        id?: unknown;
+        startsAt?: unknown;
+        endsAt?: unknown;
+        status?: unknown;
+        maxCount?: unknown;
+        maxSeconds?: unknown;
+      }
+    | undefined;
   if (!row?.id) return null;
   return {
     id: String(row.id),
     startsAt: String(row.startsAt ?? ''),
     endsAt: String(row.endsAt ?? ''),
     status: String(row.status ?? ''),
+    maxCount: Number(row.maxCount),
+    maxSeconds: Number(row.maxSeconds),
   };
 }
 
@@ -367,10 +381,12 @@ function mapEntry(row: LedgerRow): LedgerEntry {
 
 function readAllowance(
   database: RewindDatabase,
-  cycleId: string,
+  cycle: CurrentCycle,
   memberId: string,
   correctable: boolean,
+  now: Date,
 ): LedgerAllowance {
+  const windowStartsAt = correctable ? contributionQuotaWindow(cycle, now).startsAt : null;
   const row = database
     .prepare(
       `SELECT max_count AS maxCount, max_seconds AS maxSeconds,
@@ -378,18 +394,20 @@ function readAllowance(
               deletions_used AS deletionsUsed
        FROM contribution_quota_windows
        WHERE cycle_id = ? AND member_id = ?
+         ${windowStartsAt ? 'AND window_start_at = ?' : ''}
        ORDER BY window_start_at DESC LIMIT 1`,
     )
-    .get(cycleId, memberId) as Record<string, unknown> | undefined;
+    .get(...(windowStartsAt ? [cycle.id, memberId, windowStartsAt] : [cycle.id, memberId])) as
+    Record<string, unknown> | undefined;
   if (!row) {
-    // No reservation exists yet, so no correction has been consumed either.
+    // A new week has no reservation yet, even if the preceding week was full.
     return {
-      maxCount: 0,
-      maxSeconds: 0,
+      maxCount: Math.max(1, Math.min(MAX_CONTRIBUTION_COUNT, Math.floor(cycle.maxCount))),
+      maxSeconds: Math.max(1, Math.min(MAX_CONTRIBUTION_SECONDS, Math.floor(cycle.maxSeconds))),
       countUsed: 0,
       secondsUsed: 0,
       deletionsUsed: 0,
-      deletionAvailability: 'available',
+      deletionAvailability: correctable ? 'available' : 'unavailable',
     };
   }
   const deletionsUsed = Math.max(0, Math.floor(Number(row.deletionsUsed)) || 0);
@@ -446,6 +464,7 @@ export function listContributionLedger(
     };
   }
   const cycleId = cycle.id;
+  const now = options.now ?? new Date();
   // A correction is only meaningful while the cycle is still collecting, which
   // is exactly the condition `deleteContribution` re-checks before mutating.
   let correctable = false;
@@ -457,7 +476,7 @@ export function listContributionLedger(
           endsAt: cycle.endsAt,
           status: cycle.status as 'collecting' | 'revealing' | 'archived',
         },
-        options.now ?? new Date(),
+        now,
       ) === 'collecting';
   } catch {
     correctable = false;
@@ -495,7 +514,7 @@ export function listContributionLedger(
   return {
     cycleId,
     memberId,
-    allowance: readAllowance(database, cycleId, memberId, correctable),
+    allowance: readAllowance(database, cycle, memberId, correctable, now),
     entries: pageRows.map(mapEntry),
     pagination: {
       limit,
@@ -530,6 +549,9 @@ export type LinkReplacementResult =
  * only the named target changes. The guard keeps the correction inside one
  * member, one cycle, and the same seven-day allowance window, and refuses to
  * relabel a row twice so a later submission cannot rewrite history.
+ * The current capture flow deletes the old row and clears its ID before a
+ * separate upload. It does not accept a replacement target, so that upload
+ * cannot call this function without guessing which deletion it supersedes.
  */
 export function linkContributionReplacement(
   database: RewindDatabase,

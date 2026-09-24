@@ -19,6 +19,7 @@ import { DemoProfilePicker } from './src/profiles/DemoProfilePicker';
 import { DemoProfileProvider } from './src/profiles/DemoProfileProvider';
 import { CapsuleProvider, useCapsule } from './src/capsule/CapsuleProvider';
 import { CapsuleSummary } from './src/capsule/CapsuleSummary';
+import { ContributionLedgerSection } from './src/contributions/ContributionLedgerSection';
 import type { CycleRepository, DemoRevealState } from './src/domain/cycles';
 import {
   revealStateForCycle,
@@ -325,6 +326,16 @@ function ActiveAppShell({
         {activeRoute === 'home' ? (
           <HomeScreen
             clock={clock}
+            ledgerScope={
+              session && group && cycle
+                ? {
+                    sessionId: session.id,
+                    groupId: group.id,
+                    memberId: session.actor.memberId,
+                    cycleId: cycle.id,
+                  }
+                : null
+            }
             onAddMoment={() => setActiveRoute('camera')}
             onOpenArchive={() => setActiveRoute('archive')}
             revealState={revealState}
@@ -1139,12 +1150,14 @@ function GroupCreateScreen({
 
 function HomeScreen({
   clock,
+  ledgerScope,
   onAddMoment,
   onOpenArchive,
   revealState,
   runtimeClient,
 }: {
   clock: () => number;
+  ledgerScope: { sessionId: string; groupId: string; memberId: string; cycleId: string } | null;
   onAddMoment: () => void;
   onOpenArchive: () => void;
   revealState: RevealEducationState;
@@ -1169,6 +1182,10 @@ function HomeScreen({
         onOpenArchive={onOpenArchive}
         revealState={revealState}
       />
+
+      {runtimeClient?.getContributionLedger && ledgerScope ? (
+        <ContributionLedgerSection client={runtimeClient} {...ledgerScope} />
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.label}>SEALED MOMENTS</Text>

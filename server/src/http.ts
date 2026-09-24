@@ -49,6 +49,12 @@ import { createGroup } from './groups';
 import { acceptInvite, createInvite } from './invites';
 import { deleteContribution } from './contributions';
 import {
+  ContributionLedgerQueryError,
+  listContributionLedger,
+  parseLedgerLimit,
+  parseLedgerState,
+} from './contributions/ledger';
+import {
   cancelClipUpload,
   claimStagedSource,
   acquireStagedSourceLock,
@@ -1819,6 +1825,42 @@ export async function handleRequest(
 
   if (url.pathname === '/profiles') {
     sendJson(response, config, 200, { profiles: listProfiles(database) });
+    return;
+  }
+
+  if (url.pathname === '/contributions' && request.method === 'GET') {
+    const requestNow = now();
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      requestNow,
+      url.searchParams.get('groupId'),
+      'contribution',
+    );
+    if (!identity) return;
+    try {
+      sendJson(
+        response,
+        config,
+        200,
+        listContributionLedger(database, {
+          groupId: identity.groupId,
+          memberId: identity.memberId,
+          state: parseLedgerState(url.searchParams.get('state')),
+          limit: parseLedgerLimit(url.searchParams.get('limit')),
+          cursor: url.searchParams.get('cursor'),
+          now: requestNow,
+        }),
+      );
+    } catch (error) {
+      if (!(error instanceof ContributionLedgerQueryError)) throw error;
+      sendJson(response, config, 400, {
+        error: 'invalid_ledger_request',
+        message: error.message,
+      });
+    }
     return;
   }
 
