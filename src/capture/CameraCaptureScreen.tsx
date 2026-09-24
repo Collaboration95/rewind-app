@@ -219,12 +219,15 @@ export function CameraCaptureScreen({
       const sequence = ++captureSequence.current;
       setState((current) => ({ ...current, status: 'capturing', errorMessage: null }));
       try {
-        const activePreview = await session.captureImage(await getImage());
+        const activePreview = await session.captureImage(
+          await getImage(),
+          () => sequence === captureSequence.current,
+        );
         if (sequence !== captureSequence.current) {
           // The capture was abandoned while it was in flight. The session
-          // already wrote a managed copy, so release it instead of leaving an
-          // orphaned local blob behind with no preview to reach it.
-          await session.discard();
+          // already wrote a managed copy, so release only that operation's
+          // file. A newer capture may now own the session preview.
+          await session.discard(activePreview);
           return;
         }
         setState((current) => ({

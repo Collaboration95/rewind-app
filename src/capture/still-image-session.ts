@@ -47,9 +47,14 @@ export class StillImageCaptureSession {
 
   async captureImage(
     image: Awaited<ReturnType<CameraPlatform['captureStill']>>,
+    isCurrent: () => boolean = () => true,
   ): Promise<ActiveStillImage> {
+    if (this.disposed || !isCurrent()) {
+      this.releaseOriginalFile(image);
+      throw new CaptureFileLifecycleError('The still selection was cancelled before preview.');
+    }
     await this.cleanupActive();
-    if (this.disposed) {
+    if (this.disposed || !isCurrent()) {
       this.releaseOriginalFile(image);
       throw new CaptureFileLifecycleError('The still selection was cancelled before preview.');
     }
@@ -63,14 +68,14 @@ export class StillImageCaptureSession {
     this.pendingFiles.add(managed.uri);
 
     try {
-      if (this.disposed) {
+      if (this.disposed || !isCurrent()) {
         throw new CaptureFileLifecycleError('The still selection was cancelled before preview.');
       }
       const verified = await this.options.fileStore.exists(managed.uri);
-      if (!verified || this.disposed) {
+      if (!verified || this.disposed || !isCurrent()) {
         await this.options.fileStore.remove(managed.uri);
         throw new CaptureFileLifecycleError(
-          this.disposed
+          this.disposed || !isCurrent()
             ? 'The still selection was cancelled before preview.'
             : 'The captured image could not be verified in app storage. Try taking it again.',
         );
@@ -123,8 +128,22 @@ export class StillImageCaptureSession {
     await this.cleanupActive(!this.accepted);
   }
 
-  async discard(): Promise<void> {
-    await this.cleanupActive();
+  async discard(expected?: ActiveStillImage): Promise<void> {
+    if (!expected) {
+      await this.cleanupActive();
+      return;
+    }
+    if (
+      this.active?.previewUri === expected.previewUri &&
+      this.active.metadata.id === expected.metadata.id
+    ) {
+      await this.cleanupActive();
+      return;
+    }
+    // A late capture completion owns only the file it created. It must never
+    // clear a newer preview that became active while that capture was pending.
+    await this.options.fileStore.remove(expected.previewUri).catch(() => undefined);
+    await this.options.metadataStore.remove(expected.metadata.id).catch(() => undefined);
   }
 
   async reset(): Promise<void> {

@@ -49,10 +49,11 @@ async function screen(
     files: new InMemoryCaptureFileStore(),
     metadata: new InMemoryImageMetadataStore(),
   },
+  createCaptureId: () => string = () => 'capture-ui',
 ) {
   return render(
     <CameraCaptureScreen
-      createCaptureId={() => 'capture-ui'}
+      createCaptureId={createCaptureId}
       fileStore={stores.files}
       metadataStore={stores.metadata}
       now={() => new Date('2026-09-10T00:00:00.000Z')}
@@ -314,6 +315,88 @@ describe('CameraCaptureScreen', () => {
     expect(result.queryByTestId('camera-preview-panel')).toBeNull();
     await result.findByTestId('camera-capture');
     expect(stores.files.size).toBe(0);
+    appState.restore();
+  });
+
+  it('keeps a newer file-backed preview when an older capture finishes late', async () => {
+    const appState = stubAppState();
+    const files = new InMemoryCaptureFileStore();
+    const stores = { files, metadata: new InMemoryImageMetadataStore() };
+    const platform: CameraPlatform = {
+      captureStill: jest
+        .fn()
+        .mockResolvedValueOnce({
+          format: 'jpg',
+          height: 900,
+          source: 'camera' as const,
+          sourceUri: 'file://older-capture.jpg',
+          width: 1200,
+        })
+        .mockResolvedValueOnce({
+          format: 'jpg',
+          height: 900,
+          source: 'camera' as const,
+          sourceUri: 'file://newer-capture.jpg',
+          width: 1200,
+        }),
+      getCapabilities: jest
+        .fn()
+        .mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
+      getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      kind: 'expo',
+      openSettings: jest.fn().mockResolvedValue(undefined),
+      requestPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      supportsLivePreview: false,
+    };
+    const originalExists = files.exists.bind(files);
+    const exists = jest.spyOn(files, 'exists');
+    let resolveOlderExists!: (value: boolean) => void;
+    exists.mockImplementation((uri) =>
+      uri.endsWith('capture-older.jpg')
+        ? new Promise<boolean>((resolve) => {
+            resolveOlderExists = resolve;
+          })
+        : originalExists(uri),
+    );
+    let captureNumber = 0;
+    const result = await screen(platform, stores, () =>
+      ++captureNumber === 1 ? 'capture-older' : 'capture-newer',
+    );
+
+    await result.findByTestId('camera-capture');
+    let olderCapture!: Promise<void>;
+    await act(async () => {
+      olderCapture = fireEvent.press(result.getByTestId('camera-capture'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(exists).toHaveBeenCalledWith('memory://rewind-stills/capture-older.jpg'),
+    );
+
+    await act(async () => {
+      appState.emit('background');
+      appState.emit('active');
+    });
+    await result.findByTestId('camera-capture');
+    await act(async () => {
+      await fireEvent.press(result.getByTestId('camera-capture'));
+    });
+    await result.findByTestId('camera-preview-panel');
+    const newerPreview = result.getByLabelText('Captured still preview');
+    const newerUri = newerPreview.props.source.uri as string;
+    expect(newerUri).toBe('memory://rewind-stills/capture-newer.jpg');
+    expect(await files.exists(newerUri)).toBe(true);
+
+    await act(async () => {
+      resolveOlderExists(true);
+      await olderCapture;
+    });
+    expect(result.getByTestId('camera-preview-panel')).toBeTruthy();
+    expect(result.getByLabelText('Captured still preview').props.source.uri).toBe(newerUri);
+    expect(await files.exists(newerUri)).toBe(true);
+    expect(files.size).toBe(1);
+
     appState.restore();
   });
 });

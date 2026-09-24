@@ -25,7 +25,7 @@ import {
 import type { MemberProfile } from '../domain/profiles';
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { createOfflineDemoSession, demoSessionStore } from './session-store';
-import { resetCaptureData } from '../capture';
+import { clearContributionStatusForSession, resetCaptureData } from '../capture';
 import { reminderService } from '../reminders/reminder-service';
 
 export type DemoAccessStatus = 'loading' | 'entry' | 'active' | 'error';
@@ -235,6 +235,7 @@ export function DemoSessionProvider({
       }
       try {
         await clearLocalReminder();
+        if (session) await clearContributionStatusForSession(session.id);
         await store.clear();
         if (mounted.current) {
           setSession(null);

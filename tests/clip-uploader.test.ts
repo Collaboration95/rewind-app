@@ -75,6 +75,37 @@ describe('local clip upload lifecycle', () => {
     expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
   });
 
+  it('cancels source preparation before transport and retries with the same input key', async () => {
+    let finishPreparation!: () => void;
+    const transport = {
+      cancelClipUpload: jest.fn().mockResolvedValue(undefined),
+      uploadClip: jest.fn().mockResolvedValue(upload),
+    };
+    const session = new ClipUploadSession(transport);
+    const prepareInput = jest.fn(
+      () =>
+        new Promise<ClipUploadInput>((resolve) => {
+          finishPreparation = () => resolve({ ...input, sourceUri: 'staged://clip' });
+        }),
+    );
+
+    const pending = session.upload(input, undefined, prepareInput);
+    expect(prepareInput).toHaveBeenCalledWith(input);
+    await session.cancel();
+    finishPreparation();
+    await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    expect(transport.uploadClip).not.toHaveBeenCalled();
+    expect(session.canRetry()).toBe(true);
+
+    await session.retry(undefined, async (retryInput) => ({
+      ...retryInput,
+      sourceUri: 'staged://clip',
+    }));
+    expect(transport.uploadClip).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: input.idempotencyKey }),
+    );
+  });
+
   it('preserves typed runtime failures for the caller to classify', async () => {
     const failure = new LocalRuntimeError('The contribution is not authorised.', 403, 'forbidden');
     const transport = {

@@ -57,6 +57,7 @@ export {
   type ClipUploadErrorOptions,
   type ClipUploadProgress,
   type ClipUploadTransport,
+  type PrepareClipUploadInput,
 } from './clip-uploader';
 export {
   CAPTURE_INTERRUPTION_EVENTS,
@@ -67,6 +68,7 @@ export {
   type CaptureInterruptionEvent,
 } from './capture-interruption';
 export {
+  clearContributionStatusForSession,
   resetCaptureData,
   resetCaptureRestartRecoveryGuard,
   runCaptureRestartRecovery,

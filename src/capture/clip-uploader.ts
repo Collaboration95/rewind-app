@@ -19,6 +19,8 @@ export interface ClipUploadTransport {
   cancelClipUpload(jobId: string): Promise<void>;
 }
 
+export type PrepareClipUploadInput = (input: ClipUploadInput) => Promise<ClipUploadInput>;
+
 export type ClipUploadProgress =
   | { status: 'idle'; percent: 0 }
   | { status: 'validating'; percent: 0 }
@@ -127,7 +129,11 @@ export class ClipUploadSession {
     return Math.max(0, MAX_CLIP_UPLOAD_ATTEMPTS - this.attempts);
   }
 
-  async upload(input: ClipUploadInput, onProgress?: (progress: ClipUploadProgress) => void) {
+  async upload(
+    input: ClipUploadInput,
+    onProgress?: (progress: ClipUploadProgress) => void,
+    prepareInput?: PrepareClipUploadInput,
+  ) {
     const validationError = validateClipUploadInput(input);
     if (validationError) {
       this.progress = { status: 'failed', percent: 0, message: validationError };
@@ -136,12 +142,13 @@ export class ClipUploadSession {
     }
     this.lastInput = { ...input };
     this.attempts = 1;
-    return this.runUpload(input, onProgress);
+    return this.runUpload(this.lastInput, onProgress, prepareInput);
   }
 
   private async runUpload(
     input: ClipUploadInput,
     onProgress?: (progress: ClipUploadProgress) => void,
+    prepareInput?: PrepareClipUploadInput,
   ) {
     const generation = ++this.generation;
     this.progress = { status: 'validating', percent: 0 };
@@ -149,7 +156,14 @@ export class ClipUploadSession {
     this.progress = { status: 'uploading', percent: 10 };
     onProgress?.(this.getProgress());
     try {
-      const upload = await this.transport.uploadClip(input);
+      const preparedInput = prepareInput ? await prepareInput({ ...input }) : input;
+      if (generation !== this.generation) {
+        throw new ClipUploadError('The upload was cancelled.', {
+          code: 'cancelled',
+          retryable: false,
+        });
+      }
+      const upload = await this.transport.uploadClip(preparedInput);
       if (generation !== this.generation) {
         await this.transport.cancelClipUpload(upload.job.id);
         throw new ClipUploadError('The upload was cancelled.', {
@@ -183,7 +197,10 @@ export class ClipUploadSession {
     }
   }
 
-  async retry(onProgress?: (progress: ClipUploadProgress) => void): Promise<PendingClipUpload> {
+  async retry(
+    onProgress?: (progress: ClipUploadProgress) => void,
+    prepareInput?: PrepareClipUploadInput,
+  ): Promise<PendingClipUpload> {
     if (!this.lastInput)
       throw new ClipUploadError('Capture a clip before retrying its upload.', {
         code: 'missing_input',
@@ -198,7 +215,7 @@ export class ClipUploadSession {
       );
     }
     this.attempts += 1;
-    return this.runUpload(this.lastInput, onProgress);
+    return this.runUpload({ ...this.lastInput }, onProgress, prepareInput);
   }
 
   async cancel(): Promise<void> {

@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
 
 import { IMAGE_METADATA_KEY } from '../src/capture/metadata-store';
+import { CONTRIBUTION_STATUS_STORAGE_KEY } from '../src/capture/contribution-status';
 import { PENDING_CLIP_METADATA_KEY } from '../src/capture/video-review';
 import {
   resetCaptureData,
@@ -18,6 +19,10 @@ describe('resetCaptureData', () => {
   let mockDeleteAsync: jest.SpiedFunction<typeof FileSystem.deleteAsync>;
 
   beforeEach(() => {
+    return AsyncStorage.clear();
+  });
+
+  beforeEach(() => {
     Object.defineProperty(FileSystem, 'cacheDirectory', {
       configurable: true,
       value: 'file:///rewind-cache/',
@@ -26,9 +31,12 @@ describe('resetCaptureData', () => {
   });
 
   it('clears metadata and the app-owned still cache together', async () => {
+    await AsyncStorage.setItem(CONTRIBUTION_STATUS_STORAGE_KEY, '{"session:group:member":{}}');
     await resetCaptureData();
 
     expect(AsyncStorage.removeItem).toHaveBeenCalledWith(IMAGE_METADATA_KEY);
+    expect(AsyncStorage.removeItem).toHaveBeenCalledWith(CONTRIBUTION_STATUS_STORAGE_KEY);
+    expect(await AsyncStorage.getItem(CONTRIBUTION_STATUS_STORAGE_KEY)).toBeNull();
     expect(mockDeleteAsync).toHaveBeenCalledWith('file:///rewind-cache/rewind-stills/', {
       idempotent: true,
     });
