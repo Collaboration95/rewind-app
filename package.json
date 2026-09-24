@@ -16,6 +16,7 @@
     "server:build": "tsc -p tsconfig.server.json",
     "server:start": "npm run server:build && node server/dist/cli.js start",
     "server:preflight": "npm run server:build && node server/dist/cli.js preflight",
+    "server:worker": "npm run server:build && node server/dist/cli.js worker",
     "server:migrate": "npm run server:build && node server/dist/cli.js migrate",
     "server:reset": "npm run server:build && node server/dist/cli.js reset",
     "server:diagnostics": "npm run server:build && node server/dist/cli.js diagnostics",
