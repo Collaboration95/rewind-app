@@ -549,9 +549,9 @@ export type LinkReplacementResult =
  * only the named target changes. The guard keeps the correction inside one
  * member, one cycle, and the same seven-day allowance window, and refuses to
  * relabel a row twice so a later submission cannot rewrite history.
- * The current capture flow deletes the old row and clears its ID before a
- * separate upload. It does not accept a replacement target, so that upload
- * cannot call this function without guessing which deletion it supersedes.
+ * The capture flow carries the deleted row's ID into the next upload, which
+ * calls this helper inside the same writer transaction that creates the new
+ * contribution. The target is never inferred from a member's other rows.
  */
 export function linkContributionReplacement(
   database: RewindDatabase,

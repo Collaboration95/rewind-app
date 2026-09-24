@@ -32,6 +32,8 @@ export interface ClipUploadInput {
   trimStartSeconds?: number;
   trimEndSeconds?: number;
   sourceDurationSeconds?: number;
+  /** Explicit tombstone selected by the member for this replacement upload. */
+  replacesContributionId?: string;
 }
 
 export interface PendingClipUpload {

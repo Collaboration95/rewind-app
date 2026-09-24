@@ -146,6 +146,7 @@ export function VideoCaptureScreen({
     null,
   );
   const latestUploadRef = useRef<PendingClipUpload | null>(null);
+  const replacementTargetRef = useRef<string | null>(null);
   const contributionStatus = statusContext?.status ?? localContributionStatus;
   const setContributionStatus = useCallback(
     (next: ContributionStatus) => {
@@ -546,6 +547,9 @@ export function VideoCaptureScreen({
       trimEndSeconds: reviewMetadata.endSeconds,
       trimStartSeconds: reviewMetadata.startSeconds,
       width: clip.width,
+      ...(replacementTargetRef.current
+        ? { replacesContributionId: replacementTargetRef.current }
+        : {}),
     };
     try {
       activeUploadRef.current = true;
@@ -565,6 +569,7 @@ export function VideoCaptureScreen({
       const uploaded = await uploadSession.upload(input, (progress) => {
         if (isCaptureActive() && activeUploadRef.current) setUploadProgress(progress);
       });
+      if (input.replacesContributionId) replacementTargetRef.current = null;
       const processed = await processUploaded(uploaded);
       if (processed.status === 'ready') {
         try {
@@ -733,6 +738,7 @@ export function VideoCaptureScreen({
         demoSession.session.groupId,
         contributionStatus.contributionId,
       );
+      replacementTargetRef.current = contributionStatus.contributionId;
       const currentClip = clipRef.current;
       if (currentClip) await releaseOwnedClip(currentClip);
       recorder?.reset();

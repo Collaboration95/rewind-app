@@ -1687,6 +1687,17 @@ export async function handleRequest(
     );
     if (!identity) return;
     const body = await requestBody(request, config);
+    if (
+      body?.replacesContributionId !== undefined &&
+      body.replacesContributionId !== null &&
+      typeof body.replacesContributionId !== 'string'
+    ) {
+      sendJson(response, config, 400, {
+        error: 'upload_invalid_replacement_target',
+        message: 'Choose a contribution that can be replaced.',
+      });
+      return;
+    }
     const input: ClipUploadInput = {
       idempotencyKey: typeof body?.idempotencyKey === 'string' ? body.idempotencyKey : '',
       sourceUri: typeof body?.sourceUri === 'string' ? body.sourceUri : '',
@@ -1713,6 +1724,9 @@ export async function handleRequest(
       ...(typeof body?.sourceDurationSeconds === 'number'
         ? { sourceDurationSeconds: body.sourceDurationSeconds }
         : {}),
+      ...(typeof body?.replacesContributionId === 'string'
+        ? { replacesContributionId: body.replacesContributionId }
+        : {}),
     };
     const result = createClipUpload(database, identity.groupId, identity.memberId, input, now(), {
       stagingDir: resolve(config.dataDir, 'media', 'staging'),
@@ -1726,16 +1740,22 @@ export async function handleRequest(
       if (result.reason !== 'invalid_key') {
         cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
       }
-      sendJson(response, config, result.reason === 'quota_exceeded' ? 409 : 400, {
+      const conflict =
+        result.reason === 'quota_exceeded' || result.reason === 'replacement_conflict';
+      sendJson(response, config, conflict ? 409 : 400, {
         error: `upload_${result.reason}`,
         message:
           result.reason === 'quota_exceeded'
             ? 'This cycle has no remaining contribution allowance.'
-            : result.reason === 'invalid_key'
-              ? 'Provide a retryable upload key.'
-              : result.reason === 'invalid_mode'
-                ? 'Choose a supported original capture mode.'
-                : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
+            : result.reason === 'replacement_conflict'
+              ? 'That contribution can no longer be replaced.'
+              : result.reason === 'invalid_replacement_target'
+                ? 'Choose a contribution that can be replaced.'
+                : result.reason === 'invalid_key'
+                  ? 'Provide a retryable upload key.'
+                  : result.reason === 'invalid_mode'
+                    ? 'Choose a supported original capture mode.'
+                    : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
       });
       return;
     }

@@ -277,6 +277,13 @@ test('the ledger is self-only inside the selected group and current cycle', () =
 test('deletion stays deleted until an explicit accepted replacement links it', () => {
   return withLedgerDatabase(async ({ database }) => {
     const now = new Date('2026-09-10T12:00:00.000Z');
+    insertContribution(database, {
+      id: 'untouched-submission',
+      jobId: 'untouched-job',
+      jobStatus: 'ready',
+      durationSeconds: 2,
+      createdAt: '2026-09-09T00:00:00.000Z',
+    });
     const sourceUri = 'file:///tmp/ledger-replace.mp4';
     registerMetadata(database, { ...validInput, sourceUri, durationSeconds: 7 });
     const original = createClipUpload(
@@ -324,39 +331,28 @@ test('deletion stays deleted until an explicit accepted replacement links it', (
         ...validInput,
         sourceUri: 'file:///tmp/ledger-replacement.mp4',
         idempotencyKey: 'ledger-replacement-key',
+        replacesContributionId: original.upload.contribution.id,
       },
       now,
     );
     assert.equal(replacement.ok, true);
     if (!replacement.ok) return;
-
-    // A normal accepted upload does not identify a deleted target. Until an
-    // explicit replacement acceptance links these two rows, the old row must
-    // remain deleted even when the new row was submitted in the same window.
-    const unlinked = listContributionLedger(database, {
-      groupId: 'demo-group',
-      memberId: 'demo-1',
-      now,
-    });
-    assert.equal(
-      unlinked.entries.find((entry) => entry.contributionId === original.upload.contribution.id)
-        .state,
-      'deleted',
-    );
-
-    const link = linkContributionReplacement(
+    const replacementRetry = createClipUpload(
       database,
       'demo-group',
       'demo-1',
-      original.upload.contribution.id,
-      replacement.upload.contribution.id,
+      {
+        ...validInput,
+        sourceUri: 'file:///tmp/ledger-replacement.mp4',
+        idempotencyKey: 'ledger-replacement-key',
+        replacesContributionId: original.upload.contribution.id,
+      },
+      now,
     );
-    assert.deepEqual(link, {
-      ok: true,
-      replacedContributionId: original.upload.contribution.id,
-      replacementContributionId: replacement.upload.contribution.id,
-    });
-
+    assert.equal(replacementRetry.ok, true);
+    if (!replacementRetry.ok) return;
+    assert.equal(replacementRetry.upload.existing, true);
+    assert.equal(replacementRetry.upload.contribution.id, replacement.upload.contribution.id);
     const afterLink = listContributionLedger(database, {
       groupId: 'demo-group',
       memberId: 'demo-1',
@@ -373,6 +369,11 @@ test('deletion stays deleted until an explicit accepted replacement links it', (
     // Only the target changed; the replacement keeps its own live state.
     assert.equal(replacementEntry.state, 'queued');
     assert.equal(replacementEntry.replaced, false);
+    const untouchedEntry = afterLink.entries.find(
+      (entry) => entry.contributionId === 'untouched-submission',
+    );
+    assert.equal(untouchedEntry.state, 'sealed');
+    assert.equal(untouchedEntry.replaced, false);
     // A relabel is refused, so history cannot be rewritten twice.
     assert.deepEqual(
       linkContributionReplacement(
@@ -441,6 +442,67 @@ test('replacement linking refuses cross-member, cross-window, and non-deleted ta
       database
         .prepare('SELECT replaced_by_contribution_id AS linked FROM contributions WHERE id = ?')
         .get('live-target').linked,
+      null,
+    );
+  });
+});
+
+test('a replacement upload outside the member scope rolls back its new contribution and allowance', () => {
+  return withLedgerDatabase(async ({ database }) => {
+    const now = new Date('2026-09-10T12:00:00.000Z');
+    insertContribution(database, {
+      id: 'foreign-deleted-target',
+      jobId: 'foreign-deleted-job',
+      memberId: 'demo-2',
+      jobStatus: 'deleted',
+      deletedAt: now.toISOString(),
+    });
+    const sourceUri = 'file:///tmp/ledger-foreign-replacement.mp4';
+    registerMetadata(database, { ...validInput, sourceUri });
+    const beforeContributions = database
+      .prepare('SELECT COUNT(*) AS count FROM contributions')
+      .get().count;
+    const beforeAllowance = database
+      .prepare(
+        `SELECT count_used AS countUsed, seconds_used AS secondsUsed
+         FROM contribution_quota_windows WHERE cycle_id = 'demo-cycle' AND member_id = 'demo-1'`,
+      )
+      .all();
+
+    assert.deepEqual(
+      createClipUpload(
+        database,
+        'demo-group',
+        'demo-1',
+        {
+          ...validInput,
+          sourceUri,
+          idempotencyKey: 'ledger-foreign-replacement',
+          replacesContributionId: 'foreign-deleted-target',
+        },
+        now,
+      ),
+      { ok: false, reason: 'not_found' },
+    );
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM contributions').get().count,
+      beforeContributions,
+    );
+    assert.deepEqual(
+      database
+        .prepare(
+          `SELECT count_used AS countUsed, seconds_used AS secondsUsed
+           FROM contribution_quota_windows WHERE cycle_id = 'demo-cycle' AND member_id = 'demo-1'`,
+        )
+        .all(),
+      beforeAllowance,
+    );
+    assert.equal(
+      database
+        .prepare(
+          'SELECT replaced_by_contribution_id AS replacementId FROM contributions WHERE id = ?',
+        )
+        .get('foreign-deleted-target').replacementId,
       null,
     );
   });
