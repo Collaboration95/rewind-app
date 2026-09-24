@@ -335,6 +335,7 @@ export function deleteContribution(
       .prepare(
         `UPDATE media_jobs
          SET status = 'deleted', deleted_at = ?, output_path = NULL,
+             output_sha256 = NULL, output_bytes = NULL, output_verified_at = NULL,
              source_uri = NULL, source_generation = NULL, source_path = NULL,
              error_code = 'contribution_deleted'
          WHERE id = ? AND kind = 'clip' AND status IN ('pending', 'failed', 'ready')`,

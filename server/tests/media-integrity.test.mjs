@@ -17,6 +17,7 @@ const { createRuntimeServer } = await import('../dist/http.js');
 const { createClipUpload, recordClipMediaMetadata } = await import('../dist/media/index.js');
 const { hashFile, hashFileSync, verifyMediaIntegrity } = await import('../dist/media/integrity.js');
 const { processClipJob } = await import('../dist/jobs/index.js');
+const { deleteContribution } = await import('../dist/contributions/index.js');
 const { createCompilationJob, getCompilationJob, processCompilationJob } =
   await import('../dist/jobs/index.js');
 
@@ -155,7 +156,7 @@ test('finalization persists a matching SHA-256 and byte length for a real clip',
 
 test('a tampered finalized clip is unavailable, audited, and still not served', async () => {
   await withDatabase(async (context) => {
-    const { database, config, dataDir } = context;
+    const { database, config } = context;
     const jobId = await finalizeOneClip(context, 'integrity-tamper-1');
     const row = storedIntegrity(database, jobId);
 
@@ -280,6 +281,200 @@ test('a missing or unreadable output is reported unavailable rather than silentl
     const result = await verifyMediaIntegrity(database, jobId, row.outputPath);
     assert.equal(result.outcome, 'unavailable');
     assert.equal(result.expectedSha256, row.sha256);
+  });
+});
+
+for (const damage of ['deleted', 'zero-byte']) {
+  test(`HTTP audits a ${damage} finalized output once and returns 404`, async () => {
+    await withDatabase(async (context) => {
+      const { database, config } = context;
+      const jobId = await finalizeOneClip(context, `integrity-${damage}-http`);
+      const row = storedIntegrity(database, jobId);
+      if (damage === 'deleted') await rm(row.outputPath);
+      else await writeFile(row.outputPath, Buffer.alloc(0));
+
+      database
+        .prepare(
+          `UPDATE cycles SET status = 'revealing', release_status = 'published',
+             release_published_at = ? WHERE id = 'demo-cycle'`,
+        )
+        .run(new Date().toISOString());
+      const server = createRuntimeServer(config, database);
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const address = server.address();
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      try {
+        const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ memberId: 'demo-1' }),
+        });
+        const session = await sessionResponse.json();
+        const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
+          assert.equal(download.status, 404);
+          assert.deepEqual(await download.json(), NOT_FOUND);
+        }
+        const archive = await fetch(`${baseUrl}/archive?${query}`);
+        assert.equal(archive.status, 200);
+        assert.equal(
+          (await archive.json()).archive.clips.some((clip) => clip.id === jobId),
+          false,
+        );
+        const audit = database
+          .prepare(
+            `SELECT event_type AS eventType, resource_id AS resourceId, result
+             FROM audit_events WHERE event_type = 'media.integrity_failed'`,
+          )
+          .all()
+          .map((event) => ({ ...event }));
+        assert.deepEqual(audit, [
+          { eventType: 'media.integrity_failed', resourceId: `clip:${jobId}`, result: 'denied' },
+        ]);
+      } finally {
+        await new Promise((close) => server.close(close));
+      }
+    });
+  });
+}
+
+test('deletion and failed processing clear the output path and integrity metadata together', async () => {
+  await withDatabase(async (context) => {
+    const { database, config, dataDir } = context;
+    const deletedJobId = await finalizeOneClip(context, 'integrity-delete-row');
+    const contribution = database
+      .prepare('SELECT contribution_id AS id FROM media_jobs WHERE id = ?')
+      .get(deletedJobId);
+    const deleted = deleteContribution(
+      database,
+      'demo-group',
+      'demo-1',
+      contribution.id,
+      new Date('2026-09-10T12:01:00.000Z'),
+      { outputDir: resolve(dataDir, 'media', 'processed') },
+    );
+    assert.equal(deleted.ok, true);
+    const deletedRow = database
+      .prepare(
+        `SELECT status, output_path AS outputPath, output_sha256 AS sha256,
+                output_bytes AS byteLength, output_verified_at AS verifiedAt
+         FROM media_jobs WHERE id = ?`,
+      )
+      .get(deletedJobId);
+    assert.deepEqual(
+      { ...deletedRow },
+      {
+        status: 'deleted',
+        outputPath: null,
+        sha256: null,
+        byteLength: null,
+        verifiedAt: null,
+      },
+    );
+
+    const failedJobId = await finalizeOneClip(context, 'integrity-failed-row');
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'failed',
+           source_path = ? WHERE id = ?`,
+      )
+      .run(resolve(dataDir, 'media', 'staging', 'missing.mp4'), failedJobId);
+    const failed = await processClipJob(database, {
+      jobId: failedJobId,
+      ffmpegBin: config.ffmpegBin,
+      stagingDir: resolve(dataDir, 'media', 'staging'),
+      outputDir: resolve(dataDir, 'media', 'processed'),
+    });
+    assert.equal(failed.ok, false);
+    const failedRow = database
+      .prepare(
+        `SELECT status, output_path AS outputPath, output_sha256 AS sha256,
+                output_bytes AS byteLength, output_verified_at AS verifiedAt
+         FROM media_jobs WHERE id = ?`,
+      )
+      .get(failedJobId);
+    assert.deepEqual(
+      { ...failedRow },
+      {
+        status: 'failed',
+        outputPath: null,
+        sha256: null,
+        byteLength: null,
+        verifiedAt: null,
+      },
+    );
+  });
+});
+
+test('a zero-row ready update cannot complete clip finalization', async () => {
+  await withDatabase(async (context) => {
+    const { database, config, dataDir } = context;
+    const stagingDir = resolve(dataDir, 'media', 'staging');
+    const sourcePath = resolve(stagingDir, 'integrity-stale-fence.mp4');
+    await createSyntheticSource(sourcePath);
+    recordClipMediaMetadata(database, {
+      sourceUri: sourcePath,
+      mimeType: 'video/mp4',
+      byteLength: 10_000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+    });
+    const upload = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        idempotencyKey: 'integrity-stale-fence',
+        sourceUri: sourcePath,
+        mimeType: 'video/mp4',
+        byteLength: 10_000,
+        durationSeconds: 1,
+        width: 180,
+        height: 320,
+        hasAudio: true,
+        mode: 'soft-focus',
+        trimStartSeconds: 0.5,
+        trimEndSeconds: 1.5,
+      },
+      new Date('2026-09-10T12:00:00.000Z'),
+    );
+    assert.equal(upload.ok, true);
+    if (!upload.ok) return;
+    database.exec(
+      `CREATE TRIGGER ignore_clip_ready_157
+       BEFORE UPDATE OF status ON media_jobs
+       WHEN OLD.id = '${upload.upload.job.id}' AND NEW.status = 'ready'
+       BEGIN SELECT RAISE(IGNORE); END`,
+    );
+    const result = await processClipJob(database, {
+      jobId: upload.upload.job.id,
+      ffmpegBin: config.ffmpegBin,
+      stagingDir,
+      outputDir: resolve(dataDir, 'media', 'processed'),
+    });
+    assert.equal(result.ok, false);
+    const row = database
+      .prepare(
+        `SELECT status, output_path AS outputPath, output_sha256 AS sha256,
+                output_bytes AS byteLength, output_verified_at AS verifiedAt
+         FROM media_jobs WHERE id = ?`,
+      )
+      .get(upload.upload.job.id);
+    assert.deepEqual(
+      { ...row },
+      {
+        status: 'failed',
+        outputPath: null,
+        sha256: null,
+        byteLength: null,
+        verifiedAt: null,
+      },
+    );
+    assert.ok((await readFile(sourcePath)).length > 0);
   });
 });
 

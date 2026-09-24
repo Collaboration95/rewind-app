@@ -650,6 +650,20 @@ test('enqueue retries rebind a pending job to the recovered staged generation', 
     );
     assert.equal(upload.ok, true);
     if (!upload.ok) return;
+    // A recovered source generation must not retain metadata for an output
+    // that belonged to the prior job attempt.
+    database
+      .prepare(
+        `UPDATE media_jobs SET output_path = ?, output_sha256 = ?,
+           output_bytes = ?, output_verified_at = ? WHERE id = ?`,
+      )
+      .run(
+        '/private/old-output.mp4',
+        'a'.repeat(64),
+        1000,
+        '2026-09-10T12:00:00.000Z',
+        upload.upload.job.id,
+      );
     await rm(firstPath, { force: true });
     assert.equal(
       reclaimStagedSource(
@@ -682,6 +696,22 @@ test('enqueue retries rebind a pending job to the recovered staged generation', 
     );
     assert.equal(retry.ok, true);
     assert.equal(retry.ok && retry.upload.existing, true);
+    const cleared = database
+      .prepare(
+        `SELECT output_path AS outputPath, output_sha256 AS sha256,
+                output_bytes AS byteLength, output_verified_at AS verifiedAt
+         FROM media_jobs WHERE id = ?`,
+      )
+      .get(upload.upload.job.id);
+    assert.deepEqual(
+      { ...cleared },
+      {
+        outputPath: null,
+        sha256: null,
+        byteLength: null,
+        verifiedAt: null,
+      },
+    );
     const job = database
       .prepare(
         'SELECT source_uri AS sourceUri, source_generation AS sourceGeneration, source_path AS sourcePath FROM media_jobs WHERE id = ?',

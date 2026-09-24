@@ -781,6 +781,7 @@ function publishCompilationOutput(
       database.exec('ROLLBACK');
       return false;
     }
+    const finalizedAt = new Date().toISOString();
     const result = database
       .prepare(
         `UPDATE media_jobs
@@ -791,10 +792,10 @@ function publishCompilationOutput(
       )
       .run(
         finalOutputPath,
-        new Date().toISOString(),
+        finalizedAt,
         integrity.sha256,
         integrity.byteLength,
-        new Date().toISOString(),
+        finalizedAt,
         job.id,
         job.claimGeneration,
       );
@@ -1080,11 +1081,6 @@ function finalizePreparedOutput(
       database.exec('ROLLBACK');
       return false;
     }
-    if (locked.sourcePath) {
-      // cleanupStagedSourcePath enforces the server-owned staging boundary;
-      // it is safe to call after a prior crash because force is idempotent.
-      cleanupStagedSourcePath(locked.sourcePath, stagingDir);
-    }
     // The digest describes exactly the bytes this fence is publishing. It is
     // computed under the same writer lock that flips the row to ready, so a
     // concurrent reader never observes a ready row without its checksum.
@@ -1094,24 +1090,7 @@ function finalizePreparedOutput(
       return false;
     }
     const finalizedAt = new Date().toISOString();
-    if (locked.sourceUri) {
-      database
-        .prepare(
-          `DELETE FROM media_metadata WHERE source_uri = ?
-           AND EXISTS (
-             SELECT 1 FROM staged_sources
-             WHERE source_uri = ? AND claim_generation = ? AND source_path IS ?
-           )`,
-        )
-        .run(locked.sourceUri, locked.sourceUri, locked.sourceGeneration, locked.sourcePath);
-      database
-        .prepare(
-          `DELETE FROM staged_sources
-           WHERE source_uri = ? AND claim_generation = ? AND source_path IS ?`,
-        )
-        .run(locked.sourceUri, locked.sourceGeneration, locked.sourcePath);
-    }
-    database
+    const result = database
       .prepare(
         `UPDATE media_jobs
          SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL,
@@ -1129,6 +1108,32 @@ function finalizePreparedOutput(
         row.id,
         outputPath,
       );
+    if (Number(result.changes) !== 1) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    if (locked.sourcePath) {
+      // cleanupStagedSourcePath enforces the server-owned staging boundary;
+      // it is safe to call after a prior crash because force is idempotent.
+      cleanupStagedSourcePath(locked.sourcePath, stagingDir);
+    }
+    if (locked.sourceUri) {
+      database
+        .prepare(
+          `DELETE FROM media_metadata WHERE source_uri = ?
+           AND EXISTS (
+             SELECT 1 FROM staged_sources
+             WHERE source_uri = ? AND claim_generation = ? AND source_path IS ?
+           )`,
+        )
+        .run(locked.sourceUri, locked.sourceUri, locked.sourceGeneration, locked.sourcePath);
+      database
+        .prepare(
+          `DELETE FROM staged_sources
+           WHERE source_uri = ? AND claim_generation = ? AND source_path IS ?`,
+        )
+        .run(locked.sourceUri, locked.sourceGeneration, locked.sourcePath);
+    }
     database.exec('COMMIT');
     return true;
   } catch (error) {

@@ -345,9 +345,6 @@ async function verifiedServingPath(
   now: Date,
 ): Promise<{ path: string; size: number } | null> {
   const path = await resolveOwnedProcessedPath(outputPath, dataDir);
-  if (!path) return null;
-  const details = await stat(path).catch(() => null);
-  if (!details || !details.isFile() || details.size <= 0) return null;
   const result = await verifyMediaIntegrity(database, jobId, path);
   if (integrityBlocksServing(result)) {
     recordIntegrityFailure(database, {
@@ -359,6 +356,11 @@ async function verifiedServingPath(
     });
     return null;
   }
+  if (!path) return null;
+  const details = await stat(path).catch(() => null);
+  if (!details || !details.isFile() || details.size <= 0) return null;
+  // The path can change between verification and createReadStream. Keeping
+  // the checked descriptor open through streaming would close that race.
   return { path, size: details.size };
 }
 
@@ -374,25 +376,31 @@ async function filterServableArchive<T extends { id: string; outputPath: string 
   actorMemberId: string | null,
   now: Date,
 ): Promise<Omit<T, 'outputPath'>[]> {
-  const results = await Promise.all(
-    entries.map(async (entry) => ({
-      entry,
-      served: await verifiedServingPath(
-        database,
-        entry.id,
-        kind,
-        entry.outputPath,
-        dataDir,
-        actorMemberId,
-        now,
-      ),
-    })),
-  );
-  return results.flatMap(({ entry, served }) => {
-    if (!served) return [];
-    const { outputPath, ...safe } = entry;
-    return [safe];
-  });
+  const safeEntries: Omit<T, 'outputPath'>[] = [];
+  // Process at most three hashes at once. Archive calls await the film batch
+  // before the clip batch, so the whole request stays within this bound.
+  for (let index = 0; index < entries.length; index += 3) {
+    const batch = await Promise.all(
+      entries.slice(index, index + 3).map(async (entry) => {
+        const served = await verifiedServingPath(
+          database,
+          entry.id,
+          kind,
+          entry.outputPath,
+          dataDir,
+          actorMemberId,
+          now,
+        );
+        if (!served) return null;
+        const { outputPath, ...safe } = entry;
+        return safe;
+      }),
+    );
+    for (const entry of batch) {
+      if (entry !== null) safeEntries.push(entry as Omit<T, 'outputPath'>);
+    }
+  }
+  return safeEntries;
 }
 
 function streamMp4(
@@ -2149,24 +2157,22 @@ export async function handleRequest(
     // Advertise only entries whose retained bytes still match the digest
     // recorded at finalization. A tampered or truncated output disappears
     // from the archive and is audited instead of being offered for playback.
-    const [films, clips] = await Promise.all([
-      filterServableArchive(
-        database,
-        'film',
-        archive.films,
-        config.dataDir,
-        identity.memberId,
-        now(),
-      ),
-      filterServableArchive(
-        database,
-        'clip',
-        archive.clips,
-        config.dataDir,
-        identity.memberId,
-        now(),
-      ),
-    ]);
+    const films = await filterServableArchive(
+      database,
+      'film',
+      archive.films,
+      config.dataDir,
+      identity.memberId,
+      now(),
+    );
+    const clips = await filterServableArchive(
+      database,
+      'clip',
+      archive.clips,
+      config.dataDir,
+      identity.memberId,
+      now(),
+    );
     sendJson(response, config, 200, {
       archive: {
         films: films.map((film) => ({

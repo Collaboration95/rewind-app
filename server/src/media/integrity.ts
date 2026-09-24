@@ -129,7 +129,7 @@ export function readStoredIntegrity(
 export async function verifyMediaIntegrity(
   database: RewindDatabase,
   jobId: string,
-  filePath: string,
+  filePath: string | null,
 ): Promise<MediaIntegrityResult> {
   const stored = readStoredIntegrity(database, jobId);
   const expectedSha256 = stored?.sha256 ?? null;
@@ -143,7 +143,10 @@ export async function verifyMediaIntegrity(
       observedByteLength: null,
     };
   }
-  const observed = await hashFile(filePath);
+  // The HTTP path gate passes null when a file is missing, empty, or outside
+  // the processed directory. Keep that result auditable without opening an
+  // untrusted path.
+  const observed = filePath ? await hashFile(filePath) : null;
   if (!observed) {
     return {
       outcome: 'unavailable',

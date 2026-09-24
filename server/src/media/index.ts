@@ -475,6 +475,7 @@ export function reclaimStagedSource(
       .prepare(
         `UPDATE media_jobs
          SET source_uri = ?, source_generation = ?, source_path = ?, output_path = NULL,
+             output_sha256 = NULL, output_bytes = NULL, output_verified_at = NULL,
              error_code = NULL
          WHERE kind = 'clip' AND status IN ('pending', 'failed')
            AND (source_uri = ? OR idempotency_key = ?)
@@ -920,6 +921,7 @@ function updateExistingStagedBinding(
     .prepare(
       `UPDATE media_jobs
        SET source_uri = ?, source_generation = ?, source_path = ?, output_path = NULL,
+           output_sha256 = NULL, output_bytes = NULL, output_verified_at = NULL,
            error_code = NULL
        WHERE idempotency_key = ? AND group_id = ? AND kind = 'clip'
          AND status IN ('pending', 'failed')`,
