@@ -8,12 +8,11 @@ import { QUEUE_MAX_FILM_ATTEMPTS, type QueueJobKind } from './queue';
  * The loop is deliberately a thin claim-and-run shell over the existing
  * exported job processors. Those processors already own the durable lease and
  * generation fences, so this module never writes job state itself. That keeps
- * the request-driven routes usable as rollback: stopping this loop leaves every
- * job pending or retryable for POST /contributions/jobs/:id/process and
- * POST /demo/reveal.
+ * the request-driven routes usable as rollback: stopping this loop leaves
+ * exhausted clip failures eligible for manual retry and preserves the film cap.
  */
 
-/** Clip jobs retry up to this many durable attempts, then stop being claimed. */
+/** Automatic clip attempts stop here; request-driven retries remain available. */
 export const WORKER_MAX_CLIP_ATTEMPTS = 3;
 
 /** A failed film at its durable cap is terminal and is never reclaimed. */
@@ -21,6 +20,7 @@ export const WORKER_MAX_FILM_ATTEMPTS = QUEUE_MAX_FILM_ATTEMPTS;
 
 /** Default pause between claims when no work is claimable. */
 export const WORKER_DEFAULT_IDLE_MS = 1_000;
+export const WORKER_MIN_IDLE_MS = 50;
 
 /** Bounded candidate window so one tick never scans an unbounded queue. */
 export const WORKER_DEFAULT_BATCH_SIZE = 8;
@@ -50,11 +50,12 @@ export interface WorkerRunRecord {
   groupId: string;
   /** Durable status observed after the attempt. */
   status: 'ready' | 'failed' | 'processing' | 'deleted' | 'not_found';
-  /** busy means another live worker owns the claim. */
-  outcome: 'ready' | 'retryable' | 'terminal' | 'busy';
+  outcome: 'ready' | 'retryable' | 'automatic_exhausted' | 'terminal' | 'busy';
   attempts: number;
   failureCategory: WorkerFailureCategory | null;
-  /** A terminal job is never claimed again by any worker. */
+  /** The queue's domain retryability; exhausted clips remain request retryable. */
+  requestRetryable: boolean;
+  /** Ready jobs and exhausted films are terminal in the durable job domain. */
   terminal: boolean;
 }
 
@@ -64,6 +65,7 @@ export interface WorkerOptions {
   outputDir: string;
   /** Restrict claiming to one group. Omit to serve every local group. */
   groupId?: string;
+  /** System driven CLI work has no human actor; audits intentionally store null. */
   actorMemberId?: string | null;
   /** Overridable for tests; defaults to the durable clip attempt cap. */
   maxClipAttempts?: number;
@@ -72,6 +74,8 @@ export interface WorkerOptions {
   leaseMs?: number;
   batchSize?: number;
   now?: () => Date;
+  /** Internal shutdown fence checked before every processor call. */
+  shouldStop?: () => boolean;
 }
 
 export type WorkerTickResult =
@@ -80,7 +84,7 @@ export type WorkerTickResult =
 export interface WorkerLoopHandle {
   /** Stop claiming new work; an in-flight job is allowed to finish. */
   stop(): Promise<void>;
-  /** Resolves once the loop has stopped and any in-flight job settled. */
+  /** Rejects on a loop failure; resolves on clean shutdown. */
   readonly done: Promise<void>;
   /** Jobs this loop claimed and finished. */
   readonly completed: () => number;
@@ -91,7 +95,12 @@ export interface WorkerLoopOptions extends WorkerOptions {
   /** Stop after claiming and finishing this many jobs. Used by tests and --once. */
   maxJobs?: number;
   onResult?: (record: WorkerRunRecord) => void;
-  onError?: (error: unknown) => void;
+}
+
+export function workerIdleMs(value: number | undefined): number {
+  return value === undefined || !Number.isFinite(value)
+    ? WORKER_DEFAULT_IDLE_MS
+    : Math.max(WORKER_MIN_IDLE_MS, Math.floor(value));
 }
 
 interface WorkerJobStateRow {
@@ -217,14 +226,18 @@ function toRecord(
         ? 'deleted'
         : 'not_found';
   const attempts = Math.max(0, Number(state?.attempts ?? candidate.attempts));
-  const terminal = status === 'ready' || (status === 'failed' && attempts >= cap);
+  const requestRetryable =
+    status === 'failed' && (candidate.kind === 'clip' || attempts < WORKER_MAX_FILM_ATTEMPTS);
+  const terminal = status === 'ready' || (status === 'failed' && !requestRetryable);
   const outcome: WorkerRunRecord['outcome'] =
     status === 'ready'
       ? 'ready'
       : status === 'processing'
         ? 'busy'
         : status === 'failed' && attempts >= cap
-          ? 'terminal'
+          ? candidate.kind === 'clip'
+            ? 'automatic_exhausted'
+            : 'terminal'
           : 'retryable';
   return {
     jobId: candidate.id,
@@ -234,6 +247,7 @@ function toRecord(
     outcome,
     attempts,
     failureCategory: status === 'failed' ? workerFailureCategory(state?.errorCode) : null,
+    requestRetryable,
     terminal,
   };
 }
@@ -247,8 +261,10 @@ export async function runWorkerTick(
   database: RewindDatabase,
   options: WorkerOptions,
 ): Promise<WorkerTickResult> {
+  if (options.shouldStop?.()) return { claimed: false, reason: 'idle' };
   const candidates = listWorkerCandidates(database, options);
   for (const candidate of candidates) {
+    if (options.shouldStop?.()) break;
     const cap = resolveCap(options, candidate.kind);
     const result =
       candidate.kind === 'film'
@@ -286,10 +302,7 @@ export function startWorkerLoop(
   database: RewindDatabase,
   options: WorkerLoopOptions,
 ): WorkerLoopHandle {
-  const idleMs =
-    options.idleMs !== undefined && Number.isFinite(options.idleMs) && options.idleMs >= 0
-      ? options.idleMs
-      : WORKER_DEFAULT_IDLE_MS;
+  const idleMs = workerIdleMs(options.idleMs);
   const maxJobs =
     options.maxJobs !== undefined && Number.isSafeInteger(options.maxJobs) && options.maxJobs >= 1
       ? options.maxJobs
@@ -301,8 +314,10 @@ export function startWorkerLoop(
     settleStop = resolve;
   });
   let resolveDone: () => void = () => undefined;
-  const done = new Promise<void>((resolve) => {
+  let rejectDone: (error: unknown) => void = () => undefined;
+  const done = new Promise<void>((resolve, reject) => {
     resolveDone = resolve;
+    rejectDone = reject;
   });
 
   // An idle wait resolves on its own timer or as soon as stop() is requested,
@@ -319,7 +334,7 @@ export function startWorkerLoop(
   void (async () => {
     try {
       while (!stopping && completed < maxJobs) {
-        const tick = await runWorkerTick(database, options);
+        const tick = await runWorkerTick(database, { ...options, shouldStop: () => stopping });
         if (tick.claimed) {
           completed += 1;
           options.onResult?.(tick.record);
@@ -329,10 +344,10 @@ export function startWorkerLoop(
         await sleep(idleMs);
       }
     } catch (error) {
-      options.onError?.(error);
-    } finally {
-      resolveDone();
+      rejectDone(error);
+      return;
     }
+    resolveDone();
   })();
 
   return {

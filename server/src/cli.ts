@@ -10,6 +10,7 @@ import {
   safeWorkerErrorLabel,
   startWorkerLoop,
   WORKER_DEFAULT_IDLE_MS,
+  WORKER_MIN_IDLE_MS,
   type WorkerRunRecord,
 } from './jobs/worker';
 import {
@@ -225,9 +226,14 @@ function parseWorkerMsOption(argv: string[], name: string): number | undefined {
   const raw = readOption(argv, [name]);
   if (raw === undefined) return undefined;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0 || value > 3_600_000) {
+  if (!Number.isInteger(value) || value < WORKER_MIN_IDLE_MS || value > 3_600_000) {
     throw new ConfigError(
-      name + ' must be an integer from 0 to 3600000 (received ' + JSON.stringify(raw) + ').',
+      name +
+        ' must be an integer from ' +
+        WORKER_MIN_IDLE_MS +
+        ' to 3600000 (received ' +
+        JSON.stringify(raw) +
+        ').',
       'Use ' + name + ' with a bounded millisecond value or omit it.',
     );
   }
@@ -287,8 +293,6 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
     outputDir: resolve(config.dataDir, 'media', 'processed'),
     ...(groupId ? { groupId } : {}),
   };
-  await cleanupOrphanedStagedSources(database, workerOptions.stagingDir);
-
   // Close the handle exactly once, whichever exit path is taken.
   let closed = false;
   const closeDatabase = () => {
@@ -298,55 +302,67 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
   };
 
   if (once) {
-    // Drain the currently claimable queue once. The bound means a repeatedly
-    // failing job can never make --once loop indefinitely.
-    const limit = maxJobs ?? 100;
-    let drained = 0;
-    while (drained < limit) {
-      const tick = await runWorkerTick(database, workerOptions);
-      if (!tick.claimed) break;
-      drained += 1;
-      printWorkerRecord(tick.record, json);
+    try {
+      await cleanupOrphanedStagedSources(database, workerOptions.stagingDir);
+      // A repeatedly failing job can never make --once loop indefinitely.
+      const limit = maxJobs ?? 100;
+      const jobs: WorkerRunRecord[] = [];
+      while (jobs.length < limit) {
+        const tick = await runWorkerTick(database, workerOptions);
+        if (!tick.claimed) break;
+        jobs.push(tick.record);
+        if (!json) printWorkerRecord(tick.record, false);
+      }
+      if (json) console.log(JSON.stringify({ jobs, drained: jobs.length }));
+      else
+        console.log(
+          'Worker drained ' + jobs.length + ' job' + (jobs.length === 1 ? '' : 's') + '.',
+        );
+    } catch (error) {
+      console.error('Worker loop error: ' + safeWorkerErrorLabel(error));
+      process.exitCode = 1;
+    } finally {
+      closeDatabase();
     }
-    closeDatabase();
-    console.log('Worker drained ' + drained + ' job' + (drained === 1 ? '' : 's') + '.');
     return;
   }
-
-  const handle = startWorkerLoop(database, {
-    ...workerOptions,
-    ...(idleMs === undefined ? {} : { idleMs }),
-    ...(maxJobs === undefined ? {} : { maxJobs }),
-    onResult: (record) => printWorkerRecord(record, json),
-    // Loop failures may carry SQLite or filesystem detail. Log only a stable
-    // safe label so no path or FFmpeg text reaches the console or CI output.
-    onError: (error) => {
-      console.error('Worker loop error: ' + safeWorkerErrorLabel(error));
-    },
-  });
-
-  let stopping = false;
-  const shutdown = async () => {
-    if (stopping) return;
-    stopping = true;
-    // stop() stops claiming and awaits any in-flight job before exit.
-    await handle.stop();
-  };
-  process.once('SIGINT', () => void shutdown());
-  process.once('SIGTERM', () => void shutdown());
-  console.log(
-    'Rewind durable worker (' +
-      SERVICE_VERSION +
-      ') serving ' +
-      (groupId ?? 'all local groups') +
-      '; idle ' +
-      (idleMs ?? WORKER_DEFAULT_IDLE_MS) +
-      ' ms. Press Ctrl-C to stop.',
-  );
-  await handle.done;
-  closeDatabase();
-  const count = handle.completed();
-  console.log('Worker stopped after ' + count + ' job' + (count === 1 ? '' : 's') + '.');
+  try {
+    await cleanupOrphanedStagedSources(database, workerOptions.stagingDir);
+    const handle = startWorkerLoop(database, {
+      ...workerOptions,
+      ...(idleMs === undefined ? {} : { idleMs }),
+      ...(maxJobs === undefined ? {} : { maxJobs }),
+      onResult: (record) => printWorkerRecord(record, json),
+    });
+    const shutdown = () => void handle.stop().catch(() => undefined);
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+    try {
+      if (json) console.log(JSON.stringify({ event: 'worker_started', version: SERVICE_VERSION }));
+      else
+        console.log(
+          'Rewind durable worker (' +
+            SERVICE_VERSION +
+            ') serving ' +
+            (groupId ?? 'all local groups') +
+            '; idle ' +
+            (idleMs ?? WORKER_DEFAULT_IDLE_MS) +
+            ' ms. Press Ctrl-C to stop.',
+        );
+      await handle.done;
+      const count = handle.completed();
+      if (json) console.log(JSON.stringify({ event: 'worker_stopped', completed: count }));
+      else console.log('Worker stopped after ' + count + ' job' + (count === 1 ? '' : 's') + '.');
+    } finally {
+      process.off('SIGINT', shutdown);
+      process.off('SIGTERM', shutdown);
+    }
+  } catch (error) {
+    console.error('Worker loop error: ' + safeWorkerErrorLabel(error));
+    process.exitCode = 1;
+  } finally {
+    closeDatabase();
+  }
 }
 
 async function start(config: RuntimeConfig): Promise<void> {

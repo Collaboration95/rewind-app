@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { promisify } from 'node:util';
 import test from 'node:test';
 
@@ -11,6 +12,7 @@ const { openDatabase, openDatabaseAt } = await import('../dist/db.js');
 const { createClipUpload } = await import('../dist/media/index.js');
 const { createCompilationJob, PROCESSING_CLAIM_LEASE_MS, processClipJob } =
   await import('../dist/jobs/index.js');
+const { listQueueJobs } = await import('../dist/jobs/queue.js');
 const {
   listWorkerCandidates,
   runWorkerTick,
@@ -18,6 +20,8 @@ const {
   startWorkerLoop,
   WORKER_MAX_CLIP_ATTEMPTS,
   WORKER_MAX_FILM_ATTEMPTS,
+  WORKER_MIN_IDLE_MS,
+  workerIdleMs,
 } = await import('../dist/jobs/worker.js');
 
 async function withDatabase(run) {
@@ -129,17 +133,37 @@ test('duplicate workers produce exactly one result for the same clip job', async
     const jobId = await enqueueClip(database, sourcePath, 'duplicate-worker-key');
     const options = workerOptions(config, dataDir);
 
-    // Two workers poll the same durable queue concurrently, as two CLI
-    // processes would, and must not both report a completed result.
-    const ticks = await Promise.all([
-      runWorkerTick(database, options),
-      runWorkerTick(database, options),
-    ]);
-
-    const records = ticks.filter((tick) => tick.claimed).map((tick) => tick.record);
-    assert.equal(records.filter((record) => record.outcome === 'ready').length, 1);
-    assert.equal(records.filter((record) => record.jobId === jobId).length, 1);
-    assert.equal(jobRow(database, jobId).status, 'ready');
+    const secondConnection = openDatabaseAt(config.databasePath);
+    try {
+      const ticks = await Promise.all([
+        runWorkerTick(database, options),
+        runWorkerTick(secondConnection, options),
+      ]);
+      const records = ticks.filter((tick) => tick.claimed).map((tick) => tick.record);
+      assert.equal(records.filter((record) => record.outcome === 'ready').length, 1);
+      assert.equal(records.filter((record) => record.jobId === jobId).length, 1);
+      assert.equal(jobRow(database, jobId).status, 'ready');
+      assert.equal(jobRow(secondConnection, jobId).status, 'ready');
+      assert.equal(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM audit_events WHERE event_type = 'job.completed' AND resource_id = ?",
+          )
+          .get('job:' + jobId).count,
+        1,
+      );
+      assert.equal(
+        database
+          .prepare(
+            "SELECT actor_member_id AS actor FROM audit_events WHERE event_type = 'job.completed' AND resource_id = ?",
+          )
+          .get('job:' + jobId).actor,
+        null,
+        'a system worker has no human actor',
+      );
+    } finally {
+      secondConnection.close();
+    }
   });
 });
 
@@ -186,7 +210,7 @@ test('a stale processing claim is reclaimed after restart while a live claim is 
   });
 });
 
-test('retry then terminal state for a clip is deterministic at the durable cap', async () => {
+test('automatic clip retries stop at the cap while request retries remain available', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     const missingSource = dataDir + '/media/staging/missing.mp4';
     const jobId = await enqueueClip(database, missingSource, 'retry-terminal-key');
@@ -202,10 +226,11 @@ test('retry then terminal state for a clip is deterministic at the durable cap',
       assert.equal(row.errorCode, 'source_unavailable');
       assert.equal(
         tick.record.outcome,
-        attempt < WORKER_MAX_CLIP_ATTEMPTS ? 'retryable' : 'terminal',
+        attempt < WORKER_MAX_CLIP_ATTEMPTS ? 'retryable' : 'automatic_exhausted',
       );
       assert.equal(tick.record.failureCategory, 'source_unavailable');
-      assert.equal(tick.record.terminal, attempt === WORKER_MAX_CLIP_ATTEMPTS);
+      assert.equal(tick.record.requestRetryable, true);
+      assert.equal(tick.record.terminal, false);
     }
 
     assert.deepEqual(
@@ -214,6 +239,15 @@ test('retry then terminal state for a clip is deterministic at the durable cap',
     );
     const afterCap = await runWorkerTick(database, options);
     assert.equal(afterCap.claimed, false, 'an exhausted clip job was claimed again');
+    assert.equal(
+      listQueueJobs(database, { groupId: 'demo-group', status: 'failed' }).jobs.find(
+        (job) => job.id === jobId,
+      )?.retryable,
+      true,
+    );
+    const manual = await processClipJob(database, { jobId, groupId: 'demo-group', ...options });
+    assert.equal(manual.ok, false);
+    assert.equal(jobRow(database, jobId).attempts, WORKER_MAX_CLIP_ATTEMPTS + 1);
   });
 });
 
@@ -240,6 +274,7 @@ test('an exhausted film job is terminal and never claimed again', async () => {
         tick.record.outcome,
         attempt < WORKER_MAX_FILM_ATTEMPTS ? 'retryable' : 'terminal',
       );
+      assert.equal(tick.record.requestRetryable, attempt < WORKER_MAX_FILM_ATTEMPTS);
     }
     assert.equal(jobRow(database, jobId).status, 'failed');
     assert.deepEqual(
@@ -317,4 +352,77 @@ test('loop failure labels stay stable and expose no path or FFmpeg detail', () =
     'worker_loop_failed',
   );
   assert.equal(safeWorkerErrorLabel(undefined), 'worker_loop_failed');
+});
+
+test('persistent loop rejects on a claim error instead of reporting a clean stop', async () => {
+  const failure = new Error('/private/secret/sqlite failure');
+  const database = {
+    prepare: () => {
+      throw failure;
+    },
+  };
+  const handle = startWorkerLoop(database, workerOptions({ ffmpegBin: 'ffmpeg' }, '/tmp'));
+  await assert.rejects(handle.done, (error) => error === failure);
+  assert.equal(handle.completed(), 0);
+});
+
+test('worker CLI exits nonzero with a safe label after a persistent loop failure', async () => {
+  await withDatabase(async ({ config }) => {
+    const child = spawn(process.execPath, ['server/dist/cli.js', 'worker', '--idle-ms', '50'], {
+      env: { ...process.env, REWIND_DATA_DIR: config.dataDir, REWIND_HOST: '127.0.0.1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let removed = false;
+    const finished = new Promise((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', (code) => resolve(code));
+    });
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      if (!removed && stdout.includes('Rewind durable worker (')) {
+        removed = true;
+        // Corrupt only this isolated test database after startup. The next
+        // claim query must fail, and the CLI must expose a failing exit code.
+        try {
+          const connection = new DatabaseSync(config.databasePath);
+          connection.exec('PRAGMA foreign_keys = OFF; DROP TABLE media_jobs;');
+          connection.close();
+        } catch {
+          // A repeated stdout chunk may observe the table already removed.
+        }
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    const timer = setTimeout(() => child.kill('SIGTERM'), 5_000);
+    try {
+      assert.equal(await finished, 1);
+      assert.match(stderr, /Worker loop error: worker_loop_failed/);
+      assert.doesNotMatch(stderr, /\/private\/|SQLITE_ERROR|no such table/);
+      assert.doesNotMatch(stdout, /Worker stopped after/);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+});
+
+test('--once --json emits one parseable summary and zero idle is rejected', async () => {
+  await withDatabase(async ({ config }) => {
+    const env = { ...process.env, REWIND_DATA_DIR: config.dataDir };
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ['server/dist/cli.js', 'worker', '--once', '--json'],
+      { env },
+    );
+    assert.deepEqual(JSON.parse(stdout), { jobs: [], drained: 0 });
+    assert.equal(stdout.trim().split('\n').length, 1);
+    await assert.rejects(
+      execFileAsync(process.execPath, ['server/dist/cli.js', 'worker', '--idle-ms', '0'], { env }),
+      /--idle-ms must be an integer from 50/,
+    );
+    assert.equal(workerIdleMs(0), WORKER_MIN_IDLE_MS);
+  });
 });
