@@ -270,9 +270,9 @@ export async function runWorkerTick(
   for (const candidate of candidates) {
     if (options.shouldStop?.()) break;
     const cap = resolveCap(options, candidate.kind);
-    let claimed = false;
-    const observeClaim = () => {
-      claimed = true;
+    let didWork = false;
+    const observeWork = () => {
+      didWork = true;
     };
     if (candidate.kind === 'film') {
       await processCompilationJobForWorker(
@@ -284,7 +284,7 @@ export async function runWorkerTick(
           outputDir: options.outputDir,
           actorMemberId: options.actorMemberId ?? null,
         },
-        observeClaim,
+        observeWork,
       );
     } else {
       await processClipJobForWorker(
@@ -298,12 +298,12 @@ export async function runWorkerTick(
           actorMemberId: options.actorMemberId ?? null,
           workerAttemptCap: cap,
         },
-        observeClaim,
+        observeWork,
       );
     }
-    // Only report work this invocation actually claimed. Candidate snapshots
-    // can become ready, exhausted, or claimed by another worker before here.
-    if (!claimed) continue;
+    // Only report work this invocation claimed or recovered. Candidate snapshots
+    // can become ready or be claimed by another worker before here.
+    if (!didWork) continue;
     const state = readWorkerJobState(database, candidate.id);
     return { claimed: true, record: toRecord(candidate, state, cap) };
   }

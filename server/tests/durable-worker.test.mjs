@@ -578,6 +578,62 @@ test('stale ready clip and film candidates do not consume the worker job limit',
   });
 });
 
+test('a worker counts successful persisted-output recovery against the job limit', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const stagingDir = dataDir + '/media/staging';
+    const outputDir = dataDir + '/media/processed';
+    await mkdir(stagingDir, { recursive: true });
+    await mkdir(outputDir, { recursive: true });
+
+    const recoverySource = stagingDir + '/persisted-output-recovery.mp4';
+    await createSyntheticSource(recoverySource);
+    const recoveryJobId = await enqueueClip(
+      database,
+      recoverySource,
+      'persisted-output-recovery-key',
+    );
+    const outputPath = outputDir + '/persisted-output-recovery.mp4';
+    await createSyntheticSource(outputPath);
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'processing', output_path = ?,
+           processing_started_at = ?, created_at = ? WHERE id = ?`,
+      )
+      .run(
+        outputPath,
+        new Date(Date.now() - PROCESSING_CLAIM_LEASE_MS - 1_000).toISOString(),
+        '2026-09-10T00:00:00.000Z',
+        recoveryJobId,
+      );
+
+    const pendingSource = stagingDir + '/after-recovery.mp4';
+    await createSyntheticSource(pendingSource);
+    const pendingJobId = await enqueueClip(database, pendingSource, 'after-recovery-key');
+    database
+      .prepare('UPDATE media_jobs SET created_at = ? WHERE id = ?')
+      .run('2026-09-10T01:00:00.000Z', pendingJobId);
+
+    const records = [];
+    const handle = startWorkerLoop(
+      database,
+      workerOptions(config, dataDir, {
+        maxJobs: 1,
+        onResult: (record) => records.push(record),
+      }),
+    );
+    await handle.done;
+
+    assert.equal(handle.completed(), 1);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].jobId, recoveryJobId);
+    assert.equal(records[0].status, 'ready');
+    assert.equal(jobRow(database, recoveryJobId).status, 'ready');
+    assert.equal(jobRow(database, pendingJobId).status, 'pending');
+    await assert.rejects(access(recoverySource));
+    await access(outputPath);
+  });
+});
+
 test('candidate selection excludes terminal, ready, and out-of-scope rows', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();

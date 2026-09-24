@@ -99,7 +99,7 @@ export interface ProcessClipJobOptions {
   workerAttemptCap?: number;
 }
 
-type WorkerClaimObserver = () => void;
+type WorkerWorkObserver = () => void;
 
 export type CompilationJobStatus = 'pending' | 'processing' | 'ready' | 'failed';
 
@@ -777,15 +777,15 @@ export function processCompilationJob(
 export function processCompilationJobForWorker(
   database: RewindDatabase,
   options: ProcessCompilationJobOptions,
-  onClaimed: WorkerClaimObserver,
+  onWorkerWork: WorkerWorkObserver,
 ): Promise<ProcessCompilationJobResult> {
-  return processCompilationJobInternal(database, options, onClaimed);
+  return processCompilationJobInternal(database, options, onWorkerWork);
 }
 
 async function processCompilationJobInternal(
   database: RewindDatabase,
   options: ProcessCompilationJobOptions,
-  onClaimed?: WorkerClaimObserver,
+  onWorkerWork?: WorkerWorkObserver,
 ): Promise<ProcessCompilationJobResult> {
   const claim = claimCompilationJob(database, { jobId: options.jobId, groupId: options.groupId });
   if (!claim.ok) {
@@ -818,7 +818,7 @@ async function processCompilationJobInternal(
       message: 'The film job is already processing.',
     };
   }
-  onClaimed?.();
+  onWorkerWork?.();
 
   const outputDir =
     options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
@@ -1032,6 +1032,7 @@ function finalizePreparedOutput(
   row: ClipJobRow,
   stagingDir: string,
   outputPath: string,
+  onFinalized?: WorkerWorkObserver,
 ): boolean {
   beginJobTransaction(database);
   try {
@@ -1083,6 +1084,7 @@ function finalizePreparedOutput(
       )
       .run(outputPath, new Date().toISOString(), row.id, outputPath);
     database.exec('COMMIT');
+    onFinalized?.();
     return true;
   } catch (error) {
     database.exec('ROLLBACK');
@@ -1190,9 +1192,9 @@ export function processClipJob(
 export function processClipJobForWorker(
   database: RewindDatabase,
   options: ProcessClipJobOptions,
-  onClaimed: WorkerClaimObserver,
+  onWorkerWork: WorkerWorkObserver,
 ): Promise<ProcessClipJobResult> {
-  return processClipJobInternal(database, options, onClaimed);
+  return processClipJobInternal(database, options, onWorkerWork);
 }
 
 /**
@@ -1203,7 +1205,7 @@ export function processClipJobForWorker(
 async function processClipJobInternal(
   database: RewindDatabase,
   options: ProcessClipJobOptions,
-  onClaimed?: WorkerClaimObserver,
+  onWorkerWork?: WorkerWorkObserver,
 ): Promise<ProcessClipJobResult> {
   let row = readClipJob(database, options.jobId, options.groupId);
   if (!row) {
@@ -1252,7 +1254,7 @@ async function processClipJobInternal(
   if (row.status === 'processing' && row.outputPath) {
     if (
       existsSync(row.outputPath) &&
-      finalizePreparedOutput(database, row, stagingDir, row.outputPath)
+      finalizePreparedOutput(database, row, stagingDir, row.outputPath, onWorkerWork)
     ) {
       return { ok: true, jobId: row.id, status: 'ready' };
     }
@@ -1297,7 +1299,7 @@ async function processClipJobInternal(
     };
   }
   row = claim.row;
-  onClaimed?.();
+  onWorkerWork?.();
   const outputPath = row.outputPath ?? resolve(outputDir, safeOutputName(row.id));
   try {
     if (!row.sourcePath || row.trimStartSeconds === null || row.trimEndSeconds === null) {
