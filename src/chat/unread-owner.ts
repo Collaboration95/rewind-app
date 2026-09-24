@@ -118,11 +118,16 @@ export class ChatUnreadOwner {
       this.denied = false;
     }
     this.scope = input.scope;
-    if (!input.scope || !input.subscribeChat) {
+    if (!input.scope) {
       this.stopSubscription();
       this.snapshot = INITIAL_CHAT_UNREAD;
       this.denied = false;
       this.publish(UNAVAILABLE_STATE);
+      return;
+    }
+    if (!input.subscribeChat) {
+      this.stopSubscription();
+      this.publish({ connectionState: 'unavailable', unreadCount: this.snapshot.unreadCount });
       return;
     }
     if (this.subscription) return;
@@ -151,6 +156,7 @@ export class ChatUnreadOwner {
     this.publish({ connectionState: 'connecting', unreadCount: this.snapshot.unreadCount });
     try {
       const subscription = subscribeChat(scope.sessionId, scope.groupId, {
+        ...(this.snapshot.lastEventId > 0 ? { sinceEventId: this.snapshot.lastEventId } : {}),
         onEvent: (event) => {
           // A revoked scope stops being a recipient; it must not keep counting.
           if (generation !== this.generation || this.denied) return;

@@ -113,6 +113,7 @@ function runtimeMock(overrides: Partial<RuntimeClient> = {}) {
     fail: (error: unknown) => subscriptionOptions?.onError?.(error),
     deny: () => subscriptionOptions?.onConnectionStateChange?.('denied'),
     connect: () => subscriptionOptions?.onConnectionStateChange?.('connected'),
+    reconnect: () => subscriptionOptions?.onConnectionStateChange?.('reconnecting'),
   };
 }
 
@@ -128,6 +129,67 @@ beforeEach(async () => {
 });
 
 describe('persistent group chat timeline', () => {
+  it('shows connecting, connected, and reconnecting connection states', async () => {
+    const runtime = runtimeMock();
+    const result = await render(
+      <ScopedChatSurface
+        accessState="known"
+        capsuleStatus="ready"
+        group={group}
+        scope="session-a:demo-group"
+        memberNames={memberNames}
+        retryCapsule={jest.fn()}
+        runtimeClient={runtime.client}
+        session={sessionA}
+      />,
+    );
+    expect(result.getByTestId('chat-connection-status')).toHaveTextContent(
+      'Chat connection: Connecting…',
+    );
+    await result.findByTestId('chat-empty');
+
+    await act(async () => runtime.connect());
+    expect(result.getByTestId('chat-connection-status')).toHaveTextContent(
+      'Chat connection: Connected',
+    );
+
+    await act(async () => runtime.reconnect());
+    expect(result.getByTestId('chat-connection-status')).toHaveTextContent(
+      'Chat connection: Reconnecting…',
+    );
+
+    await act(async () => runtime.connect());
+    expect(result.getByTestId('chat-connection-status')).toHaveTextContent(
+      'Chat connection: Connected',
+    );
+  });
+
+  it('shows offline when the device reports no network', async () => {
+    const previousOnline = navigator.onLine;
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    try {
+      const runtime = runtimeMock();
+      const result = await render(
+        <ScopedChatSurface
+          accessState="known"
+          capsuleStatus="ready"
+          group={group}
+          scope="session-a:demo-group"
+          memberNames={memberNames}
+          retryCapsule={jest.fn()}
+          runtimeClient={runtime.client}
+          session={sessionA}
+        />,
+      );
+      expect(result.getByTestId('chat-connection-status')).toHaveTextContent(
+        'Chat connection: Offline',
+      );
+      await result.findByTestId('chat-empty');
+    } finally {
+      Object.defineProperty(navigator, 'onLine', { configurable: true, value: previousOnline });
+    }
+  });
+
   it('renders persisted events in event order and sends text through the runtime', async () => {
     const runtime = runtimeMock();
     const result = await render(<App runtimeClient={runtime.client} />);

@@ -13,7 +13,10 @@ import {
   type ChatMessage,
   type ChatMessageDraft,
   type ChatMessageEvent,
+  type RealtimeConnectionState,
 } from './realtime-client';
+import { useOptionalChatUnread } from './ChatUnreadProvider';
+import { chatConnectionLabel, type ChatConnectionState } from './unread-owner';
 
 const MESSAGE_MAX_LENGTH = 2_000;
 
@@ -110,8 +113,13 @@ export function ChatSessionSurface({
   runtimeClient: RuntimeClient | null;
   session: DemoSession | null;
 }) {
+  const unread = useOptionalChatUnread();
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
   const [timelineState, setTimelineState] = useState<TimelineState>('loading');
+  const [connectionState, setConnectionState] = useState<ChatConnectionState>('connecting');
+  const [browserOnline, setBrowserOnline] = useState(
+    () => typeof navigator === 'undefined' || navigator.onLine !== false,
+  );
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [pendingDraft, setPendingDraft] = useState<ChatMessageDraft | null>(null);
@@ -131,6 +139,26 @@ export function ChatSessionSurface({
   const activeMessageScope = session && group ? `${session.id}:${group.id}` : null;
   currentScopeRef.current = activeMessageScope;
 
+  useEffect(() => {
+    if (accessState === 'known' && session && group) unread?.markRead();
+  }, [accessState, group, session, unread]);
+
+  useEffect(() => {
+    if (
+      typeof window === 'undefined' ||
+      typeof window.addEventListener !== 'function' ||
+      typeof window.removeEventListener !== 'function'
+    )
+      return;
+    const update = () => setBrowserOnline(navigator.onLine !== false);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
+
   const clearSensitiveState = useCallback(() => {
     subscriptionScope.current = null;
     activeSendRequest.current = null;
@@ -145,6 +173,7 @@ export function ChatSessionSurface({
     setConnectionError(null);
     setSubscriptionDenied(false);
     setTimelineState('loading');
+    setConnectionState('connecting');
   }, []);
 
   useLayoutEffect(() => {
@@ -160,6 +189,7 @@ export function ChatSessionSurface({
     if (!scopeKey) return;
     subscriptionScope.current = scopeKey;
     setSubscriptionDenied(false);
+    setConnectionState('connecting');
     let active = true;
     let subscription: { close(): void } | null = null;
     const readyTimer = setTimeout(() => {
@@ -190,26 +220,33 @@ export function ChatSessionSurface({
             clearSensitiveState();
             setSubscriptionDenied(true);
             setTimelineState('denied');
+            setConnectionState('denied');
             return;
           }
           setTimelineState('error');
           setConnectionError(errorMessage(error));
         },
-        onConnectionStateChange: (connectionState) => {
+        onConnectionStateChange: (nextState: RealtimeConnectionState) => {
           if (
             !active ||
             currentScopeRef.current !== scopeKey ||
             subscriptionScope.current !== scopeKey
           )
             return;
-          if (connectionState === 'denied') {
+          if (nextState === 'denied') {
             clearSensitiveState();
             setSubscriptionDenied(true);
             setTimelineState('denied');
-          } else if (connectionState === 'connected') {
+            setConnectionState('denied');
+          } else if (nextState === 'connected') {
             setSubscriptionDenied(false);
             setTimelineState('ready');
             setConnectionError(null);
+            setConnectionState('connected');
+          } else if (nextState === 'disconnected' || nextState === 'reconnecting') {
+            setConnectionState('reconnecting');
+          } else if (nextState === 'connecting') {
+            setConnectionState('connecting');
           }
         },
       });
@@ -218,6 +255,7 @@ export function ChatSessionSurface({
         if (!active || currentScopeRef.current !== scopeKey) return;
         setTimelineState('error');
         setConnectionError(errorMessage(error));
+        setConnectionState('unavailable');
       }, 0);
     }
 
@@ -355,6 +393,14 @@ export function ChatSessionSurface({
           : timelineState;
   const showComposer = effectiveTimelineState === 'ready' || effectiveTimelineState === 'error';
   const canRenderMessages = accessState === 'known' && effectiveTimelineState !== 'unavailable';
+  const displayedConnectionState: ChatConnectionState =
+    accessState === 'denied' || subscriptionDenied
+      ? 'denied'
+      : !runtimeClient?.subscribeChat
+        ? 'unavailable'
+        : !browserOnline
+          ? 'offline'
+          : connectionState;
 
   return (
     <View style={styles.screen} testID="chat-screen">
@@ -372,6 +418,16 @@ export function ChatSessionSurface({
             {group?.name ?? 'Messages are visible only to authorised group members.'}
           </Text>
         </View>
+
+        {accessState !== 'loading' ? (
+          <Text
+            accessibilityLiveRegion="polite"
+            style={styles.connectionStatus}
+            testID="chat-connection-status"
+          >
+            Chat connection: {chatConnectionLabel(displayedConnectionState)}
+          </Text>
+        ) : null}
 
         {effectiveTimelineState === 'loading' ? (
           <View accessible style={styles.statePanel} testID="chat-loading">
@@ -565,6 +621,7 @@ const styles = StyleSheet.create({
   label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
   title: { color: COLORS.ink, fontSize: 30, fontWeight: '700', marginTop: 2 },
   bodyText: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
+  connectionStatus: { color: COLORS.muted, fontSize: 12, fontWeight: '700' },
   statePanel: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,

@@ -45,6 +45,7 @@ const ChatUnreadContext = createContext<ChatUnreadContextValue | null>(null);
 export function ChatUnreadProvider({
   activeGroupId,
   children,
+  enabled = true,
   owner,
   runtimeClient,
   session,
@@ -52,6 +53,8 @@ export function ChatUnreadProvider({
   /** Group currently visible in the chat surface, or null when off-tab. */
   activeGroupId: string | null;
   children: ReactNode;
+  /** Wait for the app's group lookup before opening an authorised stream. */
+  enabled?: boolean;
   /** Inject an owner for tests; production creates one per provider instance. */
   owner?: ChatUnreadOwner;
   runtimeClient: RuntimeClient | null;
@@ -71,17 +74,16 @@ export function ChatUnreadProvider({
   const store = owner ?? createdOwner;
   const [browserOnline, setBrowserOnline] = useState(readBrowserOnline);
 
-  const subscribeChat = runtimeClient?.subscribeChat;
   const subscribeToTransport = useMemo(
     () =>
-      subscribeChat
+      enabled && runtimeClient?.subscribeChat
         ? (
             sessionId: string,
             targetGroupId: string,
-            options: Parameters<typeof subscribeChat>[2],
-          ) => subscribeChat(sessionId, targetGroupId, options)
+            options: Parameters<NonNullable<RuntimeClient['subscribeChat']>>[2],
+          ) => runtimeClient.subscribeChat!(sessionId, targetGroupId, options)
         : null,
-    [subscribeChat],
+    [enabled, runtimeClient],
   );
   const chatActive = Boolean(scope && activeGroupId === scope.groupId);
 

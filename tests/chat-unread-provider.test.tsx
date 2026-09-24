@@ -293,6 +293,41 @@ describe('ChatUnreadProvider', () => {
     expect(runtime.subscribeChat.mock.calls[0][2].onEvent).toBeDefined();
   });
 
+  it('keeps the scope watermark through a temporary group lookup refresh', async () => {
+    const runtime = runtimeMock();
+    const result = await renderOwner({ runtimeClient: runtime.client });
+    await result.findByTestId('unread');
+    await act(async () => runtime.latest().options.onEvent(message(6, 'demo-2')));
+    expect(result.getByTestId('unread')).toHaveTextContent('1');
+
+    await act(async () =>
+      result.rerender(
+        <ChatUnreadProvider
+          activeGroupId={null}
+          enabled={false}
+          runtimeClient={runtime.client}
+          session={sessionA}
+        >
+          <Probe />
+        </ChatUnreadProvider>,
+      ),
+    );
+    expect(runtime.latest().close).toHaveBeenCalled();
+    expect(result.getByTestId('unread')).toHaveTextContent('1');
+
+    await act(async () =>
+      result.rerender(
+        <ChatUnreadProvider activeGroupId={null} runtimeClient={runtime.client} session={sessionA}>
+          <Probe />
+        </ChatUnreadProvider>,
+      ),
+    );
+    expect(runtime.subscribeChat).toHaveBeenCalledTimes(2);
+    expect(runtime.subscribeChat.mock.calls[1][2].sinceEventId).toBe(6);
+    await act(async () => runtime.latest().options.onEvent(message(6, 'demo-2')));
+    expect(result.getByTestId('unread')).toHaveTextContent('1');
+  });
+
   it('marks the current scope read on demand', async () => {
     const runtime = runtimeMock();
     const result = await renderOwner({ runtimeClient: runtime.client });
