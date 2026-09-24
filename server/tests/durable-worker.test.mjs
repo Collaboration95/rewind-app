@@ -312,6 +312,53 @@ test('graceful shutdown stops claiming and leaves work for the request-driven pa
   });
 });
 
+test('repeated idle waits do not retain callbacks for elapsed ticks', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const nativeSetTimeout = globalThis.setTimeout;
+    const nativeClearTimeout = globalThis.clearTimeout;
+    const idleTimers = new Map();
+    const idleMs = 53;
+    let firedIdleTicks = 0;
+    let clearedAfterFire = 0;
+    let handle;
+
+    globalThis.setTimeout = (callback, delay, ...args) => {
+      let fired = false;
+      const timer = nativeSetTimeout(
+        (...callbackArgs) => {
+          fired = true;
+          if (delay === idleMs) firedIdleTicks += 1;
+          callback(...callbackArgs);
+        },
+        delay,
+        ...args,
+      );
+      if (delay === idleMs) idleTimers.set(timer, () => fired);
+      return timer;
+    };
+    globalThis.clearTimeout = (timer) => {
+      if (idleTimers.get(timer)?.()) clearedAfterFire += 1;
+      return nativeClearTimeout(timer);
+    };
+
+    try {
+      handle = startWorkerLoop(database, workerOptions(config, dataDir, { idleMs }));
+      const deadline = Date.now() + 5_000;
+      while (firedIdleTicks < 3) {
+        assert.ok(Date.now() < deadline, 'worker did not complete repeated idle ticks');
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      await handle.stop();
+      assert.equal(clearedAfterFire, 0, 'shutdown revisited timers from elapsed idle ticks');
+    } finally {
+      if (handle) await handle.stop();
+      globalThis.setTimeout = nativeSetTimeout;
+      globalThis.clearTimeout = nativeClearTimeout;
+    }
+  });
+});
+
 test('candidate selection excludes terminal, ready, and out-of-scope rows', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();

@@ -309,10 +309,7 @@ export function startWorkerLoop(
       : Number.POSITIVE_INFINITY;
   let stopping = false;
   let completed = 0;
-  let settleStop: () => void = () => undefined;
-  const stopped = new Promise<void>((resolve) => {
-    settleStop = resolve;
-  });
+  let wakeIdleWait: (() => void) | null = null;
   let resolveDone: () => void = () => undefined;
   let rejectDone: (error: unknown) => void = () => undefined;
   const done = new Promise<void>((resolve, reject) => {
@@ -320,15 +317,23 @@ export function startWorkerLoop(
     rejectDone = reject;
   });
 
-  // An idle wait resolves on its own timer or as soon as stop() is requested,
-  // so shutdown never depends on an unref'd timer and is never left pending.
+  // Keep only the current idle wait's wake callback. A promise reaction on a
+  // shared stop promise would retain one closure for every completed tick.
   const sleep = (ms: number) =>
     new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      void stopped.then(() => {
-        clearTimeout(timer);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const finish = (cancelTimer: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (cancelTimer && timer !== undefined) clearTimeout(timer);
+        wakeIdleWait = null;
         resolve();
-      });
+      };
+      const wakeOnStop = () => finish(true);
+      timer = setTimeout(() => finish(false), ms);
+      wakeIdleWait = wakeOnStop;
+      if (stopping) wakeOnStop();
     });
 
   void (async () => {
@@ -354,7 +359,7 @@ export function startWorkerLoop(
     async stop() {
       if (!stopping) {
         stopping = true;
-        settleStop();
+        wakeIdleWait?.();
       }
       // Wait for the in-flight job and the loop's own exit before returning.
       await done;
