@@ -99,6 +99,8 @@ export interface ProcessClipJobOptions {
   workerAttemptCap?: number;
 }
 
+type WorkerClaimObserver = () => void;
+
 export type CompilationJobStatus = 'pending' | 'processing' | 'ready' | 'failed';
 
 /** Three explicit compile attempts prevent a broken cycle from retrying forever. */
@@ -628,14 +630,13 @@ export function updateCompilationJobProgress(
 }
 
 export type ProcessCompilationJobResult =
-  | { ok: true; jobId: string; status: 'ready'; claimed: boolean }
+  | { ok: true; jobId: string; status: 'ready' }
   | {
       ok: false;
       jobId: string;
       status: 'failed' | 'processing' | 'not_found';
       reason: 'not_found' | 'already_processing' | 'processing_failed' | 'retry_exhausted';
       message: string;
-      claimed: boolean;
     };
 
 export interface ProcessCompilationJobOptions {
@@ -765,9 +766,26 @@ function publishCompilationOutput(
 }
 
 /** Compile a cycle's reconciled, retained clips into one ready-only film. */
-export async function processCompilationJob(
+export function processCompilationJob(
   database: RewindDatabase,
   options: ProcessCompilationJobOptions,
+): Promise<ProcessCompilationJobResult> {
+  return processCompilationJobInternal(database, options);
+}
+
+/** @internal The worker observes claims separately from the request result. */
+export function processCompilationJobForWorker(
+  database: RewindDatabase,
+  options: ProcessCompilationJobOptions,
+  onClaimed: WorkerClaimObserver,
+): Promise<ProcessCompilationJobResult> {
+  return processCompilationJobInternal(database, options, onClaimed);
+}
+
+async function processCompilationJobInternal(
+  database: RewindDatabase,
+  options: ProcessCompilationJobOptions,
+  onClaimed?: WorkerClaimObserver,
 ): Promise<ProcessCompilationJobResult> {
   const claim = claimCompilationJob(database, { jobId: options.jobId, groupId: options.groupId });
   if (!claim.ok) {
@@ -788,11 +806,9 @@ export async function processCompilationJob(
           : exhausted
             ? 'The film is delayed after the maximum number of compile attempts.'
             : 'The film job cannot be processed in its current state.',
-      claimed: false,
     };
   }
-  if (claim.action === 'already_ready')
-    return { ok: true, jobId: claim.job.id, status: 'ready', claimed: false };
+  if (claim.action === 'already_ready') return { ok: true, jobId: claim.job.id, status: 'ready' };
   if (claim.action === 'already_processing') {
     return {
       ok: false,
@@ -800,9 +816,9 @@ export async function processCompilationJob(
       status: 'processing',
       reason: 'already_processing',
       message: 'The film job is already processing.',
-      claimed: false,
     };
   }
+  onClaimed?.();
 
   const outputDir =
     options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
@@ -867,7 +883,7 @@ export async function processCompilationJob(
         }
       },
     });
-    return { ok: true, jobId: claim.job.id, status: 'ready', claimed: true };
+    return { ok: true, jobId: claim.job.id, status: 'ready' };
   } catch (error) {
     await rm(temporaryOutputPath, { force: true }).catch(() => undefined);
     if (getCompilationJob(database, claim.job.id)?.status !== 'ready') {
@@ -884,7 +900,6 @@ export async function processCompilationJob(
       message: delayed
         ? 'The film is delayed after the maximum number of compile attempts.'
         : 'The film could not be compiled. Retry the job.',
-      claimed: true,
     };
   }
 }
@@ -893,14 +908,13 @@ export async function processCompilationJob(
 export const PROCESSING_CLAIM_LEASE_MS = 15 * 60 * 1000;
 
 export type ProcessClipJobResult =
-  | { ok: true; jobId: string; status: 'ready'; claimed: boolean }
+  | { ok: true; jobId: string; status: 'ready' }
   | {
       ok: false;
       jobId: string;
       status: 'failed' | 'processing' | 'not_found';
       reason: 'not_found' | 'already_processing' | 'processing_failed' | 'retry_exhausted';
       message: string;
-      claimed: boolean;
     };
 
 interface ClipJobRow {
@@ -1164,14 +1178,32 @@ function markFailed(database: RewindDatabase, jobId: string, errorCode: string):
     .run(errorCode, failedAt, failedAt, jobId);
 }
 
+/** Process one pending clip while preserving its established result shape. */
+export function processClipJob(
+  database: RewindDatabase,
+  options: ProcessClipJobOptions,
+): Promise<ProcessClipJobResult> {
+  return processClipJobInternal(database, options);
+}
+
+/** @internal The worker observes claims separately from the request result. */
+export function processClipJobForWorker(
+  database: RewindDatabase,
+  options: ProcessClipJobOptions,
+  onClaimed: WorkerClaimObserver,
+): Promise<ProcessClipJobResult> {
+  return processClipJobInternal(database, options, onClaimed);
+}
+
 /**
  * Process one pending clip and retain only its transformed output on success.
  * The operation is claimable after a failure, so a transient FFmpeg or source
  * error leaves a retryable job instead of losing the contribution.
  */
-export async function processClipJob(
+async function processClipJobInternal(
   database: RewindDatabase,
   options: ProcessClipJobOptions,
+  onClaimed?: WorkerClaimObserver,
 ): Promise<ProcessClipJobResult> {
   let row = readClipJob(database, options.jobId, options.groupId);
   if (!row) {
@@ -1181,10 +1213,9 @@ export async function processClipJob(
       status: 'not_found',
       reason: 'not_found',
       message: 'The media job was not found.',
-      claimed: false,
     };
   }
-  if (row.status === 'ready') return { ok: true, jobId: row.id, status: 'ready', claimed: false };
+  if (row.status === 'ready') return { ok: true, jobId: row.id, status: 'ready' };
   const processingStartedAt = row.processingStartedAt
     ? Date.parse(row.processingStartedAt)
     : Number.NaN;
@@ -1199,7 +1230,6 @@ export async function processClipJob(
       status: 'processing',
       reason: 'already_processing',
       message: 'The media job is already processing.',
-      claimed: false,
     };
   }
   if (!['pending', 'failed', 'processing'].includes(row.status)) {
@@ -1209,7 +1239,6 @@ export async function processClipJob(
       status: 'failed',
       reason: 'processing_failed',
       message: 'The media job cannot be processed in its current state.',
-      claimed: false,
     };
   }
 
@@ -1225,11 +1254,10 @@ export async function processClipJob(
       existsSync(row.outputPath) &&
       finalizePreparedOutput(database, row, stagingDir, row.outputPath)
     ) {
-      return { ok: true, jobId: row.id, status: 'ready', claimed: false };
+      return { ok: true, jobId: row.id, status: 'ready' };
     }
     row = readClipJob(database, options.jobId, options.groupId);
-    if (!row || row.status === 'ready')
-      return { ok: true, jobId: options.jobId, status: 'ready', claimed: false };
+    if (!row || row.status === 'ready') return { ok: true, jobId: options.jobId, status: 'ready' };
   }
   const claim = claimClipJob(database, row, options.workerAttemptCap);
   if (!claim.claimed) {
@@ -1240,7 +1268,6 @@ export async function processClipJob(
         status: 'failed',
         reason: 'retry_exhausted',
         message: 'The clip is exhausted for automatic worker retries.',
-        claimed: false,
       };
     }
     if (claim.reason === 'not_found') {
@@ -1250,7 +1277,6 @@ export async function processClipJob(
         status: 'not_found',
         reason: 'not_found',
         message: 'The media job was not found.',
-        claimed: false,
       };
     }
     if (claim.reason === 'not_claimable') {
@@ -1260,7 +1286,6 @@ export async function processClipJob(
         status: 'failed',
         reason: 'processing_failed',
         message: 'The media job cannot be processed in its current state.',
-        claimed: false,
       };
     }
     return {
@@ -1269,10 +1294,10 @@ export async function processClipJob(
       status: 'processing',
       reason: 'already_processing',
       message: 'The media job is already processing.',
-      claimed: false,
     };
   }
   row = claim.row;
+  onClaimed?.();
   const outputPath = row.outputPath ?? resolve(outputDir, safeOutputName(row.id));
   try {
     if (!row.sourcePath || row.trimStartSeconds === null || row.trimEndSeconds === null) {
@@ -1314,7 +1339,7 @@ export async function processClipJob(
         }
       },
     });
-    return { ok: true, jobId: row.id, status: 'ready', claimed: true };
+    return { ok: true, jobId: row.id, status: 'ready' };
   } catch (error) {
     // A competing stale worker may have completed the durable finalization
     // after this worker observed a binding change. Never delete an output
@@ -1330,7 +1355,6 @@ export async function processClipJob(
       status: 'failed',
       reason: 'processing_failed',
       message: 'The clip could not be processed. Retry the job.',
-      claimed: true,
     };
   }
 }

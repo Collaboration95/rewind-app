@@ -1,5 +1,9 @@
 import type { RewindDatabase } from '../db';
-import { processClipJob, processCompilationJob, PROCESSING_CLAIM_LEASE_MS } from './index';
+import {
+  processClipJobForWorker,
+  processCompilationJobForWorker,
+  PROCESSING_CLAIM_LEASE_MS,
+} from './index';
 import { QUEUE_MAX_FILM_ATTEMPTS, type QueueJobKind } from './queue';
 
 /**
@@ -266,27 +270,40 @@ export async function runWorkerTick(
   for (const candidate of candidates) {
     if (options.shouldStop?.()) break;
     const cap = resolveCap(options, candidate.kind);
-    const result =
-      candidate.kind === 'film'
-        ? await processCompilationJob(database, {
-            jobId: candidate.id,
-            groupId: candidate.groupId || undefined,
-            ffmpegBin: options.ffmpegBin,
-            outputDir: options.outputDir,
-            actorMemberId: options.actorMemberId ?? null,
-          })
-        : await processClipJob(database, {
-            jobId: candidate.id,
-            groupId: candidate.groupId || undefined,
-            ffmpegBin: options.ffmpegBin,
-            stagingDir: options.stagingDir,
-            outputDir: options.outputDir,
-            actorMemberId: options.actorMemberId ?? null,
-            workerAttemptCap: cap,
-          });
+    let claimed = false;
+    const observeClaim = () => {
+      claimed = true;
+    };
+    if (candidate.kind === 'film') {
+      await processCompilationJobForWorker(
+        database,
+        {
+          jobId: candidate.id,
+          groupId: candidate.groupId || undefined,
+          ffmpegBin: options.ffmpegBin,
+          outputDir: options.outputDir,
+          actorMemberId: options.actorMemberId ?? null,
+        },
+        observeClaim,
+      );
+    } else {
+      await processClipJobForWorker(
+        database,
+        {
+          jobId: candidate.id,
+          groupId: candidate.groupId || undefined,
+          ffmpegBin: options.ffmpegBin,
+          stagingDir: options.stagingDir,
+          outputDir: options.outputDir,
+          actorMemberId: options.actorMemberId ?? null,
+          workerAttemptCap: cap,
+        },
+        observeClaim,
+      );
+    }
     // Only report work this invocation actually claimed. Candidate snapshots
     // can become ready, exhausted, or claimed by another worker before here.
-    if (!result.claimed) continue;
+    if (!claimed) continue;
     const state = readWorkerJobState(database, candidate.id);
     return { claimed: true, record: toRecord(candidate, state, cap) };
   }

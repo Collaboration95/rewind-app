@@ -323,7 +323,13 @@ test('worker claim enforces the automatic clip cap after candidate selection', a
       groupId: 'demo-group',
       ...workerOptions(config, dataDir),
     });
-    assert.equal(manual.claimed, true);
+    assert.deepEqual(manual, {
+      ok: false,
+      jobId,
+      status: 'failed',
+      reason: 'processing_failed',
+      message: 'The clip could not be processed. Retry the job.',
+    });
     assert.equal(jobRow(database, jobId).attempts, WORKER_MAX_CLIP_ATTEMPTS + 1);
   });
 });
