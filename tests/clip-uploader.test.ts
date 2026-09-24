@@ -1,6 +1,7 @@
 import {
   ClipUploadError,
   ClipUploadSession,
+  MAX_CLIP_UPLOAD_ATTEMPTS,
   validateClipUploadInput,
 } from '../src/capture/clip-uploader';
 import type { ClipUploadInput, PendingClipUpload } from '../src/domain/video';
@@ -107,5 +108,60 @@ describe('local clip upload lifecycle', () => {
     expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
     resolveCancellation();
     await cancellation;
+  });
+
+  it('bounds retries and reports the exhausted budget without sending again', async () => {
+    const transport = {
+      cancelClipUpload: jest.fn().mockResolvedValue(undefined),
+      uploadClip: jest.fn().mockRejectedValue(new Error('runtime unavailable')),
+    };
+    const session = new ClipUploadSession(transport);
+
+    await expect(session.upload(input)).rejects.toBeInstanceOf(ClipUploadError);
+    expect(session.canRetry()).toBe(true);
+    expect(session.attemptsRemaining()).toBe(MAX_CLIP_UPLOAD_ATTEMPTS - 1);
+
+    for (let attempt = 1; attempt < MAX_CLIP_UPLOAD_ATTEMPTS; attempt += 1) {
+      await expect(session.retry()).rejects.toBeInstanceOf(ClipUploadError);
+    }
+
+    expect(transport.uploadClip).toHaveBeenCalledTimes(MAX_CLIP_UPLOAD_ATTEMPTS);
+    expect(session.canRetry()).toBe(false);
+    expect(session.attemptsRemaining()).toBe(0);
+    // The budget is spent, so the next retry is refused before transport.
+    await expect(session.retry()).rejects.toMatchObject({
+      code: 'attempts_exhausted',
+      retryable: false,
+    });
+    expect(transport.uploadClip).toHaveBeenCalledTimes(MAX_CLIP_UPLOAD_ATTEMPTS);
+  });
+
+  it('resets the attempt budget for a newly captured input', async () => {
+    const transport = {
+      cancelClipUpload: jest.fn().mockResolvedValue(undefined),
+      uploadClip: jest.fn().mockResolvedValue(upload),
+    };
+    const session = new ClipUploadSession(transport);
+    await session.upload(input);
+    await session.retry();
+    expect(session.getAttempts()).toBe(2);
+
+    await session.upload({ ...input, idempotencyKey: 'retryable-2' });
+    expect(session.getAttempts()).toBe(1);
+    expect(session.attemptsRemaining()).toBe(MAX_CLIP_UPLOAD_ATTEMPTS - 1);
+  });
+
+  it('forgets the local input so a released clip cannot be resent', async () => {
+    const transport = {
+      cancelClipUpload: jest.fn().mockResolvedValue(undefined),
+      uploadClip: jest.fn().mockRejectedValue(new Error('runtime unavailable')),
+    };
+    const session = new ClipUploadSession(transport);
+    await expect(session.upload(input)).rejects.toBeInstanceOf(ClipUploadError);
+
+    session.forget();
+    expect(session.canRetry()).toBe(false);
+    await expect(session.retry()).rejects.toMatchObject({ code: 'missing_input' });
+    expect(session.getProgress()).toEqual({ status: 'idle', percent: 0 });
   });
 });

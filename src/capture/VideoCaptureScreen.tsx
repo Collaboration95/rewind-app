@@ -13,6 +13,14 @@ import type {
 } from '../domain/video';
 import { ClipUploadError, ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
 import {
+  EXHAUSTED_UPLOAD_MESSAGE,
+  INTERRUPTED_UPLOAD_MESSAGE,
+  decideInterruption,
+  isLiveProcessingStatus,
+  reconcileContributionStatus,
+} from './capture-interruption';
+import { runCaptureRestartRecovery } from './reset';
+import {
   ContributionStatusPanel,
   useOptionalContributionStatus,
   type ContributionStatus,
@@ -178,6 +186,10 @@ export function VideoCaptureScreen({
   const clipRef = useRef<RecordedClip | null>(clip);
   const reviewRef = useRef<ClipReviewSession | null>(review);
   const activeUploadRef = useRef(false);
+  // True while this mount is driving a contribution (upload, retry, or a
+  // synthetic Demo clip). A status restored from durable storage after a
+  // reload has no such owner, which is what makes it reconcilable.
+  const contributionWorkRef = useRef(false);
   const mountedRef = useRef(true);
   const captureLeftRef = useRef(false);
   useEffect(() => {
@@ -192,6 +204,38 @@ export function VideoCaptureScreen({
   useEffect(() => {
     reviewRef.current = review;
   }, [review]);
+  const statusContextRef = useRef(statusContext);
+  useEffect(() => {
+    statusContextRef.current = statusContext;
+  }, [statusContext]);
+
+  /**
+   * Resolve a persisted contribution status against what this mount can
+   * actually do. A reload or restart drops the in-memory upload session, so a
+   * stored processing record would otherwise leave a panel claiming work that
+   * no live owner is doing.
+   */
+  const reconcileStoredStatus = useCallback(
+    (stored: ContributionStatus | null): ContributionStatus | null =>
+      reconcileContributionStatus(stored, {
+        attemptsRemaining: uploadSessionRef.current?.attemptsRemaining() ?? 0,
+        resumable: Boolean(clipRef.current && uploadSessionRef.current),
+      }),
+    [],
+  );
+
+  /**
+   * Foreground and cold-start reconciliation. A stored queued or processing
+   * record with no upload running in this mount has lost its owner, so it is
+   * replaced with an honest bounded retry rather than a stuck processing panel.
+   */
+  const reconcileInterruptedUpload = useCallback(() => {
+    const context = statusContextRef.current;
+    const stored = context?.status ?? null;
+    if (!context || activeUploadRef.current || contributionWorkRef.current) return;
+    if (!isLiveProcessingStatus(stored)) return;
+    context.setStatus(reconcileStoredStatus(stored)!);
+  }, [reconcileStoredStatus]);
 
   const isCaptureActive = useCallback(() => mountedRef.current && !captureLeftRef.current, []);
   const releaseOwnedClip = useCallback(async (ownedClip: RecordedClip | null): Promise<void> => {
@@ -243,13 +287,28 @@ export function VideoCaptureScreen({
   const cancelActiveWork = useCallback((): Promise<void> => {
     if (captureLeftRef.current) return Promise.resolve();
     captureLeftRef.current = true;
-    recorderRef.current?.cancel();
-    if (activeUploadRef.current) {
+    const routeChange = decideInterruption('route-change');
+    if (routeChange.cancelRecording) recorderRef.current?.cancel();
+    if (routeChange.cancelUploadRequest && activeUploadRef.current) {
       const cancellation = uploadSessionRef.current?.cancel();
       return cancellation?.catch(() => undefined) ?? Promise.resolve();
     }
     return Promise.resolve();
   }, []);
+
+  useEffect(() => {
+    if (!decideInterruption('restart').sweepOrphanedFiles) return;
+    // On a cold start, reclaim app-owned media that no live session can reach.
+    // The status reconcile below then reports the interruption honestly.
+    void runCaptureRestartRecovery();
+  }, []);
+
+  // A restored contribution status can arrive after the first render, once the
+  // status store has loaded. Reconcile it whenever a live-looking record
+  // appears without an upload running in this mount.
+  useEffect(() => {
+    reconcileInterruptedUpload();
+  }, [contributionStatus, reconcileInterruptedUpload]);
 
   useEffect(() => {
     return () => {
@@ -306,14 +365,42 @@ export function VideoCaptureScreen({
   }, [refresh]);
 
   // Native Settings does not tell the route when the user changes a
-  // permission. Re-check when the app becomes active again so a blocked
-  // screen can transition directly to the live preview after returning.
+  // permission, so re-check on foreground. Backgrounding is an interruption:
+  // a recording cannot continue while suspended, and an in-flight upload has
+  // lost its transport. Both are resolved explicitly instead of being left to
+  // resolve themselves, and the local clip is kept for a bounded retry.
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') void refresh();
+      if (nextState === 'active') {
+        void refresh();
+        reconcileInterruptedUpload();
+        return;
+      }
+      if (nextState === 'background' || nextState === 'inactive') {
+        const decision = decideInterruption('background');
+        if (decision.cancelRecording && recorderRef.current?.getState().status === 'recording') {
+          recorderRef.current.cancel();
+          setRecording(false);
+          setRecordingStartedAt(null);
+          setElapsedSeconds(0);
+        }
+        if (decision.cancelUploadRequest && activeUploadRef.current) {
+          activeUploadRef.current = false;
+          void uploadSessionRef.current?.cancel().catch(() => undefined);
+          setUploadProgress({ status: 'cancelled', percent: 0 });
+          if (decision.retainLocalCaptureForRetry) {
+            setContributionStatus({
+              createdAt: new Date().toISOString(),
+              message: INTERRUPTED_UPLOAD_MESSAGE,
+              retryable: uploadSessionRef.current?.canRetry() ?? false,
+              state: 'failed',
+            });
+          }
+        }
+      }
     });
     return () => subscription.remove();
-  }, [refresh]);
+  }, [reconcileInterruptedUpload, refresh, setContributionStatus]);
 
   const requestAccess = useCallback(async () => {
     if (!isCaptureActive()) return;
@@ -427,6 +514,8 @@ export function VideoCaptureScreen({
       return;
     }
     recorder?.reset();
+    uploadSession?.forget();
+    contributionWorkRef.current = false;
     setClip(null);
     setReview(null);
     setUploadProgress({ status: 'idle', percent: 0 });
@@ -548,6 +637,7 @@ export function VideoCaptureScreen({
       width: clip.width,
     };
     try {
+      contributionWorkRef.current = true;
       activeUploadRef.current = true;
       if (runtimeClient?.stageClipSource && demoSession?.session) {
         const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
@@ -600,7 +690,21 @@ export function VideoCaptureScreen({
 
   const retryUpload = async () => {
     if (!isCaptureActive()) return;
+    // A retry needs an input this mount captured or restored. Once the attempt
+    // budget is spent the action is terminal, so report it instead of silently
+    // looping on a transport that keeps failing.
+    if (uploadSession && !uploadSession.canRetry()) {
+      const stored = statusContextRef.current?.status ?? contributionStatus;
+      if (stored) {
+        setContributionStatus(
+          reconcileContributionStatus(stored, { attemptsRemaining: 0, resumable: true })!,
+        );
+      }
+      setError(EXHAUSTED_UPLOAD_MESSAGE);
+      return;
+    }
     try {
+      contributionWorkRef.current = true;
       activeUploadRef.current = true;
       const retried = await uploadSession?.retry((progress) => {
         if (isCaptureActive() && activeUploadRef.current) setUploadProgress(progress);
@@ -626,14 +730,20 @@ export function VideoCaptureScreen({
         return;
       }
       const uploaded = latestUploadRef.current;
-      if (uploaded) setContributionStatus(describeUpload(uploaded, 'failed', failure));
+      // Once the bounded budget is spent the failure is terminal. Reporting it
+      // as retryable would offer an action that can never succeed.
+      const exhausted = Boolean(uploadSession && !uploadSession.canRetry());
+      const reported = exhausted
+        ? { message: EXHAUSTED_UPLOAD_MESSAGE, retryable: false }
+        : failure;
+      if (uploaded) setContributionStatus(describeUpload(uploaded, 'failed', reported));
       else
         setContributionStatus({
           createdAt: new Date().toISOString(),
-          ...failure,
+          ...reported,
           state: 'failed',
         });
-      setError(failure.message);
+      setError(reported.message);
     } finally {
       activeUploadRef.current = false;
     }
@@ -651,6 +761,7 @@ export function VideoCaptureScreen({
     setCreatingSyntheticClip(true);
     setError(null);
     try {
+      contributionWorkRef.current = true;
       const uploaded = await runtimeClient.createSyntheticDemoClip(
         demoSession.session.id,
         demoSession.session.groupId,
@@ -668,6 +779,7 @@ export function VideoCaptureScreen({
       });
       setError(failure.message);
     } finally {
+      contributionWorkRef.current = false;
       if (isCaptureActive()) setCreatingSyntheticClip(false);
     }
   };

@@ -6,6 +6,14 @@ import {
 
 export const MAX_CLIP_BYTES = 50 * 1024 * 1024;
 
+/**
+ * How many times one clip may be submitted before the route stops offering a
+ * retry. The budget is per captured clip, bounded so a dropped connection
+ * cannot produce an endless retry loop, and observable so the UI can tell the
+ * truth once it is spent.
+ */
+export const MAX_CLIP_UPLOAD_ATTEMPTS = 3;
+
 export interface ClipUploadTransport {
   uploadClip(input: ClipUploadInput): Promise<PendingClipUpload>;
   cancelClipUpload(jobId: string): Promise<void>;
@@ -95,6 +103,7 @@ export class ClipUploadSession {
   private lastInput: ClipUploadInput | null = null;
   private generation = 0;
   private activeJobId: string | null = null;
+  private attempts = 0;
 
   constructor(private readonly transport: ClipUploadTransport) {}
 
@@ -102,6 +111,20 @@ export class ClipUploadSession {
     return this.progress.status === 'complete'
       ? { ...this.progress, upload: { ...this.progress.upload } }
       : { ...this.progress };
+  }
+
+  /** Upload attempts already spent on the current input. */
+  getAttempts(): number {
+    return this.attempts;
+  }
+
+  /** Whether the bounded retry budget still allows another submission. */
+  canRetry(): boolean {
+    return this.lastInput !== null && this.attempts < MAX_CLIP_UPLOAD_ATTEMPTS;
+  }
+
+  attemptsRemaining(): number {
+    return Math.max(0, MAX_CLIP_UPLOAD_ATTEMPTS - this.attempts);
   }
 
   async upload(input: ClipUploadInput, onProgress?: (progress: ClipUploadProgress) => void) {
@@ -112,6 +135,14 @@ export class ClipUploadSession {
       throw new ClipUploadError(validationError, { code: 'validation', retryable: false });
     }
     this.lastInput = { ...input };
+    this.attempts = 1;
+    return this.runUpload(input, onProgress);
+  }
+
+  private async runUpload(
+    input: ClipUploadInput,
+    onProgress?: (progress: ClipUploadProgress) => void,
+  ) {
     const generation = ++this.generation;
     this.progress = { status: 'validating', percent: 0 };
     onProgress?.(this.getProgress());
@@ -158,7 +189,16 @@ export class ClipUploadSession {
         code: 'missing_input',
         retryable: false,
       });
-    return this.upload(this.lastInput, onProgress);
+    // Refuse a retry once the bounded budget is spent. The caller renders the
+    // terminal state instead of a button that can never succeed.
+    if (!this.canRetry()) {
+      throw new ClipUploadError(
+        `The upload could not be completed after ${MAX_CLIP_UPLOAD_ATTEMPTS} attempts. Retake the clip.`,
+        { code: 'attempts_exhausted', retryable: false },
+      );
+    }
+    this.attempts += 1;
+    return this.runUpload(this.lastInput, onProgress);
   }
 
   async cancel(): Promise<void> {
@@ -172,5 +212,16 @@ export class ClipUploadSession {
     if (jobId) {
       await this.transport.cancelClipUpload(jobId);
     }
+  }
+
+  /**
+   * Drop the local input after the clip itself has been released, so a later
+   * retry cannot resend a file that no longer exists.
+   */
+  forget(): void {
+    this.lastInput = null;
+    this.activeJobId = null;
+    this.attempts = 0;
+    this.progress = { status: 'idle', percent: 0 };
   }
 }

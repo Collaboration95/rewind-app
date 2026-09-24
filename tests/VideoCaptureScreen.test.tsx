@@ -3,6 +3,7 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, View } from 'react-native';
 import { ClipUploadSession } from '../src/capture/clip-uploader';
+import { ContributionStatusProvider } from '../src/capture/contribution-status';
 
 import { DemoSessionProvider, useOptionalDemoSession } from '../src/session/DemoSessionProvider';
 import { VideoCaptureScreen } from '../src/capture/VideoCaptureScreen';
@@ -127,6 +128,38 @@ function runtimeClient(overrides: Partial<RuntimeClient> = {}): RuntimeClient {
 function SessionReadyMarker() {
   const session = useOptionalDemoSession()?.session;
   return session ? <View testID="demo-session-ready" /> : null;
+}
+
+/**
+ * Replace the AppState subscription with a deterministic, manually driven one.
+ *
+ * The React Native preset already installs `addEventListener` as a jest mock,
+ * so `jest.spyOn(...).mockRestore()` restores a mock with no implementation and
+ * a later unmount crashes on `undefined.remove()`. Restoring the captured
+ * original reference keeps the leak out of subsequent tests.
+ */
+function stubAppState(): {
+  emit: (state: string) => void;
+  restore: () => void;
+  subscription: { remove: jest.Mock };
+} {
+  const original = AppState.addEventListener;
+  const subscription = { remove: jest.fn() };
+  let listener: ((state: string) => void) | null = null;
+  (AppState as unknown as { addEventListener: unknown }).addEventListener = ((
+    _eventName: string,
+    next: (state: string) => void,
+  ) => {
+    listener = next;
+    return subscription;
+  }) as never;
+  return {
+    emit: (state) => listener?.(state),
+    restore: () => {
+      (AppState as unknown as { addEventListener: unknown }).addEventListener = original;
+    },
+    subscription,
+  };
 }
 
 async function renderReview(videoPlatform: TestVideoPlatform = videoPlatformForReview()) {
@@ -658,25 +691,188 @@ describe('VideoCaptureScreen', () => {
     const platform = videoPlatform(blocked);
     const getPermissions = jest.fn().mockResolvedValueOnce(blocked).mockResolvedValue(granted);
     platform.getPermissions = getPermissions;
-    let onAppStateChange!: Parameters<typeof AppState.addEventListener>[1];
-    const subscription = { remove: jest.fn() };
-    const addEventListener = jest
-      .spyOn(AppState, 'addEventListener')
-      .mockImplementation((_eventName, listener) => {
-        onAppStateChange = listener;
-        return subscription;
-      });
+    const appState = stubAppState();
     const result = await render(<VideoCaptureScreen platform={platform} />);
 
     await result.findByTestId('video-permission-blocked');
     await act(async () => {
-      onAppStateChange('active');
+      appState.emit('active');
     });
     await result.findByTestId('video-live-preview');
     expect(getPermissions).toHaveBeenCalledTimes(2);
 
     await result.unmount();
-    expect(subscription.remove).toHaveBeenCalledTimes(1);
-    addEventListener.mockRestore();
+    expect(appState.subscription.remove).toHaveBeenCalledTimes(1);
+    appState.restore();
+  });
+
+  it('abandons a backgrounded recording and keeps the local clip untouched', async () => {
+    const platform = videoPlatform({ camera: 'granted', microphone: 'granted' });
+    let resolveRecording!: (value: RecordedClip) => void;
+    (platform.recordClip as jest.Mock).mockImplementation(
+      () => new Promise<RecordedClip>((resolve) => (resolveRecording = resolve)),
+    );
+    const appState = stubAppState();
+
+    const result = await render(<VideoCaptureScreen platform={platform} />);
+    await result.findByTestId('video-live-preview');
+    await fireEvent.press(result.getByTestId('video-record'));
+    await result.findByTestId('video-recording');
+
+    await act(async () => {
+      appState.emit('background');
+    });
+
+    expect(platform.cancelRecording).toHaveBeenCalledTimes(1);
+    expect(result.queryByTestId('video-recording')).toBeNull();
+    // The abandoned platform completion must not publish a review panel.
+    await act(async () => {
+      resolveRecording(clip);
+    });
+    expect(result.queryByTestId('video-review')).toBeNull();
+    expect(result.queryByRole('alert')).toBeNull();
+
+    appState.restore();
+  });
+
+  it('cancels an in-flight upload on background and keeps the clip for a bounded retry', async () => {
+    const uploadClip = jest.fn(() => new Promise<PendingClipUpload>(() => undefined));
+    const cancelClipUpload = jest.fn().mockResolvedValue(undefined);
+    const appState = stubAppState();
+
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ cancelClipUpload, uploadClip }),
+    );
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByRole('button', { name: 'Cancel upload' });
+
+    await act(async () => {
+      appState.emit('background');
+    });
+
+    // The route left the uploading state and offers an honest retry instead.
+    await result.findByTestId('camera-contribution-status-failed');
+    expect(result.queryByRole('button', { name: 'Cancel upload' })).toBeNull();
+    expect(result.getByRole('button', { name: 'Retry upload' })).toBeTruthy();
+    expect(result.queryByTestId('video-review')).toBeTruthy();
+
+    appState.restore();
+  });
+
+  it('reconciles a restored processing status into an honest bounded retry', async () => {
+    const scope = {
+      groupId: demoSession.groupId,
+      memberId: demoSession.actor.memberId,
+      sessionId: demoSession.id,
+    };
+    await AsyncStorage.setItem(
+      '@rewind/contribution-status-v1',
+      JSON.stringify({
+        [`${scope.sessionId}:${scope.groupId}:${scope.memberId}`]: {
+          contributionId: 'restored-contribution',
+          createdAt: '2026-09-20T00:00:00.000Z',
+          durationSeconds: 4,
+          jobId: 'restored-job',
+          retryable: false,
+          state: 'processing',
+        },
+      }),
+    );
+
+    const client = runtimeClient();
+    const result = await render(
+      <DemoSessionProvider
+        clock={() => new Date('2026-09-11T12:00:00.000Z')}
+        runtimeClient={client}
+        store={demoSessionStore()}
+      >
+        <ContributionStatusProvider scope={scope}>
+          <SessionReadyMarker />
+          <VideoCaptureScreen platform={videoPlatformForReview()} runtimeClient={client} />
+        </ContributionStatusProvider>
+      </DemoSessionProvider>,
+    );
+    await result.findByTestId('demo-session-ready');
+    await result.findByTestId('video-live-preview');
+    await fireEvent.press(result.getByTestId('video-record'));
+    await result.findByTestId('video-review');
+
+    // The stale processing panel must not survive. After a reload only durable
+    // metadata remains, so the honest outcome is a terminal retake, not a
+    // retry button that has no local clip to resend.
+    await result.findByTestId('camera-contribution-status-failed');
+    expect(result.queryByTestId('camera-contribution-status-processing')).toBeNull();
+    expect(result.getByLabelText(/cannot be resumed on this device/)).toBeTruthy();
+    expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
+  });
+
+  it('stops offering retry once the bounded upload budget is spent', async () => {
+    const uploadClip = jest.fn().mockRejectedValue(new Error('runtime unavailable'));
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ uploadClip }),
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByTestId('camera-contribution-status-failed');
+
+    // Exhaust the remaining budget through the retry action. The boundary is
+    // exact: the action disappears instead of sending a fourth request.
+    await fireEvent.press(result.getByRole('button', { name: 'Retry upload' }));
+    await waitFor(() => expect(uploadClip).toHaveBeenCalledTimes(2));
+    await fireEvent.press(result.getByRole('button', { name: 'Retry upload' }));
+    await waitFor(() => expect(uploadClip).toHaveBeenCalledTimes(3));
+
+    await waitFor(() => expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull());
+    expect(result.getByLabelText(/could not be completed after 3 attempts/)).toBeTruthy();
+    expect(uploadClip).toHaveBeenCalledTimes(3);
+  });
+
+  it('treats sign-out as a route exit: cancels the upload and releases the local clip', async () => {
+    const previousRevoke = URL.revokeObjectURL;
+    const revokeObjectURL = jest.fn();
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+    const platform = fileFallbackPlatform();
+    (platform.pickVideoFile as jest.Mock).mockResolvedValue({
+      ...clip,
+      source: 'file',
+      sourceUri: 'blob:sign-out-video',
+    });
+    const uploadClip = jest.fn(() => new Promise<PendingClipUpload>(() => undefined));
+    const cancelClipUpload = jest.fn().mockResolvedValue(undefined);
+
+    try {
+      const client = runtimeClient({ cancelClipUpload, uploadClip });
+      const result = await render(
+        <DemoSessionProvider
+          clock={() => new Date('2026-09-11T12:00:00.000Z')}
+          runtimeClient={client}
+          store={demoSessionStore()}
+        >
+          <SessionReadyMarker />
+          <VideoCaptureScreen platform={platform} runtimeClient={client} />
+        </DemoSessionProvider>,
+      );
+      await result.findByTestId('demo-session-ready');
+      await result.findByTestId('video-unsupported');
+      await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
+      await result.findByTestId('video-review');
+      await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+      await result.findByRole('button', { name: 'Cancel upload' });
+
+      // Ending Demo access unmounts the capture route.
+      await result.unmount();
+
+      await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:sign-out-video'));
+      // No orphaned local blob and no lingering uploading state.
+      expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+      expect(result.queryByRole('button', { name: 'Cancel upload' })).toBeNull();
+    } finally {
+      Object.defineProperty(URL, 'revokeObjectURL', {
+        configurable: true,
+        value: previousRevoke,
+      });
+    }
   });
 });

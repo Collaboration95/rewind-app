@@ -52,12 +52,26 @@ export {
   ClipUploadError,
   ClipUploadSession,
   MAX_CLIP_BYTES,
+  MAX_CLIP_UPLOAD_ATTEMPTS,
   validateClipUploadInput,
   type ClipUploadErrorOptions,
   type ClipUploadProgress,
   type ClipUploadTransport,
 } from './clip-uploader';
-export { resetCaptureData } from './reset';
+export {
+  CAPTURE_INTERRUPTION_EVENTS,
+  decideInterruption,
+  isLiveProcessingStatus,
+  reconcileContributionStatus,
+  type CaptureInterruptionDecision,
+  type CaptureInterruptionEvent,
+} from './capture-interruption';
+export {
+  resetCaptureData,
+  resetCaptureRestartRecoveryGuard,
+  runCaptureRestartRecovery,
+  sweepOrphanedCaptureFiles,
+} from './reset';
 export {
   ContributionStatusPanel,
   ContributionStatusProvider,
