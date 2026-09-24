@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as FileSystem from 'expo-file-system/legacy';
 import { fireEvent, render } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
@@ -12,6 +13,8 @@ import { DEMO_SESSION_STORAGE_KEY } from '../src/domain/session';
 import { SELECTION_KEY } from '../src/data/selection-store';
 import { IMAGE_METADATA_KEY } from '../src/capture/metadata-store';
 import { CONTRIBUTION_STATUS_STORAGE_KEY } from '../src/capture/contribution-status';
+import { PENDING_CLIP_METADATA_KEY } from '../src/capture/video-review';
+import { resetCaptureRestartRecoveryGuard, runCaptureRestartRecovery } from '../src/capture/reset';
 import { createOfflineDemoSession } from '../src/session/session-store';
 import { LocalRuntimeError, type RuntimeClient } from '../src/runtime/local-runtime-client';
 
@@ -83,31 +86,62 @@ describe('local Demo access lifecycle', () => {
   });
 
   it('clears contribution status for the signed-out session and keeps other scopes', async () => {
-    const result = await activeApp();
-    const storedSession = JSON.parse(
-      (await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)) ?? 'null',
-    ) as { actor: { memberId: string }; groupId: string; id: string };
-    const signedOutScope = `${storedSession.id}:${storedSession.groupId}:${storedSession.actor.memberId}`;
-    const otherScope = 'other-session:other-group:other-member';
-    const status = {
-      createdAt: '2026-09-20T00:00:00.000Z',
-      retryable: true,
-      state: 'failed',
-    };
-    await AsyncStorage.setItem(
-      CONTRIBUTION_STATUS_STORAGE_KEY,
-      JSON.stringify({ [signedOutScope]: status, [otherScope]: status }),
-    );
-
-    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
-    await fireEvent.press(result.getByTestId('sign-out'));
-    await result.findByRole('header', { name: 'Choose who you are showing' });
-
-    expect(
-      JSON.parse((await AsyncStorage.getItem(CONTRIBUTION_STATUS_STORAGE_KEY)) ?? '{}'),
-    ).toEqual({
-      [otherScope]: status,
+    const cacheDirectoryDescriptor = Object.getOwnPropertyDescriptor(FileSystem, 'cacheDirectory');
+    Object.defineProperty(FileSystem, 'cacheDirectory', {
+      configurable: true,
+      value: 'file:///rewind-sign-out-cache/',
     });
+    const deleteAsync = jest.spyOn(FileSystem, 'deleteAsync').mockResolvedValue();
+    resetCaptureRestartRecoveryGuard();
+
+    try {
+      await expect(runCaptureRestartRecovery()).resolves.toBe(true);
+      deleteAsync.mockClear();
+
+      const result = await activeApp();
+      const storedSession = JSON.parse(
+        (await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)) ?? 'null',
+      ) as { actor: { memberId: string }; groupId: string; id: string };
+      const signedOutScope = `${storedSession.id}:${storedSession.groupId}:${storedSession.actor.memberId}`;
+      const otherScope = 'other-session:other-group:other-member';
+      const status = {
+        createdAt: '2026-09-20T00:00:00.000Z',
+        retryable: true,
+        state: 'failed',
+      };
+      await AsyncStorage.setItem(
+        CONTRIBUTION_STATUS_STORAGE_KEY,
+        JSON.stringify({ [signedOutScope]: status, [otherScope]: status }),
+      );
+      await AsyncStorage.setItem(
+        PENDING_CLIP_METADATA_KEY,
+        '{"uri":"file:///rewind-clips/pending.mp4"}',
+      );
+
+      await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+      await fireEvent.press(result.getByTestId('sign-out'));
+      await result.findByRole('header', { name: 'Choose who you are showing' });
+
+      expect(
+        JSON.parse((await AsyncStorage.getItem(CONTRIBUTION_STATUS_STORAGE_KEY)) ?? '{}'),
+      ).toEqual({
+        [otherScope]: status,
+      });
+      expect(await AsyncStorage.getItem(PENDING_CLIP_METADATA_KEY)).toBeNull();
+      expect(deleteAsync).toHaveBeenCalledWith('file:///rewind-sign-out-cache/rewind-stills/', {
+        idempotent: true,
+      });
+      expect(deleteAsync).toHaveBeenCalledWith('file:///rewind-sign-out-cache/rewind-clips/', {
+        idempotent: true,
+      });
+    } finally {
+      deleteAsync.mockRestore();
+      if (cacheDirectoryDescriptor) {
+        Object.defineProperty(FileSystem, 'cacheDirectory', cacheDirectoryDescriptor);
+      } else {
+        Reflect.deleteProperty(FileSystem, 'cacheDirectory');
+      }
+    }
   });
 
   it('supports an explicit entry mode for deterministic review', async () => {
