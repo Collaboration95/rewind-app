@@ -44,3 +44,13 @@ export function encodeSseEvent(event: ChatMessageEvent): string {
     '\n',
   );
 }
+
+export function encodeSseCheckpoint(eventId: number): string {
+  return [
+    'event: checkpoint',
+    `id: ${eventId}`,
+    `data: ${JSON.stringify({ eventId })}`,
+    '',
+    '',
+  ].join('\n');
+}

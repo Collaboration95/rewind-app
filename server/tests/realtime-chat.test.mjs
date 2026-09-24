@@ -100,7 +100,11 @@ async function readSseEvent(reader, pending = '') {
         .filter((line) => line.startsWith('data: '))
         .map((line) => line.slice('data: '.length))
         .join('\n');
-      if (data) return { event: JSON.parse(data), pending: buffer };
+      if (data) {
+        const eventName = block.match(/^event: (.+)$/m)?.[1] ?? 'message';
+        const eventId = block.match(/^id: (.+)$/m)?.[1] ?? null;
+        return { event: JSON.parse(data), eventName, eventId, pending: buffer };
+      }
       continue;
     }
     const chunk = await reader.read();
@@ -360,6 +364,57 @@ test('persisted message events replay after the runtime and database are reopene
   } finally {
     await reader.cancel();
     await closeRuntime(secondRuntime.server, reopened, dataDir);
+  }
+});
+
+test('a new unread observer skips persisted history but receives messages after its checkpoint', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-latest-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const { server, baseUrl } = await startRuntime(config, database);
+  const session = await createSession(baseUrl, 'demo-1');
+  try {
+    const historical = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'already present before unread subscription' }),
+      },
+    );
+    assert.equal(historical.status, 201);
+    const historicalEvent = (await historical.json()).event;
+
+    const response = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&startFromLatest=true`,
+    );
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    try {
+      const checkpoint = await readSseEvent(reader);
+      assert.equal(checkpoint.eventName, 'checkpoint');
+      assert.equal(Number(checkpoint.eventId), historicalEvent.eventId);
+      assert.deepEqual(checkpoint.event, { eventId: historicalEvent.eventId });
+
+      const next = await fetch(
+        `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: 'arrived after unread subscription' }),
+        },
+      );
+      assert.equal(next.status, 201);
+      const nextEvent = (await next.json()).event;
+      const received = await readSseEvent(reader);
+      assert.equal(received.eventName, 'message');
+      assert.equal(received.event.eventId, nextEvent.eventId);
+      assert.equal(received.event.message.body, 'arrived after unread subscription');
+    } finally {
+      await reader.cancel();
+    }
+  } finally {
+    await closeRuntime(server, database, dataDir);
   }
 });
 

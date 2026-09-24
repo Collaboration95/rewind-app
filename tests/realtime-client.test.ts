@@ -151,6 +151,71 @@ test('reconnects from the last event without leaking another group', async () =>
   subscription.close();
 });
 
+test('starts a new observer at the persisted high-water mark and reconnects from its checkpoint', async () => {
+  const first = new FakeEventSource();
+  const second = new FakeEventSource();
+  const sources = [first, second];
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => sources.shift()!);
+  const received: number[] = [];
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: factory,
+    reconnectDelayMs: 0,
+  });
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    startFromLatest: true,
+    onEvent: (event) => received.push(event.eventId),
+  });
+
+  expect(factory.mock.calls[0][0]).toContain('&startFromLatest=true');
+  first.emit('checkpoint', { data: JSON.stringify({ eventId: 21 }) });
+  expect(received).toEqual([]);
+
+  first.onerror?.({});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=21');
+  second.emit('message', {
+    data: JSON.stringify({
+      eventId: 22,
+      type: 'message',
+      occurredAt: '2026-09-13T00:00:00.000Z',
+      message: {
+        id: 'm22',
+        groupId: 'demo-group',
+        memberId: 'demo-2',
+        body: 'new message',
+        createdAt: '',
+      },
+    }),
+  });
+  expect(received).toEqual([22]);
+  subscription.close();
+});
+
+test('keeps the latest-watermark handshake on reconnect until its checkpoint arrives', async () => {
+  const first = new FakeEventSource();
+  const second = new FakeEventSource();
+  const sources = [first, second];
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => sources.shift()!);
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: factory,
+    reconnectDelayMs: 0,
+  });
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    startFromLatest: true,
+    onEvent: () => undefined,
+  });
+
+  first.onerror?.({});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(factory).toHaveBeenCalledTimes(2);
+  expect(factory.mock.calls[1][0]).toContain('&startFromLatest=true');
+  expect(factory.mock.calls[1][0]).not.toContain('&sinceEventId=0');
+
+  second.emit('checkpoint', { data: JSON.stringify({ eventId: 21 }) });
+  subscription.close();
+});
+
 test('access denial stops reconnecting and exposes a denied state', () => {
   const source = new FakeEventSource();
   source.status = 403;

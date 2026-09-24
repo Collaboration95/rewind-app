@@ -69,6 +69,8 @@ export interface RealtimeChatClientOptions {
 
 export interface SubscribeOptions {
   sinceEventId?: number;
+  /** Start a fresh observer at the current end of the persisted event log. */
+  startFromLatest?: boolean;
   onEvent(event: ChatMessageEvent): void;
   onError?(error: unknown): void;
   onConnectionStateChange?(state: RealtimeConnectionState): void;
@@ -303,6 +305,10 @@ export class RealtimeChatClient {
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let lastEventId = options.sinceEventId ?? 0;
     const includeInitialSince = options.sinceEventId !== undefined;
+    // Event id 0 is a valid checkpoint, so track receipt separately from its
+    // numeric value. Until the first checkpoint arrives, retries must still
+    // ask the server to establish a fresh unread watermark.
+    let latestCheckpointReceived = !options.startFromLatest || includeInitialSince;
     let state: RealtimeConnectionState = 'connecting';
     const reconnect = options.reconnect !== false;
     const reconnectDelayMs = options.reconnectDelayMs ?? this.reconnectDelayMs;
@@ -321,16 +327,20 @@ export class RealtimeChatClient {
 
     let sourceListener: ((event: unknown) => void) | null = null;
     let sourceDeniedListener: ((event: unknown) => void) | null = null;
+    let sourceCheckpointListener: ((event: unknown) => void) | null = null;
     const closeSource = () => {
       if (!source) return;
       if (sourceListener) source.removeEventListener?.('message', sourceListener);
       if (sourceDeniedListener) source.removeEventListener?.('access-denied', sourceDeniedListener);
+      if (sourceCheckpointListener)
+        source.removeEventListener?.('checkpoint', sourceCheckpointListener);
       source.onerror = null;
       source.onopen = null;
       source.close();
       source = null;
       sourceListener = null;
       sourceDeniedListener = null;
+      sourceCheckpointListener = null;
     };
 
     let open: (isReconnect?: boolean) => void;
@@ -366,14 +376,20 @@ export class RealtimeChatClient {
     open = (isReconnect = false) => {
       if (closed) return;
       setState(isReconnect ? 'reconnecting' : 'connecting');
+      const startingFromLatest =
+        options.startFromLatest &&
+        !includeInitialSince &&
+        !latestCheckpointReceived &&
+        lastEventId === 0;
       const since =
-        includeInitialSince || isReconnect || lastEventId > 0
+        includeInitialSince || (isReconnect && !startingFromLatest) || lastEventId > 0
           ? `&sinceEventId=${encodeURIComponent(String(lastEventId))}`
           : '';
+      const startFromLatest = startingFromLatest ? '&startFromLatest=true' : '';
       let nextSource: RealtimeEventSource;
       try {
         nextSource = this.eventSourceFactory(
-          `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(sessionId)}${since}`,
+          `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(sessionId)}${since}${startFromLatest}`,
         );
       } catch (error) {
         failWithError(error);
@@ -424,10 +440,31 @@ export class RealtimeChatClient {
         }
         failWithError(new RealtimeChatError(message, statusCode, 'forbidden'), nextSource);
       };
+      const onCheckpoint = (event: unknown) => {
+        if (source !== nextSource || closed) return;
+        const data =
+          event && typeof event === 'object' && 'data' in event
+            ? (event as { data: unknown }).data
+            : event;
+        try {
+          const parsed = (typeof data === 'string' ? JSON.parse(data) : data) as {
+            eventId?: unknown;
+          };
+          const eventId = Number(parsed?.eventId);
+          if (Number.isSafeInteger(eventId) && eventId >= 0) {
+            lastEventId = Math.max(lastEventId, eventId);
+            latestCheckpointReceived = true;
+          }
+        } catch {
+          options.onError?.(new RealtimeChatError('The realtime event checkpoint was invalid.'));
+        }
+      };
       sourceListener = onMessage;
       sourceDeniedListener = onAccessDenied;
+      sourceCheckpointListener = onCheckpoint;
       nextSource.addEventListener('message', onMessage);
       nextSource.addEventListener('access-denied', onAccessDenied);
+      nextSource.addEventListener('checkpoint', onCheckpoint);
       nextSource.onopen = () => {
         if (source === nextSource && !closed) setState('connected');
       };

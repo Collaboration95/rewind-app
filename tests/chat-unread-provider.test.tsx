@@ -112,6 +112,7 @@ describe('ChatUnreadProvider', () => {
     expect(runtime.subscribeChat).toHaveBeenCalledTimes(1);
     expect(runtime.subscribeChat.mock.calls[0][0]).toBe('session-a');
     expect(runtime.subscribeChat.mock.calls[0][1]).toBe('demo-group');
+    expect(runtime.subscribeChat.mock.calls[0][2].startFromLatest).toBe(true);
   });
 
   it('counts an off-tab message and does not resubscribe when chat becomes visible', async () => {

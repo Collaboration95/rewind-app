@@ -156,6 +156,7 @@ export class ChatUnreadOwner {
     this.publish({ connectionState: 'connecting', unreadCount: this.snapshot.unreadCount });
     try {
       const subscription = subscribeChat(scope.sessionId, scope.groupId, {
+        startFromLatest: true,
         ...(this.snapshot.lastEventId > 0 ? { sinceEventId: this.snapshot.lastEventId } : {}),
         onEvent: (event) => {
           // A revoked scope stops being a recipient; it must not keep counting.

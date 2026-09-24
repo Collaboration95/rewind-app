@@ -25,10 +25,11 @@ import {
 import {
   SUPPORTED_CHAT_REACTION,
   createChatMessage,
+  latestChatEventId,
   listChatEvents,
   toggleChatReaction,
 } from './chat';
-import { encodeSseEvent, RealtimeHub } from './realtime';
+import { encodeSseCheckpoint, encodeSseEvent, RealtimeHub } from './realtime';
 import { advanceCycleLifecycle, advanceDemoCycle, publishCycleRelease } from './cycles';
 import { classifyDemoSession } from './session/contract';
 import {
@@ -937,6 +938,10 @@ export async function handleRequest(
     const parsedLastEventId = lastEventValue ? Number(lastEventValue) : 0;
     const sinceEventId =
       Number.isSafeInteger(parsedLastEventId) && parsedLastEventId >= 0 ? parsedLastEventId : 0;
+    const startFromLatest =
+      url.searchParams.get('startFromLatest') === 'true' &&
+      lastEventValue === null &&
+      !url.searchParams.has('sinceEventId');
     const hub = options.realtimeHub;
     if (!hub) {
       sendJson(response, config, 500, {
@@ -982,11 +987,28 @@ export async function handleRequest(
       if (endUnauthorisedStream()) return;
       writeEvent(event);
     };
-    // Register before replay so a message sent during reconnect is either
-    // observed live or present in the replay query.
-    unsubscribe = hub.subscribe(groupId, writeAuthorisedEvent);
-    for (const event of listChatEvents(database, groupId, sinceEventId)) {
-      writeAuthorisedEvent(event);
+    if (startFromLatest) {
+      // Buffer while taking the database watermark so a concurrent commit is
+      // either included in that watermark or delivered once from the buffer.
+      const pending: Parameters<typeof encodeSseEvent>[0][] = [];
+      let priming = true;
+      unsubscribe = hub.subscribe(groupId, (event) => {
+        if (priming) pending.push(event);
+        else writeAuthorisedEvent(event);
+      });
+      const checkpoint = latestChatEventId(database, groupId);
+      if (!endUnauthorisedStream()) response.write(encodeSseCheckpoint(checkpoint));
+      for (const event of pending.sort((left, right) => left.eventId - right.eventId)) {
+        if (event.eventId > checkpoint) writeAuthorisedEvent(event);
+      }
+      priming = false;
+    } else {
+      // Register before replay so a message sent during reconnect is either
+      // observed live or present in the replay query.
+      unsubscribe = hub.subscribe(groupId, writeAuthorisedEvent);
+      for (const event of listChatEvents(database, groupId, sinceEventId)) {
+        writeAuthorisedEvent(event);
+      }
     }
     const heartbeat = setInterval(() => {
       if (response.writableEnded || response.destroyed || endUnauthorisedStream()) return;
