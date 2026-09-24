@@ -1,5 +1,7 @@
-import { createHash } from 'node:crypto';
-import { closeSync, createReadStream, openSync, readSync, statSync, constants } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { closeSync, constants, lstatSync, openSync, readSync, statSync } from 'node:fs';
+import { open, rm, unlink, type FileHandle } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 import { recordAuditEvent } from '../audit';
 import type { RewindDatabase } from '../db';
@@ -10,6 +12,25 @@ export interface FileIntegrity {
   byteLength: number;
 }
 
+/** Filesystem identity captured from the same descriptor that was hashed. */
+export interface FileIdentity {
+  device: string;
+  inode: string;
+  byteLength: number;
+  modifiedAtMs: number;
+  changedAtMs: number;
+}
+
+export interface HashedFileIntegrity extends FileIntegrity {
+  identity: FileIdentity;
+}
+
+export interface OpenedMediaIntegrity {
+  result: MediaIntegrityResult;
+  handle: FileHandle | null;
+  byteLength: number | null;
+}
+
 /**
  * The auditable event recorded when a stored output no longer matches the
  * digest persisted at finalization. It stays distinct from a processing
@@ -17,6 +38,8 @@ export interface FileIntegrity {
  * FFmpeg problem.
  */
 export const MEDIA_INTEGRITY_EVENT = 'media.integrity_failed' as const;
+
+const READ_ONLY_NO_FOLLOW = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
 
 export type MediaIntegrityOutcome = 'verified' | 'unverifiable' | 'mismatch' | 'unavailable';
 
@@ -31,35 +54,163 @@ export interface MediaIntegrityResult {
 /** Hash a non-empty server-owned file. The caller owns path policy; this
  * helper only reports what it observed on disk. */
 export async function hashFile(path: string): Promise<FileIntegrity | null> {
+  const hashed = await hashFileWithIdentity(path);
+  return hashed ? { sha256: hashed.sha256, byteLength: hashed.byteLength } : null;
+}
+
+/** Hash an opened file and retain its identity for a later fenced publish. */
+export async function hashFileWithIdentity(path: string): Promise<HashedFileIntegrity | null> {
+  let handle: FileHandle | null = null;
   try {
-    const details = statSync(path);
-    if (!details.isFile() || details.size <= 0) return null;
+    handle = await open(path, READ_ONLY_NO_FOLLOW);
+    return await hashOpenFileWithIdentity(handle);
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+/** Hash through one descriptor so a pathname replacement cannot change which
+ * inode was read. Positional reads leave the descriptor ready for streaming. */
+async function hashOpenFileWithIdentity(handle: FileHandle): Promise<HashedFileIntegrity | null> {
+  try {
+    const initial = await handle.stat();
+    if (!initial.isFile() || initial.size <= 0) return null;
+    const digest = createHash('sha256');
+    const buffer = Buffer.alloc(64 * 1024);
+    let byteLength = 0;
+    while (byteLength < initial.size) {
+      const read = await handle.read(
+        buffer,
+        0,
+        Math.min(buffer.length, initial.size - byteLength),
+        byteLength,
+      );
+      if (read.bytesRead <= 0) break;
+      byteLength += read.bytesRead;
+      digest.update(buffer.subarray(0, read.bytesRead));
+    }
+    const final = await handle.stat();
+    if (
+      byteLength !== initial.size ||
+      !sameFileIdentity(fileIdentity(initial), fileIdentity(final))
+    ) {
+      return null;
+    }
+    return {
+      sha256: digest.digest('hex'),
+      byteLength,
+      identity: fileIdentity(final),
+    };
   } catch {
     return null;
   }
-  return await new Promise<FileIntegrity | null>((resolvePromise) => {
+}
+
+/** Copy and hash one opened source descriptor into an unlinked snapshot. A
+ * response can stream this private inode only after its complete digest is
+ * known, so neither path replacement nor later in-place writes can alter the
+ * bytes delivered to the client. */
+async function snapshotAndHashOpenFile(
+  source: FileHandle,
+  snapshot: FileHandle,
+): Promise<HashedFileIntegrity | null> {
+  try {
+    const initial = await source.stat();
+    if (!initial.isFile() || initial.size <= 0) return null;
     const digest = createHash('sha256');
+    const buffer = Buffer.alloc(64 * 1024);
     let byteLength = 0;
-    let settled = false;
-    const finish = (value: FileIntegrity | null) => {
-      if (settled) return;
-      settled = true;
-      resolvePromise(value);
-    };
-    const stream = createReadStream(path);
-    stream.on('data', (chunk) => {
-      byteLength += chunk.length;
-      digest.update(chunk);
-    });
-    stream.on('error', () => finish(null));
-    stream.on('end', () => {
-      if (byteLength <= 0) {
-        finish(null);
-        return;
+    while (byteLength < initial.size) {
+      const read = await source.read(
+        buffer,
+        0,
+        Math.min(buffer.length, initial.size - byteLength),
+        byteLength,
+      );
+      if (read.bytesRead <= 0) break;
+      const chunkStart = byteLength;
+      byteLength += read.bytesRead;
+      digest.update(buffer.subarray(0, read.bytesRead));
+      let written = 0;
+      while (written < read.bytesRead) {
+        const result = await snapshot.write(
+          buffer,
+          written,
+          read.bytesRead - written,
+          chunkStart + written,
+        );
+        if (result.bytesWritten <= 0) return null;
+        written += result.bytesWritten;
       }
-      finish({ sha256: digest.digest('hex'), byteLength });
-    });
-  });
+    }
+    const final = await source.stat();
+    if (
+      byteLength !== initial.size ||
+      !sameFileIdentity(fileIdentity(initial), fileIdentity(final))
+    ) {
+      return null;
+    }
+    return {
+      sha256: digest.digest('hex'),
+      byteLength,
+      identity: fileIdentity(final),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function openAnonymousSnapshot(directory: string): Promise<FileHandle> {
+  const path = join(directory, `.integrity-stream-${randomUUID()}.tmp`);
+  const handle = await open(path, 'wx+', 0o600);
+  try {
+    await unlink(path);
+    return handle;
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    await rm(path, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+function fileIdentity(details: {
+  dev: number | bigint;
+  ino: number | bigint;
+  size: number | bigint;
+  mtimeMs: number;
+  ctimeMs: number;
+}): FileIdentity {
+  return {
+    device: String(details.dev),
+    inode: String(details.ino),
+    byteLength: Number(details.size),
+    modifiedAtMs: details.mtimeMs,
+    changedAtMs: details.ctimeMs,
+  };
+}
+
+function sameFileIdentity(left: FileIdentity, right: FileIdentity): boolean {
+  return (
+    left.device === right.device &&
+    left.inode === right.inode &&
+    left.byteLength === right.byteLength &&
+    left.modifiedAtMs === right.modifiedAtMs &&
+    left.changedAtMs === right.changedAtMs
+  );
+}
+
+/** A cheap fence used inside short writer transactions after the file was
+ * hashed outside the lock. It refuses publication if the pathname now names
+ * another inode or the hashed inode changed meanwhile. */
+export function filePathMatchesIdentity(path: string, identity: FileIdentity): boolean {
+  try {
+    const details = lstatSync(path);
+    return details.isFile() && sameFileIdentity(fileIdentity(details), identity);
+  } catch {
+    return false;
+  }
 }
 
 /** Synchronous variant used by the migration backfill, which runs before the
@@ -164,6 +315,94 @@ export async function verifyMediaIntegrity(
     observedSha256: observed.sha256,
     observedByteLength: observed.byteLength,
   };
+}
+
+/** Open once, verify through that descriptor, and return the same descriptor
+ * for streaming. A rename/replacement after this call cannot redirect the
+ * response to different bytes. Legacy rows without a digest remain
+ * unverifiable but still use the retained descriptor. */
+export async function openMediaWithIntegrity(
+  database: RewindDatabase,
+  jobId: string,
+  filePath: string | null,
+): Promise<OpenedMediaIntegrity> {
+  const stored = readStoredIntegrity(database, jobId);
+  const expectedSha256 = stored?.sha256 ?? null;
+  const expectedByteLength = stored?.byteLength ?? null;
+  const hasExpectation = Boolean(
+    expectedSha256 && expectedByteLength !== null && expectedByteLength > 0,
+  );
+  const unavailable = (): OpenedMediaIntegrity => ({
+    result: {
+      outcome: hasExpectation ? 'unavailable' : 'unverifiable',
+      expectedSha256,
+      expectedByteLength,
+      observedSha256: null,
+      observedByteLength: null,
+    },
+    handle: null,
+    byteLength: null,
+  });
+  if (!filePath) return unavailable();
+
+  let handle: FileHandle | null = null;
+  let source: FileHandle | null = null;
+  try {
+    source = await open(filePath, READ_ONLY_NO_FOLLOW);
+    const details = await source.stat();
+    if (!details.isFile() || details.size <= 0) {
+      await source.close();
+      return unavailable();
+    }
+    handle = await openAnonymousSnapshot(dirname(filePath));
+    const observed = await snapshotAndHashOpenFile(source, handle);
+    await source.close();
+    source = null;
+    if (!observed) {
+      await handle.close().catch(() => undefined);
+      return {
+        result: {
+          outcome: 'unavailable',
+          expectedSha256,
+          expectedByteLength,
+          observedSha256: null,
+          observedByteLength: null,
+        },
+        handle,
+        byteLength: details.size,
+      };
+    }
+    if (!hasExpectation) {
+      return {
+        result: {
+          outcome: 'unverifiable',
+          expectedSha256,
+          expectedByteLength,
+          observedSha256: null,
+          observedByteLength: null,
+        },
+        handle,
+        byteLength: observed.byteLength,
+      };
+    }
+    const matches =
+      observed.byteLength === expectedByteLength && observed.sha256 === expectedSha256;
+    return {
+      result: {
+        outcome: matches ? 'verified' : 'mismatch',
+        expectedSha256,
+        expectedByteLength,
+        observedSha256: observed.sha256,
+        observedByteLength: observed.byteLength,
+      },
+      handle,
+      byteLength: observed.byteLength,
+    };
+  } catch {
+    await source?.close().catch(() => undefined);
+    await handle?.close().catch(() => undefined);
+    return unavailable();
+  }
 }
 
 export interface IntegrityAuditInput {

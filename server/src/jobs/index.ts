@@ -12,7 +12,13 @@ import {
   cleanupStagedSourcePath,
   removeStagedSource,
 } from '../media';
-import { hashFile, hashFileSync } from '../media/integrity';
+import {
+  filePathMatchesIdentity,
+  hashFile,
+  hashFileWithIdentity,
+  recordIntegrityFailure,
+  type MediaIntegrityResult,
+} from '../media/integrity';
 import {
   compileFilmWithFfmpeg,
   processClipWithFfmpeg,
@@ -717,13 +723,33 @@ async function resolveProcessedMediaPath(value: string, outputDir: string): Prom
 async function firstFailingInput(
   inputs: CompilationInputOutput[],
   inputPaths: string[],
-): Promise<string | null> {
+): Promise<{ clipJobId: string; result: MediaIntegrityResult } | null> {
   for (const [index, input] of inputs.entries()) {
     if (!input.sha256 || input.byteLength === null || input.byteLength <= 0) continue;
     const observed = await hashFile(inputPaths[index]);
-    if (!observed) return input.clipJobId;
+    if (!observed) {
+      return {
+        clipJobId: input.clipJobId,
+        result: {
+          outcome: 'unavailable',
+          expectedSha256: input.sha256,
+          expectedByteLength: input.byteLength,
+          observedSha256: null,
+          observedByteLength: null,
+        },
+      };
+    }
     if (observed.byteLength !== input.byteLength || observed.sha256 !== input.sha256) {
-      return input.clipJobId;
+      return {
+        clipJobId: input.clipJobId,
+        result: {
+          outcome: 'mismatch',
+          expectedSha256: input.sha256,
+          expectedByteLength: input.byteLength,
+          observedSha256: observed.sha256,
+          observedByteLength: observed.byteLength,
+        },
+      };
     }
   }
   return null;
@@ -752,13 +778,18 @@ function markCompilationFailed(
  * still owns the reconciled chronological input snapshot. A completed FFmpeg
  * temp file never becomes the durable output unless this fence succeeds.
  */
-function publishCompilationOutput(
+async function publishCompilationOutput(
   database: RewindDatabase,
   job: CompilationJobRecord,
   expectedClipJobIds: string[],
   temporaryOutputPath: string,
   finalOutputPath: string,
-): boolean {
+): Promise<boolean> {
+  // FFmpeg has closed this unique temp file. Hash it before taking SQLite's
+  // writer lock; the short publication transaction checks the same inode and
+  // atomically renames it while applying the job-generation fence.
+  const integrity = await hashFileWithIdentity(temporaryOutputPath);
+  if (!integrity) return false;
   beginJobTransaction(database);
   try {
     const current = reconcileCompilationJobInputsLocked(database, job.id);
@@ -773,14 +804,11 @@ function publishCompilationOutput(
       database.exec('ROLLBACK');
       return false;
     }
-    renameSync(temporaryOutputPath, finalOutputPath);
-    // Hash the renamed bytes under the same lock that publishes the film, so
-    // the recorded digest always describes the file the fence made durable.
-    const integrity = hashFileSync(finalOutputPath);
-    if (!integrity) {
+    if (!filePathMatchesIdentity(temporaryOutputPath, integrity.identity)) {
       database.exec('ROLLBACK');
       return false;
     }
+    renameSync(temporaryOutputPath, finalOutputPath);
     const finalizedAt = new Date().toISOString();
     const result = database
       .prepare(
@@ -882,6 +910,12 @@ export async function processCompilationJob(
     // film under a fresh legitimate checksum.
     const unavailableInput = await firstFailingInput(inputs, inputPaths);
     if (unavailableInput) {
+      recordIntegrityFailure(database, {
+        jobId: unavailableInput.clipJobId,
+        kind: 'clip',
+        result: unavailableInput.result,
+        actorMemberId: options.actorMemberId,
+      });
       throw new FfmpegProcessingError(
         'source_unavailable',
         'A processed clip no longer matches its finalized integrity record.',
@@ -907,13 +941,13 @@ export async function processCompilationJob(
         });
         await probeClipWithFfmpeg(options.ffmpegBin, temporaryOutputPath);
         if (
-          !publishCompilationOutput(
+          !(await publishCompilationOutput(
             database,
             claim.job,
             claim.job.clipJobIds,
             temporaryOutputPath,
             finalOutputPath,
-          )
+          ))
         ) {
           throw new FfmpegProcessingError(
             'source_unavailable',
@@ -1031,6 +1065,7 @@ function markOutputPrepared(
     if (
       !locked ||
       locked.status !== 'processing' ||
+      locked.processingStartedAt !== row.processingStartedAt ||
       locked.sourcePath !== row.sourcePath ||
       locked.sourceUri !== row.sourceUri ||
       locked.sourceGeneration !== row.sourceGeneration ||
@@ -1043,9 +1078,9 @@ function markOutputPrepared(
       .prepare(
         `UPDATE media_jobs SET output_path = ?, error_code = NULL, updated_at = ?
          WHERE id = ? AND kind = 'clip' AND status = 'processing'
-           AND (output_path IS NULL OR output_path = ?)`,
+           AND processing_started_at = ?`,
       )
-      .run(outputPath, new Date().toISOString(), row.id, outputPath);
+      .run(outputPath, new Date().toISOString(), row.id, row.processingStartedAt);
     database.exec('COMMIT');
     return true;
   } catch (error) {
@@ -1054,15 +1089,19 @@ function markOutputPrepared(
   }
 }
 
-/** Complete the filesystem/DB hand-off under one writer lock. Filesystem
- * deletion is intentionally idempotent: a crash after deletion but before
- * COMMIT is recovered by the same output marker on the next worker run. */
-function finalizePreparedOutput(
+/** Hash a prepared output outside the writer lock, then atomically publish
+ * that same inode while validating the current claim and staged-source fence.
+ * A crash after rename but before COMMIT leaves an unpublished orphan; a
+ * retry writes a new unique temp file and resumes safely. */
+async function finalizePreparedOutput(
   database: RewindDatabase,
   row: ClipJobRow,
   stagingDir: string,
   outputPath: string,
-): boolean {
+  finalOutputPath: string,
+): Promise<boolean> {
+  const integrity = await hashFileWithIdentity(outputPath);
+  if (!integrity) return false;
   beginJobTransaction(database);
   try {
     const locked = readClipJob(database, row.id);
@@ -1073,22 +1112,21 @@ function finalizePreparedOutput(
     if (
       locked.status !== 'processing' ||
       locked.outputPath !== outputPath ||
+      locked.processingStartedAt !== row.processingStartedAt ||
       locked.sourcePath !== row.sourcePath ||
       locked.sourceUri !== row.sourceUri ||
       locked.sourceGeneration !== row.sourceGeneration ||
-      !stagedBindingMatches(database, locked)
+      !stagedBindingMatches(database, locked) ||
+      !filePathMatchesIdentity(outputPath, integrity.identity)
     ) {
       database.exec('ROLLBACK');
       return false;
     }
-    // The digest describes exactly the bytes this fence is publishing. It is
-    // computed under the same writer lock that flips the row to ready, so a
-    // concurrent reader never observes a ready row without its checksum.
-    const integrity = hashFileSync(outputPath);
-    if (!integrity) {
-      database.exec('ROLLBACK');
-      return false;
-    }
+    // New workers write unique .part files; rename the hashed inode to its
+    // deterministic ready path while the publication fence is held. Legacy
+    // markers already at their final path remain supported.
+    const publishedPath = outputPath.endsWith('.part.mp4') ? finalOutputPath : outputPath;
+    if (publishedPath !== outputPath) renameSync(outputPath, publishedPath);
     const finalizedAt = new Date().toISOString();
     const result = database
       .prepare(
@@ -1097,16 +1135,17 @@ function finalizePreparedOutput(
              output_sha256 = ?, output_bytes = ?, output_verified_at = ?,
              processing_started_at = NULL, updated_at = ?, failed_at = NULL
          WHERE id = ? AND kind = 'clip' AND status = 'processing'
-           AND output_path = ?`,
+           AND output_path = ? AND processing_started_at = ?`,
       )
       .run(
-        outputPath,
+        publishedPath,
         integrity.sha256,
         integrity.byteLength,
         finalizedAt,
         finalizedAt,
         row.id,
         outputPath,
+        row.processingStartedAt,
       );
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
@@ -1259,13 +1298,14 @@ export async function processClipJob(
     options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
   const stagingDir =
     options.stagingDir ?? resolve(process.cwd(), '.local-data', 'media', 'staging');
+  const finalOutputPath = resolve(outputDir, safeOutputName(row.id));
   // A stale worker may have already persisted the output marker. Finish that
   // hand-off first; rerunning FFmpeg would risk replacing a file while another
   // process is finalizing it.
   if (row.status === 'processing' && row.outputPath) {
     if (
       existsSync(row.outputPath) &&
-      finalizePreparedOutput(database, row, stagingDir, row.outputPath)
+      (await finalizePreparedOutput(database, row, stagingDir, row.outputPath, finalOutputPath))
     ) {
       return { ok: true, jobId: row.id, status: 'ready' };
     }
@@ -1283,7 +1323,9 @@ export async function processClipJob(
     };
   }
   row = claim;
-  const outputPath = row.outputPath ?? resolve(outputDir, safeOutputName(row.id));
+  // Each claim writes a distinct temp inode. A stale worker can therefore not
+  // mutate bytes while a newer claim hashes or publishes its output.
+  const outputPath = resolve(outputDir, `.${safeOutputName(row.id)}.${randomUUID()}.part.mp4`);
   try {
     if (!row.sourcePath || row.trimStartSeconds === null || row.trimEndSeconds === null) {
       throw new FfmpegProcessingError(
@@ -1316,7 +1358,9 @@ export async function processClipJob(
             'The staged media source changed while processing.',
           );
         }
-        if (!finalizePreparedOutput(database, row, stagingDir, outputPath)) {
+        if (
+          !(await finalizePreparedOutput(database, row, stagingDir, outputPath, finalOutputPath))
+        ) {
           throw new FfmpegProcessingError(
             'source_unavailable',
             'The staged media source changed while finalizing.',
@@ -1331,6 +1375,7 @@ export async function processClipJob(
     // that is already committed as ready.
     if (readClipJob(database, row.id)?.status !== 'ready') {
       await rm(outputPath, { force: true }).catch(() => undefined);
+      await rm(finalOutputPath, { force: true }).catch(() => undefined);
     }
     const errorCode = error instanceof FfmpegProcessingError ? error.code : 'cleanup_failed';
     markFailed(database, row.id, errorCode);

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { once } from 'node:events';
@@ -12,10 +12,16 @@ import { DatabaseSync } from 'node:sqlite';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { migrateDatabase, openDatabase } = await import('../dist/db.js');
+const { backfillMediaIntegrity, migrateDatabase, openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createClipUpload, recordClipMediaMetadata } = await import('../dist/media/index.js');
-const { hashFile, hashFileSync, verifyMediaIntegrity } = await import('../dist/media/integrity.js');
+const {
+  hashFile,
+  hashFileSync,
+  hashFileWithIdentity,
+  openMediaWithIntegrity,
+  verifyMediaIntegrity,
+} = await import('../dist/media/integrity.js');
 const { processClipJob } = await import('../dist/jobs/index.js');
 const { deleteContribution } = await import('../dist/contributions/index.js');
 const { createCompilationJob, getCompilationJob, processCompilationJob } =
@@ -509,12 +515,14 @@ test('a row finalized before #157 is unverifiable and the migration backfills it
 
     database = openDatabase(config);
     try {
+      await backfillMediaIntegrity(database, config.dataDir);
       const backfilled = storedIntegrity(database, jobId);
       assert.equal(backfilled.sha256, createHash('sha256').update(bytes).digest('hex'));
       assert.equal(backfilled.byteLength, bytes.length);
       assert.ok(backfilled.verifiedAt);
       // Repairing twice is safe and leaves the same values.
-      migrateDatabase(database, { mediaRoot: config.dataDir });
+      migrateDatabase(database);
+      await backfillMediaIntegrity(database, config.dataDir);
       assert.deepEqual({ ...storedIntegrity(database, jobId) }, { ...backfilled });
     } finally {
       database.close();
@@ -522,6 +530,84 @@ test('a row finalized before #157 is unverifiable and the migration backfills it
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
+});
+
+test('legacy backfill releases writer locks while hashing and resumes after restart', async () => {
+  await withDatabase(async ({ database, config, dataDir }) => {
+    const jobIds = [
+      await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-a'),
+      await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-b'),
+    ].sort();
+    const expected = new Map(
+      await Promise.all(
+        jobIds.map(async (jobId) => {
+          const row = storedIntegrity(database, jobId);
+          const bytes = await readFile(row.outputPath);
+          return [jobId, createHash('sha256').update(bytes).digest('hex')];
+        }),
+      ),
+    );
+    database
+      .prepare(
+        `UPDATE media_jobs SET output_sha256 = NULL, output_bytes = NULL,
+           output_verified_at = NULL WHERE id IN (?, ?)`,
+      )
+      .run(...jobIds);
+    // Force the schema-only migration to replay, as after a crash between
+    // adding columns and finishing the separate backfill phase.
+    const raw = new DatabaseSync(config.databasePath);
+    raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
+    raw.exec('DELETE FROM schema_migrations WHERE version = 15');
+    raw.close();
+    migrateDatabase(database);
+
+    const competingWriter = new DatabaseSync(config.databasePath);
+    competingWriter.exec('PRAGMA busy_timeout = 100');
+    let hashCalls = 0;
+    await assert.rejects(
+      backfillMediaIntegrity(database, dataDir, {
+        hashOutput: async (path) => {
+          hashCalls += 1;
+          const integrity = await hashFileWithIdentity(path);
+          if (hashCalls === 1) {
+            // A separate connection must be able to commit while the media
+            // bytes are being hashed. This fails with SQLITE_BUSY if the
+            // migration holds BEGIN IMMEDIATE across the file read.
+            competingWriter.exec('BEGIN IMMEDIATE');
+            competingWriter.prepare("UPDATE groups SET name = name WHERE id = 'demo-group'").run();
+            competingWriter.exec('COMMIT');
+            return integrity;
+          }
+          throw new Error('simulated interruption after one committed receipt');
+        },
+      }),
+      /simulated interruption/,
+    );
+    competingWriter.close();
+    assert.equal(hashCalls, 2);
+    assert.equal(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM media_jobs
+           WHERE id IN (?, ?) AND output_sha256 IS NOT NULL`,
+        )
+        .get(...jobIds).count,
+      1,
+      'the first short receipt transaction should survive the simulated interruption',
+    );
+
+    // Reopening reapplies only the idempotent schema and resumes the missing
+    // row; the already-recorded receipt stays unchanged.
+    const resumed = openDatabase(config);
+    try {
+      await backfillMediaIntegrity(resumed, dataDir);
+      for (const jobId of jobIds) {
+        assert.equal(storedIntegrity(resumed, jobId).sha256, expected.get(jobId));
+      }
+    } finally {
+      resumed.close();
+    }
+  });
 });
 
 test('the integrity migration is idempotent, preserves audit rows, and widens the event guard', async () => {
@@ -532,7 +618,7 @@ test('the integrity migration is idempotent, preserves audit rows, and widens th
          VALUES ('legacy-audit', 'job.failed', 'demo-1', 'job:legacy-1', ?, 'failure')`,
       )
       .run(new Date().toISOString());
-    migrateDatabase(database, { mediaRoot: config.dataDir });
+    migrateDatabase(database);
 
     assert.equal(
       database.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id = 'legacy-audit'").get()
@@ -646,16 +732,65 @@ test('a tampered retained clip input blocks film compilation instead of minting 
     assert.equal(created.ok, true);
     if (!created.ok) return;
 
-    const result = await processCompilationJob(database, {
-      jobId: created.job.id,
-      ffmpegBin: config.ffmpegBin,
-      outputDir,
-    });
-    assert.equal(result.ok, false);
-    assert.equal(result.status, 'failed');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await processCompilationJob(database, {
+        jobId: created.job.id,
+        ffmpegBin: config.ffmpegBin,
+        outputDir,
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.status, 'failed');
+    }
     // The film must not be published with a checksum of the tampered input.
     assert.equal(getCompilationJob(database, created.job.id)?.status, 'failed');
     assert.equal(storedIntegrity(database, created.job.id).sha256, null);
+    assert.deepEqual(
+      database
+        .prepare(
+          `SELECT event_type AS eventType, resource_id AS resourceId, result
+           FROM audit_events WHERE event_type = 'media.integrity_failed'`,
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        {
+          eventType: 'media.integrity_failed',
+          resourceId: 'clip:integrity-tampered-clip',
+          result: 'denied',
+        },
+      ],
+      'the damaged retained clip is audited once at compilation detection, without file details',
+    );
+  });
+});
+
+test('media streaming retains a verified snapshot after its source pathname is replaced', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const jobId = await finalizeOneClip({ database, config, dataDir }, 'integrity-stream-race');
+    const row = storedIntegrity(database, jobId);
+    const expectedBytes = await readFile(row.outputPath);
+    const replacement = resolve(dataDir, 'replacement.mp4');
+    const changedBytes = Buffer.from(expectedBytes);
+    changedBytes[Math.floor(changedBytes.length / 2)] ^= 0xff;
+    await writeFile(replacement, changedBytes);
+
+    const opened = await openMediaWithIntegrity(database, jobId, row.outputPath);
+    assert.equal(opened.result.outcome, 'verified');
+    assert.ok(opened.handle);
+    assert.equal(opened.byteLength, expectedBytes.length);
+    try {
+      // This is the exact interval between HTTP verification and beginning
+      // the response stream. Atomic replacement of the published path must
+      // not redirect the already verified response to a different inode.
+      await rename(replacement, row.outputPath);
+      const chunks = [];
+      for await (const chunk of opened.handle.createReadStream({ autoClose: true })) {
+        chunks.push(chunk);
+      }
+      assert.deepEqual(Buffer.concat(chunks), expectedBytes);
+    } finally {
+      await opened.handle.close().catch(() => undefined);
+    }
   });
 });
 

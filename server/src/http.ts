@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createReadStream, createWriteStream, existsSync } from 'node:fs';
-import { mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
+import { createWriteStream, existsSync } from 'node:fs';
+import { mkdir, readdir, realpath, rename, rm, stat, type FileHandle } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import { URL } from 'node:url';
@@ -68,6 +68,7 @@ import {
 } from './media';
 import {
   integrityBlocksServing,
+  openMediaWithIntegrity,
   recordIntegrityFailure,
   verifyMediaIntegrity,
 } from './media/integrity';
@@ -335,6 +336,37 @@ async function resolveOwnedProcessedPath(
  * truncated file is reported as unavailable and audited; the caller turns
  * that into the same safe not-found response used for other absent media.
  */
+async function openVerifiedServingFile(
+  database: RewindDatabase,
+  jobId: string,
+  kind: 'clip' | 'film' | 'download',
+  outputPath: string,
+  dataDir: string,
+  actorMemberId: string | null,
+  now: Date,
+): Promise<{ path: string; handle: FileHandle; size: number } | null> {
+  const path = await resolveOwnedProcessedPath(outputPath, dataDir);
+  const opened = await openMediaWithIntegrity(database, jobId, path);
+  if (integrityBlocksServing(opened.result)) {
+    recordIntegrityFailure(database, {
+      jobId,
+      kind,
+      result: opened.result,
+      actorMemberId,
+      timestamp: now.toISOString(),
+    });
+    await opened.handle?.close().catch(() => undefined);
+    return null;
+  }
+  if (!path || !opened.handle || !opened.byteLength) {
+    await opened.handle?.close().catch(() => undefined);
+    return null;
+  }
+  return { path, handle: opened.handle, size: opened.byteLength };
+}
+
+/** Archive/premiere checks need only a momentary verified read. Actual media
+ * routes retain the handle and stream from it. */
 async function verifiedServingPath(
   database: RewindDatabase,
   jobId: string,
@@ -359,8 +391,6 @@ async function verifiedServingPath(
   if (!path) return null;
   const details = await stat(path).catch(() => null);
   if (!details || !details.isFile() || details.size <= 0) return null;
-  // The path can change between verification and createReadStream. Keeping
-  // the checked descriptor open through streaming would close that race.
   return { path, size: details.size };
 }
 
@@ -407,7 +437,7 @@ function streamMp4(
   request: IncomingMessage,
   response: ServerResponse,
   config: RuntimeConfig,
-  path: string,
+  handle: FileHandle,
   size: number,
   attachmentName?: string,
 ): void {
@@ -417,11 +447,13 @@ function streamMp4(
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (!match) {
+      void handle.close().catch(() => undefined);
       response.writeHead(416, { 'Content-Range': `bytes */${size}` });
       response.end();
       return;
     }
     if (!match[1] && !match[2]) {
+      void handle.close().catch(() => undefined);
       response.writeHead(416, { 'Content-Range': `bytes */${size}` });
       response.end();
       return;
@@ -441,6 +473,7 @@ function streamMp4(
       end < start ||
       start >= size
     ) {
+      void handle.close().catch(() => undefined);
       response.writeHead(416, { 'Content-Range': `bytes */${size}` });
       response.end();
       return;
@@ -459,7 +492,8 @@ function streamMp4(
       : {}),
     ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
   });
-  createReadStream(path, { start, end })
+  handle
+    .createReadStream({ start, end, autoClose: true })
     .on('error', () => response.destroy())
     .pipe(response);
 }
@@ -2127,7 +2161,7 @@ export async function handleRequest(
     ) {
       return sendNotFound(response, config);
     }
-    const served = await verifiedServingPath(
+    const served = await openVerifiedServingFile(
       database,
       filmId,
       'film',
@@ -2137,7 +2171,7 @@ export async function handleRequest(
       now(),
     );
     if (!served) return sendNotFound(response, config);
-    streamMp4(request, response, config, served.path, served.size);
+    streamMp4(request, response, config, served.handle, served.size);
     return;
   }
 
@@ -2212,7 +2246,7 @@ export async function handleRequest(
       ? getReleasedFilmDownload(database, identity.groupId, resourceId)
       : getReleasedOwnClipDownload(database, identity.groupId, identity.memberId, resourceId);
     if (!media) return sendNotFound(response, config);
-    const served = await verifiedServingPath(
+    const served = await openVerifiedServingFile(
       database,
       resourceId,
       filmDownloadMatch ? 'film' : 'clip',
@@ -2226,7 +2260,7 @@ export async function handleRequest(
       request,
       response,
       config,
-      served.path,
+      served.handle,
       served.size,
       filmDownloadMatch ? 'rewind-group-film.mp4' : 'rewind-my-clip.mp4',
     );

@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { listAuditEvents, type AuditEvent } from './audit';
 import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from './config';
-import { openDatabase, resetDatabase, fixtureSummary } from './db';
+import { backfillMediaIntegrity, openDatabase, resetDatabase, fixtureSummary } from './db';
 import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 import { cleanupOrphanedStagedSources } from './jobs';
@@ -14,8 +14,17 @@ import {
 } from './jobs/queue';
 import { resolve } from 'node:path';
 
-function openRuntimeDatabase(config: RuntimeConfig): ReturnType<typeof openDatabase> {
-  return openDatabase(config, { seedNow: new Date() });
+async function openRuntimeDatabase(
+  config: RuntimeConfig,
+): Promise<ReturnType<typeof openDatabase>> {
+  const database = openDatabase(config, { seedNow: new Date() });
+  try {
+    await backfillMediaIntegrity(database, config.dataDir);
+    return database;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
 }
 
 export interface PreflightReport {
@@ -31,7 +40,7 @@ async function serviceProbe(config: RuntimeConfig): Promise<PreflightReport['ser
   let database: ReturnType<typeof openDatabase> | null = null;
   let server: ReturnType<typeof createRuntimeServer> | null = null;
   try {
-    database = openRuntimeDatabase({ ...config, port: 0 });
+    database = await openRuntimeDatabase({ ...config, port: 0 });
     server = createRuntimeServer({ ...config, port: 0 }, database);
     server.listen(0, config.host);
     await once(server, 'listening');
@@ -66,7 +75,7 @@ export async function runPreflight(
   let sqlite: PreflightReport['sqlite'];
   let database: ReturnType<typeof openDatabase> | null = null;
   try {
-    database = openRuntimeDatabase(config);
+    database = await openRuntimeDatabase(config);
     const rows = fixtureSummary(database);
     sqlite = {
       ok: rows.profiles === 5 && rows.groups === 1 && rows.memberships === 5,
@@ -215,7 +224,7 @@ function printJobs(page: ReturnType<typeof listQueueJobs>, json: boolean): void 
 }
 
 async function start(config: RuntimeConfig): Promise<void> {
-  const database = openRuntimeDatabase(config);
+  const database = await openRuntimeDatabase(config);
   await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
   const server = createRuntimeServer(config, database);
   const close = () => {
@@ -258,14 +267,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'migrate') {
-      const database = openRuntimeDatabase(config);
+      const database = await openRuntimeDatabase(config);
       console.log(`SQLite migrated and seeded at ${config.databasePath}.`);
       database.close();
       return;
     }
     if (command === 'reset') {
       resetDatabase(config);
-      const database = openRuntimeDatabase(config);
+      const database = await openRuntimeDatabase(config);
       console.log(
         `Local database reset to the deterministic five-member fixture at ${config.databasePath}.`,
       );
@@ -273,7 +282,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'diagnostics') {
-      const database = openRuntimeDatabase(config);
+      const database = await openRuntimeDatabase(config);
       try {
         printDiagnostics(listAuditEvents(database, parseDiagnosticsLimit(argv)), json);
       } finally {
@@ -282,7 +291,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'jobs' || command === 'queue') {
-      const database = openRuntimeDatabase(config);
+      const database = await openRuntimeDatabase(config);
       try {
         printJobs(listQueueJobs(database, parseJobsOptions(argv)), json);
       } finally {

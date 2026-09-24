@@ -5,7 +5,11 @@ import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { RuntimeConfig } from './config';
 import { DEMO_SESSION_LIFETIME_MS } from './session/contract';
-import { hashFileSync } from './media/integrity';
+import {
+  filePathMatchesIdentity,
+  hashFileWithIdentity,
+  type HashedFileIntegrity,
+} from './media/integrity';
 
 const MIGRATIONS = [
   // `key` is the durable identity. Version 6 is reserved here for quota;
@@ -104,7 +108,7 @@ export function openDatabase(
   mkdirSync(config.dataDir, { recursive: true });
   const database = new DatabaseSync(config.databasePath);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-  migrateDatabase(database, { mediaRoot: config.dataDir });
+  migrateDatabase(database);
   seedDatabase(database, options.seedNow);
   return database;
 }
@@ -114,21 +118,12 @@ export function openDatabaseAt(databasePath: string): RewindDatabase {
   mkdirSync(dataDir, { recursive: true });
   const database = new DatabaseSync(databasePath);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-  migrateDatabase(database, { mediaRoot: dataDir });
+  migrateDatabase(database);
   seedDatabase(database);
   return database;
 }
 
-export interface MigrateDatabaseOptions {
-  /** Server-owned data directory. When present, the integrity backfill may
-   * hash finalized outputs inside its processed media tree. */
-  mediaRoot?: string;
-}
-
-export function migrateDatabase(
-  database: RewindDatabase,
-  options: MigrateDatabaseOptions = {},
-): void {
+export function migrateDatabase(database: RewindDatabase): void {
   database.exec('PRAGMA busy_timeout = 5000;');
   database.exec(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);',
@@ -170,7 +165,7 @@ export function migrateDatabase(
       } else if (migration.key === 'queue-observability-v1') {
         applyQueueObservabilityMigration(database);
       } else if (migration.key === 'media-integrity-v1') {
-        applyMediaIntegrityMigration(database, options.mediaRoot);
+        applyMediaIntegrityMigration(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -183,6 +178,75 @@ export function migrateDatabase(
           .run(migration.version, new Date().toISOString());
       }
       markMigration(database, migration.key);
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+}
+
+export interface MediaIntegrityBackfillOptions {
+  /** Injectable to prove lock behavior and interrupted-upgrade recovery. */
+  hashOutput?: (path: string) => Promise<HashedFileIntegrity | null>;
+}
+
+/** Backfill legacy receipts with hashing outside SQLite writer transactions.
+ * Each small receipt update is independently committed, so a restart resumes
+ * at the first remaining row and competing writers are not held behind media
+ * sized work. Unreadable or out-of-tree outputs remain unverifiable. */
+export async function backfillMediaIntegrity(
+  database: RewindDatabase,
+  mediaRoot: string,
+  options: MediaIntegrityBackfillOptions = {},
+): Promise<void> {
+  const hashOutput = options.hashOutput ?? hashFileWithIdentity;
+  let afterId = '';
+  for (;;) {
+    const row = database
+      .prepare(
+        `SELECT id, output_path AS outputPath FROM media_jobs
+         WHERE id > ? AND kind IN ('clip', 'film') AND status = 'ready'
+           AND output_path IS NOT NULL AND output_sha256 IS NULL
+         ORDER BY id ASC LIMIT 1`,
+      )
+      .get(afterId) as { id: string; outputPath: string } | undefined;
+    if (!row) return;
+    afterId = row.id;
+    if (!isServerOwnedMediaPath(row.outputPath, mediaRoot)) continue;
+
+    // This potentially large read deliberately occurs before BEGIN IMMEDIATE.
+    const integrity = await hashOutput(row.outputPath);
+    if (!integrity) continue;
+
+    beginMigrationTransaction(database);
+    try {
+      const current = database
+        .prepare(
+          `SELECT output_path AS outputPath FROM media_jobs
+           WHERE id = ? AND kind IN ('clip', 'film') AND status = 'ready'
+             AND output_sha256 IS NULL`,
+        )
+        .get(row.id) as { outputPath: string } | undefined;
+      if (
+        current?.outputPath === row.outputPath &&
+        filePathMatchesIdentity(row.outputPath, integrity.identity)
+      ) {
+        database
+          .prepare(
+            `UPDATE media_jobs
+             SET output_sha256 = ?, output_bytes = ?, output_verified_at = ?
+             WHERE id = ? AND output_path = ? AND status = 'ready'
+               AND kind IN ('clip', 'film') AND output_sha256 IS NULL`,
+          )
+          .run(
+            integrity.sha256,
+            integrity.byteLength,
+            new Date().toISOString(),
+            row.id,
+            row.outputPath,
+          );
+      }
       database.exec('COMMIT');
     } catch (error) {
       database.exec('ROLLBACK');
@@ -1115,13 +1179,10 @@ function createAuditEventsTable(database: RewindDatabase): void {
   );
 }
 
-/**
- * Persist the finalized-output digest and size, then backfill rows that were
- * already finalized before #157. Backfill deliberately skips missing or
- * unreadable files: those rows stay unverifiable and are reported honestly
- * rather than being marked as verified without evidence.
- */
-function applyMediaIntegrityMigration(database: RewindDatabase, mediaRoot?: string): void {
+/** Persist the finalized-output columns and widen the audit guard. Legacy
+ * bytes are backfilled separately, after this short schema transaction has
+ * committed, by backfillMediaIntegrity. */
+function applyMediaIntegrityMigration(database: RewindDatabase): void {
   const columns = tableColumns(database, 'media_jobs');
   if (!columns.has('output_sha256')) {
     database.exec('ALTER TABLE media_jobs ADD COLUMN output_sha256 TEXT');
@@ -1135,26 +1196,6 @@ function applyMediaIntegrityMigration(database: RewindDatabase, mediaRoot?: stri
     database.exec('ALTER TABLE media_jobs ADD COLUMN output_verified_at TEXT');
   }
   rebuildAuditEventsForMediaIntegrity(database);
-
-  if (!mediaRoot) return;
-  const pending = database
-    .prepare(
-      `SELECT id, output_path AS outputPath FROM media_jobs
-       WHERE kind IN ('clip', 'film') AND status = 'ready'
-         AND output_path IS NOT NULL AND output_sha256 IS NULL`,
-    )
-    .all() as { id: string; outputPath: string }[];
-  const update = database.prepare(
-    `UPDATE media_jobs SET output_sha256 = ?, output_bytes = ?, output_verified_at = ?
-     WHERE id = ? AND output_sha256 IS NULL`,
-  );
-  const verifiedAt = new Date().toISOString();
-  for (const row of pending) {
-    if (!isServerOwnedMediaPath(row.outputPath, mediaRoot)) continue;
-    const integrity = hashFileSync(row.outputPath);
-    if (!integrity) continue;
-    update.run(integrity.sha256, integrity.byteLength, verifiedAt, row.id);
-  }
 }
 
 /** The migration may only hash files inside the server-owned processed media
