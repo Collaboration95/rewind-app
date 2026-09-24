@@ -12,6 +12,7 @@ import {
   cleanupStagedSourcePath,
   removeStagedSource,
 } from '../media';
+import { hashFile, hashFileSync } from '../media/integrity';
 import {
   compileFilmWithFfmpeg,
   processClipWithFfmpeg,
@@ -648,6 +649,8 @@ interface CompilationInputOutput {
   clipJobId: string;
   outputPath: string;
   isArchiveFiller: boolean;
+  sha256: string | null;
+  byteLength: number | null;
 }
 
 function filmOutputName(jobId: string): string {
@@ -662,6 +665,7 @@ function readCompilationInputOutputs(
   return database
     .prepare(
       `SELECT i.clip_job_id AS clipJobId, clip.output_path AS outputPath,
+              clip.output_sha256 AS sha256, clip.output_bytes AS byteLength,
               CASE WHEN contribution.cycle_id <> film.cycle_id THEN 1 ELSE 0 END AS isArchiveFiller
        FROM compilation_job_inputs i
        JOIN media_jobs film ON film.id = i.job_id
@@ -678,6 +682,14 @@ function readCompilationInputOutputs(
       clipJobId: String((row as { clipJobId: string }).clipJobId),
       outputPath: String((row as { outputPath: string }).outputPath),
       isArchiveFiller: Number((row as { isArchiveFiller: number }).isArchiveFiller) === 1,
+      sha256: (row as { sha256?: string | null }).sha256
+        ? String((row as { sha256?: string | null }).sha256)
+        : null,
+      byteLength:
+        (row as { byteLength?: number | null }).byteLength === null ||
+        (row as { byteLength?: number | null }).byteLength === undefined
+          ? null
+          : Number((row as { byteLength?: number | null }).byteLength),
     }));
 }
 
@@ -697,6 +709,26 @@ async function resolveProcessedMediaPath(value: string, outputDir: string): Prom
   }
 }
 
+/**
+ * Verify each retained film input against its persisted clip digest. Rows
+ * finalized before #157 have no recorded digest; those are unverifiable and
+ * are compiled from the retained bytes as before rather than being blocked.
+ */
+async function firstFailingInput(
+  inputs: CompilationInputOutput[],
+  inputPaths: string[],
+): Promise<string | null> {
+  for (const [index, input] of inputs.entries()) {
+    if (!input.sha256 || input.byteLength === null || input.byteLength <= 0) continue;
+    const observed = await hashFile(inputPaths[index]);
+    if (!observed) return input.clipJobId;
+    if (observed.byteLength !== input.byteLength || observed.sha256 !== input.sha256) {
+      return input.clipJobId;
+    }
+  }
+  return null;
+}
+
 function markCompilationFailed(
   database: RewindDatabase,
   jobId: string,
@@ -708,6 +740,7 @@ function markCompilationFailed(
     .prepare(
       `UPDATE media_jobs
        SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL,
+           output_sha256 = NULL, output_bytes = NULL, output_verified_at = NULL,
            updated_at = ?, failed_at = ?
        WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
     )
@@ -741,14 +774,30 @@ function publishCompilationOutput(
       return false;
     }
     renameSync(temporaryOutputPath, finalOutputPath);
+    // Hash the renamed bytes under the same lock that publishes the film, so
+    // the recorded digest always describes the file the fence made durable.
+    const integrity = hashFileSync(finalOutputPath);
+    if (!integrity) {
+      database.exec('ROLLBACK');
+      return false;
+    }
     const result = database
       .prepare(
         `UPDATE media_jobs
          SET status = 'ready', output_path = ?, completed_count = input_count, progress = 100,
-             error_code = NULL, processing_started_at = NULL, updated_at = ?, failed_at = NULL
+             error_code = NULL, processing_started_at = NULL, updated_at = ?, failed_at = NULL,
+             output_sha256 = ?, output_bytes = ?, output_verified_at = ?
          WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
       )
-      .run(finalOutputPath, new Date().toISOString(), job.id, job.claimGeneration);
+      .run(
+        finalOutputPath,
+        new Date().toISOString(),
+        integrity.sha256,
+        integrity.byteLength,
+        new Date().toISOString(),
+        job.id,
+        job.claimGeneration,
+      );
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
       return false;
@@ -826,6 +875,17 @@ export async function processCompilationJob(
     const inputPaths = await Promise.all(
       inputs.map((input) => resolveProcessedMediaPath(input.outputPath, outputDir)),
     );
+    // A film is only as trustworthy as the clips it joins. Verify each
+    // retained input against the digest persisted when that clip finalized,
+    // so a tampered or truncated clip cannot be compiled into a "verified"
+    // film under a fresh legitimate checksum.
+    const unavailableInput = await firstFailingInput(inputs, inputPaths);
+    if (unavailableInput) {
+      throw new FfmpegProcessingError(
+        'source_unavailable',
+        'A processed clip no longer matches its finalized integrity record.',
+      );
+    }
     const archiveFillerIndexes = inputs.flatMap((input, index) =>
       input.isArchiveFiller ? [index] : [],
     );
@@ -1025,6 +1085,15 @@ function finalizePreparedOutput(
       // it is safe to call after a prior crash because force is idempotent.
       cleanupStagedSourcePath(locked.sourcePath, stagingDir);
     }
+    // The digest describes exactly the bytes this fence is publishing. It is
+    // computed under the same writer lock that flips the row to ready, so a
+    // concurrent reader never observes a ready row without its checksum.
+    const integrity = hashFileSync(outputPath);
+    if (!integrity) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    const finalizedAt = new Date().toISOString();
     if (locked.sourceUri) {
       database
         .prepare(
@@ -1046,11 +1115,20 @@ function finalizePreparedOutput(
       .prepare(
         `UPDATE media_jobs
          SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL,
+             output_sha256 = ?, output_bytes = ?, output_verified_at = ?,
              processing_started_at = NULL, updated_at = ?, failed_at = NULL
          WHERE id = ? AND kind = 'clip' AND status = 'processing'
            AND output_path = ?`,
       )
-      .run(outputPath, new Date().toISOString(), row.id, outputPath);
+      .run(
+        outputPath,
+        integrity.sha256,
+        integrity.byteLength,
+        finalizedAt,
+        finalizedAt,
+        row.id,
+        outputPath,
+      );
     database.exec('COMMIT');
     return true;
   } catch (error) {
@@ -1119,6 +1197,7 @@ function markFailed(database: RewindDatabase, jobId: string, errorCode: string):
     .prepare(
       `UPDATE media_jobs
        SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL,
+           output_sha256 = NULL, output_bytes = NULL, output_verified_at = NULL,
            updated_at = ?, failed_at = ?
        WHERE id = ? AND kind = 'clip' AND status = 'processing'`,
     )
