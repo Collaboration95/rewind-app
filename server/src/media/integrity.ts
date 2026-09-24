@@ -424,21 +424,31 @@ export function recordIntegrityFailure(
   input: IntegrityAuditInput,
 ): boolean {
   const resourceId = `${input.kind}:${input.jobId}`;
-  const verifiedAt = readStoredIntegrity(database, input.jobId)?.verifiedAt ?? null;
-  const latest = database
-    .prepare(
-      `SELECT occurred_at AS occurredAt FROM audit_events
-       WHERE resource_id = ? AND event_type = ?
-       ORDER BY occurred_at DESC, id DESC LIMIT 1`,
-    )
-    .get(resourceId, MEDIA_INTEGRITY_EVENT) as { occurredAt?: string } | undefined;
-  if (latest?.occurredAt && verifiedAt && Date.parse(latest.occurredAt) >= Date.parse(verifiedAt)) {
-    return false;
-  }
-  if (latest?.occurredAt && !verifiedAt) return false;
   // Auditing is best effort. The caller must still refuse to serve the
-  // damaged file, so a failed audit insert never escalates into a 500.
+  // damaged file, so a failed audit never escalates into a 500. BEGIN
+  // IMMEDIATE serializes the dedupe read and event insert across connections.
+  let transactionStarted = false;
   try {
+    database.exec('BEGIN IMMEDIATE');
+    transactionStarted = true;
+
+    const verifiedAt = readStoredIntegrity(database, input.jobId)?.verifiedAt ?? null;
+    const latest = database
+      .prepare(
+        `SELECT occurred_at AS occurredAt FROM audit_events
+         WHERE resource_id = ? AND event_type = ?
+         ORDER BY occurred_at DESC, id DESC LIMIT 1`,
+      )
+      .get(resourceId, MEDIA_INTEGRITY_EVENT) as { occurredAt?: string } | undefined;
+    if (
+      latest?.occurredAt &&
+      ((verifiedAt && Date.parse(latest.occurredAt) >= Date.parse(verifiedAt)) || !verifiedAt)
+    ) {
+      database.exec('COMMIT');
+      transactionStarted = false;
+      return false;
+    }
+
     recordAuditEvent(database, {
       eventType: MEDIA_INTEGRITY_EVENT,
       actorMemberId: input.actorMemberId ?? null,
@@ -446,7 +456,16 @@ export function recordIntegrityFailure(
       result: 'denied',
       ...(input.timestamp ? { timestamp: input.timestamp } : {}),
     });
+    database.exec('COMMIT');
+    transactionStarted = false;
   } catch {
+    if (transactionStarted) {
+      try {
+        database.exec('ROLLBACK');
+      } catch {
+        // Keep audit failures best effort even if SQLite already aborted it.
+      }
+    }
     return false;
   }
   return true;

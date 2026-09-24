@@ -9,6 +9,7 @@ import { once } from 'node:events';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
+import { Worker } from 'node:worker_threads';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
@@ -234,6 +235,134 @@ test('a tampered finalized clip is unavailable, audited, and still not served', 
     } finally {
       await new Promise((close) => server.close(close));
     }
+  });
+});
+
+test('concurrent connections record one integrity audit event', async () => {
+  await withDatabase(async ({ database, config }) => {
+    const workerScript = `
+      const { parentPort, workerData } = require('node:worker_threads');
+      const { DatabaseSync } = require('node:sqlite');
+      const { recordIntegrityFailure } = require(workerData.integrityModule);
+
+      const startBarrier = new Int32Array(workerData.startBarrier);
+      const startCount = Atomics.add(startBarrier, 0, 1);
+      if (startCount === 0) {
+        if (Atomics.wait(startBarrier, 0, 1, 10000) === 'timed-out') {
+          throw new Error('timed out waiting for the second audit worker');
+        }
+      } else {
+        Atomics.notify(startBarrier, 0, 1);
+      }
+
+      const auditBarrier = new Int32Array(workerData.auditBarrier);
+      const database = new DatabaseSync(workerData.databasePath);
+      database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
+      let transactionActive = false;
+      const connection = new Proxy(database, {
+        get(target, property) {
+          if (property === 'exec') {
+            return (sql) => {
+              const result = target.exec(sql);
+              if (/^\\s*BEGIN\\b/i.test(sql)) transactionActive = true;
+              if (/^\\s*(COMMIT|END|ROLLBACK)\\b/i.test(sql)) transactionActive = false;
+              return result;
+            };
+          }
+          if (property === 'prepare') {
+            return (sql) => {
+              const statement = target.prepare(sql);
+              if (sql.includes('SELECT occurred_at AS occurredAt') && sql.includes('FROM audit_events')) {
+                return {
+                  get(...params) {
+                    const row = statement.get(...params);
+                    // Force both connections to finish the old check before
+                    // either can insert. The fixed implementation already
+                    // owns SQLite's writer lock here, so only one can reach
+                    // this query at a time and no barrier wait is needed.
+                    if (!transactionActive) {
+                      const count = Atomics.add(auditBarrier, 0, 1);
+                      if (count === 0) {
+                        if (Atomics.wait(auditBarrier, 0, 1, 10000) === 'timed-out') {
+                          throw new Error('timed out synchronizing concurrent audit checks');
+                        }
+                      } else {
+                        Atomics.notify(auditBarrier, 0, 1);
+                      }
+                    }
+                    return row;
+                  },
+                };
+              }
+              return statement;
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+
+      try {
+        const result = recordIntegrityFailure(connection, workerData.input);
+        parentPort.postMessage({ result });
+      } finally {
+        database.close();
+      }
+    `;
+    const workerData = {
+      databasePath: config.databasePath,
+      integrityModule: resolve(process.cwd(), 'server/dist/media/integrity.js'),
+      startBarrier: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
+      auditBarrier: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
+      input: {
+        jobId: 'integrity-concurrent-audit',
+        kind: 'clip',
+        result: {
+          outcome: 'mismatch',
+          expectedSha256: 'a'.repeat(64),
+          expectedByteLength: 10,
+          observedSha256: 'b'.repeat(64),
+          observedByteLength: 10,
+        },
+        timestamp: '2026-09-25T00:00:00.000Z',
+      },
+    };
+    const runWorker = () =>
+      new Promise((resolveWorker, rejectWorker) => {
+        const worker = new Worker(workerScript, { eval: true, workerData });
+        let message;
+        worker.once('message', (value) => {
+          message = value;
+        });
+        worker.once('error', rejectWorker);
+        worker.once('exit', (code) => {
+          if (code !== 0) {
+            rejectWorker(new Error(`audit worker exited with code ${code}`));
+          } else if (message) {
+            resolveWorker(message);
+          } else {
+            rejectWorker(new Error('audit worker exited without a result'));
+          }
+        });
+      });
+
+    const outcomes = await Promise.all([runWorker(), runWorker()]);
+    assert.deepEqual(
+      outcomes.map(({ result }) => result).sort(),
+      [false, true],
+      'only one concurrent caller should insert the deduplicated event',
+    );
+    assert.equal(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM audit_events
+           WHERE event_type = 'media.integrity_failed'
+             AND resource_id = 'clip:integrity-concurrent-audit'`,
+        )
+        .get().count,
+      1,
+      'separate SQLite connections must leave exactly one audit row',
+    );
   });
 });
 
