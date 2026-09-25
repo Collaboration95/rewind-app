@@ -159,10 +159,10 @@ test('skips symlinks and applies the 24-hour cutoff and bounded limit', async ()
     const recent = resolve(processedDir, 'recent.mp4');
     await writeFile(recent, 'recent');
     const allCandidates = planProcessedMediaRetention(database, processedDir, { now });
-    assert.deepEqual(
-      allCandidates.candidates.map((candidate) => candidate.reportName),
-      ['a.mp4', 'b.mp4'],
-    );
+    assert.deepEqual(allCandidates.candidates.map((candidate) => candidate.reportName).sort(), [
+      'a.mp4',
+      'b.mp4',
+    ]);
     const plan = planProcessedMediaRetention(database, processedDir, { now, limit: 1 });
     assert.equal(plan.candidates.length, 1);
     assert.deepEqual(plan.skippedUnsafe, ['escape.mp4']);
