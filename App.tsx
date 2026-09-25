@@ -502,6 +502,58 @@ function SettingsScreen({
     if (Platform.OS !== 'web') return;
     setTimeout(() => (resetTriggerRef.current as unknown as HTMLElement | null)?.focus(), 0);
   };
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !confirmOpen || typeof document === 'undefined') return;
+
+    const background = [
+      document.getElementById('settings-background'),
+      document.getElementById('main-navigation'),
+    ].filter((element): element is HTMLElement => element instanceof HTMLElement);
+    const priorInert = background.map((element) => element.inert);
+    background.forEach((element) => {
+      element.inert = true;
+    });
+
+    const dialog = document.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="Reset local Demo data confirmation"]',
+    );
+    const focusable = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="button"], [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
+    const trapTab = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || !dialog) return;
+      const items = focusable();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) {
+        event.preventDefault();
+        return;
+      }
+      const active = document.activeElement;
+      if (!dialog.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', trapTab, true);
+    focusable()[0]?.focus();
+
+    return () => {
+      document.removeEventListener('keydown', trapTab, true);
+      background.forEach((element, index) => {
+        element.inert = priorInert[index] ?? false;
+      });
+    };
+  }, [confirmOpen]);
   if (!session) return null;
   const groupName = state.group?.name ?? session.groupId;
   const role = state.group?.actingMemberRole ?? 'member';
@@ -513,6 +565,7 @@ function SettingsScreen({
         aria-hidden={Platform.OS === 'web' ? confirmOpen : undefined}
         importantForAccessibility={confirmOpen ? 'no-hide-descendants' : 'auto'}
         contentContainerStyle={styles.content}
+        nativeID="settings-background"
         style={styles.homeScroll}
       >
         <AppHeader />
@@ -1286,6 +1339,7 @@ function MainNavigation({
       aria-hidden={Platform.OS === 'web' ? backgroundHidden : undefined}
       accessibilityRole="tablist"
       importantForAccessibility={backgroundHidden ? 'no-hide-descendants' : 'auto'}
+      nativeID="main-navigation"
       style={styles.navigation}
       testID="main-navigation"
     >

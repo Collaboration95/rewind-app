@@ -51,7 +51,12 @@ test('dialog traps keyboard focus, restores its trigger, and has no serious or c
   const controls = dialog.getByRole('button');
   const last = controls.last();
   const first = controls.first();
-  await last.focus();
+  const backgroundButton = page.getByTestId('sign-out');
+  await backgroundButton.evaluate((element) => (element as HTMLElement).focus());
+  await expect(backgroundButton).not.toBeFocused();
+  await first.focus();
+  await page.keyboard.press('Tab');
+  await expect(last).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(first).toBeFocused();
   await page.keyboard.press('Shift+Tab');
