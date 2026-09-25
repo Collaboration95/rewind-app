@@ -149,6 +149,7 @@ export function VideoCaptureScreen({
     percent: 0,
   });
   const [creatingSyntheticClip, setCreatingSyntheticClip] = useState(false);
+  const [retryInFlight, setRetryInFlight] = useState(false);
   const statusContext = useOptionalContributionStatus();
   const [localContributionStatus, setLocalContributionStatus] = useState<ContributionStatus | null>(
     null,
@@ -186,6 +187,7 @@ export function VideoCaptureScreen({
   const clipRef = useRef<RecordedClip | null>(clip);
   const reviewRef = useRef<ClipReviewSession | null>(review);
   const activeUploadRef = useRef(false);
+  const retryInFlightRef = useRef(false);
   // Contribution work owns its async operations until they finish or a
   // lifecycle event invalidates their generation. This includes staging.
   const contributionWorkRef = useRef(false);
@@ -761,7 +763,11 @@ export function VideoCaptureScreen({
   };
 
   const retryUpload = async () => {
-    if (!isCaptureActive()) return;
+    // Guard synchronously as two presses can arrive before React commits the
+    // busy state. A second retry would supersede the first upload generation;
+    // because both use the same idempotency key, its late response could then
+    // cancel the job owned by the winning retry.
+    if (!isCaptureActive() || retryInFlightRef.current) return;
     // A retry needs an input this mount captured or restored. Once the attempt
     // budget is spent the action is terminal, so report it instead of silently
     // looping on a transport that keeps failing.
@@ -776,6 +782,8 @@ export function VideoCaptureScreen({
       return;
     }
     if (!review || !clip || !uploadSession) return;
+    retryInFlightRef.current = true;
+    setRetryInFlight(true);
     const operation = beginContributionWork(true);
     const prepareInput = async (input: ClipUploadInput): Promise<ClipUploadInput> => {
       await review.savePending(input.idempotencyKey);
@@ -845,6 +853,8 @@ export function VideoCaptureScreen({
         });
       setError(reported.message);
     } finally {
+      retryInFlightRef.current = false;
+      if (isCaptureActive()) setRetryInFlight(false);
       finishContributionWork(operation);
     }
   };
@@ -937,7 +947,7 @@ export function VideoCaptureScreen({
   }, [cancelActiveWork, onBack]);
 
   const contributionFailed = contributionStatus?.state === 'failed';
-  const canRetryContribution = contributionFailed && contributionStatus.retryable;
+  const canRetryContribution = contributionFailed && contributionStatus.retryable && !retryInFlight;
 
   const canDeleteContribution = Boolean(
     contributionStatus?.contributionId &&

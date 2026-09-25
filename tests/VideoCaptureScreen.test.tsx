@@ -601,6 +601,38 @@ describe('VideoCaptureScreen', () => {
     expect(uploadClip).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores a second retry press and does not cancel the winning idempotent job', async () => {
+    let resolveRetry!: (value: PendingClipUpload) => void;
+    const retryResponse = new Promise<PendingClipUpload>((resolve) => {
+      resolveRetry = resolve;
+    });
+    const uploadClip = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('runtime temporarily unavailable'))
+      .mockReturnValueOnce(retryResponse);
+    const cancelClipUpload = jest.fn().mockResolvedValue(undefined);
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ uploadClip, cancelClipUpload }),
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByText('runtime temporarily unavailable');
+    const retryButton = result.getByRole('button', { name: 'Retry upload' });
+
+    await fireEvent.press(retryButton);
+    await waitFor(() => expect(uploadClip).toHaveBeenCalledTimes(2));
+    expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
+    // Invoke the previously rendered handler too: the ref guard must cover
+    // duplicate native events before React has committed a rerender.
+    await fireEvent.press(retryButton);
+    expect(uploadClip).toHaveBeenCalledTimes(2);
+
+    await act(async () => resolveRetry(upload));
+    await result.findByText('Upload queued as one pending contribution.');
+    expect(cancelClipUpload).not.toHaveBeenCalled();
+  });
+
   it('cancels a queued server job before retaking an uploaded clip', async () => {
     const cancelClipUpload = jest.fn().mockResolvedValue(undefined);
     const client = runtimeClient({ cancelClipUpload });
