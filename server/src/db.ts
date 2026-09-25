@@ -1,10 +1,15 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { RuntimeConfig } from './config';
 import { DEMO_SESSION_LIFETIME_MS } from './session/contract';
+import {
+  filePathMatchesIdentity,
+  hashFileWithIdentity,
+  type HashedFileIntegrity,
+} from './media/integrity';
 
 const MIGRATIONS = [
   // `key` is the durable identity. Version 6 is reserved here for quota;
@@ -29,6 +34,7 @@ const MIGRATIONS = [
   { version: 12, key: 'chat-replies-reactions-v1', fileName: '007-chat-replies-reactions.sql' },
   { version: 13, key: 'compilation-retry-v1', fileName: '013-compilation-retry.sql' },
   { version: 14, key: 'queue-observability-v1', fileName: '014-queue-observability.sql' },
+  { version: 15, key: 'media-integrity-v1', fileName: '015-media-integrity.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -158,6 +164,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyCompilationRetryMigration(database);
       } else if (migration.key === 'queue-observability-v1') {
         applyQueueObservabilityMigration(database);
+      } else if (migration.key === 'media-integrity-v1') {
+        applyMediaIntegrityMigration(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -170,6 +178,75 @@ export function migrateDatabase(database: RewindDatabase): void {
           .run(migration.version, new Date().toISOString());
       }
       markMigration(database, migration.key);
+      database.exec('COMMIT');
+    } catch (error) {
+      database.exec('ROLLBACK');
+      throw error;
+    }
+  }
+}
+
+export interface MediaIntegrityBackfillOptions {
+  /** Injectable to prove lock behavior and interrupted-upgrade recovery. */
+  hashOutput?: (path: string) => Promise<HashedFileIntegrity | null>;
+}
+
+/** Backfill legacy receipts with hashing outside SQLite writer transactions.
+ * Each small receipt update is independently committed, so a restart resumes
+ * at the first remaining row and competing writers are not held behind media
+ * sized work. Unreadable or out-of-tree outputs remain unverifiable. */
+export async function backfillMediaIntegrity(
+  database: RewindDatabase,
+  mediaRoot: string,
+  options: MediaIntegrityBackfillOptions = {},
+): Promise<void> {
+  const hashOutput = options.hashOutput ?? hashFileWithIdentity;
+  let afterId = '';
+  for (;;) {
+    const row = database
+      .prepare(
+        `SELECT id, output_path AS outputPath FROM media_jobs
+         WHERE id > ? AND kind IN ('clip', 'film') AND status = 'ready'
+           AND output_path IS NOT NULL AND output_sha256 IS NULL
+         ORDER BY id ASC LIMIT 1`,
+      )
+      .get(afterId) as { id: string; outputPath: string } | undefined;
+    if (!row) return;
+    afterId = row.id;
+    if (!isServerOwnedMediaPath(row.outputPath, mediaRoot)) continue;
+
+    // This potentially large read deliberately occurs before BEGIN IMMEDIATE.
+    const integrity = await hashOutput(row.outputPath);
+    if (!integrity) continue;
+
+    beginMigrationTransaction(database);
+    try {
+      const current = database
+        .prepare(
+          `SELECT output_path AS outputPath FROM media_jobs
+           WHERE id = ? AND kind IN ('clip', 'film') AND status = 'ready'
+             AND output_sha256 IS NULL`,
+        )
+        .get(row.id) as { outputPath: string } | undefined;
+      if (
+        current?.outputPath === row.outputPath &&
+        filePathMatchesIdentity(row.outputPath, integrity.identity)
+      ) {
+        database
+          .prepare(
+            `UPDATE media_jobs
+             SET output_sha256 = ?, output_bytes = ?, output_verified_at = ?
+             WHERE id = ? AND output_path = ? AND status = 'ready'
+               AND kind IN ('clip', 'film') AND output_sha256 IS NULL`,
+          )
+          .run(
+            integrity.sha256,
+            integrity.byteLength,
+            new Date().toISOString(),
+            row.id,
+            row.outputPath,
+          );
+      }
       database.exec('COMMIT');
     } catch (error) {
       database.exec('ROLLBACK');
@@ -213,6 +290,7 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'chat-replies-reactions-v1') return !chatRepliesReactionsSchemaReady(database);
   if (key === 'compilation-retry-v1') return !compilationRetrySchemaReady(database);
   if (key === 'queue-observability-v1') return !queueObservabilitySchemaReady(database);
+  if (key === 'media-integrity-v1') return !mediaIntegritySchemaReady(database);
   return false;
 }
 
@@ -1018,6 +1096,117 @@ function applyQueueObservabilityMigration(database: RewindDatabase): void {
   }
 }
 
+/** The integrity columns, their audit guard, and the finalized-output
+ * backfill. Readiness depends on the columns existing; the backfill is
+ * idempotent and resumes on the next start if it was interrupted. */
+function mediaIntegritySchemaReady(database: RewindDatabase): boolean {
+  return (
+    hasColumns(database, 'media_jobs', ['output_sha256', 'output_bytes', 'output_verified_at']) &&
+    auditEventTypesAllowMediaIntegrity(database)
+  );
+}
+
+const MEDIA_INTEGRITY_EVENT_TYPE = 'media.integrity_failed';
+
+/**
+ * The audit CHECK constraint is a durable schema contract. A database written
+ * before #157 rejects the integrity event, so the table is rebuilt with the
+ * widened constraint. Existing rows are preserved unchanged.
+ */
+function auditEventTypesAllowMediaIntegrity(database: RewindDatabase): boolean {
+  if (!hasTable(database, 'audit_events')) return false;
+  const row = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'")
+    .get() as { sql?: string } | undefined;
+  return Boolean(row?.sql && row.sql.includes(MEDIA_INTEGRITY_EVENT_TYPE));
+}
+
+function rebuildAuditEventsForMediaIntegrity(database: RewindDatabase): void {
+  if (!hasTable(database, 'audit_events')) return;
+  if (auditEventTypesAllowMediaIntegrity(database)) return;
+  database.exec('ALTER TABLE audit_events RENAME TO audit_events_pre_157');
+  // SQLite moves existing indexes with the renamed table and keeps their
+  // names, so they must be dropped before the replacement table recreates
+  // them. Leaving them attached would produce an unindexed audit table.
+  database.exec('DROP INDEX IF EXISTS audit_events_occurred_at_idx');
+  database.exec('DROP INDEX IF EXISTS audit_events_resource_id_idx');
+  createAuditEventsTable(database);
+  database.exec(
+    `INSERT OR IGNORE INTO audit_events
+       (id, event_type, actor_member_id, resource_id, occurred_at, result)
+     SELECT id, event_type, actor_member_id, resource_id, occurred_at, result
+     FROM audit_events_pre_157
+     WHERE event_type IN (
+         'session.created', 'session.validated', 'session.rejected', 'session.expired',
+         'session.invalidated', 'job.started', 'job.completed', 'job.failed'
+       )
+       AND (
+         actor_member_id IS NULL
+         OR EXISTS (SELECT 1 FROM profiles WHERE profiles.id = audit_events_pre_157.actor_member_id)
+       )`,
+  );
+  database.exec('DROP TABLE audit_events_pre_157');
+}
+
+function createAuditEventsTable(database: RewindDatabase): void {
+  database.exec(
+    `CREATE TABLE IF NOT EXISTS audit_events (
+       id TEXT PRIMARY KEY,
+       event_type TEXT NOT NULL CHECK (
+         event_type IN (
+           'session.created',
+           'session.validated',
+           'session.rejected',
+           'session.expired',
+           'session.invalidated',
+           'job.started',
+           'job.completed',
+           'job.failed',
+           'media.integrity_failed'
+         )
+       ),
+       actor_member_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
+       resource_id TEXT,
+       occurred_at TEXT NOT NULL,
+       result TEXT NOT NULL CHECK (result IN ('success', 'failure', 'denied'))
+     )`,
+  );
+  database.exec(
+    'CREATE INDEX IF NOT EXISTS audit_events_occurred_at_idx ON audit_events (occurred_at DESC, id DESC);',
+  );
+  database.exec(
+    'CREATE INDEX IF NOT EXISTS audit_events_resource_id_idx ON audit_events (resource_id);',
+  );
+}
+
+/** Persist the finalized-output columns and widen the audit guard. Legacy
+ * bytes are backfilled separately, after this short schema transaction has
+ * committed, by backfillMediaIntegrity. */
+function applyMediaIntegrityMigration(database: RewindDatabase): void {
+  const columns = tableColumns(database, 'media_jobs');
+  if (!columns.has('output_sha256')) {
+    database.exec('ALTER TABLE media_jobs ADD COLUMN output_sha256 TEXT');
+  }
+  if (!columns.has('output_bytes')) {
+    database.exec(
+      'ALTER TABLE media_jobs ADD COLUMN output_bytes INTEGER CHECK (output_bytes IS NULL OR output_bytes > 0)',
+    );
+  }
+  if (!columns.has('output_verified_at')) {
+    database.exec('ALTER TABLE media_jobs ADD COLUMN output_verified_at TEXT');
+  }
+  rebuildAuditEventsForMediaIntegrity(database);
+}
+
+/** The migration may only hash files inside the server-owned processed media
+ * tree. The path policy is intentionally textual here because the backfill
+ * runs before the HTTP layer's realpath boundary exists. */
+function isServerOwnedMediaPath(path: string, mediaRoot: string): boolean {
+  const processedRoot = resolve(mediaRoot, 'media', 'processed');
+  const remainder = relative(processedRoot, resolve(path));
+  return Boolean(remainder) && !remainder.startsWith('..') && !isAbsolute(remainder);
+}
+
 function markMigration(database: RewindDatabase, key: string): void {
   database
     .prepare(
@@ -1556,8 +1745,14 @@ export interface PremiereFilmRecord {
 }
 
 export interface ReleasedArchiveRecord {
-  films: { id: string; cycleId: string; publishedAt: string }[];
-  clips: { id: string; contributionId: string; cycleId: string; createdAt: string }[];
+  films: { id: string; cycleId: string; publishedAt: string; outputPath: string }[];
+  clips: {
+    id: string;
+    contributionId: string;
+    cycleId: string;
+    createdAt: string;
+    outputPath: string;
+  }[];
 }
 
 /** List only ready, released media. Filesystem paths stay server-side. */
@@ -1568,7 +1763,8 @@ export function listReleasedArchive(
 ): ReleasedArchiveRecord {
   const films = database
     .prepare(
-      `SELECT f.id, c.id AS cycleId, c.release_published_at AS publishedAt
+      `SELECT f.id, c.id AS cycleId, c.release_published_at AS publishedAt,
+              f.output_path AS outputPath
        FROM media_jobs f
        JOIN cycles c ON c.id = f.cycle_id AND c.group_id = f.group_id
        WHERE f.group_id = ? AND f.kind = 'film' AND f.status = 'ready'
@@ -1579,7 +1775,7 @@ export function listReleasedArchive(
   const clips = database
     .prepare(
       `SELECT clip.id, contribution.id AS contributionId, cycle.id AS cycleId,
-              contribution.created_at AS createdAt
+              contribution.created_at AS createdAt, clip.output_path AS outputPath
        FROM media_jobs clip
        JOIN contributions contribution ON contribution.id = clip.contribution_id
        JOIN cycles cycle ON cycle.id = contribution.cycle_id
@@ -1595,12 +1791,14 @@ export function listReleasedArchive(
       id: String(film.id),
       cycleId: String(film.cycleId),
       publishedAt: String(film.publishedAt),
+      outputPath: String(film.outputPath),
     })),
     clips: clips.map((clip) => ({
       id: String(clip.id),
       contributionId: String(clip.contributionId),
       cycleId: String(clip.cycleId),
       createdAt: String(clip.createdAt),
+      outputPath: String(clip.outputPath),
     })),
   };
 }

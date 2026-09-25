@@ -169,7 +169,7 @@ test('queue migration repairs malformed filter/order indexes after its receipt i
         .prepare('PRAGMA table_info(media_jobs)')
         .all()
         .map((row) => row.name)
-        .slice(-2),
+        .filter((name) => name === 'updated_at' || name === 'failed_at'),
       ['updated_at', 'failed_at'],
     );
   } finally {

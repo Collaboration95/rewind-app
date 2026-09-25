@@ -21,19 +21,19 @@ Replacing the container must not replace either mount.
 ## Schema and migration contract
 
 `server/src/db.ts` is the authoritative additive migration runner. A healthy
-Sprint 2 database has migration versions 1 through 13 and matching durable
+Sprint 2 database has migration versions 1 through 15 and matching durable
 `schema_migration_markers` receipts. `/health` returns HTTP 503 with
 `ready: false` if any expected receipt is absent or a known partial schema
 shape needs repair.
 
-| Records                                                                    | Key relationships                                                                                            |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `profiles`, `groups`, `memberships`                                        | Synthetic profiles join groups through memberships; the persisted role gates owner actions.                  |
-| `sessions`, `audit_events`                                                 | A bounded synthetic Demo session identifies an actor; audit rows are redacted operational events.            |
-| `invites`, `cycles`, `cycle_control_events`, `cycle_lifecycle_events`      | Invitations and cycle transitions remain group-scoped and durable.                                           |
-| `contributions`, `contribution_quota_windows`                              | A contribution belongs to one cycle/member; quota consumption is keyed to its cycle window.                  |
-| `media_metadata`, `staged_sources`, `media_jobs`, `compilation_job_inputs` | Server-verified staged source metadata feeds clip, film, and download jobs; compilation inputs order a film. |
-| `messages`, `reactions`, `realtime_events`                                 | Group chat state and its replay sequence remain in SQLite.                                                   |
+| Records                                                                    | Key relationships                                                                                                                                                                                                                              |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profiles`, `groups`, `memberships`                                        | Synthetic profiles join groups through memberships; the persisted role gates owner actions.                                                                                                                                                    |
+| `sessions`, `audit_events`                                                 | A bounded synthetic Demo session identifies an actor; audit rows are redacted operational events.                                                                                                                                              |
+| `invites`, `cycles`, `cycle_control_events`, `cycle_lifecycle_events`      | Invitations and cycle transitions remain group-scoped and durable.                                                                                                                                                                             |
+| `contributions`, `contribution_quota_windows`                              | A contribution belongs to one cycle/member; quota consumption is keyed to its cycle window.                                                                                                                                                    |
+| `media_metadata`, `staged_sources`, `media_jobs`, `compilation_job_inputs` | Server-verified staged source metadata feeds clip, film, and download jobs; compilation inputs order a film. Finalized rows carry a SHA-256 digest and byte length; a mismatch makes the output unavailable and is recorded in `audit_events`. |
+| `messages`, `reactions`, `realtime_events`                                 | Group chat state and its replay sequence remain in SQLite.                                                                                                                                                                                     |
 
 Migrations are idempotent and repair the documented historical partial shapes;
 they must not be reordered or edited after deployment. The deployment workflow
