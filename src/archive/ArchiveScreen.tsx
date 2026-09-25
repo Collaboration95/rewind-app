@@ -178,7 +178,7 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
 
   return (
     <View style={styles.archiveScreen}>
-      <Text accessibilityRole="header" style={styles.title}>
+      <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
         Archive
       </Text>
       {state.status === 'loading' ? (

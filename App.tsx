@@ -295,7 +295,7 @@ function ActiveAppShell({
     const timer = setTimeout(() => {
       if (typeof document === 'undefined') return;
       const heading = document.querySelector<HTMLElement>(
-        `#screen-route-${activeRoute} [role="heading"]`,
+        `#screen-route-${activeRoute} [data-testid="route-heading-${activeRoute}"]`,
       );
       if (heading) {
         heading.tabIndex = -1;
@@ -571,7 +571,12 @@ function SettingsScreen({
         <AppHeader />
         <View>
           <Text style={styles.label}>SETTINGS</Text>
-          <Text accessibilityRole="header" nativeID="screen-heading-settings" style={styles.title}>
+          <Text
+            accessibilityRole="header"
+            nativeID="screen-heading-settings"
+            style={styles.title}
+            testID="route-heading-settings"
+          >
             Local Demo
           </Text>
         </View>
@@ -1124,7 +1129,7 @@ function GroupCreateScreen({
       <AppHeader />
       <View>
         <Text style={styles.label}>NEW LOCAL GROUP</Text>
-        <Text accessibilityRole="header" style={styles.title}>
+        <Text accessibilityRole="header" style={styles.title} testID="route-heading-create-group">
           Create a group
         </Text>
         <Text style={styles.bodyText}>
@@ -1307,7 +1312,7 @@ function UnavailableScreen({ route }: { route: UnavailableRouteKey }) {
       <AppHeader />
       <View>
         <Text style={styles.label}>{screen.title.toUpperCase()}</Text>
-        <Text accessibilityRole="header" style={styles.title}>
+        <Text accessibilityRole="header" style={styles.title} testID={`route-heading-${route}`}>
           {screen.title}
         </Text>
       </View>

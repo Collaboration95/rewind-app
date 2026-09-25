@@ -394,7 +394,7 @@ export function ChatSessionSurface({
       >
         <View style={styles.header}>
           <Text style={styles.label}>GROUP CHAT</Text>
-          <Text accessibilityRole="header" style={styles.title}>
+          <Text accessibilityRole="header" style={styles.title} testID="route-heading-chat">
             Chat
           </Text>
           <Text style={styles.bodyText}>

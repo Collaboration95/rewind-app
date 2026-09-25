@@ -292,7 +292,7 @@ export function CameraCaptureScreen({
     <View style={styles.screen} testID="camera-screen">
       <View style={styles.heading}>
         <Text style={styles.eyebrow}>CAPTURE</Text>
-        <Text accessibilityRole="header" style={styles.title}>
+        <Text accessibilityRole="header" style={styles.title} testID="route-heading-camera">
           Add a still moment
         </Text>
         <Text style={styles.intro}>

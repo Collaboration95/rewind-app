@@ -10,6 +10,16 @@ async function enterDemo(page: Page) {
   await expect(page.getByTestId('main-navigation')).toBeVisible();
 }
 
+async function tabUntilFocused(page: Page, target: ReturnType<Page['getByTestId']>, limit = 80) {
+  for (let step = 0; step < limit; step += 1) {
+    if (await target.evaluate((element) => document.activeElement === element).catch(() => false)) {
+      return;
+    }
+    await page.keyboard.press('Tab');
+  }
+  throw new Error(`Keyboard tab order did not reach ${await target.getAttribute('data-testid')}`);
+}
+
 async function expectNoSeriousAxeViolations(page: Page, state: string) {
   const results = await new PlaywrightAxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
@@ -28,7 +38,7 @@ test('Home, Settings, Camera, Chat, and Archive have no serious or critical Axe 
   for (const route of ['home', 'settings', 'camera', 'chat', 'archive'] as const) {
     await page.getByTestId(`nav-${route}`).click();
     if (route !== 'home') {
-      await expect(page.locator(`#screen-route-${route} [role="heading"]`).first()).toBeFocused();
+      await expect(page.getByTestId(`route-heading-${route}`)).toBeFocused();
     }
     await expectNoSeriousAxeViolations(page, route);
   }
@@ -112,11 +122,16 @@ test('entry chooser has no serious or critical Axe violations', async ({ page })
 test('keyboard navigation keeps focus on visible controls and reaches each main route', async ({
   page,
 }) => {
-  await enterDemo(page);
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await tabUntilFocused(page, page.getByTestId('demo-entry-demo-1'));
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('main-navigation')).toBeVisible();
   for (const route of ['camera', 'chat', 'archive', 'settings', 'home'] as const) {
-    await page.getByTestId(`nav-${route}`).focus();
+    const navigationItem = page.getByTestId(`nav-${route}`);
+    await tabUntilFocused(page, navigationItem);
     await page.keyboard.press('Enter');
-    await expect(page.locator(`#screen-route-${route} [role="heading"]`).first()).toBeFocused();
+    await expect(page.getByTestId(`route-heading-${route}`)).toBeFocused();
     await page.keyboard.press('Tab');
     const focused = page.locator(':focus');
     await expect(focused).toBeVisible();
