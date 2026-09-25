@@ -774,7 +774,11 @@ test('a worker restart finalizes a durable output marker after raw deletion', as
       stagingDir,
       outputDir,
     });
-    assert.deepEqual(result, { ok: true, jobId: upload.upload.job.id, status: 'ready' });
+    assert.deepEqual(result, {
+      ok: true,
+      jobId: upload.upload.job.id,
+      status: 'ready',
+    });
     assert.equal(
       database.prepare('SELECT status FROM media_jobs WHERE id = ?').get(upload.upload.job.id)
         .status,
