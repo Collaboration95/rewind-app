@@ -65,6 +65,7 @@ import {
   type InviteLinkParseResult,
 } from './src/invites/deep-links';
 import { ChatScreen } from './src/chat/ChatScreen';
+import { ChatUnreadProvider, useChatUnread } from './src/chat/unread';
 import { ArchiveScreen } from './src/archive/ArchiveScreen';
 import { ReminderSettings } from './src/reminders/ReminderSettings';
 
@@ -266,6 +267,9 @@ function ActiveAppShell({
   );
   const { retry: refreshCapsule, state: capsuleState } = useCapsule();
   const { session } = useDemoSession();
+  const chatGroup = 'group' in capsuleState ? capsuleState.group : null;
+  const chatStreamEnabled = Boolean(session && chatGroup?.id === session.groupId);
+  const unreadSession = capsuleState.status === 'denied' ? null : session;
   const cycleRevealState =
     capsuleState.status === 'ready' ? revealStateForCycle(capsuleState.cycle) : 'locked';
   const cycle = capsuleState.status === 'ready' ? capsuleState.cycle : null;
@@ -320,61 +324,68 @@ function ActiveAppShell({
   }, [cameraPlatform]);
 
   return (
-    <SafeAreaFrame>
-      <View style={styles.activeShell}>
-        {activeRoute === 'home' ? (
-          <HomeScreen
-            clock={clock}
-            onAddMoment={() => setActiveRoute('camera')}
-            onOpenArchive={() => setActiveRoute('archive')}
-            revealState={revealState}
-            runtimeClient={runtimeClient}
+    <ChatUnreadProvider
+      activeGroupId={activeRoute === 'chat' ? (session?.groupId ?? null) : null}
+      enabled={chatStreamEnabled}
+      runtimeClient={runtimeClient}
+      session={unreadSession}
+    >
+      <SafeAreaFrame>
+        <View style={styles.activeShell}>
+          {activeRoute === 'home' ? (
+            <HomeScreen
+              clock={clock}
+              onAddMoment={() => setActiveRoute('camera')}
+              onOpenArchive={() => setActiveRoute('archive')}
+              revealState={revealState}
+              runtimeClient={runtimeClient}
+            />
+          ) : activeRoute === 'settings' ? (
+            <SettingsScreen
+              onCreateGroup={() => setActiveRoute('create-group')}
+              inviteLink={inviteLink}
+              runtimeClient={runtimeClient}
+            />
+          ) : activeRoute === 'create-group' ? (
+            <GroupCreateScreen
+              onCancel={() => setActiveRoute('settings')}
+              onCreated={() => setActiveRoute('home')}
+              runtimeClient={runtimeClient}
+            />
+          ) : activeRoute === 'camera' ? (
+            <CameraCaptureScreen
+              onRecordClip={() => setActiveRoute('video')}
+              onOpenArchive={() => setActiveRoute('archive')}
+              revealState={revealState}
+              platform={resolvedCameraPlatform}
+            />
+          ) : activeRoute === 'video' ? (
+            <VideoCaptureScreen
+              onBack={() => setActiveRoute('camera')}
+              onContributionDeleted={refreshCapsule}
+              platform={resolvedCameraPlatform}
+              runtimeClient={runtimeClient}
+            />
+          ) : activeRoute === 'chat' ? (
+            <ChatScreen runtimeClient={runtimeClient} />
+          ) : activeRoute === 'archive' ? (
+            <ArchiveScreen runtimeClient={runtimeClient} />
+          ) : (
+            <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
+          )}
+          <MainNavigation
+            activeRoute={
+              activeRoute === 'create-group'
+                ? 'settings'
+                : activeRoute === 'video'
+                  ? 'camera'
+                  : activeRoute
+            }
+            onNavigate={setActiveRoute}
           />
-        ) : activeRoute === 'settings' ? (
-          <SettingsScreen
-            onCreateGroup={() => setActiveRoute('create-group')}
-            inviteLink={inviteLink}
-            runtimeClient={runtimeClient}
-          />
-        ) : activeRoute === 'create-group' ? (
-          <GroupCreateScreen
-            onCancel={() => setActiveRoute('settings')}
-            onCreated={() => setActiveRoute('home')}
-            runtimeClient={runtimeClient}
-          />
-        ) : activeRoute === 'camera' ? (
-          <CameraCaptureScreen
-            onRecordClip={() => setActiveRoute('video')}
-            onOpenArchive={() => setActiveRoute('archive')}
-            revealState={revealState}
-            platform={resolvedCameraPlatform}
-          />
-        ) : activeRoute === 'video' ? (
-          <VideoCaptureScreen
-            onBack={() => setActiveRoute('camera')}
-            onContributionDeleted={refreshCapsule}
-            platform={resolvedCameraPlatform}
-            runtimeClient={runtimeClient}
-          />
-        ) : activeRoute === 'chat' ? (
-          <ChatScreen runtimeClient={runtimeClient} />
-        ) : activeRoute === 'archive' ? (
-          <ArchiveScreen runtimeClient={runtimeClient} />
-        ) : (
-          <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
-        )}
-        <MainNavigation
-          activeRoute={
-            activeRoute === 'create-group'
-              ? 'settings'
-              : activeRoute === 'video'
-                ? 'camera'
-                : activeRoute
-          }
-          onNavigate={setActiveRoute}
-        />
-      </View>
-    </SafeAreaFrame>
+        </View>
+      </SafeAreaFrame>
+    </ChatUnreadProvider>
   );
 }
 
@@ -1224,6 +1235,7 @@ function MainNavigation({
   activeRoute: RouteKey;
   onNavigate: (route: RouteKey) => void;
 }) {
+  const { unreadCount } = useChatUnread();
   return (
     <View accessibilityRole="tablist" style={styles.navigation} testID="main-navigation">
       {ROUTES.map((route) => {
@@ -1232,7 +1244,11 @@ function MainNavigation({
         return (
           <Pressable
             accessibilityHint={`Shows the ${route.label} area`}
-            accessibilityLabel={route.label}
+            accessibilityLabel={
+              route.key === 'chat' && unreadCount > 0
+                ? `Chat, ${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`
+                : route.label
+            }
             accessibilityRole="tab"
             accessibilityState={{ selected: isSelected }}
             key={route.key}
@@ -1243,6 +1259,11 @@ function MainNavigation({
             <Text style={[styles.tabLabel, isSelected && styles.selectedTabLabel]}>
               {route.label}
             </Text>
+            {route.key === 'chat' && unreadCount > 0 ? (
+              <Text style={styles.unreadBadge} testID="chat-unread-badge">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </Text>
+            ) : null}
             <Text style={styles.tabState}>{isSelected ? 'SELECTED' : ' '}</Text>
           </Pressable>
         );
@@ -1404,6 +1425,17 @@ const styles = StyleSheet.create({
   },
   selectedTabLabel: {
     color: COLORS.ink,
+  },
+  unreadBadge: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 10,
+    color: COLORS.deep,
+    fontSize: 11,
+    fontWeight: '800',
+    minWidth: 20,
+    overflow: 'hidden',
+    paddingHorizontal: 5,
+    textAlign: 'center',
   },
   tabState: {
     color: COLORS.accent,
