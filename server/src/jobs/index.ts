@@ -654,9 +654,9 @@ interface CompilationInputOutput {
   isArchiveFiller: boolean;
 }
 
-function filmOutputName(jobId: string): string {
+function filmOutputName(jobId: string, claimGeneration: number): string {
   const suffix = createHash('sha256').update(jobId).digest('hex').slice(0, 24);
-  return `film-${suffix}.mp4`;
+  return `film-${suffix}-g${claimGeneration}.mp4`;
 }
 
 function readCompilationInputOutputs(
@@ -822,10 +822,13 @@ async function processCompilationJobInternal(
 
   const outputDir =
     options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
-  const finalOutputPath = resolve(outputDir, filmOutputName(claim.job.id));
+  const finalOutputPath = resolve(
+    outputDir,
+    filmOutputName(claim.job.id, claim.job.claimGeneration),
+  );
   const temporaryOutputPath = resolve(
     outputDir,
-    `.${filmOutputName(claim.job.id)}.${randomUUID()}.part.mp4`,
+    `.${filmOutputName(claim.job.id, claim.job.claimGeneration)}.${randomUUID()}.part.mp4`,
   );
   try {
     if (claim.job.inputCount === 0) {
@@ -887,6 +890,8 @@ async function processCompilationJobInternal(
   } catch (error) {
     await rm(temporaryOutputPath, { force: true }).catch(() => undefined);
     if (getCompilationJob(database, claim.job.id)?.status !== 'ready') {
+      // The durable film path includes this claim generation, so an expired
+      // worker can clean its own output without unlinking a reclaimed worker's.
       await rm(finalOutputPath, { force: true }).catch(() => undefined);
       const errorCode = error instanceof FfmpegProcessingError ? error.code : 'cleanup_failed';
       markCompilationFailed(database, claim.job.id, claim.job.claimGeneration, errorCode);

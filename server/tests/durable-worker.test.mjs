@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { promisify } from 'node:util';
@@ -10,7 +11,7 @@ const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase, openDatabaseAt } = await import('../dist/db.js');
 const { createClipUpload } = await import('../dist/media/index.js');
-const { createCompilationJob, PROCESSING_CLAIM_LEASE_MS, processClipJob } =
+const { createCompilationJob, PROCESSING_CLAIM_LEASE_MS, processClipJob, processCompilationJob } =
   await import('../dist/jobs/index.js');
 const { listQueueJobs } = await import('../dist/jobs/queue.js');
 const {
@@ -427,6 +428,127 @@ test('an exhausted film job is terminal and never claimed again', async () => {
       listWorkerCandidates(database, options).map((job) => job.id),
       [],
     );
+  });
+});
+
+test('a stale failing film worker cannot remove a reclaimed generation output', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const stagingDir = dataDir + '/media/staging';
+    const outputDir = dataDir + '/media/processed';
+    await mkdir(stagingDir, { recursive: true });
+    const sourcePath = stagingDir + '/stale-film-reclaim.mp4';
+    await createSyntheticSource(sourcePath);
+    const clipJobId = await enqueueClip(database, sourcePath, 'stale-film-reclaim-clip-key');
+    const clipResult = await processClipJob(database, {
+      jobId: clipJobId,
+      ...workerOptions(config, dataDir),
+    });
+    assert.equal(clipResult.ok, true);
+    database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();
+    const created = createCompilationJob(database, {
+      groupId: 'demo-group',
+      cycleId: 'demo-cycle',
+    });
+    assert.equal(created.ok, true);
+    const jobId = created.job.id;
+
+    const failingFfmpeg = dataDir + '/wrapper-fail-stale-film';
+    const succeedingFfmpeg = dataDir + '/wrapper-reclaim-film';
+    const staleStartedPath = dataDir + '/stale-film-worker-started';
+    const staleReleasePath = dataDir + '/stale-film-worker-release';
+    const currentStartedPath = dataDir + '/current-film-worker-started';
+    const currentReleasePath = dataDir + '/current-film-worker-release';
+    const realFfmpeg = (await execFileAsync('which', ['ffmpeg'])).stdout.trim();
+    const script = (startedEnv, releaseEnv, command) =>
+      [
+        '#!/bin/sh',
+        `printf started > "$${startedEnv}"`,
+        `while [ ! -f "$${releaseEnv}" ]; do sleep 0.01; done`,
+        command,
+        '',
+      ].join('\n');
+    await writeFile(
+      failingFfmpeg,
+      script('REWIND_STALE_FILM_STARTED', 'REWIND_STALE_FILM_RELEASE', 'exit 1'),
+      { mode: 0o755 },
+    );
+    await writeFile(
+      succeedingFfmpeg,
+      script(
+        'REWIND_CURRENT_FILM_STARTED',
+        'REWIND_CURRENT_FILM_RELEASE',
+        'exec "$REWIND_FILM_REAL_FFMPEG" "$@"',
+      ),
+      { mode: 0o755 },
+    );
+    const env = {
+      REWIND_STALE_FILM_STARTED: staleStartedPath,
+      REWIND_STALE_FILM_RELEASE: staleReleasePath,
+      REWIND_CURRENT_FILM_STARTED: currentStartedPath,
+      REWIND_CURRENT_FILM_RELEASE: currentReleasePath,
+      REWIND_FILM_REAL_FFMPEG: realFfmpeg,
+    };
+    const previousEnv = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, env);
+    let currentWorker;
+    try {
+      const options = workerOptions(config, dataDir);
+      const staleWorker = processCompilationJob(database, {
+        jobId,
+        ...options,
+        ffmpegBin: failingFfmpeg,
+      });
+      await waitForFile(staleStartedPath);
+      database
+        .prepare('UPDATE media_jobs SET processing_started_at = ? WHERE id = ?')
+        .run(new Date(Date.now() - PROCESSING_CLAIM_LEASE_MS - 1_000).toISOString(), jobId);
+
+      currentWorker = processCompilationJob(database, {
+        jobId,
+        ...options,
+        ffmpegBin: succeedingFfmpeg,
+      });
+      await waitForFile(currentStartedPath);
+      const currentGeneration = database
+        .prepare('SELECT claim_generation AS generation FROM media_jobs WHERE id = ?')
+        .get(jobId).generation;
+      assert.equal(currentGeneration, 2);
+
+      // Model the newer generation's final path existing during its publish
+      // window while the durable job row still says processing.
+      const suffix = createHash('sha256').update(jobId).digest('hex').slice(0, 24);
+      const currentOutputPath = outputDir + `/film-${suffix}-g2.mp4`;
+      await mkdir(outputDir, { recursive: true });
+      await writeFile(currentOutputPath, 'generation 2 output');
+
+      await writeFile(staleReleasePath, 'fail stale generation');
+      const staleResult = await staleWorker;
+      assert.equal(staleResult.ok, false);
+      const stillProcessing = database
+        .prepare('SELECT status, claim_generation AS generation FROM media_jobs WHERE id = ?')
+        .get(jobId);
+      assert.equal(stillProcessing.status, 'processing');
+      assert.equal(stillProcessing.generation, 2);
+      assert.equal(await readFile(currentOutputPath, 'utf8'), 'generation 2 output');
+
+      await writeFile(currentReleasePath, 'publish current generation');
+      const currentResult = await currentWorker;
+      assert.deepEqual(currentResult, { ok: true, jobId, status: 'ready' });
+      const ready = database
+        .prepare('SELECT status, output_path AS outputPath FROM media_jobs WHERE id = ?')
+        .get(jobId);
+      assert.equal(ready.status, 'ready');
+      assert.equal(ready.outputPath, currentOutputPath);
+      await access(ready.outputPath);
+    } finally {
+      await writeFile(staleReleasePath, 'unblock stale').catch(() => undefined);
+      await writeFile(currentReleasePath, 'unblock current').catch(() => undefined);
+      if (currentWorker) await currentWorker.catch(() => undefined);
+      for (const [key, value] of Object.entries(previousEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 });
 
