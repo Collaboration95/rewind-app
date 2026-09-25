@@ -314,3 +314,29 @@ discovery-question ownership, firsthand peer challenge, recorded synchronous
 kickoff and rough-direction critique, both peers' cross-use reviews, complete
 cross-platform matrix and final visual captures, and the team's comparison and
 explicit decision. No human feedback, agreement or sign-off is inferred.
+
+## Browser owner retest — 26 September 2026
+
+Loi reported “all passed” for the supplied Chromium checklist at phone
+(390 × 844) and desktop (1280 × 800) sizes: Demo entry/Home, prompt and
+allowance, sealed frames, five-tab navigation and scrolling, group-form
+validation/cancellation, applicable camera permission/fallback and review
+actions, Chat/Archive state messaging, and keyboard navigation including
+reset-dialog cancellation. This is owner-reported testing. The checklist
+referenced `6c2ebd8`; the exact installed browser (Chrome or Edge), its version
+and the running checkout were not independently confirmed. The report does
+not distinguish offline from connected-runtime paths, so a complete connected
+capture-to-release pass is not inferred.
+
+CI at `6c2ebd8` passed baseline checks, web-shell validation and responsive
+browser checks: [successful Actions run](https://github.com/Collaboration95/rewind-app/actions/runs/36157834467).
+The prior responsive failure was an uppercase wordmark assertion; all three
+offline shell assertions now ignore casing while retaining reload/deep-link
+coverage. This supersedes the earlier CI status, not the historical Windows
+formatting observations.
+
+Android [owner demo recording](https://github.com/Collaboration95/rewind-app/pull/201#issuecomment-5835259972)
+is attached to the PR in place of separate screenshots. Firefox 155 installed
+but failed to launch on Windows with a side-by-side configuration error;
+Firefox UI tests therefore remain blocked, not passed. iOS and independent
+peer reviews remain pending.
