@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -67,8 +68,6 @@ import {
 import { ChatScreen } from './src/chat/ChatScreen';
 import { ArchiveScreen } from './src/archive/ArchiveScreen';
 import { ReminderSettings } from './src/reminders/ReminderSettings';
-
-const lockedMoments = [1, 2, 3];
 
 const ROUTES = [
   { key: 'home', label: 'Home' },
@@ -379,11 +378,13 @@ function ActiveAppShell({
 }
 
 function AppHeader() {
+  const { session } = useDemoSession();
   return (
     <View style={styles.topBar}>
-      <Text style={styles.wordmark}>REWIND</Text>
+      <Text style={styles.wordmark}>« rewind</Text>
       <View accessibilityLabel="Local demo data" style={styles.demoBadge}>
-        <Text style={styles.demoBadgeText}>LOCAL DEMO</Text>
+        <Text style={styles.demoBadgeText}>{session?.actor.displayName ?? 'LOCAL DEMO'}</Text>
+        {session ? <Text style={styles.actorCaption}>SYNTHETIC MEMBER</Text> : null}
       </View>
     </View>
   );
@@ -1159,10 +1160,6 @@ function HomeScreen({
     >
       <AppHeader />
 
-      <RuntimeStatusCard client={runtimeClient} />
-
-      <DemoProfilePicker />
-
       <CapsuleSummary
         clock={clock}
         onAddMoment={onAddMoment}
@@ -1170,24 +1167,10 @@ function HomeScreen({
         revealState={revealState}
       />
 
-      <View style={styles.section}>
-        <Text style={styles.label}>SEALED MOMENTS</Text>
-        <View accessibilityLabel="Three sealed local demo moments" style={styles.momentRow}>
-          {lockedMoments.map((moment) => (
-            <View
-              accessible
-              accessibilityLabel={`Locked demo moment ${moment} of 3`}
-              key={moment}
-              style={styles.momentPlaceholder}
-            >
-              <Text style={styles.lockedText}>LOCKED</Text>
-            </View>
-          ))}
-        </View>
-      </View>
-
+      <RuntimeStatusCard client={runtimeClient} />
+      <DemoProfilePicker />
       <Text style={styles.helperText} testID="home-content-end">
-        Camera capture stays local. Choose a capture type on the Camera screen.
+        Still images save locally. Clip submission requires the local runtime.
       </Text>
     </ScrollView>
   );
@@ -1224,8 +1207,14 @@ function MainNavigation({
   activeRoute: RouteKey;
   onNavigate: (route: RouteKey) => void;
 }) {
+  const { width, fontScale } = useWindowDimensions();
+  const expanded = Math.min(width, 390) / fontScale < 300;
   return (
-    <View accessibilityRole="tablist" style={styles.navigation} testID="main-navigation">
+    <View
+      accessibilityRole="tablist"
+      style={[styles.navigation, expanded && styles.expandedNavigation]}
+      testID="main-navigation"
+    >
       {ROUTES.map((route) => {
         const isSelected = route.key === activeRoute;
 
@@ -1237,7 +1226,7 @@ function MainNavigation({
             accessibilityState={{ selected: isSelected }}
             key={route.key}
             onPress={() => onNavigate(route.key)}
-            style={[styles.tab, isSelected && styles.selectedTab]}
+            style={[styles.tab, expanded && styles.expandedTab, isSelected && styles.selectedTab]}
             testID={`nav-${route.key}`}
           >
             <Text style={[styles.tabLabel, isSelected && styles.selectedTabLabel]}>
@@ -1281,14 +1270,16 @@ const styles = StyleSheet.create({
   },
   wordmark: {
     color: COLORS.ink,
-    fontSize: 14,
-    fontWeight: '800',
-    letterSpacing: 2,
+    fontSize: 23,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontWeight: '700',
+    letterSpacing: -1,
   },
+  actorCaption: { color: COLORS.muted, fontSize: 8, letterSpacing: 0.6 },
   demoBadge: {
     backgroundColor: COLORS.paper,
-    borderColor: COLORS.accent,
-    borderRadius: 999,
+    borderColor: COLORS.line,
+    borderRadius: 12,
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -1379,6 +1370,8 @@ const styles = StyleSheet.create({
     gap: 10,
     padding: 20,
   },
+  expandedNavigation: { flexWrap: 'wrap' },
+  expandedTab: { flex: 0, flexBasis: '33.333%', flexGrow: 1, minHeight: 60 },
   navigation: {
     borderTopColor: COLORS.line,
     borderTopWidth: 1,
@@ -1393,7 +1386,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   selectedTab: {
-    backgroundColor: COLORS.paper,
+    backgroundColor: COLORS.background,
     borderTopColor: COLORS.accent,
     borderTopWidth: 2,
   },
@@ -1462,7 +1455,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    borderRadius: 24,
     justifyContent: 'center',
     minHeight: 48,
     paddingHorizontal: 16,

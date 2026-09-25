@@ -330,6 +330,14 @@ export class ExpoCameraPlatform implements CameraPlatform {
   async getCapabilities(): Promise<CapabilitySnapshot> {
     if (this.options.capabilityProbe) return this.options.capabilityProbe();
 
+    // Android emulators can expose a VirtualScene camera without being physical
+    // devices. The JS availability probe may exist but call a web-only native
+    // method. Permit the native permission/preview flow on Android instead;
+    // onCameraReady and mount/capture errors establish actual camera readiness.
+    if (Platform.OS === 'android') {
+      return { camera: 'supported', microphone: 'supported' };
+    }
+
     try {
       // `isAvailableAsync` is currently only registered by Expo Camera on
       // web. Some native SDK builds therefore expose no probe at all. A
@@ -407,7 +415,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
       base64: picture.base64,
       format: picture.format,
       height: picture.height,
-      source: 'camera',
+      source: Platform.OS === 'android' && !Device.isDevice ? 'demo-fixture' : 'camera',
       width: picture.width,
     };
   }

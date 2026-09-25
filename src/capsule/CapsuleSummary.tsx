@@ -1,3 +1,4 @@
+import { DarkroomRoll } from './DarkroomRoll';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useCapsule } from './CapsuleProvider';
@@ -123,23 +124,26 @@ function ReadyCapsuleSummary({
   return (
     <View style={styles.stack} testID="capsule-ready">
       <View>
-        <Text style={styles.label}>HOME</Text>
         <Text accessibilityRole="header" style={styles.title} testID="group-name">
           {groupName}
         </Text>
-        <Text style={styles.mutedText}>Shared capsule · Sample group</Text>
+        <Text style={styles.mutedText}>
+          ● {revealState === 'locked' ? 'COLLECTING · SEALED ROLL' : revealState.toUpperCase()}
+        </Text>
       </View>
 
-      {countdown ? (
+      <DarkroomRoll
+        seconds={revealState === 'locked' ? (countdown?.seconds ?? 0) : 0}
+        released={revealState === 'released'}
+      />
+      {countdown && revealState === 'locked' ? (
         <View
           accessible
           accessibilityLabel={`Current capsule. ${countdown.label}.`}
           style={styles.panel}
           testID="cycle-countdown-panel"
         >
-          <Text style={styles.label}>CURRENT CAPSULE</Text>
-          <Text style={styles.panelTitle}>Collection is open</Text>
-          <Text accessibilityLiveRegion="polite" style={styles.countdown} testID="cycle-countdown">
+          <Text style={styles.countdown} testID="cycle-countdown">
             {countdown.label}
           </Text>
         </View>
@@ -153,7 +157,7 @@ function ReadyCapsuleSummary({
         style={styles.panel}
         testID="cycle-prompt"
       >
-        <Text style={styles.label}>THIS CYCLE</Text>
+        <Text style={styles.label}>THIS CYCLE’S PROMPT</Text>
         <Text style={styles.prompt}>{cycle.prompt}</Text>
       </View>
 
@@ -163,7 +167,7 @@ function ReadyCapsuleSummary({
         style={styles.quotaPanel}
         testID="cycle-quota"
       >
-        <Text style={styles.label}>MY ALLOWANCE</Text>
+        <Text style={styles.label}>YOUR ROLL</Text>
         <Text style={styles.panelTitle}>
           {countUsed} of {cycle.quota.maxCount} contributions
         </Text>
@@ -173,7 +177,13 @@ function ReadyCapsuleSummary({
         </Text>
       </View>
 
+      <View accessible={false} style={styles.meter}>
+        {Array.from({ length: Math.min(cycle.quota.maxCount, 20) }, (_, i) => (
+          <View key={i} style={[styles.meterSegment, i < countUsed && styles.meterUsed]} />
+        ))}
+      </View>
       <RevealEducationPanel
+        actionLabel={revealState === 'locked' ? 'Add to the roll' : 'Open Archive'}
         onAction={
           revealState === 'locked'
             ? (onAddMoment ?? (() => undefined))
@@ -188,7 +198,10 @@ function ReadyCapsuleSummary({
 }
 
 const styles = StyleSheet.create({
-  stack: { gap: 18 },
+  meter: { flexDirection: 'row', gap: 5, marginTop: -6 },
+  meterSegment: { flex: 1, height: 4, backgroundColor: COLORS.line, borderRadius: 2 },
+  meterUsed: { backgroundColor: COLORS.accent },
+  stack: { gap: 12 },
   statusPanel: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,
@@ -213,26 +226,19 @@ const styles = StyleSheet.create({
   },
   retryButtonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
   label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 30, fontWeight: '700', marginTop: 6 },
-  mutedText: { color: COLORS.muted, fontSize: 14, marginTop: 4 },
-  panel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 8,
-    padding: 16,
-  },
-  panelTitle: { color: COLORS.ink, fontSize: 22, fontWeight: '700' },
-  countdown: { color: COLORS.accent, fontSize: 18, fontWeight: '700' },
-  prompt: { color: COLORS.ink, fontSize: 18, fontWeight: '600', lineHeight: 24 },
+  title: { color: COLORS.ink, fontSize: 25, fontWeight: '700', marginTop: 6 },
+  mutedText: { color: COLORS.accent, fontSize: 11, letterSpacing: 1.5, marginTop: 10 },
+  panel: { gap: 8 },
+  panelTitle: { color: COLORS.ink, fontSize: 17, fontWeight: '700' },
+  countdown: { color: COLORS.accent, fontSize: 12, fontWeight: '700' },
+  prompt: { color: COLORS.ink, fontSize: 25, fontWeight: '500', lineHeight: 30 },
   quotaPanel: {
     borderBottomColor: COLORS.line,
-    borderBottomWidth: 1,
+    borderBottomWidth: 0,
     borderTopColor: COLORS.line,
     borderTopWidth: 1,
     gap: 8,
-    paddingVertical: 14,
+    paddingVertical: 10,
   },
   lockedPanel: {
     backgroundColor: COLORS.deep,

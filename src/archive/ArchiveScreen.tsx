@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
 import type { ReleasedArchive, ReleasedArchiveMedia } from '../domain/archive';
@@ -118,6 +118,19 @@ function ArchiveEntries({
 }
 
 export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
+  return (
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+      testID="archive-scroll"
+    >
+      <ArchiveContent runtimeClient={runtimeClient} />
+    </ScrollView>
+  );
+}
+
+function ArchiveContent({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
   const { session } = useDemoSession();
   const { state: capsuleState, retry: retryCapsule } = useCapsule();
   const [state, setState] = useState<ArchiveState>({ status: 'loading' });
@@ -244,6 +257,8 @@ function PremiereStatus({
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1, minHeight: 0 },
+  content: { flexGrow: 1, padding: 24, paddingBottom: 32 },
   stack: { gap: 14 },
   panel: {
     backgroundColor: COLORS.paper,
@@ -258,13 +273,13 @@ const styles = StyleSheet.create({
   sectionTitle: { color: COLORS.ink, fontSize: 22, fontWeight: '700' },
   subhead: { color: COLORS.ink, fontSize: 16, fontWeight: '700', marginTop: 4 },
   bodyText: { color: COLORS.muted, fontSize: 15, lineHeight: 22 },
-  player: { backgroundColor: COLORS.deep, borderRadius: 8, height: 360, width: '100%' },
+  player: { backgroundColor: COLORS.deep, borderRadius: 24, height: 360, width: '100%' },
   retryButton: {
     alignItems: 'center',
     alignSelf: 'flex-start',
     backgroundColor: COLORS.background,
     borderColor: COLORS.edge,
-    borderRadius: 8,
+    borderRadius: 24,
     borderWidth: 1,
     minHeight: 48,
     justifyContent: 'center',
@@ -278,11 +293,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     alignSelf: 'flex-start',
     backgroundColor: COLORS.deep,
-    borderRadius: 8,
-    minHeight: 42,
+    borderRadius: 24,
+    minHeight: 48,
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
-  downloadText: { color: COLORS.paper, fontSize: 14, fontWeight: '700' },
+  downloadText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
   notice: { color: COLORS.muted, fontSize: 14 },
 });

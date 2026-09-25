@@ -295,12 +295,15 @@ describe('Rewind Home start screen', () => {
   it('keeps sample moments sealed and routes Add a moment to Camera', async () => {
     const result = await render(<App />);
 
-    expect(result.getByLabelText('Locked demo moment 1 of 3')).toBeTruthy();
-    expect(result.getByLabelText('Locked demo moment 2 of 3')).toBeTruthy();
-    expect(result.getByLabelText('Locked demo moment 3 of 3')).toBeTruthy();
-    expect(result.getByRole('button', { name: 'Add a moment' })).toBeTruthy();
+    expect(
+      result.getByLabelText(
+        'Illustrative sealed film frames. No media previews or contribution count.',
+      ),
+    ).toBeTruthy();
+    expect(result.queryAllByRole('image')).toHaveLength(0);
+    expect(result.getByRole('button', { name: 'Add to the roll' })).toBeTruthy();
 
-    await fireEvent.press(result.getByRole('button', { name: 'Add a moment' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Add to the roll' }));
     expect(await result.findByRole('header', { name: 'Add a still moment' })).toBeTruthy();
   });
 
