@@ -1,5 +1,6 @@
 import React from 'react';
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { AppState } from 'react-native';
 
 import { CameraCaptureScreen } from '../src/capture/CameraCaptureScreen';
 import {
@@ -48,16 +49,41 @@ async function screen(
     files: new InMemoryCaptureFileStore(),
     metadata: new InMemoryImageMetadataStore(),
   },
+  createCaptureId: () => string = () => 'capture-ui',
 ) {
   return render(
     <CameraCaptureScreen
-      createCaptureId={() => 'capture-ui'}
+      createCaptureId={createCaptureId}
       fileStore={stores.files}
       metadataStore={stores.metadata}
       now={() => new Date('2026-09-10T00:00:00.000Z')}
       platform={platform}
     />,
   );
+}
+
+/**
+ * Drive the AppState subscription deterministically and restore the captured
+ * original afterwards. The React Native preset already installs
+ * `addEventListener` as a jest mock, so restoring that mock would leave later
+ * unmounts calling `undefined.remove()`.
+ */
+function stubAppState(): { emit: (state: string) => void; restore: () => void } {
+  const original = AppState.addEventListener;
+  let listener: ((state: string) => void) | null = null;
+  (AppState as unknown as { addEventListener: unknown }).addEventListener = ((
+    _eventName: string,
+    next: (state: string) => void,
+  ) => {
+    listener = next;
+    return { remove: jest.fn() };
+  }) as never;
+  return {
+    emit: (state) => listener?.(state),
+    restore: () => {
+      (AppState as unknown as { addEventListener: unknown }).addEventListener = original;
+    },
+  };
 }
 
 describe('CameraCaptureScreen', () => {
@@ -217,5 +243,160 @@ describe('CameraCaptureScreen', () => {
     await fireEvent.press(result.getByTestId('camera-capture'));
     await result.findByTestId('camera-write-failed');
     expect(result.queryByTestId('camera-demo-preview')).toBeNull();
+  });
+
+  it('resumes an already-captured preview after the app is backgrounded', async () => {
+    const appState = stubAppState();
+    const stores = {
+      files: new InMemoryCaptureFileStore(),
+      metadata: new InMemoryImageMetadataStore(),
+    };
+    const result = await screen(new DemoCameraPlatform(), stores);
+
+    await result.findByTestId('camera-capture');
+    await fireEvent.press(result.getByTestId('camera-capture'));
+    await result.findByTestId('camera-demo-preview');
+
+    await act(async () => {
+      appState.emit('background');
+    });
+
+    // Backgrounding resumes an established preview: it is a durable managed
+    // file this route still owns, and nothing about the suspension invalidates
+    // it. Losing a captured still here would be the surprising outcome.
+    expect(result.getByTestId('camera-preview-panel')).toBeTruthy();
+    expect(stores.files.size).toBe(1);
+    expect(await stores.metadata.list()).toEqual([]);
+
+    // Returning to the foreground re-checks access and keeps the preview
+    // actionable rather than stranding it.
+    await act(async () => {
+      appState.emit('active');
+    });
+    expect(result.getByTestId('camera-preview-panel')).toBeTruthy();
+    appState.restore();
+  });
+
+  it('ignores a stale capture that resolves after the app was backgrounded', async () => {
+    const appState = stubAppState();
+    const platform = new DemoCameraPlatform();
+    let resolveCapture!: (image: Awaited<ReturnType<CameraPlatform['captureStill']>>) => void;
+    jest.spyOn(platform, 'captureStill').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCapture = resolve;
+        }),
+    );
+    const stores = {
+      files: new InMemoryCaptureFileStore(),
+      metadata: new InMemoryImageMetadataStore(),
+    };
+    const result = await screen(platform, stores);
+
+    await result.findByTestId('camera-capture');
+    // Hold the capture pending so backgrounding happens mid-capture, which is
+    // exactly the interruption the sequence guard has to survive. One act
+    // block keeps the ordering explicit and avoids overlapping act() calls.
+    await act(async () => {
+      const press = fireEvent.press(result.getByTestId('camera-capture'));
+      appState.emit('background');
+      resolveCapture({
+        format: 'jpg',
+        height: 900,
+        source: 'demo-fixture',
+        sourceUri: 'fixture://late-still',
+        width: 1200,
+      });
+      await press;
+    });
+
+    // A late completion must not publish a preview that this mount no longer
+    // owns; the still route returns to its ready state instead.
+    expect(result.queryByTestId('camera-preview-panel')).toBeNull();
+    await result.findByTestId('camera-capture');
+    expect(stores.files.size).toBe(0);
+    appState.restore();
+  });
+
+  it('keeps a newer file-backed preview when an older capture finishes late', async () => {
+    const appState = stubAppState();
+    const files = new InMemoryCaptureFileStore();
+    const stores = { files, metadata: new InMemoryImageMetadataStore() };
+    const platform: CameraPlatform = {
+      captureStill: jest
+        .fn()
+        .mockResolvedValueOnce({
+          format: 'jpg',
+          height: 900,
+          source: 'camera' as const,
+          sourceUri: 'file://older-capture.jpg',
+          width: 1200,
+        })
+        .mockResolvedValueOnce({
+          format: 'jpg',
+          height: 900,
+          source: 'camera' as const,
+          sourceUri: 'file://newer-capture.jpg',
+          width: 1200,
+        }),
+      getCapabilities: jest
+        .fn()
+        .mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
+      getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      kind: 'expo',
+      openSettings: jest.fn().mockResolvedValue(undefined),
+      requestPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      supportsLivePreview: false,
+    };
+    const originalExists = files.exists.bind(files);
+    const exists = jest.spyOn(files, 'exists');
+    let resolveOlderExists!: (value: boolean) => void;
+    exists.mockImplementation((uri) =>
+      uri.endsWith('capture-older.jpg')
+        ? new Promise<boolean>((resolve) => {
+            resolveOlderExists = resolve;
+          })
+        : originalExists(uri),
+    );
+    let captureNumber = 0;
+    const result = await screen(platform, stores, () =>
+      ++captureNumber === 1 ? 'capture-older' : 'capture-newer',
+    );
+
+    await result.findByTestId('camera-capture');
+    let olderCapture!: Promise<void>;
+    await act(async () => {
+      olderCapture = fireEvent.press(result.getByTestId('camera-capture'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(exists).toHaveBeenCalledWith('memory://rewind-stills/capture-older.jpg'),
+    );
+
+    await act(async () => {
+      appState.emit('background');
+      appState.emit('active');
+    });
+    await result.findByTestId('camera-capture');
+    await act(async () => {
+      await fireEvent.press(result.getByTestId('camera-capture'));
+    });
+    await result.findByTestId('camera-preview-panel');
+    const newerPreview = result.getByLabelText('Captured still preview');
+    const newerUri = newerPreview.props.source.uri as string;
+    expect(newerUri).toBe('memory://rewind-stills/capture-newer.jpg');
+    expect(await files.exists(newerUri)).toBe(true);
+
+    await act(async () => {
+      resolveOlderExists(true);
+      await olderCapture;
+    });
+    expect(result.getByTestId('camera-preview-panel')).toBeTruthy();
+    expect(result.getByLabelText('Captured still preview').props.source.uri).toBe(newerUri);
+    expect(await files.exists(newerUri)).toBe(true);
+    expect(files.size).toBe(1);
+
+    appState.restore();
   });
 });
