@@ -267,6 +267,7 @@ function ActiveAppShell({
   );
   const [confirmResetDialogOpen, setConfirmResetDialogOpen] = useState(false);
   const previousRoute = useRef(activeRoute);
+  const initialFocusPending = useRef(true);
   const { retry: refreshCapsule, state: capsuleState } = useCapsule();
   const { session } = useDemoSession();
   const chatGroup = 'group' in capsuleState ? capsuleState.group : null;
@@ -290,19 +291,40 @@ function ActiveAppShell({
       : cycleRevealState;
 
   useEffect(() => {
-    if (Platform.OS !== 'web' || previousRoute.current === activeRoute) return;
+    const shouldFocus = initialFocusPending.current || previousRoute.current !== activeRoute;
     previousRoute.current = activeRoute;
-    const timer = setTimeout(() => {
-      if (typeof document === 'undefined') return;
-      const heading = document.querySelector<HTMLElement>(
-        `#screen-route-${activeRoute} [data-testid="route-heading-${activeRoute}"]`,
+    initialFocusPending.current = false;
+    if (Platform.OS !== 'web' || !shouldFocus) return;
+    if (typeof document === 'undefined') return;
+    const route = document.getElementById(`screen-route-${activeRoute}`);
+    if (!route) return;
+    const focusHeading = () => {
+      const heading = route.querySelector<HTMLElement>(
+        `[data-testid="route-heading-${activeRoute}"]`,
       );
-      if (heading) {
-        heading.tabIndex = -1;
-        heading.focus();
+      if (!heading) return false;
+      heading.tabIndex = -1;
+      heading.focus();
+      return true;
+    };
+    if (focusHeading()) return;
+    let timeout: ReturnType<typeof setTimeout>;
+    const observer = new MutationObserver(() => {
+      if (focusHeading()) {
+        observer.disconnect();
+        clearTimeout(timeout);
       }
-    }, 0);
-    return () => clearTimeout(timer);
+    });
+    timeout = setTimeout(() => observer.disconnect(), 5000);
+    observer.observe(route, { childList: true, subtree: true });
+    if (focusHeading()) {
+      observer.disconnect();
+      clearTimeout(timeout);
+    }
+    return () => {
+      observer.disconnect();
+      clearTimeout(timeout);
+    };
   }, [activeRoute]);
 
   useEffect(() => {
@@ -628,8 +650,8 @@ function SettingsScreen({
         </Pressable>
       </ScrollView>
       <Modal
+        animationType="none"
         accessibilityLabel="Reset local Demo data confirmation"
-        animationType="fade"
         onRequestClose={() => {
           setConfirmOpen(false);
           restoreResetTrigger();
@@ -637,8 +659,8 @@ function SettingsScreen({
         transparent
         visible={confirmOpen}
       >
-        <View accessibilityRole="alert" style={styles.modalBackdrop} testID="reset-confirmation">
-          <View accessibilityViewIsModal accessibilityRole="alert" style={styles.modalCard}>
+        <View accessible={false} style={styles.modalBackdrop} testID="reset-confirmation">
+          <View style={styles.modalCard}>
             <Text accessibilityRole="header" style={[styles.dialogTitle, { color: '#fff7ec' }]}>
               Reset local Demo data?
             </Text>

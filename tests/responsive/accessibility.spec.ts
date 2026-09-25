@@ -54,6 +54,7 @@ test('dialog traps keyboard focus, restores its trigger, and has no serious or c
   await page.keyboard.press('Enter');
   const dialog = page.getByTestId('reset-confirmation');
   await expect(dialog).toBeVisible();
+  await expect(page.locator('[aria-modal="true"]')).toHaveAttribute('role', 'dialog');
   await expect(
     page.getByRole('dialog', { name: 'Reset local Demo data confirmation' }),
   ).toBeVisible();
@@ -127,6 +128,7 @@ test('keyboard navigation keeps focus on visible controls and reaches each main 
   await tabUntilFocused(page, page.getByTestId('demo-entry-demo-1'));
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('main-navigation')).toBeVisible();
+  await expect(page.getByTestId('route-heading-home')).toBeFocused();
   for (const route of ['camera', 'chat', 'archive', 'settings', 'home'] as const) {
     const navigationItem = page.getByTestId(`nav-${route}`);
     await tabUntilFocused(page, navigationItem);
