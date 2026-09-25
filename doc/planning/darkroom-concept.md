@@ -8,7 +8,9 @@ Branch: `ui-concept/loi-darkroom`. Reference: supplied
 This is an agent-assisted source audit and design proposal, not a human journey
 observation, peer critique, agreed kickoff record, or test completion record.
 Discovery-question ownership still needs agreement with the other contributors.
-No implementation, public posting, deployment, or merge is part of this draft.
+The original audit below is historical. Implementation and current verification
+are recorded in the dated updates at the end; unfinished human checkpoints
+remain pending.
 
 ## Two rough directions for peer critique
 
@@ -271,3 +273,44 @@ Changed UI files passed ESLint. Full `npm run check` stopped at formatting
 warnings in 174 files, including untouched baseline files on this Windows
 checkout; no blanket formatting was applied. Native visual review, Firefox,
 connected runtime walkthrough and human critiques remain outstanding.
+
+## Submission checkpoint — 25 September 2026
+
+Implemented direction: B1, preserving five destinations with the supplied
+Darkroom visual language. Loi selected Darkroom and iteratively reviewed the
+filmstrip width, camera icon, perforations and gradient. These owner decisions
+are not substitutes for the issue's independent peer critiques.
+
+Implementation commit: `62e8b94`; integration with current main: `9676a43`.
+The merge preserves contribution-ledger, unread-chat and accessibility changes.
+Loi confirmed the merged app works. No concept merge into main is intended.
+
+| Environment                                                     | Evidence and result                                                                                                                     | Remaining limitations                                                                                                                    |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Android Medium_Phone emulator, Expo Go; OS version not recorded | Loi reported launch, still capture, permission recovery, large text and normal text passed; merged build smoke test passed at `9676a43` | Full connected capture-to-release journey, OS version and final screenshots still pending                                                |
+| Chromium: Edge 153.0.4234.48, Windows                           | Earlier implementation review at 320/390/1280 widths passed navigation and overflow checks                                              | Full keyboard/focus script and post-merge browser retest pending; earlier review was of the working tree, not a separately pinned commit |
+| iOS iPhone 14+ simulator                                        | Not tested                                                                                                                              | No macOS/iOS simulator available in this Windows workspace; teammate execution needed                                                    |
+| Firefox or Safari                                               | Not tested                                                                                                                              | Second-engine review has not been performed                                                                                              |
+
+Android defects and retests: enabled the configured virtual camera instead of
+rejecting emulators; made capture content scroll above navigation; corrected
+Archive's short offline layout; switched navigation to two rows for large text.
+Loi subsequently reported permission recovery, still capture, and both text
+sizes passed. Expo Camera deliberately generates a timestamp still on Android
+emulators; the review now identifies that limitation. A physical device is
+needed to verify actual scene photography. Offline Chat/Archive correctly state
+that the runtime is unavailable; this does not verify connected functionality.
+
+Automated merge verification: 348/349 Jest tests passed initially. The one
+failure was an ambiguous Amber label in Settings after adding the actor header;
+the assertion was scoped to the identity card and all 10 tests in that suite
+passed on rerun. TypeScript, affected-file ESLint and architecture checks passed.
+Submission rerun of `npm run check` stopped at Prettier warnings in 200 files,
+including untouched incoming files; later stages did not run through that
+command. No repository-wide formatting change was made.
+
+Still pending for #189: six attributed inspiration references, confirmed
+discovery-question ownership, firsthand peer challenge, recorded synchronous
+kickoff and rough-direction critique, both peers' cross-use reviews, complete
+cross-platform matrix and final visual captures, and the team's comparison and
+explicit decision. No human feedback, agreement or sign-off is inferred.
