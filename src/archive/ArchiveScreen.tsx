@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
 import type { ReleasedArchive, ReleasedArchiveMedia } from '../domain/archive';
+import type { CycleHistoryEntry } from '../domain/cycles';
 import type { Premiere } from '../domain/premiere';
 import { useCapsule } from '../capsule/CapsuleProvider';
 import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
@@ -15,7 +16,12 @@ import { createArchiveDownloadQueue } from './archive-download';
 type ArchiveState =
   | { status: 'loading' }
   | { status: 'unavailable'; message: string }
-  | { status: 'ready'; premiere: Premiere; archive: ReleasedArchive };
+  | {
+      status: 'ready';
+      premiere: Premiere;
+      archive: ReleasedArchive;
+      cycles: CycleHistoryEntry[];
+    };
 
 const EMPTY_ARCHIVE: ReleasedArchive = { films: [], clips: [] };
 
@@ -55,8 +61,10 @@ function ArchiveEntries({
   archive,
   download,
   notice,
+  cycles,
 }: {
   archive: ReleasedArchive;
+  cycles: CycleHistoryEntry[];
   download: (media: ReleasedArchiveMedia) => void;
   notice: string | null;
 }) {
@@ -74,6 +82,9 @@ function ArchiveEntries({
         archive.films.map((film) => (
           <View key={film.id} style={styles.entry}>
             <Text style={styles.entryTitle}>Group film</Text>
+            <Text style={styles.entryMeta} testID={`archive-film-cycle-${film.id}`}>
+              Cycle: {cycles.find((cycle) => cycle.id === film.cycleId)?.prompt ?? 'Previous cycle'}
+            </Text>
             <Text style={styles.entryMeta}>
               Released {new Date(film.publishedAt).toLocaleDateString()}
             </Text>
@@ -97,6 +108,9 @@ function ArchiveEntries({
         archive.clips.map((clip) => (
           <View key={clip.id} style={styles.entry}>
             <Text style={styles.entryTitle}>Your clip</Text>
+            <Text style={styles.entryMeta} testID={`archive-clip-cycle-${clip.id}`}>
+              Cycle: {cycles.find((cycle) => cycle.id === clip.cycleId)?.prompt ?? 'Previous cycle'}
+            </Text>
             <Pressable
               accessibilityLabel="Download your released clip"
               accessibilityRole="button"
@@ -113,6 +127,24 @@ function ArchiveEntries({
           {notice}
         </Text>
       ) : null}
+      <Text accessibilityRole="header" style={styles.subhead}>
+        Cycle history
+      </Text>
+      {cycles.map((cycle) => (
+        <View key={cycle.id} style={styles.entry} testID={`archive-cycle-${cycle.id}`}>
+          <Text style={styles.entryTitle}>{cycle.prompt}</Text>
+          <Text style={styles.entryMeta}>
+            {new Date(cycle.startsAt).toLocaleDateString()} –{' '}
+            {new Date(cycle.endsAt).toLocaleDateString()}
+          </Text>
+          <Text style={styles.entryMeta}>{cycle.status}</Text>
+          {cycle.releaseStatus === 'unpublished' ? (
+            <Text style={styles.bodyText} testID={`archive-cycle-locked-${cycle.id}`}>
+              This cycle is locked. Only its prompt and dates are available.
+            </Text>
+          ) : null}
+        </View>
+      ))}
     </View>
   );
 }
@@ -140,8 +172,26 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
       runtimeClient.getReleasedArchive
         ? runtimeClient.getReleasedArchive(session.id, group.id)
         : Promise.resolve(EMPTY_ARCHIVE),
+      runtimeClient.getCycleHistory
+        ? runtimeClient.getCycleHistory(session.id, group.id)
+        : Promise.resolve(
+            cycle
+              ? [
+                  {
+                    id: cycle.id,
+                    prompt: cycle.prompt,
+                    startsAt: cycle.startsAt,
+                    endsAt: cycle.endsAt,
+                    status: cycle.status,
+                    releaseStatus: 'unpublished' as const,
+                  },
+                ]
+              : [],
+          ),
     ])
-      .then(([premiere, archive]) => setState({ status: 'ready', premiere, archive }))
+      .then(([premiere, archive, cycles]) =>
+        setState({ status: 'ready', premiere, archive, cycles }),
+      )
       .catch((error: unknown) =>
         setState({
           status: 'unavailable',
@@ -176,48 +226,79 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
       );
   };
 
+  if (state.status === 'loading') {
+    return (
+      <View style={styles.panel} testID="archive-loading">
+        <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
+          Archive
+        </Text>
+        <Text style={styles.label}>ARCHIVE</Text>
+        <Text accessibilityLiveRegion="polite" style={styles.title}>
+          Checking the group premiere…
+        </Text>
+      </View>
+    );
+  }
+
+  if (state.status === 'unavailable') {
+    return (
+      <View style={styles.panel} testID="archive-unavailable">
+        <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
+          Archive
+        </Text>
+        <Text style={styles.label}>ARCHIVE</Text>
+        <Text accessibilityRole="header" style={styles.title}>
+          Premiere unavailable
+        </Text>
+        <Text accessibilityLiveRegion="assertive" style={styles.bodyText}>
+          {state.message}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            retryCapsule();
+            load();
+          }}
+          style={styles.retryButton}
+        >
+          <Text style={styles.retryText}>Retry premiere</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const releasedCycleIds = new Set(
+    state.cycles.filter((cycle) => cycle.releaseStatus === 'published').map((cycle) => cycle.id),
+  );
+  const premierePanel =
+    state.premiere.state === 'ready' ? (
+      releasedCycleIds.has(state.premiere.cycleId) ? (
+        <PublishedPlayer premiere={state.premiere} />
+      ) : (
+        <PremiereStatus
+          premiere={{ state: 'locked', cycleId: state.premiere.cycleId }}
+          reload={load}
+        />
+      )
+    ) : (
+      <PremiereStatus premiere={state.premiere} reload={load} />
+    );
+  const releasedArchive: ReleasedArchive = {
+    films: state.archive.films.filter((film) => releasedCycleIds.has(film.cycleId)),
+    clips: state.archive.clips.filter((clip) => releasedCycleIds.has(clip.cycleId)),
+  };
   return (
-    <View style={styles.archiveScreen}>
+    <View style={styles.stack}>
       <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
         Archive
       </Text>
-      {state.status === 'loading' ? (
-        <View style={styles.panel} testID="archive-loading">
-          <Text style={styles.label}>ARCHIVE</Text>
-          <Text accessibilityRole="header" style={styles.title}>
-            Checking the group premiere…
-          </Text>
-        </View>
-      ) : state.status === 'unavailable' ? (
-        <View style={styles.panel} testID="archive-unavailable">
-          <Text style={styles.label}>ARCHIVE</Text>
-          <Text accessibilityRole="header" style={styles.title}>
-            Premiere unavailable
-          </Text>
-          <Text accessibilityLiveRegion="assertive" style={styles.bodyText}>
-            {state.message}
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              retryCapsule();
-              load();
-            }}
-            style={styles.retryButton}
-          >
-            <Text style={styles.retryText}>Retry premiere</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <View style={styles.stack}>
-          {state.premiere.state === 'ready' ? (
-            <PublishedPlayer premiere={state.premiere} />
-          ) : (
-            <PremiereStatus premiere={state.premiere} reload={load} />
-          )}
-          <ArchiveEntries archive={state.archive} download={download} notice={downloadNotice} />
-        </View>
-      )}
+      {premierePanel}
+      <ArchiveEntries
+        archive={releasedArchive}
+        cycles={state.cycles}
+        download={download}
+        notice={downloadNotice}
+      />
     </View>
   );
 }
@@ -241,7 +322,6 @@ function PremiereStatus({
 }
 
 const styles = StyleSheet.create({
-  archiveScreen: { gap: 12 },
   stack: { gap: 14 },
   panel: {
     backgroundColor: COLORS.paper,
@@ -281,6 +361,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
-  downloadText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
+  downloadText: { color: COLORS.paper, fontSize: 14, fontWeight: '700' },
   notice: { color: COLORS.muted, fontSize: 14 },
 });
