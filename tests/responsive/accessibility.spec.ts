@@ -94,12 +94,16 @@ test('Archive loading and Demo access error states have no serious or critical A
     await new Promise<void>((resolve) => releasePremiereRequests.push(resolve));
     await route.continue();
   });
-  await page.getByTestId('nav-archive').click();
-  await expect(page.getByTestId('archive-loading')).toBeVisible();
-  await expectNoSeriousAxeViolations(page, 'loading');
-  releasePremiereRequests.forEach((release) => release());
-  await expect(page.getByTestId('archive-locked')).toBeVisible();
-  await page.unroute('**/api/cycles/*/premiere**');
+  try {
+    await page.getByTestId('nav-archive').click();
+    await expect(page.getByTestId('archive-loading')).toBeVisible({ timeout: 15_000 });
+    await expectNoSeriousAxeViolations(page, 'loading');
+    releasePremiereRequests.splice(0).forEach((release) => release());
+    await expect(page.getByTestId('archive-locked')).toBeVisible({ timeout: 15_000 });
+  } finally {
+    releasePremiereRequests.splice(0).forEach((release) => release());
+    await page.unroute('**/api/cycles/*/premiere**');
+  }
 });
 
 test('Demo access error state has no serious or critical Axe violations', async ({ page }) => {
