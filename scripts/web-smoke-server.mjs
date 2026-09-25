@@ -66,6 +66,7 @@ async function main() {
     await run(process.env.npm_execpath || 'npm', ['run', 'server:build']);
     const webExportEnv = {
       ...process.env,
+      EXPO_PUBLIC_DEMO_ACCESS: 'entry',
       EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
     };
     // Responsive/browser smoke coverage must exercise the real web adapter.

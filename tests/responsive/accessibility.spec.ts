@@ -1,0 +1,155 @@
+import { default as PlaywrightAxeBuilder } from '@axe-core/playwright';
+import { expect, test, type Page } from '@playwright/test';
+
+test.use({ serviceWorkers: 'block' });
+
+async function enterDemo(page: Page) {
+  await page.goto('/');
+  const chooser = page.getByTestId('demo-entry-demo-1');
+  const navigation = page.getByTestId('main-navigation');
+  await expect
+    .poll(
+      async () =>
+        (await chooser.isVisible().catch(() => false)) ||
+        (await navigation.isVisible().catch(() => false)),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
+  if (await chooser.isVisible().catch(() => false)) await chooser.click();
+  await expect(navigation).toBeVisible({ timeout: 15_000 });
+}
+
+async function tabUntilFocused(page: Page, target: ReturnType<Page['getByTestId']>, limit = 80) {
+  for (let step = 0; step < limit; step += 1) {
+    if (await target.evaluate((element) => document.activeElement === element).catch(() => false)) {
+      return;
+    }
+    await page.keyboard.press('Tab');
+  }
+  throw new Error(`Keyboard tab order did not reach ${await target.getAttribute('data-testid')}`);
+}
+
+async function expectNoSeriousAxeViolations(page: Page, state: string) {
+  const results = await new PlaywrightAxeBuilder({ page })
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    .analyze();
+  const serious = results.violations.filter((violation) =>
+    ['serious', 'critical'].includes(violation.impact ?? ''),
+  );
+  expect(serious, `${state}: ${JSON.stringify(serious, null, 2)}`).toEqual([]);
+}
+
+test('Home, Settings, Camera, Chat, and Archive have no serious or critical Axe violations', async ({
+  page,
+}) => {
+  await enterDemo(page);
+  await expectNoSeriousAxeViolations(page, 'home');
+  for (const route of ['home', 'settings', 'camera', 'chat', 'archive'] as const) {
+    await page.getByTestId(`nav-${route}`).click();
+    if (route !== 'home') {
+      await expect(page.getByTestId(`route-heading-${route}`)).toBeFocused();
+    }
+    await expectNoSeriousAxeViolations(page, route);
+  }
+});
+
+test('dialog traps keyboard focus, restores its trigger, and has no serious or critical violations', async ({
+  page,
+}) => {
+  await enterDemo(page);
+  await page.getByTestId('nav-settings').click();
+  const trigger = page.getByTestId('reset-demo-data');
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByTestId('reset-confirmation');
+  await expect(dialog).toBeVisible();
+  await expect(page.locator('[aria-modal="true"]')).toHaveAttribute('role', 'dialog');
+  await expect(
+    page.getByRole('dialog', { name: 'Reset local Demo data confirmation' }),
+  ).toBeVisible();
+  await expectNoSeriousAxeViolations(page, 'dialog');
+  const controls = dialog.getByRole('button');
+  const last = controls.last();
+  const first = controls.first();
+  const backgroundButton = page.getByTestId('sign-out');
+  await backgroundButton.evaluate((element) => (element as HTMLElement).focus());
+  await expect(backgroundButton).not.toBeFocused();
+  await first.focus();
+  await page.keyboard.press('Tab');
+  await expect(last).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(first).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(last).toBeFocused();
+  await page.getByRole('button', { name: 'Keep local data' }).click();
+  await expect(trigger).toBeFocused();
+});
+
+test('Archive loading and Demo access error states have no serious or critical Axe violations', async ({
+  page,
+}) => {
+  await enterDemo(page);
+  const releasePremiereRequests: (() => void)[] = [];
+  await page.route('**/api/cycles/*/premiere**', async (route) => {
+    await new Promise<void>((resolve) => releasePremiereRequests.push(resolve));
+    await route.continue();
+  });
+  try {
+    await page.getByTestId('nav-archive').click();
+    await expect(page.getByTestId('archive-loading')).toBeVisible({ timeout: 15_000 });
+    await expectNoSeriousAxeViolations(page, 'loading');
+    releasePremiereRequests.splice(0).forEach((release) => release());
+    await expect(page.getByTestId('archive-locked')).toBeVisible({ timeout: 15_000 });
+  } finally {
+    releasePremiereRequests.splice(0).forEach((release) => release());
+    await page.unroute('**/api/cycles/*/premiere**');
+  }
+});
+
+test('Demo access error state has no serious or critical Axe violations', async ({ page }) => {
+  await page.route('**/sessions/demo', async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: '{"error":"runtime_unavailable","message":"The local runtime is offline."}',
+    });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await page.getByTestId('demo-entry-demo-1').click();
+  await expect(page.getByRole('alert')).toContainText('local runtime is offline');
+  await expect(page.getByRole('button', { name: 'Retry Demo access' })).toBeVisible();
+  await expectNoSeriousAxeViolations(page, 'error');
+});
+
+test('entry chooser has no serious or critical Axe violations', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await expectNoSeriousAxeViolations(page, 'entry');
+});
+
+/*
+ * The browser tab order is deliberately exercised along with route heading
+ * focus, so no navigation check is satisfied by a pointer-only interaction.
+ */
+test('keyboard navigation keeps focus on visible controls and reaches each main route', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await tabUntilFocused(page, page.getByTestId('demo-entry-demo-1'));
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('main-navigation')).toBeVisible();
+  await expect(page.getByTestId('route-heading-home')).toBeFocused();
+  for (const route of ['camera', 'chat', 'archive', 'settings', 'home'] as const) {
+    const navigationItem = page.getByTestId(`nav-${route}`);
+    await tabUntilFocused(page, navigationItem);
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId(`route-heading-${route}`)).toBeFocused();
+    await page.keyboard.press('Tab');
+    const focused = page.locator(':focus');
+    await expect(focused).toBeVisible();
+    await expect(focused).not.toHaveAttribute('aria-hidden', 'true');
+  }
+});

@@ -7,6 +7,8 @@ import test from 'node:test';
 
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
+const { createGroup } = await import('../dist/groups/index.js');
+const { createChatMessage } = await import('../dist/chat/index.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { RealtimeHub } = await import('../dist/realtime/index.js');
 
@@ -100,7 +102,11 @@ async function readSseEvent(reader, pending = '') {
         .filter((line) => line.startsWith('data: '))
         .map((line) => line.slice('data: '.length))
         .join('\n');
-      if (data) return { event: JSON.parse(data), pending: buffer };
+      if (data) {
+        const eventName = block.match(/^event: (.+)$/m)?.[1] ?? 'message';
+        const eventId = block.match(/^id: (.+)$/m)?.[1] ?? null;
+        return { event: JSON.parse(data), eventName, eventId, pending: buffer };
+      }
       continue;
     }
     const chunk = await reader.read();
@@ -327,6 +333,44 @@ test('heartbeat closes and removes a subscription after its session is revoked',
   }
 });
 
+test('disconnect during paginated replay immediately removes the hub subscription', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-disconnect-replay-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const hub = new RealtimeHub();
+  let clientRequest;
+  const subscribe = hub.subscribe.bind(hub);
+  hub.subscribe = (groupId, writer) => {
+    const unsubscribe = subscribe(groupId, writer);
+    setImmediate(() => clientRequest?.destroy());
+    return unsubscribe;
+  };
+  const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
+  const session = await createSession(baseUrl, 'demo-1');
+  for (let index = 0; index < 205; index += 1) {
+    const created = createChatMessage(database, {
+      groupId: 'demo-group',
+      memberId: 'demo-2',
+      body: `disconnect replay ${index}`,
+    });
+    assert.equal(created.ok, true);
+  }
+
+  try {
+    const url = new URL(
+      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=0`,
+    );
+    clientRequest = httpRequest(url, (response) => response.resume());
+    clientRequest.on('error', () => {});
+    clientRequest.end();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(hub.subscriberCount('demo-group'), 0);
+  } finally {
+    clientRequest?.destroy();
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
 test('persisted message events replay after the runtime and database are reopened', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-restart-test-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
@@ -360,6 +404,261 @@ test('persisted message events replay after the runtime and database are reopene
   } finally {
     await reader.cancel();
     await closeRuntime(secondRuntime.server, reopened, dataDir);
+  }
+});
+
+test('a zero checkpoint cursor replays messages after an unread stream replacement', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-zero-checkpoint-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const { server, baseUrl } = await startRuntime(config, database);
+  const created = createGroup(database, 'demo-1', {
+    name: 'Zero checkpoint test',
+    prompt: 'What is worth keeping?',
+  });
+  assert.equal(created.ok, true);
+  const groupId = created.group.id;
+  const session = await createSession(baseUrl, 'demo-1', groupId);
+  try {
+    const initial = await fetch(
+      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(session.id)}&startFromLatest=true`,
+    );
+    assert.equal(initial.status, 200);
+    const initialReader = initial.body.getReader();
+    try {
+      const checkpoint = await readSseEvent(initialReader);
+      assert.equal(checkpoint.eventName, 'checkpoint');
+      assert.equal(checkpoint.event.eventId, 0);
+    } finally {
+      await initialReader.cancel();
+    }
+
+    const sent = await fetch(
+      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages?sessionId=${encodeURIComponent(session.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'arrived during the replacement gap' }),
+      },
+    );
+    assert.equal(sent.status, 201);
+    const sentPayload = await sent.json();
+
+    const resumed = await fetch(
+      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=0`,
+    );
+    assert.equal(resumed.status, 200);
+    const resumedReader = resumed.body.getReader();
+    try {
+      const replayed = await readSseEvent(resumedReader);
+      assert.equal(replayed.eventName, 'message');
+      assert.equal(replayed.event.eventId, sentPayload.event.eventId);
+      assert.equal(replayed.event.message.body, 'arrived during the replacement gap');
+    } finally {
+      await resumedReader.cancel();
+    }
+  } finally {
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
+test('reconnect replay drains every page and delivers events committed during the drain once', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-replay-pages-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const hub = new RealtimeHub();
+  let injectedEvent;
+  let injectionError;
+  let resolveInjection;
+  const injectionComplete = new Promise((resolve) => {
+    resolveInjection = resolve;
+  });
+  const subscribe = hub.subscribe.bind(hub);
+  hub.subscribe = (groupId, writer) => {
+    const unsubscribe = subscribe(groupId, writer);
+    if (!injectedEvent) {
+      setImmediate(() => {
+        try {
+          const created = createChatMessage(database, {
+            groupId: 'demo-group',
+            memberId: 'demo-2',
+            body: 'arrived while replay was draining',
+          });
+          assert.equal(created.ok, true);
+          injectedEvent = created.event;
+          hub.publish(injectedEvent);
+        } catch (error) {
+          injectionError = error;
+        } finally {
+          resolveInjection();
+        }
+      });
+    }
+    return unsubscribe;
+  };
+  const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
+  const session = await createSession(baseUrl, 'demo-1');
+  const persistedEvents = [];
+  for (let index = 0; index < 205; index += 1) {
+    const created = createChatMessage(database, {
+      groupId: 'demo-group',
+      memberId: 'demo-2',
+      body: `replay backlog ${index}`,
+    });
+    assert.equal(created.ok, true);
+    persistedEvents.push(created.event);
+  }
+
+  try {
+    const response = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=0`,
+    );
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    try {
+      await injectionComplete;
+      assert.equal(injectionError, undefined);
+      const expected = database
+        .prepare('SELECT id FROM realtime_events WHERE group_id = ? ORDER BY id')
+        .all('demo-group')
+        .map((row) => Number(row.id));
+      const received = [];
+      let pending = '';
+      for (let index = 0; index < expected.length; index += 1) {
+        const result = await readSseEvent(reader, pending);
+        pending = result.pending;
+        received.push(result.event.eventId);
+      }
+      assert.deepEqual(received, expected);
+      assert.equal(new Set(received).size, received.length);
+    } finally {
+      await reader.cancel();
+    }
+  } finally {
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
+test('metadata-only unread SSE omits message and reply bodies while timeline SSE keeps them', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-metadata-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const hub = new RealtimeHub();
+  const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
+  const sender = await createSession(baseUrl, 'demo-1');
+  const observer = await createSession(baseUrl, 'demo-2');
+  const unreadResponse = await fetch(
+    `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(observer.id)}&startFromLatest=true&metadataOnly=true`,
+  );
+  assert.equal(unreadResponse.status, 200);
+  const unreadReader = unreadResponse.body.getReader();
+  let timelineReader;
+
+  async function send(body, replyToMessageId) {
+    const response = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(sender.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body, ...(replyToMessageId ? { replyToMessageId } : {}) }),
+      },
+    );
+    assert.equal(response.status, 201);
+    return (await response.json()).event;
+  }
+
+  try {
+    const checkpoint = await readSseEvent(unreadReader);
+    assert.equal(checkpoint.eventName, 'checkpoint');
+    assert.equal(Number.isSafeInteger(checkpoint.event.eventId), true);
+    const timelineResponse = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(observer.id)}&sinceEventId=${checkpoint.event.eventId}`,
+    );
+    assert.equal(timelineResponse.status, 200);
+    timelineReader = timelineResponse.body.getReader();
+
+    const parent = await send('private parent text', undefined);
+    const [unreadParent, timelineParent] = await Promise.all([
+      readSseEvent(unreadReader),
+      readSseEvent(timelineReader),
+    ]);
+    assert.deepEqual(unreadParent.event, {
+      eventId: parent.eventId,
+      type: 'message',
+      message: { groupId: 'demo-group', memberId: 'demo-1' },
+    });
+    assert.equal(JSON.stringify(unreadParent.event).includes('private parent text'), false);
+    assert.equal(timelineParent.event.message.body, 'private parent text');
+
+    const reply = await send('private reply text', parent.message.id);
+    const [unreadReply, timelineReply] = await Promise.all([
+      readSseEvent(unreadReader),
+      readSseEvent(timelineReader),
+    ]);
+    assert.deepEqual(unreadReply.event, {
+      eventId: reply.eventId,
+      type: 'message',
+      message: { groupId: 'demo-group', memberId: 'demo-1' },
+    });
+    assert.equal(JSON.stringify(unreadReply.event).includes('private reply text'), false);
+    assert.equal(JSON.stringify(unreadReply.event).includes('private parent text'), false);
+    assert.equal(timelineReply.event.message.body, 'private reply text');
+    assert.equal(timelineReply.event.message.replyTo.body, 'private parent text');
+  } finally {
+    await unreadReader.cancel();
+    if (timelineReader) await timelineReader.cancel();
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
+test('a new unread observer skips persisted history but receives messages after its checkpoint', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-latest-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const { server, baseUrl } = await startRuntime(config, database);
+  const session = await createSession(baseUrl, 'demo-1');
+  try {
+    const historical = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'already present before unread subscription' }),
+      },
+    );
+    assert.equal(historical.status, 201);
+    const historicalEvent = (await historical.json()).event;
+
+    const response = await fetch(
+      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&startFromLatest=true`,
+    );
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    try {
+      const checkpoint = await readSseEvent(reader);
+      assert.equal(checkpoint.eventName, 'checkpoint');
+      assert.equal(Number(checkpoint.eventId), historicalEvent.eventId);
+      assert.deepEqual(checkpoint.event, { eventId: historicalEvent.eventId });
+
+      const next = await fetch(
+        `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: 'arrived after unread subscription' }),
+        },
+      );
+      assert.equal(next.status, 201);
+      const nextEvent = (await next.json()).event;
+      const received = await readSseEvent(reader);
+      assert.equal(received.eventName, 'message');
+      assert.equal(received.event.eventId, nextEvent.eventId);
+      assert.equal(received.event.message.body, 'arrived after unread subscription');
+    } finally {
+      await reader.cancel();
+    }
+  } finally {
+    await closeRuntime(server, database, dataDir);
   }
 });
 

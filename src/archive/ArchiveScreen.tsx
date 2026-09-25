@@ -229,6 +229,9 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
   if (state.status === 'loading') {
     return (
       <View style={styles.panel} testID="archive-loading">
+        <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
+          Archive
+        </Text>
         <Text style={styles.label}>ARCHIVE</Text>
         <Text accessibilityLiveRegion="polite" style={styles.title}>
           Checking the group premiere…
@@ -240,6 +243,9 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
   if (state.status === 'unavailable') {
     return (
       <View style={styles.panel} testID="archive-unavailable">
+        <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
+          Archive
+        </Text>
         <Text style={styles.label}>ARCHIVE</Text>
         <Text accessibilityRole="header" style={styles.title}>
           Premiere unavailable
@@ -283,6 +289,9 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
   };
   return (
     <View style={styles.stack}>
+      <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
+        Archive
+      </Text>
       {premierePanel}
       <ArchiveEntries
         archive={releasedArchive}
