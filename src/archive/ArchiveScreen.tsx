@@ -261,15 +261,22 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
     );
   }
 
-  const premierePanel =
-    state.premiere.state === 'ready' ? (
-      <PublishedPlayer premiere={state.premiere} />
-    ) : (
-      <PremiereStatus premiere={state.premiere} reload={load} />
-    );
   const releasedCycleIds = new Set(
     state.cycles.filter((cycle) => cycle.releaseStatus === 'published').map((cycle) => cycle.id),
   );
+  const premierePanel =
+    state.premiere.state === 'ready' ? (
+      releasedCycleIds.has(state.premiere.cycleId) ? (
+        <PublishedPlayer premiere={state.premiere} />
+      ) : (
+        <PremiereStatus
+          premiere={{ state: 'locked', cycleId: state.premiere.cycleId }}
+          reload={load}
+        />
+      )
+    ) : (
+      <PremiereStatus premiere={state.premiere} reload={load} />
+    );
   const releasedArchive: ReleasedArchive = {
     films: state.archive.films.filter((film) => releasedCycleIds.has(film.cycleId)),
     clips: state.archive.clips.filter((clip) => releasedCycleIds.has(clip.cycleId)),

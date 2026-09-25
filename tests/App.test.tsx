@@ -265,12 +265,39 @@ describe('Rewind Home start screen', () => {
       filmId: 'demo-film',
       playbackUrl: 'http://localhost:8787/films/demo-film/play?sessionId=demo',
     });
+    client.getCycleHistory.mockResolvedValue([
+      {
+        id: 'demo-cycle',
+        prompt: 'What made you pause and smile?',
+        startsAt: '2026-09-01T00:00:00.000Z',
+        endsAt: '2026-09-12T00:00:00.000Z',
+        status: 'revealing',
+        releaseStatus: 'published',
+      },
+    ]);
     const result = await render(<App runtimeClient={client} />);
     await result.findByTestId('capsule-ready');
     await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
     expect(await result.findByTestId('archive-video-player')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Play group film' })).toBeTruthy();
     expect(result.queryByTestId('archive-locked')).toBeNull();
+  });
+
+  it('keeps a ready premiere locked unless cycle history confirms publication', async () => {
+    const playbackUrl = 'http://localhost:8787/films/demo-film/play?sessionId=demo';
+    const client = runtimeClientWithPremiere({
+      state: 'ready',
+      cycleId: 'demo-cycle',
+      filmId: 'demo-film',
+      playbackUrl,
+    });
+    const result = await render(<App runtimeClient={client} />);
+    await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
+    expect(await result.findByTestId('archive-locked')).toBeTruthy();
+    expect(result.queryByTestId('archive-video-player')).toBeNull();
+    expect(result.queryByRole('button', { name: 'Play group film' })).toBeNull();
+    expect(JSON.stringify(result.toJSON())).not.toContain(playbackUrl);
   });
 
   it('shows the owner-only local reveal control and keeps its lifecycle truthful', async () => {
@@ -327,6 +354,18 @@ describe('Rewind Home start screen', () => {
     'drives Home and Capture $educationState education from the actual premiere route state',
     async ({ archiveTestId, educationState, premiere, released }) => {
       const client = runtimeClientWithPremiere(premiere);
+      if (released) {
+        client.getCycleHistory.mockResolvedValue([
+          {
+            id: 'demo-cycle',
+            prompt: 'What made you pause and smile?',
+            startsAt: '2026-09-01T00:00:00.000Z',
+            endsAt: '2026-09-12T00:00:00.000Z',
+            status: 'revealing',
+            releaseStatus: 'published',
+          },
+        ]);
+      }
       const result = await render(
         <App cameraPlatform={new DemoCameraPlatform()} runtimeClient={client} />,
       );
