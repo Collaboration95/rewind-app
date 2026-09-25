@@ -2,7 +2,7 @@ Rewind autonomous coding backlog — 19 September 2026
 
 Purpose
 -------
-Fifteen substantial, code-and-test-focused child issues derived from the Sprint 2 hosted-Demo plan. They deliberately exclude AWS applies, alert subscriptions, physical-device proof, credentials, and unresolved product-policy choices. A coding agent may implement them in dependency order, but must work on one issue/PR at a time and preserve the existing uncommitted deployment work.
+Fifteen substantial, code-and-test-focused child issues derived from the Sprint 1 hosted-Demo plan. They deliberately exclude AWS applies, alert subscriptions, physical-device proof, credentials, and unresolved product-policy choices. A coding agent may implement them in dependency order, but must work on one issue/PR at a time and preserve the existing uncommitted deployment work.
 
 Project: Rewind — Sprint 0 (#8)
 Parents: #106 host deployment, #97 persistence/recovery, #101 hosted lifecycle, #100 cost safety, #24 quality proof.
@@ -477,7 +477,7 @@ Priority/Risk/Area: P0 / High / End-to-end quality
 Stable key: agent-orchestration:issue-key=s2-quality-006
 
 ## Objective
-Give the team a repeatable browser-level proof of the Sprint 2 Demo journey against the built web artifact and production-shaped local runtime.
+Give the team a repeatable browser-level proof of the Sprint 1 Demo journey against the built web artifact and production-shaped local runtime.
 
 ## In scope
 - Start from a disposable reset state and use only the labelled server-owned synthetic clip.

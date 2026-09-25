@@ -6198,13 +6198,13 @@
           "motion": false
         }
       },
-      "text": "What Sprint 2 completion gives us",
+      "text": "What Sprint 1 completion gives us",
       "fontSize": 30,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "What Sprint 2 completion gives us",
+      "originalText": "What Sprint 1 completion gives us",
       "autoResize": true,
       "lineHeight": 1.25
     },
@@ -7870,13 +7870,13 @@
           "motion": false
         }
       },
-      "text": "Sprint 2 end state",
+      "text": "Sprint 1 end state",
       "fontSize": 18,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Sprint 2 end state",
+      "originalText": "Sprint 1 end state",
       "autoResize": true,
       "lineHeight": 1.25
     },
@@ -9068,13 +9068,13 @@
           "motion": false
         }
       },
-      "text": "Sprint 2 outcome",
+      "text": "Sprint 1 outcome",
       "fontSize": 16,
       "fontFamily": 5,
       "textAlign": "left",
       "verticalAlign": "top",
       "containerId": null,
-      "originalText": "Sprint 2 outcome",
+      "originalText": "Sprint 1 outcome",
       "autoResize": true,
       "lineHeight": 1.25
     }

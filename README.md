@@ -92,4 +92,4 @@ npm run server:preflight  # local runtime, SQLite, LAN, and FFmpeg readiness
 - [Local Demo runbook](docs/local-demo-runbook.md)
 - [Hosted Demo persistence](docs/architecture/hosted-demo-persistence.md)
 - [Hosted deployment, backup, and recovery](deploy/README.md)
-- [Current Sprint plan](doc/planning/sprints/sprint-2-plan.md)
+- [Current Sprint plan](doc/planning/sprints/sprint-1-plan.md)

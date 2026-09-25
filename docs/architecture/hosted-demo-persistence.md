@@ -1,6 +1,6 @@
 # Hosted Demo persistence contract
 
-Sprint 2 runs one disposable Node container against persistent SQLite and
+Sprint 1 runs one disposable Node container against persistent SQLite and
 server-owned synthetic media. It is a Demo appliance, not a production data
 platform: it accepts no personal media and does not claim high availability.
 
@@ -21,7 +21,7 @@ Replacing the container must not replace either mount.
 ## Schema and migration contract
 
 `server/src/db.ts` is the authoritative additive migration runner. A healthy
-Sprint 2 database has migration versions 1 through 15 and matching durable
+Sprint 1 database has migration versions 1 through 15 and matching durable
 `schema_migration_markers` receipts. `/health` returns HTTP 503 with
 `ready: false` if any expected receipt is absent or a known partial schema
 shape needs repair.
