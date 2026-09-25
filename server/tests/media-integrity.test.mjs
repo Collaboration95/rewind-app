@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { once } from 'node:events';
@@ -925,6 +925,57 @@ test('media streaming retains a verified snapshot after its source pathname is r
       assert.deepEqual(Buffer.concat(chunks), expectedBytes);
     } finally {
       await opened.handle.close().catch(() => undefined);
+    }
+  });
+});
+
+test('media streaming rejects a mixed snapshot after an in-place source mutation', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const jobId = await finalizeOneClip(
+      { database, config, dataDir },
+      'integrity-stream-in-place-race',
+    );
+    const row = storedIntegrity(database, jobId);
+    const expectedBytes = await readFile(row.outputPath);
+    const replacement = Buffer.from(expectedBytes);
+    replacement.fill(0x5a, Math.floor(replacement.length / 2));
+
+    // Pause the source read after its first chunk. This reliably places the
+    // mutation between snapshot chunks without relying on filesystem timing.
+    const source = await open(row.outputPath, 'r+');
+    const originalSourceRead = source.read.bind(source);
+    let paused = false;
+    let releaseRead;
+    let continueRead;
+    const readPaused = new Promise((resolve) => {
+      releaseRead = resolve;
+    });
+    const resumeRead = new Promise((resolve) => {
+      continueRead = resolve;
+    });
+    const readFromSource = async (...args) => {
+      const result = await originalSourceRead(...args);
+      if (!paused && result.bytesRead > 0) {
+        paused = true;
+        releaseRead();
+        await resumeRead;
+      }
+      return result;
+    };
+
+    try {
+      const opening = openMediaWithIntegrity(database, jobId, row.outputPath, {
+        readSource: readFromSource,
+      });
+      await readPaused;
+      await source.write(replacement, 0, replacement.length, 0);
+      continueRead();
+      const opened = await opening;
+      assert.equal(opened.result.outcome, 'unavailable');
+      assert.equal(opened.handle, null);
+    } finally {
+      continueRead();
+      await source.close();
     }
   });
 });

@@ -115,6 +115,7 @@ async function hashOpenFileWithIdentity(handle: FileHandle): Promise<HashedFileI
 async function snapshotAndHashOpenFile(
   source: FileHandle,
   snapshot: FileHandle,
+  readSource: FileHandle['read'] = source.read.bind(source),
 ): Promise<HashedFileIntegrity | null> {
   try {
     const initial = await source.stat();
@@ -123,7 +124,7 @@ async function snapshotAndHashOpenFile(
     const buffer = Buffer.alloc(64 * 1024);
     let byteLength = 0;
     while (byteLength < initial.size) {
-      const read = await source.read(
+      const read = await readSource(
         buffer,
         0,
         Math.min(buffer.length, initial.size - byteLength),
@@ -152,8 +153,20 @@ async function snapshotAndHashOpenFile(
     ) {
       return null;
     }
+    // The source may be modified in place while it is being read without a
+    // distinguishable identity change (for example, coarse filesystem
+    // timestamps). Verify the completed private snapshot itself so the bytes
+    // that will be served are exactly the bytes included in this digest.
+    const snapshotIntegrity = await hashOpenFileWithIdentity(snapshot);
+    if (
+      !snapshotIntegrity ||
+      snapshotIntegrity.byteLength !== byteLength ||
+      snapshotIntegrity.sha256 !== digest.digest('hex')
+    ) {
+      return null;
+    }
     return {
-      sha256: digest.digest('hex'),
+      sha256: snapshotIntegrity.sha256,
       byteLength,
       identity: fileIdentity(final),
     };
@@ -325,6 +338,7 @@ export async function openMediaWithIntegrity(
   database: RewindDatabase,
   jobId: string,
   filePath: string | null,
+  options: { readSource?: FileHandle['read'] } = {},
 ): Promise<OpenedMediaIntegrity> {
   const stored = readStoredIntegrity(database, jobId);
   const expectedSha256 = stored?.sha256 ?? null;
@@ -355,7 +369,11 @@ export async function openMediaWithIntegrity(
       return unavailable();
     }
     handle = await openAnonymousSnapshot(dirname(filePath));
-    const observed = await snapshotAndHashOpenFile(source, handle);
+    const observed = await snapshotAndHashOpenFile(
+      source,
+      handle,
+      options.readSource ?? source.read.bind(source),
+    );
     await source.close();
     source = null;
     if (!observed) {
@@ -368,7 +386,7 @@ export async function openMediaWithIntegrity(
           observedSha256: null,
           observedByteLength: null,
         },
-        handle,
+        handle: null,
         byteLength: details.size,
       };
     }
