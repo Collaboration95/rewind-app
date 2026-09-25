@@ -2,7 +2,17 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { once } from 'node:events';
@@ -23,7 +33,7 @@ const {
   openMediaWithIntegrity,
   verifyMediaIntegrity,
 } = await import('../dist/media/integrity.js');
-const { processClipJob } = await import('../dist/jobs/index.js');
+const { processClipJob, PROCESSING_CLAIM_LEASE_MS } = await import('../dist/jobs/index.js');
 const { deleteContribution } = await import('../dist/contributions/index.js');
 const { createCompilationJob, getCompilationJob, processCompilationJob } =
   await import('../dist/jobs/index.js');
@@ -610,6 +620,123 @@ test('a zero-row ready update cannot complete clip finalization', async () => {
       },
     );
     assert.ok((await readFile(sourcePath)).length > 0);
+  });
+});
+
+test('a stale clip worker cannot delete output published by a reclaimed worker', async () => {
+  await withDatabase(async ({ database, config, dataDir }) => {
+    const stagingDir = resolve(dataDir, 'media', 'staging');
+    const sourcePath = resolve(stagingDir, 'integrity-overlapping-claims.mp4');
+    await createSyntheticSource(sourcePath);
+    recordClipMediaMetadata(database, {
+      sourceUri: sourcePath,
+      mimeType: 'video/mp4',
+      byteLength: 10_000,
+      durationSeconds: 2,
+      width: 180,
+      height: 320,
+      hasAudio: true,
+    });
+    const upload = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        idempotencyKey: 'integrity-overlapping-claims',
+        sourceUri: sourcePath,
+        mimeType: 'video/mp4',
+        byteLength: 10_000,
+        durationSeconds: 1,
+        width: 180,
+        height: 320,
+        hasAudio: true,
+        mode: 'soft-focus',
+        trimStartSeconds: 0.5,
+        trimEndSeconds: 1.5,
+        sourceDurationSeconds: 2,
+      },
+      new Date('2026-09-10T12:00:00.000Z'),
+    );
+    assert.equal(upload.ok, true);
+    if (!upload.ok) return;
+    const jobId = upload.upload.job.id;
+    const outputDir = resolve(dataDir, 'media', 'processed');
+    const invocationCountPath = resolve(dataDir, 'ffmpeg-invocations.txt');
+    const firstStartedPath = resolve(dataDir, 'first-ffmpeg-started');
+    const releaseFirstPath = resolve(dataDir, 'release-first-ffmpeg');
+    const { stdout: realFfmpeg } = await execFileAsync('which', ['ffmpeg']);
+    const { stdout: realFfprobe } = await execFileAsync('which', ['ffprobe']);
+    await symlink(realFfprobe.trim(), resolve(dataDir, 'ffprobe'));
+    const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+    const shimPath = resolve(dataDir, 'ffmpeg-claim-race-shim');
+    await writeFile(
+      shimPath,
+      `#!/bin/sh
+count_file=${shellQuote(invocationCountPath)}
+started_file=${shellQuote(firstStartedPath)}
+release_file=${shellQuote(releaseFirstPath)}
+count=0
+if [ -f "$count_file" ]; then count=$(cat "$count_file"); fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+if [ "$count" -eq 1 ]; then
+  : > "$started_file"
+  while [ ! -f "$release_file" ]; do sleep 0.01; done
+  exit 1
+fi
+exec ${shellQuote(realFfmpeg.trim())} "$@"
+`,
+    );
+    await chmod(shimPath, 0o700);
+
+    const workerOptions = {
+      jobId,
+      ffmpegBin: shimPath,
+      stagingDir,
+      outputDir,
+    };
+    const firstWorker = processClipJob(database, workerOptions);
+    let secondResult;
+    let secondError;
+    try {
+      let started = false;
+      for (let attempt = 0; attempt < 500; attempt += 1) {
+        try {
+          await readFile(firstStartedPath);
+          started = true;
+          break;
+        } catch {
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+        }
+      }
+      assert.equal(started, true, 'first worker did not reach the controlled FFmpeg pause');
+      database
+        .prepare('UPDATE media_jobs SET processing_started_at = ? WHERE id = ?')
+        .run(new Date(Date.now() - PROCESSING_CLAIM_LEASE_MS - 1000).toISOString(), jobId);
+      secondResult = await processClipJob(database, workerOptions);
+    } catch (error) {
+      secondError = error;
+    } finally {
+      await writeFile(releaseFirstPath, 'release');
+    }
+
+    const firstResult = await firstWorker;
+    if (secondError) throw secondError;
+    assert.deepEqual(secondResult, { ok: true, jobId, status: 'ready' });
+    assert.equal(firstResult.ok, false);
+    const readyRow = database
+      .prepare(
+        `SELECT status, claim_generation AS claimGeneration, output_path AS outputPath,
+                output_sha256 AS sha256, output_bytes AS byteLength
+         FROM media_jobs WHERE id = ?`,
+      )
+      .get(jobId);
+    assert.equal(readyRow.status, 'ready');
+    assert.equal(readyRow.claimGeneration, 2);
+    assert.ok(readyRow.outputPath);
+    const outputBytes = await readFile(readyRow.outputPath);
+    assert.equal(readyRow.byteLength, outputBytes.length);
+    assert.equal(readyRow.sha256, createHash('sha256').update(outputBytes).digest('hex'));
   });
 });
 
