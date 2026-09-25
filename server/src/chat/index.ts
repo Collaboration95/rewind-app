@@ -158,6 +158,14 @@ export function listChatEvents(
     .map((row) => mapEvent(database, row as Record<string, unknown>));
 }
 
+/** Current group event watermark for a new live observer that should not count history. */
+export function latestChatEventId(database: RewindDatabase, groupId: string): number {
+  const row = database
+    .prepare('SELECT COALESCE(MAX(id), 0) AS eventId FROM realtime_events WHERE group_id = ?')
+    .get(groupId) as { eventId: number };
+  return Number(row.eventId);
+}
+
 export function createChatMessage(
   database: RewindDatabase,
   input: CreateChatMessageInput,

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fireEvent, render } from '@testing-library/react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
@@ -11,6 +12,9 @@ import {
 import { DEMO_SESSION_STORAGE_KEY } from '../src/domain/session';
 import { SELECTION_KEY } from '../src/data/selection-store';
 import { IMAGE_METADATA_KEY } from '../src/capture/metadata-store';
+import { CONTRIBUTION_STATUS_STORAGE_KEY } from '../src/capture/contribution-status';
+import { PENDING_CLIP_METADATA_KEY } from '../src/capture/video-review';
+import { resetCaptureRestartRecoveryGuard, runCaptureRestartRecovery } from '../src/capture/reset';
 import { createOfflineDemoSession } from '../src/session/session-store';
 import { LocalRuntimeError, type RuntimeClient } from '../src/runtime/local-runtime-client';
 
@@ -70,7 +74,7 @@ describe('local Demo access lifecycle', () => {
 
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     expect(result.getByTestId('settings-identity')).toBeTruthy();
-    expect(result.getByText('Amber')).toBeTruthy();
+    expect(within(result.getByTestId('settings-identity')).getByText('Amber')).toBeTruthy();
     await fireEvent.press(result.getByTestId('sign-out'));
     await result.findByRole('header', { name: 'Choose who you are showing' });
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
@@ -79,6 +83,65 @@ describe('local Demo access lifecycle', () => {
     await result.findByRole('header', { name: 'Weekend People' });
     expect(result.getByText('Current member: Birch')).toBeTruthy();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-2');
+  });
+
+  it('clears contribution status for the signed-out session and keeps other scopes', async () => {
+    const cacheDirectoryDescriptor = Object.getOwnPropertyDescriptor(FileSystem, 'cacheDirectory');
+    Object.defineProperty(FileSystem, 'cacheDirectory', {
+      configurable: true,
+      value: 'file:///rewind-sign-out-cache/',
+    });
+    const deleteAsync = jest.spyOn(FileSystem, 'deleteAsync').mockResolvedValue();
+    resetCaptureRestartRecoveryGuard();
+
+    try {
+      await expect(runCaptureRestartRecovery()).resolves.toBe(true);
+      deleteAsync.mockClear();
+
+      const result = await activeApp();
+      const storedSession = JSON.parse(
+        (await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)) ?? 'null',
+      ) as { actor: { memberId: string }; groupId: string; id: string };
+      const signedOutScope = `${storedSession.id}:${storedSession.groupId}:${storedSession.actor.memberId}`;
+      const otherScope = 'other-session:other-group:other-member';
+      const status = {
+        createdAt: '2026-09-20T00:00:00.000Z',
+        retryable: true,
+        state: 'failed',
+      };
+      await AsyncStorage.setItem(
+        CONTRIBUTION_STATUS_STORAGE_KEY,
+        JSON.stringify({ [signedOutScope]: status, [otherScope]: status }),
+      );
+      await AsyncStorage.setItem(
+        PENDING_CLIP_METADATA_KEY,
+        '{"uri":"file:///rewind-clips/pending.mp4"}',
+      );
+
+      await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+      await fireEvent.press(result.getByTestId('sign-out'));
+      await result.findByRole('header', { name: 'Choose who you are showing' });
+
+      expect(
+        JSON.parse((await AsyncStorage.getItem(CONTRIBUTION_STATUS_STORAGE_KEY)) ?? '{}'),
+      ).toEqual({
+        [otherScope]: status,
+      });
+      expect(await AsyncStorage.getItem(PENDING_CLIP_METADATA_KEY)).toBeNull();
+      expect(deleteAsync).toHaveBeenCalledWith('file:///rewind-sign-out-cache/rewind-stills/', {
+        idempotent: true,
+      });
+      expect(deleteAsync).toHaveBeenCalledWith('file:///rewind-sign-out-cache/rewind-clips/', {
+        idempotent: true,
+      });
+    } finally {
+      deleteAsync.mockRestore();
+      if (cacheDirectoryDescriptor) {
+        Object.defineProperty(FileSystem, 'cacheDirectory', cacheDirectoryDescriptor);
+      } else {
+        Reflect.deleteProperty(FileSystem, 'cacheDirectory');
+      }
+    }
   });
 
   it('supports an explicit entry mode for deterministic review', async () => {
@@ -127,6 +190,7 @@ describe('local Demo access lifecycle', () => {
     await AsyncStorage.setItem(LOCAL_GROUPS_STORAGE_KEY, '[]');
     await AsyncStorage.setItem(SELECTION_KEY, 'demo-1');
     await AsyncStorage.setItem(IMAGE_METADATA_KEY, '[]');
+    await AsyncStorage.setItem(CONTRIBUTION_STATUS_STORAGE_KEY, '{"old-session:group:member":{}}');
     const runtime = rejectingRuntime(
       'resetDemoData',
       new LocalRuntimeError('This Demo access is already inactive.', 409),
@@ -141,6 +205,7 @@ describe('local Demo access lifecycle', () => {
     expect(await AsyncStorage.getItem(LOCAL_GROUPS_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(IMAGE_METADATA_KEY)).toBeNull();
+    expect(await AsyncStorage.getItem(CONTRIBUTION_STATUS_STORAGE_KEY)).toBeNull();
   });
 
   it('re-enables reset after a reachable runtime failure', async () => {

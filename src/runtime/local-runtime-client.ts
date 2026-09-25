@@ -3,6 +3,7 @@ import type {
   Cycle,
   CycleAdvanceResult,
   DemoRevealState,
+  CycleHistoryEntry,
 } from '../domain/cycles';
 import type { InviteAcceptance, LocalInvite } from '../domain/invites';
 import type { ClipUploadInput, PendingClipUpload } from '../domain/video';
@@ -16,6 +17,11 @@ import type {
 import type { DemoSession } from '../domain/session';
 import type { Premiere } from '../domain/premiere';
 import type { ReleasedArchive } from '../domain/archive';
+import {
+  parseContributionLedgerPage,
+  type ContributionLedgerPage,
+  type ContributionLedgerState,
+} from '../domain/contributions';
 import {
   RealtimeChatClient,
   type ChatMessage,
@@ -86,6 +92,12 @@ export interface RuntimeClient {
   ): Promise<PendingClipUpload['job']>;
   getPremiere?(sessionId: string, groupId: string, cycleId: string): Promise<Premiere>;
   getReleasedArchive?(sessionId: string, groupId: string): Promise<ReleasedArchive>;
+  getCycleHistory?(sessionId: string, groupId: string): Promise<CycleHistoryEntry[]>;
+  getContributionLedger?(
+    sessionId: string,
+    groupId: string,
+    options?: { state?: ContributionLedgerState; limit?: number; cursor?: string },
+  ): Promise<ContributionLedgerPage>;
   deleteContribution?(
     sessionId: string,
     groupId: string,
@@ -459,6 +471,13 @@ export class LocalRuntimeClient implements RuntimeClient {
     };
   }
 
+  async getCycleHistory(sessionId: string, groupId: string): Promise<CycleHistoryEntry[]> {
+    const body = await this.request<{ cycles: CycleHistoryEntry[] }>(
+      `/cycles/history?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId)}`,
+    );
+    return body.cycles;
+  }
+
   async deleteContribution(
     sessionId: string,
     groupId: string,
@@ -478,6 +497,33 @@ export class LocalRuntimeClient implements RuntimeClient {
       jobId: body.jobId,
       restored: body.restored,
     };
+  }
+
+  /** Planned GET /contributions contract. This remains unused until the
+   * authenticated route is available and a parent mounts the ledger. */
+  async getContributionLedger(
+    sessionId: string,
+    groupId: string,
+    options: { state?: ContributionLedgerState; limit?: number; cursor?: string } = {},
+  ): Promise<ContributionLedgerPage> {
+    const filters = [
+      `groupId=${encodeURIComponent(groupId)}`,
+      `sessionId=${encodeURIComponent(sessionId)}`,
+    ];
+    if (options.state) filters.push(`state=${encodeURIComponent(options.state)}`);
+    if (options.limit !== undefined)
+      filters.push(`limit=${encodeURIComponent(String(options.limit))}`);
+    if (options.cursor) filters.push(`cursor=${encodeURIComponent(options.cursor)}`);
+    const payload = await this.request<unknown>(`/contributions?${filters.join('&')}`);
+    const page = parseContributionLedgerPage(payload);
+    if (!page) {
+      throw new LocalRuntimeError(
+        'The contribution list could not be read. Try again.',
+        undefined,
+        'invalid_contribution_ledger',
+      );
+    }
+    return page;
   }
 
   async stageClipSource(

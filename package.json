@@ -16,6 +16,7 @@
     "server:build": "tsc -p tsconfig.server.json",
     "server:start": "npm run server:build && node server/dist/cli.js start",
     "server:preflight": "npm run server:build && node server/dist/cli.js preflight",
+    "server:worker": "npm run server:build && node server/dist/cli.js worker",
     "server:migrate": "npm run server:build && node server/dist/cli.js migrate",
     "server:reset": "npm run server:build && node server/dist/cli.js reset",
     "server:diagnostics": "npm run server:build && node server/dist/cli.js diagnostics",
@@ -36,10 +37,11 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs && npm run server:test && jest --runInBand",
+    "test:a11y": "npm run build:web && playwright test --config=playwright.config.ts tests/responsive/accessibility.spec.ts",
     "test:web-smoke": "playwright test tests/responsive/production-web-routing.spec.ts",
     "test:production-e2e": "node scripts/run-production-e2e.mjs",
     "test:responsive": "npm run build:web && playwright test",
-    "check": "npm run format:check && npm run lint && npm run architecture:check && npm run typecheck && npm test"
+    "check": "npm run format:check && npm run lint && npm run architecture:check && npm run typecheck && npm test && npm run test:a11y"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -49,6 +51,7 @@
     "expo-device": "~57.0.1",
     "expo-file-system": "~57.0.6",
     "expo-linear-gradient": "~57.0.2",
+    "expo-network": "~57.0.2",
     "expo-notifications": "~57.0.20",
     "expo-status-bar": "~57.0.1",
     "expo-video": "~57.0.4",
@@ -59,6 +62,7 @@
     "react-native-web": "~0.21.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
     "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29.5.14",

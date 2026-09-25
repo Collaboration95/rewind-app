@@ -81,7 +81,9 @@ export function ReminderSettings({ service = reminderService }: { service?: Remi
         </Text>
       ) : null}
       <Pressable
+        accessibilityLabel="Sunday 7pm reminder"
         accessibilityRole="switch"
+        aria-checked={reminder?.enabled ?? false}
         accessibilityState={{
           checked: reminder?.enabled ?? false,
           disabled: pending || unavailable,

@@ -13,6 +13,13 @@ import {
   removeStagedSource,
 } from '../media';
 import {
+  filePathMatchesIdentity,
+  hashFile,
+  hashFileWithIdentity,
+  recordIntegrityFailure,
+  type MediaIntegrityResult,
+} from '../media/integrity';
+import {
   compileFilmWithFfmpeg,
   processClipWithFfmpeg,
   probeClipWithFfmpeg,
@@ -95,7 +102,11 @@ export interface ProcessClipJobOptions {
   /** Directory for retained processed media. It must be server-owned. */
   outputDir?: string;
   actorMemberId?: string | null;
+  /** Automatic worker retries are capped; request-driven retries omit this. */
+  workerAttemptCap?: number;
 }
+
+type WorkerWorkObserver = () => void;
 
 export type CompilationJobStatus = 'pending' | 'processing' | 'ready' | 'failed';
 
@@ -648,11 +659,13 @@ interface CompilationInputOutput {
   clipJobId: string;
   outputPath: string;
   isArchiveFiller: boolean;
+  sha256: string | null;
+  byteLength: number | null;
 }
 
-function filmOutputName(jobId: string): string {
+function filmOutputName(jobId: string, claimGeneration: number): string {
   const suffix = createHash('sha256').update(jobId).digest('hex').slice(0, 24);
-  return `film-${suffix}.mp4`;
+  return `film-${suffix}-g${claimGeneration}.mp4`;
 }
 
 function readCompilationInputOutputs(
@@ -662,6 +675,7 @@ function readCompilationInputOutputs(
   return database
     .prepare(
       `SELECT i.clip_job_id AS clipJobId, clip.output_path AS outputPath,
+              clip.output_sha256 AS sha256, clip.output_bytes AS byteLength,
               CASE WHEN contribution.cycle_id <> film.cycle_id THEN 1 ELSE 0 END AS isArchiveFiller
        FROM compilation_job_inputs i
        JOIN media_jobs film ON film.id = i.job_id
@@ -678,6 +692,14 @@ function readCompilationInputOutputs(
       clipJobId: String((row as { clipJobId: string }).clipJobId),
       outputPath: String((row as { outputPath: string }).outputPath),
       isArchiveFiller: Number((row as { isArchiveFiller: number }).isArchiveFiller) === 1,
+      sha256: (row as { sha256?: string | null }).sha256
+        ? String((row as { sha256?: string | null }).sha256)
+        : null,
+      byteLength:
+        (row as { byteLength?: number | null }).byteLength === null ||
+        (row as { byteLength?: number | null }).byteLength === undefined
+          ? null
+          : Number((row as { byteLength?: number | null }).byteLength),
     }));
 }
 
@@ -697,6 +719,46 @@ async function resolveProcessedMediaPath(value: string, outputDir: string): Prom
   }
 }
 
+/**
+ * Verify each retained film input against its persisted clip digest. Rows
+ * finalized before #157 have no recorded digest; those are unverifiable and
+ * are compiled from the retained bytes as before rather than being blocked.
+ */
+async function firstFailingInput(
+  inputs: CompilationInputOutput[],
+  inputPaths: string[],
+): Promise<{ clipJobId: string; result: MediaIntegrityResult } | null> {
+  for (const [index, input] of inputs.entries()) {
+    if (!input.sha256 || input.byteLength === null || input.byteLength <= 0) continue;
+    const observed = await hashFile(inputPaths[index]);
+    if (!observed) {
+      return {
+        clipJobId: input.clipJobId,
+        result: {
+          outcome: 'unavailable',
+          expectedSha256: input.sha256,
+          expectedByteLength: input.byteLength,
+          observedSha256: null,
+          observedByteLength: null,
+        },
+      };
+    }
+    if (observed.byteLength !== input.byteLength || observed.sha256 !== input.sha256) {
+      return {
+        clipJobId: input.clipJobId,
+        result: {
+          outcome: 'mismatch',
+          expectedSha256: input.sha256,
+          expectedByteLength: input.byteLength,
+          observedSha256: observed.sha256,
+          observedByteLength: observed.byteLength,
+        },
+      };
+    }
+  }
+  return null;
+}
+
 function markCompilationFailed(
   database: RewindDatabase,
   jobId: string,
@@ -708,6 +770,7 @@ function markCompilationFailed(
     .prepare(
       `UPDATE media_jobs
        SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL,
+           output_sha256 = NULL, output_bytes = NULL, output_verified_at = NULL,
            updated_at = ?, failed_at = ?
        WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
     )
@@ -719,13 +782,18 @@ function markCompilationFailed(
  * still owns the reconciled chronological input snapshot. A completed FFmpeg
  * temp file never becomes the durable output unless this fence succeeds.
  */
-function publishCompilationOutput(
+async function publishCompilationOutput(
   database: RewindDatabase,
   job: CompilationJobRecord,
   expectedClipJobIds: string[],
   temporaryOutputPath: string,
   finalOutputPath: string,
-): boolean {
+): Promise<boolean> {
+  // FFmpeg has closed this unique temp file. Hash it before taking SQLite's
+  // writer lock; the short publication transaction checks the same inode and
+  // atomically renames it while applying the job-generation fence.
+  const integrity = await hashFileWithIdentity(temporaryOutputPath);
+  if (!integrity) return false;
   beginJobTransaction(database);
   try {
     const current = reconcileCompilationJobInputsLocked(database, job.id);
@@ -740,15 +808,29 @@ function publishCompilationOutput(
       database.exec('ROLLBACK');
       return false;
     }
+    if (!filePathMatchesIdentity(temporaryOutputPath, integrity.identity)) {
+      database.exec('ROLLBACK');
+      return false;
+    }
     renameSync(temporaryOutputPath, finalOutputPath);
+    const finalizedAt = new Date().toISOString();
     const result = database
       .prepare(
         `UPDATE media_jobs
          SET status = 'ready', output_path = ?, completed_count = input_count, progress = 100,
-             error_code = NULL, processing_started_at = NULL, updated_at = ?, failed_at = NULL
+             error_code = NULL, processing_started_at = NULL, updated_at = ?, failed_at = NULL,
+             output_sha256 = ?, output_bytes = ?, output_verified_at = ?
          WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
       )
-      .run(finalOutputPath, new Date().toISOString(), job.id, job.claimGeneration);
+      .run(
+        finalOutputPath,
+        finalizedAt,
+        integrity.sha256,
+        integrity.byteLength,
+        finalizedAt,
+        job.id,
+        job.claimGeneration,
+      );
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
       return false;
@@ -762,9 +844,26 @@ function publishCompilationOutput(
 }
 
 /** Compile a cycle's reconciled, retained clips into one ready-only film. */
-export async function processCompilationJob(
+export function processCompilationJob(
   database: RewindDatabase,
   options: ProcessCompilationJobOptions,
+): Promise<ProcessCompilationJobResult> {
+  return processCompilationJobInternal(database, options);
+}
+
+/** @internal The worker observes claims separately from the request result. */
+export function processCompilationJobForWorker(
+  database: RewindDatabase,
+  options: ProcessCompilationJobOptions,
+  onWorkerWork: WorkerWorkObserver,
+): Promise<ProcessCompilationJobResult> {
+  return processCompilationJobInternal(database, options, onWorkerWork);
+}
+
+async function processCompilationJobInternal(
+  database: RewindDatabase,
+  options: ProcessCompilationJobOptions,
+  onWorkerWork?: WorkerWorkObserver,
 ): Promise<ProcessCompilationJobResult> {
   const claim = claimCompilationJob(database, { jobId: options.jobId, groupId: options.groupId });
   if (!claim.ok) {
@@ -797,13 +896,17 @@ export async function processCompilationJob(
       message: 'The film job is already processing.',
     };
   }
+  onWorkerWork?.();
 
   const outputDir =
     options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
-  const finalOutputPath = resolve(outputDir, filmOutputName(claim.job.id));
+  const finalOutputPath = resolve(
+    outputDir,
+    filmOutputName(claim.job.id, claim.job.claimGeneration),
+  );
   const temporaryOutputPath = resolve(
     outputDir,
-    `.${filmOutputName(claim.job.id)}.${randomUUID()}.part.mp4`,
+    `.${filmOutputName(claim.job.id, claim.job.claimGeneration)}.${randomUUID()}.part.mp4`,
   );
   try {
     if (claim.job.inputCount === 0) {
@@ -826,6 +929,23 @@ export async function processCompilationJob(
     const inputPaths = await Promise.all(
       inputs.map((input) => resolveProcessedMediaPath(input.outputPath, outputDir)),
     );
+    // A film is only as trustworthy as the clips it joins. Verify each
+    // retained input against the digest persisted when that clip finalized,
+    // so a tampered or truncated clip cannot be compiled into a "verified"
+    // film under a fresh legitimate checksum.
+    const unavailableInput = await firstFailingInput(inputs, inputPaths);
+    if (unavailableInput) {
+      recordIntegrityFailure(database, {
+        jobId: unavailableInput.clipJobId,
+        kind: 'clip',
+        result: unavailableInput.result,
+        actorMemberId: options.actorMemberId,
+      });
+      throw new FfmpegProcessingError(
+        'source_unavailable',
+        'A processed clip no longer matches its finalized integrity record.',
+      );
+    }
     const archiveFillerIndexes = inputs.flatMap((input, index) =>
       input.isArchiveFiller ? [index] : [],
     );
@@ -846,13 +966,13 @@ export async function processCompilationJob(
         });
         await probeClipWithFfmpeg(options.ffmpegBin, temporaryOutputPath);
         if (
-          !publishCompilationOutput(
+          !(await publishCompilationOutput(
             database,
             claim.job,
             claim.job.clipJobIds,
             temporaryOutputPath,
             finalOutputPath,
-          )
+          ))
         ) {
           throw new FfmpegProcessingError(
             'source_unavailable',
@@ -865,6 +985,8 @@ export async function processCompilationJob(
   } catch (error) {
     await rm(temporaryOutputPath, { force: true }).catch(() => undefined);
     if (getCompilationJob(database, claim.job.id)?.status !== 'ready') {
+      // The durable path is unique to this claim generation, so a stale
+      // worker can clean its own output without unlinking a reclaimed worker's.
       await rm(finalOutputPath, { force: true }).catch(() => undefined);
       const errorCode = error instanceof FfmpegProcessingError ? error.code : 'cleanup_failed';
       markCompilationFailed(database, claim.job.id, claim.job.claimGeneration, errorCode);
@@ -891,13 +1013,14 @@ export type ProcessClipJobResult =
       ok: false;
       jobId: string;
       status: 'failed' | 'processing' | 'not_found';
-      reason: 'not_found' | 'already_processing' | 'processing_failed';
+      reason: 'not_found' | 'already_processing' | 'processing_failed' | 'retry_exhausted';
       message: string;
     };
 
 interface ClipJobRow {
   id: string;
   status: string;
+  claimGeneration: number;
   outputPath: string | null;
   sourceUri: string | null;
   sourceGeneration: number | null;
@@ -906,21 +1029,31 @@ interface ClipJobRow {
   trimEndSeconds: number | null;
   mode: string | null;
   processingStartedAt: string | null;
+  attemptCount: number;
 }
+
+type ClipJobClaimResult =
+  | { claimed: true; row: ClipJobRow }
+  | {
+      claimed: false;
+      reason: 'not_found' | 'already_processing' | 'not_claimable' | 'retry_exhausted';
+    };
 
 function readClipJob(database: RewindDatabase, jobId: string, groupId?: string): ClipJobRow | null {
   const row = database
     .prepare(
-      `SELECT id, status, output_path AS outputPath, source_uri AS sourceUri,
+      `SELECT id, status, claim_generation AS claimGeneration,
+              output_path AS outputPath, source_uri AS sourceUri,
               source_generation AS sourceGeneration, source_path AS sourcePath,
               trim_start_seconds AS trimStartSeconds,
               trim_end_seconds AS trimEndSeconds, mode,
-              processing_started_at AS processingStartedAt
+              processing_started_at AS processingStartedAt,
+              attempt_count AS attemptCount
        FROM media_jobs
        WHERE id = ? AND kind = 'clip' ${groupId ? 'AND group_id = ?' : ''}`,
     )
     .get(...(groupId ? [jobId, groupId] : [jobId])) as ClipJobRow | undefined;
-  return row ?? null;
+  return row ? { ...row, claimGeneration: Number(row.claimGeneration) } : null;
 }
 
 function beginJobTransaction(database: RewindDatabase): void {
@@ -970,6 +1103,8 @@ function markOutputPrepared(
     if (
       !locked ||
       locked.status !== 'processing' ||
+      locked.claimGeneration !== row.claimGeneration ||
+      locked.processingStartedAt !== row.processingStartedAt ||
       locked.sourcePath !== row.sourcePath ||
       locked.sourceUri !== row.sourceUri ||
       locked.sourceGeneration !== row.sourceGeneration ||
@@ -978,45 +1113,95 @@ function markOutputPrepared(
       database.exec('ROLLBACK');
       return false;
     }
-    database
+    const result = database
       .prepare(
         `UPDATE media_jobs SET output_path = ?, error_code = NULL, updated_at = ?
          WHERE id = ? AND kind = 'clip' AND status = 'processing'
+           AND claim_generation = ? AND processing_started_at = ?
            AND (output_path IS NULL OR output_path = ?)`,
       )
-      .run(outputPath, new Date().toISOString(), row.id, outputPath);
+      .run(
+        outputPath,
+        new Date().toISOString(),
+        row.id,
+        row.claimGeneration,
+        row.processingStartedAt,
+        outputPath,
+      );
     database.exec('COMMIT');
-    return true;
+    return Number(result.changes) === 1;
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
   }
 }
 
-/** Complete the filesystem/DB hand-off under one writer lock. Filesystem
- * deletion is intentionally idempotent: a crash after deletion but before
- * COMMIT is recovered by the same output marker on the next worker run. */
-function finalizePreparedOutput(
+/** Hash a prepared output outside the writer lock, then atomically publish
+ * that same inode while validating the current claim and staged-source fence.
+ * A crash after rename but before COMMIT leaves an unpublished orphan; a
+ * retry writes a new unique temp file and resumes safely. */
+async function finalizePreparedOutput(
   database: RewindDatabase,
   row: ClipJobRow,
   stagingDir: string,
   outputPath: string,
-): boolean {
+  finalOutputPath: string,
+  onFinalized?: WorkerWorkObserver,
+): Promise<boolean> {
+  const integrity = await hashFileWithIdentity(outputPath);
+  if (!integrity) return false;
   beginJobTransaction(database);
   try {
     const locked = readClipJob(database, row.id);
     if (!locked || locked.status === 'ready') {
       database.exec('COMMIT');
-      return locked?.status === 'ready';
+      return (
+        locked?.status === 'ready' &&
+        locked.claimGeneration === row.claimGeneration &&
+        locked.outputPath === finalOutputPath
+      );
     }
     if (
       locked.status !== 'processing' ||
+      locked.claimGeneration !== row.claimGeneration ||
       locked.outputPath !== outputPath ||
+      locked.processingStartedAt !== row.processingStartedAt ||
       locked.sourcePath !== row.sourcePath ||
       locked.sourceUri !== row.sourceUri ||
       locked.sourceGeneration !== row.sourceGeneration ||
-      !stagedBindingMatches(database, locked)
+      !stagedBindingMatches(database, locked) ||
+      !filePathMatchesIdentity(outputPath, integrity.identity)
     ) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    // New workers write unique .part files; rename the hashed inode to its
+    // deterministic ready path while the publication fence is held. Legacy
+    // markers already at their final path remain supported.
+    const publishedPath = outputPath.endsWith('.part.mp4') ? finalOutputPath : outputPath;
+    if (publishedPath !== outputPath) renameSync(outputPath, publishedPath);
+    const finalizedAt = new Date().toISOString();
+    const result = database
+      .prepare(
+        `UPDATE media_jobs
+         SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL,
+             output_sha256 = ?, output_bytes = ?, output_verified_at = ?,
+             processing_started_at = NULL, updated_at = ?, failed_at = NULL
+         WHERE id = ? AND kind = 'clip' AND status = 'processing'
+           AND claim_generation = ? AND output_path = ? AND processing_started_at = ?`,
+      )
+      .run(
+        publishedPath,
+        integrity.sha256,
+        integrity.byteLength,
+        finalizedAt,
+        finalizedAt,
+        row.id,
+        row.claimGeneration,
+        outputPath,
+        row.processingStartedAt,
+      );
+    if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
       return false;
     }
@@ -1042,16 +1227,8 @@ function finalizePreparedOutput(
         )
         .run(locked.sourceUri, locked.sourceGeneration, locked.sourcePath);
     }
-    database
-      .prepare(
-        `UPDATE media_jobs
-         SET status = 'ready', output_path = ?, source_path = NULL, error_code = NULL,
-             processing_started_at = NULL, updated_at = ?, failed_at = NULL
-         WHERE id = ? AND kind = 'clip' AND status = 'processing'
-           AND output_path = ?`,
-      )
-      .run(outputPath, new Date().toISOString(), row.id, outputPath);
     database.exec('COMMIT');
+    onFinalized?.();
     return true;
   } catch (error) {
     database.exec('ROLLBACK');
@@ -1059,13 +1236,17 @@ function finalizePreparedOutput(
   }
 }
 
-function claimClipJob(database: RewindDatabase, row: ClipJobRow): ClipJobRow | null {
+function claimClipJob(
+  database: RewindDatabase,
+  row: ClipJobRow,
+  workerAttemptCap?: number,
+): ClipJobClaimResult {
   beginJobTransaction(database);
   try {
     const locked = readClipJob(database, row.id);
     if (!locked) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'not_found' };
     }
     const processingStartedAt = locked.processingStartedAt
       ? Date.parse(locked.processingStartedAt)
@@ -1076,21 +1257,32 @@ function claimClipJob(database: RewindDatabase, row: ClipJobRow): ClipJobRow | n
         Date.now() - processingStartedAt >= PROCESSING_CLAIM_LEASE_MS);
     if (locked.status === 'processing' && !stale) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'already_processing' };
     }
     if (!['pending', 'failed', 'processing'].includes(locked.status)) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'not_claimable' };
+    }
+    if (
+      Number.isSafeInteger(workerAttemptCap) &&
+      Number(workerAttemptCap) >= 1 &&
+      locked.status !== 'processing' &&
+      locked.attemptCount >= Number(workerAttemptCap)
+    ) {
+      database.exec('ROLLBACK');
+      return { claimed: false, reason: 'retry_exhausted' };
     }
     if (!stagedBindingMatches(database, locked)) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'not_claimable' };
     }
     const startedAt = new Date().toISOString();
+    const startsNewAttempt = locked.status === 'pending' || locked.status === 'failed';
     const result = database
       .prepare(
         `UPDATE media_jobs SET status = 'processing', error_code = NULL,
              processing_started_at = ?, updated_at = ?, failed_at = NULL,
+             claim_generation = claim_generation + 1,
              attempt_count = attempt_count + CASE WHEN status IN ('pending', 'failed') THEN 1 ELSE 0 END
          WHERE id = ? AND kind = 'clip' AND status IN ('pending', 'failed', 'processing')
            AND (processing_started_at IS ? OR processing_started_at = ?)`,
@@ -1098,31 +1290,86 @@ function claimClipJob(database: RewindDatabase, row: ClipJobRow): ClipJobRow | n
       .run(startedAt, startedAt, locked.id, locked.processingStartedAt, locked.processingStartedAt);
     if (Number(result.changes) !== 1) {
       database.exec('ROLLBACK');
-      return null;
+      return { claimed: false, reason: 'already_processing' };
     }
     database.exec('COMMIT');
-    return { ...locked, status: 'processing', processingStartedAt: startedAt };
+    return {
+      claimed: true,
+      row: {
+        ...locked,
+        status: 'processing',
+        processingStartedAt: startedAt,
+        claimGeneration: locked.claimGeneration + 1,
+        attemptCount: locked.attemptCount + (startsNewAttempt ? 1 : 0),
+      },
+    };
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
   }
 }
 
-function safeOutputName(jobId: string): string {
+function safeOutputName(jobId: string, claimGeneration: number): string {
   const suffix = createHash('sha256').update(jobId).digest('hex').slice(0, 24);
-  return `clip-${suffix}.mp4`;
+  return `clip-${suffix}-g${claimGeneration}.mp4`;
 }
 
-function markFailed(database: RewindDatabase, jobId: string, errorCode: string): void {
+async function markFailed(
+  database: RewindDatabase,
+  row: ClipJobRow,
+  outputPath: string,
+  finalOutputPath: string,
+  errorCode: string,
+): Promise<boolean> {
   const failedAt = new Date().toISOString();
-  database
-    .prepare(
-      `UPDATE media_jobs
-       SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL,
-           updated_at = ?, failed_at = ?
-       WHERE id = ? AND kind = 'clip' AND status = 'processing'`,
-    )
-    .run(errorCode, failedAt, failedAt, jobId);
+  beginJobTransaction(database);
+  try {
+    const current = readClipJob(database, row.id);
+    if (
+      !current ||
+      current.status !== 'processing' ||
+      current.claimGeneration !== row.claimGeneration
+    ) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    // The claim token is checked while holding the writer lock. This output
+    // path is private to this invocation; remove the shared published path
+    // only while this same generation still owns the processing row.
+    await rm(outputPath, { force: true }).catch(() => undefined);
+    await rm(finalOutputPath, { force: true }).catch(() => undefined);
+    const result = database
+      .prepare(
+        `UPDATE media_jobs
+         SET status = 'failed', output_path = NULL, error_code = ?, processing_started_at = NULL,
+             output_sha256 = NULL, output_bytes = NULL, output_verified_at = NULL,
+             updated_at = ?, failed_at = ?
+         WHERE id = ? AND kind = 'clip' AND status = 'processing' AND claim_generation = ?`,
+      )
+      .run(errorCode, failedAt, failedAt, row.id, row.claimGeneration);
+    database.exec('COMMIT');
+    return Number(result.changes) === 1;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+/** Process one pending clip while preserving its established result shape. */
+export function processClipJob(
+  database: RewindDatabase,
+  options: ProcessClipJobOptions,
+): Promise<ProcessClipJobResult> {
+  return processClipJobInternal(database, options);
+}
+
+/** @internal The worker observes claims separately from the request result. */
+export function processClipJobForWorker(
+  database: RewindDatabase,
+  options: ProcessClipJobOptions,
+  onWorkerWork: WorkerWorkObserver,
+): Promise<ProcessClipJobResult> {
+  return processClipJobInternal(database, options, onWorkerWork);
 }
 
 /**
@@ -1130,9 +1377,10 @@ function markFailed(database: RewindDatabase, jobId: string, errorCode: string):
  * The operation is claimable after a failure, so a transient FFmpeg or source
  * error leaves a retryable job instead of losing the contribution.
  */
-export async function processClipJob(
+async function processClipJobInternal(
   database: RewindDatabase,
   options: ProcessClipJobOptions,
+  onWorkerWork?: WorkerWorkObserver,
 ): Promise<ProcessClipJobResult> {
   let row = readClipJob(database, options.jobId, options.groupId);
   if (!row) {
@@ -1175,21 +1423,56 @@ export async function processClipJob(
     options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
   const stagingDir =
     options.stagingDir ?? resolve(process.cwd(), '.local-data', 'media', 'staging');
+  let finalOutputPath = resolve(outputDir, safeOutputName(row.id, row.claimGeneration));
   // A stale worker may have already persisted the output marker. Finish that
   // hand-off first; rerunning FFmpeg would risk replacing a file while another
   // process is finalizing it.
   if (row.status === 'processing' && row.outputPath) {
     if (
       existsSync(row.outputPath) &&
-      finalizePreparedOutput(database, row, stagingDir, row.outputPath)
+      (await finalizePreparedOutput(
+        database,
+        row,
+        stagingDir,
+        row.outputPath,
+        finalOutputPath,
+        onWorkerWork,
+      ))
     ) {
       return { ok: true, jobId: row.id, status: 'ready' };
     }
     row = readClipJob(database, options.jobId, options.groupId);
     if (!row || row.status === 'ready') return { ok: true, jobId: options.jobId, status: 'ready' };
   }
-  const claim = claimClipJob(database, row);
-  if (!claim) {
+  const claim = claimClipJob(database, row, options.workerAttemptCap);
+  if (!claim.claimed) {
+    if (claim.reason === 'retry_exhausted') {
+      return {
+        ok: false,
+        jobId: row.id,
+        status: 'failed',
+        reason: 'retry_exhausted',
+        message: 'The clip is exhausted for automatic worker retries.',
+      };
+    }
+    if (claim.reason === 'not_found') {
+      return {
+        ok: false,
+        jobId: row.id,
+        status: 'not_found',
+        reason: 'not_found',
+        message: 'The media job was not found.',
+      };
+    }
+    if (claim.reason === 'not_claimable') {
+      return {
+        ok: false,
+        jobId: row.id,
+        status: 'failed',
+        reason: 'processing_failed',
+        message: 'The media job cannot be processed in its current state.',
+      };
+    }
     return {
       ok: false,
       jobId: row.id,
@@ -1198,8 +1481,15 @@ export async function processClipJob(
       message: 'The media job is already processing.',
     };
   }
-  row = claim;
-  const outputPath = row.outputPath ?? resolve(outputDir, safeOutputName(row.id));
+  row = claim.row;
+  finalOutputPath = resolve(outputDir, safeOutputName(row.id, row.claimGeneration));
+  onWorkerWork?.();
+  // Each claim writes a distinct temp inode. A stale worker can therefore not
+  // mutate bytes while a newer claim hashes or publishes its output.
+  const outputPath = resolve(
+    outputDir,
+    `.${safeOutputName(row.id, row.claimGeneration)}.${randomUUID()}.part.mp4`,
+  );
   try {
     if (!row.sourcePath || row.trimStartSeconds === null || row.trimEndSeconds === null) {
       throw new FfmpegProcessingError(
@@ -1232,7 +1522,16 @@ export async function processClipJob(
             'The staged media source changed while processing.',
           );
         }
-        if (!finalizePreparedOutput(database, row, stagingDir, outputPath)) {
+        if (
+          !(await finalizePreparedOutput(
+            database,
+            row,
+            stagingDir,
+            outputPath,
+            finalOutputPath,
+            onWorkerWork,
+          ))
+        ) {
           throw new FfmpegProcessingError(
             'source_unavailable',
             'The staged media source changed while finalizing.',
@@ -1242,14 +1541,13 @@ export async function processClipJob(
     });
     return { ok: true, jobId: row.id, status: 'ready' };
   } catch (error) {
-    // A competing stale worker may have completed the durable finalization
-    // after this worker observed a binding change. Never delete an output
-    // that is already committed as ready.
-    if (readClipJob(database, row.id)?.status !== 'ready') {
+    const errorCode = error instanceof FfmpegProcessingError ? error.code : 'cleanup_failed';
+    const ownedFailure = await markFailed(database, row, outputPath, finalOutputPath, errorCode);
+    if (!ownedFailure) {
+      // Each invocation has a unique private part path, so removing that
+      // abandoned file cannot affect the output published by a later claim.
       await rm(outputPath, { force: true }).catch(() => undefined);
     }
-    const errorCode = error instanceof FfmpegProcessingError ? error.code : 'cleanup_failed';
-    markFailed(database, row.id, errorCode);
     return {
       ok: false,
       jobId: row.id,

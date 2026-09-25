@@ -39,8 +39,35 @@ export class RealtimeHub {
   }
 }
 
-export function encodeSseEvent(event: ChatMessageEvent): string {
-  return ['event: message', `id: ${event.eventId}`, `data: ${JSON.stringify(event)}`, '', ''].join(
-    '\n',
-  );
+export function encodeSseEvent(
+  event: ChatMessageEvent,
+  options: { metadataOnly?: boolean } = {},
+): string {
+  const payload = options.metadataOnly
+    ? {
+        eventId: event.eventId,
+        type: event.type,
+        message: {
+          groupId: event.message.groupId,
+          memberId: event.message.memberId,
+        },
+      }
+    : event;
+  return [
+    'event: message',
+    `id: ${event.eventId}`,
+    `data: ${JSON.stringify(payload)}`,
+    '',
+    '',
+  ].join('\n');
+}
+
+export function encodeSseCheckpoint(eventId: number): string {
+  return [
+    'event: checkpoint',
+    `id: ${eventId}`,
+    `data: ${JSON.stringify({ eventId })}`,
+    '',
+    '',
+  ].join('\n');
 }

@@ -3,6 +3,16 @@ import type { MemberId, MembershipDenied } from './profiles';
 export type CycleStatus = 'collecting' | 'revealing' | 'archived';
 export type LockState = 'locked' | 'unlocked';
 
+/** Public cycle history metadata; deliberately contains no media capability. */
+export interface CycleHistoryEntry {
+  id: string;
+  prompt: string;
+  startsAt: string;
+  endsAt: string;
+  status: CycleStatus;
+  releaseStatus: 'unpublished' | 'published';
+}
+
 /**
  * The two supported local-demo cycle lengths. The server owns the lifecycle
  * calculation; this type keeps client control ports independent of transport

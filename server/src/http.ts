@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createReadStream, createWriteStream, existsSync } from 'node:fs';
-import { mkdir, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
+import { createWriteStream, existsSync } from 'node:fs';
+import { mkdir, readdir, realpath, rename, rm, stat, type FileHandle } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import { URL } from 'node:url';
@@ -25,10 +25,11 @@ import {
 import {
   SUPPORTED_CHAT_REACTION,
   createChatMessage,
+  latestChatEventId,
   listChatEvents,
   toggleChatReaction,
 } from './chat';
-import { encodeSseEvent, RealtimeHub } from './realtime';
+import { encodeSseCheckpoint, encodeSseEvent, RealtimeHub } from './realtime';
 import { advanceCycleLifecycle, advanceDemoCycle, publishCycleRelease } from './cycles';
 import { classifyDemoSession } from './session/contract';
 import {
@@ -49,6 +50,12 @@ import { createGroup } from './groups';
 import { acceptInvite, createInvite } from './invites';
 import { deleteContribution } from './contributions';
 import {
+  ContributionLedgerQueryError,
+  listContributionLedger,
+  parseLedgerLimit,
+  parseLedgerState,
+} from './contributions/ledger';
+import {
   cancelClipUpload,
   claimStagedSource,
   acquireStagedSourceLock,
@@ -66,6 +73,12 @@ import {
   waitForStagedIntakesIdle,
   type ClipUploadInput,
 } from './media';
+import {
+  integrityBlocksServing,
+  openMediaWithIntegrity,
+  recordIntegrityFailure,
+  verifyMediaIntegrity,
+} from './media/integrity';
 import {
   cleanupOrphanedStagedSources,
   getCompilationJob,
@@ -324,11 +337,114 @@ async function resolveOwnedProcessedPath(
   }
 }
 
+/**
+ * Confirm a finalized output still matches the digest recorded when it was
+ * published, then return its current size for streaming. A tampered or
+ * truncated file is reported as unavailable and audited; the caller turns
+ * that into the same safe not-found response used for other absent media.
+ */
+async function openVerifiedServingFile(
+  database: RewindDatabase,
+  jobId: string,
+  kind: 'clip' | 'film' | 'download',
+  outputPath: string,
+  dataDir: string,
+  actorMemberId: string | null,
+  now: Date,
+): Promise<{ path: string; handle: FileHandle; size: number } | null> {
+  const path = await resolveOwnedProcessedPath(outputPath, dataDir);
+  const opened = await openMediaWithIntegrity(database, jobId, path);
+  if (integrityBlocksServing(opened.result)) {
+    recordIntegrityFailure(database, {
+      jobId,
+      kind,
+      result: opened.result,
+      actorMemberId,
+      timestamp: now.toISOString(),
+    });
+    await opened.handle?.close().catch(() => undefined);
+    return null;
+  }
+  if (!path || !opened.handle || !opened.byteLength) {
+    await opened.handle?.close().catch(() => undefined);
+    return null;
+  }
+  return { path, handle: opened.handle, size: opened.byteLength };
+}
+
+/** Archive/premiere checks need only a momentary verified read. Actual media
+ * routes retain the handle and stream from it. */
+async function verifiedServingPath(
+  database: RewindDatabase,
+  jobId: string,
+  kind: 'clip' | 'film' | 'download',
+  outputPath: string,
+  dataDir: string,
+  actorMemberId: string | null,
+  now: Date,
+): Promise<{ path: string; size: number } | null> {
+  const path = await resolveOwnedProcessedPath(outputPath, dataDir);
+  const result = await verifyMediaIntegrity(database, jobId, path);
+  if (integrityBlocksServing(result)) {
+    recordIntegrityFailure(database, {
+      jobId,
+      kind,
+      result,
+      actorMemberId,
+      timestamp: now.toISOString(),
+    });
+    return null;
+  }
+  if (!path) return null;
+  const details = await stat(path).catch(() => null);
+  if (!details || !details.isFile() || details.size <= 0) return null;
+  return { path, size: details.size };
+}
+
+/**
+ * Keep only released archive entries whose retained bytes still match their
+ * finalized digest. The returned objects never include the server-side path.
+ */
+async function filterServableArchive<T extends { id: string; outputPath: string }>(
+  database: RewindDatabase,
+  kind: 'clip' | 'film',
+  entries: T[],
+  dataDir: string,
+  actorMemberId: string | null,
+  now: Date,
+): Promise<Omit<T, 'outputPath'>[]> {
+  const safeEntries: Omit<T, 'outputPath'>[] = [];
+  // Process at most three hashes at once. Archive calls await the film batch
+  // before the clip batch, so the whole request stays within this bound.
+  for (let index = 0; index < entries.length; index += 3) {
+    const batch = await Promise.all(
+      entries.slice(index, index + 3).map(async (entry) => {
+        const served = await verifiedServingPath(
+          database,
+          entry.id,
+          kind,
+          entry.outputPath,
+          dataDir,
+          actorMemberId,
+          now,
+        );
+        if (!served) return null;
+        const { outputPath, ...safe } = entry;
+        return safe;
+      }),
+    );
+    for (const entry of batch) {
+      if (entry !== null) safeEntries.push(entry as Omit<T, 'outputPath'>);
+    }
+  }
+  return safeEntries;
+}
+
 function streamMp4(
   request: IncomingMessage,
   response: ServerResponse,
   config: RuntimeConfig,
-  path: string,
+  handle: FileHandle,
   size: number,
   attachmentName?: string,
 ): void {
@@ -338,11 +454,13 @@ function streamMp4(
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (!match) {
+      void handle.close().catch(() => undefined);
       response.writeHead(416, { 'Content-Range': `bytes */${size}` });
       response.end();
       return;
     }
     if (!match[1] && !match[2]) {
+      void handle.close().catch(() => undefined);
       response.writeHead(416, { 'Content-Range': `bytes */${size}` });
       response.end();
       return;
@@ -362,6 +480,7 @@ function streamMp4(
       end < start ||
       start >= size
     ) {
+      void handle.close().catch(() => undefined);
       response.writeHead(416, { 'Content-Range': `bytes */${size}` });
       response.end();
       return;
@@ -380,7 +499,8 @@ function streamMp4(
       : {}),
     ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
   });
-  createReadStream(path, { start, end })
+  handle
+    .createReadStream({ start, end, autoClose: true })
     .on('error', () => response.destroy())
     .pipe(response);
 }
@@ -937,6 +1057,11 @@ export async function handleRequest(
     const parsedLastEventId = lastEventValue ? Number(lastEventValue) : 0;
     const sinceEventId =
       Number.isSafeInteger(parsedLastEventId) && parsedLastEventId >= 0 ? parsedLastEventId : 0;
+    const startFromLatest =
+      url.searchParams.get('startFromLatest') === 'true' &&
+      lastEventValue === null &&
+      !url.searchParams.has('sinceEventId');
+    const metadataOnly = url.searchParams.get('metadataOnly') === 'true';
     const hub = options.realtimeHub;
     if (!hub) {
       sendJson(response, config, 500, {
@@ -957,9 +1082,17 @@ export async function handleRequest(
     response.write(': connected\n\n');
 
     const writeEvent = (event: Parameters<typeof encodeSseEvent>[0]) => {
-      if (!response.writableEnded && !response.destroyed) response.write(encodeSseEvent(event));
+      if (!response.writableEnded && !response.destroyed) {
+        response.write(encodeSseEvent(event, { metadataOnly }));
+      }
     };
     let unsubscribe = () => {};
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    const cleanup = () => {
+      if (heartbeat) clearInterval(heartbeat);
+      unsubscribe();
+    };
+    response.once('close', cleanup);
     const streamIsAuthorised = () => {
       const currentSession = getDemoSession(database, identity.identity.sessionId);
       return Boolean(
@@ -982,22 +1115,71 @@ export async function handleRequest(
       if (endUnauthorisedStream()) return;
       writeEvent(event);
     };
-    // Register before replay so a message sent during reconnect is either
-    // observed live or present in the replay query.
-    unsubscribe = hub.subscribe(groupId, writeAuthorisedEvent);
-    for (const event of listChatEvents(database, groupId, sinceEventId)) {
-      writeAuthorisedEvent(event);
+    if (startFromLatest) {
+      // Buffer while taking the database watermark so a concurrent commit is
+      // either included in that watermark or delivered once from the buffer.
+      const pending: Parameters<typeof encodeSseEvent>[0][] = [];
+      let priming = true;
+      unsubscribe = hub.subscribe(groupId, (event) => {
+        if (priming) pending.push(event);
+        else writeAuthorisedEvent(event);
+      });
+      const checkpoint = latestChatEventId(database, groupId);
+      if (response.destroyed || response.writableEnded) {
+        unsubscribe();
+        return;
+      }
+      if (!endUnauthorisedStream()) response.write(encodeSseCheckpoint(checkpoint));
+      for (const event of pending.sort((left, right) => left.eventId - right.eventId)) {
+        if (event.eventId > checkpoint) writeAuthorisedEvent(event);
+      }
+      priming = false;
+    } else {
+      // Buffer live events while draining the persisted log through a fixed
+      // watermark. Events committed after that watermark are flushed once the
+      // replay is complete; events at or below it are covered by replay.
+      let priming = true;
+      const pending: Parameters<typeof encodeSseEvent>[0][] = [];
+      let lastDeliveredEventId = sinceEventId;
+      const deliverOnce = (event: Parameters<typeof encodeSseEvent>[0]) => {
+        if (event.eventId <= lastDeliveredEventId) return;
+        writeAuthorisedEvent(event);
+        lastDeliveredEventId = event.eventId;
+      };
+      unsubscribe = hub.subscribe(groupId, (event) => {
+        if (priming) pending.push(event);
+        else deliverOnce(event);
+      });
+      const watermark = latestChatEventId(database, groupId);
+      while (lastDeliveredEventId < watermark) {
+        if (response.destroyed || response.writableEnded) break;
+        const page = listChatEvents(database, groupId, lastDeliveredEventId, 100);
+        let progressed = false;
+        for (const event of page) {
+          if (event.eventId > watermark) break;
+          deliverOnce(event);
+          progressed = true;
+        }
+        if (!progressed || lastDeliveredEventId >= watermark) break;
+        // Let concurrent message requests publish while replay continues. Their
+        // events remain buffered until the captured watermark has been drained.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      for (const event of pending.sort((left, right) => left.eventId - right.eventId)) {
+        if (response.destroyed || response.writableEnded) break;
+        if (event.eventId > watermark) deliverOnce(event);
+      }
+      priming = false;
     }
-    const heartbeat = setInterval(() => {
+    if (response.destroyed || response.writableEnded) {
+      cleanup();
+      return;
+    }
+    heartbeat = setInterval(() => {
       if (response.writableEnded || response.destroyed || endUnauthorisedStream()) return;
       response.write(': keep-alive\n\n');
     }, options.realtimeHeartbeatIntervalMs ?? 15_000);
     heartbeat.unref();
-    const cleanup = () => {
-      clearInterval(heartbeat);
-      unsubscribe();
-    };
-    response.once('close', cleanup);
     return;
   }
 
@@ -1568,6 +1750,17 @@ export async function handleRequest(
     );
     if (!identity) return;
     const body = await requestBody(request, config);
+    if (
+      body?.replacesContributionId !== undefined &&
+      body.replacesContributionId !== null &&
+      typeof body.replacesContributionId !== 'string'
+    ) {
+      sendJson(response, config, 400, {
+        error: 'upload_invalid_replacement_target',
+        message: 'Choose a contribution that can be replaced.',
+      });
+      return;
+    }
     const input: ClipUploadInput = {
       idempotencyKey: typeof body?.idempotencyKey === 'string' ? body.idempotencyKey : '',
       sourceUri: typeof body?.sourceUri === 'string' ? body.sourceUri : '',
@@ -1594,6 +1787,9 @@ export async function handleRequest(
       ...(typeof body?.sourceDurationSeconds === 'number'
         ? { sourceDurationSeconds: body.sourceDurationSeconds }
         : {}),
+      ...(typeof body?.replacesContributionId === 'string'
+        ? { replacesContributionId: body.replacesContributionId }
+        : {}),
     };
     const result = createClipUpload(database, identity.groupId, identity.memberId, input, now(), {
       stagingDir: resolve(config.dataDir, 'media', 'staging'),
@@ -1607,16 +1803,22 @@ export async function handleRequest(
       if (result.reason !== 'invalid_key') {
         cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
       }
-      sendJson(response, config, result.reason === 'quota_exceeded' ? 409 : 400, {
+      const conflict =
+        result.reason === 'quota_exceeded' || result.reason === 'replacement_conflict';
+      sendJson(response, config, conflict ? 409 : 400, {
         error: `upload_${result.reason}`,
         message:
           result.reason === 'quota_exceeded'
             ? 'This cycle has no remaining contribution allowance.'
-            : result.reason === 'invalid_key'
-              ? 'Provide a retryable upload key.'
-              : result.reason === 'invalid_mode'
-                ? 'Choose a supported original capture mode.'
-                : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
+            : result.reason === 'replacement_conflict'
+              ? 'That contribution can no longer be replaced.'
+              : result.reason === 'invalid_replacement_target'
+                ? 'Choose a contribution that can be replaced.'
+                : result.reason === 'invalid_key'
+                  ? 'Provide a retryable upload key.'
+                  : result.reason === 'invalid_mode'
+                    ? 'Choose a supported original capture mode.'
+                    : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
       });
       return;
     }
@@ -1706,6 +1908,42 @@ export async function handleRequest(
 
   if (url.pathname === '/profiles') {
     sendJson(response, config, 200, { profiles: listProfiles(database) });
+    return;
+  }
+
+  if (url.pathname === '/contributions' && request.method === 'GET') {
+    const requestNow = now();
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      requestNow,
+      url.searchParams.get('groupId'),
+      'contribution',
+    );
+    if (!identity) return;
+    try {
+      sendJson(
+        response,
+        config,
+        200,
+        listContributionLedger(database, {
+          groupId: identity.groupId,
+          memberId: identity.memberId,
+          state: parseLedgerState(url.searchParams.get('state')),
+          limit: parseLedgerLimit(url.searchParams.get('limit')),
+          cursor: url.searchParams.get('cursor'),
+          now: requestNow,
+        }),
+      );
+    } catch (error) {
+      if (!(error instanceof ContributionLedgerQueryError)) throw error;
+      sendJson(response, config, 400, {
+        error: 'invalid_ledger_request',
+        message: error.message,
+      });
+    }
     return;
   }
 
@@ -1897,6 +2135,39 @@ export async function handleRequest(
     return;
   }
 
+  if (url.pathname === '/cycles/history' && request.method === 'GET') {
+    const groupId = url.searchParams.get('groupId');
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'group',
+    );
+    if (!identity) return;
+    const cycles = database
+      .prepare(
+        `SELECT id, prompt, starts_at AS startsAt, ends_at AS endsAt, status,
+                release_status AS releaseStatus
+         FROM cycles WHERE group_id = ?
+         ORDER BY starts_at DESC, id DESC`,
+      )
+      .all(identity.groupId) as Record<string, unknown>[];
+    sendJson(response, config, 200, {
+      cycles: cycles.map((cycle) => ({
+        id: String(cycle.id),
+        prompt: String(cycle.prompt),
+        startsAt: String(cycle.startsAt),
+        endsAt: String(cycle.endsAt),
+        status: String(cycle.status),
+        releaseStatus: String(cycle.releaseStatus),
+      })),
+    });
+    return;
+  }
+
   const messageMatch = url.pathname.match(/^\/messages\/([^/]+)$/);
   if (messageMatch) {
     const messageId = decodePathSegment(messageMatch[1], response, config);
@@ -1987,7 +2258,22 @@ export async function handleRequest(
     if (!identity) return;
     const film = getPremiereFilm(database, identity.groupId, cycleId);
     if (!film) return sendNotFound(response, config);
-    const state = premiereState(film);
+    let state = premiereState(film);
+    // A published film whose bytes no longer match its finalized digest must
+    // not be advertised as playable. It is reported as delayed and audited,
+    // the same safe state used for an exhausted compile.
+    if (state === 'ready' && film.filmId && film.outputPath) {
+      const served = await verifiedServingPath(
+        database,
+        film.filmId,
+        'film',
+        film.outputPath,
+        config.dataDir,
+        identity.memberId,
+        now(),
+      );
+      if (!served) state = 'delayed';
+    }
     sendJson(response, config, 200, {
       premiere:
         state === 'ready'
@@ -2033,11 +2319,17 @@ export async function handleRequest(
     ) {
       return sendNotFound(response, config);
     }
-    const path = await resolveOwnedProcessedPath(premiere.outputPath, config.dataDir);
-    if (!path) return sendNotFound(response, config);
-    const details = await stat(path).catch(() => null);
-    if (!details || !details.isFile() || details.size <= 0) return sendNotFound(response, config);
-    streamMp4(request, response, config, path, details.size);
+    const served = await openVerifiedServingFile(
+      database,
+      filmId,
+      'film',
+      premiere.outputPath,
+      config.dataDir,
+      identity.memberId,
+      now(),
+    );
+    if (!served) return sendNotFound(response, config);
+    streamMp4(request, response, config, served.handle, served.size);
     return;
   }
 
@@ -2054,13 +2346,32 @@ export async function handleRequest(
     );
     if (!identity) return;
     const archive = listReleasedArchive(database, identity.groupId, identity.memberId);
+    // Advertise only entries whose retained bytes still match the digest
+    // recorded at finalization. A tampered or truncated output disappears
+    // from the archive and is audited instead of being offered for playback.
+    const films = await filterServableArchive(
+      database,
+      'film',
+      archive.films,
+      config.dataDir,
+      identity.memberId,
+      now(),
+    );
+    const clips = await filterServableArchive(
+      database,
+      'clip',
+      archive.clips,
+      config.dataDir,
+      identity.memberId,
+      now(),
+    );
     sendJson(response, config, 200, {
       archive: {
-        films: archive.films.map((film) => ({
+        films: films.map((film) => ({
           ...film,
           downloadPath: `/films/${encodeURIComponent(film.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
         })),
-        clips: archive.clips.map((clip) => ({
+        clips: clips.map((clip) => ({
           ...clip,
           downloadPath: `/clips/${encodeURIComponent(clip.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
         })),
@@ -2093,16 +2404,22 @@ export async function handleRequest(
       ? getReleasedFilmDownload(database, identity.groupId, resourceId)
       : getReleasedOwnClipDownload(database, identity.groupId, identity.memberId, resourceId);
     if (!media) return sendNotFound(response, config);
-    const path = await resolveOwnedProcessedPath(media.outputPath, config.dataDir);
-    if (!path) return sendNotFound(response, config);
-    const details = await stat(path).catch(() => null);
-    if (!details || !details.isFile() || details.size <= 0) return sendNotFound(response, config);
+    const served = await openVerifiedServingFile(
+      database,
+      resourceId,
+      filmDownloadMatch ? 'film' : 'clip',
+      media.outputPath,
+      config.dataDir,
+      identity.memberId,
+      now(),
+    );
+    if (!served) return sendNotFound(response, config);
     streamMp4(
       request,
       response,
       config,
-      path,
-      details.size,
+      served.handle,
+      served.size,
       filmDownloadMatch ? 'rewind-group-film.mp4' : 'rewind-my-clip.mp4',
     );
     return;

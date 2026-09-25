@@ -1,10 +1,18 @@
 import { once } from 'node:events';
 import { listAuditEvents, type AuditEvent } from './audit';
 import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from './config';
-import { openDatabase, resetDatabase, fixtureSummary } from './db';
+import { backfillMediaIntegrity, openDatabase, resetDatabase, fixtureSummary } from './db';
 import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 import { cleanupOrphanedStagedSources } from './jobs';
+import {
+  runWorkerTick,
+  safeWorkerErrorLabel,
+  startWorkerLoop,
+  WORKER_DEFAULT_IDLE_MS,
+  WORKER_MIN_IDLE_MS,
+  type WorkerRunRecord,
+} from './jobs/worker';
 import {
   listQueueJobs,
   parseQueueKind,
@@ -13,9 +21,31 @@ import {
   QueueQueryError,
 } from './jobs/queue';
 import { resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import {
+  applyConsistencyRepair,
+  CONSISTENCY_DEFAULT_LIMIT,
+  CONSISTENCY_MAX_LIMIT,
+  planConsistencyRepair,
+} from './jobs/consistency';
+import {
+  applyProcessedMediaRetention,
+  planProcessedMediaRetention,
+  PROCESSED_RETENTION_DEFAULT_LIMIT,
+  PROCESSED_RETENTION_MAX_LIMIT,
+} from './jobs/retention';
 
-function openRuntimeDatabase(config: RuntimeConfig): ReturnType<typeof openDatabase> {
-  return openDatabase(config, { seedNow: new Date() });
+async function openRuntimeDatabase(
+  config: RuntimeConfig,
+): Promise<ReturnType<typeof openDatabase>> {
+  const database = openDatabase(config, { seedNow: new Date() });
+  try {
+    await backfillMediaIntegrity(database, config.dataDir);
+    return database;
+  } catch (error) {
+    database.close();
+    throw error;
+  }
 }
 
 export interface PreflightReport {
@@ -31,7 +61,7 @@ async function serviceProbe(config: RuntimeConfig): Promise<PreflightReport['ser
   let database: ReturnType<typeof openDatabase> | null = null;
   let server: ReturnType<typeof createRuntimeServer> | null = null;
   try {
-    database = openRuntimeDatabase({ ...config, port: 0 });
+    database = await openRuntimeDatabase({ ...config, port: 0 });
     server = createRuntimeServer({ ...config, port: 0 }, database);
     server.listen(0, config.host);
     await once(server, 'listening');
@@ -66,7 +96,7 @@ export async function runPreflight(
   let sqlite: PreflightReport['sqlite'];
   let database: ReturnType<typeof openDatabase> | null = null;
   try {
-    database = openRuntimeDatabase(config);
+    database = await openRuntimeDatabase(config);
     const rows = fixtureSummary(database);
     sqlite = {
       ok: rows.profiles === 5 && rows.groups === 1 && rows.memberships === 5,
@@ -142,6 +172,100 @@ function parseDiagnosticsLimit(argv: string[]): number {
   return limit;
 }
 
+function parseRetentionLimit(argv: string[]): number {
+  const index = argv.indexOf('--limit');
+  if (index === -1) return PROCESSED_RETENTION_DEFAULT_LIMIT;
+  const value = argv[index + 1];
+  const limit = Number(value);
+  if (!value || !Number.isInteger(limit) || limit < 1 || limit > PROCESSED_RETENTION_MAX_LIMIT) {
+    throw new ConfigError(
+      `--limit must be an integer from 1 to ${PROCESSED_RETENTION_MAX_LIMIT}.`,
+      'Use retention --limit 100; deletion requires the explicit --apply flag.',
+    );
+  }
+  return limit;
+}
+
+function parseConsistencyLimit(argv: string[]): number {
+  const value = readOption(argv, ['--limit']);
+  const limit = value === undefined ? CONSISTENCY_DEFAULT_LIMIT : Number(value);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > CONSISTENCY_MAX_LIMIT) {
+    throw new ConfigError(
+      `--limit must be an integer from 1 to ${CONSISTENCY_MAX_LIMIT}.`,
+      'Use consistency --limit 100; changes require --repair.',
+    );
+  }
+  return limit;
+}
+
+function printConsistency(
+  report: ReturnType<typeof planConsistencyRepair>,
+  json: boolean,
+  applied?: { repaired: string[]; skipped: string[] },
+): void {
+  const result = {
+    mode: applied ? 'repair' : 'report',
+    limit: report.limit,
+    truncated: report.truncated,
+    findings: report.findings.map(({ kind, id, name, repairable, reason }) => ({
+      kind,
+      id,
+      ...(name ? { name } : {}),
+      repairable,
+      ...(reason ? { reason } : {}),
+    })),
+    ...(applied ? { repaired: applied.repaired, skippedOnRevalidation: applied.skipped } : {}),
+  };
+  if (json) {
+    console.log(JSON.stringify({ version: SERVICE_VERSION, ...result }, null, 2));
+    return;
+  }
+  console.log(
+    `Rewind consistency ${result.mode} (${result.findings.length} finding(s)${report.truncated ? '; additional rows or findings were omitted by report bounds' : ''})`,
+  );
+  for (const finding of result.findings)
+    console.log(
+      `${finding.kind} id=${finding.id}${finding.name ? ` name=${finding.name}` : ''}${finding.repairable ? ' repairable' : ''}${finding.reason ? ` reason=${finding.reason}` : ''}`,
+    );
+  if (applied)
+    console.log(`Repaired ${applied.repaired.length}; skipped ${applied.skipped.length}.`);
+}
+
+function printRetention(
+  report: {
+    cutoff: string;
+    limit: number;
+    candidates: { reportName: string }[];
+    skippedUnsafe: string[];
+  },
+  json: boolean,
+  applied?: { deleted: string[]; skipped: string[] },
+): void {
+  const result = {
+    mode: applied ? 'apply' : 'dry-run',
+    cutoff: report.cutoff,
+    limit: report.limit,
+    candidates: report.candidates.map((candidate) => candidate.reportName),
+    skippedUnsafe: report.skippedUnsafe,
+    ...(applied ? { deleted: applied.deleted, skippedOnRevalidation: applied.skipped } : {}),
+  };
+  if (json) {
+    console.log(JSON.stringify({ version: SERVICE_VERSION, ...result }, null, 2));
+    return;
+  }
+  console.log(`Processed media retention (${result.mode}; stale before ${report.cutoff})`);
+  for (const name of result.candidates) console.log(`${applied ? 'deleted' : 'candidate'} ${name}`);
+  for (const name of result.skippedUnsafe) console.log(`skipped unsafe ${name}`);
+  if (applied) {
+    for (const name of applied.skipped) console.log(`skipped on revalidation ${name}`);
+    console.log(`Deleted ${applied.deleted.length}; skipped ${applied.skipped.length}.`);
+  } else {
+    console.log(
+      `${report.candidates.length} candidate(s). Use --apply to delete after revalidation.`,
+    );
+  }
+}
+
 function printDiagnostics(events: AuditEvent[], json: boolean): void {
   if (json) {
     console.log(JSON.stringify({ version: SERVICE_VERSION, events }, null, 2));
@@ -214,8 +338,151 @@ function printJobs(page: ReturnType<typeof listQueueJobs>, json: boolean): void 
     console.log('More jobs are available; pass --cursor from JSON output.');
 }
 
+function parseWorkerMsOption(argv: string[], name: string): number | undefined {
+  const raw = readOption(argv, [name]);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < WORKER_MIN_IDLE_MS || value > 3_600_000) {
+    throw new ConfigError(
+      name +
+        ' must be an integer from ' +
+        WORKER_MIN_IDLE_MS +
+        ' to 3600000 (received ' +
+        JSON.stringify(raw) +
+        ').',
+      'Use ' + name + ' with a bounded millisecond value or omit it.',
+    );
+  }
+  return value;
+}
+
+function parseWorkerMaxJobs(argv: string[]): number | undefined {
+  const raw = readOption(argv, ['--max-jobs']);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 10_000) {
+    throw new ConfigError(
+      '--max-jobs must be an integer from 1 to 10000 (received ' + JSON.stringify(raw) + ').',
+      'Use --max-jobs with a bounded positive integer or omit it.',
+    );
+  }
+  return value;
+}
+
+function printWorkerRecord(record: WorkerRunRecord, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(record));
+    return;
+  }
+  const category = record.failureCategory ? ' category=' + record.failureCategory : '';
+  console.log(
+    record.jobKind +
+      ' ' +
+      record.status +
+      ' id=' +
+      record.jobId +
+      ' attempts=' +
+      record.attempts +
+      ' outcome=' +
+      record.outcome +
+      ' terminal=' +
+      record.terminal +
+      category,
+  );
+}
+
+/**
+ * Run the durable local worker loop. It claims only pending, retryable, or
+ * lease-expired jobs, so the request-driven process routes remain a safe
+ * rollback: stop this command and clients can still drive the same jobs.
+ */
+async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
+  const json = argv.includes('--json');
+  const once = argv.includes('--once');
+  const groupId = readOption(argv, ['--group', '--group-id', '--groupId']);
+  const idleMs = parseWorkerMsOption(argv, '--idle-ms');
+  const maxJobs = parseWorkerMaxJobs(argv);
+  const database = await openRuntimeDatabase(config);
+  const workerOptions = {
+    ffmpegBin: config.ffmpegBin,
+    stagingDir: resolve(config.dataDir, 'media', 'staging'),
+    outputDir: resolve(config.dataDir, 'media', 'processed'),
+    ...(groupId ? { groupId } : {}),
+  };
+  // Close the handle exactly once, whichever exit path is taken.
+  let closed = false;
+  const closeDatabase = () => {
+    if (closed) return;
+    closed = true;
+    database.close();
+  };
+
+  if (once) {
+    try {
+      await cleanupOrphanedStagedSources(database, workerOptions.stagingDir);
+      // A repeatedly failing job can never make --once loop indefinitely.
+      const limit = maxJobs ?? 100;
+      const jobs: WorkerRunRecord[] = [];
+      while (jobs.length < limit) {
+        const tick = await runWorkerTick(database, workerOptions);
+        if (!tick.claimed) break;
+        jobs.push(tick.record);
+        if (!json) printWorkerRecord(tick.record, false);
+      }
+      if (json) console.log(JSON.stringify({ jobs, drained: jobs.length }));
+      else
+        console.log(
+          'Worker drained ' + jobs.length + ' job' + (jobs.length === 1 ? '' : 's') + '.',
+        );
+    } catch (error) {
+      console.error('Worker loop error: ' + safeWorkerErrorLabel(error));
+      process.exitCode = 1;
+    } finally {
+      closeDatabase();
+    }
+    return;
+  }
+  try {
+    await cleanupOrphanedStagedSources(database, workerOptions.stagingDir);
+    const handle = startWorkerLoop(database, {
+      ...workerOptions,
+      ...(idleMs === undefined ? {} : { idleMs }),
+      ...(maxJobs === undefined ? {} : { maxJobs }),
+      onResult: (record) => printWorkerRecord(record, json),
+    });
+    const shutdown = () => void handle.stop().catch(() => undefined);
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+    try {
+      if (json) console.log(JSON.stringify({ event: 'worker_started', version: SERVICE_VERSION }));
+      else
+        console.log(
+          'Rewind durable worker (' +
+            SERVICE_VERSION +
+            ') serving ' +
+            (groupId ?? 'all local groups') +
+            '; idle ' +
+            (idleMs ?? WORKER_DEFAULT_IDLE_MS) +
+            ' ms. Press Ctrl-C to stop.',
+        );
+      await handle.done;
+      const count = handle.completed();
+      if (json) console.log(JSON.stringify({ event: 'worker_stopped', completed: count }));
+      else console.log('Worker stopped after ' + count + ' job' + (count === 1 ? '' : 's') + '.');
+    } finally {
+      process.off('SIGINT', shutdown);
+      process.off('SIGTERM', shutdown);
+    }
+  } catch (error) {
+    console.error('Worker loop error: ' + safeWorkerErrorLabel(error));
+    process.exitCode = 1;
+  } finally {
+    closeDatabase();
+  }
+}
+
 async function start(config: RuntimeConfig): Promise<void> {
-  const database = openRuntimeDatabase(config);
+  const database = await openRuntimeDatabase(config);
   await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
   const server = createRuntimeServer(config, database);
   const close = () => {
@@ -258,14 +525,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'migrate') {
-      const database = openRuntimeDatabase(config);
+      const database = await openRuntimeDatabase(config);
       console.log(`SQLite migrated and seeded at ${config.databasePath}.`);
       database.close();
       return;
     }
     if (command === 'reset') {
       resetDatabase(config);
-      const database = openRuntimeDatabase(config);
+      const database = await openRuntimeDatabase(config);
       console.log(
         `Local database reset to the deterministic five-member fixture at ${config.databasePath}.`,
       );
@@ -273,7 +540,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'diagnostics') {
-      const database = openRuntimeDatabase(config);
+      const database = await openRuntimeDatabase(config);
       try {
         printDiagnostics(listAuditEvents(database, parseDiagnosticsLimit(argv)), json);
       } finally {
@@ -281,8 +548,74 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       }
       return;
     }
+    if (command === 'retention') {
+      const limit = parseRetentionLimit(argv);
+      const apply = argv.includes('--apply');
+      // Retention must not run migrations, seed fixtures, or the startup
+      // integrity backfill. The apply path needs only a direct SQLite handle
+      // so reference revalidation and deletion share its writer transaction.
+      const database = new DatabaseSync(
+        config.databasePath,
+        apply ? undefined : { readOnly: true },
+      );
+      try {
+        const report = planProcessedMediaRetention(
+          database,
+          resolve(config.dataDir, 'media', 'processed'),
+          { limit },
+        );
+        printRetention(
+          report,
+          json,
+          apply
+            ? applyProcessedMediaRetention(
+                database,
+                resolve(config.dataDir, 'media', 'processed'),
+                report,
+              )
+            : undefined,
+        );
+      } finally {
+        database.close();
+      }
+      return;
+    }
+    if (command === 'consistency') {
+      const limit = parseConsistencyLimit(argv);
+      const repair = argv.includes('--repair');
+      const database = new DatabaseSync(
+        config.databasePath,
+        repair ? undefined : { readOnly: true },
+      );
+      try {
+        const report = planConsistencyRepair(
+          database,
+          resolve(config.dataDir, 'media', 'processed'),
+          resolve(config.dataDir, 'media', 'staging'),
+          { limit },
+        );
+        printConsistency(
+          report,
+          json,
+          repair
+            ? applyConsistencyRepair(
+                database,
+                resolve(config.dataDir, 'media', 'processed'),
+                report,
+              )
+            : undefined,
+        );
+      } finally {
+        database.close();
+      }
+      return;
+    }
+    if (command === 'worker') {
+      await runWorker(config, argv);
+      return;
+    }
     if (command === 'jobs' || command === 'queue') {
-      const database = openRuntimeDatabase(config);
+      const database = await openRuntimeDatabase(config);
       try {
         printJobs(listQueueJobs(database, parseJobsOptions(argv)), json);
       } finally {
@@ -293,7 +626,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (command !== 'start') {
       throw new ConfigError(
         `Unknown local runtime command ${JSON.stringify(command)}.`,
-        'Use start, preflight, migrate, reset, diagnostics, or jobs.',
+        'Use start, worker, preflight, migrate, reset, diagnostics, jobs, retention, or consistency.',
       );
     }
     await start(config);
