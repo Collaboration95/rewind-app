@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { opendirSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -10,7 +11,7 @@ const execFileAsync = promisify(execFile);
 
 const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, openDatabase, schemaReadiness } = await import('../dist/db.js');
-const { applyConsistencyRepair, planConsistencyRepair } =
+const { applyConsistencyRepair, planConsistencyRepair, CONSISTENCY_SCAN_LIMIT } =
   await import('../dist/jobs/consistency.js');
 
 async function fixture(run) {
@@ -283,6 +284,39 @@ test('report limits scan classes independently and fairly select findings', asyn
     assert.deepEqual(
       new Set(plan.findings.map((finding) => finding.kind)),
       new Set(['missing_output', 'invalid_compilation_reference']),
+    );
+    assert.equal(plan.truncated, true);
+  });
+});
+
+test('marks a consistency report truncated when processed entries exceed the hard scan bound', async () => {
+  await fixture(async ({ database, processedDir, stagingDir }) => {
+    database.prepare("UPDATE media_jobs SET status = 'failed', output_path = NULL").run();
+    const names = Array.from(
+      { length: CONSISTENCY_SCAN_LIMIT + 1 },
+      (_, index) => `scan-${String(index).padStart(5, '0')}`,
+    );
+    for (let start = 0; start < names.length; start += 250) {
+      await Promise.all(
+        names.slice(start, start + 250).map((name) => mkdir(resolve(processedDir, name))),
+      );
+    }
+
+    const directory = opendirSync(processedDir);
+    for (let scanned = 0; scanned < CONSISTENCY_SCAN_LIMIT; scanned += 1) {
+      assert.ok(directory.readSync(), `expected directory entry ${scanned}`);
+    }
+    const omittedEntry = directory.readSync();
+    directory.closeSync();
+    assert.ok(omittedEntry);
+    const omittedPath = resolve(processedDir, omittedEntry.name);
+    await rm(omittedPath, { recursive: true });
+    await writeFile(omittedPath, 'omitted orphan');
+
+    const plan = planConsistencyRepair(database, processedDir, stagingDir, { limit: 1 });
+    assert.equal(
+      plan.findings.some((finding) => finding.name === omittedEntry.name),
+      false,
     );
     assert.equal(plan.truncated, true);
   });
