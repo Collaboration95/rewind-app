@@ -182,6 +182,7 @@ test('every protected endpoint category requires a session and ignores caller id
     const paths = [
       '/groups/demo-group',
       '/cycles/current?groupId=demo-group',
+      '/cycles/history?groupId=demo-group',
       '/messages/demo-message?groupId=demo-group',
       '/contributions/demo-contribution?groupId=demo-group',
       '/clips/demo-clip?groupId=demo-group',
@@ -217,6 +218,49 @@ test('every protected endpoint category requires a session and ignores caller id
 
 test('released archive downloads are session-bound, owner-scoped, release-gated, and never expose paths', async () => {
   await withRuntime(async ({ baseUrl, config, database }) => {
+    database
+      .prepare(
+        `INSERT INTO cycles
+          (id, group_id, prompt, starts_at, ends_at, status, lock_state, max_count,
+           max_seconds, count_used, seconds_used, release_status, release_published_at)
+         VALUES (?, 'demo-group', ?, ?, ?, ?, 'locked', 5, 30, 0, 0, ?, ?)`,
+      )
+      .run(
+        'revealing-cycle',
+        'A revealing prompt',
+        '2026-08-20T00:00:00.000Z',
+        '2026-08-27T00:00:00.000Z',
+        'revealing',
+        'unpublished',
+        null,
+      );
+    database
+      .prepare(
+        `INSERT INTO cycles
+          (id, group_id, prompt, starts_at, ends_at, status, lock_state, max_count,
+           max_seconds, count_used, seconds_used, release_status, release_published_at)
+         VALUES (?, 'demo-group', ?, ?, ?, 'archived', 'locked', 5, 30, 0, 0, 'published', ?)`,
+      )
+      .run(
+        'archived-cycle',
+        'An archived prompt',
+        '2026-08-01T00:00:00.000Z',
+        '2026-08-08T00:00:00.000Z',
+        '2026-08-09T00:00:00.000Z',
+      );
+    database
+      .prepare(
+        `INSERT INTO cycles
+          (id, group_id, prompt, starts_at, ends_at, status, lock_state, max_count,
+           max_seconds, count_used, seconds_used, release_status, release_published_at)
+         VALUES (?, 'demo-group', ?, ?, ?, 'archived', 'locked', 5, 30, 0, 0, 'unpublished', NULL)`,
+      )
+      .run(
+        'locked-archived-cycle',
+        'A locked archived prompt',
+        '2026-08-10T00:00:00.000Z',
+        '2026-08-17T00:00:00.000Z',
+      );
     const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -224,6 +268,50 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
     });
     const { session } = await sessionResponse.json();
     const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+
+    const historyNoSession = await fetch(`${baseUrl}/cycles/history?groupId=demo-group`);
+    assert.equal(historyNoSession.status, 401);
+    const historyResponse = await fetch(`${baseUrl}/cycles/history?${query}`);
+    assert.equal(historyResponse.status, 200);
+    const history = await historyResponse.json();
+    assert.deepEqual(history.cycles, [
+      {
+        id: 'demo-cycle',
+        prompt: 'What made you pause and smile?',
+        startsAt: '2026-09-01T00:00:00.000Z',
+        endsAt: '2026-09-12T00:00:00.000Z',
+        status: 'collecting',
+        releaseStatus: 'unpublished',
+      },
+      {
+        id: 'revealing-cycle',
+        prompt: 'A revealing prompt',
+        startsAt: '2026-08-20T00:00:00.000Z',
+        endsAt: '2026-08-27T00:00:00.000Z',
+        status: 'revealing',
+        releaseStatus: 'unpublished',
+      },
+      {
+        id: 'locked-archived-cycle',
+        prompt: 'A locked archived prompt',
+        startsAt: '2026-08-10T00:00:00.000Z',
+        endsAt: '2026-08-17T00:00:00.000Z',
+        status: 'archived',
+        releaseStatus: 'unpublished',
+      },
+      {
+        id: 'archived-cycle',
+        prompt: 'An archived prompt',
+        startsAt: '2026-08-01T00:00:00.000Z',
+        endsAt: '2026-08-08T00:00:00.000Z',
+        status: 'archived',
+        releaseStatus: 'published',
+      },
+    ]);
+    assert.doesNotMatch(
+      JSON.stringify(history),
+      /uri|thumbnail|playback|download|share|outputPath/i,
+    );
 
     const locked = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
     assert.equal(locked.status, 200);
@@ -287,6 +375,12 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
     const archive = await archiveResponse.json();
     assert.equal(archive.archive.films.length, 1);
     assert.equal(archive.archive.clips.length, 1);
+    const releasedHistoryResponse = await fetch(`${baseUrl}/cycles/history?${query}`);
+    const releasedHistory = await releasedHistoryResponse.json();
+    assert.equal(releasedHistory.cycles[0].status, 'revealing');
+    assert.equal(releasedHistory.cycles[0].releaseStatus, 'published');
+    assert.equal(archive.archive.films[0].cycleId, releasedHistory.cycles[0].id);
+    assert.equal(archive.archive.clips[0].cycleId, releasedHistory.cycles[0].id);
     assert.match(archive.archive.films[0].downloadPath, /^\/films\/demo-film\/download\?/);
     assert.match(archive.archive.clips[0].downloadPath, /^\/clips\/demo-clip\/download\?/);
     assert.doesNotMatch(
