@@ -9,6 +9,7 @@ import { PROCESSED_RETENTION_AGE_MS } from './retention';
 
 export const CONSISTENCY_DEFAULT_LIMIT = 100;
 export const CONSISTENCY_MAX_LIMIT = 500;
+export const CONSISTENCY_SCAN_LIMIT = 5000;
 export const CONSISTENCY_STALE_CLAIM_MS = PROCESSING_CLAIM_LEASE_MS;
 export const CONSISTENCY_STALE_FILE_MS = PROCESSED_RETENTION_AGE_MS;
 
@@ -34,6 +35,7 @@ export interface ConsistencyFinding {
 interface CandidateFile {
   path: string;
   databasePaths: [string, string];
+  key: string;
   name: string;
   device: number;
   inode: number;
@@ -45,6 +47,7 @@ export interface ConsistencyPlan {
   limit: number;
   findings: ConsistencyFinding[];
   files: CandidateFile[];
+  truncated: boolean;
   staleBefore: string;
   staleFileBefore: string;
 }
@@ -68,6 +71,7 @@ function safeStat(root: string, path: string): Omit<CandidateFile, 'databasePath
   if (!details.isFile()) return null;
   return {
     path: actual,
+    key: createHash('sha256').update(relative(root, actual)).digest('hex'),
     name: safeName(relative(root, actual)),
     device: details.dev,
     inode: details.ino,
@@ -101,6 +105,7 @@ export function planConsistencyRepair(
   const stagingRoot = realpathSync(stagingDir);
   const findings: ConsistencyFinding[] = [];
   const files: CandidateFile[] = [];
+  let truncated = false;
   const staleFileBefore = new Date(now.getTime() - CONSISTENCY_STALE_FILE_MS).toISOString();
   const outputRows = database
     .prepare(
@@ -114,16 +119,16 @@ export function planConsistencyRepair(
        FROM media_jobs WHERE kind IN ('clip', 'film')
        ORDER BY created_at, id LIMIT ?`,
     )
-    .all(limit) as Record<string, unknown>[];
-  for (const row of outputRows) {
+    .all(CONSISTENCY_SCAN_LIMIT + 1) as Record<string, unknown>[];
+  if (outputRows.length > CONSISTENCY_SCAN_LIMIT) truncated = true;
+  for (const row of outputRows.slice(0, CONSISTENCY_SCAN_LIMIT)) {
     const key = String(row.id);
     const id = safeName(key);
     if (typeof row.outputPath === 'string' && row.outputPath) {
       try {
         const path = resolve(String(row.outputPath));
-        if (!within(processedRoot, path)) throw new Error('outside processed root');
-        const link = lstatSync(path);
-        if (!link.isFile() || link.isSymbolicLink()) throw new Error('not regular');
+        if (!safeStat(processedRoot, path))
+          throw new Error('missing, non-regular, or outside root');
       } catch {
         findings.push({
           kind: 'missing_output',
@@ -177,8 +182,9 @@ export function planConsistencyRepair(
        LEFT JOIN cycles contributionCycle ON contributionCycle.id = contribution.cycle_id
        ORDER BY input.job_id, input.position LIMIT ?`,
     )
-    .all(limit) as Record<string, unknown>[];
-  for (const row of compilationRows) {
+    .all(CONSISTENCY_SCAN_LIMIT + 1) as Record<string, unknown>[];
+  if (compilationRows.length > CONSISTENCY_SCAN_LIMIT) truncated = true;
+  for (const row of compilationRows.slice(0, CONSISTENCY_SCAN_LIMIT)) {
     const invalid =
       row.filmKind !== 'film' ||
       row.clipKind !== 'clip' ||
@@ -207,8 +213,9 @@ export function planConsistencyRepair(
               claim_generation AS generation, claim_expires_at AS claimExpiresAt
          FROM staged_sources ORDER BY source_id LIMIT ?`,
     )
-    .all(limit) as Record<string, unknown>[];
-  for (const row of stagedRows) {
+    .all(CONSISTENCY_SCAN_LIMIT + 1) as Record<string, unknown>[];
+  if (stagedRows.length > CONSISTENCY_SCAN_LIMIT) truncated = true;
+  for (const row of stagedRows.slice(0, CONSISTENCY_SCAN_LIMIT)) {
     if (row.status === 'pending' && !row.sourcePath) continue;
     const expiry =
       typeof row.claimExpiresAt === 'string' ? Date.parse(row.claimExpiresAt) : Number.NaN;
@@ -234,49 +241,86 @@ export function planConsistencyRepair(
   }
 
   const directory = opendirSync(processedRoot);
+  const names: string[] = [];
   try {
-    for (let scanned = 0; scanned < limit; scanned += 1) {
+    for (let scanned = 0; scanned < CONSISTENCY_SCAN_LIMIT; scanned += 1) {
       const entry = directory.readSync();
       if (!entry) break;
-      const name = entry.name;
-      if (findings.length >= limit) break;
-      try {
-        const path = resolve(processedRoot, name);
-        const file = safeStat(processedRoot, path);
-        if (!file) continue;
-        const databasePaths: [string, string] = [resolve(requestedProcessedRoot, name), file.path];
-        const referenced = database
-          .prepare('SELECT 1 FROM media_jobs WHERE output_path IN (?, ?) LIMIT 1')
-          .get(...databasePaths);
-        if (referenced) continue;
-        if (file.modifiedAtMs > Date.parse(staleFileBefore)) {
-          findings.push({
-            kind: 'unreferenced_processed_file',
-            id: safeName(name),
-            name: safeName(name),
-            repairable: false,
-            reason: 'The file is younger than the shared 24-hour cleanup horizon.',
-          });
-          continue;
-        }
-        files.push({ ...file, databasePaths });
-        findings.push({
-          kind: 'unreferenced_processed_file',
-          id: safeName(name),
-          name: safeName(name),
-          repairable: true,
-        });
-      } catch {
-        /* inaccessible entries are omitted from the sanitized report */
-      }
+      names.push(entry.name);
     }
+    if (names.length === CONSISTENCY_SCAN_LIMIT && directory.readSync()) truncated = true;
   } finally {
     directory.closeSync();
   }
+  for (const name of names.sort()) {
+    try {
+      const path = resolve(processedRoot, name);
+      const file = safeStat(processedRoot, path);
+      if (!file) continue;
+      const databasePaths: [string, string] = [resolve(requestedProcessedRoot, name), file.path];
+      const referenced = database
+        .prepare('SELECT 1 FROM media_jobs WHERE output_path IN (?, ?) LIMIT 1')
+        .get(...databasePaths);
+      if (referenced) continue;
+      if (file.modifiedAtMs > Date.parse(staleFileBefore)) {
+        findings.push({
+          kind: 'unreferenced_processed_file',
+          id: file.name,
+          name: file.name,
+          key: file.key,
+          repairable: false,
+          reason: 'The file is younger than the shared 24-hour cleanup horizon.',
+        });
+        continue;
+      }
+      files.push({ ...file, databasePaths });
+      findings.push({
+        kind: 'unreferenced_processed_file',
+        id: file.name,
+        name: file.name,
+        key: file.key,
+        repairable: true,
+      });
+    } catch {
+      /* inaccessible entries are omitted from the sanitized report */
+    }
+  }
+
+  const order: ConsistencyKind[] = [
+    'missing_output',
+    'unreferenced_processed_file',
+    'staged_without_file',
+    'invalid_compilation_reference',
+    'stale_processing_claim',
+  ];
+  const byKind = new Map<ConsistencyKind, ConsistencyFinding[]>(order.map((kind) => [kind, []]));
+  for (const finding of findings) byKind.get(finding.kind)?.push(finding);
+  const selected: ConsistencyFinding[] = [];
+  for (let index = 0; selected.length < limit; index += 1) {
+    let found = false;
+    for (const kind of order) {
+      const finding = byKind.get(kind)?.[index];
+      if (finding) {
+        selected.push(finding);
+        found = true;
+        if (selected.length === limit) break;
+      }
+    }
+    if (!found) break;
+  }
+  if (selected.length < findings.length) truncated = true;
+  const selectedFileKeys = new Set(
+    selected
+      .filter((finding) => finding.kind === 'unreferenced_processed_file' && finding.repairable)
+      .map((finding) => finding.key),
+  );
+  const selectedFiles = files.filter((file) => selectedFileKeys.has(file.key));
+
   return {
     limit,
-    findings: findings.slice(0, limit),
-    files: files.slice(0, limit),
+    findings: selected,
+    files: selectedFiles,
+    truncated,
     staleBefore: new Date(now.getTime() - staleMs).toISOString(),
     staleFileBefore,
   };

@@ -198,6 +198,7 @@ function printConsistency(
   const result = {
     mode: applied ? 'repair' : 'report',
     limit: report.limit,
+    truncated: report.truncated,
     findings: report.findings.map(({ kind, id, name, repairable, reason }) => ({
       kind,
       id,
@@ -211,7 +212,9 @@ function printConsistency(
     console.log(JSON.stringify({ version: SERVICE_VERSION, ...result }, null, 2));
     return;
   }
-  console.log(`Rewind consistency ${result.mode} (${result.findings.length} finding(s))`);
+  console.log(
+    `Rewind consistency ${result.mode} (${result.findings.length} finding(s)${report.truncated ? '; additional rows or findings were omitted by report bounds' : ''})`,
+  );
   for (const finding of result.findings)
     console.log(
       `${finding.kind} id=${finding.id}${finding.name ? ` name=${finding.name}` : ''}${finding.repairable ? ' repairable' : ''}${finding.reason ? ` reason=${finding.reason}` : ''}`,

@@ -203,6 +203,91 @@ test('processed-file candidate checks find references beyond the limited job win
   });
 });
 
+test('processed-file scan continues past referenced entries to the finding limit', async () => {
+  await fixture(async ({ database, processedDir, stagingDir }) => {
+    database.prepare("UPDATE media_jobs SET status = 'failed', output_path = NULL").run();
+    const referencedPaths = ['a-reference.mp4', 'b-reference.mp4', 'c-reference.mp4'].map((name) =>
+      resolve(processedDir, name),
+    );
+    for (const path of referencedPaths) await writeFile(path, 'referenced bytes');
+    for (let index = 0; index < referencedPaths.length; index += 1) {
+      addJob(database, {
+        id: `job:reference-${index}`,
+        status: 'ready',
+        outputPath: referencedPaths[index],
+      });
+    }
+    const orphan = resolve(processedDir, 'z-orphan.mp4');
+    await writeFile(orphan, 'orphan bytes');
+    const oldTime = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    await utimes(orphan, oldTime, oldTime);
+
+    const plan = planConsistencyRepair(database, processedDir, stagingDir, { limit: 1 });
+    assert.equal(plan.findings.length, 1);
+    assert.equal(
+      plan.findings[0].kind,
+      'unreferenced_processed_file',
+      JSON.stringify(plan.findings),
+    );
+    assert.equal(plan.findings[0].name, 'z-orphan.mp4');
+    assert.equal(plan.truncated, false);
+  });
+});
+
+test('report limits scan classes independently and fairly select findings', async () => {
+  await fixture(async ({ database, processedDir, stagingDir }) => {
+    for (let index = 0; index < 4; index += 1) {
+      addJob(database, {
+        id: `job:missing-${index}`,
+        kind: 'clip',
+        status: 'ready',
+        outputPath: resolve(processedDir, `missing-${index}.mp4`),
+      });
+    }
+    const original = database
+      .prepare('SELECT id, cycle_id, member_id, quota_window_start_at FROM contributions LIMIT 1')
+      .get();
+    const alternateContribution = 'contribution:limit-binding';
+    database
+      .prepare(
+        `INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at, quota_window_start_at)
+       VALUES (?, ?, ?, 1, '2026-01-02T00:00:00.000Z', ?)`,
+      )
+      .run(
+        alternateContribution,
+        original.cycle_id,
+        original.member_id,
+        original.quota_window_start_at,
+      );
+    addJob(database, {
+      id: 'job:z-binding-film',
+      kind: 'film',
+      status: 'pending',
+      cycleId: original.cycle_id,
+    });
+    addJob(database, {
+      id: 'job:z-binding-clip',
+      status: 'ready',
+      cycleId: original.cycle_id,
+      contributionId: original.id,
+    });
+    database
+      .prepare(
+        `INSERT INTO compilation_job_inputs (job_id, clip_job_id, contribution_id, position)
+       VALUES ('job:z-binding-film', 'job:z-binding-clip', ?, 0)`,
+      )
+      .run(alternateContribution);
+
+    const plan = planConsistencyRepair(database, processedDir, stagingDir, { limit: 2 });
+    assert.equal(plan.findings.length, 2);
+    assert.deepEqual(
+      new Set(plan.findings.map((finding) => finding.kind)),
+      new Set(['missing_output', 'invalid_compilation_reference']),
+    );
+    assert.equal(plan.truncated, true);
+  });
+});
+
 test('compilation audit detects IDs bound to the wrong contribution', async () => {
   await fixture(async ({ database, processedDir, stagingDir }) => {
     const original = database
@@ -392,6 +477,7 @@ test('consistency CLI defaults to read-only JSON report mode', async () => {
     );
     const report = JSON.parse(stdout);
     assert.equal(report.mode, 'report');
+    assert.equal(report.truncated, false);
     assert.ok(
       report.findings.some(
         (finding) =>
