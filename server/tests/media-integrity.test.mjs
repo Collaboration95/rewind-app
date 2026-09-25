@@ -1026,6 +1026,139 @@ test('a tampered retained clip input blocks film compilation instead of minting 
   });
 });
 
+test('a stale failing film worker cannot remove a reclaimed generation output', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const outputDir = resolve(dataDir, 'media', 'processed');
+    const clipPath = resolve(outputDir, 'overlapping-film-input.mp4');
+    await createSyntheticSource(clipPath);
+    await insertReadyClipWithIntegrity(database, {
+      id: 'integrity-overlapping-film-clip',
+      contributionId: 'integrity-overlapping-film-contribution',
+      cycleId: 'demo-cycle',
+      path: clipPath,
+    });
+    database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();
+    const created = createCompilationJob(database, {
+      groupId: 'demo-group',
+      cycleId: 'demo-cycle',
+      createdAt: '2026-09-11T00:00:00.000Z',
+    });
+    assert.equal(created.ok, true);
+    if (!created.ok) return;
+    const jobId = created.job.id;
+
+    const staleStartedPath = resolve(dataDir, 'stale-film-worker-started');
+    const staleReleasePath = resolve(dataDir, 'stale-film-worker-release');
+    const currentStartedPath = resolve(dataDir, 'current-film-worker-started');
+    const currentReleasePath = resolve(dataDir, 'current-film-worker-release');
+    const { stdout: realFfmpeg } = await execFileAsync('which', ['ffmpeg']);
+    const { stdout: realFfprobe } = await execFileAsync('which', ['ffprobe']);
+    await symlink(realFfprobe.trim(), resolve(dataDir, 'ffprobe'));
+    const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+    const makeWrapper = (startedPath, releasePath, command) =>
+      `#!/bin/sh\n: > ${shellQuote(startedPath)}\nwhile [ ! -f ${shellQuote(releasePath)} ]; do sleep 0.01; done\n${command}\n`;
+    const staleFfmpeg = resolve(dataDir, 'ffmpeg-stale-film-worker');
+    const currentFfmpeg = resolve(dataDir, 'ffmpeg-current-film-worker');
+    await writeFile(staleFfmpeg, makeWrapper(staleStartedPath, staleReleasePath, 'exit 1'), {
+      mode: 0o700,
+    });
+    await writeFile(
+      currentFfmpeg,
+      makeWrapper(
+        currentStartedPath,
+        currentReleasePath,
+        `exec ${shellQuote(realFfmpeg.trim())} "$@"`,
+      ),
+      { mode: 0o700 },
+    );
+
+    let staleWorker;
+    let currentWorker;
+    try {
+      staleWorker = processCompilationJob(database, {
+        jobId,
+        ffmpegBin: staleFfmpeg,
+        outputDir,
+      });
+      let staleStarted = false;
+      for (let attempt = 0; attempt < 500; attempt += 1) {
+        try {
+          await readFile(staleStartedPath);
+          staleStarted = true;
+          break;
+        } catch {
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+        }
+      }
+      assert.equal(staleStarted, true, 'stale worker did not reach the controlled FFmpeg pause');
+      database
+        .prepare('UPDATE media_jobs SET processing_started_at = ? WHERE id = ?')
+        .run(new Date(Date.now() - PROCESSING_CLAIM_LEASE_MS - 1000).toISOString(), jobId);
+
+      currentWorker = processCompilationJob(database, {
+        jobId,
+        ffmpegBin: currentFfmpeg,
+        outputDir,
+      });
+      let currentStarted = false;
+      for (let attempt = 0; attempt < 500; attempt += 1) {
+        try {
+          await readFile(currentStartedPath);
+          currentStarted = true;
+          break;
+        } catch {
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 10));
+        }
+      }
+      assert.equal(
+        currentStarted,
+        true,
+        'reclaimed worker did not reach the controlled FFmpeg pause',
+      );
+
+      const currentGeneration = database
+        .prepare('SELECT claim_generation AS generation FROM media_jobs WHERE id = ?')
+        .get(jobId).generation;
+      assert.equal(currentGeneration, 2);
+      const suffix = createHash('sha256').update(jobId).digest('hex').slice(0, 24);
+      const currentOutputPath = resolve(outputDir, `film-${suffix}-g2.mp4`);
+      await writeFile(currentOutputPath, 'generation 2 output');
+
+      // Let stale generation 1 fail while generation 2 is still processing
+      // and its generation-specific final path already exists.
+      await writeFile(staleReleasePath, 'fail stale worker');
+      const staleResult = await staleWorker;
+      assert.equal(staleResult.ok, false);
+      const stillProcessing = database
+        .prepare('SELECT status, claim_generation AS generation FROM media_jobs WHERE id = ?')
+        .get(jobId);
+      assert.equal(stillProcessing.status, 'processing');
+      assert.equal(stillProcessing.generation, 2);
+      assert.equal(await readFile(currentOutputPath, 'utf8'), 'generation 2 output');
+
+      await writeFile(currentReleasePath, 'publish current worker');
+      const currentResult = await currentWorker;
+      assert.deepEqual(currentResult, { ok: true, jobId, status: 'ready' });
+      const readyRow = database
+        .prepare('SELECT status, output_path AS outputPath FROM media_jobs WHERE id = ?')
+        .get(jobId);
+      assert.equal(readyRow.status, 'ready');
+      assert.equal(readyRow.outputPath, currentOutputPath);
+      const integrity = storedIntegrity(database, jobId);
+      const bytes = await readFile(readyRow.outputPath);
+      assert.equal(integrity.byteLength, bytes.length);
+      assert.equal(integrity.sha256, createHash('sha256').update(bytes).digest('hex'));
+    } finally {
+      await writeFile(staleReleasePath, 'unblock stale worker').catch(() => undefined);
+      await writeFile(currentReleasePath, 'unblock current worker').catch(() => undefined);
+      await Promise.all([
+        staleWorker?.catch(() => undefined),
+        currentWorker?.catch(() => undefined),
+      ]);
+    }
+  });
+});
+
 test('media streaming retains a verified snapshot after its source pathname is replaced', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     const jobId = await finalizeOneClip({ database, config, dataDir }, 'integrity-stream-race');
