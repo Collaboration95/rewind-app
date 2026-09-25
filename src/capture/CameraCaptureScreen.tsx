@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { COLORS } from '../theme';
 import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
@@ -23,6 +23,8 @@ import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './me
 import { ExpoCameraPlatform } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
 import { ContributionStatusPanel, useOptionalContributionStatus } from './contribution-status';
+import { decideInterruption } from './capture-interruption';
+import { runCaptureRestartRecovery } from './reset';
 
 export interface CameraCaptureScreenProps {
   platform?: CameraPlatform;
@@ -95,18 +97,37 @@ export function CameraCaptureScreen({
   const [cameraReady, setCameraReady] = useState(!platform.supportsLivePreview);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const contributionStatus = useOptionalContributionStatus()?.status ?? null;
+  // Captures are asynchronous and the platform may resolve one after the route
+  // was backgrounded. The sequence makes a stale completion a no-op so it
+  // cannot publish a preview that nothing on this mount can act on.
+  const captureSequence = useRef(0);
+
+  useEffect(() => {
+    if (!decideInterruption('restart').sweepOrphanedFiles) return;
+    // Reclaim app-owned media left by a previous process on a cold start.
+    void runCaptureRestartRecovery();
+  }, []);
 
   const refreshAccess = useCallback(async () => {
     setSettingsError(null);
-    setState((current) => ({ ...current, status: 'checking', errorMessage: null }));
+    // An established preview is a durable capture that this route still owns.
+    // Re-checking access must not erase it; only an interruption that discards
+    // the preview does that.
+    setState((current) =>
+      current.activePreview
+        ? { ...current, errorMessage: null }
+        : { ...current, status: 'checking', errorMessage: null },
+    );
     try {
       const capabilities = await platform.getCapabilities();
       const permissions = await platform.getPermissions();
-      setState((current) => ({
-        ...current,
-        ...accessState(capabilities, permissions),
-        activePreview: null,
-      }));
+      setState((current) => {
+        const next = accessState(capabilities, permissions);
+        if (current.activePreview) {
+          return { ...current, ...next, status: 'preview', errorMessage: null };
+        }
+        return { ...current, ...next, activePreview: null };
+      });
       setCameraReady(!platform.supportsLivePreview);
     } catch {
       setState((current) => ({
@@ -122,6 +143,35 @@ export function CameraCaptureScreen({
     return () => {
       void session.dispose();
     };
+  }, [refreshAccess, session]);
+
+  // A still capture requires the native camera session, which the platform
+  // suspends when the app is backgrounded. Any in-flight capture is abandoned
+  // and its preview discarded; re-checking on foreground keeps the access
+  // panel honest instead of showing a stale preview.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void refreshAccess();
+        return;
+      }
+      if (nextState !== 'background' && nextState !== 'inactive') return;
+      const decision = decideInterruption('background');
+      captureSequence.current += 1;
+      // A suspended camera cannot finish a capture, so abandon any in-flight
+      // one. Without this the route would stay stuck on "Capturing…" with no
+      // control able to leave it.
+      setState((current) =>
+        decision.discardPreview && (current.status === 'capturing' || current.activePreview)
+          ? { ...current, status: 'ready', activePreview: null, errorMessage: null }
+          : current,
+      );
+      // Release the managed copy only when this event discards the preview.
+      // Deleting it while the panel stays visible would leave a preview that
+      // points at a file which no longer exists.
+      if (decision.discardPreview) void session.discard();
+    });
+    return () => subscription.remove();
   }, [refreshAccess, session]);
 
   const requestAccess = useCallback(async () => {
@@ -166,9 +216,20 @@ export function CameraCaptureScreen({
         (requireAccess && platform.supportsLivePreview && !cameraReady)
       )
         return;
+      const sequence = ++captureSequence.current;
       setState((current) => ({ ...current, status: 'capturing', errorMessage: null }));
       try {
-        const activePreview = await session.captureImage(await getImage());
+        const activePreview = await session.captureImage(
+          await getImage(),
+          () => sequence === captureSequence.current,
+        );
+        if (sequence !== captureSequence.current) {
+          // The capture was abandoned while it was in flight. The session
+          // already wrote a managed copy, so release only that operation's
+          // file. A newer capture may now own the session preview.
+          await session.discard(activePreview);
+          return;
+        }
         setState((current) => ({
           ...current,
           status: 'preview',
@@ -176,6 +237,7 @@ export function CameraCaptureScreen({
           errorMessage: null,
         }));
       } catch (error) {
+        if (sequence !== captureSequence.current) return;
         setState((current) => ({
           ...current,
           status: error instanceof CaptureFileLifecycleError ? 'write-failed' : 'capture-failed',
