@@ -331,11 +331,13 @@ export function applyConsistencyRepair(
   database: RewindDatabase,
   processedDir: string,
   plan: ConsistencyPlan,
+  options: { unlink?: (path: string) => void } = {},
 ): { repaired: string[]; skipped: string[] } {
   const root = realpathSync(processedDir);
+  const unlinkFile = options.unlink ?? unlinkSync;
   const repaired: string[] = [];
   const skipped: string[] = [];
-  const quarantined: { source: string; path: string; name: string }[] = [];
+  const quarantined: { source: string; path: string; name: string; resourceId: string }[] = [];
   database.exec('BEGIN IMMEDIATE');
   try {
     for (const finding of plan.findings) {
@@ -394,16 +396,17 @@ export function applyConsistencyRepair(
           skipped.push(file.name);
           continue;
         }
+        const resourceId = `file:${createHash('sha256').update(file.name).digest('hex')}:consistency`;
         const audit = recordAuditEvent(database, {
-          eventType: 'media.consistency_repaired',
-          resourceId: `file:${createHash('sha256').update(file.name).digest('hex')}:consistency`,
+          eventType: 'media.consistency_quarantined',
+          resourceId,
           result: 'success',
         });
         try {
           const quarantinePath = resolve(root, `.rewind-consistency-${randomUUID()}.tmp`);
           if (!within(root, quarantinePath)) throw new Error('invalid quarantine path');
           renameSync(path, quarantinePath);
-          quarantined.push({ source: path, path: quarantinePath, name: file.name });
+          quarantined.push({ source: path, path: quarantinePath, name: file.name, resourceId });
         } catch (error) {
           database.prepare('DELETE FROM audit_events WHERE id = ?').run(audit.id);
           throw error;
@@ -435,11 +438,54 @@ export function applyConsistencyRepair(
   }
   for (const file of quarantined) {
     try {
-      unlinkSync(file.path);
-      repaired.push(file.name);
+      unlinkFile(file.path);
     } catch {
+      // Put the orphan back where the next report can find it. If restoration
+      // is unavailable, the quarantined path remains contained under the root
+      // and the report scanner can discover it on a later run.
+      try {
+        lstatSync(file.source);
+      } catch {
+        try {
+          renameSync(file.path, file.source);
+        } catch {
+          /* Keep the quarantine in place; it is still path-contained. */
+        }
+      }
+      try {
+        database.exec('BEGIN IMMEDIATE');
+        recordAuditEvent(database, {
+          eventType: 'media.consistency_repair_failed',
+          resourceId: file.resourceId,
+          result: 'failure',
+        });
+        database.exec('COMMIT');
+      } catch {
+        try {
+          database.exec('ROLLBACK');
+        } catch {
+          /* The committed quarantine event remains as a recovery trace. */
+        }
+      }
       skipped.push(file.name);
+      continue;
     }
+    try {
+      database.exec('BEGIN IMMEDIATE');
+      recordAuditEvent(database, {
+        eventType: 'media.consistency_repaired',
+        resourceId: file.resourceId,
+        result: 'success',
+      });
+      database.exec('COMMIT');
+    } catch {
+      try {
+        database.exec('ROLLBACK');
+      } catch {
+        /* The durable quarantine event records that the orphan left its path. */
+      }
+    }
+    repaired.push(file.name);
   }
   return { repaired, skipped };
 }

@@ -1121,6 +1121,8 @@ function mediaIntegritySchemaReady(database: RewindDatabase): boolean {
 
 const MEDIA_INTEGRITY_EVENT_TYPE = 'media.integrity_failed';
 const CONSISTENCY_REPAIR_EVENT_TYPE = 'media.consistency_repaired';
+const CONSISTENCY_QUARANTINE_EVENT_TYPE = 'media.consistency_quarantined';
+const CONSISTENCY_REPAIR_FAILED_EVENT_TYPE = 'media.consistency_repair_failed';
 
 /**
  * The audit CHECK constraint is a durable schema contract. A database written
@@ -1142,11 +1144,13 @@ function auditEventTypesAllowConsistencyRepair(database: RewindDatabase): boolea
     .get() as { sql?: string } | undefined;
   return Boolean(
     row?.sql?.includes(MEDIA_INTEGRITY_EVENT_TYPE) &&
-    row.sql.includes(CONSISTENCY_REPAIR_EVENT_TYPE),
+    row.sql.includes(CONSISTENCY_REPAIR_EVENT_TYPE) &&
+    row.sql.includes(CONSISTENCY_QUARANTINE_EVENT_TYPE) &&
+    row.sql.includes(CONSISTENCY_REPAIR_FAILED_EVENT_TYPE),
   );
 }
 
-/** Add the consistency-repair audit value without discarding existing audit history. */
+/** Add consistency-repair audit values without discarding existing audit history. */
 function rebuildAuditEventsForConsistencyRepair(database: RewindDatabase): void {
   if (!hasTable(database, 'audit_events') || auditEventTypesAllowConsistencyRepair(database))
     return;
@@ -1162,7 +1166,8 @@ function rebuildAuditEventsForConsistencyRepair(database: RewindDatabase): void 
       WHERE event_type IN (
         'session.created', 'session.validated', 'session.rejected', 'session.expired',
         'session.invalidated', 'job.started', 'job.completed', 'job.failed',
-        'media.integrity_failed', 'media.consistency_repaired'
+        'media.integrity_failed', 'media.consistency_quarantined',
+        'media.consistency_repaired', 'media.consistency_repair_failed'
       )
         AND (actor_member_id IS NULL OR EXISTS (
           SELECT 1 FROM profiles WHERE profiles.id = audit_events_pre_017.actor_member_id
@@ -1213,7 +1218,9 @@ function createAuditEventsTable(database: RewindDatabase): void {
            'job.completed',
            'job.failed',
            'media.integrity_failed',
-           'media.consistency_repaired'
+           'media.consistency_quarantined',
+           'media.consistency_repaired',
+           'media.consistency_repair_failed'
          )
        ),
        actor_member_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,

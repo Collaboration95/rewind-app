@@ -12,7 +12,9 @@ export const AUDIT_EVENT_TYPES = [
   'job.completed',
   'job.failed',
   'media.integrity_failed',
+  'media.consistency_quarantined',
   'media.consistency_repaired',
+  'media.consistency_repair_failed',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

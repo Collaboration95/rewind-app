@@ -491,7 +491,9 @@ test('migration 017 preserves audit history and permits consistency repair event
     database
       .prepare(
         `INSERT INTO audit_events (id, event_type, actor_member_id, resource_id, occurred_at, result)
-       VALUES ('audit-new-consistency', 'media.consistency_repaired', NULL, NULL, '2026-09-25T00:00:02.000Z', 'success')`,
+       VALUES ('audit-new-consistency-quarantine', 'media.consistency_quarantined', NULL, NULL, '2026-09-25T00:00:02.000Z', 'success'),
+              ('audit-new-consistency', 'media.consistency_repaired', NULL, NULL, '2026-09-25T00:00:03.000Z', 'success'),
+              ('audit-new-consistency-failed', 'media.consistency_repair_failed', NULL, NULL, '2026-09-25T00:00:04.000Z', 'failure')`,
       )
       .run();
   });
@@ -642,5 +644,60 @@ test('a failed database commit restores quarantined files and rolls back their a
     assert.throws(() => applyConsistencyRepair(database, processedDir, plan), /FOREIGN KEY/i);
     assert.equal(await readFile(orphan, 'utf8'), 'restore me');
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM audit_events').get().count, 0);
+  });
+});
+
+test('a failed post-commit unlink restores the orphan and records a recoverable failure', async () => {
+  await fixture(async ({ database, processedDir, stagingDir }) => {
+    const orphan = resolve(processedDir, 'retry-after-unlink-failure.mp4');
+    await writeFile(orphan, 'recover after failed cleanup');
+    const staleTime = new Date('2026-09-20T00:00:00.000Z');
+    await utimes(orphan, staleTime, staleTime);
+    const plan = planConsistencyRepair(database, processedDir, stagingDir, {
+      now: new Date('2026-09-25T00:00:00.000Z'),
+    });
+
+    const failed = applyConsistencyRepair(database, processedDir, plan, {
+      unlink: () => {
+        throw new Error('simulated post-commit unlink failure');
+      },
+    });
+    assert.deepEqual(failed.repaired, []);
+    assert.deepEqual(failed.skipped, ['retry-after-unlink-failure.mp4']);
+    assert.equal(await readFile(orphan, 'utf8'), 'recover after failed cleanup');
+    const failedEvents = database
+      .prepare(
+        `SELECT event_type, result FROM audit_events
+          WHERE resource_id LIKE 'file:%:consistency'`,
+      )
+      .all();
+    assert.deepEqual(
+      new Set(failedEvents.map((event) => `${event.event_type}:${event.result}`)),
+      new Set(['media.consistency_quarantined:success', 'media.consistency_repair_failed:failure']),
+    );
+
+    const retryPlan = planConsistencyRepair(database, processedDir, stagingDir, {
+      now: new Date('2026-09-25T00:00:00.000Z'),
+    });
+    assert.ok(
+      retryPlan.findings.some(
+        (finding) =>
+          finding.kind === 'unreferenced_processed_file' &&
+          finding.name === 'retry-after-unlink-failure.mp4' &&
+          finding.repairable,
+      ),
+    );
+    const retried = applyConsistencyRepair(database, processedDir, retryPlan);
+    assert.ok(retried.repaired.includes('retry-after-unlink-failure.mp4'));
+    await assert.rejects(readFile(orphan));
+    assert.ok(
+      database
+        .prepare(
+          `SELECT 1 FROM audit_events
+            WHERE event_type = 'media.consistency_repaired'
+              AND resource_id LIKE 'file:%:consistency' AND result = 'success'`,
+        )
+        .get(),
+    );
   });
 });

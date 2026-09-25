@@ -1,3 +1,3 @@
--- The consistency-repair audit event is added by the ordered, repairable
--- audit-table migration in server/src/db.ts, preserving all existing rows.
+-- Consistency quarantine, repair, and cleanup-failure events are added by the
+-- ordered audit-table migration in server/src/db.ts, preserving existing rows.
 SELECT 1;
