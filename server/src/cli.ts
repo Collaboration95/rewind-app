@@ -21,6 +21,19 @@ import {
   QueueQueryError,
 } from './jobs/queue';
 import { resolve } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import {
+  applyConsistencyRepair,
+  CONSISTENCY_DEFAULT_LIMIT,
+  CONSISTENCY_MAX_LIMIT,
+  planConsistencyRepair,
+} from './jobs/consistency';
+import {
+  applyProcessedMediaRetention,
+  planProcessedMediaRetention,
+  PROCESSED_RETENTION_DEFAULT_LIMIT,
+  PROCESSED_RETENTION_MAX_LIMIT,
+} from './jobs/retention';
 
 async function openRuntimeDatabase(
   config: RuntimeConfig,
@@ -157,6 +170,100 @@ function parseDiagnosticsLimit(argv: string[]): number {
     );
   }
   return limit;
+}
+
+function parseRetentionLimit(argv: string[]): number {
+  const index = argv.indexOf('--limit');
+  if (index === -1) return PROCESSED_RETENTION_DEFAULT_LIMIT;
+  const value = argv[index + 1];
+  const limit = Number(value);
+  if (!value || !Number.isInteger(limit) || limit < 1 || limit > PROCESSED_RETENTION_MAX_LIMIT) {
+    throw new ConfigError(
+      `--limit must be an integer from 1 to ${PROCESSED_RETENTION_MAX_LIMIT}.`,
+      'Use retention --limit 100; deletion requires the explicit --apply flag.',
+    );
+  }
+  return limit;
+}
+
+function parseConsistencyLimit(argv: string[]): number {
+  const value = readOption(argv, ['--limit']);
+  const limit = value === undefined ? CONSISTENCY_DEFAULT_LIMIT : Number(value);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > CONSISTENCY_MAX_LIMIT) {
+    throw new ConfigError(
+      `--limit must be an integer from 1 to ${CONSISTENCY_MAX_LIMIT}.`,
+      'Use consistency --limit 100; changes require --repair.',
+    );
+  }
+  return limit;
+}
+
+function printConsistency(
+  report: ReturnType<typeof planConsistencyRepair>,
+  json: boolean,
+  applied?: { repaired: string[]; skipped: string[] },
+): void {
+  const result = {
+    mode: applied ? 'repair' : 'report',
+    limit: report.limit,
+    truncated: report.truncated,
+    findings: report.findings.map(({ kind, id, name, repairable, reason }) => ({
+      kind,
+      id,
+      ...(name ? { name } : {}),
+      repairable,
+      ...(reason ? { reason } : {}),
+    })),
+    ...(applied ? { repaired: applied.repaired, skippedOnRevalidation: applied.skipped } : {}),
+  };
+  if (json) {
+    console.log(JSON.stringify({ version: SERVICE_VERSION, ...result }, null, 2));
+    return;
+  }
+  console.log(
+    `Rewind consistency ${result.mode} (${result.findings.length} finding(s)${report.truncated ? '; additional rows or findings were omitted by report bounds' : ''})`,
+  );
+  for (const finding of result.findings)
+    console.log(
+      `${finding.kind} id=${finding.id}${finding.name ? ` name=${finding.name}` : ''}${finding.repairable ? ' repairable' : ''}${finding.reason ? ` reason=${finding.reason}` : ''}`,
+    );
+  if (applied)
+    console.log(`Repaired ${applied.repaired.length}; skipped ${applied.skipped.length}.`);
+}
+
+function printRetention(
+  report: {
+    cutoff: string;
+    limit: number;
+    candidates: { reportName: string }[];
+    skippedUnsafe: string[];
+  },
+  json: boolean,
+  applied?: { deleted: string[]; skipped: string[] },
+): void {
+  const result = {
+    mode: applied ? 'apply' : 'dry-run',
+    cutoff: report.cutoff,
+    limit: report.limit,
+    candidates: report.candidates.map((candidate) => candidate.reportName),
+    skippedUnsafe: report.skippedUnsafe,
+    ...(applied ? { deleted: applied.deleted, skippedOnRevalidation: applied.skipped } : {}),
+  };
+  if (json) {
+    console.log(JSON.stringify({ version: SERVICE_VERSION, ...result }, null, 2));
+    return;
+  }
+  console.log(`Processed media retention (${result.mode}; stale before ${report.cutoff})`);
+  for (const name of result.candidates) console.log(`${applied ? 'deleted' : 'candidate'} ${name}`);
+  for (const name of result.skippedUnsafe) console.log(`skipped unsafe ${name}`);
+  if (applied) {
+    for (const name of applied.skipped) console.log(`skipped on revalidation ${name}`);
+    console.log(`Deleted ${applied.deleted.length}; skipped ${applied.skipped.length}.`);
+  } else {
+    console.log(
+      `${report.candidates.length} candidate(s). Use --apply to delete after revalidation.`,
+    );
+  }
 }
 
 function printDiagnostics(events: AuditEvent[], json: boolean): void {
@@ -441,6 +548,68 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       }
       return;
     }
+    if (command === 'retention') {
+      const limit = parseRetentionLimit(argv);
+      const apply = argv.includes('--apply');
+      // Retention must not run migrations, seed fixtures, or the startup
+      // integrity backfill. The apply path needs only a direct SQLite handle
+      // so reference revalidation and deletion share its writer transaction.
+      const database = new DatabaseSync(
+        config.databasePath,
+        apply ? undefined : { readOnly: true },
+      );
+      try {
+        const report = planProcessedMediaRetention(
+          database,
+          resolve(config.dataDir, 'media', 'processed'),
+          { limit },
+        );
+        printRetention(
+          report,
+          json,
+          apply
+            ? applyProcessedMediaRetention(
+                database,
+                resolve(config.dataDir, 'media', 'processed'),
+                report,
+              )
+            : undefined,
+        );
+      } finally {
+        database.close();
+      }
+      return;
+    }
+    if (command === 'consistency') {
+      const limit = parseConsistencyLimit(argv);
+      const repair = argv.includes('--repair');
+      const database = new DatabaseSync(
+        config.databasePath,
+        repair ? undefined : { readOnly: true },
+      );
+      try {
+        const report = planConsistencyRepair(
+          database,
+          resolve(config.dataDir, 'media', 'processed'),
+          resolve(config.dataDir, 'media', 'staging'),
+          { limit },
+        );
+        printConsistency(
+          report,
+          json,
+          repair
+            ? applyConsistencyRepair(
+                database,
+                resolve(config.dataDir, 'media', 'processed'),
+                report,
+              )
+            : undefined,
+        );
+      } finally {
+        database.close();
+      }
+      return;
+    }
     if (command === 'worker') {
       await runWorker(config, argv);
       return;
@@ -457,7 +626,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (command !== 'start') {
       throw new ConfigError(
         `Unknown local runtime command ${JSON.stringify(command)}.`,
-        'Use start, worker, preflight, migrate, reset, diagnostics, or jobs.',
+        'Use start, worker, preflight, migrate, reset, diagnostics, jobs, retention, or consistency.',
       );
     }
     await start(config);

@@ -40,6 +40,7 @@ const MIGRATIONS = [
   { version: 14, key: 'queue-observability-v1', fileName: '014-queue-observability.sql' },
   { version: 15, key: 'media-integrity-v1', fileName: '015-media-integrity.sql' },
   { version: 16, key: 'contribution-ledger-v1', fileName: '016-contribution-ledger.sql' },
+  { version: 17, key: 'consistency-repair-audit-v1', fileName: '017-consistency-repair-audit.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -173,6 +174,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyMediaIntegrityMigration(database);
       } else if (migration.key === 'contribution-ledger-v1') {
         ensureContributionLedgerSchema(database);
+      } else if (migration.key === 'consistency-repair-audit-v1') {
+        rebuildAuditEventsForConsistencyRepair(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -299,6 +302,8 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'queue-observability-v1') return !queueObservabilitySchemaReady(database);
   if (key === 'media-integrity-v1') return !mediaIntegritySchemaReady(database);
   if (key === 'contribution-ledger-v1') return !contributionLedgerSchemaReady(database);
+  if (key === 'consistency-repair-audit-v1')
+    return !auditEventTypesAllowConsistencyRepair(database);
   return false;
 }
 
@@ -1115,6 +1120,9 @@ function mediaIntegritySchemaReady(database: RewindDatabase): boolean {
 }
 
 const MEDIA_INTEGRITY_EVENT_TYPE = 'media.integrity_failed';
+const CONSISTENCY_REPAIR_EVENT_TYPE = 'media.consistency_repaired';
+const CONSISTENCY_QUARANTINE_EVENT_TYPE = 'media.consistency_quarantined';
+const CONSISTENCY_REPAIR_FAILED_EVENT_TYPE = 'media.consistency_repair_failed';
 
 /**
  * The audit CHECK constraint is a durable schema contract. A database written
@@ -1127,6 +1135,45 @@ function auditEventTypesAllowMediaIntegrity(database: RewindDatabase): boolean {
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'")
     .get() as { sql?: string } | undefined;
   return Boolean(row?.sql && row.sql.includes(MEDIA_INTEGRITY_EVENT_TYPE));
+}
+
+function auditEventTypesAllowConsistencyRepair(database: RewindDatabase): boolean {
+  if (!hasTable(database, 'audit_events')) return false;
+  const row = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'audit_events'")
+    .get() as { sql?: string } | undefined;
+  return Boolean(
+    row?.sql?.includes(MEDIA_INTEGRITY_EVENT_TYPE) &&
+    row.sql.includes(CONSISTENCY_REPAIR_EVENT_TYPE) &&
+    row.sql.includes(CONSISTENCY_QUARANTINE_EVENT_TYPE) &&
+    row.sql.includes(CONSISTENCY_REPAIR_FAILED_EVENT_TYPE),
+  );
+}
+
+/** Add consistency-repair audit values without discarding existing audit history. */
+function rebuildAuditEventsForConsistencyRepair(database: RewindDatabase): void {
+  if (!hasTable(database, 'audit_events') || auditEventTypesAllowConsistencyRepair(database))
+    return;
+  database.exec('ALTER TABLE audit_events RENAME TO audit_events_pre_017');
+  database.exec('DROP INDEX IF EXISTS audit_events_occurred_at_idx');
+  database.exec('DROP INDEX IF EXISTS audit_events_resource_id_idx');
+  createAuditEventsTable(database);
+  database.exec(
+    `INSERT OR IGNORE INTO audit_events
+       (id, event_type, actor_member_id, resource_id, occurred_at, result)
+     SELECT id, event_type, actor_member_id, resource_id, occurred_at, result
+       FROM audit_events_pre_017
+      WHERE event_type IN (
+        'session.created', 'session.validated', 'session.rejected', 'session.expired',
+        'session.invalidated', 'job.started', 'job.completed', 'job.failed',
+        'media.integrity_failed', 'media.consistency_quarantined',
+        'media.consistency_repaired', 'media.consistency_repair_failed'
+      )
+        AND (actor_member_id IS NULL OR EXISTS (
+          SELECT 1 FROM profiles WHERE profiles.id = audit_events_pre_017.actor_member_id
+        ))`,
+  );
+  database.exec('DROP TABLE audit_events_pre_017');
 }
 
 function rebuildAuditEventsForMediaIntegrity(database: RewindDatabase): void {
@@ -1170,7 +1217,10 @@ function createAuditEventsTable(database: RewindDatabase): void {
            'job.started',
            'job.completed',
            'job.failed',
-           'media.integrity_failed'
+           'media.integrity_failed',
+           'media.consistency_quarantined',
+           'media.consistency_repaired',
+           'media.consistency_repair_failed'
          )
        ),
        actor_member_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
