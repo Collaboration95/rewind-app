@@ -6,6 +6,14 @@ import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 import { cleanupOrphanedStagedSources } from './jobs';
 import {
+  runWorkerTick,
+  safeWorkerErrorLabel,
+  startWorkerLoop,
+  WORKER_DEFAULT_IDLE_MS,
+  WORKER_MIN_IDLE_MS,
+  type WorkerRunRecord,
+} from './jobs/worker';
+import {
   listQueueJobs,
   parseQueueKind,
   parseQueueLimit,
@@ -330,6 +338,149 @@ function printJobs(page: ReturnType<typeof listQueueJobs>, json: boolean): void 
     console.log('More jobs are available; pass --cursor from JSON output.');
 }
 
+function parseWorkerMsOption(argv: string[], name: string): number | undefined {
+  const raw = readOption(argv, [name]);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < WORKER_MIN_IDLE_MS || value > 3_600_000) {
+    throw new ConfigError(
+      name +
+        ' must be an integer from ' +
+        WORKER_MIN_IDLE_MS +
+        ' to 3600000 (received ' +
+        JSON.stringify(raw) +
+        ').',
+      'Use ' + name + ' with a bounded millisecond value or omit it.',
+    );
+  }
+  return value;
+}
+
+function parseWorkerMaxJobs(argv: string[]): number | undefined {
+  const raw = readOption(argv, ['--max-jobs']);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > 10_000) {
+    throw new ConfigError(
+      '--max-jobs must be an integer from 1 to 10000 (received ' + JSON.stringify(raw) + ').',
+      'Use --max-jobs with a bounded positive integer or omit it.',
+    );
+  }
+  return value;
+}
+
+function printWorkerRecord(record: WorkerRunRecord, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(record));
+    return;
+  }
+  const category = record.failureCategory ? ' category=' + record.failureCategory : '';
+  console.log(
+    record.jobKind +
+      ' ' +
+      record.status +
+      ' id=' +
+      record.jobId +
+      ' attempts=' +
+      record.attempts +
+      ' outcome=' +
+      record.outcome +
+      ' terminal=' +
+      record.terminal +
+      category,
+  );
+}
+
+/**
+ * Run the durable local worker loop. It claims only pending, retryable, or
+ * lease-expired jobs, so the request-driven process routes remain a safe
+ * rollback: stop this command and clients can still drive the same jobs.
+ */
+async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
+  const json = argv.includes('--json');
+  const once = argv.includes('--once');
+  const groupId = readOption(argv, ['--group', '--group-id', '--groupId']);
+  const idleMs = parseWorkerMsOption(argv, '--idle-ms');
+  const maxJobs = parseWorkerMaxJobs(argv);
+  const database = await openRuntimeDatabase(config);
+  const workerOptions = {
+    ffmpegBin: config.ffmpegBin,
+    stagingDir: resolve(config.dataDir, 'media', 'staging'),
+    outputDir: resolve(config.dataDir, 'media', 'processed'),
+    ...(groupId ? { groupId } : {}),
+  };
+  // Close the handle exactly once, whichever exit path is taken.
+  let closed = false;
+  const closeDatabase = () => {
+    if (closed) return;
+    closed = true;
+    database.close();
+  };
+
+  if (once) {
+    try {
+      await cleanupOrphanedStagedSources(database, workerOptions.stagingDir);
+      // A repeatedly failing job can never make --once loop indefinitely.
+      const limit = maxJobs ?? 100;
+      const jobs: WorkerRunRecord[] = [];
+      while (jobs.length < limit) {
+        const tick = await runWorkerTick(database, workerOptions);
+        if (!tick.claimed) break;
+        jobs.push(tick.record);
+        if (!json) printWorkerRecord(tick.record, false);
+      }
+      if (json) console.log(JSON.stringify({ jobs, drained: jobs.length }));
+      else
+        console.log(
+          'Worker drained ' + jobs.length + ' job' + (jobs.length === 1 ? '' : 's') + '.',
+        );
+    } catch (error) {
+      console.error('Worker loop error: ' + safeWorkerErrorLabel(error));
+      process.exitCode = 1;
+    } finally {
+      closeDatabase();
+    }
+    return;
+  }
+  try {
+    await cleanupOrphanedStagedSources(database, workerOptions.stagingDir);
+    const handle = startWorkerLoop(database, {
+      ...workerOptions,
+      ...(idleMs === undefined ? {} : { idleMs }),
+      ...(maxJobs === undefined ? {} : { maxJobs }),
+      onResult: (record) => printWorkerRecord(record, json),
+    });
+    const shutdown = () => void handle.stop().catch(() => undefined);
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+    try {
+      if (json) console.log(JSON.stringify({ event: 'worker_started', version: SERVICE_VERSION }));
+      else
+        console.log(
+          'Rewind durable worker (' +
+            SERVICE_VERSION +
+            ') serving ' +
+            (groupId ?? 'all local groups') +
+            '; idle ' +
+            (idleMs ?? WORKER_DEFAULT_IDLE_MS) +
+            ' ms. Press Ctrl-C to stop.',
+        );
+      await handle.done;
+      const count = handle.completed();
+      if (json) console.log(JSON.stringify({ event: 'worker_stopped', completed: count }));
+      else console.log('Worker stopped after ' + count + ' job' + (count === 1 ? '' : 's') + '.');
+    } finally {
+      process.off('SIGINT', shutdown);
+      process.off('SIGTERM', shutdown);
+    }
+  } catch (error) {
+    console.error('Worker loop error: ' + safeWorkerErrorLabel(error));
+    process.exitCode = 1;
+  } finally {
+    closeDatabase();
+  }
+}
+
 async function start(config: RuntimeConfig): Promise<void> {
   const database = await openRuntimeDatabase(config);
   await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
@@ -459,6 +610,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       }
       return;
     }
+    if (command === 'worker') {
+      await runWorker(config, argv);
+      return;
+    }
     if (command === 'jobs' || command === 'queue') {
       const database = await openRuntimeDatabase(config);
       try {
@@ -471,7 +626,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (command !== 'start') {
       throw new ConfigError(
         `Unknown local runtime command ${JSON.stringify(command)}.`,
-        'Use start, preflight, migrate, reset, diagnostics, jobs, retention, or consistency.',
+        'Use start, worker, preflight, migrate, reset, diagnostics, jobs, retention, or consistency.',
       );
     }
     await start(config);

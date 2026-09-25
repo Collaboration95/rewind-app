@@ -50,7 +50,7 @@ test('realtime client sends authenticated messages and decodes SSE events', asyn
       ),
   );
   const source = new FakeEventSource();
-  const factory = jest.fn(() => source);
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => source);
   const client = new RealtimeChatClient('http://127.0.0.1:8787', fetchImpl, {
     eventSourceFactory: factory,
   });
@@ -148,6 +148,131 @@ test('reconnects from the last event without leaking another group', async () =>
   });
   expect(received).toEqual(['before', 'after']);
   expect(states).toEqual(['connecting', 'connected', 'disconnected', 'reconnecting', 'connected']);
+  subscription.close();
+});
+
+test('starts a new observer at the persisted high-water mark and reconnects from its checkpoint', async () => {
+  const first = new FakeEventSource();
+  const second = new FakeEventSource();
+  const sources = [first, second];
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => sources.shift()!);
+  const received: number[] = [];
+  const checkpoints: number[] = [];
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: factory,
+    reconnectDelayMs: 0,
+  });
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    startFromLatest: true,
+    onEvent: (event) => received.push(event.eventId),
+    onCheckpoint: (eventId) => checkpoints.push(eventId),
+  });
+
+  expect(factory.mock.calls[0][0]).toContain('&startFromLatest=true');
+  first.emit('checkpoint', { data: JSON.stringify({ eventId: 21 }) });
+  expect(received).toEqual([]);
+  expect(checkpoints).toEqual([21]);
+
+  first.onerror?.({});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=21');
+  second.emit('message', {
+    data: JSON.stringify({
+      eventId: 22,
+      type: 'message',
+      occurredAt: '2026-09-13T00:00:00.000Z',
+      message: {
+        id: 'm22',
+        groupId: 'demo-group',
+        memberId: 'demo-2',
+        body: 'new message',
+        createdAt: '',
+      },
+    }),
+  });
+  expect(received).toEqual([22]);
+  subscription.close();
+});
+
+test('forwards and resumes from a valid zero checkpoint', async () => {
+  const first = new FakeEventSource();
+  const second = new FakeEventSource();
+  const sources = [first, second];
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => sources.shift()!);
+  const checkpoints: number[] = [];
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: factory,
+    reconnectDelayMs: 0,
+  });
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    startFromLatest: true,
+    onEvent: () => undefined,
+    onCheckpoint: (eventId) => checkpoints.push(eventId),
+  });
+
+  first.emit('checkpoint', { data: JSON.stringify({ eventId: 0 }) });
+  expect(checkpoints).toEqual([0]);
+  first.onerror?.({});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=0');
+  expect(factory.mock.calls[1][0]).not.toContain('&startFromLatest=true');
+  subscription.close();
+});
+
+test('requests and decodes metadata-only unread events', () => {
+  const source = new FakeEventSource();
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => source);
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: factory,
+  });
+  const received: unknown[] = [];
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    startFromLatest: true,
+    metadataOnly: true,
+    onEvent: (event) => received.push(event),
+  });
+
+  expect(factory.mock.calls[0][0]).toContain('&startFromLatest=true&metadataOnly=true');
+  source.emit('message', {
+    data: JSON.stringify({
+      eventId: 4,
+      type: 'message',
+      message: { groupId: 'demo-group', memberId: 'demo-2' },
+    }),
+  });
+  expect(received).toEqual([
+    {
+      eventId: 4,
+      type: 'message',
+      message: { groupId: 'demo-group', memberId: 'demo-2' },
+    },
+  ]);
+  subscription.close();
+});
+
+test('keeps the latest-watermark handshake on reconnect until its checkpoint arrives', async () => {
+  const first = new FakeEventSource();
+  const second = new FakeEventSource();
+  const sources = [first, second];
+  const factory = jest.fn<RealtimeEventSource, [string]>(() => sources.shift()!);
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: factory,
+    reconnectDelayMs: 0,
+  });
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    startFromLatest: true,
+    onEvent: () => undefined,
+  });
+
+  first.onerror?.({});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(factory).toHaveBeenCalledTimes(2);
+  expect(factory.mock.calls[1][0]).toContain('&startFromLatest=true');
+  expect(factory.mock.calls[1][0]).not.toContain('&sinceEventId=0');
+
+  second.emit('checkpoint', { data: JSON.stringify({ eventId: 21 }) });
   subscription.close();
 });
 

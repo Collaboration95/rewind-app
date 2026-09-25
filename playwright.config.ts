@@ -3,6 +3,7 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   reporter: 'list',
   testDir: './tests/responsive',
+  testMatch: ['**/*.spec.ts'],
   use: {
     baseURL: 'http://127.0.0.1:8082',
     screenshot: 'only-on-failure',
