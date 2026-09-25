@@ -4,6 +4,7 @@ import { dirname, relative, resolve, isAbsolute } from 'node:path';
 
 import { cyclePhase } from '../cycles/engine';
 import { releaseContributionAllowance, reserveContributionAllowance } from '../contributions';
+import { linkContributionReplacement } from '../contributions/ledger';
 import { getCurrentCycle, isMember } from '../db';
 import type { RewindDatabase } from '../db';
 
@@ -32,6 +33,8 @@ export interface ClipUploadInput {
   startSeconds?: number;
   endSeconds?: number;
   sourceDurationSeconds?: number;
+  /** Deleted contribution being replaced by this accepted upload. */
+  replacesContributionId?: string;
 }
 
 export interface PendingClipUpload {
@@ -64,7 +67,9 @@ export type ClipUploadResult =
         | 'invalid_key'
         | 'not_found'
         | 'quota_exceeded'
-        | 'already_member';
+        | 'already_member'
+        | 'invalid_replacement_target'
+        | 'replacement_conflict';
     };
 
 export type CancelClipUploadResult =
@@ -850,6 +855,12 @@ export function validateClipUpload(
     return { ok: false, reason: 'invalid_key' };
   }
   if (
+    input.replacesContributionId !== undefined &&
+    !/^[A-Za-z0-9_-]{1,128}$/.test(input.replacesContributionId)
+  ) {
+    return { ok: false, reason: 'invalid_replacement_target' };
+  }
+  if (
     !input.sourceUri ||
     input.mimeType !== 'video/mp4' ||
     !Number.isInteger(input.byteLength) ||
@@ -1153,6 +1164,23 @@ export function createClipUpload(
     database
       .prepare('UPDATE contributions SET media_job_id = ? WHERE id = ?')
       .run(jobId, contributionId);
+    if (input.replacesContributionId) {
+      const replacement = linkContributionReplacement(
+        database,
+        groupId,
+        memberId,
+        input.replacesContributionId,
+        contributionId,
+      );
+      if (!replacement.ok) {
+        database.exec('ROLLBACK');
+        transactionStarted = false;
+        return {
+          ok: false,
+          reason: replacement.reason === 'not_found' ? 'not_found' : 'replacement_conflict',
+        };
+      }
+    }
     database
       .prepare(
         `UPDATE cycles

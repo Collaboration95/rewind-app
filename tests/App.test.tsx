@@ -4,6 +4,7 @@ import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
 import type { Cycle, CycleRepository } from '../src/domain/cycles';
+import type { ContributionLedgerPage } from '../src/domain/contributions';
 import { SELECTION_KEY } from '../src/data/selection-store';
 import type { SelectionStore } from '../src/domain/profiles';
 import { DemoProfilePicker } from '../src/profiles/DemoProfilePicker';
@@ -130,6 +131,49 @@ describe('Rewind Home start screen', () => {
     expect(result.getByLabelText('Current prompt: What made you pause and smile?')).toBeTruthy();
     expect(result.getByLabelText(/0 of 5 contributions used/)).toBeTruthy();
     await result.findByText('Current member: Amber');
+  });
+
+  it('mounts the signed-in contribution ledger on Home and refreshes it on return', async () => {
+    const ledger: ContributionLedgerPage = {
+      cycleId: 'demo-cycle',
+      memberId: 'demo-1',
+      allowance: {
+        maxCount: 5,
+        maxSeconds: 30,
+        countUsed: 1,
+        secondsUsed: 4,
+        deletionsUsed: 0,
+        deletionAvailability: 'available',
+      },
+      entries: [
+        {
+          contributionId: 'contribution-1',
+          jobId: 'clip-job-1',
+          state: 'sealed',
+          durationSeconds: 4,
+          createdAt: '2026-09-10T12:00:00.000Z',
+          updatedAt: '2026-09-10T12:01:00.000Z',
+          attempts: 1,
+          progress: 100,
+          failureCategory: null,
+          retryable: false,
+          replaced: false,
+          restored: null,
+        },
+      ],
+      pagination: { limit: 50, hasMore: false, nextCursor: null },
+    };
+    const client = {
+      ...runtimeClientWithPremiere({ state: 'locked', cycleId: 'demo-cycle' }),
+      getContributionLedger: jest.fn().mockResolvedValue(ledger),
+    };
+    const result = await render(<App runtimeClient={client} />);
+    await result.findByText('Reference contribution-1');
+    expect(client.getContributionLedger).toHaveBeenCalledWith(expect.any(String), 'demo-group');
+    await fireEvent.press(result.getByRole('tab', { name: 'Camera' }));
+    expect(result.queryByTestId('contribution-ledger-ready')).toBeNull();
+    await fireEvent.press(result.getByRole('tab', { name: 'Home' }));
+    await waitFor(() => expect(client.getContributionLedger).toHaveBeenCalledTimes(2));
   });
 
   it('starts on Home and makes every main area reachable', async () => {

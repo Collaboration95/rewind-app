@@ -10,6 +10,10 @@ import {
   hashFileWithIdentity,
   type HashedFileIntegrity,
 } from './media/integrity';
+import {
+  contributionLedgerSchemaReady,
+  ensureContributionLedgerSchema,
+} from './contributions/ledger';
 
 const MIGRATIONS = [
   // `key` is the durable identity. Version 6 is reserved here for quota;
@@ -35,6 +39,7 @@ const MIGRATIONS = [
   { version: 13, key: 'compilation-retry-v1', fileName: '013-compilation-retry.sql' },
   { version: 14, key: 'queue-observability-v1', fileName: '014-queue-observability.sql' },
   { version: 15, key: 'media-integrity-v1', fileName: '015-media-integrity.sql' },
+  { version: 16, key: 'contribution-ledger-v1', fileName: '016-contribution-ledger.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -166,6 +171,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyQueueObservabilityMigration(database);
       } else if (migration.key === 'media-integrity-v1') {
         applyMediaIntegrityMigration(database);
+      } else if (migration.key === 'contribution-ledger-v1') {
+        ensureContributionLedgerSchema(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -291,6 +298,7 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'compilation-retry-v1') return !compilationRetrySchemaReady(database);
   if (key === 'queue-observability-v1') return !queueObservabilitySchemaReady(database);
   if (key === 'media-integrity-v1') return !mediaIntegritySchemaReady(database);
+  if (key === 'contribution-ledger-v1') return !contributionLedgerSchemaReady(database);
   return false;
 }
 

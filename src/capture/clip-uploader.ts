@@ -80,6 +80,12 @@ export function validateClipUploadInput(input: ClipUploadInput): string | null {
   if (!/^[A-Za-z0-9_-]{8,100}$/.test(input.idempotencyKey))
     return 'Provide a retryable upload key.';
   if (
+    input.replacesContributionId !== undefined &&
+    !/^[A-Za-z0-9_-]{1,128}$/.test(input.replacesContributionId)
+  ) {
+    return 'Choose a contribution that can be replaced.';
+  }
+  if (
     !input.sourceUri ||
     input.mimeType !== 'video/mp4' ||
     !Number.isInteger(input.byteLength) ||

@@ -193,6 +193,7 @@ export function VideoCaptureScreen({
   const contributionWorkRef = useRef(false);
   const contributionOperationRef = useRef(0);
   const pendingUploadInputRef = useRef<{ signature: string; input: ClipUploadInput } | null>(null);
+  const replacementTargetRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const captureLeftRef = useRef(false);
   useEffect(() => {
@@ -667,6 +668,7 @@ export function VideoCaptureScreen({
       reviewMetadata.startSeconds,
       reviewMetadata.endSeconds,
       reviewMetadata.durationSeconds,
+      replacementTargetRef.current,
     ]);
     let pendingInput = pendingUploadInputRef.current;
     if (!pendingInput || pendingInput.signature !== signature) {
@@ -685,6 +687,9 @@ export function VideoCaptureScreen({
           trimEndSeconds: reviewMetadata.endSeconds,
           trimStartSeconds: reviewMetadata.startSeconds,
           width: clip.width,
+          ...(replacementTargetRef.current
+            ? { replacesContributionId: replacementTargetRef.current }
+            : {}),
         },
       };
       pendingUploadInputRef.current = pendingInput;
@@ -725,6 +730,9 @@ export function VideoCaptureScreen({
       const processed = await processUploaded(uploaded, operation);
       if (!processed || !isContributionWorkActive(operation)) return;
       if (processed.status === 'ready') {
+        if (pendingInput.input.replacesContributionId === replacementTargetRef.current) {
+          replacementTargetRef.current = null;
+        }
         try {
           await releaseOwnedClip(clip);
         } catch {
@@ -815,6 +823,11 @@ export function VideoCaptureScreen({
       if (retried && isContributionWorkActive(operation)) {
         const processed = await processUploaded(retried, operation);
         if (processed?.status === 'ready' && isContributionWorkActive(operation)) {
+          const replacedContributionId =
+            pendingUploadInputRef.current?.input.replacesContributionId;
+          if (replacedContributionId === replacementTargetRef.current) {
+            replacementTargetRef.current = null;
+          }
           if (clip) {
             try {
               await releaseOwnedClip(clip);
@@ -972,6 +985,7 @@ export function VideoCaptureScreen({
         demoSession.session.groupId,
         contributionStatus.contributionId,
       );
+      replacementTargetRef.current = contributionStatus.contributionId;
       const currentClip = clipRef.current;
       if (currentClip) await releaseOwnedClip(currentClip);
       recorder?.reset();

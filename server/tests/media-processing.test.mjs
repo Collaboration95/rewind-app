@@ -1244,6 +1244,70 @@ test('session-authorized HTTP processing completes a staged capture workflow', a
       await access(sourcePath);
       await assert.rejects(access(stagedSourcePath(source.uri, stagingDir)));
 
+      const deleteResponse = await fetch(
+        `${baseUrl}/contributions/${encodeURIComponent(upload.contribution.id)}?${query}`,
+        { method: 'DELETE' },
+      );
+      assert.equal(deleteResponse.status, 200);
+      assert.equal((await deleteResponse.json()).contributionId, upload.contribution.id);
+
+      const replacementStagedResponse = await fetch(
+        `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=replacement-source-key`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'video/mp4' },
+          body: await readFile(sourcePath),
+        },
+      );
+      assert.equal(replacementStagedResponse.status, 201);
+      const { source: replacementSource } = await replacementStagedResponse.json();
+      const replacementResponse = await fetch(`${baseUrl}/contributions/upload?${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idempotencyKey: 'replacement-source-key',
+          sourceUri: replacementSource.uri,
+          mimeType: 'video/mp4',
+          byteLength: 10_000,
+          durationSeconds: 1.25,
+          width: 180,
+          height: 320,
+          hasAudio: true,
+          mode: 'soft-focus',
+          trimStartSeconds: 0.25,
+          trimEndSeconds: 1.5,
+          sourceDurationSeconds: 2,
+          replacesContributionId: upload.contribution.id,
+        }),
+      });
+      assert.equal(replacementResponse.status, 201);
+      const { upload: replacementUpload } = await replacementResponse.json();
+      assert.equal(
+        database
+          .prepare(
+            'SELECT replaced_by_contribution_id AS replacementId FROM contributions WHERE id = ?',
+          )
+          .get(upload.contribution.id).replacementId,
+        replacementUpload.contribution.id,
+      );
+      const ledgerResponse = await fetch(`${baseUrl}/contributions?${query}`);
+      assert.equal(ledgerResponse.status, 200);
+      const ledger = await ledgerResponse.json();
+      assert.equal(
+        ledger.entries.find((entry) => entry.contributionId === upload.contribution.id).state,
+        'replaced',
+      );
+      assert.equal(
+        ledger.entries.find((entry) => entry.contributionId === replacementUpload.contribution.id)
+          .state,
+        'queued',
+      );
+      const replacementProcessResponse = await fetch(
+        `${baseUrl}/contributions/jobs/${encodeURIComponent(replacementUpload.job.id)}/process?${query}`,
+        { method: 'POST' },
+      );
+      assert.equal(replacementProcessResponse.status, 200);
+
       const cancelStagedResponse = await fetch(
         `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=cancel-source-key`,
         {
@@ -1279,15 +1343,15 @@ test('session-authorized HTTP processing completes a staged capture workflow', a
       assert.equal(cancelledResponse.status, 200);
       await assert.rejects(access(stagedSourcePath(cancelSource.uri, stagingDir)));
       const clipResponse = await fetch(
-        `${baseUrl}/clips/${encodeURIComponent(upload.job.id)}?${query}`,
+        `${baseUrl}/clips/${encodeURIComponent(replacementUpload.job.id)}?${query}`,
       );
       assert.equal(clipResponse.status, 200);
       assert.deepEqual((await clipResponse.json()).clip, {
-        id: upload.job.id,
+        id: replacementUpload.job.id,
         groupId: 'demo-group',
         kind: 'clip',
         status: 'ready',
-        createdAt: upload.job.createdAt,
+        createdAt: replacementUpload.job.createdAt,
       });
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -1301,7 +1365,7 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
       .prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all()
       .map((row) => Number(row.version));
-    assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
 
     // Databases created by the first #45 implementation recorded media as
     // version 6. Existing columns are enough to promote that record safely.
@@ -1348,7 +1412,7 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
         .map((row) => Number(row.version)),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
     );
     assert.equal(
       database

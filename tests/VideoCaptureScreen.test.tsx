@@ -488,16 +488,36 @@ describe('VideoCaptureScreen', () => {
     expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
   });
 
-  it('clears the sealed contribution state after the bounded delete-and-replace action', async () => {
-    const processClipJob = jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' as const });
+  it('carries the selected contribution ID through delete and its replacement upload', async () => {
+    const replacementUpload = {
+      ...upload,
+      contribution: { ...upload.contribution, id: 'contribution-replacement-ui' },
+      job: {
+        ...upload.job,
+        contributionId: 'contribution-replacement-ui',
+        id: 'job-replacement-ui',
+      },
+    };
+    const processClipJob = jest
+      .fn()
+      .mockResolvedValueOnce({ ...upload.job, status: 'ready' as const })
+      .mockResolvedValueOnce({ ...replacementUpload.job, status: 'ready' as const });
+    const uploadClip = jest
+      .fn()
+      .mockResolvedValueOnce(upload)
+      .mockResolvedValueOnce(replacementUpload);
     const deleteContribution = jest.fn().mockResolvedValue({
       contributionId: upload.contribution.id,
       jobId: upload.job.id,
       restored: { count: 1 as const, seconds: 8 },
     });
+    const platform = videoPlatformForReview();
+    (platform.recordClip as jest.Mock)
+      .mockResolvedValueOnce(clip)
+      .mockResolvedValueOnce({ ...clip, sourceUri: 'file://replacement-clip.mp4' });
     const result = await renderReviewWithRuntime(
-      videoPlatformForReview(),
-      runtimeClient({ processClipJob, deleteContribution }),
+      platform,
+      runtimeClient({ processClipJob, uploadClip, deleteContribution }),
     );
 
     await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
@@ -516,6 +536,17 @@ describe('VideoCaptureScreen', () => {
         'Contribution deleted. Your weekly allowance is restored for a replacement.',
       ),
     ).toBeTruthy();
+
+    await fireEvent.press(result.getByTestId('video-record'));
+    await result.findByTestId('video-review');
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByTestId('camera-contribution-status-sealed');
+    expect(uploadClip).toHaveBeenNthCalledWith(
+      2,
+      'demo-session-ui',
+      'demo-group',
+      expect.objectContaining({ replacesContributionId: 'contribution-ui' }),
+    );
   });
 
   it('persists a used delete allowance in the status and removes the action', async () => {
