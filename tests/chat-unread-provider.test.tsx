@@ -7,6 +7,18 @@ import type { RealtimeConnectionState, SubscribeOptions } from '../src/chat/real
 import type { DemoSession } from '../src/domain/session';
 import type { RuntimeClient } from '../src/runtime/local-runtime-client';
 
+let mockNetworkListener:
+  ((state: { isConnected: boolean; isInternetReachable: boolean }) => void) | null;
+jest.mock('expo-network', () => ({
+  addNetworkStateListener: (listener: typeof mockNetworkListener) => {
+    mockNetworkListener = listener;
+    return { remove: jest.fn() };
+  },
+  getNetworkStateAsync: jest
+    .fn()
+    .mockResolvedValue({ isConnected: true, isInternetReachable: true }),
+}));
+
 const sessionA: DemoSession = {
   id: 'session-a',
   accessKind: 'demo',
@@ -238,17 +250,16 @@ describe('ChatUnreadProvider', () => {
     expect(result.getByTestId('connection')).toHaveTextContent('connected');
   });
 
-  it('reports offline while the browser is offline and recovers afterwards', async () => {
+  it('reports offline and online from native connectivity events', async () => {
     const runtime = runtimeMock();
-    const previousOnline = navigator.onLine;
-    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
-    try {
-      const result = await renderOwner({ runtimeClient: runtime.client });
-      await result.findByTestId('unread');
-      expect(result.getByTestId('connection')).toHaveTextContent('offline');
-    } finally {
-      Object.defineProperty(navigator, 'onLine', { configurable: true, value: previousOnline });
-    }
+    const result = await renderOwner({ runtimeClient: runtime.client });
+    await result.findByTestId('unread');
+    await act(async () =>
+      mockNetworkListener?.({ isConnected: false, isInternetReachable: false }),
+    );
+    expect(result.getByTestId('connection')).toHaveTextContent('offline');
+    await act(async () => mockNetworkListener?.({ isConnected: true, isInternetReachable: true }));
+    expect(result.getByTestId('connection')).toHaveTextContent('connecting');
   });
 
   it('reports unavailable when no realtime transport exists', async () => {

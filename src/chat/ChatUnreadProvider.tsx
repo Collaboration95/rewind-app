@@ -12,13 +12,10 @@ import type { DemoSession } from '../domain/session';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { ChatUnreadOwner, type ChatConnectionState, type ChatUnreadState } from './unread-owner';
 import { chatScopeKey, type ChatUnreadScope } from './unread-store';
+import { useNetworkOnline } from './use-network-online';
 
 export type { ChatConnectionState } from './unread-owner';
 export { chatConnectionLabel } from './unread-owner';
-
-function readBrowserOnline(): boolean {
-  return typeof navigator === 'undefined' || navigator.onLine !== false;
-}
 
 export interface ChatUnreadContextValue {
   unreadCount: number;
@@ -73,7 +70,7 @@ export function ChatUnreadProvider({
   // runs once and later renders reuse the created owner.
   const [createdOwner] = useState(() => new ChatUnreadOwner());
   const store = owner ?? createdOwner;
-  const [browserOnline, setBrowserOnline] = useState(readBrowserOnline);
+  const online = useNetworkOnline();
 
   const subscribeToTransport = useMemo(
     () =>
@@ -101,22 +98,6 @@ export function ChatUnreadProvider({
 
   useEffect(() => () => store.dispose(), [store]);
 
-  useEffect(() => {
-    if (
-      typeof window === 'undefined' ||
-      typeof window.addEventListener !== 'function' ||
-      typeof window.removeEventListener !== 'function'
-    )
-      return;
-    const update = () => setBrowserOnline(readBrowserOnline());
-    window.addEventListener('online', update);
-    window.addEventListener('offline', update);
-    return () => {
-      window.removeEventListener('online', update);
-      window.removeEventListener('offline', update);
-    };
-  }, []);
-
   const state = useSyncExternalStore(store.subscribe, store.getState, store.getState);
   // Effects bind the new scope after commit. Hide the previous scope's count
   // during the render that precedes that reset.
@@ -124,11 +105,11 @@ export function ChatUnreadProvider({
 
   const value = useMemo<ChatUnreadContextValue>(
     () => ({
-      connectionState: browserOnline ? state.connectionState : 'offline',
+      connectionState: online ? state.connectionState : 'offline',
       markRead: () => store.markRead(),
       unreadCount,
     }),
-    [browserOnline, state.connectionState, store, unreadCount],
+    [online, state.connectionState, store, unreadCount],
   );
 
   return <ChatUnreadContext.Provider value={value}>{children}</ChatUnreadContext.Provider>;

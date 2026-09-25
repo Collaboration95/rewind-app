@@ -333,6 +333,44 @@ test('heartbeat closes and removes a subscription after its session is revoked',
   }
 });
 
+test('disconnect during paginated replay immediately removes the hub subscription', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-disconnect-replay-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const hub = new RealtimeHub();
+  let clientRequest;
+  const subscribe = hub.subscribe.bind(hub);
+  hub.subscribe = (groupId, writer) => {
+    const unsubscribe = subscribe(groupId, writer);
+    setImmediate(() => clientRequest?.destroy());
+    return unsubscribe;
+  };
+  const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
+  const session = await createSession(baseUrl, 'demo-1');
+  for (let index = 0; index < 205; index += 1) {
+    const created = createChatMessage(database, {
+      groupId: 'demo-group',
+      memberId: 'demo-2',
+      body: `disconnect replay ${index}`,
+    });
+    assert.equal(created.ok, true);
+  }
+
+  try {
+    const url = new URL(
+      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=0`,
+    );
+    clientRequest = httpRequest(url, (response) => response.resume());
+    clientRequest.on('error', () => {});
+    clientRequest.end();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(hub.subscriberCount('demo-group'), 0);
+  } finally {
+    clientRequest?.destroy();
+    await closeRuntime(server, database, dataDir);
+  }
+});
+
 test('persisted message events replay after the runtime and database are reopened', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-restart-test-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });

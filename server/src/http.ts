@@ -968,6 +968,12 @@ export async function handleRequest(
       }
     };
     let unsubscribe = () => {};
+    let heartbeat: ReturnType<typeof setInterval> | null = null;
+    const cleanup = () => {
+      if (heartbeat) clearInterval(heartbeat);
+      unsubscribe();
+    };
+    response.once('close', cleanup);
     const streamIsAuthorised = () => {
       const currentSession = getDemoSession(database, identity.identity.sessionId);
       return Boolean(
@@ -1000,6 +1006,10 @@ export async function handleRequest(
         else writeAuthorisedEvent(event);
       });
       const checkpoint = latestChatEventId(database, groupId);
+      if (response.destroyed || response.writableEnded) {
+        unsubscribe();
+        return;
+      }
       if (!endUnauthorisedStream()) response.write(encodeSseCheckpoint(checkpoint));
       for (const event of pending.sort((left, right) => left.eventId - right.eventId)) {
         if (event.eventId > checkpoint) writeAuthorisedEvent(event);
@@ -1023,6 +1033,7 @@ export async function handleRequest(
       });
       const watermark = latestChatEventId(database, groupId);
       while (lastDeliveredEventId < watermark) {
+        if (response.destroyed || response.writableEnded) break;
         const page = listChatEvents(database, groupId, lastDeliveredEventId, 100);
         let progressed = false;
         for (const event of page) {
@@ -1036,20 +1047,20 @@ export async function handleRequest(
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
       for (const event of pending.sort((left, right) => left.eventId - right.eventId)) {
+        if (response.destroyed || response.writableEnded) break;
         if (event.eventId > watermark) deliverOnce(event);
       }
       priming = false;
     }
-    const heartbeat = setInterval(() => {
+    if (response.destroyed || response.writableEnded) {
+      cleanup();
+      return;
+    }
+    heartbeat = setInterval(() => {
       if (response.writableEnded || response.destroyed || endUnauthorisedStream()) return;
       response.write(': keep-alive\n\n');
     }, options.realtimeHeartbeatIntervalMs ?? 15_000);
     heartbeat.unref();
-    const cleanup = () => {
-      clearInterval(heartbeat);
-      unsubscribe();
-    };
-    response.once('close', cleanup);
     return;
   }
 

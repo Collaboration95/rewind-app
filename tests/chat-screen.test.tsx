@@ -11,11 +11,23 @@ import type { DemoSession } from '../src/domain/session';
 import type { ChatMessageEvent, SubscribeOptions } from '../src/chat';
 import type { RuntimeClient } from '../src/runtime/local-runtime-client';
 
+let mockNetworkListener:
+  ((state: { isConnected: boolean; isInternetReachable: boolean }) => void) | null;
+
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
 jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
 jest.mock('react-native-safe-area-context', () => mockSafeAreaContext);
+jest.mock('expo-network', () => ({
+  addNetworkStateListener: (listener: typeof mockNetworkListener) => {
+    mockNetworkListener = listener;
+    return { remove: jest.fn() };
+  },
+  getNetworkStateAsync: jest
+    .fn()
+    .mockResolvedValue({ isConnected: true, isInternetReachable: true }),
+}));
 
 const group: Group = {
   id: 'demo-group',
@@ -164,30 +176,31 @@ describe('persistent group chat timeline', () => {
     );
   });
 
-  it('shows offline when the device reports no network', async () => {
-    const previousOnline = navigator.onLine;
-    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
-    try {
-      const runtime = runtimeMock();
-      const result = await render(
-        <ScopedChatSurface
-          accessState="known"
-          capsuleStatus="ready"
-          group={group}
-          scope="session-a:demo-group"
-          memberNames={memberNames}
-          retryCapsule={jest.fn()}
-          runtimeClient={runtime.client}
-          session={sessionA}
-        />,
-      );
-      expect(result.getByTestId('chat-connection-status')).toHaveTextContent(
-        'Chat connection: Offline',
-      );
-      await result.findByTestId('chat-empty');
-    } finally {
-      Object.defineProperty(navigator, 'onLine', { configurable: true, value: previousOnline });
-    }
+  it('shows offline and online when native reachability changes', async () => {
+    const runtime = runtimeMock();
+    const result = await render(
+      <ScopedChatSurface
+        accessState="known"
+        capsuleStatus="ready"
+        group={group}
+        scope="session-a:demo-group"
+        memberNames={memberNames}
+        retryCapsule={jest.fn()}
+        runtimeClient={runtime.client}
+        session={sessionA}
+      />,
+    );
+    await result.findByTestId('chat-empty');
+    await act(async () =>
+      mockNetworkListener?.({ isConnected: false, isInternetReachable: false }),
+    );
+    expect(result.getByTestId('chat-connection-status')).toHaveTextContent(
+      'Chat connection: Offline',
+    );
+    await act(async () => mockNetworkListener?.({ isConnected: true, isInternetReachable: true }));
+    expect(result.getByTestId('chat-connection-status')).toHaveTextContent(
+      'Chat connection: Connecting…',
+    );
   });
 
   it('renders persisted events in event order and sends text through the runtime', async () => {

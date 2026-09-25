@@ -17,6 +17,7 @@ import {
 } from './realtime-client';
 import { useOptionalChatUnread } from './ChatUnreadProvider';
 import { chatConnectionLabel, type ChatConnectionState } from './unread-owner';
+import { useNetworkOnline } from './use-network-online';
 
 const MESSAGE_MAX_LENGTH = 2_000;
 
@@ -117,9 +118,7 @@ export function ChatSessionSurface({
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
   const [timelineState, setTimelineState] = useState<TimelineState>('loading');
   const [connectionState, setConnectionState] = useState<ChatConnectionState>('connecting');
-  const [browserOnline, setBrowserOnline] = useState(
-    () => typeof navigator === 'undefined' || navigator.onLine !== false,
-  );
+  const browserOnline = useNetworkOnline();
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [pendingDraft, setPendingDraft] = useState<ChatMessageDraft | null>(null);
@@ -142,22 +141,6 @@ export function ChatSessionSurface({
   useEffect(() => {
     if (accessState === 'known' && session && group) unread?.markRead();
   }, [accessState, group, session, unread]);
-
-  useEffect(() => {
-    if (
-      typeof window === 'undefined' ||
-      typeof window.addEventListener !== 'function' ||
-      typeof window.removeEventListener !== 'function'
-    )
-      return;
-    const update = () => setBrowserOnline(navigator.onLine !== false);
-    window.addEventListener('online', update);
-    window.addEventListener('offline', update);
-    return () => {
-      window.removeEventListener('online', update);
-      window.removeEventListener('offline', update);
-    };
-  }, []);
 
   const clearSensitiveState = useCallback(() => {
     subscriptionScope.current = null;
