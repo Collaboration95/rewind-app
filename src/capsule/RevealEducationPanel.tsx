@@ -58,8 +58,8 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   label: { color: COLORS.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.paper, fontSize: 21, fontWeight: '700' },
-  body: { color: COLORS.paper, fontSize: 14, lineHeight: 21 },
+  title: { color: COLORS.ink, fontSize: 21, fontWeight: '700' },
+  body: { color: COLORS.ink, fontSize: 14, lineHeight: 21 },
   action: {
     alignItems: 'center',
     alignSelf: 'flex-start',
