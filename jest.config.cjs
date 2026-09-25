@@ -3,6 +3,7 @@ module.exports = {
   clearMocks: true,
   moduleNameMapper: {
     '^expo-notifications$': '<rootDir>/tests/mocks/expo-notifications.ts',
+    '^expo-network$': '<rootDir>/tests/mocks/expo-network.ts',
     '^expo-video$': '<rootDir>/tests/mocks/expo-video.tsx',
   },
   preset: 'jest-expo',

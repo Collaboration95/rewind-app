@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ElementRef, type ReactNode } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
 import {
@@ -66,6 +66,7 @@ import {
   type InviteLinkParseResult,
 } from './src/invites/deep-links';
 import { ChatScreen } from './src/chat/ChatScreen';
+import { ChatUnreadProvider, useChatUnread } from './src/chat/unread';
 import { ArchiveScreen } from './src/archive/ArchiveScreen';
 import { ReminderSettings } from './src/reminders/ReminderSettings';
 
@@ -265,8 +266,14 @@ function ActiveAppShell({
   const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group' | 'video'>(() =>
     inviteLink ? 'settings' : 'home',
   );
+  const [confirmResetDialogOpen, setConfirmResetDialogOpen] = useState(false);
+  const previousRoute = useRef(activeRoute);
+  const initialFocusPending = useRef(true);
   const { retry: refreshCapsule, state: capsuleState } = useCapsule();
   const { session } = useDemoSession();
+  const chatGroup = 'group' in capsuleState ? capsuleState.group : null;
+  const chatStreamEnabled = Boolean(session && chatGroup?.id === session.groupId);
+  const unreadSession = capsuleState.status === 'denied' ? null : session;
   const cycleRevealState =
     capsuleState.status === 'ready' ? revealStateForCycle(capsuleState.cycle) : 'locked';
   const cycle = capsuleState.status === 'ready' ? capsuleState.cycle : null;
@@ -283,6 +290,43 @@ function ActiveAppShell({
     premiereEducation?.cycleId === cycle.id
       ? premiereEducation.state
       : cycleRevealState;
+
+  useEffect(() => {
+    const shouldFocus = initialFocusPending.current || previousRoute.current !== activeRoute;
+    previousRoute.current = activeRoute;
+    initialFocusPending.current = false;
+    if (Platform.OS !== 'web' || !shouldFocus) return;
+    if (typeof document === 'undefined') return;
+    const route = document.getElementById(`screen-route-${activeRoute}`);
+    if (!route) return;
+    const focusHeading = () => {
+      const heading = route.querySelector<HTMLElement>(
+        `[data-testid="route-heading-${activeRoute}"]`,
+      );
+      if (!heading) return false;
+      heading.tabIndex = -1;
+      heading.focus();
+      return true;
+    };
+    if (focusHeading()) return;
+    let timeout: ReturnType<typeof setTimeout>;
+    const observer = new MutationObserver(() => {
+      if (focusHeading()) {
+        observer.disconnect();
+        clearTimeout(timeout);
+      }
+    });
+    timeout = setTimeout(() => observer.disconnect(), 5000);
+    observer.observe(route, { childList: true, subtree: true });
+    if (focusHeading()) {
+      observer.disconnect();
+      clearTimeout(timeout);
+    }
+    return () => {
+      observer.disconnect();
+      clearTimeout(timeout);
+    };
+  }, [activeRoute]);
 
   useEffect(() => {
     const routeUsesRevealEducation =
@@ -321,71 +365,83 @@ function ActiveAppShell({
   }, [cameraPlatform]);
 
   return (
-    <SafeAreaFrame>
-      <View style={styles.activeShell}>
-        {activeRoute === 'home' ? (
-          <HomeScreen
-            clock={clock}
-            ledgerScope={
-              session && group && cycle
-                ? {
-                    sessionId: session.id,
-                    groupId: group.id,
-                    memberId: session.actor.memberId,
-                    cycleId: cycle.id,
-                  }
-                : null
+    <ChatUnreadProvider
+      activeGroupId={activeRoute === 'chat' ? (session?.groupId ?? null) : null}
+      enabled={chatStreamEnabled}
+      runtimeClient={runtimeClient}
+      session={unreadSession}
+    >
+      <SafeAreaFrame>
+        <View style={styles.activeShell}>
+          <View nativeID={`screen-route-${activeRoute}`} style={styles.routeContent}>
+            {activeRoute === 'home' ? (
+              <HomeScreen
+                clock={clock}
+                ledgerScope={
+                  session && group && cycle
+                    ? {
+                        sessionId: session.id,
+                        groupId: group.id,
+                        memberId: session.actor.memberId,
+                        cycleId: cycle.id,
+                      }
+                    : null
+                }
+                onAddMoment={() => setActiveRoute('camera')}
+                onOpenArchive={() => setActiveRoute('archive')}
+                revealState={revealState}
+                runtimeClient={runtimeClient}
+              />
+            ) : activeRoute === 'settings' ? (
+              <SettingsScreen
+                confirmResetDialogOpen={confirmResetDialogOpen}
+                onConfirmResetDialogOpenChange={setConfirmResetDialogOpen}
+                onCreateGroup={() => setActiveRoute('create-group')}
+                inviteLink={inviteLink}
+                runtimeClient={runtimeClient}
+              />
+            ) : activeRoute === 'create-group' ? (
+              <GroupCreateScreen
+                onCancel={() => setActiveRoute('settings')}
+                onCreated={() => setActiveRoute('home')}
+                runtimeClient={runtimeClient}
+              />
+            ) : activeRoute === 'camera' ? (
+              <CameraCaptureScreen
+                onRecordClip={() => setActiveRoute('video')}
+                onOpenArchive={() => setActiveRoute('archive')}
+                revealState={revealState}
+                platform={resolvedCameraPlatform}
+              />
+            ) : activeRoute === 'video' ? (
+              <VideoCaptureScreen
+                onBack={() => setActiveRoute('camera')}
+                onContributionDeleted={refreshCapsule}
+                platform={resolvedCameraPlatform}
+                runtimeClient={runtimeClient}
+              />
+            ) : activeRoute === 'chat' ? (
+              <ChatScreen runtimeClient={runtimeClient} />
+            ) : activeRoute === 'archive' ? (
+              <ArchiveScreen runtimeClient={runtimeClient} />
+            ) : (
+              <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
+            )}
+          </View>
+          <MainNavigation
+            activeRoute={
+              activeRoute === 'create-group'
+                ? 'settings'
+                : activeRoute === 'video'
+                  ? 'camera'
+                  : activeRoute
             }
-            onAddMoment={() => setActiveRoute('camera')}
-            onOpenArchive={() => setActiveRoute('archive')}
-            revealState={revealState}
-            runtimeClient={runtimeClient}
+            backgroundHidden={confirmResetDialogOpen}
+            onNavigate={setActiveRoute}
           />
-        ) : activeRoute === 'settings' ? (
-          <SettingsScreen
-            onCreateGroup={() => setActiveRoute('create-group')}
-            inviteLink={inviteLink}
-            runtimeClient={runtimeClient}
-          />
-        ) : activeRoute === 'create-group' ? (
-          <GroupCreateScreen
-            onCancel={() => setActiveRoute('settings')}
-            onCreated={() => setActiveRoute('home')}
-            runtimeClient={runtimeClient}
-          />
-        ) : activeRoute === 'camera' ? (
-          <CameraCaptureScreen
-            onRecordClip={() => setActiveRoute('video')}
-            onOpenArchive={() => setActiveRoute('archive')}
-            revealState={revealState}
-            platform={resolvedCameraPlatform}
-          />
-        ) : activeRoute === 'video' ? (
-          <VideoCaptureScreen
-            onBack={() => setActiveRoute('camera')}
-            onContributionDeleted={refreshCapsule}
-            platform={resolvedCameraPlatform}
-            runtimeClient={runtimeClient}
-          />
-        ) : activeRoute === 'chat' ? (
-          <ChatScreen runtimeClient={runtimeClient} />
-        ) : activeRoute === 'archive' ? (
-          <ArchiveScreen runtimeClient={runtimeClient} />
-        ) : (
-          <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
-        )}
-        <MainNavigation
-          activeRoute={
-            activeRoute === 'create-group'
-              ? 'settings'
-              : activeRoute === 'video'
-                ? 'camera'
-                : activeRoute
-          }
-          onNavigate={setActiveRoute}
-        />
-      </View>
-    </SafeAreaFrame>
+        </View>
+      </SafeAreaFrame>
+    </ChatUnreadProvider>
   );
 }
 
@@ -460,101 +516,172 @@ function DemoAccessEntry() {
 }
 
 function SettingsScreen({
+  confirmResetDialogOpen: confirmOpen,
+  onConfirmResetDialogOpenChange: setConfirmOpen,
   inviteLink,
   onCreateGroup,
   runtimeClient,
 }: {
+  confirmResetDialogOpen: boolean;
+  onConfirmResetDialogOpenChange: (open: boolean) => void;
   inviteLink: InviteLinkIntent | null;
   onCreateGroup: () => void;
   runtimeClient: RuntimeClient | null;
 }) {
   const { session, signOut, resetDemoData, pending, error } = useDemoSession();
   const { state } = useCapsule();
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  const resetTriggerRef = useRef<ElementRef<typeof Pressable>>(null);
+  const restoreResetTrigger = () => {
+    if (Platform.OS !== 'web') return;
+    setTimeout(() => (resetTriggerRef.current as unknown as HTMLElement | null)?.focus(), 0);
+  };
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !confirmOpen || typeof document === 'undefined') return;
+
+    const background = [
+      document.getElementById('settings-background'),
+      document.getElementById('main-navigation'),
+    ].filter((element): element is HTMLElement => element instanceof HTMLElement);
+    const priorInert = background.map((element) => element.inert);
+    background.forEach((element) => {
+      element.inert = true;
+    });
+
+    const dialog = document.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="Reset local Demo data confirmation"]',
+    );
+    const focusable = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [role="button"], [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      ).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
+    const trapTab = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || !dialog) return;
+      const items = focusable();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first || !last) {
+        event.preventDefault();
+        return;
+      }
+      const active = document.activeElement;
+      if (!dialog.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', trapTab, true);
+    focusable()[0]?.focus();
+
+    return () => {
+      document.removeEventListener('keydown', trapTab, true);
+      background.forEach((element, index) => {
+        element.inert = priorInert[index] ?? false;
+      });
+    };
+  }, [confirmOpen]);
   if (!session) return null;
   const groupName = state.group?.name ?? session.groupId;
   const role = state.group?.actingMemberRole ?? 'member';
 
   return (
-    <ScrollView contentContainerStyle={styles.content} style={styles.homeScroll}>
-      <AppHeader />
-      <View>
-        <Text style={styles.label}>SETTINGS</Text>
-        <Text accessibilityRole="header" style={styles.title}>
-          Local Demo
-        </Text>
-      </View>
-      <View accessible style={styles.settingsPanel} testID="settings-identity">
-        <Text style={styles.label}>CURRENT ACCESS</Text>
-        <Text style={styles.panelTitle}>{session.actor.displayName}</Text>
-        <Text style={styles.bodyText}>Synthetic member · Demo access</Text>
-      </View>
-      <View accessible style={styles.settingsPanel} testID="settings-group">
-        <Text style={styles.label}>CURRENT GROUP</Text>
-        <Text style={styles.panelTitle}>{groupName}</Text>
-        <Text style={styles.bodyText}>{role === 'owner' ? 'Owner' : 'Member'} · local group</Text>
-      </View>
-      <ReminderSettings />
-      <InvitePanel
-        groupId={session.groupId}
-        inviteLink={inviteLink}
-        runtimeClient={runtimeClient}
-      />
-      <DemoRevealPanel groupId={session.groupId} runtimeClient={runtimeClient} />
-      {error ? (
-        <Text accessibilityRole="alert" style={styles.errorText}>
-          {error}
-        </Text>
-      ) : null}
-      <Pressable accessibilityRole="button" onPress={onCreateGroup} style={styles.primaryButton}>
-        <Text style={styles.primaryButtonText}>Create a local group</Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        disabled={pending}
-        onPress={() => void signOut()}
-        style={styles.outlineButton}
-        testID="sign-out"
+    <View style={styles.settingsScreen}>
+      <ScrollView
+        accessibilityElementsHidden={confirmOpen}
+        aria-hidden={Platform.OS === 'web' ? confirmOpen : undefined}
+        importantForAccessibility={confirmOpen ? 'no-hide-descendants' : 'auto'}
+        contentContainerStyle={styles.content}
+        nativeID="settings-background"
+        style={styles.homeScroll}
       >
-        <Text style={styles.outlineButtonText}>
-          {pending ? 'Ending Demo access…' : 'Sign out of Demo'}
-        </Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        disabled={pending}
-        onPress={() => setConfirmOpen(true)}
-        style={styles.dangerButton}
-        testID="reset-demo-data"
-      >
-        <Text style={styles.dangerButtonText}>Reset local Demo data</Text>
-      </Pressable>
-      <Text style={styles.helperText}>
-        Reset removes local Demo access, groups, and camera files on this device, then restores the
-        deterministic fixture.
-      </Text>
+        <AppHeader />
+        <View>
+          <Text style={styles.label}>SETTINGS</Text>
+          <Text
+            accessibilityRole="header"
+            nativeID="screen-heading-settings"
+            style={styles.title}
+            testID="route-heading-settings"
+          >
+            Local Demo
+          </Text>
+        </View>
+        <View accessible style={styles.settingsPanel} testID="settings-identity">
+          <Text style={styles.label}>CURRENT ACCESS</Text>
+          <Text style={styles.panelTitle}>{session.actor.displayName}</Text>
+          <Text style={styles.bodyText}>Synthetic member · Demo access</Text>
+        </View>
+        <View accessible style={styles.settingsPanel} testID="settings-group">
+          <Text style={styles.label}>CURRENT GROUP</Text>
+          <Text style={styles.panelTitle}>{groupName}</Text>
+          <Text style={styles.bodyText}>{role === 'owner' ? 'Owner' : 'Member'} · local group</Text>
+        </View>
+        <ReminderSettings />
+        <InvitePanel
+          groupId={session.groupId}
+          inviteLink={inviteLink}
+          runtimeClient={runtimeClient}
+        />
+        <DemoRevealPanel groupId={session.groupId} runtimeClient={runtimeClient} />
+        {error ? (
+          <Text accessibilityRole="alert" style={styles.errorText}>
+            {error}
+          </Text>
+        ) : null}
+        <Pressable accessibilityRole="button" onPress={onCreateGroup} style={styles.primaryButton}>
+          <Text style={styles.primaryButtonText}>Create a local group</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={pending}
+          onPress={() => void signOut()}
+          style={styles.outlineButton}
+          testID="sign-out"
+        >
+          <Text style={styles.outlineButtonText}>
+            {pending ? 'Ending Demo access…' : 'Sign out of Demo'}
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={pending}
+          onPress={() => setConfirmOpen(true)}
+          ref={resetTriggerRef}
+          style={styles.dangerButton}
+          testID="reset-demo-data"
+        >
+          <Text style={styles.dangerButtonText}>Reset local Demo data</Text>
+        </Pressable>
+      </ScrollView>
       <Modal
-        accessibilityViewIsModal
-        animationType="fade"
-        onRequestClose={() => setConfirmOpen(false)}
+        animationType="none"
+        accessibilityLabel="Reset local Demo data confirmation"
+        onRequestClose={() => {
+          setConfirmOpen(false);
+          restoreResetTrigger();
+        }}
         transparent
         visible={confirmOpen}
       >
-        <View style={styles.modalBackdrop}>
-          <View
-            accessibilityViewIsModal
-            accessibilityRole="alert"
-            style={styles.modalCard}
-            testID="reset-confirmation"
-          >
-            <Text accessibilityRole="header" style={styles.panelTitle}>
+        <View accessible={false} style={styles.modalBackdrop} testID="reset-confirmation">
+          <View style={styles.modalCard}>
+            <Text accessibilityRole="header" style={[styles.dialogTitle, { color: '#fff7ec' }]}>
               Reset local Demo data?
             </Text>
-            <Text style={styles.bodyText}>
-              This removes the saved Demo session, locally created groups, accepted still metadata,
-              and app-owned cached camera files on this device. It restores the deterministic
-              five-member fixture. Nothing remote or source-controlled is changed.
-            </Text>
+            <ScrollView style={styles.dialogCopy}>
+              <Text style={[styles.dialogBodyText, { color: '#fff7ec' }]}>
+                This removes the saved Demo session, locally created groups, accepted still
+                metadata, and app-owned cached camera files on this device. It restores the
+                deterministic five-member fixture. Nothing remote or source-controlled is changed.
+              </Text>
+            </ScrollView>
             {error ? (
               <Text accessibilityRole="alert" style={styles.errorText}>
                 {error}
@@ -564,22 +691,28 @@ function SettingsScreen({
               <Pressable
                 accessibilityRole="button"
                 disabled={pending}
-                onPress={() => setConfirmOpen(false)}
-                style={styles.outlineButton}
+                onPress={() => {
+                  setConfirmOpen(false);
+                  restoreResetTrigger();
+                }}
+                style={styles.dialogButton}
               >
-                <Text style={styles.outlineButtonText}>Keep local data</Text>
+                <Text style={[styles.dialogButtonText, { color: '#fff7ec' }]}>Keep local data</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 disabled={pending}
                 onPress={async () => {
                   const reset = await resetDemoData();
-                  if (reset) setConfirmOpen(false);
+                  if (reset) {
+                    setConfirmOpen(false);
+                    restoreResetTrigger();
+                  }
                 }}
-                style={styles.dangerButton}
+                style={styles.dialogButton}
                 testID="reset-confirm-action"
               >
-                <Text style={styles.dangerButtonText}>
+                <Text style={[styles.dialogDangerButtonText, { color: '#fff7ec' }]}>
                   {pending ? 'Resetting local Demo data…' : 'Reset local Demo data'}
                 </Text>
               </Pressable>
@@ -587,7 +720,7 @@ function SettingsScreen({
           </View>
         </View>
       </Modal>
-    </ScrollView>
+    </View>
   );
 }
 
@@ -1029,7 +1162,7 @@ function GroupCreateScreen({
       <AppHeader />
       <View>
         <Text style={styles.label}>NEW LOCAL GROUP</Text>
-        <Text accessibilityRole="header" style={styles.title}>
+        <Text accessibilityRole="header" style={styles.title} testID="route-heading-create-group">
           Create a group
         </Text>
         <Text style={styles.bodyText}>
@@ -1218,7 +1351,7 @@ function UnavailableScreen({ route }: { route: UnavailableRouteKey }) {
       <AppHeader />
       <View>
         <Text style={styles.label}>{screen.title.toUpperCase()}</Text>
-        <Text accessibilityRole="header" style={styles.title}>
+        <Text accessibilityRole="header" style={styles.title} testID={`route-heading-${route}`}>
           {screen.title}
         </Text>
       </View>
@@ -1236,20 +1369,35 @@ function UnavailableScreen({ route }: { route: UnavailableRouteKey }) {
 
 function MainNavigation({
   activeRoute,
+  backgroundHidden,
   onNavigate,
 }: {
   activeRoute: RouteKey;
+  backgroundHidden: boolean;
   onNavigate: (route: RouteKey) => void;
 }) {
+  const { unreadCount } = useChatUnread();
   return (
-    <View accessibilityRole="tablist" style={styles.navigation} testID="main-navigation">
+    <View
+      accessibilityElementsHidden={backgroundHidden}
+      aria-hidden={Platform.OS === 'web' ? backgroundHidden : undefined}
+      accessibilityRole="tablist"
+      importantForAccessibility={backgroundHidden ? 'no-hide-descendants' : 'auto'}
+      nativeID="main-navigation"
+      style={styles.navigation}
+      testID="main-navigation"
+    >
       {ROUTES.map((route) => {
         const isSelected = route.key === activeRoute;
 
         return (
           <Pressable
             accessibilityHint={`Shows the ${route.label} area`}
-            accessibilityLabel={route.label}
+            accessibilityLabel={
+              route.key === 'chat' && unreadCount > 0
+                ? `Chat, ${unreadCount} unread ${unreadCount === 1 ? 'message' : 'messages'}`
+                : route.label
+            }
             accessibilityRole="tab"
             accessibilityState={{ selected: isSelected }}
             key={route.key}
@@ -1260,6 +1408,11 @@ function MainNavigation({
             <Text style={[styles.tabLabel, isSelected && styles.selectedTabLabel]}>
               {route.label}
             </Text>
+            {route.key === 'chat' && unreadCount > 0 ? (
+              <Text style={styles.unreadBadge} testID="chat-unread-badge">
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </Text>
+            ) : null}
             <Text style={styles.tabState}>{isSelected ? 'SELECTED' : ' '}</Text>
           </Pressable>
         );
@@ -1383,6 +1536,23 @@ const styles = StyleSheet.create({
     marginTop: -12,
     textAlign: 'center',
   },
+  dialogHelperText: { color: COLORS.ink, fontSize: 12, textAlign: 'center' },
+  dialogBodyText: { color: COLORS.ink, fontSize: 14, lineHeight: 21 },
+  dialogCopy: { maxHeight: 180 },
+  dialogTitle: { color: '#fff7ec', fontSize: 22, fontWeight: '700' },
+  dialogButtonText: { color: '#fff7ec', fontSize: 15, fontWeight: '700' },
+  dialogDangerButtonText: { color: COLORS.ink, fontSize: 15, fontWeight: '700' },
+  dialogButton: {
+    alignItems: 'center',
+    backgroundColor: '#302d30',
+    borderColor: COLORS.accent,
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
   unavailableScreen: {
     flex: 1,
     gap: 24,
@@ -1422,6 +1592,17 @@ const styles = StyleSheet.create({
   selectedTabLabel: {
     color: COLORS.ink,
   },
+  unreadBadge: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 10,
+    color: COLORS.deep,
+    fontSize: 11,
+    fontWeight: '800',
+    minWidth: 20,
+    overflow: 'hidden',
+    paddingHorizontal: 5,
+    textAlign: 'center',
+  },
   tabState: {
     color: COLORS.accent,
     fontSize: 8,
@@ -1429,6 +1610,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   activeShell: { flex: 1 },
+  routeContent: { flex: 1 },
+  settingsScreen: { flex: 1 },
   entryContent: { flexGrow: 1, gap: 24, padding: 24, paddingBottom: 36 },
   entryIntro: { gap: 8 },
   entryChoices: { gap: 12 },
@@ -1520,13 +1703,13 @@ const styles = StyleSheet.create({
   dangerButtonText: { color: COLORS.accent, fontSize: 15, fontWeight: '700' },
   modalBackdrop: {
     alignItems: 'center',
-    backgroundColor: 'rgba(29, 27, 30, 0.82)',
+    backgroundColor: 'rgba(29, 27, 30, 0.96)',
     flex: 1,
     justifyContent: 'center',
     padding: 24,
   },
   modalCard: {
-    backgroundColor: COLORS.paper,
+    backgroundColor: COLORS.background,
     borderColor: COLORS.edge,
     borderRadius: 12,
     borderWidth: 1,

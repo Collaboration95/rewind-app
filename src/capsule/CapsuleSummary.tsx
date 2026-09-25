@@ -124,7 +124,7 @@ function ReadyCapsuleSummary({
     <View style={styles.stack} testID="capsule-ready">
       <View>
         <Text style={styles.label}>HOME</Text>
-        <Text accessibilityRole="header" style={styles.title} testID="group-name">
+        <Text accessibilityRole="header" style={styles.title} testID="route-heading-home">
           {groupName}
         </Text>
         <Text style={styles.mutedText}>Shared capsule · Sample group</Text>
