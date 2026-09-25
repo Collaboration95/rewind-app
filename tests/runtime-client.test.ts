@@ -266,6 +266,37 @@ describe('LocalRuntimeClient', () => {
     );
   });
 
+  it('loads metadata-only cycle history for the authorized group', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(
+      response(200, {
+        cycles: [
+          {
+            id: 'cycle-1',
+            prompt: 'A prompt',
+            startsAt: '2026-09-01T00:00:00.000Z',
+            endsAt: '2026-09-08T00:00:00.000Z',
+            status: 'archived',
+            releaseStatus: 'unpublished',
+          },
+        ],
+      }),
+    );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(client.getCycleHistory('session-1', 'group-1')).resolves.toEqual([
+      {
+        id: 'cycle-1',
+        prompt: 'A prompt',
+        startsAt: '2026-09-01T00:00:00.000Z',
+        endsAt: '2026-09-08T00:00:00.000Z',
+        status: 'archived',
+        releaseStatus: 'unpublished',
+      },
+    ]);
+    expect(fetchImpl.mock.calls[0][0]).toContain(
+      '/cycles/history?groupId=group-1&sessionId=session-1',
+    );
+  });
+
   it('uploads captured bytes to the server-owned staging endpoint', async () => {
     const fetchImpl = jest
       .fn()

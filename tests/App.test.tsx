@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
@@ -105,6 +105,40 @@ function runtimeClientWithPremiere(
       .mockResolvedValue({ state: 'compiling', cycleId: 'demo-cycle', jobId: 'demo-film' }),
     getPremiere: jest.fn().mockResolvedValue(premiere),
     getReleasedArchive: jest.fn().mockResolvedValue({ films: [], clips: [] }),
+    getCycleHistory: jest.fn().mockResolvedValue([
+      {
+        id: 'demo-cycle',
+        prompt: 'What made you pause and smile?',
+        startsAt: '2026-09-01T00:00:00.000Z',
+        endsAt: '2026-09-12T00:00:00.000Z',
+        status: 'collecting',
+        releaseStatus: 'unpublished',
+      },
+      {
+        id: 'revealing-cycle',
+        prompt: 'The revealing prompt',
+        startsAt: '2026-08-20T00:00:00.000Z',
+        endsAt: '2026-08-27T00:00:00.000Z',
+        status: 'revealing',
+        releaseStatus: 'unpublished',
+      },
+      {
+        id: 'locked-archived-cycle',
+        prompt: 'The sealed archived prompt',
+        startsAt: '2026-08-10T00:00:00.000Z',
+        endsAt: '2026-08-17T00:00:00.000Z',
+        status: 'archived',
+        releaseStatus: 'unpublished',
+      },
+      {
+        id: 'old-cycle',
+        prompt: 'The archived prompt',
+        startsAt: '2026-08-01T00:00:00.000Z',
+        endsAt: '2026-08-08T00:00:00.000Z',
+        status: 'archived',
+        releaseStatus: 'published',
+      },
+    ]),
   };
 }
 
@@ -314,7 +348,7 @@ describe('Rewind Home start screen', () => {
     },
   );
 
-  it('lists only released media and presents explicit archive empty states', async () => {
+  it('maps released media to cycle history and keeps locked cycles metadata only', async () => {
     const client = runtimeClientWithPremiere({ state: 'locked', cycleId: 'demo-cycle' });
     client.getReleasedArchive.mockResolvedValue({
       films: [
@@ -324,8 +358,35 @@ describe('Rewind Home start screen', () => {
           publishedAt: '2026-09-18T00:00:00.000Z',
           downloadUrl: 'http://localhost:8787/films/film-1/download?sessionId=demo',
         },
+        {
+          id: 'locked-film',
+          cycleId: 'demo-cycle',
+          publishedAt: '2026-09-18T00:00:00.000Z',
+          downloadUrl: 'http://localhost:8787/films/locked-film/download?sessionId=demo',
+        },
+        {
+          id: 'locked-archived-film',
+          cycleId: 'locked-archived-cycle',
+          publishedAt: '2026-08-18T00:00:00.000Z',
+          downloadUrl: 'http://localhost:8787/films/locked-archived-film/download?sessionId=demo',
+        },
       ],
-      clips: [],
+      clips: [
+        {
+          id: 'clip-1',
+          contributionId: 'contribution-1',
+          cycleId: 'old-cycle',
+          createdAt: '2026-08-06T00:00:00.000Z',
+          downloadUrl: 'http://localhost:8787/clips/clip-1/download?sessionId=demo',
+        },
+        {
+          id: 'locked-clip',
+          contributionId: 'locked-contribution',
+          cycleId: 'demo-cycle',
+          createdAt: '2026-09-06T00:00:00.000Z',
+          downloadUrl: 'http://localhost:8787/clips/locked-clip/download?sessionId=demo',
+        },
+      ],
     });
     const result = await render(<App runtimeClient={client} />);
     await result.findByTestId('capsule-ready');
@@ -333,7 +394,37 @@ describe('Rewind Home start screen', () => {
     expect(await result.findByTestId('archive-released-media')).toBeTruthy();
     expect(result.getByText('Group film')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Download released group film' })).toBeTruthy();
-    expect(result.getByTestId('archive-empty-clips')).toBeTruthy();
+    expect(result.getByTestId('archive-film-cycle-film-1')).toHaveTextContent(
+      'Cycle: The archived prompt',
+    );
+    expect(result.getByTestId('archive-clip-cycle-clip-1')).toHaveTextContent(
+      'Cycle: The archived prompt',
+    );
+    const lockedCycle = result.getByTestId('archive-cycle-demo-cycle');
+    expect(within(lockedCycle).getByText('What made you pause and smile?')).toBeTruthy();
+    expect(within(lockedCycle).getByText('collecting')).toBeTruthy();
+    expect(within(lockedCycle).getByText(/2026/)).toBeTruthy();
+    expect(within(lockedCycle).getByTestId('archive-cycle-locked-demo-cycle')).toBeTruthy();
+    expect(within(lockedCycle).queryByRole('button')).toBeNull();
+    expect(within(lockedCycle).queryByRole('image')).toBeNull();
+    const revealingCycle = result.getByTestId('archive-cycle-revealing-cycle');
+    expect(within(revealingCycle).getByText('The revealing prompt')).toBeTruthy();
+    expect(within(revealingCycle).getByText('revealing')).toBeTruthy();
+    const archivedCycle = result.getByTestId('archive-cycle-old-cycle');
+    expect(within(archivedCycle).getByText('The archived prompt')).toBeTruthy();
+    expect(within(archivedCycle).getByText('archived')).toBeTruthy();
+    const lockedArchivedCycle = result.getByTestId('archive-cycle-locked-archived-cycle');
+    expect(within(lockedArchivedCycle).getByText('The sealed archived prompt')).toBeTruthy();
+    expect(
+      within(lockedArchivedCycle).getByTestId('archive-cycle-locked-locked-archived-cycle'),
+    ).toBeTruthy();
+    expect(within(lockedArchivedCycle).queryByRole('button')).toBeNull();
+    expect(result.queryByTestId('archive-video-player')).toBeNull();
+    expect(result.queryByRole('button', { name: /share/i })).toBeNull();
+    expect(result.getAllByRole('button', { name: /download/i })).toHaveLength(2);
+    expect(result.queryByTestId('archive-film-cycle-locked-film')).toBeNull();
+    expect(result.queryByTestId('archive-film-cycle-locked-archived-film')).toBeNull();
+    expect(result.queryByTestId('archive-clip-cycle-locked-clip')).toBeNull();
   });
 
   it('keeps sample moments sealed and routes Add a moment to Camera', async () => {

@@ -2072,6 +2072,39 @@ export async function handleRequest(
     return;
   }
 
+  if (url.pathname === '/cycles/history' && request.method === 'GET') {
+    const groupId = url.searchParams.get('groupId');
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'group',
+    );
+    if (!identity) return;
+    const cycles = database
+      .prepare(
+        `SELECT id, prompt, starts_at AS startsAt, ends_at AS endsAt, status,
+                release_status AS releaseStatus
+         FROM cycles WHERE group_id = ?
+         ORDER BY starts_at DESC, id DESC`,
+      )
+      .all(identity.groupId) as Record<string, unknown>[];
+    sendJson(response, config, 200, {
+      cycles: cycles.map((cycle) => ({
+        id: String(cycle.id),
+        prompt: String(cycle.prompt),
+        startsAt: String(cycle.startsAt),
+        endsAt: String(cycle.endsAt),
+        status: String(cycle.status),
+        releaseStatus: String(cycle.releaseStatus),
+      })),
+    });
+    return;
+  }
+
   const messageMatch = url.pathname.match(/^\/messages\/([^/]+)$/);
   if (messageMatch) {
     const messageId = decodePathSegment(messageMatch[1], response, config);

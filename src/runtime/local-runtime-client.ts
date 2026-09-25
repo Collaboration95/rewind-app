@@ -3,6 +3,7 @@ import type {
   Cycle,
   CycleAdvanceResult,
   DemoRevealState,
+  CycleHistoryEntry,
 } from '../domain/cycles';
 import type { InviteAcceptance, LocalInvite } from '../domain/invites';
 import type { ClipUploadInput, PendingClipUpload } from '../domain/video';
@@ -91,6 +92,7 @@ export interface RuntimeClient {
   ): Promise<PendingClipUpload['job']>;
   getPremiere?(sessionId: string, groupId: string, cycleId: string): Promise<Premiere>;
   getReleasedArchive?(sessionId: string, groupId: string): Promise<ReleasedArchive>;
+  getCycleHistory?(sessionId: string, groupId: string): Promise<CycleHistoryEntry[]>;
   getContributionLedger?(
     sessionId: string,
     groupId: string,
@@ -467,6 +469,13 @@ export class LocalRuntimeClient implements RuntimeClient {
         downloadUrl: `${this.baseUrl}${downloadPath}`,
       })),
     };
+  }
+
+  async getCycleHistory(sessionId: string, groupId: string): Promise<CycleHistoryEntry[]> {
+    const body = await this.request<{ cycles: CycleHistoryEntry[] }>(
+      `/cycles/history?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId)}`,
+    );
+    return body.cycles;
   }
 
   async deleteContribution(
