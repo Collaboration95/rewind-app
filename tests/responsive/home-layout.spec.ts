@@ -23,6 +23,11 @@ for (const screenSize of screenSizes) {
     if (await entryChoice.isVisible()) await entryChoice.click();
 
     await expect(navigation).toBeVisible();
+
+    // The ledger can replace its loading panel with a larger result after the
+    // first layout. Wait for that request to settle before scrolling the final
+    // Home item, otherwise late content can move it back below the nav.
+    await expect(page.getByTestId(/contribution-ledger-(ready|denied|error)/)).toBeVisible();
     await lastHomeContent.scrollIntoViewIfNeeded();
     await expect(lastHomeContent).toBeVisible();
 
