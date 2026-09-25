@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, readdirSync, realpathSync, statSync, unlinkSync } from 'node:fs';
+import { lstatSync, opendirSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import type { RewindDatabase } from '../db';
@@ -7,6 +7,7 @@ import type { RewindDatabase } from '../db';
 export const PROCESSED_RETENTION_AGE_MS = 24 * 60 * 60 * 1000;
 export const PROCESSED_RETENTION_DEFAULT_LIMIT = 100;
 export const PROCESSED_RETENTION_MAX_LIMIT = 500;
+export const PROCESSED_RETENTION_SCAN_LIMIT = 5000;
 
 export interface RetentionCandidate {
   path: string;
@@ -15,6 +16,7 @@ export interface RetentionCandidate {
   size: number;
   modifiedAtMs: number;
   reportName: string;
+  databasePaths: [string, string];
 }
 
 export interface RetentionPlan {
@@ -39,30 +41,20 @@ function reportName(name: string): string {
   return safe || createHash('sha256').update(name).digest('hex').slice(0, 16);
 }
 
-function referencedPaths(database: RewindDatabase): Set<string> {
-  const references = new Set<string>();
-  const active = database
+function isReferenced(database: RewindDatabase, paths: [string, string]): boolean {
+  const result = database
     .prepare(
-      `SELECT output_path AS path FROM media_jobs
-     WHERE status IN ('pending', 'processing', 'ready') AND output_path IS NOT NULL`,
+      `SELECT EXISTS (
+         SELECT 1 FROM media_jobs
+          WHERE status IN ('pending', 'processing', 'ready') AND output_path IN (?, ?)
+       ) OR EXISTS (
+         SELECT 1 FROM compilation_job_inputs input
+         JOIN media_jobs clip ON clip.id = input.clip_job_id
+          WHERE clip.output_path IN (?, ?)
+       ) AS referenced`,
     )
-    .all() as { path: string }[];
-  const inputs = database
-    .prepare(
-      `SELECT clip.output_path AS path
-       FROM compilation_job_inputs input
-       JOIN media_jobs clip ON clip.id = input.clip_job_id
-      WHERE clip.output_path IS NOT NULL`,
-    )
-    .all() as { path: string }[];
-  for (const row of [...active, ...inputs]) {
-    try {
-      references.add(realpathSync(row.path));
-    } catch {
-      references.add(resolve(row.path));
-    }
-  }
-  return references;
+    .get(...paths, ...paths) as { referenced: number };
+  return Boolean(result.referenced);
 }
 
 function safelyStatCandidate(root: string, path: string) {
@@ -86,32 +78,45 @@ export function planProcessedMediaRetention(
     throw new RangeError(`limit must be an integer from 1 to ${PROCESSED_RETENTION_MAX_LIMIT}`);
   }
   const root = realpathSync(processedDir);
+  const requestedRoot = resolve(processedDir);
   const cutoffMs = (options.now ?? new Date()).getTime() - PROCESSED_RETENTION_AGE_MS;
-  const refs = referencedPaths(database);
   const candidates: RetentionCandidate[] = [];
   const skippedUnsafe: string[] = [];
-  for (const name of readdirSync(root).sort()) {
-    const path = resolve(root, name);
-    try {
-      const details = safelyStatCandidate(root, path);
-      if (!details) {
-        skippedUnsafe.push(reportName(name));
-        continue;
+  const directory = opendirSync(root);
+  try {
+    for (let scanned = 0; scanned < PROCESSED_RETENTION_SCAN_LIMIT; scanned += 1) {
+      const entry = directory.readSync();
+      if (!entry) break;
+      const name = entry.name;
+      const path = resolve(root, name);
+      try {
+        const details = safelyStatCandidate(root, path);
+        if (!details) {
+          if (skippedUnsafe.length < limit) skippedUnsafe.push(reportName(name));
+          continue;
+        }
+        const databasePaths: [string, string] = [resolve(requestedRoot, name), realpathSync(path)];
+        if (
+          candidates.length < limit &&
+          !isReferenced(database, databasePaths) &&
+          details.mtimeMs <= cutoffMs
+        ) {
+          candidates.push({
+            path: realpathSync(path),
+            device: details.dev,
+            inode: details.ino,
+            size: details.size,
+            modifiedAtMs: details.mtimeMs,
+            reportName: reportName(name),
+            databasePaths,
+          });
+        }
+      } catch {
+        if (skippedUnsafe.length < limit) skippedUnsafe.push(reportName(name));
       }
-      if (refs.has(path) || details.mtimeMs > cutoffMs) continue;
-      if (candidates.length < limit) {
-        candidates.push({
-          path: realpathSync(path),
-          device: details.dev,
-          inode: details.ino,
-          size: details.size,
-          modifiedAtMs: details.mtimeMs,
-          reportName: reportName(name),
-        });
-      }
-    } catch {
-      skippedUnsafe.push(reportName(name));
     }
+  } finally {
+    directory.closeSync();
   }
   return { cutoff: new Date(cutoffMs).toISOString(), limit, candidates, skippedUnsafe };
 }
@@ -127,12 +132,11 @@ export function applyProcessedMediaRetention(
   const skipped: string[] = [];
   database.exec('BEGIN IMMEDIATE');
   try {
-    const refs = referencedPaths(database);
     const cutoffMs = Date.parse(plan.cutoff);
     for (const candidate of plan.candidates) {
       try {
         const path = resolve(candidate.path);
-        if (!within(root, path) || refs.has(path)) {
+        if (!within(root, path) || isReferenced(database, candidate.databasePaths)) {
           skipped.push(candidate.reportName);
           continue;
         }

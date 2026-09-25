@@ -124,10 +124,10 @@ function insertFixtures(database) {
 test('migration 016 records readiness and repairs a malformed index after receipt', async () => {
   await withRuntime(async ({ database }) => {
     assert.equal(schemaReadiness(database).ready, true);
-    assert.equal(schemaReadiness(database).expectedMigrationVersion, 16);
+    assert.equal(schemaReadiness(database).expectedMigrationVersion, 17);
     assert.equal(
-      database.prepare('SELECT version FROM schema_migrations WHERE version = 16').get()?.version,
-      16,
+      database.prepare('SELECT version FROM schema_migrations WHERE version = 17').get()?.version,
+      17,
     );
     database.exec(`
       DROP INDEX contributions_ledger_member_idx;

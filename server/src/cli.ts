@@ -15,6 +15,12 @@ import {
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
+  applyConsistencyRepair,
+  CONSISTENCY_DEFAULT_LIMIT,
+  CONSISTENCY_MAX_LIMIT,
+  planConsistencyRepair,
+} from './jobs/consistency';
+import {
   applyProcessedMediaRetention,
   planProcessedMediaRetention,
   PROCESSED_RETENTION_DEFAULT_LIMIT,
@@ -170,6 +176,48 @@ function parseRetentionLimit(argv: string[]): number {
     );
   }
   return limit;
+}
+
+function parseConsistencyLimit(argv: string[]): number {
+  const value = readOption(argv, ['--limit']);
+  const limit = value === undefined ? CONSISTENCY_DEFAULT_LIMIT : Number(value);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > CONSISTENCY_MAX_LIMIT) {
+    throw new ConfigError(
+      `--limit must be an integer from 1 to ${CONSISTENCY_MAX_LIMIT}.`,
+      'Use consistency --limit 100; changes require --repair.',
+    );
+  }
+  return limit;
+}
+
+function printConsistency(
+  report: ReturnType<typeof planConsistencyRepair>,
+  json: boolean,
+  applied?: { repaired: string[]; skipped: string[] },
+): void {
+  const result = {
+    mode: applied ? 'repair' : 'report',
+    limit: report.limit,
+    findings: report.findings.map(({ kind, id, name, repairable, reason }) => ({
+      kind,
+      id,
+      ...(name ? { name } : {}),
+      repairable,
+      ...(reason ? { reason } : {}),
+    })),
+    ...(applied ? { repaired: applied.repaired, skippedOnRevalidation: applied.skipped } : {}),
+  };
+  if (json) {
+    console.log(JSON.stringify({ version: SERVICE_VERSION, ...result }, null, 2));
+    return;
+  }
+  console.log(`Rewind consistency ${result.mode} (${result.findings.length} finding(s))`);
+  for (const finding of result.findings)
+    console.log(
+      `${finding.kind} id=${finding.id}${finding.name ? ` name=${finding.name}` : ''}${finding.repairable ? ' repairable' : ''}${finding.reason ? ` reason=${finding.reason}` : ''}`,
+    );
+  if (applied)
+    console.log(`Repaired ${applied.repaired.length}; skipped ${applied.skipped.length}.`);
 }
 
 function printRetention(
@@ -378,6 +426,36 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       }
       return;
     }
+    if (command === 'consistency') {
+      const limit = parseConsistencyLimit(argv);
+      const repair = argv.includes('--repair');
+      const database = new DatabaseSync(
+        config.databasePath,
+        repair ? undefined : { readOnly: true },
+      );
+      try {
+        const report = planConsistencyRepair(
+          database,
+          resolve(config.dataDir, 'media', 'processed'),
+          resolve(config.dataDir, 'media', 'staging'),
+          { limit },
+        );
+        printConsistency(
+          report,
+          json,
+          repair
+            ? applyConsistencyRepair(
+                database,
+                resolve(config.dataDir, 'media', 'processed'),
+                report,
+              )
+            : undefined,
+        );
+      } finally {
+        database.close();
+      }
+      return;
+    }
     if (command === 'jobs' || command === 'queue') {
       const database = await openRuntimeDatabase(config);
       try {
@@ -390,7 +468,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (command !== 'start') {
       throw new ConfigError(
         `Unknown local runtime command ${JSON.stringify(command)}.`,
-        'Use start, preflight, migrate, reset, diagnostics, jobs, or retention.',
+        'Use start, preflight, migrate, reset, diagnostics, jobs, retention, or consistency.',
       );
     }
     await start(config);

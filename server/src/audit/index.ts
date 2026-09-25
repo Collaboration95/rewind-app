@@ -12,6 +12,7 @@ export const AUDIT_EVENT_TYPES = [
   'job.completed',
   'job.failed',
   'media.integrity_failed',
+  'media.consistency_repaired',
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
@@ -36,7 +37,7 @@ export interface AuditEventInput {
 
 const SAFE_ACTOR_ID = /^demo-[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SAFE_RESOURCE_ID =
-  /^(?:session|job|group|cycle|profile|message|contribution|clip|film|download):[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+  /^(?:session|job|group|cycle|profile|message|contribution|clip|film|download|file):[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 function isAuditEventType(value: string): value is AuditEventType {
   return (AUDIT_EVENT_TYPES as readonly string[]).includes(value);
