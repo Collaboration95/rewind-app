@@ -6,8 +6,17 @@ test.use({ serviceWorkers: 'block' });
 async function enterDemo(page: Page) {
   await page.goto('/');
   const chooser = page.getByTestId('demo-entry-demo-1');
+  const navigation = page.getByTestId('main-navigation');
+  await expect
+    .poll(
+      async () =>
+        (await chooser.isVisible().catch(() => false)) ||
+        (await navigation.isVisible().catch(() => false)),
+      { timeout: 15_000 },
+    )
+    .toBe(true);
   if (await chooser.isVisible().catch(() => false)) await chooser.click();
-  await expect(page.getByTestId('main-navigation')).toBeVisible();
+  await expect(navigation).toBeVisible({ timeout: 15_000 });
 }
 
 async function tabUntilFocused(page: Page, target: ReturnType<Page['getByTestId']>, limit = 80) {
