@@ -36,14 +36,14 @@ jobs:
       - name: Install FFmpeg for the local runtime gate
         run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
 
+      - name: Install Chromium for accessibility and responsive checks
+        run: npx playwright install --with-deps chromium
+
       - name: Run baseline checks
         run: npm run check
 
       - name: Build and validate the installable web shell
         run: npm run test:pwa
-
-      - name: Install Chromium for responsive checks
-        run: npx playwright install --with-deps chromium
 
       - name: Run responsive browser checks
         run: npm run test:responsive

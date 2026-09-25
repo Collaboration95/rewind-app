@@ -176,51 +176,48 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
       );
   };
 
-  if (state.status === 'loading') {
-    return (
-      <View style={styles.panel} testID="archive-loading">
-        <Text style={styles.label}>ARCHIVE</Text>
-        <Text accessibilityLiveRegion="polite" style={styles.title}>
-          Checking the group premiere…
-        </Text>
-      </View>
-    );
-  }
-
-  if (state.status === 'unavailable') {
-    return (
-      <View style={styles.panel} testID="archive-unavailable">
-        <Text style={styles.label}>ARCHIVE</Text>
-        <Text accessibilityRole="header" style={styles.title}>
-          Premiere unavailable
-        </Text>
-        <Text accessibilityLiveRegion="assertive" style={styles.bodyText}>
-          {state.message}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            retryCapsule();
-            load();
-          }}
-          style={styles.retryButton}
-        >
-          <Text style={styles.retryText}>Retry premiere</Text>
-        </Pressable>
-      </View>
-    );
-  }
-
-  const premierePanel =
-    state.premiere.state === 'ready' ? (
-      <PublishedPlayer premiere={state.premiere} />
-    ) : (
-      <PremiereStatus premiere={state.premiere} reload={load} />
-    );
   return (
-    <View style={styles.stack}>
-      {premierePanel}
-      <ArchiveEntries archive={state.archive} download={download} notice={downloadNotice} />
+    <View style={styles.archiveScreen}>
+      <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
+        Archive
+      </Text>
+      {state.status === 'loading' ? (
+        <View style={styles.panel} testID="archive-loading">
+          <Text style={styles.label}>ARCHIVE</Text>
+          <Text accessibilityRole="header" style={styles.title}>
+            Checking the group premiere…
+          </Text>
+        </View>
+      ) : state.status === 'unavailable' ? (
+        <View style={styles.panel} testID="archive-unavailable">
+          <Text style={styles.label}>ARCHIVE</Text>
+          <Text accessibilityRole="header" style={styles.title}>
+            Premiere unavailable
+          </Text>
+          <Text accessibilityLiveRegion="assertive" style={styles.bodyText}>
+            {state.message}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              retryCapsule();
+              load();
+            }}
+            style={styles.retryButton}
+          >
+            <Text style={styles.retryText}>Retry premiere</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={styles.stack}>
+          {state.premiere.state === 'ready' ? (
+            <PublishedPlayer premiere={state.premiere} />
+          ) : (
+            <PremiereStatus premiere={state.premiere} reload={load} />
+          )}
+          <ArchiveEntries archive={state.archive} download={download} notice={downloadNotice} />
+        </View>
+      )}
     </View>
   );
 }
@@ -244,6 +241,7 @@ function PremiereStatus({
 }
 
 const styles = StyleSheet.create({
+  archiveScreen: { gap: 12 },
   stack: { gap: 14 },
   panel: {
     backgroundColor: COLORS.paper,
@@ -283,6 +281,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
-  downloadText: { color: COLORS.paper, fontSize: 14, fontWeight: '700' },
+  downloadText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
   notice: { color: COLORS.muted, fontSize: 14 },
 });
