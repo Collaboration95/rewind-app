@@ -250,6 +250,69 @@ test('a stale processing claim is reclaimed after restart while a live claim is 
   });
 });
 
+test('a stale failing clip worker cannot change or remove a reclaimed worker output', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const stagingDir = dataDir + '/media/staging';
+    await mkdir(stagingDir, { recursive: true });
+    const sourcePath = stagingDir + '/stale-failure-reclaim.mp4';
+    await createSyntheticSource(sourcePath);
+    const jobId = await enqueueClip(database, sourcePath, 'stale-failure-reclaim-key');
+
+    const failingFfmpeg = dataDir + '/wrapper-fail-after-reclaim';
+    const startedPath = dataDir + '/stale-worker-started';
+    const releasePath = dataDir + '/stale-worker-release';
+    await writeFile(
+      failingFfmpeg,
+      [
+        '#!/bin/sh',
+        'printf started > "$REWIND_STALE_WORKER_STARTED"',
+        'while [ ! -f "$REWIND_STALE_WORKER_RELEASE" ]; do sleep 0.01; done',
+        'exit 1',
+        '',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+    const envKeys = ['REWIND_STALE_WORKER_STARTED', 'REWIND_STALE_WORKER_RELEASE'];
+    const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+    process.env.REWIND_STALE_WORKER_STARTED = startedPath;
+    process.env.REWIND_STALE_WORKER_RELEASE = releasePath;
+    try {
+      const staleWorker = processClipJob(database, {
+        jobId,
+        ...workerOptions(config, dataDir, { ffmpegBin: failingFfmpeg }),
+      });
+      await waitForFile(startedPath);
+      database
+        .prepare('UPDATE media_jobs SET processing_started_at = ? WHERE id = ?')
+        .run(new Date(Date.now() - PROCESSING_CLAIM_LEASE_MS - 1_000).toISOString(), jobId);
+
+      const reclaimed = await processClipJob(database, {
+        jobId,
+        ...workerOptions(config, dataDir),
+      });
+      assert.deepEqual(reclaimed, { ok: true, jobId, status: 'ready' });
+      const readyJob = jobRow(database, jobId);
+      assert.equal(readyJob.status, 'ready');
+      assert.equal(readyJob.outputPath.includes('-g2.mp4'), true);
+      await access(readyJob.outputPath);
+
+      await writeFile(releasePath, 'continue');
+      const staleResult = await staleWorker;
+      assert.equal(staleResult.ok, false);
+      assert.equal(jobRow(database, jobId).status, 'ready');
+      assert.equal(jobRow(database, jobId).outputPath, readyJob.outputPath);
+      await access(readyJob.outputPath);
+    } finally {
+      await writeFile(releasePath, 'continue').catch(() => undefined);
+      for (const key of envKeys) {
+        const value = previousEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+});
+
 test('automatic clip retries stop at the cap while request retries remain available', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     const missingSource = dataDir + '/media/staging/missing.mp4';
