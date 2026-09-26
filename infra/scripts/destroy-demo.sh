@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Back up the live Demo host, then hibernate its disposable compute through
-# Terraform. This deliberately does not destroy the backup bucket or IAM.
+# Back up the live Demo host, then hibernate disposable compute and its optional
+# distribution through Terraform. Preserve the backup bucket and recovery IAM.
 #
 # The default is a read-only plan. Only --apply --confirm can reach the host
 # backup, S3 upload, or Terraform apply stages.
@@ -110,6 +110,7 @@ validate_hibernation_plan() {
             "aws_lightsail_static_ip.rewind[0]",
             "aws_lightsail_static_ip_attachment.rewind[0]",
             "aws_lightsail_instance_public_ports.rewind[0]",
+            "aws_lightsail_distribution.web[0]",
             "aws_iam_role.power_controller[0]",
             "aws_iam_role_policy.power_controller[0]",
             "aws_iam_role_policy.operator[0]",
@@ -169,7 +170,7 @@ trap cleanup EXIT
 
 if [[ "$APPLY" == 0 ]]; then
   run_hibernation_plan
-  printf 'Dry-run passed: the plan is eligible to hibernate disposable Demo compute/network and disable its legacy controller bindings.\n'
+  printf 'Dry-run passed: the plan is eligible to remove disposable Demo compute/network and its optional public distribution, and disable legacy controller bindings.\n'
   printf '%s\n' 'No SSH backup, S3 upload, or Terraform apply was performed.'
   exit 0
 fi
@@ -242,9 +243,9 @@ fi
 printf 'Verified recovery point is ready for hibernation.\n'
 
 run_hibernation_plan
-printf 'Applying the reviewed hibernation plan: the disposable instance will be deleted.\n'
+printf 'Applying the reviewed hibernation plan: disposable compute and any configured public distribution will be deleted.\n'
 if ! AWS_PROFILE="$TF_AWS_PROFILE" terraform -chdir="$TF_DIR" apply "$plan_file"; then
   lifecycle_guard_reject 'Terraform apply failed after the verified backup was secured.'
   exit 1
 fi
-printf 'Demo compute hibernated. The verified S3 backup, recovery roles, and audit infrastructure remain.\n'
+printf 'Demo compute and public distribution hibernated. The verified S3 backup, recovery roles, and audit infrastructure remain.\n'

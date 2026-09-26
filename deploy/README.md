@@ -68,8 +68,9 @@ first pass installs the Docker/JQ/rsync prerequisites and creates the persistent
 repository bundle exists.
 
 After Terraform creates the instance, `infra/scripts/wake-demo.sh` transfers
-the checked-in repository and private `rewind.env`, then runs the same script
-with `--complete`. Completion installs the compose files, executable operator
+the reviewed release bundle and private `rewind.env`, verifies its digest on
+the host, and runs the bundled bootstrap with `--complete`. Completion installs
+the compose files, executable operator
 scripts (including `pause-host.sh` and `preflight.sh`), the backup service and timer, and a
 0600 copy of `rewind.env.example` only when no environment file exists. It
 reloads and enables the backup timer, and writes
@@ -115,7 +116,7 @@ ownership:
 
 ## Build, migrate, and start
 
-From the repository root:
+For local Compose development, from the repository root:
 
 ```sh
 cp deploy/rewind.env.example /srv/rewind/rewind.env
@@ -334,9 +335,49 @@ To recreate the host from the newest backup, keep a private local copy of
 
 ```sh
 export REWIND_ENV_FILE=/private/path/rewind.env
+export RELEASE_BUNDLE=/private/path/rewind-<green-main-sha>.tar
+export RELEASE_BUNDLE_SHA256=<reviewed-sha256-of-bundle>
 ./infra/scripts/wake-demo.sh --latest
 ./infra/scripts/wake-demo.sh --latest --apply --confirm
 ```
+
+Build that bundle once on the green `origin/main` commit with a clean checkout,
+including no untracked files. The `--green-sha` value is the exact commit whose
+required CI checks passed; record the resulting bundle SHA-256 alongside it.
+`--config-version` names the operator-reviewed private configuration contract;
+change it when a release requires an incompatible environment layout. The
+bundle contains a Git-archived deployment allowlist, both Docker images tagged
+with the same commit SHA, and checksums. Build on an operator/CI machine with
+Docker; the host loads those exact images and does not rebuild the app:
+
+```sh
+git status --short
+git rev-parse HEAD
+git rev-parse origin/main
+python3 deploy/release.py build --green-sha "$GREEN_MAIN_SHA" \
+  --config-version demo-v1 --output "/private/path/rewind-$GREEN_MAIN_SHA.tar"
+python3 deploy/release.py verify "/private/path/rewind-$GREEN_MAIN_SHA.tar"
+sha256sum "/private/path/rewind-$GREEN_MAIN_SHA.tar"
+```
+
+Before applying wake, confirm the reviewed PR and green check belong to that
+SHA, verify the full S3 backup, and review any migration against the previous
+image. A new schema version can block rollback to an older image. `wake-demo.sh`
+still requires `--apply --confirm` and the verified recovery point; `--seed`
+remains only for first installation. After deployment, check the host runtime,
+the public HTTPS shell and `/api/health`, and the synthetic group journey. The
+host retains its previous release archive, image pair, and configuration version.
+If health or the journey fails, an operator can run the following on the host:
+
+```sh
+cd /srv/rewind
+./deploy/release-host.sh rollback
+```
+
+Rollback refuses a newer database schema or changed configuration version and
+verifies runtime and web health after starting the prior images. If it refuses,
+restore only through the verified recovery procedure after reviewing data and
+migration compatibility; do not force an older image onto a newer database.
 
 You can select an exact recovery point with
 `--manifest s3://rewind-demo-backups-.../rewind-demo/rewind-<timestamp>.manifest.json`.
@@ -353,7 +394,7 @@ execution form is `--apply --confirm`; the default and `--dry-run` forms stop
 after the reviewed plan.
 
 The wake script then creates the new host, waits for cloud-init, copies the
-runtime bundle, transfers the already-verified recovery point, restores it
+digest-checked release bundle, transfers the already-verified recovery point, restores it
 through `restore.sh`, and checks `/health` before reporting success. Run the
 hermetic selection tests with `npm run test:wake-recovery-selection`.
 
