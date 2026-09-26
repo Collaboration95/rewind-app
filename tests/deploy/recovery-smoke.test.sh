@@ -8,6 +8,9 @@ set -Eeuo pipefail
 
 TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rewind-recovery-smoke.XXXXXX")"
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+RELEASE_BUNDLE="$TEST_ROOT/release.tar"
+python3 "$REPO_ROOT/tests/deploy/make-release-fixture.py" "$(git -C "$REPO_ROOT" rev-parse HEAD)" "$RELEASE_BUNDLE"
+RELEASE_BUNDLE_SHA256="$(sha256sum "$RELEASE_BUNDLE" | cut -d ' ' -f 1)"
 WAKE_SCRIPT="$REPO_ROOT/infra/scripts/wake-demo.sh"
 RESTORE_SCRIPT="$REPO_ROOT/deploy/restore.sh"
 FAKE_BIN="$TEST_ROOT/bin"
@@ -154,7 +157,13 @@ if [[ "$recovery_transfer" == 1 ]]; then
     exit 1
   fi
 else
-  log_event 'transfer.env'
+  if [[ " $* " == *'rewind-release.tar'* ]]; then
+    log_event 'transfer.bundle'
+  elif [[ " $* " == *'release-host.sh'* ]]; then
+    log_event 'transfer.verifier'
+  else
+    log_event 'transfer.env'
+  fi
 fi
 
 # Copy only fixture files into a disposable local stand-in for /tmp on the
@@ -232,7 +241,7 @@ if [[ "$remote_command" == *'test -f /srv/rewind/.host-bootstrap-prerequisites'*
   exit 0
 fi
 
-if [[ "$remote_command" == *'cloud-init.sh --complete'* ]]; then
+if [[ "$remote_command" == *'release-host.sh install'* ]]; then
   log_event 'host.bundle.install'
   exit 0
 fi
@@ -372,6 +381,8 @@ run_wake() {
       TF_DIR="$TF_DIR" \
       TFVARS_FILE="$TFVARS_FILE" \
       REWIND_ENV_FILE="$REWIND_ENV_FILE" \
+      RELEASE_BUNDLE="$RELEASE_BUNDLE" \
+      RELEASE_BUNDLE_SHA256="$RELEASE_BUNDLE_SHA256" \
       OBJECT_ROOT="$OBJECT_ROOT" \
       LISTING_FILE="$LISTING_FILE" \
       PLAN_JSON="$PLAN_JSON" \

@@ -8,6 +8,9 @@ cleanup() {
 trap cleanup EXIT
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+export RELEASE_BUNDLE="$TEST_ROOT/release.tar"
+python3 "$REPO_ROOT/tests/deploy/make-release-fixture.py" "$(git -C "$REPO_ROOT" rev-parse HEAD)" "$RELEASE_BUNDLE"
+export RELEASE_BUNDLE_SHA256="$(sha256sum "$RELEASE_BUNDLE" | cut -d ' ' -f 1)"
 FAKE_BIN="$TEST_ROOT/bin"
 OBJECT_ROOT="$TEST_ROOT/objects"
 LOG_FILE="$TEST_ROOT/commands.log"
@@ -257,6 +260,16 @@ latest_output="$(run_wake --latest 2>&1)"
 }
 grep -Fq 'terraform' "$COMMAND_LOG"
 ! grep -Eq '^(ssh|scp|rsync) ' "$COMMAND_LOG"
+
+saved_release_digest="$RELEASE_BUNDLE_SHA256"
+export RELEASE_BUNDLE_SHA256="$(printf '%064d' 0)"
+if output="$(run_wake --latest 2>&1)"; then
+  printf 'Expected a mismatched release digest to fail.\n' >&2
+  exit 1
+fi
+[[ "$output" == *'differs from the reviewed digest'* ]]
+! grep -Eq '^(aws|terraform|ssh|scp|rsync) ' "$COMMAND_LOG"
+export RELEASE_BUNDLE_SHA256="$saved_release_digest"
 
 for invalid_uri in \
   "s3://other-backup-bucket/rewind-demo/rewind-$NEWER_VALID_STAMP.manifest.json" \
