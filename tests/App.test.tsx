@@ -10,6 +10,7 @@ import type { SelectionStore } from '../src/domain/profiles';
 import { DemoProfilePicker } from '../src/profiles/DemoProfilePicker';
 import { DemoProfileProvider } from '../src/profiles/DemoProfileProvider';
 import { DemoCameraPlatform } from '../src/capture/platform';
+import type { RuntimeClient } from '../src/runtime/local-runtime-client';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
@@ -301,11 +302,26 @@ describe('Rewind Home start screen', () => {
   });
 
   it('shows the owner-only local reveal control and keeps its lifecycle truthful', async () => {
-    const runtime = runtimeClientWithPremiere({
+    const delegate = runtimeClientWithPremiere({
       state: 'locked',
       cycleId: 'demo-cycle',
     });
-    const result = await render(<App runtimeClient={runtime} />);
+    const revealHandler = delegate.revealDemoCycle;
+    delete (delegate as { revealDemoCycle?: typeof revealHandler }).revealDemoCycle;
+    class ClassBackedRuntimeClient {
+      [key: string]: unknown;
+      revealHandler!: typeof revealHandler;
+
+      constructor() {
+        Object.assign(this, delegate, { revealHandler });
+      }
+
+      revealDemoCycle(sessionId: string, groupId: string) {
+        return this.revealHandler(sessionId, groupId);
+      }
+    }
+    const runtime = new ClassBackedRuntimeClient();
+    const result = await render(<App runtimeClient={runtime as unknown as RuntimeClient} />);
     await result.findByTestId('capsule-ready');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await result.findByTestId('settings-local-reveal');
@@ -317,7 +333,7 @@ describe('Rewind Home start screen', () => {
       24 * 60 * 60,
       expect.any(String),
     );
-    expect(runtime.revealDemoCycle).toHaveBeenCalledWith(expect.any(String), 'demo-group');
+    expect(runtime.revealHandler).toHaveBeenCalledWith(expect.any(String), 'demo-group');
     expect(result.getByRole('button', { name: 'Compile and release' })).toBeTruthy();
   });
 

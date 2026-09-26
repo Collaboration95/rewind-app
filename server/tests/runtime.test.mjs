@@ -1,16 +1,25 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
+import { request as httpRequest } from 'node:http';
 import test from 'node:test';
+import { clearDemoMedia } from './helpers/demo-media.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { fixtureSummary, openDatabase, resetDatabase } = await import('../dist/db.js');
+const { fixtureSummary, getCurrentCycle, openDatabase, resetDatabase } =
+  await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createGroup } = await import('../dist/groups/index.js');
+const { planConsistencyRepair } = await import('../dist/jobs/consistency.js');
+const { runWorkerTick } = await import('../dist/jobs/worker.js');
+const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
+const { claimStagedSource, markStagedSourceReady, recordClipMediaMetadata, stagedSourceId } =
+  await import('../dist/media/index.js');
 
 async function withRuntime(run, options = {}) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-runtime-test-`);
@@ -67,6 +76,39 @@ async function assertNoSyntheticStagingLeak(database, config, expectedJobCount) 
     entries.filter((entry) => entry.endsWith('.mp4') || entry.includes('.part-')),
     [],
   );
+}
+
+async function postBodyAfter(body, path, baseUrl, afterPartial) {
+  const url = new URL(path, baseUrl);
+  const responsePromise = new Promise((resolve, reject) => {
+    const request = httpRequest(
+      url,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.on('end', () =>
+          resolve({
+            status: response.statusCode,
+            body: JSON.parse(Buffer.concat(chunks).toString('utf8')),
+          }),
+        );
+      },
+    );
+    request.on('error', reject);
+    const serialized = JSON.stringify(body);
+    const split = Math.max(1, Math.floor(serialized.length / 2));
+    request.write(serialized.slice(0, split));
+    setTimeout(() => {
+      try {
+        afterPartial();
+        request.end(serialized.slice(split));
+      } catch (error) {
+        request.destroy(error);
+      }
+    }, 20);
+  });
+  return responsePromise;
 }
 
 test('configuration rejects an unsafe bind address with an actionable hint', async () => {
@@ -136,6 +178,84 @@ test('a fresh runtime seeds a current Demo window while retaining fixed-clock te
     },
     { seedNow },
   );
+});
+
+test('fresh and reset Demo fixtures keep quota and media consistency truthful', async () => {
+  await withRuntime(async ({ baseUrl, config, database }) => {
+    const processedDir = resolve(config.dataDir, 'media', 'processed');
+    const stagingDir = resolve(config.dataDir, 'media', 'staging');
+    const assertFixture = async () => {
+      const seededCycle = getCurrentCycle(database, 'demo-group', 'demo-1');
+      assert.deepEqual(
+        getCurrentCycle(database, 'demo-group', 'demo-1', new Date(seededCycle.startsAt))
+          .contributionUsage,
+        {
+          countUsed: 1,
+          secondsUsed: 3,
+        },
+      );
+      const jobs = database
+        .prepare(
+          "SELECT id, status, output_path AS outputPath, output_sha256 AS sha256, output_bytes AS bytes FROM media_jobs WHERE kind IN ('clip', 'film') ORDER BY id",
+        )
+        .all();
+      assert.deepEqual(
+        jobs.map(({ id, status }) => ({ id, status })),
+        [
+          { id: 'demo-clip', status: 'ready' },
+          { id: 'demo-film', status: 'ready' },
+        ],
+      );
+      for (const job of jobs) {
+        const bytes = await readFile(job.outputPath);
+        assert.equal(job.bytes, bytes.byteLength);
+        assert.equal(job.sha256, createHash('sha256').update(bytes).digest('hex'));
+        const metadata = await probeClipWithFfmpeg(config.ffmpegBin, job.outputPath, processedDir);
+        assert.equal(metadata.durationSeconds, 3);
+        assert.equal(metadata.hasAudio, true);
+        assert.ok(metadata.width < metadata.height);
+      }
+      assert.deepEqual(planConsistencyRepair(database, processedDir, stagingDir).findings, []);
+      assert.deepEqual(
+        await runWorkerTick(database, {
+          ffmpegBin: config.ffmpegBin,
+          stagingDir,
+          outputDir: processedDir,
+        }),
+        { claimed: false, reason: 'idle' },
+      );
+    };
+    await assertFixture();
+    // Restart preserves genuine missing-output failures; only explicit reset
+    // restores the bundled sample. There are no special fixture exclusions.
+    const paths = database
+      .prepare("SELECT output_path AS path FROM media_jobs WHERE kind IN ('clip', 'film')")
+      .all();
+    for (const { path } of paths) await rm(path);
+    const reopened = openDatabase(config);
+    try {
+      assert.equal(
+        planConsistencyRepair(reopened, processedDir, stagingDir).findings.filter(
+          (item) => item.kind === 'missing_output',
+        ).length,
+        2,
+      );
+    } finally {
+      reopened.close();
+    }
+
+    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberId: 'demo-1' }),
+    });
+    const { session } = await sessionResponse.json();
+    const reset = await fetch(`${baseUrl}/demo/reset?sessionId=${encodeURIComponent(session.id)}`, {
+      method: 'POST',
+    });
+    assert.equal(reset.status, 200);
+    await assertFixture();
+  });
 });
 
 test('health and typed fixture endpoints are reachable over the local service', async () => {
@@ -341,17 +461,33 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
     const outputPath = resolve(processedDir, 'demo-film.mp4');
     const clipOutputPath = resolve(processedDir, 'demo-clip.mp4');
     await mkdir(processedDir, { recursive: true });
-    await writeFile(outputPath, Buffer.from('synthetic playable bytes'));
-    await writeFile(clipOutputPath, Buffer.from('synthetic clip bytes'));
+    const filmBytes = Buffer.from('synthetic playable bytes');
+    const clipBytes = Buffer.from('synthetic clip bytes');
+    await writeFile(outputPath, filmBytes);
+    await writeFile(clipOutputPath, clipBytes);
     database
       .prepare(
-        `UPDATE media_jobs SET status = 'ready', cycle_id = ?, output_path = ?
+        `UPDATE media_jobs SET status = 'ready', cycle_id = ?, output_path = ?,
+           output_sha256 = ?, output_bytes = ?, output_verified_at = ?
          WHERE id = 'demo-film' AND kind = 'film'`,
       )
-      .run('demo-cycle', outputPath);
+      .run(
+        'demo-cycle',
+        outputPath,
+        createHash('sha256').update(filmBytes).digest('hex'),
+        filmBytes.byteLength,
+        new Date().toISOString(),
+      );
     database
-      .prepare(`UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = 'demo-clip'`)
-      .run(clipOutputPath);
+      .prepare(
+        `UPDATE media_jobs SET status = 'ready', output_path = ?, output_sha256 = ?, output_bytes = ?, output_verified_at = ? WHERE id = 'demo-clip'`,
+      )
+      .run(
+        clipOutputPath,
+        createHash('sha256').update(clipBytes).digest('hex'),
+        clipBytes.byteLength,
+        new Date().toISOString(),
+      );
     database
       .prepare(
         `UPDATE cycles SET status = 'revealing', release_status = 'published',
@@ -649,7 +785,8 @@ test('the owner reveal control reports collecting while the cycle is still open'
 });
 
 test('the owner reveal control reports a durable compile failure as delayed without a player', async () => {
-  await withRuntime(async ({ baseUrl }) => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    clearDemoMedia(database);
     const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -768,6 +905,147 @@ test('invitation routes require a session and expose an owner-generated code sta
     );
     assert.equal(malformed.status, 400);
     assert.equal((await malformed.json()).error, 'invite_malformed');
+  });
+});
+
+test('delayed group, invite, and contribution bodies cannot commit after session revocation', async () => {
+  await withRuntime(async ({ baseUrl, config, database }) => {
+    const newSession = async (memberId) => {
+      const response = await fetch(`${baseUrl}/sessions/demo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId }),
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).session;
+    };
+    const revoke = (sessionId) =>
+      database
+        .prepare('UPDATE sessions SET invalidated_at = ? WHERE id = ?')
+        .run(new Date().toISOString(), sessionId);
+
+    const groupSession = await newSession('demo-1');
+    const groupCount = database.prepare('SELECT COUNT(*) AS count FROM groups').get().count;
+    const groupResult = await postBodyAfter(
+      { name: 'Revoked group', prompt: 'Should not persist' },
+      `/groups?sessionId=${encodeURIComponent(groupSession.id)}`,
+      baseUrl,
+      () => revoke(groupSession.id),
+    );
+    assert.equal(groupResult.status, 401);
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM groups').get().count, groupCount);
+
+    const inviteSession = await newSession('demo-1');
+    const inviteCount = database.prepare('SELECT COUNT(*) AS count FROM invites').get().count;
+    const inviteResult = await postBodyAfter(
+      { expiresInSeconds: 600 },
+      `/invites?groupId=demo-group&sessionId=${encodeURIComponent(inviteSession.id)}`,
+      baseUrl,
+      () => revoke(inviteSession.id),
+    );
+    assert.equal(inviteResult.status, 401);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM invites').get().count,
+      inviteCount,
+    );
+
+    database.exec(`
+      INSERT INTO profiles (id, display_name, avatar_label, is_synthetic)
+        VALUES ('demo-6', 'Fable', 'Fable, invite member', 1);
+      INSERT INTO groups (id, name, current_cycle_id) VALUES ('invite-source', 'Invite source', NULL);
+      INSERT INTO cycles
+        (id, group_id, prompt, starts_at, ends_at, status, lock_state, max_count, max_seconds, count_used, seconds_used)
+        VALUES ('invite-source-cycle', 'invite-source', 'Prompt', '2026-09-01T00:00:00.000Z',
+          '2026-09-02T00:00:00.000Z', 'collecting', 'locked', 5, 30, 0, 0);
+      UPDATE groups SET current_cycle_id = 'invite-source-cycle' WHERE id = 'invite-source';
+      INSERT INTO memberships (group_id, member_id, role, accepted_at)
+        VALUES ('invite-source', 'demo-6', 'member', '2026-09-01T00:00:00.000Z');
+    `);
+    const ownerSession = await newSession('demo-1');
+    const createdResponse = await fetch(
+      `${baseUrl}/invites?groupId=demo-group&sessionId=${encodeURIComponent(ownerSession.id)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiresInSeconds: 600 }),
+      },
+    );
+    assert.equal(createdResponse.status, 201);
+    const { invite } = await createdResponse.json();
+    const guestSession = await newSession('demo-6');
+    const acceptResult = await postBodyAfter(
+      { code: invite.code, groupId: 'demo-group' },
+      `/invites/accept?groupId=demo-group&sessionId=${encodeURIComponent(guestSession.id)}`,
+      baseUrl,
+      () => revoke(guestSession.id),
+    );
+    assert.equal(acceptResult.status, 401);
+    assert.equal(
+      database.prepare('SELECT status FROM invites WHERE id = ?').get(invite.id).status,
+      'active',
+    );
+    assert.equal(
+      database
+        .prepare('SELECT COUNT(*) AS count FROM memberships WHERE group_id = ? AND member_id = ?')
+        .get('demo-group', 'demo-6').count,
+      0,
+    );
+    assert.equal(
+      database.prepare('SELECT group_id AS groupId FROM sessions WHERE id = ?').get(guestSession.id)
+        .groupId,
+      'invite-source',
+    );
+
+    database
+      .prepare('UPDATE cycles SET ends_at = ? WHERE id = ?')
+      .run('2030-01-01T00:00:00.000Z', 'demo-cycle');
+    const uploadKey = 'revoked-upload-key';
+    const sourceUri = `staged://${stagedSourceId(uploadKey)}`;
+    const sourcePath = resolve(config.dataDir, 'media', 'staging', 'revoked-source.mp4');
+    const claim = claimStagedSource(
+      database,
+      'demo-group',
+      'demo-1',
+      uploadKey,
+      new Date(),
+      sourcePath,
+    );
+    assert.equal(claim.ok, true);
+    recordClipMediaMetadata(database, {
+      sourceUri,
+      mimeType: 'video/mp4',
+      byteLength: 1024,
+      durationSeconds: 3,
+      width: 720,
+      height: 1280,
+      hasAudio: true,
+    });
+    assert.equal(markStagedSourceReady(database, sourceUri, 1024, sourcePath, 1), true);
+    const uploadSession = await newSession('demo-1');
+    const contributionCount = database
+      .prepare('SELECT COUNT(*) AS count FROM contributions')
+      .get().count;
+    const uploadResult = await postBodyAfter(
+      {
+        idempotencyKey: uploadKey,
+        sourceUri,
+        mimeType: 'video/mp4',
+        byteLength: 1024,
+        durationSeconds: 3,
+        width: 720,
+        height: 1280,
+        hasAudio: true,
+      },
+      `/contributions/upload?groupId=demo-group&sessionId=${encodeURIComponent(uploadSession.id)}`,
+      baseUrl,
+      () => revoke(uploadSession.id),
+    );
+    assert.equal(uploadResult.status, 401);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM contributions').get().count,
+      contributionCount,
+    );
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 0);
   });
 });
 

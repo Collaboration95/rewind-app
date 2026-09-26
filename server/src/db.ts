@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { RuntimeConfig } from './config';
@@ -68,7 +68,7 @@ export interface DemoFixture {
   acceptedAt: string;
   message: { id: string; body: string };
   contribution: { id: string; durationSeconds: number };
-  mediaJobs: { id: string; kind: 'clip' | 'film' | 'download' }[];
+  mediaJobs: { id: string; kind: 'clip' | 'film' | 'download'; status: 'pending' | 'ready' }[];
 }
 
 export type RewindDatabase = DatabaseSync;
@@ -1380,6 +1380,22 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
   }
   const cycleStartsAt = now;
   const cycleEndsAt = new Date(nowDate.getTime() + fixtureDurationMs).toISOString();
+  // The sample is a bundled three-second synthetic portrait MP4 with audio.
+  // Copy actual bytes before publishing ready rows; seeding must not enqueue
+  // source-less work or require an FFmpeg process at startup/reset.
+  const databaseFile = (
+    database.prepare('PRAGMA database_list').all() as { name: string; file: string }[]
+  ).find((entry) => entry.name === 'main')?.file;
+  if (!databaseFile) throw new Error('Demo media seeding requires a file-backed database.');
+  const processedDir = resolve(databaseFile, '..', 'media', 'processed');
+  const sample = readFileSync(resolve(process.cwd(), 'server/fixtures/demo-media.mp4'));
+  const sampleSha256 = createHash('sha256').update(sample).digest('hex');
+  mkdirSync(processedDir, { recursive: true });
+  mkdirSync(resolve(databaseFile, '..', 'media', 'staging'), { recursive: true });
+  const clipPath = resolve(processedDir, 'fixture-demo-clip.mp4');
+  const filmPath = resolve(processedDir, 'fixture-demo-film.mp4');
+  writeFileSync(clipPath, sample);
+  writeFileSync(filmPath, sample);
   database.exec('BEGIN');
   try {
     const profileInsert = database.prepare(
@@ -1438,9 +1454,17 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
         'INSERT INTO invites (id, group_id, invitee_member_id, status, created_at) VALUES (?, ?, ?, ?, ?)',
       )
       .run('demo-invite', FIXTURE.group.id, FIXTURE.profiles[0].id, 'accepted', now);
+    const hasQuotaWindowStart = tableColumns(database, 'contributions').has(
+      'quota_window_start_at',
+    );
     database
       .prepare(
-        'INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at) VALUES (?, ?, ?, ?, ?)',
+        hasQuotaWindowStart
+          ? `INSERT INTO contributions
+              (id, cycle_id, member_id, duration_seconds, created_at, quota_window_start_at)
+             VALUES (?, ?, ?, ?, ?, ?)`
+          : `INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
       )
       .run(
         FIXTURE.contribution.id,
@@ -1448,7 +1472,27 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
         FIXTURE.profiles[0].id,
         FIXTURE.contribution.durationSeconds,
         now,
+        ...(hasQuotaWindowStart ? [cycleStartsAt] : []),
       );
+    if (hasQuotaWindowStart && hasTable(database, 'contribution_quota_windows')) {
+      database
+        .prepare(
+          `INSERT INTO contribution_quota_windows
+            (id, cycle_id, member_id, window_start_at, window_end_at,
+             max_count, max_seconds, count_used, seconds_used)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        )
+        .run(
+          `fixture-quota-${FIXTURE.cycle.id}-${FIXTURE.profiles[0].id}`,
+          FIXTURE.cycle.id,
+          FIXTURE.profiles[0].id,
+          cycleStartsAt,
+          new Date(Date.parse(cycleStartsAt) + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          FIXTURE.cycle.maxCount,
+          FIXTURE.cycle.maxSeconds,
+          FIXTURE.contribution.durationSeconds,
+        );
+    }
     const mediaInsert = tableColumns(database, 'media_jobs').has('updated_at')
       ? database.prepare(
           'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, output_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -1463,8 +1507,8 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
           FIXTURE.group.id,
           job.kind === 'clip' ? FIXTURE.contribution.id : null,
           job.kind,
-          'ready',
-          null,
+          job.status,
+          job.kind === 'clip' ? clipPath : filmPath,
           now,
           now,
         );
@@ -1474,10 +1518,17 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
           FIXTURE.group.id,
           job.kind === 'clip' ? FIXTURE.contribution.id : null,
           job.kind,
-          'ready',
-          null,
+          job.status,
+          job.kind === 'clip' ? clipPath : filmPath,
           now,
         );
+      }
+      if (tableColumns(database, 'media_jobs').has('output_sha256')) {
+        database
+          .prepare(
+            `UPDATE media_jobs SET output_sha256 = ?, output_bytes = ?, output_verified_at = ?, progress = 100 WHERE id = ?`,
+          )
+          .run(sampleSha256, sample.byteLength, now, job.id);
       }
     }
     database
@@ -1529,8 +1580,8 @@ export function clearMediaDirectory(mediaDir: string): void {
   }
 }
 
-/** Restore only the SQLite-backed local fixture. Source files and migrations
- * are never touched. This form is used by the in-process reset endpoint. */
+/** Restore the local fixture and its bundled synthetic media outputs.
+ * Source files and migrations are never touched. */
 export function restoreFixture(database: RewindDatabase, seedNow?: Date | string): void {
   database.exec('BEGIN');
   try {

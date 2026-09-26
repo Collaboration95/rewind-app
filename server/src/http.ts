@@ -44,7 +44,7 @@ import {
   createDemoSession,
   getDemoSession,
   invalidateDemoSession,
-  updateDemoSessionGroup,
+  isActiveDemoSession,
   validateDemoSession,
 } from './session';
 import { extractDemoRequestIdentity, type DemoRequestIdentity } from './session/request';
@@ -1081,7 +1081,6 @@ export async function handleRequest(
     const releaseStagingLock = await acquireStagedSourceLock(stagingDir);
     try {
       await waitForStagedIntakesIdle();
-      restoreFixture(database, now());
       // The lock prevents a concurrent upload from recreating a staged file
       // while reset is clearing every Demo-owned media artifact. Keep the
       // directory itself because hosted Compose binds it as a mount target.
@@ -1089,6 +1088,7 @@ export async function handleRequest(
       for (const entry of await readdir(mediaDir).catch(() => [])) {
         await rm(resolve(mediaDir, entry), { recursive: true, force: true });
       }
+      restoreFixture(database, now());
       await mkdir(stagingDir, { recursive: true });
       sendJson(response, config, 200, { reset: true });
     } finally {
@@ -1426,11 +1426,20 @@ export async function handleRequest(
     const identity = requireSessionIdentity(database, url, response, config, now());
     if (!identity) return;
     const body = await requestBody(request, config);
-    const result = createGroup(database, identity.memberId, {
-      name: typeof body?.name === 'string' ? body.name : '',
-      prompt: typeof body?.prompt === 'string' ? body.prompt : '',
-      now: now(),
-    });
+    const result = createGroup(
+      database,
+      identity.memberId,
+      {
+        name: typeof body?.name === 'string' ? body.name : '',
+        prompt: typeof body?.prompt === 'string' ? body.prompt : '',
+        now: now(),
+      },
+      identity.sessionId,
+    );
+    if (!result.ok && result.field === 'session') {
+      sendSessionRequired(response, config);
+      return;
+    }
     if (!result.ok) {
       sendJson(response, config, 400, {
         error: 'invalid_group',
@@ -1449,23 +1458,10 @@ export async function handleRequest(
       });
       return;
     }
-    const moved = updateDemoSessionGroup(
-      database,
-      identity.sessionId,
-      result.group?.id ?? '',
-      now(),
-    );
-    if (!moved.ok) {
-      sendJson(response, config, 500, {
-        error: 'group_context_error',
-        message: 'The local group was created but its Demo context could not be updated.',
-      });
-      return;
-    }
     sendJson(response, config, 201, {
       group: result.group,
       cycle: result.cycle,
-      session: moved.session,
+      session: getDemoSession(database, identity.sessionId),
     });
     return;
   }
@@ -1481,8 +1477,16 @@ export async function handleRequest(
         : typeof body?.expiresInSeconds === 'string'
           ? Number(body.expiresInSeconds)
           : undefined;
-    const result = createInvite(database, identity.memberId, identity.groupId, ttlSeconds, now());
+    const result = createInvite(
+      database,
+      identity.memberId,
+      identity.groupId,
+      ttlSeconds,
+      now(),
+      identity.sessionId,
+    );
     if (!result.ok) {
+      if (result.reason === 'session_inactive') return sendSessionRequired(response, config);
       if (result.reason === 'forbidden') return sendDenied(response, config);
       sendJson(response, config, 400, {
         error: 'invalid_invite',
@@ -1505,8 +1509,10 @@ export async function handleRequest(
       code,
       url.searchParams.get('groupId') ?? undefined,
       now(),
+      identity.sessionId,
     );
     if (!result.ok) {
+      if (result.reason === 'session_inactive') return sendSessionRequired(response, config);
       const messages = {
         malformed: 'Enter the eight-character invite code.',
         not_found: 'That invite code is not recognized.',
@@ -1521,18 +1527,10 @@ export async function handleRequest(
       });
       return;
     }
-    const moved = updateDemoSessionGroup(database, identity.sessionId, result.group.id, now());
-    if (!moved.ok) {
-      sendJson(response, config, 500, {
-        error: 'invite_context_error',
-        message: 'The membership was created but Demo context could not be updated.',
-      });
-      return;
-    }
     sendJson(response, config, 200, {
       invite: result.invite,
       group: result.group,
-      session: moved.session,
+      session: getDemoSession(database, identity.sessionId),
     });
     return;
   }
@@ -1675,6 +1673,17 @@ export async function handleRequest(
         const probed = await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
         database.exec('BEGIN');
         try {
+          if (!isActiveDemoSession(database, identity.sessionId, identity.memberId, now())) {
+            database.exec('ROLLBACK');
+            cleanupFailedStagedClaim(
+              database,
+              sourceUri,
+              claimedSourcePath,
+              claimGeneration,
+              stagingDir,
+            );
+            return sendSessionRequired(response, config);
+          }
           recordClipMediaMetadata(database, {
             sourceUri,
             ...probed,
@@ -1801,7 +1810,7 @@ export async function handleRequest(
             trimEndSeconds: metadata.durationSeconds,
           },
           now(),
-          { stagingDir, requireVerifiedMetadata: true },
+          { stagingDir, requireVerifiedMetadata: true, sessionId: identity.sessionId },
         );
         if (!upload.ok) {
           cleanupFailedStagedClaim(
@@ -1818,6 +1827,7 @@ export async function handleRequest(
             });
             return;
           }
+          if (upload.reason === 'session_inactive') return sendSessionRequired(response, config);
           if (upload.reason === 'not_found') {
             sendJson(response, config, 409, {
               error: 'contribution_window_closed',
@@ -1911,6 +1921,7 @@ export async function handleRequest(
     const result = createClipUpload(database, identity.groupId, identity.memberId, input, now(), {
       stagingDir: resolve(config.dataDir, 'media', 'staging'),
       requireVerifiedMetadata: true,
+      sessionId: identity.sessionId,
     });
     if (!result.ok) {
       if (result.reason === 'not_found') return sendNotFound(response, config);
@@ -1920,6 +1931,7 @@ export async function handleRequest(
       if (result.reason !== 'invalid_key') {
         cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
       }
+      if (result.reason === 'session_inactive') return sendSessionRequired(response, config);
       const conflict =
         result.reason === 'quota_exceeded' || result.reason === 'replacement_conflict';
       sendJson(response, config, conflict ? 409 : 400, {
