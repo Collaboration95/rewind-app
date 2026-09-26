@@ -1,0 +1,41 @@
+{
+  "applied": false,
+  "candidate_commit": "ec69af8",
+  "reviewer": "Andrew",
+  "apply_owner": "Guruprasath",
+  "changes": [
+    {
+      "address": "aws_iam_role_policy.cost_safety_audit_scheduler",
+      "actions": ["update"]
+    },
+    {
+      "address": "aws_iam_role_policy.power_controller[0]",
+      "actions": ["update"]
+    },
+    {
+      "address": "aws_lambda_function.cost_safety_audit",
+      "actions": ["update"]
+    },
+    {
+      "address": "aws_lightsail_distribution.web[0]",
+      "actions": ["create"]
+    },
+    {
+      "address": "aws_lightsail_instance.rewind[0]",
+      "actions": ["create"]
+    },
+    {
+      "address": "aws_lightsail_instance_public_ports.rewind[0]",
+      "actions": ["create"]
+    },
+    {
+      "address": "aws_lightsail_static_ip.rewind[0]",
+      "actions": ["create"]
+    },
+    {
+      "address": "aws_lightsail_static_ip_attachment.rewind[0]",
+      "actions": ["create"]
+    }
+  ],
+  "note": "Wake guard intentionally rejects unrelated Lambda/IAM updates. Review deterministic Lambda artifact reconciliation before wake. Re-plan if source/state changes; no resources created."
+}

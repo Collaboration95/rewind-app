@@ -1,0 +1,37 @@
+[WebServer] (node:86709) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:86789) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:86709) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+
+Running 19 tests using 4 workers
+
+(node:87036) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:87035) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:87038) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:87037) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   3 tests/responsive/production-web-routing.spec.ts:3:5 › deep application routes return the exported web shell (347ms)
+  ✓   5 tests/responsive/production-web-routing.spec.ts:12:5 › same-origin API proxy reaches the runtime and preserves its status (52ms)
+  ✓   2 tests/responsive/home-layout.spec.ts:12:7 › compact phone keeps Home content clear of the main navigation (591ms)
+  ✓   6 tests/responsive/production-web-routing.spec.ts:32:5 › the exported shell exposes install metadata and an honest offline API fallback (354ms)
+  ✓   1 tests/responsive/video-file-fallback.spec.ts:29:5 › accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadata truthful (859ms)
+  ✓   7 tests/responsive/home-layout.spec.ts:12:7 › iPhone SE keeps Home content clear of the main navigation (306ms)
+  ✓   8 tests/responsive/production-web-routing.spec.ts:69:5 › the installed shell reloads root and starts a deep SPA route offline (437ms)
+  ✓  10 tests/responsive/home-layout.spec.ts:12:7 › small Android phone keeps Home content clear of the main navigation (314ms)
+  ✓  11 tests/responsive/production-web-routing.spec.ts:93:5 › the shell is uncached while Expo assets are immutable (13ms)
+  ✓   9 tests/responsive/video-file-fallback.spec.ts:71:5 › rejects a renamed WebM even when its caller-controlled type says video/mp4 (417ms)
+  ✓  13 tests/responsive/production-web-routing.spec.ts:104:5 › the smoke boundary is local-only and does not require a cloud endpoint (163ms)
+  ✓  12 tests/responsive/home-layout.spec.ts:12:7 › standard phone keeps Home content clear of the main navigation (283ms)
+  ✓  14 tests/responsive/home-layout.spec.ts:12:7 › desktop browser keeps Home content clear of the main navigation (262ms)
+  ✓   4 tests/responsive/accessibility.spec.ts:42:5 › Home, Settings, Camera, Chat, and Archive have no serious or critical Axe violations (2.1s)
+  ✓  15 tests/responsive/accessibility.spec.ts:56:5 › dialog traps keyboard focus, restores its trigger, and has no serious or critical violations (443ms)
+  ✓  16 tests/responsive/accessibility.spec.ts:88:5 › Archive loading and Demo access error states have no serious or critical Axe violations (391ms)
+  ✓  17 tests/responsive/accessibility.spec.ts:109:5 › Demo access error state has no serious or critical Axe violations (327ms)
+  ✓  18 tests/responsive/accessibility.spec.ts:126:5 › entry chooser has no serious or critical Axe violations (260ms)
+  ✓  19 tests/responsive/accessibility.spec.ts:136:5 › keyboard navigation keeps focus on visible controls and reaches each main route (236ms)
+
+  19 passed (9.1s)
