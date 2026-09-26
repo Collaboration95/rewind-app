@@ -28,6 +28,10 @@ Material decisions or blockers: review rather than blindly merge major-version D
 
 ## Evidence and limits
 
+### Post-merge update, 26 September 2026
+
+PR #224 merged as `df2de03dbc5211c281be5034fde8be04c8718fa7`. Its main Quality and CodeQL workflows passed, and a scan-only release-security run on that exact commit passed all three jobs; see [AWS/hosted attempt](aws-hosted-attempt-2026-09-26.md) for the run, artifacts and bundle digest. The Dependabot alert is resolved. Three of four production CodeQL alerts resolved, but [alert #3](https://github.com/Collaboration95/rewind-app/security/code-scanning/3) is still open on the current main analysis and is being investigated. Thus earlier statements below describing #224 as awaiting review are historical and no longer current.
+
 Sources: main commit and workflow runs linked above; live main files [quality.yml](https://github.com/Collaboration95/rewind-app/blob/main/.github/workflows/quality.yml), [codeql.yml](https://github.com/Collaboration95/rewind-app/blob/main/.github/workflows/codeql.yml), [release-security.yml](https://github.com/Collaboration95/rewind-app/blob/main/.github/workflows/release-security.yml), [dependabot.yml](https://github.com/Collaboration95/rewind-app/blob/main/.github/dependabot.yml); open Dependabot PR search; workflow artifact metadata for run 36232000177.
 
 The checked-out local repository was on `codex/sprint-label-reconciliation` at `8b2da51` with pre-existing modified/untracked files. It was not pulled or altered for this review. GitHub files and workflow data above were read directly from main. The note is the only new local path.
