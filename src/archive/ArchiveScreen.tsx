@@ -173,6 +173,13 @@ function ArchiveEntries({
 
 export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
   const { session } = useDemoSession();
+  const { state } = useCapsule();
+  const scope = state.status === 'ready' ? `${state.group?.id}:${state.cycle?.id}` : state.status;
+  return <ArchiveSurface key={`${session?.id}:${scope}`} runtimeClient={runtimeClient} />;
+}
+
+function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
+  const { session } = useDemoSession();
   const { state: capsuleState, retry: retryCapsule } = useCapsule();
   const [state, setState] = useState<ArchiveState>({ status: 'loading' });
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);

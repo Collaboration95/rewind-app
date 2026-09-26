@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import type { ComponentProps } from 'react';
+import { StrictMode, type ComponentProps } from 'react';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
@@ -141,6 +141,29 @@ beforeEach(async () => {
 });
 
 describe('persistent group chat timeline', () => {
+  it('retains exactly one live message when StrictMode replays state updates', async () => {
+    const runtime = runtimeMock();
+    const result = await render(
+      <StrictMode>
+        <ScopedChatSurface
+          accessState="known"
+          capsuleStatus="ready"
+          group={group}
+          scope="session-a:demo-group"
+          memberNames={memberNames}
+          retryCapsule={jest.fn()}
+          runtimeClient={runtime.client}
+          session={sessionA}
+        />
+      </StrictMode>,
+    );
+    await result.findByTestId('chat-empty');
+    const message = event(1, 'Strict replay survives', '2026-09-13T01:00:00.000Z');
+    await act(async () => runtime.emit(message));
+    await act(async () => runtime.emit(message));
+    expect(result.getAllByText('Strict replay survives')).toHaveLength(1);
+  });
+
   it('shows connecting, connected, and reconnecting connection states', async () => {
     const runtime = runtimeMock();
     const result = await render(

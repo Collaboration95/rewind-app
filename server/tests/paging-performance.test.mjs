@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { once } from 'node:events';
-import { EventEmitter } from 'node:events';
+import { once, EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { clearDemoMedia } from './helpers/demo-media.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
@@ -20,6 +21,7 @@ test('archive and cycle routes keyset-page independently and invalidate changed 
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-paging-performance-test-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
   const database = openDatabase(config);
+  clearDemoMedia(database);
   const processedDir = `${dataDir}/media/processed`;
   await mkdir(processedDir, { recursive: true });
   const mediaPath = `${processedDir}/archive-fixture.mp4`;
@@ -219,6 +221,7 @@ test('integrity snapshot refuses a source larger than its reserved temporary-byt
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-snapshot-budget-test-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
   const database = openDatabase(config);
+  clearDemoMedia(database);
   const processedDir = `${dataDir}/media/processed`;
   await mkdir(processedDir, { recursive: true });
   const mediaPath = `${processedDir}/oversized.mp4`;

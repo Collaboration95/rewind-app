@@ -37,13 +37,7 @@ interface TimelineMessage {
   message: ChatMessage;
 }
 
-function appendEvent(
-  messages: TimelineMessage[],
-  event: ChatMessageEvent,
-  ids: Set<string>,
-): TimelineMessage[] {
-  if (ids.has(event.message.id)) return messages;
-  ids.add(event.message.id);
+function appendEvent(messages: TimelineMessage[], event: ChatMessageEvent): TimelineMessage[] {
   const next = { eventId: event.eventId, message: event.message };
   const last = messages[messages.length - 1];
   if (!last || event.eventId > last.eventId) return [...messages, next];
@@ -152,7 +146,16 @@ export function ChatSessionSurface({
   const previousScopeRef = useRef<string | null>(null);
 
   const activeMessageScope = session && group ? `${session.id}:${group.id}` : null;
-  currentScopeRef.current = activeMessageScope;
+  useLayoutEffect(() => {
+    currentScopeRef.current = activeMessageScope;
+  }, [activeMessageScope]);
+
+  const receiveEvent = useCallback((event: ChatMessageEvent) => {
+    if (messageIds.current.has(event.message.id)) return;
+    messageIds.current.add(event.message.id);
+    // React may replay a functional updater. Keep it free of ref mutations.
+    setMessages((current) => appendEvent(current, event));
+  }, []);
 
   useEffect(() => {
     if (accessState === 'known' && session && group) unread?.markRead();
@@ -191,8 +194,6 @@ export function ChatSessionSurface({
     const scopeKey = activeMessageScope;
     if (!scopeKey) return;
     subscriptionScope.current = scopeKey;
-    setSubscriptionDenied(false);
-    setConnectionState('connecting');
     let active = true;
     let subscription: { close(): void } | null = null;
     const readyTimer = setTimeout(() => {
@@ -224,7 +225,7 @@ export function ChatSessionSurface({
             event.message.groupId !== group.id
           )
             return;
-          setMessages((current) => appendEvent(current, event, messageIds.current));
+          receiveEvent(event);
           setTimelineState('ready');
           setConnectionError(null);
         },
@@ -291,6 +292,7 @@ export function ChatSessionSurface({
     group,
     retryKey,
     runtimeClient,
+    receiveEvent,
     session,
   ]);
 
@@ -301,6 +303,7 @@ export function ChatSessionSurface({
     setHasOlderMessages(false);
     subscriptionScope.current = null;
     setConnectionError(null);
+    setConnectionState('connecting');
     setReplyTarget(null);
     setReactionActive({});
     if (capsuleStatus === 'error' || capsuleStatus === 'loading') retryCapsule();
@@ -334,9 +337,10 @@ export function ChatSessionSurface({
       olderCursor.current = page.nextCursor;
       setHasOlderMessages(page.hasMore);
     } catch (error) {
-      setConnectionError(errorMessage(error));
+      if (currentScopeRef.current === `${session.id}:${group.id}`)
+        setConnectionError(errorMessage(error));
     } finally {
-      setLoadingOlderMessages(false);
+      if (currentScopeRef.current === `${session.id}:${group.id}`) setLoadingOlderMessages(false);
     }
   }, [group, loadingOlderMessages, runtimeClient, session]);
 
@@ -378,7 +382,7 @@ export function ChatSessionSurface({
           ? await runtimeClient.sendChatReply(session.id, group.id, messageDraft, replyTarget.id)
           : await runtimeClient.sendChatMessage(session.id, group.id, messageDraft);
       if (!isCurrentSend() || event.message.groupId !== group.id) return;
-      setMessages((current) => appendEvent(current, event, messageIds.current));
+      receiveEvent(event);
       setPendingDraft(null);
       setReplyTarget(null);
       setDraft((current) => (current === submittedText ? '' : current));
@@ -408,6 +412,7 @@ export function ChatSessionSurface({
     pendingDraft,
     replyTarget,
     runtimeClient,
+    receiveEvent,
     sending,
     session,
     subscriptionDenied,
