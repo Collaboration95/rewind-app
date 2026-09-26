@@ -1007,7 +1007,6 @@ export async function handleRequest(
     const releaseStagingLock = await acquireStagedSourceLock(stagingDir);
     try {
       await waitForStagedIntakesIdle();
-      restoreFixture(database, now());
       // The lock prevents a concurrent upload from recreating a staged file
       // while reset is clearing every Demo-owned media artifact. Keep the
       // directory itself because hosted Compose binds it as a mount target.
@@ -1015,6 +1014,7 @@ export async function handleRequest(
       for (const entry of await readdir(mediaDir).catch(() => [])) {
         await rm(resolve(mediaDir, entry), { recursive: true, force: true });
       }
+      restoreFixture(database, now());
       await mkdir(stagingDir, { recursive: true });
       sendJson(response, config, 200, { reset: true });
     } finally {

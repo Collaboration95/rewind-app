@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { RewindDatabase } from '../db';
 import { getGroup, getCurrentCycle } from '../db';
 import { createCycleWindow } from '../cycles/engine';
-import { getDemoSession, isActiveDemoSession } from '../session';
+import { isActiveDemoSession } from '../session';
 
 export const GROUP_NAME_MAX_LENGTH = 80;
 export const PROMPT_MAX_LENGTH = 160;

@@ -30,8 +30,8 @@
     "durationSeconds": 3
   },
   "mediaJobs": [
-    { "id": "demo-clip", "kind": "clip", "status": "pending" },
-    { "id": "demo-film", "kind": "film", "status": "pending" },
-    { "id": "demo-download", "kind": "download", "status": "pending" }
+    { "id": "demo-clip", "kind": "clip", "status": "ready" },
+    { "id": "demo-film", "kind": "film", "status": "ready" },
+    { "id": "demo-download", "kind": "download", "status": "ready" }
   ]
 }

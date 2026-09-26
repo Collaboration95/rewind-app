@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import test from 'node:test';
+import { clearDemoMedia } from './helpers/demo-media.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { fixtureSummary, getCurrentCycle, openDatabase, resetDatabase } =
@@ -14,6 +16,8 @@ const { fixtureSummary, getCurrentCycle, openDatabase, resetDatabase } =
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createGroup } = await import('../dist/groups/index.js');
 const { planConsistencyRepair } = await import('../dist/jobs/consistency.js');
+const { runWorkerTick } = await import('../dist/jobs/worker.js');
+const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
 const { claimStagedSource, markStagedSourceReady, recordClipMediaMetadata, stagedSourceId } =
   await import('../dist/media/index.js');
 
@@ -182,7 +186,7 @@ test('fresh and reset Demo fixtures keep quota and media consistency truthful', 
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
     await mkdir(processedDir, { recursive: true });
     await mkdir(stagingDir, { recursive: true });
-    const assertFixture = () => {
+    const assertFixture = async () => {
       const seededCycle = getCurrentCycle(database, 'demo-group', 'demo-1');
       assert.deepEqual(
         getCurrentCycle(database, 'demo-group', 'demo-1', new Date(seededCycle.startsAt))
@@ -192,26 +196,55 @@ test('fresh and reset Demo fixtures keep quota and media consistency truthful', 
           secondsUsed: 3,
         },
       );
+      const jobs = database
+        .prepare(
+          "SELECT id, status, output_path AS outputPath, output_sha256 AS sha256, output_bytes AS bytes FROM media_jobs WHERE kind IN ('clip', 'film') ORDER BY id",
+        )
+        .all();
       assert.deepEqual(
-        database
-          .prepare(
-            "SELECT id, status, output_path AS outputPath FROM media_jobs WHERE kind IN ('clip', 'film') ORDER BY id",
-          )
-          .all()
-          .map((job) => ({ id: job.id, status: job.status, outputPath: job.outputPath })),
+        jobs.map(({ id, status }) => ({ id, status })),
         [
-          { id: 'demo-clip', status: 'pending', outputPath: null },
-          { id: 'demo-film', status: 'pending', outputPath: null },
+          { id: 'demo-clip', status: 'ready' },
+          { id: 'demo-film', status: 'ready' },
         ],
       );
-      assert.equal(
-        planConsistencyRepair(database, processedDir, stagingDir).findings.some(
-          (finding) => finding.kind === 'missing_output',
-        ),
-        false,
+      for (const job of jobs) {
+        const bytes = await readFile(job.outputPath);
+        assert.equal(job.bytes, bytes.byteLength);
+        assert.equal(job.sha256, createHash('sha256').update(bytes).digest('hex'));
+        const metadata = await probeClipWithFfmpeg(config.ffmpegBin, job.outputPath, processedDir);
+        assert.equal(metadata.durationSeconds, 3);
+        assert.equal(metadata.hasAudio, true);
+        assert.ok(metadata.width < metadata.height);
+      }
+      assert.deepEqual(planConsistencyRepair(database, processedDir, stagingDir).findings, []);
+      assert.deepEqual(
+        await runWorkerTick(database, {
+          ffmpegBin: config.ffmpegBin,
+          stagingDir,
+          outputDir: processedDir,
+        }),
+        { claimed: false, reason: 'idle' },
       );
     };
-    assertFixture();
+    await assertFixture();
+    // Restart preserves genuine missing-output failures; only explicit reset
+    // restores the bundled sample. There are no special fixture exclusions.
+    const paths = database
+      .prepare("SELECT output_path AS path FROM media_jobs WHERE kind IN ('clip', 'film')")
+      .all();
+    for (const { path } of paths) await rm(path);
+    const reopened = openDatabase(config);
+    try {
+      assert.equal(
+        planConsistencyRepair(reopened, processedDir, stagingDir).findings.filter(
+          (item) => item.kind === 'missing_output',
+        ).length,
+        2,
+      );
+    } finally {
+      reopened.close();
+    }
 
     const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
       method: 'POST',
@@ -225,7 +258,7 @@ test('fresh and reset Demo fixtures keep quota and media consistency truthful', 
     assert.equal(reset.status, 200);
     await mkdir(processedDir, { recursive: true });
     await mkdir(stagingDir, { recursive: true });
-    assertFixture();
+    await assertFixture();
   });
 });
 
@@ -432,17 +465,33 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
     const outputPath = resolve(processedDir, 'demo-film.mp4');
     const clipOutputPath = resolve(processedDir, 'demo-clip.mp4');
     await mkdir(processedDir, { recursive: true });
-    await writeFile(outputPath, Buffer.from('synthetic playable bytes'));
-    await writeFile(clipOutputPath, Buffer.from('synthetic clip bytes'));
+    const filmBytes = Buffer.from('synthetic playable bytes');
+    const clipBytes = Buffer.from('synthetic clip bytes');
+    await writeFile(outputPath, filmBytes);
+    await writeFile(clipOutputPath, clipBytes);
     database
       .prepare(
-        `UPDATE media_jobs SET status = 'ready', cycle_id = ?, output_path = ?
+        `UPDATE media_jobs SET status = 'ready', cycle_id = ?, output_path = ?,
+           output_sha256 = ?, output_bytes = ?, output_verified_at = ?
          WHERE id = 'demo-film' AND kind = 'film'`,
       )
-      .run('demo-cycle', outputPath);
+      .run(
+        'demo-cycle',
+        outputPath,
+        createHash('sha256').update(filmBytes).digest('hex'),
+        filmBytes.byteLength,
+        new Date().toISOString(),
+      );
     database
-      .prepare(`UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = 'demo-clip'`)
-      .run(clipOutputPath);
+      .prepare(
+        `UPDATE media_jobs SET status = 'ready', output_path = ?, output_sha256 = ?, output_bytes = ?, output_verified_at = ? WHERE id = 'demo-clip'`,
+      )
+      .run(
+        clipOutputPath,
+        createHash('sha256').update(clipBytes).digest('hex'),
+        clipBytes.byteLength,
+        new Date().toISOString(),
+      );
     database
       .prepare(
         `UPDATE cycles SET status = 'revealing', release_status = 'published',
@@ -740,7 +789,8 @@ test('the owner reveal control reports collecting while the cycle is still open'
 });
 
 test('the owner reveal control reports a durable compile failure as delayed without a player', async () => {
-  await withRuntime(async ({ baseUrl }) => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    clearDemoMedia(database);
     const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

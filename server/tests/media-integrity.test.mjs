@@ -213,8 +213,8 @@ test('a tampered finalized clip is unavailable, audited, and still not served', 
       const archiveBody = await archive.json();
       assert.deepEqual(
         archiveBody.archive.clips.map((clip) => clip.id),
-        [],
-        'a tampered clip must not be advertised in the archive',
+        ['demo-clip'],
+        'the healthy sample remains available while the tampered clip is excluded',
       );
 
       const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
