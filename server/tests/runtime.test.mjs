@@ -184,8 +184,6 @@ test('fresh and reset Demo fixtures keep quota and media consistency truthful', 
   await withRuntime(async ({ baseUrl, config, database }) => {
     const processedDir = resolve(config.dataDir, 'media', 'processed');
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
-    await mkdir(processedDir, { recursive: true });
-    await mkdir(stagingDir, { recursive: true });
     const assertFixture = async () => {
       const seededCycle = getCurrentCycle(database, 'demo-group', 'demo-1');
       assert.deepEqual(
@@ -256,8 +254,6 @@ test('fresh and reset Demo fixtures keep quota and media consistency truthful', 
       method: 'POST',
     });
     assert.equal(reset.status, 200);
-    await mkdir(processedDir, { recursive: true });
-    await mkdir(stagingDir, { recursive: true });
     await assertFixture();
   });
 });

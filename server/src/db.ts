@@ -1391,6 +1391,7 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
   const sample = readFileSync(resolve(process.cwd(), 'server/fixtures/demo-media.mp4'));
   const sampleSha256 = createHash('sha256').update(sample).digest('hex');
   mkdirSync(processedDir, { recursive: true });
+  mkdirSync(resolve(databaseFile, '..', 'media', 'staging'), { recursive: true });
   const clipPath = resolve(processedDir, 'fixture-demo-clip.mp4');
   const filmPath = resolve(processedDir, 'fixture-demo-film.mp4');
   writeFileSync(clipPath, sample);
