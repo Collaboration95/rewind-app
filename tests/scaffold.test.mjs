@@ -30,7 +30,13 @@ test('scaffold identifies the Rewind app and exposes baseline quality commands',
 
 test('quality workflow validates main pushes and PRs against any stacked base', () => {
   assert.match(workflow, /npm ci/);
-  assert.match(workflow, /npm run check/);
+  assert.match(workflow, /name: Format, lint, typecheck, and test/);
+  assert.match(workflow, /npm run format:check/);
+  assert.match(workflow, /npm run lint/);
+  assert.match(workflow, /npm run typecheck/);
+  assert.match(workflow, /npx jest --runInBand --coverage/);
+  assert.match(workflow, /bash tests\/deploy\/recovery-smoke\.test\.sh/);
+  assert.equal((workflow.match(/npm run build:web/g) ?? []).length, 1);
   assert.match(workflow, /push:\n    branches: \[main\]/);
   const pullRequestBlock = workflow.match(/  pull_request:\n((?:    .*\n)*)/)?.[1] ?? '';
   assert.match(pullRequestBlock, /types: \[opened, synchronize, reopened, ready_for_review\]/);
