@@ -18,16 +18,18 @@ permissions:
 jobs:
   baseline:
     name: Format, lint, typecheck, and test
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: 22.x
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install dependencies
@@ -39,11 +41,39 @@ jobs:
       - name: Install Chromium for accessibility and responsive checks
         run: npx playwright install --with-deps chromium
 
-      - name: Run baseline checks
-        run: npm run check
+      - name: Check source and run application tests with coverage
+        run: |
+          npm run format:check
+          npm run lint
+          npm run architecture:check
+          npm run typecheck
+          node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs
+          npm run server:build
+          node --experimental-test-coverage '--test-coverage-include=server/dist/**/*.js' --test server/tests/*.test.mjs
+          npx jest --runInBand --coverage
 
-      - name: Build and validate the installable web shell
-        run: npm run test:pwa
+      - name: Run cloud-free deployment fixtures
+        run: |
+          bash tests/deploy/backup-manifest.test.sh
+          bash tests/deploy/wake-recovery-selection.test.sh
+          bash tests/deploy/lifecycle-guards.test.sh
+          bash tests/deploy/recovery-smoke.test.sh
+          bash tests/deploy/restore-atomic.test.sh
+          bash tests/deploy/ownership-contract.test.sh
+          bash tests/deploy/host-preflight.test.sh
+          bash deploy/tests/host-bootstrap.test.sh
 
-      - name: Run responsive browser checks
-        run: npm run test:responsive
+      - name: Export web app once and verify PWA and browser behavior
+        run: |
+          npm run build:web
+          node scripts/check-pwa.mjs dist
+          npx playwright test
+
+      - name: Retain frontend coverage baseline
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frontend-coverage
+          path: coverage/coverage-summary.json
+          if-no-files-found: ignore
+          retention-days: 14
