@@ -1,5 +1,7 @@
 # Independent review request — remaining Sprint 2 Demo PRs
 
+> Status update, 26 September 2026: all four audit PRs have merged into main. This request is retained as historical review context; no further approval of these PRs is needed. Current main is `6708066`, with passing Quality checks and CodeQL. Continue with the hosted and device acceptance gates.
+
 PRs [#205](https://github.com/Collaboration95/rewind-app/pull/205) and [#206](https://github.com/Collaboration95/rewind-app/pull/206) have merged into main. Please review the two remaining PRs from your own non-author GitHub account:
 
 1. [#204 — CI and security](https://github.com/Collaboration95/rewind-app/pull/204). It now targets main. Check that the current required quality gate, CodeQL, image scans and IaC gate pass, and that the five narrow IaC exceptions still expire on 10 October 2026. Look for a concrete missing gate or overly broad exception.
