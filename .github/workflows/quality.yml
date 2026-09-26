@@ -37,6 +37,8 @@ jobs:
           npm audit --omit=dev --audit-level=high
       - name: Run root and Terraform policy tests
         run: node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs
+      - name: Test IaC scan gate failure cases
+        run: python3 -m unittest discover -s tests/security -p 'test_*.py'
 
   server:
     name: Server tests and coverage
