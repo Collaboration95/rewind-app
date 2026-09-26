@@ -53,10 +53,10 @@ check_candidate() {
 load_candidate() {
   local sha="$1" release_dir="$RELEASES/$1"
   check_candidate "$sha"
-  python3 "$RELEASE_PY" verify "$release_dir/bundle.tar" >/dev/null || die 'stored release artifact is damaged'
-  docker load -i "$release_dir/runtime.tar" >/dev/null
-  docker load -i "$release_dir/web.tar" >/dev/null
-  REWIND_BUNDLE_SOURCE="$release_dir/source" sudo -E sh "$release_dir/source/infra/terraform/demo/cloud-init.sh" --complete
+  python3 "$RELEASE_PY" verify "$release_dir/bundle.tar" >/dev/null || return 1
+  docker load -i "$release_dir/runtime.tar" >/dev/null || return 1
+  docker load -i "$release_dir/web.tar" >/dev/null || return 1
+  REWIND_BUNDLE_SOURCE="$release_dir/source" sudo -E sh "$release_dir/source/infra/terraform/demo/cloud-init.sh" --complete || return 1
 }
 
 start_candidate() {
@@ -124,14 +124,21 @@ case "$1" in
       die 'prepare is only for fresh wake; use install for an existing host'
     fi
     sha="$(stage_bundle "$2")"
-    load_candidate "$sha"
+    if [[ "$1" == install ]]; then
+      if ! (load_candidate "$sha"); then
+        (restore_current) || die 'upgrade preparation failed and prior-release recovery failed'
+        die 'upgrade preparation failed; prior release restored'
+      fi
+    else
+      load_candidate "$sha"
+    fi
     printf '%s\n' "$sha" > "$HOST_ROOT/pending-release"
     if [[ "$1" == prepare ]]; then
       printf 'Prepared release %s; no release was activated.\n' "$sha"
       exit 0
     fi
     if ! start_candidate "$sha" || ! candidate_ready "$sha"; then
-      restore_current || die 'upgrade failed and automatic prior-release recovery failed'
+      (restore_current) || die 'upgrade failed and automatic prior-release recovery failed'
       die 'upgrade health failed; prior release restored'
     fi
     promote "$sha"
@@ -141,7 +148,7 @@ case "$1" in
     sha="$(cat "$HOST_ROOT/pending-release")"
     check_candidate "$sha"
     if ! candidate_ready "$sha"; then
-      restore_current || die 'pending release failed and automatic prior-release recovery failed'
+      (restore_current) || die 'pending release failed and automatic prior-release recovery failed'
       die 'pending release health failed; prior release restored'
     fi
     promote "$sha"
@@ -149,9 +156,12 @@ case "$1" in
   rollback)
     [[ $# == 1 && -f "$HOST_ROOT/previous-release" ]] || die 'no previous release'
     sha="$(cat "$HOST_ROOT/previous-release")"
-    load_candidate "$sha"
+    if ! (load_candidate "$sha"); then
+      (restore_current) || die 'rollback preparation failed and current release recovery failed'
+      die 'rollback preparation failed; current release restored'
+    fi
     if ! start_candidate "$sha" || ! candidate_ready "$sha"; then
-      restore_current || die 'rollback failed and current release recovery failed'
+      (restore_current) || die 'rollback failed and current release recovery failed'
       die 'rollback health failed; current release restored'
     fi
     promote "$sha"

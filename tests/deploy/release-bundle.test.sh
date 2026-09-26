@@ -185,6 +185,8 @@ elif [[ "${1:-}" == inspect ]]; then
 import json, sys
 print(json.load(open(sys.argv[1]))["images"][sys.argv[2]])
 PY
+elif [[ "${1:-}" == load && " $* " == *"${FIXTURE_LOAD_FAIL_SHA:-never}"* ]]; then
+  exit 1
 fi
 exit 0
 HOST_DOCKER
@@ -197,6 +199,11 @@ bash "$repo/deploy/release-host.sh" prepare "$root/release.tar"
 REWIND_RELEASE_SHA="$sha" docker compose up -d
 bash "$repo/deploy/release-host.sh" promote
 [[ "$(cat "$host/current-release")" == "$sha" ]]
+if FIXTURE_LOAD_FAIL_SHA="$second_sha" bash "$repo/deploy/release-host.sh" install "$root/second.tar" >"$root/error" 2>&1; then
+  echo 'failed image load was marked active' >&2; exit 1
+fi
+rg -q 'prior release restored' "$root/error"
+[[ "$(cat "$host/current-release")" == "$sha" && "$(cat "$host/.active-image")" == "$sha" ]]
 printf 'changed config\n' >> "$host/rewind.env"
 if bash "$repo/deploy/release-host.sh" install "$root/second.tar" >"$root/error" 2>&1; then
   echo 'changed private configuration was accepted' >&2; exit 1
