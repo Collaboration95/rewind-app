@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
 import type { ReleasedArchive, ReleasedArchiveMedia, ReleasedArchivePage } from '../domain/archive';
@@ -428,7 +428,7 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
     ),
   };
   return (
-    <View style={styles.stack}>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stack}>
       <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
         Archive
       </Text>
@@ -446,7 +446,7 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
         download={download}
         notice={downloadNotice}
       />
-    </View>
+    </ScrollView>
   );
 }
 
