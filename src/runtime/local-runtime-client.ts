@@ -30,8 +30,10 @@ import {
   type ChatReactionEmoji,
   type ChatReactionResult,
   type RealtimeSubscription,
+  type RealtimeEventSource,
   type SubscribeOptions,
 } from '../chat/realtime-client';
+import { createRuntimeEventSource } from '../chat/native-event-source';
 
 export interface RuntimeHealth {
   ok: true;
@@ -153,6 +155,7 @@ function isBrowserOffline(): boolean {
 
 export interface LocalRuntimeClientOptions {
   requestTimeoutMs?: number;
+  eventSourceFactory?: (url: string) => RealtimeEventSource;
 }
 
 interface ErrorPayload {
@@ -217,6 +220,7 @@ export class LocalRuntimeClient implements RuntimeClient {
     this.requestTimeoutMs = requestTimeoutMs;
     this.realtimeChatClient = new RealtimeChatClient(baseUrl, this.fetchImpl as typeof fetch, {
       sendTimeoutMs: requestTimeoutMs,
+      eventSourceFactory: options.eventSourceFactory ?? createRuntimeEventSource,
     });
   }
 

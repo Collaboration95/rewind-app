@@ -739,7 +739,7 @@ function DemoRevealPanel({
   const owner = state.group?.actingMemberRole === 'owner';
   const revealDemoCycle = runtimeClient?.revealDemoCycle;
 
-  if (!owner || !session || !revealDemoCycle) return null;
+  if (!owner || !session || !runtimeClient || !revealDemoCycle) return null;
 
   const progress = async () => {
     setPending(true);
@@ -756,7 +756,7 @@ function DemoRevealPanel({
           throw new Error('The local Demo cycle could not be advanced for reveal.');
         }
       }
-      const next = await revealDemoCycle(session.id, groupId);
+      const next = await revealDemoCycle.call(runtimeClient, session.id, groupId);
       setReveal(next);
       retry();
     } catch (error) {
