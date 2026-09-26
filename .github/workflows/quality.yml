@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Reject high or critical production dependency advisories
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Install FFmpeg for the local runtime gate
         run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
 
@@ -49,7 +52,8 @@ jobs:
           npm run typecheck
           node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs
           npm run server:build
-          node --experimental-test-coverage '--test-coverage-include=server/dist/**/*.js' --test server/tests/*.test.mjs
+          mkdir -p coverage/server-v8
+          NODE_V8_COVERAGE=coverage/server-v8 node --experimental-test-coverage '--test-coverage-include=server/dist/**/*.js' --test server/tests/*.test.mjs | tee coverage/server-summary.txt
           npx jest --runInBand --coverage
 
       - name: Run cloud-free deployment fixtures
@@ -69,11 +73,14 @@ jobs:
           node scripts/check-pwa.mjs dist
           npx playwright test
 
-      - name: Retain frontend coverage baseline
+      - name: Retain separate frontend and server coverage baselines
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: frontend-coverage
-          path: coverage/coverage-summary.json
+          name: application-coverage
+          path: |
+            coverage/coverage-summary.json
+            coverage/server-summary.txt
+            coverage/server-v8/*.json
           if-no-files-found: ignore
           retention-days: 14
