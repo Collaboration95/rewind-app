@@ -63,19 +63,19 @@ printf 'dirty\n' > "$repo/untracked"
 if (cd "$repo" && python3 deploy/release.py build --green-sha "$sha" --config-version demo-v1 --output "$root/release.tar") >"$root/error" 2>&1; then
   echo 'dirty checkout was accepted' >&2; exit 1
 fi
-rg -q 'clean checkout' "$root/error"
+grep -q 'clean checkout' "$root/error"
 rm "$repo/untracked"
 printf 'changed\n' >> "$repo/deploy/compose.yaml"
 if (cd "$repo" && python3 deploy/release.py build --green-sha "$sha" --config-version demo-v1 --output "$root/release.tar") >"$root/error" 2>&1; then
   echo 'tracked change was accepted' >&2; exit 1
 fi
-rg -q 'clean checkout' "$root/error"
+grep -q 'clean checkout' "$root/error"
 git -C "$repo" checkout -- deploy/compose.yaml
 
 if (cd "$repo" && FIXTURE_CI_FAILED=1 python3 deploy/release.py build --green-sha "$sha" --config-version demo-v1 --output "$root/release.tar") >"$root/error" 2>&1; then
   echo 'unverified CI commit was accepted' >&2; exit 1
 fi
-rg -q 'no successful main-branch' "$root/error"
+grep -q 'no successful main-branch' "$root/error"
 
 (cd "$repo" && python3 deploy/release.py build --green-sha "$sha" --config-version demo-v1 --output "$root/release.tar")
 [[ "$(python3 "$repo/deploy/release.py" verify "$root/release.tar")" == "$sha" ]]
@@ -93,7 +93,7 @@ PY
 if python3 "$repo/deploy/release.py" verify "$root/tampered.tar" >"$root/error" 2>&1; then
   echo 'tampered artifact was accepted' >&2; exit 1
 fi
-rg -q 'checksum mismatch' "$root/error"
+grep -q 'checksum mismatch' "$root/error"
 
 python3 - "$root/release.tar" "$root/wrong-version.tar" <<'PY'
 import hashlib, io, json, sys, tarfile
@@ -120,7 +120,7 @@ PY
 if python3 "$repo/deploy/release.py" verify "$root/wrong-version.tar" >"$root/error" 2>&1; then
   echo 'wrong image version was accepted' >&2; exit 1
 fi
-rg -q 'image tag does not match' "$root/error"
+grep -q 'image tag does not match' "$root/error"
 
 python3 - "$root/release.tar" "$root/wrong-image-id.tar" <<'PY'
 import io, json, sys, tarfile
@@ -137,7 +137,7 @@ PY
 if python3 "$repo/deploy/release.py" verify "$root/wrong-image-id.tar" >"$root/error" 2>&1; then
   echo 'wrong image ID was accepted' >&2; exit 1
 fi
-rg -q 'image ID mismatch' "$root/error"
+grep -q 'image ID mismatch' "$root/error"
 
 python3 "$repo/deploy/release.py" verify "$root/release.tar" --extract "$root/extracted" >/dev/null
 [[ -f "$root/extracted/source/deploy/compose.yaml" ]]
@@ -202,18 +202,18 @@ bash "$repo/deploy/release-host.sh" promote
 if FIXTURE_LOAD_FAIL_SHA="$second_sha" bash "$repo/deploy/release-host.sh" install "$root/second.tar" >"$root/error" 2>&1; then
   echo 'failed image load was marked active' >&2; exit 1
 fi
-rg -q 'prior release restored' "$root/error"
+grep -q 'prior release restored' "$root/error"
 [[ "$(cat "$host/current-release")" == "$sha" && "$(cat "$host/.active-image")" == "$sha" ]]
 printf 'changed config\n' >> "$host/rewind.env"
 if bash "$repo/deploy/release-host.sh" install "$root/second.tar" >"$root/error" 2>&1; then
   echo 'changed private configuration was accepted' >&2; exit 1
 fi
-rg -q 'private configuration revision changed' "$root/error"
+grep -q 'private configuration revision changed' "$root/error"
 printf '' > "$host/rewind.env"
 if FIXTURE_FAIL_SHA="$second_sha" bash "$repo/deploy/release-host.sh" install "$root/second.tar" >"$root/error" 2>&1; then
   echo 'unhealthy upgrade was marked active' >&2; exit 1
 fi
-rg -q 'prior release restored' "$root/error"
+grep -q 'prior release restored' "$root/error"
 [[ "$(cat "$host/current-release")" == "$sha" && "$(cat "$host/.active-image")" == "$sha" ]]
 [[ ! -e "$host/previous-release" ]]
 bash "$repo/deploy/release-host.sh" install "$root/second.tar"
@@ -221,13 +221,13 @@ bash "$repo/deploy/release-host.sh" install "$root/second.tar"
 if FIXTURE_FAIL_SHA="$sha" bash "$repo/deploy/release-host.sh" rollback >"$root/error" 2>&1; then
   echo 'unhealthy rollback was marked active' >&2; exit 1
 fi
-rg -q 'current release restored' "$root/error"
+grep -q 'current release restored' "$root/error"
 [[ "$(cat "$host/current-release")" == "$second_sha" && "$(cat "$host/.active-image")" == "$second_sha" ]]
 touch "$host/data/rewind.sqlite"
 if FIXTURE_SCHEMA=18 bash "$repo/deploy/release-host.sh" rollback >"$root/error" 2>&1; then
   echo 'incompatible rollback was accepted' >&2; exit 1
 fi
-rg -q 'schema is newer' "$root/error"
+grep -q 'schema is newer' "$root/error"
 FIXTURE_SCHEMA=17 bash "$repo/deploy/release-host.sh" rollback
 [[ "$(cat "$host/current-release")" == "$sha" ]]
 echo 'release bundle fixture passed'
