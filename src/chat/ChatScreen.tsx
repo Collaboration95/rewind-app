@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCapsule, type CapsuleState } from '../capsule/CapsuleProvider';
 import { demoRepository } from '../data/demo-repository';
@@ -121,6 +122,7 @@ export function ChatSessionSurface({
   session: DemoSession | null;
 }) {
   const unread = useOptionalChatUnread();
+  const safeAreaInsets = useSafeAreaInsets();
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
   const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
@@ -468,7 +470,7 @@ export function ChatSessionSurface({
       behavior={
         Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined
       }
-      keyboardVerticalOffset={0}
+      keyboardVerticalOffset={safeAreaInsets.top}
       style={styles.screen}
       testID="chat-screen"
     >
