@@ -154,7 +154,7 @@ if [ "$COMPLETE" -ne 1 ]; then
   exit 0
 fi
 
-required_bundle_files='Dockerfile README.md compose.yaml operator-common.sh backup-manifest.sh backup.sh restore.sh pause-host.sh preflight.sh migrate-with-backup.sh nginx.conf reset-with-backup.sh rewind.env.example rewind-backup.service rewind-backup.timer web.Dockerfile'
+required_bundle_files='Dockerfile README.md compose.yaml operator-common.sh backup-manifest.sh backup.sh restore.sh pause-host.sh preflight.sh migrate-with-backup.sh nginx.conf reset-with-backup.sh rewind.env.example rewind-backup.service rewind-backup.timer web.Dockerfile release.py release-host.sh'
 for file_name in $required_bundle_files; do
   [ -f "$BUNDLE_SOURCE/deploy/$file_name" ] ||
     fail "required deployment artifact is missing: $BUNDLE_SOURCE/deploy/$file_name; restore the complete checked-in deploy/ bundle and retry"

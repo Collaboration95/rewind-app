@@ -38,6 +38,9 @@ if [[ "${1:-}" == inspect ]]; then
   exit 0
 fi
 [[ "${1:-}" == compose ]] || exit 1
+if [[ -n "${EXPECTED_RELEASE_SHA:-}" && "${REWIND_RELEASE_SHA:-}" != "$EXPECTED_RELEASE_SHA" ]]; then
+  exit 75
+fi
 case " $* " in
   *' version '*) exit 0 ;;
   *' config '*) exit 0 ;;
@@ -174,8 +177,10 @@ assert_replaced_state() {
 }
 
 create_fixture success
+printf 'REWIND_RELEASE_SHA=local\n' >> "$ENV_FILE"
 PATH="$FAKE_BIN:$ORIGINAL_PATH" DATA_DIR="$DATA_DIR" MEDIA_DIR="$MEDIA_DIR" BACKUP_DIR="$BACKUP_DIR" \
   ENV_FILE="$ENV_FILE" COMPOSE_FILE="$COMPOSE_FILE" RUNTIME_UID="$RUNTIME_UID" RUNTIME_GID="$RUNTIME_GID" \
+  REWIND_RELEASE_SHA=release-fixture EXPECTED_RELEASE_SHA=release-fixture \
   BACKUP_VALIDATION_NOW="$(date -u +%s)" RESTORE_READINESS_TIMEOUT_SECONDS=0 "$RESTORE" --confirm "$MANIFEST" >/dev/null
 assert_replaced_state
 

@@ -30,16 +30,21 @@ test('Compose starts the web proxy only after the healthy runtime', () => {
   assert.match(compose, /condition: service_healthy/);
   assert.match(
     compose,
-    /\$\{REWIND_WEB_BIND_ADDRESS:-127\.0\.0\.1\}:\$\{REWIND_WEB_PORT:-8080\}:80/,
+    /\$\{REWIND_WEB_BIND_ADDRESS:-127\.0\.0\.1\}:\$\{REWIND_WEB_PORT:-8080\}:8080/,
   );
   assert.match(compose, /127\.0\.0\.1:\$\{REWIND_RUNTIME_PORT:-8787\}:8787/);
   assert.match(compose, /rewind-demo-web/);
+  assert.match(compose, /http:\/\/127\.0\.0\.1:8080\//);
+  assert.doesNotMatch(compose, /cap_add:/);
 });
 
 test('the web image bakes the same-origin API prefix into the Expo artifact', () => {
   assert.match(dockerfile, /EXPO_PUBLIC_LOCAL_BASE_URL=\/api npm run build:web/);
   assert.match(dockerfile, /COPY deploy\/nginx\.conf \/etc\/nginx\/conf\.d\/default\.conf/);
   assert.match(dockerfile, /COPY --from=build \/app\/dist \/usr\/share\/nginx\/html/);
+  assert.match(dockerfile, /USER nginx/);
+  assert.match(dockerfile, /EXPOSE 8080/);
+  assert.match(nginx, /listen 8080;/);
 });
 
 test('runtime-unavailable API responses stay JSON and never fall back to the shell', async () => {

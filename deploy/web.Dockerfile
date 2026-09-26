@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:22.13.0-bookworm-slim AS build
+FROM node:22.23.3-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -9,14 +9,19 @@ RUN npm ci --ignore-scripts
 COPY app.json tsconfig.json ./
 COPY App.tsx .
 COPY src ./src
+COPY public ./public
 RUN EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
 
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.30.5-alpine@sha256:bf3201ab56f23e5954646379c775d511fc466e9f11376d9725361064ad07ed35 AS runtime
+
+RUN apk add --no-cache --upgrade 'libexpat=2.8.5-r0'
+RUN sed -i 's#pid /run/nginx.pid;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf
 
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 
-EXPOSE 80
+USER nginx
+EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1

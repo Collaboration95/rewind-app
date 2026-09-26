@@ -41,8 +41,12 @@ require_safe_mutable_path "BACKUP_DIR" "$BACKUP_DIR"
 require_absolute_path "manifest path" "$MANIFEST"
 require_regular_file "backup manifest" "$MANIFEST"
 require_regular_file "ENV_FILE" "$ENV_FILE"
+selected_release_sha="${REWIND_RELEASE_SHA:-}"
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+if [[ -n "$selected_release_sha" ]]; then
+  export REWIND_RELEASE_SHA="$selected_release_sha"
+fi
 : "${REWIND_BACKUP_PREFIX:=rewind-demo}"
 validate_backup_prefix "$REWIND_BACKUP_PREFIX" || exit 1
 
