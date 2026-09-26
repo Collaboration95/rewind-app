@@ -229,6 +229,57 @@ describe('persistent group chat timeline', () => {
     expect(result.getByText('Sent from the composer')).toBeTruthy();
   });
 
+  it('loads a bounded latest page, retrieves older history, and deduplicates SSE arrivals', async () => {
+    const latest = event(100, 'Latest saved message', '2026-09-13T10:00:00.000Z');
+    const older = event(20, 'Older saved message', '2026-09-12T10:00:00.000Z', 'demo-2');
+    const history = jest
+      .fn()
+      .mockResolvedValueOnce({
+        events: [latest],
+        nextCursor: older.eventId,
+        watermarkEventId: latest.eventId,
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        events: [older],
+        nextCursor: null,
+        watermarkEventId: latest.eventId,
+        hasMore: false,
+      });
+    const runtime = runtimeMock({ getChatHistoryPage: history });
+    const result = await render(
+      <ScopedChatSurface
+        accessState="known"
+        capsuleStatus="ready"
+        group={group}
+        scope="session-a:demo-group"
+        memberNames={memberNames}
+        retryCapsule={jest.fn()}
+        runtimeClient={runtime.client}
+        session={sessionA}
+      />,
+    );
+
+    expect(await result.findByText('Latest saved message')).toBeTruthy();
+    expect(history).toHaveBeenCalledWith('session-a', 'demo-group', { limit: 100 });
+    expect(runtime.client.subscribeChat).toHaveBeenCalledWith(
+      'session-a',
+      'demo-group',
+      expect.objectContaining({ sinceEventId: latest.eventId }),
+    );
+    expect(result.getByTestId('chat-screen')).toBeTruthy();
+    await act(async () => fireEvent.press(result.getByTestId('chat-load-older')));
+    expect(await result.findByText('Older saved message')).toBeTruthy();
+    await act(async () =>
+      runtime.emit({
+        ...latest,
+        eventId: latest.eventId + 1,
+      }),
+    );
+    expect(result.getAllByText('Latest saved message')).toHaveLength(1);
+    expect(result.queryByTestId('chat-load-older')).toBeNull();
+  });
+
   it('keeps an understandable connection error and supports retry', async () => {
     const runtime = runtimeMock();
     const result = await render(<App runtimeClient={runtime.client} />);

@@ -33,6 +33,21 @@ export interface ChatMessageEvent {
   occurredAt: string;
 }
 
+export interface ChatEventMetadata {
+  eventId: number;
+  type: 'message';
+  message: Pick<ChatMessage, 'groupId' | 'memberId'>;
+  occurredAt: string;
+}
+
+export interface ChatHistoryPage {
+  events: ChatMessageEvent[];
+  /** Event id to use as the exclusive upper bound for the next older page. */
+  nextCursor: number | null;
+  watermarkEventId: number;
+  hasMore: boolean;
+}
+
 export interface CreateChatMessageInput {
   groupId: string;
   memberId: string;
@@ -99,7 +114,10 @@ function reactionCounts(database: RewindDatabase, messageId: string) {
   return result;
 }
 
-function mapMessage(database: RewindDatabase, row: Record<string, unknown>): ChatMessage {
+function mapMessage(
+  row: Record<string, unknown>,
+  counts: Partial<Record<ChatReactionEmoji, number>> = {},
+): ChatMessage {
   const replyTo = row.replyToId
     ? {
         id: String(row.replyToId),
@@ -115,15 +133,18 @@ function mapMessage(database: RewindDatabase, row: Record<string, unknown>): Cha
     body: String(row.body),
     createdAt: String(row.createdAt),
     replyTo,
-    reactionCounts: reactionCounts(database, String(row.id)),
+    reactionCounts: counts,
   };
 }
 
-function mapEvent(database: RewindDatabase, row: Record<string, unknown>): ChatMessageEvent {
+function mapEvent(
+  row: Record<string, unknown>,
+  counts: Partial<Record<ChatReactionEmoji, number>> = {},
+): ChatMessageEvent {
   return {
     eventId: Number(row.eventId),
     type: 'message',
-    message: mapMessage(database, row),
+    message: mapMessage(row, counts),
     occurredAt: String(row.occurredAt),
   };
 }
@@ -140,7 +161,7 @@ export function listChatEvents(
 ): ChatMessageEvent[] {
   const boundedSince = Number.isInteger(sinceEventId) && sinceEventId >= 0 ? sinceEventId : 0;
   const boundedLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 500) : 100;
-  return database
+  const rows = database
     .prepare(
       `SELECT e.id AS eventId, e.occurred_at AS occurredAt,
         m.id, m.group_id AS groupId, m.member_id AS memberId,
@@ -154,8 +175,100 @@ export function listChatEvents(
        ORDER BY e.id ASC
        LIMIT ?`,
     )
+    .all(groupId, boundedSince, boundedLimit) as Record<string, unknown>[];
+  return mapChatRowsWithReactionCounts(database, rows);
+}
+
+function mapChatRowsWithReactionCounts(
+  database: RewindDatabase,
+  rows: Record<string, unknown>[],
+): ChatMessageEvent[] {
+  if (rows.length === 0) return [];
+  const ids = rows.map((row) => String(row.id));
+  const placeholders = ids.map(() => '?').join(', ');
+  const reactions = database
+    .prepare(
+      `SELECT message_id AS messageId, emoji, COUNT(*) AS count
+       FROM reactions WHERE message_id IN (${placeholders}) GROUP BY message_id, emoji`,
+    )
+    .all(...ids) as { messageId?: unknown; emoji?: unknown; count?: unknown }[];
+  const countsByMessage = new Map<string, Partial<Record<ChatReactionEmoji, number>>>();
+  for (const reaction of reactions) {
+    if (reaction.emoji !== SUPPORTED_CHAT_REACTION) continue;
+    const counts = countsByMessage.get(String(reaction.messageId)) ?? {};
+    counts[SUPPORTED_CHAT_REACTION] = Number(reaction.count);
+    countsByMessage.set(String(reaction.messageId), counts);
+  }
+  return rows.map((row) => mapEvent(row, countsByMessage.get(String(row.id)) ?? {}));
+}
+
+/** Read a bounded latest/older page without discarding any older history. */
+export function listChatHistoryPage(
+  database: RewindDatabase,
+  groupId: string,
+  options: { beforeEventId?: number; limit?: number } = {},
+): ChatHistoryPage {
+  const requestedLimit = options.limit ?? 100;
+  const limit =
+    Number.isInteger(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 100;
+  const watermarkEventId = latestChatEventId(database, groupId);
+  const beforeEventId =
+    Number.isInteger(options.beforeEventId) && options.beforeEventId! > 0
+      ? Math.min(options.beforeEventId!, watermarkEventId + 1)
+      : watermarkEventId + 1;
+  const rows = database
+    .prepare(
+      `SELECT e.id AS eventId, e.occurred_at AS occurredAt,
+        m.id, m.group_id AS groupId, m.member_id AS memberId,
+        m.body, m.created_at AS createdAt,
+        parent.id AS replyToId, parent.member_id AS replyToMemberId,
+        parent.body AS replyToBody, parent.created_at AS replyToCreatedAt
+       FROM realtime_events e
+       JOIN messages m ON m.id = e.message_id
+       LEFT JOIN messages parent ON parent.id = m.reply_to_message_id
+       WHERE e.group_id = ? AND e.id < ? AND e.id <= ?
+       ORDER BY e.id DESC
+       LIMIT ?`,
+    )
+    .all(groupId, beforeEventId, watermarkEventId, limit + 1) as Record<string, unknown>[];
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit).reverse();
+  const events = mapChatRowsWithReactionCounts(database, pageRows);
+  return {
+    events,
+    nextCursor: hasMore && events.length > 0 ? events[0].eventId : null,
+    watermarkEventId,
+    hasMore,
+  };
+}
+
+/** Metadata replay for unread observers; this query never loads message or reply bodies. */
+export function listChatEventMetadata(
+  database: RewindDatabase,
+  groupId: string,
+  sinceEventId = 0,
+  limit = 100,
+): ChatEventMetadata[] {
+  const boundedSince = Number.isInteger(sinceEventId) && sinceEventId >= 0 ? sinceEventId : 0;
+  const boundedLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 500) : 100;
+  return database
+    .prepare(
+      `SELECT e.id AS eventId, e.group_id AS groupId, m.member_id AS memberId,
+              e.occurred_at AS occurredAt
+       FROM realtime_events e JOIN messages m ON m.id = e.message_id
+       WHERE e.group_id = ? AND e.id > ?
+       ORDER BY e.id ASC LIMIT ?`,
+    )
     .all(groupId, boundedSince, boundedLimit)
-    .map((row) => mapEvent(database, row as Record<string, unknown>));
+    .map((row) => {
+      const record = row as Record<string, unknown>;
+      return {
+        eventId: Number(record.eventId),
+        type: 'message' as const,
+        message: { groupId: String(record.groupId), memberId: String(record.memberId) },
+        occurredAt: String(record.occurredAt),
+      };
+    });
 }
 
 /** Current group event watermark for a new live observer that should not count history. */
@@ -241,7 +354,11 @@ export function createChatMessage(
         return { ok: false, reason: 'duplicate_message' };
       }
       database.exec('COMMIT');
-      return { ok: true, deduplicated: true, event: mapEvent(database, existing) };
+      return {
+        ok: true,
+        deduplicated: true,
+        event: mapEvent(existing, reactionCounts(database, String(existing.id))),
+      };
     }
     if (input.replyToMessageId) {
       const parent = database
@@ -299,7 +416,7 @@ export function createChatMessage(
     )
     .get(messageId) as Record<string, unknown> | undefined;
   if (!row) throw new Error('Persisted chat message event could not be loaded.');
-  return { ok: true, event: mapEvent(database, row) };
+  return { ok: true, event: mapEvent(row, reactionCounts(database, String(row.id))) };
 }
 
 function validReaction(emoji: string): emoji is ChatReactionEmoji {
@@ -402,7 +519,7 @@ export function toggleChatReaction(
         active,
         count,
       },
-      message: mapMessage(database, row),
+      message: mapMessage(row, reactionCounts(database, String(row.id))),
     };
   } catch (error) {
     database.exec('ROLLBACK');

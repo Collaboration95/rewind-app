@@ -8,7 +8,8 @@ import test from 'node:test';
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
 const { createGroup } = await import('../dist/groups/index.js');
-const { createChatMessage } = await import('../dist/chat/index.js');
+const { createChatMessage, listChatEventMetadata, listChatEvents, listChatHistoryPage } =
+  await import('../dist/chat/index.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { RealtimeHub } = await import('../dist/realtime/index.js');
 
@@ -47,6 +48,117 @@ async function createSession(baseUrl, memberId, groupId = 'demo-group') {
   assert.equal(response.status, 201);
   return (await response.json()).session;
 }
+
+test('chat history pages are bounded, ordered, and include batched reactions', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-chat-history-page-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  try {
+    const events = [];
+    for (let index = 0; index < 7; index += 1) {
+      const created = createChatMessage(database, {
+        groupId: 'demo-group',
+        memberId: 'demo-2',
+        body: `history ${index}`,
+        messageId: `history-${index}`,
+      });
+      assert.equal(created.ok, true);
+      events.push(created.event);
+    }
+    database
+      .prepare(
+        'INSERT INTO reactions (id, message_id, member_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run('reaction-1', 'history-4', 'demo-1', '✨', '2026-09-26T00:00:00.000Z');
+
+    const latest = listChatHistoryPage(database, 'demo-group', { limit: 3 });
+    assert.deepEqual(
+      latest.events.map(({ eventId }) => eventId),
+      events.slice(4).map(({ eventId }) => eventId),
+    );
+    assert.equal(latest.hasMore, true);
+    assert.equal(latest.nextCursor, events[4].eventId);
+    assert.equal(latest.watermarkEventId, events[6].eventId);
+    assert.equal(latest.events[0].message.reactionCounts?.['✨'], 1);
+
+    const older = listChatHistoryPage(database, 'demo-group', {
+      beforeEventId: latest.nextCursor,
+      limit: 3,
+    });
+    assert.deepEqual(
+      older.events.map(({ eventId }) => eventId),
+      events.slice(1, 4).map(({ eventId }) => eventId),
+    );
+    assert.equal(older.hasMore, true);
+
+    const metadata = listChatEventMetadata(database, 'demo-group', events[5].eventId, 10);
+    assert.deepEqual(metadata, [
+      {
+        eventId: events[6].eventId,
+        type: 'message',
+        message: { groupId: 'demo-group', memberId: 'demo-2' },
+        occurredAt: events[6].occurredAt,
+      },
+    ]);
+    assert.equal(JSON.stringify(metadata).includes('history 6'), false);
+    assert.equal(
+      listChatEvents(database, 'demo-group', events[3].eventId, 2)[0].message.reactionCounts?.[
+        '✨'
+      ],
+      1,
+    );
+  } finally {
+    database.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('authorized chat history HTTP pages resume after their watermark without dropping older events', async () => {
+  const dataDir = await mkdtemp(`${tmpdir()}/rewind-chat-history-http-test-`);
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openDatabase(config);
+  const { server, baseUrl } = await startRuntime(config, database);
+  const session = await createSession(baseUrl, 'demo-1');
+  const persisted = [];
+  for (let index = 0; index < 105; index += 1) {
+    const created = createChatMessage(database, {
+      groupId: 'demo-group',
+      memberId: 'demo-2',
+      body: `http history ${index}`,
+    });
+    assert.equal(created.ok, true);
+    persisted.push(created.event);
+  }
+  try {
+    const endpoint = `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`;
+    const latestResponse = await fetch(`${endpoint}&limit=100`);
+    assert.equal(latestResponse.status, 200);
+    const latest = await latestResponse.json();
+    assert.deepEqual(
+      latest.events.map(({ eventId }) => eventId),
+      persisted.slice(5).map(({ eventId }) => eventId),
+    );
+    assert.equal(latest.watermarkEventId, persisted.at(-1).eventId);
+    assert.equal(latest.hasMore, true);
+    const olderResponse = await fetch(`${endpoint}&limit=100&beforeEventId=${latest.nextCursor}`);
+    const older = await olderResponse.json();
+    const expectedOlderIds = database
+      .prepare('SELECT id FROM realtime_events WHERE group_id = ? AND id < ? ORDER BY id ASC')
+      .all('demo-group', latest.nextCursor)
+      .map(({ id }) => Number(id));
+    assert.deepEqual(
+      older.events.map(({ eventId }) => eventId),
+      expectedOlderIds,
+    );
+    assert.equal(older.hasMore, false);
+    assert.equal(older.watermarkEventId, latest.watermarkEventId);
+
+    const invalidCursor = await fetch(`${endpoint}&beforeEventId=0`);
+    assert.equal(invalidCursor.status, 400);
+  } finally {
+    await closeRuntime(server, database, dataDir);
+  }
+});
 
 function delayedMessageRequest(baseUrl, sessionId) {
   const url = new URL(

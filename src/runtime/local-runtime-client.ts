@@ -4,6 +4,7 @@ import type {
   CycleAdvanceResult,
   DemoRevealState,
   CycleHistoryEntry,
+  CycleHistoryPage,
 } from '../domain/cycles';
 import type { InviteAcceptance, LocalInvite } from '../domain/invites';
 import type { ClipUploadInput, PendingClipUpload } from '../domain/video';
@@ -16,7 +17,7 @@ import type {
 } from '../domain/profiles';
 import type { DemoSession } from '../domain/session';
 import type { Premiere } from '../domain/premiere';
-import type { ReleasedArchive } from '../domain/archive';
+import type { ReleasedArchive, ReleasedArchivePage } from '../domain/archive';
 import {
   parseContributionLedgerPage,
   type ContributionLedgerPage,
@@ -27,6 +28,7 @@ import {
   type ChatMessage,
   type ChatMessageDraft,
   type ChatMessageEvent,
+  type ChatHistoryPage,
   type ChatReactionEmoji,
   type ChatReactionResult,
   type RealtimeSubscription,
@@ -95,6 +97,27 @@ export interface RuntimeClient {
   getPremiere?(sessionId: string, groupId: string, cycleId: string): Promise<Premiere>;
   getReleasedArchive?(sessionId: string, groupId: string): Promise<ReleasedArchive>;
   getCycleHistory?(sessionId: string, groupId: string): Promise<CycleHistoryEntry[]>;
+  getReleasedArchivePage?(
+    sessionId: string,
+    groupId: string,
+    options?: {
+      filmCursor?: string | null;
+      clipCursor?: string | null;
+      includeFilms?: boolean;
+      includeClips?: boolean;
+      limit?: number;
+    },
+  ): Promise<ReleasedArchivePage>;
+  getCycleHistoryPage?(
+    sessionId: string,
+    groupId: string,
+    options?: { cursor?: string | null; limit?: number },
+  ): Promise<CycleHistoryPage>;
+  getChatHistoryPage?(
+    sessionId: string,
+    groupId: string,
+    options?: { beforeEventId?: number; limit?: number },
+  ): Promise<ChatHistoryPage>;
   getContributionLedger?(
     sessionId: string,
     groupId: string,
@@ -447,6 +470,50 @@ export class LocalRuntimeClient implements RuntimeClient {
   }
 
   async getReleasedArchive(sessionId: string, groupId: string): Promise<ReleasedArchive> {
+    const films: ReleasedArchive['films'] = [];
+    const clips: ReleasedArchive['clips'] = [];
+    let filmCursor: string | null = null;
+    let clipCursor: string | null = null;
+    let hasMoreFilms = true;
+    let hasMoreClips = true;
+    while (hasMoreFilms || hasMoreClips) {
+      const page = await this.getReleasedArchivePage(sessionId, groupId, {
+        filmCursor,
+        clipCursor,
+        includeFilms: hasMoreFilms,
+        includeClips: hasMoreClips,
+        limit: 50,
+      });
+      films.push(...page.archive.films);
+      clips.push(...page.archive.clips);
+      hasMoreFilms = page.hasMoreFilms;
+      hasMoreClips = page.hasMoreClips;
+      filmCursor = page.filmCursor;
+      clipCursor = page.clipCursor;
+    }
+    return { films, clips };
+  }
+
+  async getReleasedArchivePage(
+    sessionId: string,
+    groupId: string,
+    options: {
+      filmCursor?: string | null;
+      clipCursor?: string | null;
+      includeFilms?: boolean;
+      includeClips?: boolean;
+      limit?: number;
+    } = {},
+  ): Promise<ReleasedArchivePage> {
+    const query = new URLSearchParams({
+      groupId,
+      sessionId,
+      limit: String(options.limit ?? 50),
+    });
+    if (options.includeFilms === false) query.set('includeFilms', 'false');
+    if (options.includeClips === false) query.set('includeClips', 'false');
+    if (options.filmCursor) query.set('filmCursor', options.filmCursor);
+    if (options.clipCursor) query.set('clipCursor', options.clipCursor);
     const body = await this.request<{
       archive: {
         films: { id: string; cycleId: string; publishedAt: string; downloadPath: string }[];
@@ -458,28 +525,66 @@ export class LocalRuntimeClient implements RuntimeClient {
           downloadPath: string;
         }[];
       };
-    }>(
-      `/archive?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId)}`,
-      {},
-      MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
-    );
+      pagination?: {
+        filmCursor: string | null;
+        clipCursor: string | null;
+        hasMoreFilms: boolean;
+        hasMoreClips: boolean;
+      };
+    }>(`/archive?${query.toString()}`, {}, MEDIA_RUNTIME_REQUEST_TIMEOUT_MS);
     return {
-      films: body.archive.films.map(({ downloadPath, ...film }) => ({
-        ...film,
-        downloadUrl: `${this.baseUrl}${downloadPath}`,
-      })),
-      clips: body.archive.clips.map(({ downloadPath, ...clip }) => ({
-        ...clip,
-        downloadUrl: `${this.baseUrl}${downloadPath}`,
-      })),
+      archive: {
+        films: body.archive.films.map(({ downloadPath, ...film }) => ({
+          ...film,
+          downloadUrl: `${this.baseUrl}${downloadPath}`,
+        })),
+        clips: body.archive.clips.map(({ downloadPath, ...clip }) => ({
+          ...clip,
+          downloadUrl: `${this.baseUrl}${downloadPath}`,
+        })),
+      },
+      filmCursor: body.pagination?.filmCursor ?? null,
+      clipCursor: body.pagination?.clipCursor ?? null,
+      hasMoreFilms: body.pagination?.hasMoreFilms ?? false,
+      hasMoreClips: body.pagination?.hasMoreClips ?? false,
     };
   }
 
   async getCycleHistory(sessionId: string, groupId: string): Promise<CycleHistoryEntry[]> {
-    const body = await this.request<{ cycles: CycleHistoryEntry[] }>(
-      `/cycles/history?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(sessionId)}`,
+    const cycles: CycleHistoryEntry[] = [];
+    let cursor: string | null = null;
+    let hasMore = true;
+    while (hasMore) {
+      const page = await this.getCycleHistoryPage(sessionId, groupId, { cursor, limit: 50 });
+      cycles.push(...page.cycles);
+      cursor = page.nextCursor;
+      hasMore = page.hasMore;
+    }
+    return cycles;
+  }
+
+  async getCycleHistoryPage(
+    sessionId: string,
+    groupId: string,
+    options: { cursor?: string | null; limit?: number } = {},
+  ): Promise<CycleHistoryPage> {
+    const query = new URLSearchParams({ groupId, sessionId, limit: String(options.limit ?? 50) });
+    if (options.cursor) query.set('cursor', options.cursor);
+    const body = await this.request<CycleHistoryPage>(`/cycles/history?${query.toString()}`);
+    return body;
+  }
+
+  async getChatHistoryPage(
+    sessionId: string,
+    groupId: string,
+    options: { beforeEventId?: number; limit?: number } = {},
+  ): Promise<ChatHistoryPage> {
+    const query = new URLSearchParams({ sessionId, limit: String(options.limit ?? 100) });
+    if (options.beforeEventId !== undefined)
+      query.set('beforeEventId', String(options.beforeEventId));
+    return this.request<ChatHistoryPage>(
+      `/realtime/groups/${encodeURIComponent(groupId)}/messages?${query.toString()}`,
     );
-    return body.cycles;
   }
 
   async deleteContribution(

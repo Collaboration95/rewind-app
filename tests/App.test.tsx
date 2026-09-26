@@ -447,6 +447,9 @@ describe('Rewind Home start screen', () => {
     await result.findByTestId('capsule-ready');
     await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
     expect(await result.findByTestId('archive-released-media')).toBeTruthy();
+    expect(result.getByTestId('archive-current-cycle-context')).toHaveTextContent(
+      'This status is for the current cycle. Previously released media remains available below.',
+    );
     expect(result.getByText('Group film')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Download released group film' })).toBeTruthy();
     expect(result.getByTestId('archive-film-cycle-film-1')).toHaveTextContent(

@@ -29,6 +29,7 @@ export interface OpenedMediaIntegrity {
   result: MediaIntegrityResult;
   handle: FileHandle | null;
   byteLength: number | null;
+  capacityExceeded?: boolean;
 }
 
 /**
@@ -49,6 +50,8 @@ export interface MediaIntegrityResult {
   expectedByteLength: number | null;
   observedSha256: string | null;
   observedByteLength: number | null;
+  /** Present only after hashing a stable opened file descriptor. */
+  observedIdentity?: FileIdentity | null;
 }
 
 /** Hash a non-empty server-owned file. The caller owns path policy; this
@@ -116,10 +119,12 @@ async function snapshotAndHashOpenFile(
   source: FileHandle,
   snapshot: FileHandle,
   readSource: FileHandle['read'] = source.read.bind(source),
-): Promise<HashedFileIntegrity | null> {
+  maxByteLength = Number.POSITIVE_INFINITY,
+): Promise<HashedFileIntegrity | null | 'over-limit'> {
   try {
     const initial = await source.stat();
     if (!initial.isFile() || initial.size <= 0) return null;
+    if (initial.size > maxByteLength) return 'over-limit';
     const digest = createHash('sha256');
     const buffer = Buffer.alloc(64 * 1024);
     let byteLength = 0;
@@ -310,7 +315,7 @@ export async function verifyMediaIntegrity(
   // The HTTP path gate passes null when a file is missing, empty, or outside
   // the processed directory. Keep that result auditable without opening an
   // untrusted path.
-  const observed = filePath ? await hashFile(filePath) : null;
+  const observed = filePath ? await hashFileWithIdentity(filePath) : null;
   if (!observed) {
     return {
       outcome: 'unavailable',
@@ -318,6 +323,7 @@ export async function verifyMediaIntegrity(
       expectedByteLength,
       observedSha256: null,
       observedByteLength: null,
+      observedIdentity: null,
     };
   }
   const matches = observed.byteLength === expectedByteLength && observed.sha256 === expectedSha256;
@@ -327,6 +333,7 @@ export async function verifyMediaIntegrity(
     expectedByteLength,
     observedSha256: observed.sha256,
     observedByteLength: observed.byteLength,
+    observedIdentity: observed.identity,
   };
 }
 
@@ -338,7 +345,7 @@ export async function openMediaWithIntegrity(
   database: RewindDatabase,
   jobId: string,
   filePath: string | null,
-  options: { readSource?: FileHandle['read'] } = {},
+  options: { readSource?: FileHandle['read']; maxSnapshotBytes?: number } = {},
 ): Promise<OpenedMediaIntegrity> {
   const stored = readStoredIntegrity(database, jobId);
   const expectedSha256 = stored?.sha256 ?? null;
@@ -368,14 +375,28 @@ export async function openMediaWithIntegrity(
       await source.close();
       return unavailable();
     }
+    if (
+      options.maxSnapshotBytes !== undefined &&
+      (!Number.isSafeInteger(options.maxSnapshotBytes) || details.size > options.maxSnapshotBytes)
+    ) {
+      await source.close();
+      source = null;
+      return { ...unavailable(), byteLength: details.size, capacityExceeded: true };
+    }
     handle = await openAnonymousSnapshot(dirname(filePath));
     const observed = await snapshotAndHashOpenFile(
       source,
       handle,
       options.readSource ?? source.read.bind(source),
+      options.maxSnapshotBytes,
     );
     await source.close();
     source = null;
+    if (observed === 'over-limit') {
+      await handle.close().catch(() => undefined);
+      handle = null;
+      return { ...unavailable(), byteLength: details.size, capacityExceeded: true };
+    }
     if (!observed) {
       await handle.close().catch(() => undefined);
       return {
