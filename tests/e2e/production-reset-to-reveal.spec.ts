@@ -238,8 +238,21 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
     `/api/archive?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
   );
   expect(archive.archive.films).toHaveLength(1);
-  expect(archive.archive.films[0].downloadPath).toEqual(expect.any(String));
-  expect(archive.archive.clips).toHaveLength(0);
+  expect(archive.archive.films[0]).toMatchObject({
+    cycleId,
+    downloadPath: expect.any(String),
+  });
+  expect(archive.archive.clips).toHaveLength(1);
+  expect(archive.archive.clips[0]).toMatchObject({
+    id: 'demo-clip',
+    contributionId: 'demo-contribution',
+    cycleId,
+    downloadPath: expect.any(String),
+  });
+  const seededClipDownload = await page.request.get(`/api${archive.archive.clips[0].downloadPath}`);
+  expect(seededClipDownload.status()).toBe(200);
+  expect(seededClipDownload.headers()['content-type']).toContain('video/mp4');
+  expect(Number(seededClipDownload.headers()['content-length'] ?? 0)).toBeGreaterThan(0);
   const premiere = await runtimeJson(
     page,
     `/api/cycles/${encodeURIComponent(cycleId)}/premiere?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
@@ -290,8 +303,14 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
     `/api/archive?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(releasedMemberSessionId)}`,
   );
   expect(memberArchive.archive.films).toHaveLength(1);
+  expect(memberArchive.archive.films[0].id).toBe(filmId);
   expect(memberArchive.archive.clips).toHaveLength(1);
   expect(memberArchive.archive.clips[0].id).toBe(clipJobId);
+  expect(memberArchive.archive.clips[0].cycleId).toBe(cycleId);
+  const otherMemberSeededClip = await page.request.get(
+    `/api/clips/demo-clip/download?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(releasedMemberSessionId)}`,
+  );
+  expect(otherMemberSeededClip.status()).toBe(404);
   const clipDownload = await page.request.get(
     `/api/clips/${clipJobId}/download?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(releasedMemberSessionId)}`,
   );
