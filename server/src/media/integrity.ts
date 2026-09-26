@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, lstatSync, openSync, readSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { open, rm, unlink, type FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -236,9 +236,13 @@ export function filePathMatchesIdentity(path: string, identity: FileIdentity): b
 export function hashFileSync(path: string): FileIntegrity | null {
   let descriptor: number | null = null;
   try {
-    const details = statSync(path);
-    if (!details.isFile() || details.size <= 0) return null;
-    descriptor = openSync(path, constants.O_RDONLY);
+    // Open the pathname without following a symlink, then validate the object
+    // reached through this descriptor. This closes the stat/open replacement
+    // window while keeping hashing memory bounded to one fixed-size buffer.
+    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = fstatSync(descriptor);
+    if (!before.isFile() || before.size <= 0) return null;
+    const beforeIdentity = fileIdentity(before);
     const digest = createHash('sha256');
     const buffer = Buffer.alloc(64 * 1024);
     let byteLength = 0;
@@ -248,7 +252,15 @@ export function hashFileSync(path: string): FileIntegrity | null {
       byteLength += read;
       digest.update(buffer.subarray(0, read));
     }
-    if (byteLength <= 0) return null;
+    const after = fstatSync(descriptor);
+    if (
+      byteLength <= 0 ||
+      byteLength !== Number(before.size) ||
+      !after.isFile() ||
+      !sameFileIdentity(beforeIdentity, fileIdentity(after))
+    ) {
+      return null;
+    }
     return { sha256: digest.digest('hex'), byteLength };
   } catch {
     return null;
