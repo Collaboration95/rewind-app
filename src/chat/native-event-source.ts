@@ -18,6 +18,10 @@ interface NativeXhr {
 
 type NativeXhrConstructor = new () => NativeXhr;
 
+export const NATIVE_SSE_MAX_RESPONSE_CHARS = 256 * 1024;
+const MAX_SSE_LINE_CHARS = 16 * 1024;
+const MAX_SSE_EVENT_CHARS = 64 * 1024;
+
 interface SseEvent {
   type: string;
   data: string;
@@ -36,10 +40,12 @@ export class NativeEventSource implements RealtimeEventSource {
   private lineBuffer = '';
   private eventType = '';
   private eventData: string[] = [];
+  private eventBufferChars = 0;
   private lastEventId = '';
   private opened = false;
   private closed = false;
   private failed = false;
+  private xhrAborted = false;
 
   constructor(url: string, Xhr: NativeXhrConstructor = getXhrConstructor()) {
     this.xhr = new Xhr();
@@ -84,7 +90,7 @@ export class NativeEventSource implements RealtimeEventSource {
     this.xhr.onerror = null;
     this.xhr.ontimeout = null;
     this.xhr.onabort = null;
-    this.xhr.abort();
+    this.abortXhr();
     this.listeners.clear();
   }
 
@@ -103,27 +109,41 @@ export class NativeEventSource implements RealtimeEventSource {
     if (this.closed || this.failed || !this.opened) return;
     const text = this.xhr.responseText ?? '';
     if (text.length < this.responseOffset) this.responseOffset = 0;
-    this.lineBuffer += text.slice(this.responseOffset);
-    this.responseOffset = text.length;
+    const responseLimitReached = text.length >= NATIVE_SSE_MAX_RESPONSE_CHARS;
+    const responseEnd = Math.min(text.length, NATIVE_SSE_MAX_RESPONSE_CHARS);
+    this.lineBuffer += text.slice(this.responseOffset, responseEnd);
+    this.responseOffset = responseEnd;
 
     let newline = this.lineBuffer.search(/[\r\n]/);
     while (newline >= 0) {
       if (this.lineBuffer[newline] === '\r' && newline === this.lineBuffer.length - 1 && !atEnd) {
         break;
       }
+      if (newline > MAX_SSE_LINE_CHARS) {
+        this.fail({ status: this.status ?? 0, code: 'line_too_large' });
+        return;
+      }
       const line = this.lineBuffer.slice(0, newline);
       const separatorLength =
         this.lineBuffer[newline] === '\r' && this.lineBuffer[newline + 1] === '\n' ? 2 : 1;
-      if (separatorLength === 1 && newline === this.lineBuffer.length - 1 && !atEnd) break;
       this.lineBuffer = this.lineBuffer.slice(newline + separatorLength);
       this.consumeLine(line);
+      if (this.failed) return;
       newline = this.lineBuffer.search(/[\r\n]/);
+    }
+    if (this.lineBuffer.length > MAX_SSE_LINE_CHARS) {
+      this.fail({ status: this.status ?? 0, code: 'line_too_large' });
+      return;
     }
     if (atEnd && this.lineBuffer.length > 0) {
       this.consumeLine(this.lineBuffer);
       this.lineBuffer = '';
+      if (this.failed) return;
     }
     if (atEnd) this.dispatchEvent();
+    if (responseLimitReached) {
+      this.fail({ status: this.status ?? 0, code: 'response_limit' });
+    }
   }
 
   private consumeLine(line: string): void {
@@ -132,6 +152,11 @@ export class NativeEventSource implements RealtimeEventSource {
       return;
     }
     if (line.startsWith(':')) return;
+    if (this.eventBufferChars + line.length + 1 > MAX_SSE_EVENT_CHARS) {
+      this.fail({ status: this.status ?? 0, code: 'event_too_large' });
+      return;
+    }
+    this.eventBufferChars += line.length + 1;
     const separator = line.indexOf(':');
     const field = separator === -1 ? line : line.slice(0, separator);
     let value = separator === -1 ? '' : line.slice(separator + 1);
@@ -152,6 +177,7 @@ export class NativeEventSource implements RealtimeEventSource {
   }
 
   private dispatchEvent(): void {
+    this.eventBufferChars = 0;
     if (this.eventData.length === 0) {
       this.eventType = '';
       return;
@@ -175,6 +201,13 @@ export class NativeEventSource implements RealtimeEventSource {
         ? { ...(event as Record<string, unknown>), status: this.status ?? 0 }
         : { status: this.status ?? 0 };
     this.onerror?.(error);
+    if (!this.closed) this.abortXhr();
+  }
+
+  private abortXhr(): void {
+    if (this.xhrAborted) return;
+    this.xhrAborted = true;
+    this.xhr.abort();
   }
 }
 
