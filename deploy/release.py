@@ -33,6 +33,37 @@ def digest(path):
     return value.hexdigest()
 
 
+def extract_source(source, destination):
+    """Extract only regular files and directories beneath a fresh destination."""
+    destination = Path(destination).resolve()
+    seen_paths = set()
+    template_hash = None
+    for member in source:
+        parts = Path(member.name).parts
+        if (member.name.startswith("/") or "\\" in member.name or ".." in parts
+                or not (member.name.startswith("deploy/") or member.name == "deploy"
+                        or member.name == "infra/terraform/demo/cloud-init.sh"
+                        or member.name in ("infra", "infra/terraform", "infra/terraform/demo"))
+                or not (member.isfile() or member.isdir())):
+            fail("release source contains an unsafe or unexpected path")
+        if member.name in seen_paths:
+            fail("release source contains a duplicate path")
+        seen_paths.add(member.name)
+
+        target = (destination / member.name).resolve()
+        if target != destination and destination not in target.parents:
+            fail("release source contains an unsafe or unexpected path")
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with source.extractfile(member) as content, open(target, "xb") as output:
+            shutil.copyfileobj(content, output)
+        if member.name == "deploy/rewind.env.example":
+            template_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+    return template_hash
+
+
 def image_id(image_tar, image, sha):
     with tarfile.open(image_tar, "r") as archive:
         entries = json.load(archive.extractfile("manifest.json"))
@@ -129,19 +160,10 @@ def verify(bundle_path, extract=None):
                 fail(f"image ID mismatch: {name}")
         with tarfile.open(temp / "source.tar", "r") as source:
             template_hash = None
-            seen_paths = set()
-            for member in source:
-                if (member.name.startswith("/") or ".." in Path(member.name).parts
-                        or not (member.name.startswith("deploy/") or member.name == "deploy"
-                                or member.name == "infra/terraform/demo/cloud-init.sh"
-                                or member.name in ("infra", "infra/terraform", "infra/terraform/demo"))
-                        or not (member.isfile() or member.isdir())):
-                    fail("release source contains an unsafe or unexpected path")
-                if member.name in seen_paths:
-                    fail("release source contains a duplicate path")
-                seen_paths.add(member.name)
-                if member.name == "deploy/rewind.env.example":
-                    template_hash = hashlib.sha256(source.extractfile(member).read()).hexdigest()
+            # The destination is newly created under the private temporary tree.
+            source_destination = temp / "source"
+            source_destination.mkdir()
+            template_hash = extract_source(source, source_destination)
             if template_hash != manifest["config_template_sha256"]:
                 fail("configuration template revision mismatch")
         if extract:
@@ -152,7 +174,7 @@ def verify(bundle_path, extract=None):
             for name in ("manifest.json", *FILES):
                 shutil.copyfile(temp / name, destination / name)
             with tarfile.open(temp / "source.tar", "r") as source:
-                source.extractall(destination / "source")
+                extract_source(source, destination / "source")
         print(manifest["sha"])
         return manifest
 
