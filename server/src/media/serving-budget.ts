@@ -1,3 +1,6 @@
+import type { ServerResponse } from 'node:http';
+import type { Readable } from 'node:stream';
+
 export interface MediaServingLease {
   release(): void;
 }
@@ -53,5 +56,3 @@ export function releaseBudgetWhenSnapshotCloses(
     if (!stream.destroyed) stream.destroy();
   });
 }
-import type { ServerResponse } from 'node:http';
-import type { Readable } from 'node:stream';
