@@ -9,7 +9,7 @@
 | Main code and security PR #224 | ✅ Merged | Main Quality, CodeQL and release-security scans green; no open Dependabot or CodeQL alerts |
 | Issue #199 | ✅ Done | Merged-main fixture, simulator, focused tests and production E2E evidence |
 | HTTPS origin #200 | ✅ Done | Public `/` and `/api/health` each 200 with valid TLS; host runtime stays loopback-only |
-| Backup and wake | ✅ Working | Verified 21 Sep SQLite/media backup restored; SQLite integrity `ok`; active amd64 release healthy |
+| Backup and live restore | ✅ Passed with manual recovery | Verified 21 Sep SQLite/media backup restored; SQLite integrity `ok`; active amd64 release healthy |
 | Hosted surface smoke | ✅ Passed | Chromium Home, Archive sealed state, Chat connected; screenshots below |
 | Full hosted acceptance #145 | ⬜ Open | Two clean reset-to-reveal runs, restart/rollback and non-author run still needed |
 | Lifecycle #190 | ⬜ Open | Wake succeeded; OFF automation and two deployment-script fixes remain |
