@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { RewindDatabase } from '../db';
 import { getGroup, getCurrentCycle } from '../db';
 import { createCycleWindow } from '../cycles/engine';
+import { getDemoSession, isActiveDemoSession } from '../session';
 
 export const GROUP_NAME_MAX_LENGTH = 80;
 export const PROMPT_MAX_LENGTH = 160;
@@ -15,7 +16,11 @@ export interface CreateGroupInput {
 
 export type CreateGroupResult =
   | { ok: true; group: ReturnType<typeof getGroup>; cycle: ReturnType<typeof getCurrentCycle> }
-  | { ok: false; field: 'name' | 'prompt' | 'owner'; reason: 'required' | 'too_long' | 'invalid' };
+  | {
+      ok: false;
+      field: 'name' | 'prompt' | 'owner' | 'session';
+      reason: 'required' | 'too_long' | 'invalid' | 'inactive';
+    };
 
 function normalize(value: unknown): string | null {
   return typeof value === 'string' ? value.trim() : null;
@@ -25,6 +30,7 @@ export function createGroup(
   database: RewindDatabase,
   ownerMemberId: string,
   input: CreateGroupInput,
+  sessionId?: string,
 ): CreateGroupResult {
   const name = normalize(input.name);
   const prompt = normalize(input.prompt);
@@ -43,8 +49,13 @@ export function createGroup(
   const cycleId = `local-cycle-${randomUUID()}`;
   const { endsAt } = createCycleWindow({ preset: 'one-day', startsAt: startedAt });
 
-  database.exec('BEGIN');
+  database.exec('BEGIN IMMEDIATE');
   try {
+    const now = input.now ?? new Date();
+    if (sessionId && !isActiveDemoSession(database, sessionId, ownerMemberId, now)) {
+      database.exec('ROLLBACK');
+      return { ok: false, field: 'session', reason: 'inactive' };
+    }
     database
       .prepare('INSERT INTO groups (id, name, current_cycle_id) VALUES (?, ?, NULL)')
       .run(groupId, name);
@@ -61,6 +72,8 @@ export function createGroup(
         "INSERT INTO memberships (group_id, member_id, role, accepted_at) VALUES (?, ?, 'owner', ?)",
       )
       .run(groupId, ownerMemberId, startedAt);
+    if (sessionId)
+      database.prepare('UPDATE sessions SET group_id = ? WHERE id = ?').run(groupId, sessionId);
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
