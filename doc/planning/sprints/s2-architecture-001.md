@@ -4,7 +4,7 @@
 
 ## Decision
 
-Sprint 2 uses the existing standalone AWS account `330599756236` through the
+Sprint 1 uses the existing standalone AWS account `330599756236` through the
 non-root IAM profile `macos-m1`. The default and only deployment region is
 `ap-southeast-1`; the existing demo host is in `ap-southeast-1a`.
 
