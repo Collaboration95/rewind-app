@@ -7,7 +7,9 @@ shell and same-origin API proxy on `127.0.0.1:8080`. The hosted
 `rewind.env.example` explicitly sets `REWIND_WEB_BIND_ADDRESS=0.0.0.0` and
 `REWIND_WEB_PORT=80`, publishing the web container on all host IPv4 interfaces
 so the Lightsail HTTPS distribution can reach its HTTP origin on port 80.
-The Lightsail firewall must allow that port; no host-installed Nginx is needed.
+The container listens as non-root on internal port 8080; Compose publishes
+that as host port 80 for the distribution. The Lightsail firewall must allow
+the host port; no host-installed Nginx is needed.
 The Node runtime's host binding remains `127.0.0.1:8787` in both modes, with
 the web container reaching it over the internal Compose network.
 
@@ -68,8 +70,9 @@ first pass installs the Docker/JQ/rsync prerequisites and creates the persistent
 repository bundle exists.
 
 After Terraform creates the instance, `infra/scripts/wake-demo.sh` transfers
-the checked-in repository and private `rewind.env`, then runs the same script
-with `--complete`. Completion installs the compose files, executable operator
+the reviewed release bundle and private `rewind.env`, verifies its digest on
+the host, and runs the bundled bootstrap with `--complete`. Completion installs
+the compose files, executable operator
 scripts (including `pause-host.sh` and `preflight.sh`), the backup service and timer, and a
 0600 copy of `rewind.env.example` only when no environment file exists. It
 reloads and enables the backup timer, and writes
@@ -115,7 +118,7 @@ ownership:
 
 ## Build, migrate, and start
 
-From the repository root:
+For local Compose development, from the repository root:
 
 ```sh
 cp deploy/rewind.env.example /srv/rewind/rewind.env
@@ -334,9 +337,58 @@ To recreate the host from the newest backup, keep a private local copy of
 
 ```sh
 export REWIND_ENV_FILE=/private/path/rewind.env
+export RELEASE_BUNDLE=/private/path/rewind-<green-main-sha>.tar
+export RELEASE_BUNDLE_SHA256=<reviewed-sha256-of-bundle>
 ./infra/scripts/wake-demo.sh --latest
 ./infra/scripts/wake-demo.sh --latest --apply --confirm
 ```
+
+Build that bundle once on the green `origin/main` commit with a clean checkout,
+including no untracked files. The `--green-sha` value is the exact commit whose
+required CI checks passed; record the resulting bundle SHA-256 alongside it.
+The build command queries the completed successful `Quality checks` push run
+for that SHA on `main` through `gh`; the operator machine needs authenticated
+GitHub CLI access. A matching SHA supplied on the command line alone cannot
+authorize a build. `--config-version` names the operator-reviewed private configuration contract;
+change it when a release requires an incompatible environment layout. The
+bundle contains a Git-archived deployment allowlist, both Docker images tagged
+and labeled with the same commit SHA, exact image IDs, the configuration
+template revision, and checksums. Build on an operator/CI machine with
+Docker; the host loads those exact images and does not rebuild the app:
+
+```sh
+git status --short
+git rev-parse HEAD
+git rev-parse origin/main
+python3 deploy/release.py build --green-sha "$GREEN_MAIN_SHA" \
+  --config-version demo-v1 --output "/private/path/rewind-$GREEN_MAIN_SHA.tar"
+python3 deploy/release.py verify "/private/path/rewind-$GREEN_MAIN_SHA.tar"
+sha256sum "/private/path/rewind-$GREEN_MAIN_SHA.tar"
+```
+
+Before applying wake, confirm the reviewed PR and green check belong to that
+SHA, verify the full S3 backup, and review any migration against the previous
+image. A new schema version can block rollback to an older image. `wake-demo.sh`
+still requires `--apply --confirm` and the verified recovery point; `--seed`
+remains only for first installation. After deployment, check the host runtime,
+the public HTTPS shell and `/api/health`, and the synthetic group journey. The
+host records the active release only after both runtime and web health pass.
+For a later existing-host upgrade, first compare the bundle SHA-256 with the
+reviewed value, then run `./deploy/release-host.sh install /path/to/bundle.tar`
+on the host. A failed healthy upgrade restores the previous image pair when
+the database schema permits it. The host retains the prior release archive,
+image pair, and private configuration digest for rollback.
+If health or the journey fails, an operator can run the following on the host:
+
+```sh
+cd /srv/rewind
+./deploy/release-host.sh rollback
+```
+
+Rollback refuses a newer database schema or changed private configuration and
+updates the active pointer only after runtime and web health pass. If it refuses,
+restore only through the verified recovery procedure after reviewing data and
+migration compatibility; do not force an older image onto a newer database.
 
 You can select an exact recovery point with
 `--manifest s3://rewind-demo-backups-.../rewind-demo/rewind-<timestamp>.manifest.json`.
@@ -353,7 +405,7 @@ execution form is `--apply --confirm`; the default and `--dry-run` forms stop
 after the reviewed plan.
 
 The wake script then creates the new host, waits for cloud-init, copies the
-runtime bundle, transfers the already-verified recovery point, restores it
+digest-checked release bundle, transfers the already-verified recovery point, restores it
 through `restore.sh`, and checks `/health` before reporting success. Run the
 hermetic selection tests with `npm run test:wake-recovery-selection`.
 

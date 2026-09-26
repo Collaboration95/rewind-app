@@ -8,6 +8,9 @@ cleanup() {
 trap cleanup EXIT
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+export RELEASE_BUNDLE="$TEST_ROOT/release.tar"
+python3 "$REPO_ROOT/tests/deploy/make-release-fixture.py" "${GITHUB_SHA:-$(git -C "$REPO_ROOT" rev-parse HEAD)}" "$RELEASE_BUNDLE"
+export RELEASE_BUNDLE_SHA256="$(sha256sum "$RELEASE_BUNDLE" | cut -d ' ' -f 1)"
 FAKE_BIN="$TEST_ROOT/bin"
 LOG_FILE="$TEST_ROOT/commands.log"
 TF_DIR="$TEST_ROOT/tf"
@@ -25,6 +28,7 @@ cat > "$PLAN_JSON" <<'JSON'
   {"address":"aws_lightsail_static_ip.rewind[0]","change":{"actions":["delete"]}},
   {"address":"aws_lightsail_static_ip_attachment.rewind[0]","change":{"actions":["delete"]}},
   {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["delete"]}},
+  {"address":"aws_lightsail_distribution.web[0]","change":{"actions":["delete"]}},
   {"address":"aws_iam_role.power_controller[0]","change":{"actions":["delete"]}},
   {"address":"aws_iam_role_policy.power_controller[0]","change":{"actions":["delete"]}},
   {"address":"aws_iam_role_policy.operator[0]","change":{"actions":["delete"]}},
@@ -185,6 +189,17 @@ grep -Fq 'terraform' "$LOG_FILE"
 ! grep -Eq '^(ssh|scp|rsync) ' "$LOG_FILE"
 ! grep -Eq '^aws (s3|s3api)' "$LOG_FILE"
 ! grep -Eq 'terraform .* apply' "$LOG_FILE"
+
+jq '(.resource_changes[] | select(.address == "aws_lightsail_distribution.web[0]").change.actions) = ["update"]' "$PLAN_JSON" > "$TEST_ROOT/unsafe-plan.json"
+cp "$TEST_ROOT/unsafe-plan.json" "$PLAN_JSON"
+if INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" \
+  output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --dry-run 2>&1)"; then
+  printf 'distribution update unexpectedly passed hibernation allowlist\n' >&2
+  exit 1
+fi
+[[ "$output" == *'unexpected resource change'* ]]
+jq '(.resource_changes[] | select(.address == "aws_lightsail_distribution.web[0]").change.actions) = ["delete"]' "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
+cp "$TEST_ROOT/safe-plan.json" "$PLAN_JSON"
 
 INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" \
   output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" 2>&1)"
