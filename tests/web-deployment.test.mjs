@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { createProductionWebServer } from '../scripts/production-web-proxy.mjs';
+import { apiTarget, createProductionWebServer } from '../scripts/production-web-proxy.mjs';
 
 const nginx = await readFile(new URL('../deploy/nginx.conf', import.meta.url), 'utf8');
 const compose = await readFile(new URL('../deploy/compose.yaml', import.meta.url), 'utf8');
@@ -83,4 +83,26 @@ test('runtime-unavailable API responses stay JSON and never fall back to the she
     });
     await rm(staticDir, { recursive: true, force: true });
   }
+});
+
+test('API path references cannot replace the configured runtime authority', () => {
+  const runtimeOrigin = new URL('http://runtime.internal');
+  const forgedPath = new URL('/api//attacker.example/path?source=test', 'http://rewind-web.local');
+
+  const target = apiTarget(runtimeOrigin, forgedPath);
+
+  assert.equal(target.origin, runtimeOrigin.origin);
+  assert.equal(target.pathname, '//attacker.example/path');
+  assert.equal(target.search, '?source=test');
+});
+
+test('API paths retain same-origin runtime routing and query parameters', () => {
+  const runtimeOrigin = new URL('http://runtime.internal');
+  const requestUrl = new URL('/api/health?check=ready', 'http://rewind-web.local');
+
+  const target = apiTarget(runtimeOrigin, requestUrl);
+
+  assert.equal(target.origin, runtimeOrigin.origin);
+  assert.equal(target.pathname, '/health');
+  assert.equal(target.search, '?check=ready');
 });
