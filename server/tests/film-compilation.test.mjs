@@ -5,6 +5,7 @@ import { access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { clearDemoMedia } from './helpers/demo-media.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
@@ -23,6 +24,7 @@ async function withDatabase(run) {
     REWIND_FFMPEG_BIN: 'ffmpeg',
   });
   const database = openDatabase(config);
+  clearDemoMedia(database);
   try {
     return await run({ config, database, dataDir });
   } finally {

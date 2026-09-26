@@ -206,7 +206,6 @@ test('processed-file candidate checks find references beyond the limited job win
 
 test('processed-file scan continues past referenced entries to the finding limit', async () => {
   await fixture(async ({ database, processedDir, stagingDir }) => {
-    database.prepare("UPDATE media_jobs SET status = 'failed', output_path = NULL").run();
     const referencedPaths = ['a-reference.mp4', 'b-reference.mp4', 'c-reference.mp4'].map((name) =>
       resolve(processedDir, name),
     );
@@ -291,7 +290,6 @@ test('report limits scan classes independently and fairly select findings', asyn
 
 test('marks a consistency report truncated when processed entries exceed the hard scan bound', async () => {
   await fixture(async ({ database, processedDir, stagingDir }) => {
-    database.prepare("UPDATE media_jobs SET status = 'failed', output_path = NULL").run();
     const names = Array.from(
       { length: CONSISTENCY_SCAN_LIMIT + 1 },
       (_, index) => `scan-${String(index).padStart(5, '0')}`,
