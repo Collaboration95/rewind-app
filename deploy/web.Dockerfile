@@ -9,6 +9,7 @@ RUN npm ci --ignore-scripts
 COPY app.json tsconfig.json ./
 COPY App.tsx .
 COPY src ./src
+COPY public ./public
 RUN EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
 
 FROM nginx:1.27-alpine AS runtime
