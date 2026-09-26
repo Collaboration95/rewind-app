@@ -14,7 +14,7 @@
       "resource": "aws_s3_bucket_server_side_encryption_configuration.terraform_state",
       "owner": "Guruprasath",
       "expires": "2026-10-10",
-      "reason": "Accepted risk pending PR review: private, versioned synthetic Demo state uses SSE-S3 (AES256); a customer-managed KMS key adds cost and operations outside this release."
+      "reason": "Accepted risk pending PR review: private, versioned Terraform state for Demo infrastructure uses SSE-S3 (AES256); a customer-managed KMS key adds cost and operations outside this release."
     },
     {
       "id": "AWS-0132",

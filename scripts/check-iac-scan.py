@@ -24,6 +24,8 @@ def main():
     policy = json.loads(policy_path.read_text())
     accepted = {}
     errors = []
+    if not isinstance(report.get("Results"), list) or not report["Results"]:
+        errors.append("missing or empty Trivy scan results")
     for exception in policy["exceptions"]:
         key = (exception["id"], exception["target"], exception["resource"])
         if key in accepted:

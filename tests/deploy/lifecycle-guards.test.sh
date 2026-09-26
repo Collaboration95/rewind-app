@@ -8,6 +8,9 @@ cleanup() {
 trap cleanup EXIT
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+export RELEASE_BUNDLE="$TEST_ROOT/release.tar"
+python3 "$REPO_ROOT/tests/deploy/make-release-fixture.py" "${GITHUB_SHA:-$(git -C "$REPO_ROOT" rev-parse HEAD)}" "$RELEASE_BUNDLE"
+export RELEASE_BUNDLE_SHA256="$(sha256sum "$RELEASE_BUNDLE" | cut -d ' ' -f 1)"
 FAKE_BIN="$TEST_ROOT/bin"
 LOG_FILE="$TEST_ROOT/commands.log"
 TF_DIR="$TEST_ROOT/tf"
