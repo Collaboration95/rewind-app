@@ -72,6 +72,21 @@ export function getDemoSession(database: RewindDatabase, sessionId: string): Dem
   return mapSession(row);
 }
 
+/** Re-read persisted identity while a caller holds its write transaction. */
+export function isActiveDemoSession(
+  database: RewindDatabase,
+  sessionId: string,
+  memberId: string,
+  now: Date,
+): boolean {
+  const session = getDemoSession(database, sessionId);
+  return Boolean(
+    session &&
+    session.actor.memberId === memberId &&
+    classifyDemoSession(session.expiresAt, session.invalidatedAt, now) === 'valid',
+  );
+}
+
 function memberGroup(database: RewindDatabase, memberId: string, groupId?: string): string | null {
   const row = database
     .prepare(
