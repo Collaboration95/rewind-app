@@ -1,7 +1,17 @@
 data "archive_file" "cost_safety_audit" {
   type        = "zip"
-  source_dir  = "${path.module}/lambda"
   output_path = "${path.module}/.terraform/cost-safety-audit.zip"
+
+  # Package only runtime modules. Local Python bytecode and tests must not
+  # change the deployment hash between developer and clean CI checkouts.
+  source {
+    content  = file("${path.module}/lambda/cost_safety_audit.py")
+    filename = "cost_safety_audit.py"
+  }
+  source {
+    content  = file("${path.module}/lambda/cost_safety_notification.py")
+    filename = "cost_safety_notification.py"
+  }
 }
 
 locals {
