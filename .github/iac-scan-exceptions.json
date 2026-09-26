@@ -1,0 +1,44 @@
+{
+  "exceptions": [
+    {
+      "id": "AWS-0345",
+      "target": "infra/terraform/bootstrap/access.tf",
+      "resource": "data.aws_iam_policy_document.terraform_apply",
+      "owner": "Guruprasath",
+      "expires": "2026-10-10",
+      "reason": "Accepted risk pending PR review: the existing human-only Terraform apply role has service-family administrator permissions, no CI tokens, and exact plan review. Narrowing only S3 while IAM:* remains would misrepresent risk and may break applies. Next-sprint #174 requires a separate least-privilege GitHub OIDC deploy role."
+    },
+    {
+      "id": "AWS-0132",
+      "target": "infra/terraform/bootstrap/main.tf",
+      "resource": "aws_s3_bucket_server_side_encryption_configuration.terraform_state",
+      "owner": "Guruprasath",
+      "expires": "2026-10-10",
+      "reason": "Accepted risk pending PR review: private, versioned Terraform state for Demo infrastructure uses SSE-S3 (AES256); a customer-managed KMS key adds cost and operations outside this release."
+    },
+    {
+      "id": "AWS-0132",
+      "target": "infra/terraform/demo/storage.tf",
+      "resource": "aws_s3_bucket_server_side_encryption_configuration.backups",
+      "owner": "Guruprasath",
+      "expires": "2026-10-10",
+      "reason": "Accepted risk pending PR review: private, versioned synthetic Demo backups use SSE-S3 (AES256); a customer-managed KMS key adds cost and operations outside this release."
+    },
+    {
+      "id": "AWS-0132",
+      "target": "infra/terraform/demo/storage.tf",
+      "resource": "aws_s3_bucket_server_side_encryption_configuration.audit_logs",
+      "owner": "Guruprasath",
+      "expires": "2026-10-10",
+      "reason": "Accepted risk pending PR review: private, versioned synthetic Demo audit logs use SSE-S3 (AES256); a customer-managed KMS key adds cost and operations outside this release."
+    },
+    {
+      "id": "AWS-0015",
+      "target": "infra/terraform/demo/observability.tf",
+      "resource": "aws_cloudtrail.management",
+      "owner": "Guruprasath",
+      "expires": "2026-10-10",
+      "reason": "Accepted risk pending PR review: CloudTrail writes to a private, versioned SSE-S3 (AES256) log bucket for the synthetic Demo; a customer-managed KMS key adds cost and operations outside this release."
+    }
+  ]
+}

@@ -202,7 +202,7 @@ run_restore_failure | grep -q 'integrity validation\|could not be opened'
 assert_previous_state
 
 create_fixture corrupt-media
-printf 'not a tar archive\n' | gzip -c > "$BACKUP_DIR"/*.media.tar.gz
+printf 'not a gzip stream\n' > "$BACKUP_DIR"/*.media.tar.gz
 MEDIA_NAME="$(basename -- "$BACKUP_DIR"/*.media.tar.gz)"
 MEDIA_BYTES="$(wc -c < "$BACKUP_DIR/$MEDIA_NAME" | tr -d '[:space:]')"
 STAMP="$(basename -- "$MANIFEST" | sed 's/^rewind-//; s/\.manifest\.json$//')"
