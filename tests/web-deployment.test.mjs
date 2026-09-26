@@ -44,6 +44,7 @@ test('the web image bakes the same-origin API prefix into the Expo artifact', ()
   assert.match(dockerfile, /COPY --from=build \/app\/dist \/usr\/share\/nginx\/html/);
   assert.match(dockerfile, /USER nginx/);
   assert.match(dockerfile, /EXPOSE 8080/);
+  assert.match(dockerfile, /pid \/tmp\/nginx\.pid/);
   assert.match(nginx, /listen 8080;/);
 });
 
