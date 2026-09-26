@@ -56,20 +56,16 @@ services:
     read_only: true
     tmpfs:
       - /var/cache/nginx:size=32m,mode=1777,uid=101,gid=101
-      - /var/run:size=1m,mode=1777,uid=101,gid=101
+      - /tmp:size=8m,mode=1777
     depends_on:
       runtime:
         condition: service_healthy
     ports:
-      - '${REWIND_WEB_BIND_ADDRESS:-127.0.0.1}:${REWIND_WEB_PORT:-8080}:80'
+      - '${REWIND_WEB_BIND_ADDRESS:-127.0.0.1}:${REWIND_WEB_PORT:-8080}:8080'
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      - SETGID
-      - SETUID
     mem_limit: 128m
     pids_limit: 64
     healthcheck:
@@ -79,7 +75,7 @@ services:
         - -q
         - -O
         - /dev/null
-        - http://127.0.0.1/
+        - http://127.0.0.1:8080/
       interval: 30s
       timeout: 5s
       start_period: 5s
