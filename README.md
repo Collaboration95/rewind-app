@@ -33,6 +33,28 @@ upload require a physical device and the optional local runtime. Set
 `EXPO_PUBLIC_DEMO_ACCESS=entry` to start at the Demo member chooser instead of
 the default synthetic Amber session.
 
+## Android virtual camera review
+
+An Android emulator with a configured VirtualScene camera can use the native
+still-camera path. In PowerShell, unset the fixture override before restarting:
+
+```powershell
+Remove-Item Env:EXPO_PUBLIC_CAMERA_MODE -ErrorAction SilentlyContinue
+npm.cmd start -- --android --go --clear --port 8087
+```
+
+Grant camera and microphone permissions when prompted. Capture stays disabled
+until the preview reports ready; a mount failure offers Check again. VirtualScene
+preview images are emulator-generated, not physical-camera evidence. Expo Camera
+on Android emulators returns a generated still with a yellow timestamp instead
+of photographing the virtual scene. The capture review labels this limitation;
+use a physical Android device to verify actual photographs. The Android adapter
+allows this permission/preview attempt rather than rejecting `isDevice=false` or
+calling Expo's web-only availability probe. iOS simulator behavior is unchanged.
+Automated adapter and screen tests cover this path; hands-on emulator capture
+must still be verified. Set the camera mode to `demo` to return to the labelled
+fixture path.
+
 ## Optional local runtime
 
 The companion Node service adds local SQLite persistence, media processing,

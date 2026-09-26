@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  AppState,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { COLORS } from '../theme';
 import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
@@ -351,7 +360,12 @@ export function CameraCaptureScreen({
   }, [onAccepted, session]);
 
   return (
-    <View style={styles.screen} testID="camera-screen">
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.screenContent}
+      keyboardShouldPersistTaps="handled"
+      testID="camera-screen"
+    >
       <View style={styles.heading}>
         <Text style={styles.eyebrow}>CAPTURE</Text>
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-camera">
@@ -502,6 +516,15 @@ export function CameraCaptureScreen({
               accessibilityLabel="Live camera preview"
               facing="back"
               onCameraReady={() => setCameraReady(true)}
+              onMountError={() => {
+                setCameraReady(false);
+                setState((current) => ({
+                  ...current,
+                  status: 'temporarily-unavailable',
+                  errorMessage:
+                    'The camera preview could not open. Check device camera settings, then try again.',
+                }));
+              }}
               ref={cameraRef}
               style={styles.livePreview}
               testID="camera-live-preview"
@@ -531,7 +554,7 @@ export function CameraCaptureScreen({
           {settingsError ? <Text style={styles.errorText}>{settingsError}</Text> : null}
         </View>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -611,6 +634,12 @@ function PreviewPanel({
           style={[styles.stillPreview, styles.previewImage]}
         />
       )}
+      {!demo && metadata.source === 'demo-fixture' ? (
+        <Text style={styles.previewMeta} testID="camera-emulator-photo-notice">
+          ANDROID EMULATOR · Expo generates a test image with a timestamp instead of photographing
+          the virtual scene. Use a physical Android device to capture the camera view.
+        </Text>
+      ) : null}
       {metadata.source === 'file' ? (
         <Text style={styles.previewMeta}>
           FILE FALLBACK · selected locally, not camera-captured
@@ -650,10 +679,11 @@ function PreviewPanel({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 18, padding: 24 },
+  screen: { flex: 1, minHeight: 0 },
+  screenContent: { flexGrow: 1, gap: 18, padding: 24, paddingBottom: 32 },
   heading: { gap: 7 },
   eyebrow: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 30, fontWeight: '700' },
+  title: { color: COLORS.ink, fontSize: 25, fontWeight: '600' },
   intro: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   demoNotice: {
     backgroundColor: COLORS.deep,
@@ -689,7 +719,7 @@ const styles = StyleSheet.create({
   actionButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    borderRadius: 28,
     minHeight: 48,
     justifyContent: 'center',
     paddingHorizontal: 16,
@@ -749,7 +779,7 @@ const styles = StyleSheet.create({
   shutter: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    borderRadius: 28,
     justifyContent: 'center',
     minHeight: 52,
     padding: 14,

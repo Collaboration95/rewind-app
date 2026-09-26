@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
@@ -74,7 +74,7 @@ describe('local Demo access lifecycle', () => {
 
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     expect(result.getByTestId('settings-identity')).toBeTruthy();
-    expect(result.getByText('Amber')).toBeTruthy();
+    expect(within(result.getByTestId('settings-identity')).getByText('Amber')).toBeTruthy();
     await fireEvent.press(result.getByTestId('sign-out'));
     await result.findByRole('header', { name: 'Choose who you are showing' });
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();

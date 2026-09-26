@@ -602,7 +602,7 @@ const styles = StyleSheet.create({
   content: { gap: 14, padding: 24, paddingBottom: 20 },
   header: { gap: 4 },
   label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 30, fontWeight: '700', marginTop: 2 },
+  title: { color: COLORS.ink, fontSize: 25, fontWeight: '600', marginTop: 2 },
   bodyText: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   connectionStatus: { color: COLORS.muted, fontSize: 12, fontWeight: '700' },
   statePanel: {
@@ -692,7 +692,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    borderRadius: 28,
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 16,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
@@ -1030,7 +1030,12 @@ export function VideoCaptureScreen({
     setContributionStatus,
   ]);
   return (
-    <View style={styles.screen} testID="video-capture-screen">
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={styles.screenContent}
+      keyboardShouldPersistTaps="handled"
+      testID="video-capture-screen"
+    >
       <View style={styles.header}>
         {onBack ? (
           <Pressable accessibilityRole="button" onPress={leaveCapture} style={styles.backButton}>
@@ -1273,7 +1278,7 @@ export function VideoCaptureScreen({
           {error}
         </Text>
       ) : null}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -1311,7 +1316,8 @@ function Panel({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 16, padding: 24 },
+  screen: { flex: 1, minHeight: 0 },
+  screenContent: { flexGrow: 1, gap: 16, padding: 24, paddingBottom: 32 },
   header: { gap: 7 },
   backButton: { alignSelf: 'flex-start', paddingVertical: 4 },
   backText: { color: COLORS.accent, fontSize: 14, fontWeight: '700' },
@@ -1332,7 +1338,7 @@ const styles = StyleSheet.create({
   recordButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    borderRadius: 28,
     justifyContent: 'center',
     minHeight: 50,
     padding: 12,
@@ -1390,7 +1396,7 @@ const styles = StyleSheet.create({
   primaryButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    borderRadius: 28,
     justifyContent: 'center',
     minHeight: 46,
     padding: 10,

@@ -177,3 +177,23 @@ the member can do next. Quota values use explicit units (`contributions`,
   cycle is locked.
 - **Don't:** Make a local fixture look like authentication or private account
   state.
+
+## Darkroom concept branch
+
+The `ui-concept/loi-darkroom` experiment follows supplied Concept B. Home uses a
+monospaced day/hour (or hour/minute) collection countdown, a celluloid filmstrip,
+large prompt text and an apricot pill action. `celluloid` is `#302016` in
+`src/theme.ts`; all previous semantic palette tokens remain unchanged.
+Film frames are opaque decorative placeholders, explicitly not a moment count.
+They never load unreleased media. Collection expiry is not a release promise.
+Runtime and synthetic-member controls remain below the primary Home content;
+Settings remains a fifth navigation destination for existing behavior.
+Capture, Chat, Archive and forms retain their state handling with shared dark
+surfaces and aligned typography/action styling. Reveal text uses ink on dark
+surfaces for readability. The prototype is not yet human cross-reviewed or
+verified on the issue's complete four-platform matrix.
+
+Film detail tokens: `filmFrame` #201B18, `filmAmber` #D9B77D and `filmBorder`
+#715337. Warm amber labels and outlined lock/play marks sit on opaque brown-black
+frames; they never represent a loaded preview. Camera and film icons use matching
+outlined strokes, and visible action/state text remains their accessible meaning.

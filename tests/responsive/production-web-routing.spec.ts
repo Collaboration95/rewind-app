@@ -72,18 +72,18 @@ test('the installed shell reloads root and starts a deep SPA route offline', asy
 }) => {
   await page.goto('/');
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
-  await expect(page.locator('#root')).toContainText('REWIND');
+  await expect(page.locator('#root')).toContainText(/rewind/i);
 
   let deepPage: Awaited<ReturnType<typeof context.newPage>> | undefined;
   await context.setOffline(true);
   try {
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.locator('#root')).toContainText('REWIND');
+    await expect(page.locator('#root')).toContainText(/rewind/i);
 
     deepPage = await context.newPage();
     await deepPage.goto('/groups/demo-group/capsule', { waitUntil: 'domcontentloaded' });
     expect(new URL(deepPage.url()).pathname).toBe('/groups/demo-group/capsule');
-    await expect(deepPage.locator('#root')).toContainText('REWIND');
+    await expect(deepPage.locator('#root')).toContainText(/rewind/i);
   } finally {
     await deepPage?.close();
     await context.setOffline(false);

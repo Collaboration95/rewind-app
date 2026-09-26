@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { Camera, CameraView } from 'expo-camera';
+import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system/legacy';
 import { PermissionStatus } from 'expo-modules-core';
 import {
@@ -23,7 +24,7 @@ jest.mock('expo-camera', () => ({
   CameraView: {},
 }));
 
-jest.mock('expo-device', () => ({ isDevice: true }));
+jest.mock('expo-device', () => ({ __esModule: true, isDevice: true }));
 
 jest.mock('expo-file-system/legacy', () => ({
   copyAsync: jest.fn(),
@@ -64,6 +65,34 @@ it('treats a missing native availability probe as available on a physical device
 });
 
 describe('Expo camera adapter contract', () => {
+  it('allows an Android virtual camera without calling the unsupported availability probe', async () => {
+    const os = Platform.OS;
+    const device = Device.isDevice;
+    const cameraView = CameraView as typeof CameraView & {
+      isAvailableAsync?: () => Promise<boolean>;
+    };
+    const previousProbe = cameraView.isAvailableAsync;
+    const probe = jest.fn().mockRejectedValue(new Error('web-only native method'));
+    try {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: 'android' });
+      Object.defineProperty(Device, 'isDevice', { configurable: true, value: false });
+      cameraView.isAvailableAsync = probe;
+      const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+      await expect(platform.getCapabilities()).resolves.toEqual({
+        camera: 'supported',
+        microphone: 'supported',
+      });
+      expect(probe).not.toHaveBeenCalled();
+      await expect(platform.captureStill()).rejects.toThrow('preview is not ready');
+      const readyPlatform = new ExpoCameraPlatform({ getCameraRef: () => cameraHandle() });
+      await expect(readyPlatform.captureStill()).resolves.toMatchObject({ source: 'demo-fixture' });
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: os });
+      Object.defineProperty(Device, 'isDevice', { configurable: true, value: device });
+      cameraView.isAvailableAsync = previousProbe;
+    }
+  });
+
   it('uses an injected capability probe and preserves its device matrix', async () => {
     const capabilityProbe = jest.fn().mockResolvedValue({
       camera: 'unsupported',

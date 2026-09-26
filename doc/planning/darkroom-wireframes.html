@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Darkroom · Two rough directions</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font:
+          16px/1.5 system-ui,
+          sans-serif;
+        background: #191719;
+        color: #f9ebd5;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+      }
+      main {
+        max-width: 1120px;
+        margin: auto;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0 0 12px;
+      }
+      h1 {
+        font-size: 30px;
+      }
+      h2 {
+        font-size: 24px;
+      }
+      h3 {
+        font-size: 18px;
+      }
+      small,
+      .muted {
+        color: #c6b9b0;
+      }
+      button,
+      select,
+      input,
+      textarea {
+        font: inherit;
+        color: inherit;
+        background: #302d30;
+        border: 1px solid #95867b;
+        border-radius: 6px;
+        padding: 10px;
+        min-height: 44px;
+        max-width: 100%;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        background: #484047;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      select:focus-visible,
+      a:focus-visible {
+        outline: 3px solid #ffa572;
+        outline-offset: 3px;
+      }
+      button[aria-pressed='true'],
+      .primary {
+        background: #f3ac80;
+        color: #211c19;
+        border-color: #f3ac80;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      a {
+        color: #ffc59f;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+      }
+      textarea {
+        min-height: 90px;
+      }
+      input,
+      textarea {
+        width: 100%;
+      }
+      .controls,
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .controls {
+        margin: 20px 0;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(280px, 430px) 1fr;
+        gap: 32px;
+        align-items: start;
+      }
+      .phone {
+        border: 1px solid #95867b;
+        border-radius: 24px;
+        overflow: hidden;
+        background: #252326;
+      }
+      .identity {
+        padding: 18px;
+        border-bottom: 1px solid #61565a;
+      }
+      .identity strong {
+        font-family: monospace;
+        font-size: 22px;
+      }
+      .tag {
+        font: 12px/1.6 monospace;
+        letter-spacing: 0.06em;
+        color: #ffc59f;
+      }
+      .screen {
+        padding: 22px;
+        min-height: 440px;
+        display: grid;
+        gap: 16px;
+        align-content: start;
+      }
+      .screen p {
+        margin: 0;
+      }
+      .screen button {
+        width: 100%;
+      }
+      .screen .row > * {
+        flex: 1;
+      }
+      .panel {
+        border: 1px solid #84766b;
+        padding: 14px;
+        border-radius: 8px;
+      }
+      .film {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        border-block: 5px dashed #95867b;
+        padding: 15px 0;
+      }
+      .film span {
+        background: #1d1b1e;
+        min-height: 88px;
+        display: grid;
+        place-content: center;
+        text-align: center;
+        font: 12px monospace;
+        border: 1px solid #84766b;
+      }
+      .clock {
+        font: 46px/1.1 monospace;
+      }
+      .nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        padding: 12px;
+        border-top: 1px solid #61565a;
+      }
+      .nav button {
+        flex: 1;
+        min-width: 65px;
+        font-size: 13px;
+        padding: 8px 4px;
+      }
+      .steps {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+      }
+      .steps span {
+        font: 12px monospace;
+        border-bottom: 2px solid #84766b;
+        padding: 5px;
+      }
+      .notes {
+        display: grid;
+        gap: 20px;
+      }
+      .notes section {
+        border-top: 1px solid #61565a;
+        padding-top: 16px;
+      }
+      li {
+        margin: 8px 0;
+      }
+      .notice {
+        padding: 12px;
+        background: #302d30;
+        border-left: 3px solid #ffa572;
+      }
+      .status {
+        min-height: 24px;
+        color: #ffc59f;
+      }
+      footer {
+        margin-top: 24px;
+        color: #c6b9b0;
+        font-size: 14px;
+      }
+      @media (max-width: 730px) {
+        body {
+          padding: 16px;
+        }
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .phone {
+          max-width: 430px;
+          width: 100%;
+          margin: auto;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="tag">LOI · CONCEPT B / DARKROOM · ROUGH WIREFRAMES</p>
+      <h1>One roll. Two ways through.</h1>
+      <p>
+        Two complete interaction directions for peer critique. All data and interactions below are
+        labelled design fixtures; nothing is recorded, sent, saved or released.
+      </p>
+      <div class="controls" aria-label="Direction">
+        <button id="d1" aria-pressed="true">B1 · Roll dashboard</button
+        ><button id="d2" aria-pressed="false">B2 · Guided roll</button>
+      </div>
+      <div class="controls">
+        <label
+          >Inspect screen<select id="page">
+            <option value="entry">Demo entry</option>
+            <option value="setup">Group setup</option>
+            <option value="home" selected>Home / current roll</option>
+            <option value="camera">Camera / contribution</option>
+            <option value="chat">Chat</option>
+            <option value="archive">Archive / reveal</option>
+            <option value="settings">Settings</option>
+          </select></label
+        ><label
+          >Inspect fixture state<select id="state">
+            <option value="collecting">Collecting / locked</option>
+            <option value="loading">Loading</option>
+            <option value="empty">Empty</option>
+            <option value="denied">Permission / access denied</option>
+            <option value="failed">Failed / retry</option>
+            <option value="processing">Processing</option>
+            <option value="released">Released</option>
+            <option value="offline">Runtime unavailable</option>
+          </select></label
+        >
+      </div>
+      <div class="layout">
+        <article class="phone" aria-label="Interactive rough phone wireframe">
+          <header class="identity">
+            <div class="row"><strong>rewind</strong><span class="tag">DESIGN FIXTURE</span></div>
+            <small id="identity">Amber · synthetic member · Weekend People</small>
+          </header>
+          <div id="screen" class="screen"></div>
+          <nav id="nav" class="nav" aria-label="Proposed app navigation"></nav>
+        </article>
+        <aside class="notes">
+          <section>
+            <h2 id="direction-title"></h2>
+            <p id="direction-description"></p>
+          </section>
+          <section>
+            <h3>Screen rationale</h3>
+            <p id="rationale"></p>
+          </section>
+          <section>
+            <h3>Same review tasks</h3>
+            <ol>
+              <li>Enter the Demo and create or join a group.</li>
+              <li>Find the prompt and remaining allowance.</li>
+              <li>Review a still or clip and explain what happens next.</li>
+              <li>Find Chat and the current synthetic identity.</li>
+              <li>Find a film or explain why it is unavailable.</li>
+            </ol>
+          </section>
+          <section>
+            <h3>Peer critique prompts</h3>
+            <p id="challenge"></p>
+            <p>
+              Sam and 嘉宇 should each record their own observations, hesitations,
+              accessibility/state challenge and suggested change. No feedback or direction approval
+              has been filled in.
+            </p>
+          </section>
+          <div class="notice">
+            Opaque frames never contain media. Local still saving differs from group clip
+            submission. A countdown reaching zero does not publish a film.
+          </div>
+        </aside>
+      </div>
+      <footer>
+        Low-fidelity proposal, not an implemented app or a platform test. B1 retains five
+        destinations; B2 proposes stage-based navigation and nested screens. Native Back, focus
+        restoration, permissions and persistence must be implemented and tested later.
+      </footer>
+    </main>
+    <script>
+      const screen = document.getElementById('screen'),
+        nav = document.getElementById('nav'),
+        page = document.getElementById('page'),
+        state = document.getElementById('state');
+      let direction = 1,
+        mode = 'still',
+        review = false,
+        accepted = false;
+      const button = (label, action, primary = false) =>
+        `<button type="button" data-action="${action}" class="${primary ? 'primary' : ''}">${label}</button>`;
+      const film = () =>
+        '<div class="film" aria-label="Illustrative sealed frames, not a contribution count"><span>SEALED<br>NO PREVIEW</span><span>SEALED<br>NO PREVIEW</span><span>SEALED<br>NO PREVIEW</span></div>';
+      const prompt =
+        '<div class="panel"><small>THIS CYCLE’S PROMPT</small><h3>What made you pause and smile?</h3></div>';
+      const allowance =
+        '<p><strong>5 contributions · 30 seconds left</strong><br><small>Sample allowance · 0 used</small></p>';
+      const rationale = {
+        entry:
+          'Explicit synthetic access comes before all group content. This is a chooser, not account registration.',
+        setup:
+          'Name and prompt remain the core creation fields. Joining uses the existing invitation model; both paths remain visible.',
+        home: 'B1 prioritizes roll status and reveal timing. B2 prioritizes the next task and places the sealed roll in the journey stages.',
+        camera:
+          'The capturing member can review their own draft. Still acceptance is local-only; clip submission requires the runtime. These are distinct outcomes.',
+        chat: 'Keep text conversation separate from sealed media. An offline surface must not pretend a message was delivered.',
+        archive:
+          'Published readiness controls playback. Locked, empty, preparing and unavailable each explain a different reason there is no film.',
+        settings:
+          'Current synthetic actor and group remain explicit. Reset names its local scope; group management remains discoverable.',
+      };
+      function go(p) {
+        page.value = p;
+        review = false;
+        accepted = false;
+        render();
+      }
+      function statusPanel() {
+        const s = state.value;
+        if (s === 'collecting') return film();
+        if (s === 'released')
+          return (
+            '<div class="panel"><h3>Released · sample film</h3><p>Publication is confirmed in this represented state.</p>' +
+            button('Open Archive', 'archive') +
+            '</div>'
+          );
+        const copy = {
+          loading: ['Checking the roll…', 'Loading state; no media preview.'],
+          empty: ['No moments yet', 'Add the first moment when collection is open.'],
+          denied: ['Group access unavailable', 'No group media or message content is shown.'],
+          failed: ['Could not load roll', 'Try again without changing your selection.'],
+          processing: [
+            'Preparing the group film',
+            'Submitted media remains sealed until publication.',
+          ],
+          offline: ['Runtime unavailable', 'Connect the local runtime to check release.'],
+        }[s];
+        return `<div class="panel"><h3>${copy[0]}</h3><p>${copy[1]}</p>${['failed', 'offline'].includes(s) ? button('Retry · fixture', 'retry') : ''}</div>`;
+      }
+      function camera() {
+        if (state.value === 'denied')
+          return (
+            '<h2>Camera access denied</h2><p>Allow camera access in device Settings, then try again. Clips also need microphone access.</p>' +
+            button('Retry access · fixture', 'retry') +
+            button('Back to roll', 'home')
+          );
+        if (state.value === 'loading')
+          return '<h2>Checking camera access…</h2><p>No capture is enabled yet.</p>';
+        if (accepted)
+          return (
+            `<h2>${mode === 'still' ? 'Saved on this device' : 'Submission queued · fixture'}</h2><p>${mode === 'still' ? 'Local still metadata only. This did not upload a group contribution or consume the sample allowance.' : 'This represents a successful connected submission, not an actual upload. Media stays sealed while processing.'}</p>` +
+            button('Return to roll', 'home', true) +
+            button('Capture another', 'again')
+          );
+        if (review)
+          return (
+            `<h2>Review ${mode}</h2><div class="panel">SYNTHETIC ${mode.toUpperCase()} PLACEHOLDER<br>No physical media captured${mode === 'clip' ? '<p>Sample duration: 6 seconds · trim controls represented</p>' : ''}</div><p>Your draft is visible to you before acceptance.</p>` +
+            button(
+              mode === 'still' ? 'Save on this device · fixture' : 'Submit clip · fixture',
+              'accept',
+              true,
+            ) +
+            button('Retake', 'again') +
+            button('Discard', 'home')
+          );
+        return (
+          '<h2>Add to the roll</h2><div class="row">' +
+          button('Still', 'still', mode === 'still') +
+          button('Clip', 'clip', mode === 'clip') +
+          '</div><p class="tag">SIMULATED CAPTURE ONLY</p><div class="panel">Capture area · no live camera</div>' +
+          allowance +
+          (state.value === 'failed'
+            ? '<p>Previous capture failed. Retake without claiming a successful contribution.</p>'
+            : '') +
+          (mode === 'clip' && state.value === 'offline'
+            ? '<p>Clip submission needs the local runtime. No upload is available in this state.</p>'
+            : '') +
+          button(
+            mode === 'still' ? 'Simulate still review' : 'Simulate clip review',
+            'review',
+            true,
+          )
+        );
+      }
+      function archive() {
+        if (state.value !== 'released')
+          return (
+            '<h2>Archive</h2>' +
+            statusPanel() +
+            '<p>No playable film is represented in this state.</p>' +
+            button('Check release · fixture', 'retry')
+          );
+        return (
+          '<h2>Released roll</h2><div class="panel"><h3>Group film · published</h3><p>Player position only. No video is embedded.</p>' +
+          button('Play sample · explanation', 'play') +
+          '</div><h3>Released collection</h3><p>Sample group film · current cycle</p>' +
+          button('Download · explanation', 'download')
+        );
+      }
+      function content() {
+        switch (page.value) {
+          case 'entry':
+            return (
+              '<h2>Enter the Darkroom</h2><p>Local Demo with synthetic members. This is not a secure account.</p>' +
+              (['loading', 'failed'].includes(state.value)
+                ? `<p>${state.value === 'loading' ? 'Restoring Demo access…' : 'Could not restore Demo access. Try again.'}</p>`
+                : '') +
+              button('Enter Demo as Amber', 'home', true) +
+              button('Enter Demo as Birch', 'birch') +
+              button('Group setup preview', 'setup')
+            );
+          case 'setup':
+            return (
+              '<h2>Your group</h2><label>Group name<input maxlength="80" placeholder="e.g. Weekend People"></label><label>Prompt<textarea maxlength="160" placeholder="What made you pause and smile?"></textarea></label>' +
+              button('Create group · fixture', 'create', true) +
+              '<p>Or join an existing group</p><label>Invitation code<input placeholder="Enter local invitation code"></label>' +
+              button('Join · fixture', 'join') +
+              button('Cancel', 'settings')
+            );
+          case 'home':
+            return (
+              '<h2>Weekend People</h2>' +
+              (direction === 1
+                ? '<p class="tag">CURRENT ROLL · ' +
+                  (state.value === 'collecting' ? 'COLLECTING' : state.value.toUpperCase()) +
+                  '</p><p class="clock">02d : 14h</p><small>Sample collection time remaining; not a publication guarantee</small>' +
+                  statusPanel() +
+                  prompt +
+                  allowance
+                : prompt +
+                  allowance +
+                  button('1 · Contribute a moment', 'camera', true) +
+                  '<div class="panel"><h3>2 · Wait for reveal</h3><p>Sample collection time: 02d 14h</p>' +
+                  statusPanel() +
+                  '</div>' +
+                  button('3 · View release', 'archive')) +
+              (direction === 1
+                ? button(
+                    state.value === 'released' ? 'Open Archive' : 'Add to the roll',
+                    state.value === 'released' ? 'archive' : 'camera',
+                    true,
+                  )
+                : '')
+            );
+          case 'camera':
+            return camera();
+          case 'archive':
+            return archive();
+          case 'chat':
+            return (
+              '<h2>Group conversation</h2>' +
+              (['offline', 'denied', 'loading', 'empty', 'failed'].includes(state.value)
+                ? '<p>' +
+                  {
+                    offline: 'Connect the local runtime to load Chat.',
+                    denied: 'You cannot access this group conversation.',
+                    loading: 'Loading messages…',
+                    empty: 'No messages yet.',
+                    failed: 'Connection lost. Keep your draft and retry.',
+                  }[state.value] +
+                  '</p>'
+                : '<div class="panel"><strong>Birch · sample message</strong><p>Looking forward to the reveal.</p><small>Illustrative text, not a real participant observation</small></div>') +
+              (!['offline', 'denied', 'loading'].includes(state.value)
+                ? '<label>Message<textarea id="draft" placeholder="Write to the group"></textarea></label>' +
+                  button('Send · fixture', 'send', true)
+                : '') +
+              button('Back to roll', 'home')
+            );
+          case 'settings':
+            return (
+              '<h2>Settings</h2><div class="panel"><h3>Amber · synthetic member</h3><p>Weekend People · Owner</p><small>Local Demo access, not authentication</small></div>' +
+              button('Create or join a group', 'setup') +
+              '<p>Device reminders: native capability required; unavailable in this browser wireframe.</p>' +
+              button('Sign out of Demo · fixture', 'entry') +
+              button('Reset local Demo data…', 'reset')
+            );
+        }
+      }
+      function render() {
+        document.getElementById('d1').setAttribute('aria-pressed', direction === 1);
+        document.getElementById('d2').setAttribute('aria-pressed', direction === 2);
+        document.getElementById('direction-title').textContent =
+          direction === 1 ? 'B1 · Roll dashboard' : 'B2 · Guided roll';
+        document.getElementById('direction-description').textContent =
+          direction === 1
+            ? 'Five persistent destinations. A countdown and opaque roll lead Home; members choose where to go. Closest to the supplied Home reference and existing app navigation.'
+            : 'Three destinations: Roll, Conversation and Settings. Capture and Archive sit inside the roll journey, reached by explicit stage actions. Task-first Home replaces the countdown-led dashboard.';
+        document.getElementById('rationale').textContent = rationale[page.value];
+        document.getElementById('challenge').textContent =
+          direction === 1
+            ? 'Can you find the prompt and remaining allowance quickly beneath the roll? Does the five-item navigation remain usable at large text sizes?'
+            : 'Can you find Archive without a dedicated tab? Does the guided sequence falsely suggest Chat or capture must be completed in order?';
+        document.getElementById('identity').textContent =
+          page.value === 'entry'
+            ? 'No active member · Local Demo'
+            : 'Amber · synthetic member · Weekend People';
+        screen.innerHTML =
+          (direction === 2 && !['entry', 'setup', 'settings', 'chat'].includes(page.value)
+            ? '<div class="steps" aria-label="Roll stages"><span>1 Capture</span><span>2 Sealed</span><span>3 Reveal</span></div>'
+            : '') +
+          content() +
+          '<p id="feedback" class="status" role="status"></p>';
+        nav.innerHTML = ['entry', 'setup'].includes(page.value)
+          ? ''
+          : (direction === 1
+              ? [
+                  ['home', 'Home'],
+                  ['camera', 'Camera'],
+                  ['chat', 'Chat'],
+                  ['archive', 'Archive'],
+                  ['settings', 'Settings'],
+                ]
+              : [
+                  ['home', 'Roll'],
+                  ['chat', 'Conversation'],
+                  ['settings', 'Settings'],
+                ]
+            )
+              .map(
+                ([key, label]) =>
+                  `<button data-action="${key}" ${page.value === key ? 'aria-current="page"' : ''}>${label}</button>`,
+              )
+              .join('');
+      }
+      document.getElementById('d1').onclick = () => {
+        direction = 1;
+        render();
+      };
+      document.getElementById('d2').onclick = () => {
+        direction = 2;
+        render();
+      };
+      page.onchange = () => {
+        review = false;
+        accepted = false;
+        render();
+      };
+      state.onchange = () => {
+        review = false;
+        accepted = false;
+        render();
+      };
+      document.addEventListener('click', (e) => {
+        const a = e.target.closest('[data-action]')?.dataset.action;
+        if (!a) return;
+        if (Object.keys(rationale).includes(a)) {
+          go(a);
+          return;
+        }
+        if (a === 'still' || a === 'clip') {
+          mode = a;
+          review = false;
+          render();
+          return;
+        }
+        if (a === 'review') {
+          review = true;
+          render();
+          return;
+        }
+        if (a === 'again') {
+          review = false;
+          accepted = false;
+          render();
+          return;
+        }
+        if (a === 'accept') {
+          if (mode === 'clip' && state.value === 'offline') {
+            document.getElementById('feedback').textContent =
+              'Cannot submit: local runtime unavailable.';
+            return;
+          }
+          accepted = true;
+          render();
+          return;
+        }
+        if (a === 'reset') {
+          screen.innerHTML =
+            '<h2>Reset local Demo data?</h2><p>In the app this removes saved Demo access, local groups and app-owned camera files on this device. No real data is changed here.</p>' +
+            button('Keep local data', 'settings') +
+            button('Simulate reset', 'entry');
+          return;
+        }
+        const copy = {
+          retry: 'Retry represented. Choose a different fixture state above to inspect its result.',
+          play: 'Published player would open here. No media is embedded in this wireframe.',
+          download: 'Authorized download would start here in the app. No file is downloaded.',
+          send: 'Message delivery is represented only. Your draft remains visible.',
+          create: 'Group creation represented only; the sample group and actor are unchanged.',
+          join: 'Invitation validation represented only; membership is unchanged.',
+          birch:
+            'Alternative member selection represented only; this wireframe keeps Amber as its example.',
+        };
+        document.getElementById('feedback').textContent = copy[a] || 'Design fixture only.';
+      });
+      render();
+    </script>
+  </body>
+</html>
