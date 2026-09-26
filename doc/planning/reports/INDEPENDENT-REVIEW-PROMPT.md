@@ -1,39 +1,39 @@
 # Independent review request — Rewind Sprint 2 Demo
 
-You are a genuine non-author reviewer of changes submitted by the Collaboration95 GitHub account. Review the code and evidence yourself. A green CI run is supporting evidence, not a reason to approve without inspection. For each PR, return PASS, REVISE, or BLOCKED with the current head and base, checks, files inspected, tests or evidence checked, actionable findings with file and line, and any limitation. Submit a GitHub approval only from your own account after resolving findings. Do not use the author's account.
+You are reviewing four PRs submitted by the Collaboration95 account. Please keep this review practical and proportional. Check that each PR does what it says, that its current required CI checks pass, and that the synthetic Demo works at a basic level. If it looks right and you find no concrete regression or material safety problem, **PASS and approve it**. Do not hold it for speculative edge cases, style preferences, exhaustive retesting, or features outside this sprint.
 
-Read the audit handoff, closure checklist, initial audit, and verification evidence under doc/planning. The present GitHub milestone is Sprint 2. The report file is titled Sprint 1 and needs a label correction before external submission. Current sprint acceptance covers only the synthetic Demo; real accounts and remote/PWA reminders are next sprint.
+You must be a genuine non-author reviewer using your own GitHub account. The author cannot satisfy the required independent approval. The code approval is separate from Andrew's Terraform plan review and the later live hosted acceptance.
 
-First refresh GitHub's live PR heads, bases, checks, conversations, and review decisions. The September 26 snapshot in the evidence folder is historical. Review each diff against its actual base. PR #204 is stacked on #205; PR #207 is stacked on #206. After a parent merges, verify the child targets main, its diff stays focused, and required checks and approvals are current.
+Read the audit handoff and closure checklist in this directory for context. The GitHub milestone is Sprint 2. The report is still named Sprint 1 and should be relabeled before external submission. This sprint covers the synthetic Demo. Real accounts and remote/PWA reminders are next sprint.
 
-## Set up a clean test checkout
+## Quick setup and tests
 
-Use a new clone or worktree. Do not test from the author's original dirty checkout. Install the version in .nvmrc (Node 22.23.3, npm 10 or newer), Python 3, Docker if running the container lifecycle, and Playwright Chromium if the browser is missing. Never use real AWS credentials for local or CI fixtures. Run these commands from the repository root; replace the path with your own clean clone:
+First refresh the current PR heads, bases, CI checks, comments and reviews. The September 26 evidence snapshot is historical. Use a clean clone or worktree if you run tests; the author's original checkout contains unrelated uncommitted work. Use Node 22.23.3 from .nvmrc and npm 10 or newer.
 
     git clone https://github.com/Collaboration95/rewind-app.git /tmp/rewind-independent-review
     cd /tmp/rewind-independent-review
     git fetch origin
-    node --version
-    npm ci
-
-For a quick combined candidate smoke test, check out origin/codex/sprint-audit-fixes in detached mode and run:
-
     git switch --detach origin/codex/sprint-audit-fixes
+    npm ci
     npm run check
-    npm run test:responsive
-    npm run test:production-e2e
 
-The combined candidate passed 31 root, 203 server, 357 frontend and 6 accessibility tests in the required check; 19 responsive tests and the two-test production-shaped E2E also passed. Those counts are reference evidence for the historical head, not a substitute for recording your own result. The E2E uses synthetic local Demo data and a disposable local server. It does not deploy AWS.
+The combined candidate previously passed 31 root, 203 server, 357 frontend and 6 accessibility tests. Current green GitHub checks on each PR are valid test evidence. You do **not** have to rerun every suite to approve. If you want a quick browser journey, run npm run test:production-e2e; if you want responsive UI checks, run npm run test:responsive. Install Playwright Chromium if your machine needs it. These tests use synthetic local data and do not deploy AWS.
 
-For focused review, fetch and switch to the actual PR head before each test. For #206, use origin/codex/audit-server-fixes and run npm run check plus npm run test:production-e2e. For #207, use origin/codex/audit-performance and run npm run check, then verify the two state-safety regressions in tests/chat-screen.test.tsx and tests/archive-scope.test.tsx. For #205, use origin/codex/audit-release and run npm run check and bash tests/deploy/release-bundle.test.sh; npm run test:host-lifecycle requires a disposable local Docker environment. For #204, use origin/codex/audit-devsecops and run npm run check and python3 -m unittest discover -s tests/security -p test_*.py. Also inspect the GitHub CodeQL, image and IaC scan jobs, their retained artifacts, and the exact findings/exceptions. The CI result on each current PR head is the authoritative required gate.
+If a specific part worries you, switch to its actual PR head and run only the relevant test: #206 is origin/codex/audit-server-fixes; #207 is origin/codex/audit-performance; #205 is origin/codex/audit-release; #204 is origin/codex/audit-devsecops. Useful focused commands are npm run test:production-e2e, bash tests/deploy/release-bundle.test.sh, npm run test:host-lifecycle (needs disposable Docker), and python3 -m unittest discover -s tests/security -p 'test_*.py'. Check the live CodeQL/image/IaC summaries for #204; open detailed artifacts only if a result needs explanation.
 
-To compare a stacked PR without pulling in its parent diff, use GitHub's Files changed view or compare the parent branch to the child head. Use main as base for #205 and #206, codex/audit-release for #204, and codex/audit-server-fixes for #207. If a parent has merged, refetch and inspect the new effective base/diff before reviewing or approving.
+## Review these PRs
 
-1. Review https://github.com/Collaboration95/rewind-app/pull/205 — release artifacts. Trace clean origin/main and green-main-run provenance, both image IDs, config and schema checksums, health-gated promotion, failed load or health check, compatible rollback, and verified wake inputs. Check the patched runtime and web images, non-root web port 8080, PWA assets and cloud-free lifecycle evidence. Reject any broadening of the Terraform wake allowlist merely to absorb unrelated Lambda or IAM drift.
-2. Review https://github.com/Collaboration95/rewind-app/pull/204 — CI and security. Check that all parallel static, server, frontend, browser and deployment jobs must succeed for the required aggregate gate. Verify CodeQL for JavaScript/TypeScript, Python and Actions; both image scans, SBOMs and npm audit threshold. Inspect the full IaC output and negative gate tests. Five exact resource-specific IaC exceptions are owned by Guruprasath and expire 10 October 2026; confirm unknown, new, duplicate, unused and expired findings fail. Residual exceptions remain risks. CodeQL result merge requirements need a baseline on main, and the configured release environment is not yet a Terraform-apply gate because no job uses it.
-3. Review https://github.com/Collaboration95/rewind-app/pull/206 — Demo correctness. Check the reveal-client receiver and class-backed regression; native XHR EventSource LF/CRLF, replay, bounds, reconnect and teardown; persisted-session revalidation inside group, invite and upload write transactions; the three-second seeded MP4, quota, digest and output paths; fresh database consistency and genuine missing-output detection. Confirm production E2E owner and non-owner clip access. Native simulator evidence does not prove physical camera or hosted behavior.
-4. Review https://github.com/Collaboration95/rewind-app/pull/207 — paging, media bounds and native UI. Check stable cursors, bounded history/archive pages, reaction batching and unread metadata; archive cache identity and digest; private download snapshots; the 96 MiB and three-request budget within a 128 MiB tmpfs, 413/429 responses and lease release; React StrictMode duplicate/replay and old-session archive-page regressions. Check Send above the iOS keyboard, archive contrast and current-cycle explanation. Manual swipe to the oldest archive entries remains an open acceptance check.
+1. [#206 — Demo correctness](https://github.com/Collaboration95/rewind-app/pull/206): confirm Chat, reveal, seeded quota/media and basic owner/non-owner access align with the passing tests and simulator evidence. Focus on an obvious access or data-integrity regression.
+2. [#207 — performance and native UI](https://github.com/Collaboration95/rewind-app/pull/207): confirm histories and media snapshots are bounded and the iOS keyboard/archive fixes make sense. Focus on obvious data mixing, integrity or resource-exhaustion mistakes. It is stacked on #206.
+3. [#205 — release reliability](https://github.com/Collaboration95/rewind-app/pull/205): confirm a green main build produces the release bundle, health checks precede promotion, rollback is covered, and images are patched. Look for an obvious unsafe widening of the Terraform wake allowlist.
+4. [#204 — CI and security](https://github.com/Collaboration95/rewind-app/pull/204): confirm the required quality, CodeQL, image and IaC checks are green. Note five narrowly defined IaC exceptions owned by Guruprasath and expiring 10 October 2026. Investigate a missing job, failing scan or broad exception. It is stacked on #205.
 
-Keep infrastructure and hosted acceptance separate from code review. Andrew must review a fresh exact Terraform plan after code changes; Guruprasath owns apply. The September 26 sanitized plan showed five creates, three updates and no deletes, including unrelated Lambda/scheduler-policy drift rejected by the wake guard. Do not circulate the private raw plan, state, tfvars, credentials or backups. No AWS apply occurred in the audit.
+Review #205 and #206 against main; #204 against #205; #207 against #206. When a parent merges, verify its child now targets main, its diff remains focused, and required checks/approval still apply.
 
-Do not close #190, #200 or #145 on code evidence alone. They require actual lifecycle and origin verification, two public HTTPS journeys, restart, denial, rollback or fallback, and a genuine non-author run. Record physical Android APK and installed iPhone PWA status honestly. Keep #203 and Sprint 2 open until the agreed acceptance evidence is linked. Never bypass branch protection or count the author as the independent reviewer.
+For each PR, give a short **PASS / REVISE / BLOCKED** decision with its current head/base, CI result, one or two things you checked and any concrete issue. If the basic behavior works and CI is green, approve it without extending the review unnecessarily. If there is a real defect, request the smallest fix and recheck it.
+
+## Separate acceptance gates
+
+Do not treat code approval as AWS or hosted acceptance. Andrew reviews a fresh exact Terraform plan; Guruprasath owns apply. The old sanitized snapshot showed five creates, three updates and zero deletes, including Lambda/policy drift rejected by the wake guard. Do not widen that guard just to make the plan pass. Do not circulate raw Terraform plans, state, tfvars, credentials or backups.
+
+Keep #190, #200, #145 and the Sprint 2 tracker #203 open until real lifecycle, origin, two public HTTPS journeys, restart/denial/rollback and genuine non-author evidence is linked. Record physical Android APK and installed iPhone PWA status honestly. The simulator evidence is useful but does not claim physical-device or hosted acceptance.
