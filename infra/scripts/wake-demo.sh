@@ -185,6 +185,7 @@ validate_recreate_plan() {
             "aws_lightsail_static_ip.rewind[0]",
             "aws_lightsail_static_ip_attachment.rewind[0]",
             "aws_lightsail_instance_public_ports.rewind[0]",
+            "aws_lightsail_distribution.web[0]",
             "aws_iam_role.power_controller[0]",
             "aws_iam_role_policy.power_controller[0]",
             "aws_iam_role_policy.operator[0]",
@@ -193,6 +194,21 @@ validate_recreate_plan() {
             "aws_scheduler_schedule.automatic_start[0]"
           ] | index($address)
         ) != null and $actions == ["create"]
+      ) or
+      (
+        .address == "aws_iam_role_policy.power_controller[0]" and
+        (.change.actions // []) == ["update"] and
+        (.change.after_unknown.policy == true) and
+        ((.change.after_unknown | keys) == ["policy"]) and
+        ((.change.before | del(.policy)) == (.change.after | del(.policy))) and
+        ((.change.before.policy | fromjson | .Statement) |
+          any(.[];
+            .Sid == "ControlOnlyTheRewindDemo" and
+            .Effect == "Allow" and
+            (.Action | sort) == ["lightsail:StartInstance", "lightsail:StopInstance"] and
+            ((.Resource | if type == "array" then .[0] else . end) |
+              test("^arn:aws:lightsail:[a-z0-9-]+:[0-9]{12}:Instance/[A-Za-z0-9-]+$"))
+          ))
       ) or
       (
         .address as $address |
@@ -294,7 +310,7 @@ if ! ssh "${SSH_OPTS[@]}" "$SSH_USER@$host_ip" '
   set -Eeuo pipefail
   sudo install -o ubuntu -g ubuntu -m 0600 /tmp/rewind.env /srv/rewind/rewind.env
   test "$(sha256sum /tmp/rewind-release.tar | cut -d " " -f 1)" = "'"$(sha256sum "$RELEASE_BUNDLE" | cut -d ' ' -f 1)"'"
-  bash /tmp/release-host.sh install /tmp/rewind-release.tar
+  bash /tmp/release-host.sh prepare /tmp/rewind-release.tar
 ' >/dev/null 2>&1; then
   lifecycle_guard_reject 'host bundle installation failed; restore was not attempted.'
   exit 1
@@ -316,6 +332,7 @@ if [[ "$SEED" == 1 ]]; then
       sleep 2
     done
     [[ "$health_ready" == 1 ]]
+    ./deploy/release-host.sh promote
   ' >/dev/null 2>&1; then
     lifecycle_guard_reject 'seed-mode host initialization or health verification failed.'
     exit 1
@@ -351,6 +368,7 @@ else
       sleep 2
     done
     [[ "\$health_ready" == 1 ]]
+    ./deploy/release-host.sh promote
   " >/dev/null 2>&1; then
     lifecycle_guard_reject 'verified recovery restore or final health verification failed.'
     exit 1

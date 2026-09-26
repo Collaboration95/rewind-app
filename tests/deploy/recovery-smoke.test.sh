@@ -241,7 +241,7 @@ if [[ "$remote_command" == *'test -f /srv/rewind/.host-bootstrap-prerequisites'*
   exit 0
 fi
 
-if [[ "$remote_command" == *'release-host.sh install'* ]]; then
+if [[ "$remote_command" == *'release-host.sh prepare'* ]]; then
   log_event 'host.bundle.install'
   exit 0
 fi
@@ -359,9 +359,13 @@ SQL
   {"address":"aws_lightsail_instance.rewind[0]","change":{"actions":["create"]}},
   {"address":"aws_lightsail_static_ip.rewind[0]","change":{"actions":["create"]}},
   {"address":"aws_lightsail_static_ip_attachment.rewind[0]","change":{"actions":["create"]}},
-  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["create"]}}
+  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["create"]}},
+  {"address":"aws_lightsail_distribution.web[0]","change":{"actions":["create"]}}
 ]}
 JSON
+  local power_policy='{"Statement":[{"Sid":"ControlOnlyTheRewindDemo","Effect":"Allow","Action":["lightsail:StartInstance","lightsail:StopInstance"],"Resource":"arn:aws:lightsail:ap-southeast-1:123456789012:Instance/rewind-demo"}]}'
+  jq --arg policy "$power_policy" '.resource_changes += [{"address":"aws_iam_role_policy.power_controller[0]","change":{"actions":["update"],"before":{"name":"rewind-demo-power-controller","role":"rewind-demo-power-controller","policy":$policy},"after":{"name":"rewind-demo-power-controller","role":"rewind-demo-power-controller","policy":null},"after_unknown":{"policy":true}}}]' "$PLAN_JSON" > "$CASE_ROOT/expanded-plan.json"
+  mv "$CASE_ROOT/expanded-plan.json" "$PLAN_JSON"
 }
 
 run_wake() {

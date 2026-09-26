@@ -27,9 +27,13 @@ cat > "$PLAN_JSON" <<'JSON'
   {"address":"aws_lightsail_instance.rewind[0]","change":{"actions":["create"]}},
   {"address":"aws_lightsail_static_ip.rewind[0]","change":{"actions":["create"]}},
   {"address":"aws_lightsail_static_ip_attachment.rewind[0]","change":{"actions":["create"]}},
-  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["create"]}}
+  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["create"]}},
+  {"address":"aws_lightsail_distribution.web[0]","change":{"actions":["create"]}}
 ]}
 JSON
+power_policy='{"Statement":[{"Sid":"ControlOnlyTheRewindDemo","Effect":"Allow","Action":["lightsail:StartInstance","lightsail:StopInstance"],"Resource":"arn:aws:lightsail:ap-southeast-1:330599756236:Instance/rewind-demo"}]}'
+jq --arg policy "$power_policy" '.resource_changes += [{"address":"aws_iam_role_policy.power_controller[0]","change":{"actions":["update"],"before":{"name":"rewind-demo-power-controller","role":"rewind-demo-power-controller","policy":$policy},"after":{"name":"rewind-demo-power-controller","role":"rewind-demo-power-controller","policy":null},"after_unknown":{"policy":true}}}]' "$PLAN_JSON" > "$TEST_ROOT/expanded-plan.json"
+mv "$TEST_ROOT/expanded-plan.json" "$PLAN_JSON"
 
 cat > "$FAKE_BIN/aws" <<'FAKE_AWS'
 #!/usr/bin/env bash
@@ -270,6 +274,16 @@ fi
 [[ "$output" == *'differs from the reviewed digest'* ]]
 ! grep -Eq '^(aws|terraform|ssh|scp|rsync) ' "$COMMAND_LOG"
 export RELEASE_BUNDLE_SHA256="$saved_release_digest"
+
+jq '(.resource_changes[] | select(.address == "aws_iam_role_policy.power_controller[0]").change.after_unknown) = {"policy":true,"role":true}' "$PLAN_JSON" > "$TEST_ROOT/unsafe-plan.json"
+cp "$TEST_ROOT/unsafe-plan.json" "$PLAN_JSON"
+if output="$(run_wake --latest 2>&1)"; then
+  printf 'Expected unrelated IAM unknown change to be rejected.\n' >&2
+  exit 1
+fi
+[[ "$output" == *'unexpected resource change'* ]]
+jq '(.resource_changes[] | select(.address == "aws_iam_role_policy.power_controller[0]").change.after_unknown) = {"policy":true}' "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
+cp "$TEST_ROOT/safe-plan.json" "$PLAN_JSON"
 
 for invalid_uri in \
   "s3://other-backup-bucket/rewind-demo/rewind-$NEWER_VALID_STAMP.manifest.json" \

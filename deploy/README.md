@@ -344,10 +344,14 @@ export RELEASE_BUNDLE_SHA256=<reviewed-sha256-of-bundle>
 Build that bundle once on the green `origin/main` commit with a clean checkout,
 including no untracked files. The `--green-sha` value is the exact commit whose
 required CI checks passed; record the resulting bundle SHA-256 alongside it.
-`--config-version` names the operator-reviewed private configuration contract;
+The build command queries the completed successful `Quality checks` push run
+for that SHA on `main` through `gh`; the operator machine needs authenticated
+GitHub CLI access. A matching SHA supplied on the command line alone cannot
+authorize a build. `--config-version` names the operator-reviewed private configuration contract;
 change it when a release requires an incompatible environment layout. The
 bundle contains a Git-archived deployment allowlist, both Docker images tagged
-with the same commit SHA, and checksums. Build on an operator/CI machine with
+and labeled with the same commit SHA, exact image IDs, the configuration
+template revision, and checksums. Build on an operator/CI machine with
 Docker; the host loads those exact images and does not rebuild the app:
 
 ```sh
@@ -366,7 +370,12 @@ image. A new schema version can block rollback to an older image. `wake-demo.sh`
 still requires `--apply --confirm` and the verified recovery point; `--seed`
 remains only for first installation. After deployment, check the host runtime,
 the public HTTPS shell and `/api/health`, and the synthetic group journey. The
-host retains its previous release archive, image pair, and configuration version.
+host records the active release only after both runtime and web health pass.
+For a later existing-host upgrade, first compare the bundle SHA-256 with the
+reviewed value, then run `./deploy/release-host.sh install /path/to/bundle.tar`
+on the host. A failed healthy upgrade restores the previous image pair when
+the database schema permits it. The host retains the prior release archive,
+image pair, and private configuration digest for rollback.
 If health or the journey fails, an operator can run the following on the host:
 
 ```sh
@@ -374,8 +383,8 @@ cd /srv/rewind
 ./deploy/release-host.sh rollback
 ```
 
-Rollback refuses a newer database schema or changed configuration version and
-verifies runtime and web health after starting the prior images. If it refuses,
+Rollback refuses a newer database schema or changed private configuration and
+updates the active pointer only after runtime and web health pass. If it refuses,
 restore only through the verified recovery procedure after reviewing data and
 migration compatibility; do not force an older image onto a newer database.
 
