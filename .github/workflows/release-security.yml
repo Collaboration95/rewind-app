@@ -1,6 +1,18 @@
 name: Release security
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/**
+      - app.json
+      - App.tsx
+      - package.json
+      - package-lock.json
+      - public/**
+      - src/**
+      - server/**
+      - deploy/**
+      - infra/**
   push:
     tags: ['v*']
   workflow_dispatch:
@@ -9,60 +21,83 @@ permissions:
   contents: read
 
 jobs:
-  image-and-iac:
-    name: Release image and IaC scan
+  images:
+    name: Scan ${{ matrix.image }} image
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: runtime
+            dockerfile: deploy/Dockerfile
+          - image: web
+            dockerfile: deploy/web.Dockerfile
     steps:
-      - name: Check out release source
+      - name: Check out candidate source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - name: Build runtime image from release commit
-        run: docker build --file deploy/Dockerfile --tag rewind-runtime:release .
+      - name: Build candidate image
+        run: docker build --file '${{ matrix.dockerfile }}' --tag 'rewind-${{ matrix.image }}:candidate' .
       - name: Record immutable image identity
         run: |
           mkdir -p scan-results
-          printf 'source_commit=%s\nimage_id=%s\n' "$GITHUB_SHA" "$(docker image inspect --format '{{.Id}}' rewind-runtime:release)" > scan-results/image-identity.txt
+          printf 'source_commit=%s\nimage_id=%s\n' "$GITHUB_SHA" "$(docker image inspect --format '{{.Id}}' 'rewind-${{ matrix.image }}:candidate')" > 'scan-results/${{ matrix.image }}-image-identity.txt'
       - name: Generate CycloneDX image SBOM
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: rewind-runtime:release
+          image-ref: rewind-${{ matrix.image }}:candidate
           version: v0.70.0
           format: cyclonedx
-          output: scan-results/runtime-sbom.cdx.json
+          output: scan-results/${{ matrix.image }}-sbom.cdx.json
           cache: 'false'
-      - name: Scan runtime image vulnerabilities
+      - name: Scan image vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: rewind-runtime:release
+          image-ref: rewind-${{ matrix.image }}:candidate
           version: v0.70.0
           skip-setup-trivy: true
           scanners: vuln
           format: table
-          output: scan-results/runtime-vulnerabilities.txt
+          output: scan-results/${{ matrix.image }}-vulnerabilities.txt
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
           exit-code: '1'
           cache: 'false'
-      - name: Scan Terraform and Docker configuration
+      - name: Retain image scan and SBOM with image identity
         if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-security-${{ matrix.image }}-${{ github.sha }}
+          path: scan-results/
+          if-no-files-found: error
+          retention-days: 30
+
+  iac:
+    name: Scan IaC configuration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out candidate source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Scan Terraform and Docker configuration
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
           scan-ref: .
           version: v0.70.0
-          skip-setup-trivy: true
           format: table
-          output: scan-results/iac-misconfigurations.txt
+          output: iac-misconfigurations.txt
           severity: HIGH,CRITICAL
           exit-code: '1'
           cache: 'false'
-      - name: Retain scan results and SBOM with image identity
+      - name: Retain IaC scan
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-security-${{ github.sha }}
-          path: scan-results/
+          name: release-security-iac-${{ github.sha }}
+          path: iac-misconfigurations.txt
           if-no-files-found: error
           retention-days: 30
