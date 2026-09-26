@@ -1,0 +1,1286 @@
+TAP version 13
+# (node:12) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: members can persist one-level replies and nested replies are rejected
+ok 1 - members can persist one-level replies and nested replies are rejected
+  ---
+  duration_ms: 60.515625
+  type: 'test'
+  ...
+# Subtest: supported reaction add/remove is idempotent and returns aggregate counts
+ok 2 - supported reaction add/remove is idempotent and returns aggregate counts
+  ---
+  duration_ms: 29.675583
+  type: 'test'
+  ...
+# Subtest: a member outside the group cannot reply or react to its messages
+ok 3 - a member outside the group cannot reply or react to its messages
+  ---
+  duration_ms: 19.204917
+  type: 'test'
+  ...
+# (node:24) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: cycle boundary creates one persistent film job from processed non-raw clips
+ok 4 - cycle boundary creates one persistent film job from processed non-raw clips
+  ---
+  duration_ms: 19.013875
+  type: 'test'
+  ...
+# Subtest: compilation claims and progress survive a restart without duplicate jobs
+ok 5 - compilation claims and progress survive a restart without duplicate jobs
+  ---
+  duration_ms: 15.682959
+  type: 'test'
+  ...
+# Subtest: compilation excludes tombstones and a worker claim reconciles stale inputs atomically
+ok 6 - compilation excludes tombstones and a worker claim reconciles stale inputs atomically
+  ---
+  duration_ms: 11.073417
+  type: 'test'
+  ...
+# Subtest: progress heartbeats renew only the current fenced claim lease
+ok 7 - progress heartbeats renew only the current fenced claim lease
+  ---
+  duration_ms: 21.122667
+  type: 'test'
+  ...
+# Subtest: recorded compilation migration repairs malformed input shape and keeps valid rows
+ok 8 - recorded compilation migration repairs malformed input shape and keeps valid rows
+  ---
+  duration_ms: 29.567375
+  type: 'test'
+  ...
+# Subtest: recorded deletion migration repairs a malformed active-contribution index
+ok 9 - recorded deletion migration repairs a malformed active-contribution index
+  ---
+  duration_ms: 12.399417
+  type: 'test'
+  ...
+# (node:35) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: report detects each required inconsistency and does not mutate rows, files, or audits
+ok 10 - report detects each required inconsistency and does not mutate rows, files, or audits
+  ---
+  duration_ms: 19.319083
+  type: 'test'
+  ...
+# Subtest: processed-file candidate checks find references beyond the limited job window
+ok 11 - processed-file candidate checks find references beyond the limited job window
+  ---
+  duration_ms: 12.273583
+  type: 'test'
+  ...
+# Subtest: processed-file scan continues past referenced entries to the finding limit
+ok 12 - processed-file scan continues past referenced entries to the finding limit
+  ---
+  duration_ms: 12.622292
+  type: 'test'
+  ...
+# Subtest: report limits scan classes independently and fairly select findings
+ok 13 - report limits scan classes independently and fairly select findings
+  ---
+  duration_ms: 11.416916
+  type: 'test'
+  ...
+# Subtest: marks a consistency report truncated when processed entries exceed the hard scan bound
+ok 14 - marks a consistency report truncated when processed entries exceed the hard scan bound
+  ---
+  duration_ms: 195.455375
+  type: 'test'
+  ...
+# Subtest: compilation audit detects IDs bound to the wrong contribution
+ok 15 - compilation audit detects IDs bound to the wrong contribution
+  ---
+  duration_ms: 11.054125
+  type: 'test'
+  ...
+# Subtest: compilation audit detects a clip bound to another group cycle
+ok 16 - compilation audit detects a clip bound to another group cycle
+  ---
+  duration_ms: 8.765125
+  type: 'test'
+  ...
+# Subtest: compilation audit detects a film bound to a different cycle than its clip
+ok 17 - compilation audit detects a film bound to a different cycle than its clip
+  ---
+  duration_ms: 9.169792
+  type: 'test'
+  ...
+# Subtest: migration 017 preserves audit history and permits consistency repair events
+ok 18 - migration 017 preserves audit history and permits consistency repair events
+  ---
+  duration_ms: 15.38325
+  type: 'test'
+  ...
+# Subtest: consistency CLI defaults to read-only JSON report mode
+ok 19 - consistency CLI defaults to read-only JSON report mode
+  ---
+  duration_ms: 43.239084
+  type: 'test'
+  ...
+# Subtest: repair is bounded, audited, generation-fenced, path-contained, and idempotent
+ok 20 - repair is bounded, audited, generation-fenced, path-contained, and idempotent
+  ---
+  duration_ms: 12.394958
+  type: 'test'
+  ...
+# Subtest: a failed database commit restores quarantined files and rolls back their audit rows
+ok 21 - a failed database commit restores quarantined files and rolls back their audit rows
+  ---
+  duration_ms: 12.873041
+  type: 'test'
+  ...
+# Subtest: a failed post-commit unlink restores the orphan and records a recoverable failure
+ok 22 - a failed post-commit unlink restores the orphan and records a recoverable failure
+  ---
+  duration_ms: 11.032167
+  type: 'test'
+  ...
+# (node:53) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: migration 016 records readiness and repairs a malformed index after receipt
+ok 23 - migration 016 records readiness and repairs a malformed index after receipt
+  ---
+  duration_ms: 50.556958
+  type: 'test'
+  ...
+# Subtest: GET /contributions is self-only, current-cycle, paginated, filterable and redacted
+ok 24 - GET /contributions is self-only, current-cycle, paginated, filterable and redacted
+  ---
+  duration_ms: 55.000792
+  type: 'test'
+  ...
+# Subtest: ledger denial happens before filters and hides group existence
+ok 25 - ledger denial happens before filters and hides group existence
+  ---
+  duration_ms: 27.1715
+  type: 'test'
+  ...
+# (node:65) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: ledger schema is repaired idempotently and exposes its readiness probe
+ok 26 - ledger schema is repaired idempotently and exposes its readiness probe
+  ---
+  duration_ms: 18.119834
+  type: 'test'
+  ...
+# Subtest: the ledger reports every lifecycle state with duration and redacted metadata
+ok 27 - the ledger reports every lifecycle state with duration and redacted metadata
+  ---
+  duration_ms: 16.900084
+  type: 'test'
+  ...
+# Subtest: the ledger is self-only inside the selected group and current cycle
+ok 28 - the ledger is self-only inside the selected group and current cycle
+  ---
+  duration_ms: 10.323916
+  type: 'test'
+  ...
+# Subtest: deletion stays deleted until an explicit accepted replacement links it
+ok 29 - deletion stays deleted until an explicit accepted replacement links it
+  ---
+  duration_ms: 10.605083
+  type: 'test'
+  ...
+# Subtest: replacement linking refuses cross-member, cross-window, and non-deleted targets
+ok 30 - replacement linking refuses cross-member, cross-window, and non-deleted targets
+  ---
+  duration_ms: 9.325292
+  type: 'test'
+  ...
+# Subtest: a replacement upload outside the member scope rolls back its new contribution and allowance
+ok 31 - a replacement upload outside the member scope rolls back its new contribution and allowance
+  ---
+  duration_ms: 9.501083
+  type: 'test'
+  ...
+# Subtest: ledger pagination is bounded and its cursor is bound to member and state
+ok 32 - ledger pagination is bounded and its cursor is bound to member and state
+  ---
+  duration_ms: 10.838542
+  type: 'test'
+  ...
+# Subtest: ledger allowance impact tracks the current window and cycle phase
+ok 33 - ledger allowance impact tracks the current window and cycle phase
+  ---
+  duration_ms: 9.5175
+  type: 'test'
+  ...
+# Subtest: current-week allowance does not inherit usage or correction from the previous week
+ok 34 - current-week allowance does not inherit usage or correction from the previous week
+  ---
+  duration_ms: 13.257917
+  type: 'test'
+  ...
+# (node:76) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: weekly allowance is anchored to the cycle start and resets at seven days
+ok 35 - weekly allowance is anchored to the cycle start and resets at seven days
+  ---
+  duration_ms: 1.019875
+  type: 'test'
+  ...
+# Subtest: upgrading a v005 database backfills the cycle-start quota ledger
+ok 36 - upgrading a v005 database backfills the cycle-start quota ledger
+  ---
+  duration_ms: 14.203625
+  type: 'test'
+  ...
+# Subtest: a legacy media-only v6 is repaired without losing its media schema
+ok 37 - a legacy media-only v6 is repaired without losing its media schema
+  ---
+  duration_ms: 10.08375
+  type: 'test'
+  ...
+# Subtest: clip submissions enforce five clips and thirty seconds per member window
+ok 38 - clip submissions enforce five clips and thirty seconds per member window
+  ---
+  duration_ms: 12.940333
+  type: 'test'
+  ...
+# Subtest: one current-week deletion tombstones media, restores exact allowance, and permits replacement
+ok 39 - one current-week deletion tombstones media, restores exact allowance, and permits replacement
+  ---
+  duration_ms: 15.140542
+  type: 'test'
+  ...
+# Subtest: second deletion in the same weekly window and post-reveal deletion are denied
+ok 40 - second deletion in the same weekly window and post-reveal deletion are denied
+  ---
+  duration_ms: 12.817166
+  type: 'test'
+  ...
+# Subtest: processing contributions cannot be deleted while a worker owns the job
+ok 41 - processing contributions cannot be deleted while a worker owns the job
+  ---
+  duration_ms: 10.466959
+  type: 'test'
+  ...
+# Subtest: idempotent retries consume one allowance and persisted state survives reopen
+ok 42 - idempotent retries consume one allowance and persisted state survives reopen
+  ---
+  duration_ms: 11.665416
+  type: 'test'
+  ...
+# Subtest: the thirty-second limit is independent from the five-clip limit
+ok 43 - the thirty-second limit is independent from the five-clip limit
+  ---
+  duration_ms: 10.606084
+  type: 'test'
+  ...
+# Subtest: duration above fifteen seconds is rejected before policy state is written
+ok 44 - duration above fifteen seconds is rejected before policy state is written
+  ---
+  duration_ms: 9.400292
+  type: 'test'
+  ...
+# Subtest: quota uses verified server metadata when a client submits a shorter duration hint
+ok 45 - quota uses verified server metadata when a client submits a shorter duration hint
+  ---
+  duration_ms: 11.106458
+  type: 'test'
+  ...
+# Subtest: trim bounds use verified FFprobe duration rather than a client source-duration hint
+ok 46 - trim bounds use verified FFprobe duration rather than a client source-duration hint
+  ---
+  duration_ms: 10.804083
+  type: 'test'
+  ...
+# Subtest: demo reset clears quota and verified metadata so stale sources cannot be reused
+ok 47 - demo reset clears quota and verified metadata so stale sources cannot be reused
+  ---
+  duration_ms: 14.998709
+  type: 'test'
+  ...
+# Subtest: staged source capabilities are owner-bound and cannot be replaced
+ok 48 - staged source capabilities are owner-bound and cannot be replaced
+  ---
+  duration_ms: 11.224458
+  type: 'test'
+  ...
+# (node:76) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:76) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a transient SQLite writer lock retries and same-key submissions remain idempotent
+ok 49 - a transient SQLite writer lock retries and same-key submissions remain idempotent
+  ---
+  duration_ms: 120.900875
+  type: 'test'
+  ...
+# (node:89) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: every exposed protected category denies a member of another group without content
+ok 50 - every exposed protected category denies a member of another group without content
+  ---
+  duration_ms: 59.556709
+  type: 'test'
+  ...
+# Subtest: each protected category remains readable for the member of its own group
+ok 51 - each protected category remains readable for the member of its own group
+  ---
+  duration_ms: 26.825708
+  type: 'test'
+  ...
+# Subtest: a member of another group cannot use the owner-only cycle control
+ok 52 - a member of another group cannot use the owner-only cycle control
+  ---
+  duration_ms: 26.810958
+  type: 'test'
+  ...
+# Subtest: a session from another group cannot inspect or play a group premiere
+ok 53 - a session from another group cannot inspect or play a group premiere
+  ---
+  duration_ms: 20.215375
+  type: 'test'
+  ...
+# Subtest: a session from another group cannot operate the local Demo reveal control
+ok 54 - a session from another group cannot operate the local Demo reveal control
+  ---
+  duration_ms: 17.993875
+  type: 'test'
+  ...
+# Subtest: a session from another group cannot create a synthetic Demo contribution
+ok 55 - a session from another group cannot create a synthetic Demo contribution
+  ---
+  duration_ms: 13.6605
+  type: 'test'
+  ...
+# Subtest: invite creation binds the requested group to the session context
+ok 56 - invite creation binds the requested group to the session context
+  ---
+  duration_ms: 11.495084
+  type: 'test'
+  ...
+# (node:101) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: one deterministic engine calculates one-day and four-week windows
+ok 57 - one deterministic engine calculates one-day and four-week windows
+  ---
+  duration_ms: 1.560958
+  type: 'test'
+  ...
+# Subtest: engine advances a cycle deterministically without changing its duration
+ok 58 - engine advances a cycle deterministically without changing its duration
+  ---
+  duration_ms: 0.173125
+  type: 'test'
+  ...
+# Subtest: only the persisted owner can advance a demo cycle and controls are recorded
+ok 59 - only the persisted owner can advance a demo cycle and controls are recorded
+  ---
+  duration_ms: 18.491125
+  type: 'test'
+  ...
+# Subtest: owner controls reject invalid or excessive advances without changing the cycle
+ok 60 - owner controls reject invalid or excessive advances without changing the cycle
+  ---
+  duration_ms: 11.359125
+  type: 'test'
+  ...
+# Subtest: cycle lifecycle transitions wait for release and create one successor idempotently
+ok 61 - cycle lifecycle transitions wait for release and create one successor idempotently
+  ---
+  duration_ms: 10.992792
+  type: 'test'
+  ...
+# Subtest: lifecycle never archives or creates a successor without a ready film output
+ok 62 - lifecycle never archives or creates a successor without a ready film output
+  ---
+  duration_ms: 9.84025
+  type: 'test'
+  ...
+# Subtest: lifecycle migration applies after the canonical quota/media migrations
+ok 63 - lifecycle migration applies after the canonical quota/media migrations
+  ---
+  duration_ms: 11.663375
+  type: 'test'
+  ...
+# Subtest: a legacy \#54 version-006 lifecycle database is promoted without losing quota state
+ok 64 - a legacy \#54 version-006 lifecycle database is promoted without losing quota state
+  ---
+  duration_ms: 13.087625
+  type: 'test'
+  ...
+# Subtest: lifecycle migration repairs a partial DDL shape even after version 009 was recorded
+ok 65 - lifecycle migration repairs a partial DDL shape even after version 009 was recorded
+  ---
+  duration_ms: 13.94525
+  type: 'test'
+  ...
+# Subtest: HTTP owner control requires a valid session and derives the actor from it
+ok 66 - HTTP owner control requires a valid session and derives the actor from it
+  ---
+  duration_ms: 50.512542
+  type: 'test'
+  ...
+# (node:113) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: duplicate workers produce exactly one result for the same clip job
+ok 67 - duplicate workers produce exactly one result for the same clip job
+  ---
+  duration_ms: 174.863416
+  type: 'test'
+  ...
+# Subtest: a stale processing claim is reclaimed after restart while a live claim is not
+ok 68 - a stale processing claim is reclaimed after restart while a live claim is not
+  ---
+  duration_ms: 104.686958
+  type: 'test'
+  ...
+# Subtest: a stale failing clip worker cannot change or remove a reclaimed worker output
+ok 69 - a stale failing clip worker cannot change or remove a reclaimed worker output
+  ---
+  duration_ms: 121.270375
+  type: 'test'
+  ...
+# Subtest: automatic clip retries stop at the cap while request retries remain available
+ok 70 - automatic clip retries stop at the cap while request retries remain available
+  ---
+  duration_ms: 11.144959
+  type: 'test'
+  ...
+# Subtest: worker claim enforces the automatic clip cap after candidate selection
+ok 71 - worker claim enforces the automatic clip cap after candidate selection
+  ---
+  duration_ms: 10.770125
+  type: 'test'
+  ...
+# Subtest: an exhausted film job is terminal and never claimed again
+ok 72 - an exhausted film job is terminal and never claimed again
+  ---
+  duration_ms: 12.1445
+  type: 'test'
+  ...
+# Subtest: a stale failing film worker cannot remove a reclaimed generation output
+ok 73 - a stale failing film worker cannot remove a reclaimed generation output
+  ---
+  duration_ms: 391.196333
+  type: 'test'
+  ...
+# Subtest: graceful shutdown stops claiming and leaves work for the request-driven path
+ok 74 - graceful shutdown stops claiming and leaves work for the request-driven path
+  ---
+  duration_ms: 250.57175
+  type: 'test'
+  ...
+# Subtest: graceful shutdown waits for in-flight FFmpeg and skips the next claim
+ok 75 - graceful shutdown waits for in-flight FFmpeg and skips the next claim
+  ---
+  duration_ms: 239.601834
+  type: 'test'
+  ...
+# Subtest: repeated idle waits do not retain callbacks for elapsed ticks
+ok 76 - repeated idle waits do not retain callbacks for elapsed ticks
+  ---
+  duration_ms: 167.93425
+  type: 'test'
+  ...
+# Subtest: stale ready clip and film candidates do not consume the worker job limit
+ok 77 - stale ready clip and film candidates do not consume the worker job limit
+  ---
+  duration_ms: 114.013292
+  type: 'test'
+  ...
+# Subtest: a worker counts successful persisted-output recovery against the job limit
+ok 78 - a worker counts successful persisted-output recovery against the job limit
+  ---
+  duration_ms: 125.993375
+  type: 'test'
+  ...
+# Subtest: candidate selection excludes terminal, ready, and out-of-scope rows
+ok 79 - candidate selection excludes terminal, ready, and out-of-scope rows
+  ---
+  duration_ms: 8.767791
+  type: 'test'
+  ...
+# Subtest: loop failure labels stay stable and expose no path or FFmpeg detail
+ok 80 - loop failure labels stay stable and expose no path or FFmpeg detail
+  ---
+  duration_ms: 0.441084
+  type: 'test'
+  ...
+# Subtest: persistent loop rejects on a claim error instead of reporting a clean stop
+ok 81 - persistent loop rejects on a claim error instead of reporting a clean stop
+  ---
+  duration_ms: 0.189958
+  type: 'test'
+  ...
+# Subtest: worker CLI exits nonzero with a safe label after a persistent loop failure
+ok 82 - worker CLI exits nonzero with a safe label after a persistent loop failure
+  ---
+  duration_ms: 118.171375
+  type: 'test'
+  ...
+# Subtest: --once --json emits one parseable summary and zero idle is rejected
+ok 83 - --once --json emits one parseable summary and zero idle is rejected
+  ---
+  duration_ms: 68.414875
+  type: 'test'
+  ...
+# (node:635) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: creates a deterministic portrait synthetic clip with audio for the local Demo
+ok 84 - creates a deterministic portrait synthetic clip with audio for the local Demo
+  ---
+  duration_ms: 88.63425
+  type: 'test'
+  ...
+# Subtest: compiles chronological retained clips into a playable normalized-audio film
+ok 85 - compiles chronological retained clips into a playable normalized-audio film
+  ---
+  duration_ms: 434.626167
+  type: 'test'
+  ...
+# Subtest: production selection appends and visibly labels same-group archive filler
+ok 86 - production selection appends and visibly labels same-group archive filler
+  ---
+  duration_ms: 369.961291
+  type: 'test'
+  ...
+# Subtest: a write-then-fail FFmpeg run removes partial output and keeps playback unavailable
+ok 87 - a write-then-fail FFmpeg run removes partial output and keeps playback unavailable
+  ---
+  duration_ms: 289.790041
+  type: 'test'
+  ...
+# (node:1142) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: full-cycle: reset → join → sealed clip → reveal → authorized archive
+ok 88 - full-cycle: reset → join → sealed clip → reveal → authorized archive
+  ---
+  duration_ms: 378.418458
+  type: 'test'
+  ...
+# (node:1222) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: HTTP policy configuration is bounded and has documented defaults
+ok 89 - HTTP policy configuration is bounded and has documented defaults
+  ---
+  duration_ms: 1.020833
+  type: 'test'
+  ...
+# Subtest: slow JSON bodies return a stable 408 contract
+ok 90 - slow JSON bodies return a stable 408 contract
+  ---
+  duration_ms: 73.631375
+  type: 'test'
+  ...
+# Subtest: an upload that exceeds its total deadline returns a stable 408 contract
+ok 91 - an upload that exceeds its total deadline returns a stable 408 contract
+  ---
+  duration_ms: 55.7785
+  type: 'test'
+  ...
+# Subtest: staging exceptions remove the final source, release the claim, and allow retry
+ok 92 - staging exceptions remove the final source, release the claim, and allow retry
+  ---
+  duration_ms: 132.690958
+  type: 'test'
+  ...
+# Subtest: JSON bodies above the existing 64 KiB cap return a stable 413 contract
+ok 93 - JSON bodies above the existing 64 KiB cap return a stable 413 contract
+  ---
+  duration_ms: 13.485625
+  type: 'test'
+  ...
+# Subtest: media bodies above the existing 50 MiB cap return a stable 413 contract
+ok 94 - media bodies above the existing 50 MiB cap return a stable 413 contract
+  ---
+  duration_ms: 14.772
+  type: 'test'
+  ...
+# Subtest: a second media intake receives a stable 429 while the first is active
+ok 95 - a second media intake receives a stable 429 while the first is active
+  ---
+  duration_ms: 32.879792
+  type: 'test'
+  ...
+# Subtest: aborted media intake returns to a retryable staged state
+ok 96 - aborted media intake returns to a retryable staged state
+  ---
+  duration_ms: 171.728042
+  type: 'test'
+  ...
+# Subtest: processing concurrency returns stable 429 and releases capacity for retry
+ok 97 - processing concurrency returns stable 429 and releases capacity for retry
+  ---
+  duration_ms: 319.184042
+  type: 'test'
+  ...
+# Subtest: a normal bounded media upload remains successful
+ok 98 - a normal bounded media upload remains successful
+  ---
+  duration_ms: 167.776667
+  type: 'test'
+  ...
+# (node:1368) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: owners create bounded expiring invite codes bound to their group
+ok 99 - owners create bounded expiring invite codes bound to their group
+  ---
+  duration_ms: 22.427167
+  type: 'test'
+  ...
+# Subtest: valid invite acceptance persists one member, moves the session group, and consumes the code
+ok 100 - valid invite acceptance persists one member, moves the session group, and consumes the code
+  ---
+  duration_ms: 13.662875
+  type: 'test'
+  ...
+# Subtest: invite acceptance rejects malformed, expired, and cross-group codes without membership writes
+ok 101 - invite acceptance rejects malformed, expired, and cross-group codes without membership writes
+  ---
+  duration_ms: 19.071083
+  type: 'test'
+  ...
+# (node:1379) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: finalization persists a matching SHA-256 and byte length for a real clip
+ok 102 - finalization persists a matching SHA-256 and byte length for a real clip
+  ---
+  duration_ms: 186.025708
+  type: 'test'
+  ...
+# Subtest: a tampered finalized clip is unavailable, audited, and still not served
+ok 103 - a tampered finalized clip is unavailable, audited, and still not served
+  ---
+  duration_ms: 268.598001
+  type: 'test'
+  ...
+# (node:1379) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# (node:1379) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: concurrent connections record one integrity audit event
+ok 104 - concurrent connections record one integrity audit event
+  ---
+  duration_ms: 92.869
+  type: 'test'
+  ...
+# Subtest: a truncated finalized clip is unavailable and never streamed
+ok 105 - a truncated finalized clip is unavailable and never streamed
+  ---
+  duration_ms: 209.772208
+  type: 'test'
+  ...
+# Subtest: a missing or unreadable output is reported unavailable rather than silently served
+ok 106 - a missing or unreadable output is reported unavailable rather than silently served
+  ---
+  duration_ms: 159.175708
+  type: 'test'
+  ...
+# Subtest: HTTP audits a deleted finalized output once and returns 404
+ok 107 - HTTP audits a deleted finalized output once and returns 404
+  ---
+  duration_ms: 177.952667
+  type: 'test'
+  ...
+# Subtest: HTTP audits a zero-byte finalized output once and returns 404
+ok 108 - HTTP audits a zero-byte finalized output once and returns 404
+  ---
+  duration_ms: 160.736
+  type: 'test'
+  ...
+# Subtest: deletion and failed processing clear the output path and integrity metadata together
+ok 109 - deletion and failed processing clear the output path and integrity metadata together
+  ---
+  duration_ms: 252.924
+  type: 'test'
+  ...
+# Subtest: a zero-row ready update cannot complete clip finalization
+ok 110 - a zero-row ready update cannot complete clip finalization
+  ---
+  duration_ms: 123.112583
+  type: 'test'
+  ...
+# Subtest: a stale clip worker cannot delete output published by a reclaimed worker
+ok 111 - a stale clip worker cannot delete output published by a reclaimed worker
+  ---
+  duration_ms: 149.906917
+  type: 'test'
+  ...
+# Subtest: a row finalized before \#157 is unverifiable and the migration backfills it
+ok 112 - a row finalized before \#157 is unverifiable and the migration backfills it
+  ---
+  duration_ms: 105.804833
+  type: 'test'
+  ...
+# Subtest: legacy backfill releases writer locks while hashing and resumes after restart
+ok 113 - legacy backfill releases writer locks while hashing and resumes after restart
+  ---
+  duration_ms: 197.29675
+  type: 'test'
+  ...
+# Subtest: the integrity migration is idempotent, preserves audit rows, and widens the event guard
+ok 114 - the integrity migration is idempotent, preserves audit rows, and widens the event guard
+  ---
+  duration_ms: 9.521625
+  type: 'test'
+  ...
+# Subtest: film finalization persists a digest and verifies its retained clip inputs
+ok 115 - film finalization persists a digest and verifies its retained clip inputs
+  ---
+  duration_ms: 322.838667
+  type: 'test'
+  ...
+# Subtest: a tampered retained clip input blocks film compilation instead of minting a fresh digest
+ok 116 - a tampered retained clip input blocks film compilation instead of minting a fresh digest
+  ---
+  duration_ms: 52.440208
+  type: 'test'
+  ...
+# Subtest: a stale failing film worker cannot remove a reclaimed generation output
+ok 117 - a stale failing film worker cannot remove a reclaimed generation output
+  ---
+  duration_ms: 348.395084
+  type: 'test'
+  ...
+# Subtest: media streaming retains a verified snapshot after its source pathname is replaced
+ok 118 - media streaming retains a verified snapshot after its source pathname is replaced
+  ---
+  duration_ms: 110.557875
+  type: 'test'
+  ...
+# Subtest: media streaming rejects a mixed snapshot after an in-place source mutation
+ok 119 - media streaming rejects a mixed snapshot after an in-place source mutation
+  ---
+  duration_ms: 107.733666
+  type: 'test'
+  ...
+# Subtest: a published film whose bytes changed is reported delayed and never streamed
+ok 120 - a published film whose bytes changed is reported delayed and never streamed
+  ---
+  duration_ms: 69.1185
+  type: 'test'
+  ...
+# Subtest: hashFileSync and hashFile agree, and reject empty or absent files
+ok 121 - hashFileSync and hashFile agree, and reject empty or absent files
+  ---
+  duration_ms: 9.879833
+  type: 'test'
+  ...
+# (node:2216) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: FFmpeg produces a playable soft-focus clip with bounded trim and raw cleanup
+ok 122 - FFmpeg produces a playable soft-focus clip with bounded trim and raw cleanup
+  ---
+  duration_ms: 172.699
+  type: 'test'
+  ...
+# Subtest: FFmpeg produces a playable high-contrast clip with bounded trim and raw cleanup
+ok 123 - FFmpeg produces a playable high-contrast clip with bounded trim and raw cleanup
+  ---
+  duration_ms: 153.615625
+  type: 'test'
+  ...
+# Subtest: the shared probe accepts only playable portrait MP4 sources with audio
+ok 124 - the shared probe accepts only playable portrait MP4 sources with audio
+  ---
+  duration_ms: 169.8165
+  type: 'test'
+  ...
+# Subtest: same-key staging claims one pending source and rejects a concurrent distinct payload
+ok 125 - same-key staging claims one pending source and rejects a concurrent distinct payload
+  ---
+  duration_ms: 261.700917
+  type: 'test'
+  ...
+# Subtest: stale intake callbacks cannot complete or reset a reclaimed generation
+ok 126 - stale intake callbacks cannot complete or reset a reclaimed generation
+  ---
+  duration_ms: 12.171333
+  type: 'test'
+  ...
+# (node:2216) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: claim reset and fenced metadata deletion exclude a concurrent generation-two writer
+ok 127 - claim reset and fenced metadata deletion exclude a concurrent generation-two writer
+  ---
+  duration_ms: 222.96
+  type: 'test'
+  ...
+# Subtest: expired pending intake claims can be reclaimed to a new generation
+ok 128 - expired pending intake claims can be reclaimed to a new generation
+  ---
+  duration_ms: 10.946458
+  type: 'test'
+  ...
+# Subtest: enqueue retries rebind a pending job to the recovered staged generation
+ok 129 - enqueue retries rebind a pending job to the recovered staged generation
+  ---
+  duration_ms: 10.043541
+  type: 'test'
+  ...
+# Subtest: a worker restart finalizes a durable output marker after raw deletion
+ok 130 - a worker restart finalizes a durable output marker after raw deletion
+  ---
+  duration_ms: 56.809208
+  type: 'test'
+  ...
+# Subtest: cleanup preserves a live leased intake claim even when its file is old
+ok 131 - cleanup preserves a live leased intake claim even when its file is old
+  ---
+  duration_ms: 56.161208
+  type: 'test'
+  ...
+# Subtest: restart cleanup removes stale partial intake state and permits an immediate retry
+ok 132 - restart cleanup removes stale partial intake state and permits an immediate retry
+  ---
+  duration_ms: 11.55175
+  type: 'test'
+  ...
+# Subtest: orphan cleanup never deletes a reclaimed generation or escapes a staging symlink
+ok 133 - orphan cleanup never deletes a reclaimed generation or escapes a staging symlink
+  ---
+  duration_ms: 10.224917
+  type: 'test'
+  ...
+# Subtest: processing failure is recoverable and never discloses media paths
+ok 134 - processing failure is recoverable and never discloses media paths
+  ---
+  duration_ms: 139.410376
+  type: 'test'
+  ...
+# Subtest: a stale processing claim is recoverable after a worker restart
+ok 135 - a stale processing claim is recoverable after a worker restart
+  ---
+  duration_ms: 96.820625
+  type: 'test'
+  ...
+# (node:2216) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: cancellation rechecks the job state after a concurrent processor claim
+ok 136 - cancellation rechecks the job state after a concurrent processor claim
+  ---
+  duration_ms: 161.154875
+  type: 'test'
+  ...
+# Subtest: cancellation fences a capability that is concurrently recovered to a new path
+ok 137 - cancellation fences a capability that is concurrently recovered to a new path
+  ---
+  duration_ms: 42.50975
+  type: 'test'
+  ...
+# Subtest: session-authorized HTTP processing completes a staged capture workflow
+ok 138 - session-authorized HTTP processing completes a staged capture workflow
+  ---
+  duration_ms: 254.224833
+  type: 'test'
+  ...
+# Subtest: migration versions are explicit and guard legacy media-v6 promotion until quota is installed
+ok 139 - migration versions are explicit and guard legacy media-v6 promotion until quota is installed
+  ---
+  duration_ms: 13.761541
+  type: 'test'
+  ...
+# Subtest: staged orphan cleanup is bounded and leaves active job sources untouched
+ok 140 - staged orphan cleanup is bounded and leaves active job sources untouched
+  ---
+  duration_ms: 52.342833
+  type: 'test'
+  ...
+# Subtest: staged source tokens cannot be enqueued across owner or group boundaries
+ok 141 - staged source tokens cannot be enqueued across owner or group boundaries
+  ---
+  duration_ms: 9.849375
+  type: 'test'
+  ...
+# Subtest: production enqueue rejects arbitrary local paths without verified staged metadata
+ok 142 - production enqueue rejects arbitrary local paths without verified staged metadata
+  ---
+  duration_ms: 8.217792
+  type: 'test'
+  ...
+# (node:2758) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: clip upload validates media before creating a job and retries idempotently
+ok 143 - clip upload validates media before creating a job and retries idempotently
+  ---
+  duration_ms: 16.111333
+  type: 'test'
+  ...
+# Subtest: clip upload rejects ended cycles and malformed dimensions before writing
+ok 144 - clip upload rejects ended cycles and malformed dimensions before writing
+  ---
+  duration_ms: 10.572041
+  type: 'test'
+  ...
+# Subtest: HTTP clip upload requires a session and cancellation releases quota for retry
+ok 145 - HTTP clip upload requires a session and cancellation releases quota for retry
+  ---
+  duration_ms: 109.976875
+  type: 'test'
+  ...
+# Subtest: HTTP delete-and-replace is session-bound and restores the exact weekly allowance
+ok 146 - HTTP delete-and-replace is session-bound and restores the exact weekly allowance
+  ---
+  duration_ms: 13.893834
+  type: 'test'
+  ...
+# (node:2795) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: archive and cycle routes keyset-page independently and invalidate changed media identity
+ok 147 - archive and cycle routes keyset-page independently and invalidate changed media identity
+  ---
+  duration_ms: 66.008209
+  type: 'test'
+  ...
+# Subtest: archive integrity cache expires, bounds entries, and rejects replaced or changed files
+ok 148 - archive integrity cache expires, bounds entries, and rejects replaced or changed files
+  ---
+  duration_ms: 1.683833
+  type: 'test'
+  ...
+# Subtest: media serving budget rejects excess concurrency/bytes and releases capacity once
+ok 149 - media serving budget rejects excess concurrency/bytes and releases capacity once
+  ---
+  duration_ms: 0.101209
+  type: 'test'
+  ...
+# Subtest: default media snapshot budget leaves tmpfs headroom and rejects an oversized file
+ok 150 - default media snapshot budget leaves tmpfs headroom and rejects an oversized file
+  ---
+  duration_ms: 0.040667
+  type: 'test'
+  ...
+# Subtest: aborted media response retains its lease until the snapshot stream closes
+ok 151 - aborted media response retains its lease until the snapshot stream closes
+  ---
+  duration_ms: 0.338792
+  type: 'test'
+  ...
+# Subtest: integrity snapshot refuses a source larger than its reserved temporary-byte budget
+ok 152 - integrity snapshot refuses a source larger than its reserved temporary-byte budget
+  ---
+  duration_ms: 15.136208
+  type: 'test'
+  ...
+# Subtest: one-command preflight passes service, SQLite, LAN, and FFmpeg gates
+ok 153 - one-command preflight passes service, SQLite, LAN, and FFmpeg gates
+  ---
+  duration_ms: 137.23675
+  type: 'test'
+  ...
+# (node:2859) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: retains active job outputs and every compilation input, including unverifiable failed bytes
+ok 154 - retains active job outputs and every compilation input, including unverifiable failed bytes
+  ---
+  duration_ms: 20.514041
+  type: 'test'
+  ...
+# Subtest: dry-run CLI reports sanitized names without deleting; apply revalidates references and is idempotent
+ok 155 - dry-run CLI reports sanitized names without deleting; apply revalidates references and is idempotent
+  ---
+  duration_ms: 41.750958
+  type: 'test'
+  ...
+# Subtest: skips symlinks and applies the 24-hour cutoff and bounded limit
+ok 156 - skips symlinks and applies the 24-hour cutoff and bounded limit
+  ---
+  duration_ms: 10.840375
+  type: 'test'
+  ...
+# (node:2877) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: queue migration repairs malformed filter/order indexes after its receipt is recorded
+ok 157 - queue migration repairs malformed filter/order indexes after its receipt is recorded
+  ---
+  duration_ms: 22.16125
+  type: 'test'
+  ...
+# Subtest: queue API is authenticated, group-scoped, paginated, redacted, and retry-aware
+ok 158 - queue API is authenticated, group-scoped, paginated, redacted, and retry-aware
+  ---
+  duration_ms: 87.071917
+  type: 'test'
+  ...
+# Subtest: jobs CLI emits the same redacted bounded contract
+ok 159 - jobs CLI emits the same redacted bounded contract
+  ---
+  duration_ms: 51.4955
+  type: 'test'
+  ...
+# Subtest: queue read model uses keyset order without exposing ready or download rows
+ok 160 - queue read model uses keyset order without exposing ready or download rows
+  ---
+  duration_ms: 10.836458
+  type: 'test'
+  ...
+# (node:2896) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: chat history pages are bounded, ordered, and include batched reactions
+ok 161 - chat history pages are bounded, ordered, and include batched reactions
+  ---
+  duration_ms: 26.564625
+  type: 'test'
+  ...
+# Subtest: authorized chat history HTTP pages resume after their watermark without dropping older events
+ok 162 - authorized chat history HTTP pages resume after their watermark without dropping older events
+  ---
+  duration_ms: 40.385125
+  type: 'test'
+  ...
+# Subtest: two authorised sessions receive a persisted group message over SSE
+ok 163 - two authorised sessions receive a persisted group message over SSE
+  ---
+  duration_ms: 18.931667
+  type: 'test'
+  ...
+# Subtest: a non-member cannot open a group realtime subscription or post
+ok 164 - a non-member cannot open a group realtime subscription or post
+  ---
+  duration_ms: 16.321
+  type: 'test'
+  ...
+# Subtest: an EventSource-compatible denial sends a terminal SSE event
+ok 165 - an EventSource-compatible denial sends a terminal SSE event
+  ---
+  duration_ms: 13.114541
+  type: 'test'
+  ...
+# Subtest: a session invalidated while the request body is delayed cannot persist a message
+ok 166 - a session invalidated while the request body is delayed cannot persist a message
+  ---
+  duration_ms: 16.656333
+  type: 'test'
+  ...
+# Subtest: realtime delivery is isolated to the subscribed group
+ok 167 - realtime delivery is isolated to the subscribed group
+  ---
+  duration_ms: 122.287791
+  type: 'test'
+  ...
+# Subtest: heartbeat closes and removes a subscription after its session is revoked
+ok 168 - heartbeat closes and removes a subscription after its session is revoked
+  ---
+  duration_ms: 23.126791
+  type: 'test'
+  ...
+# Subtest: disconnect during paginated replay immediately removes the hub subscription
+ok 169 - disconnect during paginated replay immediately removes the hub subscription
+  ---
+  duration_ms: 58.119
+  type: 'test'
+  ...
+# Subtest: persisted message events replay after the runtime and database are reopened
+ok 170 - persisted message events replay after the runtime and database are reopened
+  ---
+  duration_ms: 22.460958
+  type: 'test'
+  ...
+# Subtest: a zero checkpoint cursor replays messages after an unread stream replacement
+ok 171 - a zero checkpoint cursor replays messages after an unread stream replacement
+  ---
+  duration_ms: 13.390083
+  type: 'test'
+  ...
+# Subtest: reconnect replay drains every page and delivers events committed during the drain once
+ok 172 - reconnect replay drains every page and delivers events committed during the drain once
+  ---
+  duration_ms: 37.615333
+  type: 'test'
+  ...
+# Subtest: metadata-only unread SSE omits message and reply bodies while timeline SSE keeps them
+ok 173 - metadata-only unread SSE omits message and reply bodies while timeline SSE keeps them
+  ---
+  duration_ms: 16.286917
+  type: 'test'
+  ...
+# Subtest: a new unread observer skips persisted history but receives messages after its checkpoint
+ok 174 - a new unread observer skips persisted history but receives messages after its checkpoint
+  ---
+  duration_ms: 16.1785
+  type: 'test'
+  ...
+# Subtest: retrying the same client message id replays one persisted event
+ok 175 - retrying the same client message id replays one persisted event
+  ---
+  duration_ms: 12.62525
+  type: 'test'
+  ...
+# (node:2908) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: configuration rejects an unsafe bind address with an actionable hint
+ok 176 - configuration rejects an unsafe bind address with an actionable hint
+  ---
+  duration_ms: 1.123041
+  type: 'test'
+  ...
+# Subtest: fresh migration, restart, and reset preserve or restore deterministic state
+ok 177 - fresh migration, restart, and reset preserve or restore deterministic state
+  ---
+  duration_ms: 28.877625
+  type: 'test'
+  ...
+# Subtest: a fresh runtime seeds a current Demo window while retaining fixed-clock test control
+ok 178 - a fresh runtime seeds a current Demo window while retaining fixed-clock test control
+  ---
+  duration_ms: 12.7035
+  type: 'test'
+  ...
+# Subtest: fresh and reset Demo fixtures keep quota and media consistency truthful
+ok 179 - fresh and reset Demo fixtures keep quota and media consistency truthful
+  ---
+  duration_ms: 148.815625
+  type: 'test'
+  ...
+# Subtest: health and typed fixture endpoints are reachable over the local service
+ok 180 - health and typed fixture endpoints are reachable over the local service
+  ---
+  duration_ms: 22.305667
+  type: 'test'
+  ...
+# Subtest: every protected endpoint category requires a session and ignores caller identity values
+ok 181 - every protected endpoint category requires a session and ignores caller identity values
+  ---
+  duration_ms: 26.305042
+  type: 'test'
+  ...
+# Subtest: released archive downloads are session-bound, owner-scoped, release-gated, and never expose paths
+ok 182 - released archive downloads are session-bound, owner-scoped, release-gated, and never expose paths
+  ---
+  duration_ms: 38.415875
+  type: 'test'
+  ...
+# Subtest: a session-authorized synthetic Demo clip enters the ordinary sealed processing path
+ok 183 - a session-authorized synthetic Demo clip enters the ordinary sealed processing path
+  ---
+  duration_ms: 223.614959
+  type: 'test'
+  ...
+# Subtest: synthetic quota rejection removes its staged capability and permits an immediate retry
+ok 184 - synthetic quota rejection removes its staged capability and permits an immediate retry
+  ---
+  duration_ms: 145.035875
+  type: 'test'
+  ...
+# Subtest: synthetic closed-window rejection removes its staged capability and permits an immediate retry
+ok 185 - synthetic closed-window rejection removes its staged capability and permits an immediate retry
+  ---
+  duration_ms: 174.352417
+  type: 'test'
+  ...
+# Subtest: synthetic post-ready exception removes its exact staged capability with a redacted retryable error
+ok 186 - synthetic post-ready exception removes its exact staged capability with a redacted retryable error
+  ---
+  duration_ms: 137.555208
+  type: 'test'
+  ...
+# Subtest: the owner reveal control reports collecting while the cycle is still open
+ok 187 - the owner reveal control reports collecting while the cycle is still open
+  ---
+  duration_ms: 9.699834
+  type: 'test'
+  ...
+# Subtest: the owner reveal control reports a durable compile failure as delayed without a player
+ok 188 - the owner reveal control reports a durable compile failure as delayed without a player
+  ---
+  duration_ms: 13.485166
+  type: 'test'
+  ...
+# Subtest: a non-owner Demo member cannot operate the reveal control
+ok 189 - a non-owner Demo member cannot operate the reveal control
+  ---
+  duration_ms: 9.138916
+  type: 'test'
+  ...
+# Subtest: malformed percent-encoded path segments return a client error for every route family
+ok 190 - malformed percent-encoded path segments return a client error for every route family
+  ---
+  duration_ms: 11.231791
+  type: 'test'
+  ...
+# Subtest: invitation routes require a session and expose an owner-generated code state
+ok 191 - invitation routes require a session and expose an owner-generated code state
+  ---
+  duration_ms: 13.524833
+  type: 'test'
+  ...
+# Subtest: delayed group, invite, and contribution bodies cannot commit after session revocation
+ok 192 - delayed group, invite, and contribution bodies cannot commit after session revocation
+  ---
+  duration_ms: 103.056334
+  type: 'test'
+  ...
+# Subtest: local group creation validates before writing and creates an owner one-day cycle atomically
+ok 193 - local group creation validates before writing and creates an owner one-day cycle atomically
+  ---
+  duration_ms: 8.395792
+  type: 'test'
+  ...
+# Subtest: Demo session and group HTTP mutations preserve the selected group context
+ok 194 - Demo session and group HTTP mutations preserve the selected group context
+  ---
+  duration_ms: 11.415292
+  type: 'test'
+  ...
+# Subtest: local Demo reset endpoint restores the deterministic fixture and removes created groups
+ok 195 - local Demo reset endpoint restores the deterministic fixture and removes created groups
+  ---
+  duration_ms: 13.17175
+  type: 'test'
+  ...
+# Subtest: local Demo reset endpoint refuses a valid non-owner session
+ok 196 - local Demo reset endpoint refuses a valid non-owner session
+  ---
+  duration_ms: 9.916875
+  type: 'test'
+  ...
+# (node:3145) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: demo sessions persist a stable synthetic actor and enforce a bounded lifecycle
+ok 197 - demo sessions persist a stable synthetic actor and enforce a bounded lifecycle
+  ---
+  duration_ms: 13.867625
+  type: 'test'
+  ...
+# Subtest: demo session invalidation is persisted and terminal
+ok 198 - demo session invalidation is persisted and terminal
+  ---
+  duration_ms: 8.147584
+  type: 'test'
+  ...
+# Subtest: audit events structurally redact arbitrary text and correlate failed jobs safely
+ok 199 - audit events structurally redact arbitrary text and correlate failed jobs safely
+  ---
+  duration_ms: 39.199083
+  type: 'test'
+  ...
+# (node:3163) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: protected route classes reject caller-supplied identity without a session
+ok 200 - protected route classes reject caller-supplied identity without a session
+  ---
+  duration_ms: 45.926958
+  type: 'test'
+  ...
+# Subtest: valid session identity authorises group, contribution, media, film, archive, owner, invite, and realtime routes
+ok 201 - valid session identity authorises group, contribution, media, film, archive, owner, invite, and realtime routes
+  ---
+  duration_ms: 24.857208
+  type: 'test'
+  ...
+# Subtest: expired, invalid, and cross-group sessions fail before protected resource lookup
+ok 202 - expired, invalid, and cross-group sessions fail before protected resource lookup
+  ---
+  duration_ms: 24.466167
+  type: 'test'
+  ...
+# Subtest: owner-only reset accepts the session owner and rejects a valid non-owner
+ok 203 - owner-only reset accepts the session owner and rejects a valid non-owner
+  ---
+  duration_ms: 14.838125
+  type: 'test'
+  ...
+1..203
+# tests 203
+# suites 0
+# pass 203
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 15356.879007

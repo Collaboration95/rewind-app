@@ -1,0 +1,32 @@
+
+> rewind-app@0.1.0 test:production-e2e
+> node scripts/run-production-e2e.mjs
+
+[WebServer] (node:98508) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:98593) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:98508) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+
+Running 2 tests using 1 worker
+
+(node:98823) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 tests/e2e/production-reset-to-reveal.spec.ts:97:5 › redacts session and capability values from failure diagnostics (87ms)
+  ✓  2 tests/e2e/production-reset-to-reveal.spec.ts:109:5 › proves the disposable reset-to-reveal Demo journey through the production web boundary (1.4s)
+
+  2 passed (7.8s)
+[WebServer] (node:98907) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:98959) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:98907) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+
+Running 2 tests using 1 worker
+
+(node:99170) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 tests/e2e/production-reset-to-reveal.spec.ts:97:5 › redacts session and capability values from failure diagnostics (47ms)
+  ✓  2 tests/e2e/production-reset-to-reveal.spec.ts:109:5 › proves the disposable reset-to-reveal Demo journey through the production web boundary (1.4s)
+
+  2 passed (7.7s)

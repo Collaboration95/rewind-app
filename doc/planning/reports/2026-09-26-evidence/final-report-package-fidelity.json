@@ -1,0 +1,32 @@
+{
+  "source_sha256": "a6f4972a09f685858a0c28ad9536ec52d96ea4f5d6f4c6982a2a8e3b2abc52e4",
+  "changed_parts": [
+    "word/document.xml",
+    "word/_rels/document.xml.rels",
+    "word/settings.xml"
+  ],
+  "preserved_parts": 26,
+  "added_parts": [
+    "word/media/native-evidence-1.png",
+    "word/media/native-evidence-2.png"
+  ],
+  "original_relationships": "preserved; two screenshot image relationships added",
+  "section_geometry": "unchanged",
+  "footer_fields": "preserved; updateFields true; Word refresh deferred",
+  "delivery": {
+    "pages": 10,
+    "status": "Review ready \u2014 sprint not closed",
+    "every_page_visual_qa": "passed",
+    "source_unchanged": true,
+    "files": [
+      {
+        "path": "/Users/speedpowermac/Documents/projects/CODE_MAIN/NUS/SWE5006/rewind-app/doc/planning/reports/rewind-sprint-1-progress-report-2026-09-26.docx",
+        "sha256": "32cb65601411c8f923db9697d486fe93279176422e23eb10cc61a0fd85fe701b"
+      },
+      {
+        "path": "/Users/speedpowermac/Documents/projects/CODE_MAIN/NUS/SWE5006/rewind-app/doc/planning/reports/rewind-sprint-1-progress-report-2026-09-26.pdf",
+        "sha256": "0eeca1e154c342d651e2f46f3eff7885b7c4a5cbef326420cdda9016c37c01fc"
+      }
+    ]
+  }
+}
