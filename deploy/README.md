@@ -7,7 +7,9 @@ shell and same-origin API proxy on `127.0.0.1:8080`. The hosted
 `rewind.env.example` explicitly sets `REWIND_WEB_BIND_ADDRESS=0.0.0.0` and
 `REWIND_WEB_PORT=80`, publishing the web container on all host IPv4 interfaces
 so the Lightsail HTTPS distribution can reach its HTTP origin on port 80.
-The Lightsail firewall must allow that port; no host-installed Nginx is needed.
+The container listens as non-root on internal port 8080; Compose publishes
+that as host port 80 for the distribution. The Lightsail firewall must allow
+the host port; no host-installed Nginx is needed.
 The Node runtime's host binding remains `127.0.0.1:8787` in both modes, with
 the web container reaching it over the internal Compose network.
 
