@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useCapsule, type CapsuleState } from '../capsule/CapsuleProvider';
 import { demoRepository } from '../data/demo-repository';
@@ -29,16 +39,13 @@ interface TimelineMessage {
 }
 
 function appendEvent(messages: TimelineMessage[], event: ChatMessageEvent): TimelineMessage[] {
-  if (messages.some(({ message }) => message.id === event.message.id)) return messages;
-  return [...messages, { eventId: event.eventId, message: event.message }].sort((left, right) => {
-    if (left.eventId !== right.eventId) return left.eventId - right.eventId;
-    const leftTime = Date.parse(left.message.createdAt);
-    const rightTime = Date.parse(right.message.createdAt);
-    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
-      return leftTime - rightTime;
-    }
-    return left.message.id.localeCompare(right.message.id);
-  });
+  const next = { eventId: event.eventId, message: event.message };
+  const last = messages[messages.length - 1];
+  if (!last || event.eventId > last.eventId) return [...messages, next];
+  const insertionIndex = messages.findIndex((current) => current.eventId > event.eventId);
+  return insertionIndex < 0
+    ? [...messages, next]
+    : [...messages.slice(0, insertionIndex), next, ...messages.slice(insertionIndex)];
 }
 
 function formatTimestamp(value: string): string {
@@ -115,7 +122,10 @@ export function ChatSessionSurface({
   session: DemoSession | null;
 }) {
   const unread = useOptionalChatUnread();
+  const safeAreaInsets = useSafeAreaInsets();
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [timelineState, setTimelineState] = useState<TimelineState>('loading');
   const [connectionState, setConnectionState] = useState<ChatConnectionState>('connecting');
   const browserOnline = useNetworkOnline();
@@ -130,13 +140,24 @@ export function ChatSessionSurface({
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
   const [reactionActive, setReactionActive] = useState<Record<string, boolean>>({});
   const subscriptionScope = useRef<string | null>(null);
+  const messageIds = useRef(new Set<string>());
+  const olderCursor = useRef<number | null>(null);
   const sendRequestId = useRef(0);
   const activeSendRequest = useRef<{ id: number; scope: string } | null>(null);
   const currentScopeRef = useRef<string | null>(null);
   const previousScopeRef = useRef<string | null>(null);
 
   const activeMessageScope = session && group ? `${session.id}:${group.id}` : null;
-  currentScopeRef.current = activeMessageScope;
+  useLayoutEffect(() => {
+    currentScopeRef.current = activeMessageScope;
+  }, [activeMessageScope]);
+
+  const receiveEvent = useCallback((event: ChatMessageEvent) => {
+    if (messageIds.current.has(event.message.id)) return;
+    messageIds.current.add(event.message.id);
+    // React may replay a functional updater. Keep it free of ref mutations.
+    setMessages((current) => appendEvent(current, event));
+  }, []);
 
   useEffect(() => {
     if (accessState === 'known' && session && group) unread?.markRead();
@@ -145,7 +166,11 @@ export function ChatSessionSurface({
   const clearSensitiveState = useCallback(() => {
     subscriptionScope.current = null;
     activeSendRequest.current = null;
+    messageIds.current.clear();
+    olderCursor.current = null;
     setMessages([]);
+    setHasOlderMessages(false);
+    setLoadingOlderMessages(false);
     setDraft('');
     setPendingDraft(null);
     setReplyTarget(null);
@@ -171,15 +196,29 @@ export function ChatSessionSurface({
     const scopeKey = activeMessageScope;
     if (!scopeKey) return;
     subscriptionScope.current = scopeKey;
-    setSubscriptionDenied(false);
-    setConnectionState('connecting');
     let active = true;
     let subscription: { close(): void } | null = null;
     const readyTimer = setTimeout(() => {
       if (active) setTimelineState('ready');
     }, 0);
-    try {
-      subscription = runtimeClient.subscribeChat(session.id, group.id, {
+    const historyClient = runtimeClient;
+    const connect = async () => {
+      let watermarkEventId: number | undefined;
+      if (historyClient.getChatHistoryPage) {
+        const page = await historyClient.getChatHistoryPage(session.id, group.id, { limit: 100 });
+        if (!active || currentScopeRef.current !== scopeKey) return;
+        const initial = page.events.map(({ eventId, message }) => ({ eventId, message }));
+        messageIds.current = new Set(initial.map(({ message }) => message.id));
+        olderCursor.current = page.nextCursor;
+        setMessages(initial);
+        setHasOlderMessages(page.hasMore);
+        watermarkEventId = page.watermarkEventId;
+      }
+      if (!active || currentScopeRef.current !== scopeKey) return;
+      subscription = runtimeClient.subscribeChat!(session.id, group.id, {
+        ...(watermarkEventId === undefined
+          ? { startFromLatest: true }
+          : { sinceEventId: watermarkEventId }),
         onEvent: (event) => {
           if (
             !active ||
@@ -188,7 +227,7 @@ export function ChatSessionSurface({
             event.message.groupId !== group.id
           )
             return;
-          setMessages((current) => appendEvent(current, event));
+          receiveEvent(event);
           setTimelineState('ready');
           setConnectionError(null);
         },
@@ -233,14 +272,15 @@ export function ChatSessionSurface({
           }
         },
       });
-    } catch (error) {
+    };
+    void connect().catch((error: unknown) => {
       setTimeout(() => {
         if (!active || currentScopeRef.current !== scopeKey) return;
         setTimelineState('error');
         setConnectionError(errorMessage(error));
         setConnectionState('unavailable');
       }, 0);
-    }
+    });
 
     return () => {
       active = false;
@@ -254,18 +294,57 @@ export function ChatSessionSurface({
     group,
     retryKey,
     runtimeClient,
+    receiveEvent,
     session,
   ]);
 
   const retry = useCallback(() => {
+    messageIds.current.clear();
+    olderCursor.current = null;
     setMessages([]);
+    setHasOlderMessages(false);
     subscriptionScope.current = null;
     setConnectionError(null);
+    setConnectionState('connecting');
     setReplyTarget(null);
     setReactionActive({});
     if (capsuleStatus === 'error' || capsuleStatus === 'loading') retryCapsule();
     setRetryKey((current) => current + 1);
   }, [capsuleStatus, retryCapsule]);
+
+  const loadOlderMessages = useCallback(async () => {
+    const historyClient = runtimeClient;
+    const cursor = olderCursor.current;
+    if (
+      !historyClient ||
+      !historyClient.getChatHistoryPage ||
+      !session ||
+      !group ||
+      cursor === null ||
+      loadingOlderMessages
+    )
+      return;
+    setLoadingOlderMessages(true);
+    try {
+      const page = await historyClient.getChatHistoryPage(session.id, group.id, {
+        beforeEventId: cursor,
+        limit: 100,
+      });
+      if (currentScopeRef.current !== `${session.id}:${group.id}`) return;
+      const older = page.events
+        .filter(({ message }) => !messageIds.current.has(message.id))
+        .map(({ eventId, message }) => ({ eventId, message }));
+      for (const item of older) messageIds.current.add(item.message.id);
+      setMessages((current) => [...older, ...current]);
+      olderCursor.current = page.nextCursor;
+      setHasOlderMessages(page.hasMore);
+    } catch (error) {
+      if (currentScopeRef.current === `${session.id}:${group.id}`)
+        setConnectionError(errorMessage(error));
+    } finally {
+      if (currentScopeRef.current === `${session.id}:${group.id}`) setLoadingOlderMessages(false);
+    }
+  }, [group, loadingOlderMessages, runtimeClient, session]);
 
   const send = useCallback(async () => {
     const body = draft.trim();
@@ -305,7 +384,7 @@ export function ChatSessionSurface({
           ? await runtimeClient.sendChatReply(session.id, group.id, messageDraft, replyTarget.id)
           : await runtimeClient.sendChatMessage(session.id, group.id, messageDraft);
       if (!isCurrentSend() || event.message.groupId !== group.id) return;
-      setMessages((current) => appendEvent(current, event));
+      receiveEvent(event);
       setPendingDraft(null);
       setReplyTarget(null);
       setDraft((current) => (current === submittedText ? '' : current));
@@ -335,6 +414,7 @@ export function ChatSessionSurface({
     pendingDraft,
     replyTarget,
     runtimeClient,
+    receiveEvent,
     sending,
     session,
     subscriptionDenied,
@@ -386,151 +466,181 @@ export function ChatSessionSurface({
           : connectionState;
 
   return (
-    <View style={styles.screen} testID="chat-screen">
-      <ScrollView
+    <KeyboardAvoidingView
+      behavior={
+        Platform.OS === 'ios' ? 'padding' : Platform.OS === 'android' ? 'height' : undefined
+      }
+      keyboardVerticalOffset={safeAreaInsets.top}
+      style={styles.screen}
+      testID="chat-screen"
+    >
+      <FlatList
+        data={canRenderMessages ? messages : []}
+        extraData={{ reactionActive, reactionBusy, memberId: session?.actor.memberId }}
+        keyExtractor={({ message }) => message.id}
+        ListHeaderComponent={
+          <View style={styles.content}>
+            <View style={styles.header}>
+              <Text style={styles.label}>GROUP CHAT</Text>
+              <Text accessibilityRole="header" style={styles.title} testID="route-heading-chat">
+                Chat
+              </Text>
+              <Text style={styles.bodyText}>
+                {group?.name ?? 'Messages are visible only to authorised group members.'}
+              </Text>
+            </View>
+
+            {accessState !== 'loading' ? (
+              <Text
+                accessibilityLiveRegion="polite"
+                style={styles.connectionStatus}
+                testID="chat-connection-status"
+              >
+                Chat connection: {chatConnectionLabel(displayedConnectionState)}
+              </Text>
+            ) : null}
+
+            {effectiveTimelineState === 'loading' ? (
+              <View accessible style={styles.statePanel} testID="chat-loading">
+                <Text style={styles.panelTitle}>Loading messages…</Text>
+                <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
+                  Checking the saved group conversation.
+                </Text>
+              </View>
+            ) : null}
+
+            {effectiveTimelineState === 'denied' ? (
+              <View accessible style={styles.statePanel} testID="chat-denied">
+                <Text style={styles.panelTitle}>Chat unavailable</Text>
+                <Text style={styles.bodyText}>
+                  Choose authorised Demo access to view this group conversation.
+                </Text>
+              </View>
+            ) : null}
+
+            {effectiveTimelineState === 'unavailable' ? (
+              <View accessible style={styles.statePanel} testID="chat-unavailable">
+                <Text style={styles.panelTitle}>Chat needs the local runtime</Text>
+                <Text style={styles.bodyText}>
+                  Connect the local runtime to load this group chat.
+                </Text>
+              </View>
+            ) : null}
+
+            {effectiveTimelineState === 'error' ? (
+              <View accessible style={styles.errorPanel} testID="chat-error">
+                <Text accessibilityRole="alert" style={styles.errorText}>
+                  {connectionError ?? 'The chat connection could not be established.'}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={retry}
+                  style={styles.outlineButton}
+                  testID="chat-retry"
+                >
+                  <Text style={styles.outlineButtonText}>Retry chat connection</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {effectiveTimelineState === 'ready' && canRenderMessages && messages.length === 0 ? (
+              <View accessible style={styles.statePanel} testID="chat-empty">
+                <Text style={styles.panelTitle}>No messages yet</Text>
+                <Text style={styles.bodyText}>Start the conversation with a short note below.</Text>
+              </View>
+            ) : null}
+
+            {hasOlderMessages ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={loadingOlderMessages}
+                onPress={() => void loadOlderMessages()}
+                style={styles.outlineButton}
+                testID="chat-load-older"
+              >
+                <Text style={styles.outlineButtonText}>
+                  {loadingOlderMessages ? 'Loading older messages…' : 'Load older messages'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        }
+
+        renderItem={({ item: { message } }) => {
+          const author = memberNames.get(message.memberId) ?? 'Group member';
+          const isCurrentMember = message.memberId === session?.actor.memberId;
+          const reactionCount = message.reactionCounts?.['✨'] ?? 0;
+          const canReply = Boolean(runtimeClient?.sendChatReply && !message.replyTo);
+          return (
+            <View
+              accessible={false}
+              accessibilityLabel={`${author}${isCurrentMember ? ', you' : ''}. ${message.body}. ${formatTimestamp(message.createdAt)}${message.replyTo ? `. Reply to ${message.replyTo.body}` : ''}${reactionCount ? `. ${reactionCount} sparkle reactions` : ''}`}
+              style={[styles.message, isCurrentMember && styles.currentMessage]}
+              testID="chat-message"
+            >
+              <View style={styles.messageMeta}>
+                <Text style={styles.author}>{isCurrentMember ? 'You' : author}</Text>
+                <Text style={styles.timestamp}>{formatTimestamp(message.createdAt)}</Text>
+              </View>
+              {message.replyTo ? (
+                <View
+                  accessible
+                  accessibilityLabel={`Replying to ${message.replyTo.body}`}
+                  style={styles.replyContext}
+                  testID="chat-reply-context"
+                >
+                  <Text style={styles.replyLabel}>REPLYING TO</Text>
+                  <Text numberOfLines={2} style={styles.replyText}>
+                    {message.replyTo.body}
+                  </Text>
+                </View>
+              ) : null}
+              <Text style={styles.messageBody}>{message.body}</Text>
+              {runtimeClient?.toggleChatReaction || canReply ? (
+                <View style={styles.messageActions}>
+                  {runtimeClient?.toggleChatReaction ? (
+                    <Pressable
+                      accessibilityLabel={`${reactionCount} sparkle reactions, ${reactionActive[message.id] === undefined ? 'toggle sparkle reaction' : reactionActive[message.id] ? 'remove yours' : 'add sparkle reaction'}`}
+                      accessibilityRole="button"
+                      disabled={reactionBusy === message.id}
+                      onPress={() => void toggleReaction(message)}
+                      style={styles.actionButton}
+                      testID={`chat-reaction-${message.id}`}
+                    >
+                      <Text style={styles.actionText}>
+                        {reactionActive[message.id] ? '✨ Reacted' : '✨'} {reactionCount}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  {canReply ? (
+                    <Pressable
+                      accessibilityLabel={`Reply to ${author}`}
+                      accessibilityRole="button"
+                      onPress={() => setReplyTarget(message)}
+                      style={styles.actionButton}
+                      testID={`chat-reply-${message.id}`}
+                    >
+                      <Text style={styles.actionText}>Reply</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          );
+        }}
+
+        ListFooterComponent={
+          sendError ? (
+            <Text accessibilityRole="alert" style={styles.fieldError} testID="chat-send-error">
+              {sendError}
+            </Text>
+          ) : null
+        }
         contentContainerStyle={styles.content}
+        maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
         style={styles.timelineScroll}
         testID="chat-timeline"
-      >
-        <View style={styles.header}>
-          <Text style={styles.label}>GROUP CHAT</Text>
-          <Text accessibilityRole="header" style={styles.title} testID="route-heading-chat">
-            Chat
-          </Text>
-          <Text style={styles.bodyText}>
-            {group?.name ?? 'Messages are visible only to authorised group members.'}
-          </Text>
-        </View>
-
-        {accessState !== 'loading' ? (
-          <Text
-            accessibilityLiveRegion="polite"
-            style={styles.connectionStatus}
-            testID="chat-connection-status"
-          >
-            Chat connection: {chatConnectionLabel(displayedConnectionState)}
-          </Text>
-        ) : null}
-
-        {effectiveTimelineState === 'loading' ? (
-          <View accessible style={styles.statePanel} testID="chat-loading">
-            <Text style={styles.panelTitle}>Loading messages…</Text>
-            <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
-              Checking the saved group conversation.
-            </Text>
-          </View>
-        ) : null}
-
-        {effectiveTimelineState === 'denied' ? (
-          <View accessible style={styles.statePanel} testID="chat-denied">
-            <Text style={styles.panelTitle}>Chat unavailable</Text>
-            <Text style={styles.bodyText}>
-              Choose authorised Demo access to view this group conversation.
-            </Text>
-          </View>
-        ) : null}
-
-        {effectiveTimelineState === 'unavailable' ? (
-          <View accessible style={styles.statePanel} testID="chat-unavailable">
-            <Text style={styles.panelTitle}>Chat needs the local runtime</Text>
-            <Text style={styles.bodyText}>Connect the local runtime to load this group chat.</Text>
-          </View>
-        ) : null}
-
-        {effectiveTimelineState === 'error' ? (
-          <View accessible style={styles.errorPanel} testID="chat-error">
-            <Text accessibilityRole="alert" style={styles.errorText}>
-              {connectionError ?? 'The chat connection could not be established.'}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={retry}
-              style={styles.outlineButton}
-              testID="chat-retry"
-            >
-              <Text style={styles.outlineButtonText}>Retry chat connection</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        {effectiveTimelineState === 'ready' && canRenderMessages && messages.length === 0 ? (
-          <View accessible style={styles.statePanel} testID="chat-empty">
-            <Text style={styles.panelTitle}>No messages yet</Text>
-            <Text style={styles.bodyText}>Start the conversation with a short note below.</Text>
-          </View>
-        ) : null}
-
-        {canRenderMessages &&
-          messages.map(({ message }) => {
-            const author = memberNames.get(message.memberId) ?? 'Group member';
-            const isCurrentMember = message.memberId === session?.actor.memberId;
-            const reactionCount = message.reactionCounts?.['✨'] ?? 0;
-            const canReply = Boolean(runtimeClient?.sendChatReply && !message.replyTo);
-            return (
-              <View
-                accessible={false}
-                accessibilityLabel={`${author}${isCurrentMember ? ', you' : ''}. ${message.body}. ${formatTimestamp(message.createdAt)}${message.replyTo ? `. Reply to ${message.replyTo.body}` : ''}${reactionCount ? `. ${reactionCount} sparkle reactions` : ''}`}
-                key={message.id}
-                style={[styles.message, isCurrentMember && styles.currentMessage]}
-                testID="chat-message"
-              >
-                <View style={styles.messageMeta}>
-                  <Text style={styles.author}>{isCurrentMember ? 'You' : author}</Text>
-                  <Text style={styles.timestamp}>{formatTimestamp(message.createdAt)}</Text>
-                </View>
-                {message.replyTo ? (
-                  <View
-                    accessible
-                    accessibilityLabel={`Replying to ${message.replyTo.body}`}
-                    style={styles.replyContext}
-                    testID="chat-reply-context"
-                  >
-                    <Text style={styles.replyLabel}>REPLYING TO</Text>
-                    <Text numberOfLines={2} style={styles.replyText}>
-                      {message.replyTo.body}
-                    </Text>
-                  </View>
-                ) : null}
-                <Text style={styles.messageBody}>{message.body}</Text>
-                {runtimeClient?.toggleChatReaction || canReply ? (
-                  <View style={styles.messageActions}>
-                    {runtimeClient?.toggleChatReaction ? (
-                      <Pressable
-                        accessibilityLabel={`${reactionCount} sparkle reactions, ${reactionActive[message.id] === undefined ? 'toggle sparkle reaction' : reactionActive[message.id] ? 'remove yours' : 'add sparkle reaction'}`}
-                        accessibilityRole="button"
-                        disabled={reactionBusy === message.id}
-                        onPress={() => void toggleReaction(message)}
-                        style={styles.actionButton}
-                        testID={`chat-reaction-${message.id}`}
-                      >
-                        <Text style={styles.actionText}>
-                          {reactionActive[message.id] ? '✨ Reacted' : '✨'} {reactionCount}
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                    {canReply ? (
-                      <Pressable
-                        accessibilityLabel={`Reply to ${author}`}
-                        accessibilityRole="button"
-                        onPress={() => setReplyTarget(message)}
-                        style={styles.actionButton}
-                        testID={`chat-reply-${message.id}`}
-                      >
-                        <Text style={styles.actionText}>Reply</Text>
-                      </Pressable>
-                    ) : null}
-                  </View>
-                ) : null}
-              </View>
-            );
-          })}
-
-        {sendError ? (
-          <Text accessibilityRole="alert" style={styles.fieldError} testID="chat-send-error">
-            {sendError}
-          </Text>
-        ) : null}
-      </ScrollView>
+      />
 
       {showComposer && !subscriptionDenied && runtimeClient?.sendChatMessage && group && session ? (
         <View style={styles.composer}>
@@ -592,7 +702,7 @@ export function ChatSessionSurface({
           <Text style={styles.outlineButtonText}>Retry sending</Text>
         </Pressable>
       ) : null}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

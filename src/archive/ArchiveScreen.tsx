@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
-import type { ReleasedArchive, ReleasedArchiveMedia } from '../domain/archive';
-import type { CycleHistoryEntry } from '../domain/cycles';
+import type { ReleasedArchive, ReleasedArchiveMedia, ReleasedArchivePage } from '../domain/archive';
+import type { CycleHistoryEntry, CycleHistoryPage } from '../domain/cycles';
 import type { Premiere } from '../domain/premiere';
 import { useCapsule } from '../capsule/CapsuleProvider';
 import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
@@ -20,7 +20,9 @@ type ArchiveState =
       status: 'ready';
       premiere: Premiere;
       archive: ReleasedArchive;
+      archivePage: ReleasedArchivePage;
       cycles: CycleHistoryEntry[];
+      cyclePage: CycleHistoryPage;
     };
 
 const EMPTY_ARCHIVE: ReleasedArchive = { films: [], clips: [] };
@@ -62,12 +64,19 @@ function ArchiveEntries({
   download,
   notice,
   cycles,
+  hasMoreCycles,
+  loadingMore,
+  loadMore,
 }: {
   archive: ReleasedArchive;
   cycles: CycleHistoryEntry[];
+  hasMoreCycles: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
   download: (media: ReleasedArchiveMedia) => void;
   notice: string | null;
 }) {
+  const cycleById = new Map(cycles.map((cycle) => [cycle.id, cycle]));
   return (
     <View style={styles.panel} testID="archive-released-media">
       <Text style={styles.label}>RELEASED MEDIA</Text>
@@ -83,7 +92,7 @@ function ArchiveEntries({
           <View key={film.id} style={styles.entry}>
             <Text style={styles.entryTitle}>Group film</Text>
             <Text style={styles.entryMeta} testID={`archive-film-cycle-${film.id}`}>
-              Cycle: {cycles.find((cycle) => cycle.id === film.cycleId)?.prompt ?? 'Previous cycle'}
+              Cycle: {cycleById.get(film.cycleId)?.prompt ?? 'Previous cycle'}
             </Text>
             <Text style={styles.entryMeta}>
               Released {new Date(film.publishedAt).toLocaleDateString()}
@@ -109,7 +118,7 @@ function ArchiveEntries({
           <View key={clip.id} style={styles.entry}>
             <Text style={styles.entryTitle}>Your clip</Text>
             <Text style={styles.entryMeta} testID={`archive-clip-cycle-${clip.id}`}>
-              Cycle: {cycles.find((cycle) => cycle.id === clip.cycleId)?.prompt ?? 'Previous cycle'}
+              Cycle: {cycleById.get(clip.cycleId)?.prompt ?? 'Previous cycle'}
             </Text>
             <Pressable
               accessibilityLabel="Download your released clip"
@@ -145,15 +154,36 @@ function ArchiveEntries({
           ) : null}
         </View>
       ))}
+      {hasMoreCycles ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={loadingMore}
+          onPress={loadMore}
+          style={styles.retryButton}
+          testID="archive-load-more"
+        >
+          <Text style={styles.retryText}>
+            {loadingMore ? 'Loading…' : 'Load older archive items'}
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
 
 export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
   const { session } = useDemoSession();
+  const { state } = useCapsule();
+  const scope = state.status === 'ready' ? `${state.group?.id}:${state.cycle?.id}` : state.status;
+  return <ArchiveSurface key={`${session?.id}:${scope}`} runtimeClient={runtimeClient} />;
+}
+
+function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
+  const { session } = useDemoSession();
   const { state: capsuleState, retry: retryCapsule } = useCapsule();
   const [state, setState] = useState<ArchiveState>({ status: 'loading' });
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const downloadQueue = useRef(createArchiveDownloadQueue()).current;
   const cycle = capsuleState.status === 'ready' ? capsuleState.cycle : null;
   const group = capsuleState.status === 'ready' ? capsuleState.group : null;
@@ -169,28 +199,57 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
     setState({ status: 'loading' });
     void Promise.all([
       runtimeClient.getPremiere(session.id, group.id, cycle.id),
-      runtimeClient.getReleasedArchive
-        ? runtimeClient.getReleasedArchive(session.id, group.id)
-        : Promise.resolve(EMPTY_ARCHIVE),
-      runtimeClient.getCycleHistory
-        ? runtimeClient.getCycleHistory(session.id, group.id)
-        : Promise.resolve(
-            cycle
-              ? [
-                  {
-                    id: cycle.id,
-                    prompt: cycle.prompt,
-                    startsAt: cycle.startsAt,
-                    endsAt: cycle.endsAt,
-                    status: cycle.status,
-                    releaseStatus: 'unpublished' as const,
-                  },
-                ]
-              : [],
-          ),
+      runtimeClient.getReleasedArchivePage
+        ? runtimeClient.getReleasedArchivePage(session.id, group.id, { limit: 50 })
+        : runtimeClient.getReleasedArchive
+          ? runtimeClient.getReleasedArchive(session.id, group.id).then((archive) => ({
+              archive,
+              filmCursor: null,
+              clipCursor: null,
+              hasMoreFilms: false,
+              hasMoreClips: false,
+            }))
+          : Promise.resolve({
+              archive: EMPTY_ARCHIVE,
+              filmCursor: null,
+              clipCursor: null,
+              hasMoreFilms: false,
+              hasMoreClips: false,
+            }),
+      runtimeClient.getCycleHistoryPage
+        ? runtimeClient.getCycleHistoryPage(session.id, group.id, { limit: 50 })
+        : runtimeClient.getCycleHistory
+          ? runtimeClient.getCycleHistory(session.id, group.id).then((cycles) => ({
+              cycles,
+              nextCursor: null,
+              hasMore: false,
+            }))
+          : Promise.resolve({
+              cycles: cycle
+                ? [
+                    {
+                      id: cycle.id,
+                      prompt: cycle.prompt,
+                      startsAt: cycle.startsAt,
+                      endsAt: cycle.endsAt,
+                      status: cycle.status,
+                      releaseStatus: 'unpublished' as const,
+                    },
+                  ]
+                : [],
+              nextCursor: null,
+              hasMore: false,
+            }),
     ])
-      .then(([premiere, archive, cycles]) =>
-        setState({ status: 'ready', premiere, archive, cycles }),
+      .then(([premiere, archivePage, cyclePage]) =>
+        setState({
+          status: 'ready',
+          premiere,
+          archive: archivePage.archive,
+          archivePage,
+          cycles: cyclePage.cycles,
+          cyclePage,
+        }),
       )
       .catch((error: unknown) =>
         setState({
@@ -198,6 +257,74 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
           message: error instanceof Error ? error.message : RUNTIME_OFFLINE_MESSAGE,
         }),
       );
+  };
+
+  const loadMore = async () => {
+    if (state.status !== 'ready' || !session || !group || loadingMore) return;
+    const current = state;
+    const canPageArchive = Boolean(runtimeClient?.getReleasedArchivePage);
+    const canPageCycles = Boolean(runtimeClient?.getCycleHistoryPage);
+    if (!canPageArchive && !canPageCycles) return;
+    setLoadingMore(true);
+    try {
+      const [archivePage, cyclePage] = await Promise.all([
+        canPageArchive && (current.archivePage.hasMoreFilms || current.archivePage.hasMoreClips)
+          ? runtimeClient!.getReleasedArchivePage!(session.id, group.id, {
+              filmCursor: current.archivePage.filmCursor,
+              clipCursor: current.archivePage.clipCursor,
+              includeFilms: current.archivePage.hasMoreFilms,
+              includeClips: current.archivePage.hasMoreClips,
+              limit: 50,
+            })
+          : Promise.resolve(null),
+        canPageCycles && current.cyclePage.hasMore
+          ? runtimeClient!.getCycleHistoryPage!(session.id, group.id, {
+              cursor: current.cyclePage.nextCursor,
+              limit: 50,
+            })
+          : Promise.resolve(null),
+      ]);
+      setState((latest) => {
+        if (latest.status !== 'ready') return latest;
+        const mergeById = <T extends { id: string }>(left: T[], right: T[]) => {
+          const entries = new Map(left.map((entry) => [entry.id, entry]));
+          for (const entry of right) entries.set(entry.id, entry);
+          return [...entries.values()];
+        };
+        const nextArchive = archivePage
+          ? {
+              archive: {
+                films: mergeById(latest.archive.films, archivePage.archive.films),
+                clips: mergeById(latest.archive.clips, archivePage.archive.clips),
+              },
+              filmCursor: archivePage.hasMoreFilms ? archivePage.filmCursor : null,
+              clipCursor: archivePage.hasMoreClips ? archivePage.clipCursor : null,
+              hasMoreFilms: archivePage.hasMoreFilms,
+              hasMoreClips: archivePage.hasMoreClips,
+            }
+          : latest.archivePage;
+        const nextCycles = cyclePage
+          ? {
+              cycles: mergeById(latest.cycles, cyclePage.cycles),
+              nextCursor: cyclePage.hasMore ? cyclePage.nextCursor : null,
+              hasMore: cyclePage.hasMore,
+            }
+          : latest.cyclePage;
+        return {
+          ...latest,
+          archive: nextArchive.archive,
+          archivePage: nextArchive,
+          cycles: nextCycles.cycles,
+          cyclePage: nextCycles,
+        };
+      });
+    } catch (error) {
+      setDownloadNotice(
+        error instanceof Error ? error.message : 'Older archive items could not load.',
+      );
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   useEffect(() => {
@@ -278,17 +405,30 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
         <PremiereStatus
           premiere={{ state: 'locked', cycleId: state.premiere.cycleId }}
           reload={load}
+          hasOlderReleasedMedia={state.archive.films.length > 0 || state.archive.clips.length > 0}
         />
       )
     ) : (
-      <PremiereStatus premiere={state.premiere} reload={load} />
+      <PremiereStatus
+        premiere={state.premiere}
+        reload={load}
+        hasOlderReleasedMedia={state.archive.films.length > 0 || state.archive.clips.length > 0}
+      />
     );
+  // The server restricts real archive pages to published cycles. If locally
+  // supplied cycle metadata is available, also hide any explicitly locked
+  // entry; an older paged cycle with no metadata remains visible.
+  const cycleById = new Map(state.cycles.map((entry) => [entry.id, entry]));
   const releasedArchive: ReleasedArchive = {
-    films: state.archive.films.filter((film) => releasedCycleIds.has(film.cycleId)),
-    clips: state.archive.clips.filter((clip) => releasedCycleIds.has(clip.cycleId)),
+    films: state.archive.films.filter(
+      (film) => cycleById.get(film.cycleId)?.releaseStatus !== 'unpublished',
+    ),
+    clips: state.archive.clips.filter(
+      (clip) => cycleById.get(clip.cycleId)?.releaseStatus !== 'unpublished',
+    ),
   };
   return (
-    <View style={styles.stack}>
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stack}>
       <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
         Archive
       </Text>
@@ -296,28 +436,44 @@ export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient 
       <ArchiveEntries
         archive={releasedArchive}
         cycles={state.cycles}
+        hasMoreCycles={
+          state.archivePage.hasMoreFilms ||
+          state.archivePage.hasMoreClips ||
+          state.cyclePage.hasMore
+        }
+        loadingMore={loadingMore}
+        loadMore={() => void loadMore()}
         download={download}
         notice={downloadNotice}
       />
-    </View>
+    </ScrollView>
   );
 }
 
 function PremiereStatus({
   premiere,
   reload,
+  hasOlderReleasedMedia = false,
 }: {
   premiere: Exclude<Premiere, { state: 'ready' }>;
   reload: () => void;
+  hasOlderReleasedMedia?: boolean;
 }) {
   const state = revealStateForPremiere(premiere);
   return (
-    <RevealEducationPanel
-      onAction={reload}
-      state={state}
-      surface="archive"
-      testID={`archive-${premiere.state}`}
-    />
+    <View style={styles.stack}>
+      <RevealEducationPanel
+        onAction={reload}
+        state={state}
+        surface="archive"
+        testID={`archive-${premiere.state}`}
+      />
+      {hasOlderReleasedMedia ? (
+        <Text style={styles.bodyText} testID="archive-current-cycle-context">
+          This status is for the current cycle. Previously released media remains available below.
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -361,6 +517,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
-  downloadText: { color: COLORS.paper, fontSize: 14, fontWeight: '700' },
+  downloadText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
   notice: { color: COLORS.muted, fontSize: 14 },
 });
