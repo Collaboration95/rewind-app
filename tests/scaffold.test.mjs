@@ -37,6 +37,8 @@ test('quality workflow validates main pushes and PRs against any stacked base', 
   assert.match(workflow, /npx jest --runInBand --coverage/);
   assert.match(workflow, /bash tests\/deploy\/recovery-smoke\.test\.sh/);
   assert.equal((workflow.match(/npm run build:web/g) ?? []).length, 1);
+  assert.match(workflow, /needs: \[static, server, frontend, browser, fixtures\]/);
+  assert.match(workflow, /if: \$\{\{ always\(\) \}\}/);
   assert.match(workflow, /push:\n    branches: \[main\]/);
   const pullRequestBlock = workflow.match(/  pull_request:\n((?:    .*\n)*)/)?.[1] ?? '';
   assert.match(pullRequestBlock, /types: \[opened, synchronize, reopened, ready_for_review\]/);
