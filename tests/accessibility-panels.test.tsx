@@ -98,8 +98,9 @@ describe('native accessibility panels', () => {
 
   it('keeps invite actions as separate native accessibility elements', async () => {
     const result = await render(<App runtimeClient={inviteRuntime()} />);
-    await result.findByText('Current member: Amber');
+    await result.findByRole('header', { name: 'Weekend People' });
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await result.findByText('Current member: Amber');
 
     const panel = result.getByTestId('settings-invites');
     expect(panel.props.accessible).toBe(false);

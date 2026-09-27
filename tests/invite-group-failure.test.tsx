@@ -161,6 +161,7 @@ describe('group creation and invite failure paths', () => {
     request.resolve({ ok: true, group: createdGroup });
     await result.findByRole('header', { name: createdGroup.name });
     expect(createGroup).toHaveBeenCalledTimes(1);
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     expect(result.getByText('Current member: Amber')).toBeTruthy();
   });
 
