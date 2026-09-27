@@ -362,3 +362,58 @@ route keyboard navigation and two-member Chat delivery. All 15 server realtime
 tests passed. TypeScript and affected-file lint passed. These results do not
 replace native iPhone owner/peer retesting or the remaining Firefox/Safari and
 joint-comparison requirements.
+
+## Attributed reference study — 28 September 2026
+
+These six references across three products were researched with AI assistance
+after implementation, for owner review. They are not retroactive evidence of
+Loi's original inspiration, personal app usage or an earlier peer meeting.
+The adaptation and rejection columns are design analysis, not product claims.
+
+| Product and source                                                                                                           | Documented principle                                                                       | Application to Darkroom                                                                       | Deliberately rejected                                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| [Apple Photos: collections](https://support.apple.com/guide/iphone/browse-your-photo-collections-iph4f36c4148/ios)           | Frequently used collections can be pinned and reordered.                                   | Prioritize prompt, allowance and next action; put secondary Demo controls in Settings.        | Adding configurable dashboard ordering to this concept; it adds scope without proving the core journey. |
+| [Apple Photos: Hidden album](https://support.apple.com/en-us/104987)                                                         | Hidden media has an explicit location and an unlock boundary.                              | Clearly distinguish sealed and released Archive states, with no preview before release.       | Suggesting biometric authentication or equivalent privacy guarantees for synthetic Demo access.         |
+| [Signal: message status](https://support.signal.org/hc/en-us/articles/360009303072-Troubleshooting-sending-messages)         | Sending, sent, delivered and read are distinct statuses.                                   | Keep connection state and successful local POST separate; verify receipt in a second session. | Inventing delivered/read receipts when Rewind has no supporting contract.                               |
+| [Signal: permissions](https://support.signal.org/hc/en-us/articles/360007062172-Signal-Permissions-OS-Notification-Settings) | Camera and microphone permissions are explained by the feature they enable.                | Explain capture access and recovery; distinguish OS permission from preview readiness.        | Copying permissions for contacts, phone identity or unrelated capabilities.                             |
+| [Lapse: disposable camera listing](https://apps.apple.com/us/app/lapse-disposable-camera/id1636699256)                       | Capture is framed as taking a photo now and developing it later.                           | Filmstrip, collection countdown and delayed reveal communicate time and anticipation.         | Removing the capturing member's draft review; Rewind explicitly supports it before acceptance.          |
+| [Lapse: product and account explanation](https://lapse.com/)                                                                 | Film photography informs a friends-oriented journal; account management lives in Settings. | Keep the current group visible and move actor-management controls off Home.                   | Claiming real accounts, private friend networks or public profiles for local synthetic members.         |
+
+## Remaining human execution — ready-to-use sequence
+
+1. **Physical iPhone retest:** use the updated branch and record its commit,
+   device, iOS and Expo Go versions. Unset `EXPO_PUBLIC_CAMERA_MODE`, start Expo
+   on LAN, open Camera, allow permissions, capture/review/discard, then verify
+   denial and recovery through Settings. Do not reset unrelated phone data.
+2. **Connected Chat:** start the local runtime using README instructions and
+   its reachable LAN address. On two clients, enter different synthetic members
+   in the same group. Send one unique message each way; both must appear without
+   reload. Background/reopen a client and verify reconnect and no duplicates.
+   Record connection status and any failed step; health alone is not a pass.
+3. **iPhone 14+ simulator:** on a Mac run `npm ci`, then
+   `npm start -- --ios --lan --clear`. Use explicit `demo` / `demo-denied`
+   camera fixtures for simulator-only capture review and label them as such.
+   Check all five routes, safe areas, forms, keyboard, large text, scroll bounds
+   and sealed/revealed copy. The physical-iPhone report does not replace this
+   explicitly required simulator environment.
+4. **Firefox or Safari:** repeat the six-task browser script at 390 × 844 and
+   1280 × 800, including Tab/Shift+Tab, visible focus, form cancellation and reset
+   cancellation. Record browser/version, commit, actual state and pass/fail.
+   Firefox's Windows launch remains blocked: `sxstrace` diagnostics also required
+   unavailable administrator access. No browser-test pass is inferred.
+5. **Independent cross-use:** each teammate posts their own findings, hesitation,
+   accessibility/truthful-state challenge and setup result. Loi must likewise
+   personally try both peer branches. Agent-generated critiques do not satisfy
+   this checkpoint.
+6. **Joint comparison:** use journey clarity, accessibility, phone/web fit,
+   truthful Demo/sealed states and implementation cost as comparison rows.
+   Link each person's evidence for each concept, then record preferred direction,
+   retained ideas, open trade-offs, follow-up owners and each person's explicit
+   agreement or dissent. Meeting dates, attendees and decisions remain unfilled
+   until supplied by participants. Do not merge this concept into main.
+
+The security revision renders the wireframe's selected-state label with
+`textContent`; no selected text is interpolated as HTML. A browser regression
+injects markup into an option, verifies it remains inert text, and confirms the
+ordinary still-review interaction continues to work. CodeQL clearance must be
+confirmed by the next remote scan.

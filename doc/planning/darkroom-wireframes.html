@@ -379,7 +379,7 @@
             'Submitted media remains sealed until publication.',
           ],
           offline: ['Runtime unavailable', 'Connect the local runtime to check release.'],
-        }[s];
+        }[s] || ['Unknown fixture state', 'Choose a supported state above.'];
         return `<div class="panel"><h3>${copy[0]}</h3><p>${copy[1]}</p>${['failed', 'offline'].includes(s) ? button('Retry · fixture', 'retry') : ''}</div>`;
       }
       function camera() {
@@ -466,9 +466,7 @@
             return (
               '<h2>Weekend People</h2>' +
               (direction === 1
-                ? '<p class="tag">CURRENT ROLL · ' +
-                  (state.value === 'collecting' ? 'COLLECTING' : state.value.toUpperCase()) +
-                  '</p><p class="clock">02d : 14h</p><small>Sample collection time remaining; not a publication guarantee</small>' +
+                ? '<p class="tag">CURRENT ROLL · <span id="roll-state"></span></p><p class="clock">02d : 14h</p><small>Sample collection time remaining; not a publication guarantee</small>' +
                   statusPanel() +
                   prompt +
                   allowance
@@ -545,6 +543,8 @@
             : '') +
           content() +
           '<p id="feedback" class="status" role="status"></p>';
+        const rollState = document.getElementById('roll-state');
+        if (rollState) rollState.textContent = state.value.toUpperCase();
         nav.innerHTML = ['entry', 'setup'].includes(page.value)
           ? ''
           : (direction === 1
@@ -593,7 +593,7 @@
           return;
         }
         if (a === 'still' || a === 'clip') {
-          mode = a;
+          mode = a === 'clip' ? 'clip' : 'still';
           review = false;
           render();
           return;
