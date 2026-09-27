@@ -421,6 +421,43 @@ describe('VideoCaptureScreen', () => {
     expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
   });
 
+  it('reviews a chosen phone video, previews it locally, and explains the runtime need', async () => {
+    const platform: TestVideoPlatform = {
+      ...videoPlatformForReview(),
+      pickLibraryVideo: jest.fn().mockResolvedValue({ ...clip, source: 'file' as const }),
+      supportsLibraryVideo: true,
+    };
+    const result = await render(<VideoCaptureScreen platform={platform} />);
+    await result.findByTestId('video-live-preview');
+
+    await fireEvent.press(result.getByTestId('video-choose-library'));
+    await result.findByTestId('video-review');
+    expect(platform.pickLibraryVideo).toHaveBeenCalledTimes(1);
+    expect(result.getByTestId('video-upload-needs-runtime')).toBeTruthy();
+
+    expect(result.queryByTestId('video-clip-preview')).toBeNull();
+    await fireEvent.press(result.getByTestId('video-preview-toggle'));
+    expect(result.getByTestId('video-clip-preview-player')).toBeTruthy();
+    expect(result.getByTestId('video-clip-preview-meta').props.children).toMatch(
+      /Phone video · 8\.0 s · 720 × 1280/,
+    );
+    await fireEvent.press(result.getByRole('button', { name: 'Hide preview' }));
+    expect(result.queryByTestId('video-clip-preview')).toBeNull();
+  });
+
+  it('keeps the capture screen when the phone video picker is cancelled', async () => {
+    const platform: TestVideoPlatform = {
+      ...videoPlatformForReview(),
+      pickLibraryVideo: jest.fn().mockResolvedValue(null),
+      supportsLibraryVideo: true,
+    };
+    const result = await render(<VideoCaptureScreen platform={platform} />);
+    await result.findByTestId('video-live-preview');
+    await fireEvent.press(result.getByTestId('video-choose-library'));
+    expect(result.queryByTestId('video-review')).toBeNull();
+    expect(result.getByTestId('video-live-preview')).toBeTruthy();
+  });
+
   it('waits for the camera to be ready before recording can start', async () => {
     const platform = videoPlatformForReview();
     const result = await render(<VideoCaptureScreen platform={platform} />);

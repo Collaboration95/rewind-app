@@ -103,6 +103,8 @@ export interface CameraPlatform {
   readonly supportsVideoRecording?: boolean;
   /** Whether this adapter exposes a local file fallback. */
   readonly supportsFileFallback?: boolean;
+  /** Whether an existing phone video can be chosen from the photo library. */
+  readonly supportsLibraryVideo?: boolean;
 
   getCapabilities(): Promise<CapabilitySnapshot>;
   getPermissions(): Promise<PermissionSnapshot>;
@@ -113,6 +115,8 @@ export interface CameraPlatform {
   pickStillFile?(): Promise<PlatformStillImage>;
   /** Browser-only fallback when native video recording is unavailable. */
   pickVideoFile?(): Promise<import('../domain/video').RecordedClip>;
+  /** Native photo-library pick; resolves null when the person cancels. */
+  pickLibraryVideo?(): Promise<import('../domain/video').RecordedClip | null>;
 }
 
 export interface ActiveStillImage {

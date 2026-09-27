@@ -278,6 +278,37 @@ describe('Expo camera adapter contract', () => {
     expect(getInfoAsync).toHaveBeenCalledWith('file://capture.mp4');
   });
 
+  it('picks a portrait phone video of 15 seconds or less and rejects others', async () => {
+    jest.mocked(FileSystem.getInfoAsync).mockResolvedValue({
+      exists: true,
+      isDirectory: false,
+      modificationTime: 1,
+      size: 64_000,
+      uri: 'file://picked.mov',
+    });
+    const picked = { duration: 12_400, height: 1920, uri: 'file://picked.mov', width: 1080 };
+    const libraryVideoPicker = jest.fn().mockResolvedValue(picked);
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => null, libraryVideoPicker });
+
+    await expect(platform.pickLibraryVideo()).resolves.toMatchObject({
+      durationSeconds: 12.4,
+      hasAudio: true,
+      height: 1920,
+      mimeType: 'video/mp4',
+      source: 'file',
+      width: 1080,
+    });
+
+    libraryVideoPicker.mockResolvedValueOnce(null);
+    await expect(platform.pickLibraryVideo()).resolves.toBeNull();
+    libraryVideoPicker.mockResolvedValueOnce({ ...picked, duration: 16_000 });
+    await expect(platform.pickLibraryVideo()).rejects.toThrow('15 seconds or shorter');
+    libraryVideoPicker.mockResolvedValueOnce({ ...picked, height: 1080, width: 1920 });
+    await expect(platform.pickLibraryVideo()).rejects.toThrow('portrait');
+    libraryVideoPicker.mockResolvedValueOnce({ ...picked, duration: null });
+    await expect(platform.pickLibraryVideo()).rejects.toThrow('length could not be read');
+  });
+
   it('honors a shorter requested duration while preserving the adapter contract', async () => {
     const recordAsync = jest.fn().mockResolvedValue({
       duration: 9,

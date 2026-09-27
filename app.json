@@ -29,6 +29,14 @@
           "recordAudioAndroid": true
         }
       ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Rewind to choose a short portrait video from your library.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
       "expo-video",
       "expo-notifications"
     ],

@@ -2,6 +2,7 @@ import { Platform, Linking } from 'react-native';
 import { Camera, CameraView, type CameraCapturedPicture } from 'expo-camera';
 import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as ImagePicker from 'expo-image-picker';
 
 import type {
   CameraPlatform,
@@ -14,6 +15,7 @@ import type {
 import type { RecordedClip } from '../domain/video';
 
 export const VIDEO_CACHE_FOLDER = 'rewind-clips';
+const MAX_LIBRARY_VIDEO_SECONDS = 15;
 
 type BrowserVideoElement = HTMLVideoElement & {
   audioTracks?: { length: number };
@@ -325,6 +327,38 @@ export interface ExpoCameraPlatformOptions {
   browserObjectUrlFactory?: (file: File) => string;
   browserVideoContainerReader?: (file: File) => Promise<BrowserVideoContainerMetadata>;
   browserVideoMetadataReader?: (uri: string) => Promise<BrowserVideoMetadata>;
+  /** Native photo-library seam; resolves null when the person cancels. */
+  libraryVideoPicker?: () => Promise<LibraryVideoAsset | null>;
+}
+
+/** The subset of an Expo Image Picker video asset the adapter relies on. */
+export interface LibraryVideoAsset {
+  uri: string;
+  width: number;
+  height: number;
+  /** Milliseconds, as reported by Expo Image Picker. */
+  duration?: number | null;
+  fileSize?: number;
+}
+
+async function launchLibraryVideoPicker(): Promise<LibraryVideoAsset | null> {
+  const result = await ImagePicker.launchImageLibraryAsync({
+    allowsEditing: false,
+    mediaTypes: ['videos'],
+    // Ask iOS for a widely decodable (H.264) representation of HEVC videos.
+    preferredAssetRepresentationMode:
+      ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+    quality: 1,
+  });
+  if (result.canceled || !result.assets?.[0]) return null;
+  const asset = result.assets[0];
+  return {
+    duration: asset.duration,
+    fileSize: asset.fileSize,
+    height: asset.height,
+    uri: asset.uri,
+    width: asset.width,
+  };
 }
 
 async function webCameraAvailable(): Promise<boolean> {
@@ -339,6 +373,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
   readonly supportsLivePreview = true;
   readonly supportsVideoRecording = Platform.OS !== 'web';
   readonly supportsFileFallback = Platform.OS === 'web';
+  readonly supportsLibraryVideo = Platform.OS !== 'web';
 
   constructor(private readonly options: ExpoCameraPlatformOptions) {}
 
@@ -494,6 +529,45 @@ export class ExpoCameraPlatform implements CameraPlatform {
       if (typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(sourceUri);
       throw error;
     }
+  }
+
+  /**
+   * Choose an existing phone video of 15 seconds or less. Duration and the
+   * displayed (rotation-aware) orientation are checked here; the server still
+   * verifies the container and audio track before the clip is accepted.
+   */
+  async pickLibraryVideo(): Promise<RecordedClip | null> {
+    if (!this.supportsLibraryVideo) {
+      throw new Error('Choosing a phone video is only available on iOS and Android.');
+    }
+    const asset = await (this.options.libraryVideoPicker ?? launchLibraryVideoPicker)();
+    if (!asset) return null;
+    const durationSeconds = asset.duration ? asset.duration / 1000 : Number.NaN;
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      throw new Error('The video length could not be read. Choose another video.');
+    }
+    // Library durations can overshoot a 15-second recording by a few frames.
+    if (durationSeconds > MAX_LIBRARY_VIDEO_SECONDS + 0.1) {
+      throw new Error('Choose a video that is 15 seconds or shorter.');
+    }
+    const width = Math.round(asset.width);
+    const height = Math.round(asset.height);
+    if (!(width > 0 && height > 0) || width >= height) {
+      throw new Error('Choose a portrait video.');
+    }
+    const managed = await moveVideoToManagedCache(asset.uri);
+    return {
+      byteLength: managed.byteLength ?? asset.fileSize,
+      durationSeconds: Math.min(MAX_LIBRARY_VIDEO_SECONDS, durationSeconds),
+      format: 'mp4',
+      // Picker assets do not report audio; the server rejects silent clips.
+      hasAudio: true,
+      height,
+      mimeType: 'video/mp4',
+      source: 'file',
+      sourceUri: managed.uri,
+      width,
+    };
   }
 
   async recordClip(maxDurationSeconds = 15): Promise<RecordedClip> {

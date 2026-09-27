@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { CameraView } from 'expo-camera';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
@@ -560,6 +561,22 @@ export function VideoCaptureScreen({
       );
     }
   };
+
+  const chooseLibraryVideo = async () => {
+    if (!isCaptureActive() || !platform.pickLibraryVideo) return;
+    setError(null);
+    try {
+      const selected = await platform.pickLibraryVideo();
+      if (selected) await replaceClip(selected);
+    } catch (libraryError) {
+      if (!isCaptureActive()) return;
+      setError(
+        libraryError instanceof Error ? libraryError.message : 'The video file could not be used.',
+      );
+    }
+  };
+  const canChooseLibraryVideo = Boolean(platform.supportsLibraryVideo && platform.pickLibraryVideo);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const cancelRecording = () => {
     recorder?.cancel();
@@ -1307,6 +1324,15 @@ export function VideoCaptureScreen({
           recording={recording}
         />
       ) : null}
+      {canChooseLibraryVideo && !clip && !recording && access !== 'checking' ? (
+        <ActionButton
+          accessibilityHint={t('Opens your photo library to choose a portrait video')}
+          full
+          label={t('Choose a phone video (15 s max)')}
+          onPress={chooseLibraryVideo}
+          testID="video-choose-library"
+        />
+      ) : null}
       {review && clip && !recording ? (
         <View style={styles.reviewPanel} testID="video-review">
           <StepLine
@@ -1369,8 +1395,21 @@ export function VideoCaptureScreen({
               </Pressable>
             ))}
           </View>
+          <ActionButton
+            label={previewOpen ? t('Hide preview') : t('Preview clip')}
+            onPress={() => setPreviewOpen((open) => !open)}
+            testID="video-preview-toggle"
+          />
+          {previewOpen ? <ClipPreview clip={clip} /> : null}
           <ActionButton label={t('Save trim and mode')} onPress={saveReview} />
           <ActionButton label={t('Retake')} onPress={() => void retake()} />
+          {!runtimeClient ? (
+            <Notice testID="video-upload-needs-runtime">
+              {t(
+                'Upload needs the local runtime. Start it on your computer and set EXPO_PUBLIC_LOCAL_BASE_URL before starting Expo.',
+              )}
+            </Notice>
+          ) : null}
           {uploadProgress.status === 'complete' && !contributionFailed ? (
             <Text style={styles.success}>{t('Upload queued as one pending contribution.')}</Text>
           ) : uploadProgress.status === 'failed' || contributionFailed ? null : (
@@ -1400,6 +1439,39 @@ export function VideoCaptureScreen({
       />
       {error && access !== 'error' ? <InlineError>{t(error)}</InlineError> : null}
     </ScrollView>
+  );
+}
+
+/**
+ * Local, pre-upload playback of the member's own clip for checking what will
+ * be submitted. It is never shown after submission, when media is sealed.
+ */
+function ClipPreview({ clip }: { clip: RecordedClip }) {
+  const { t } = useI18n();
+  const player = useVideoPlayer(clip.sourceUri, (instance) => {
+    instance.loop = true;
+  });
+  const size = clip.byteLength ? `${(clip.byteLength / 1024 / 1024).toFixed(2)} MB` : '—';
+  return (
+    <View style={styles.clipPreview} testID="video-clip-preview">
+      <VideoView
+        accessibilityLabel={t('Preview of your unsent clip')}
+        contentFit="contain"
+        nativeControls
+        player={player}
+        style={styles.clipPreviewPlayer}
+        testID="video-clip-preview-player"
+      />
+      <Micro testID="video-clip-preview-meta">
+        {t('{source} · {seconds} s · {width} × {height} · {size} · audio checked by server', {
+          height: clip.height,
+          seconds: clip.durationSeconds.toFixed(1),
+          size,
+          source: clip.source === 'file' ? t('Phone video') : t('Recorded here'),
+          width: clip.width,
+        })}
+      </Micro>
+    </View>
   );
 }
 
@@ -1499,6 +1571,14 @@ function Panel({
 const styles = StyleSheet.create({
   header: { alignItems: 'flex-start', gap: 6 },
   reviewStack: { gap: 12 },
+  clipPreview: { gap: 8 },
+  clipPreviewPlayer: {
+    aspectRatio: 9 / 16,
+    backgroundColor: COLORS.deep,
+    borderRadius: 10,
+    maxHeight: 420,
+    width: '100%',
+  },
   body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   panel: {
     backgroundColor: COLORS.paper,
