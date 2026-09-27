@@ -26,9 +26,16 @@ jest.mock('expo-camera', () => {
   const ReactModule = require('react');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { View } = require('react-native');
-  const CameraView = ReactModule.forwardRef((props: Record<string, unknown>, _ref: unknown) => (
-    <View {...props} />
-  ));
+  const CameraView = ReactModule.forwardRef(
+    (props: Record<string, unknown> & { onCameraReady?: () => void }, _ref: unknown) => {
+      // Native CameraView reports readiness after its session starts.
+      const { onCameraReady } = props;
+      ReactModule.useEffect(() => {
+        onCameraReady?.();
+      }, [onCameraReady]);
+      return <View {...props} />;
+    },
+  );
   return { CameraView };
 });
 
@@ -414,6 +421,14 @@ describe('VideoCaptureScreen', () => {
     expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
   });
 
+  it('waits for the camera to be ready before recording can start', async () => {
+    const platform = videoPlatformForReview();
+    const result = await render(<VideoCaptureScreen platform={platform} />);
+    await result.findByTestId('video-live-preview');
+    fireEvent(result.getByTestId('video-live-preview'), 'cameraReady');
+    expect(result.getByRole('button', { name: 'Start recording' })).toBeEnabled();
+  });
+
   it('shows recording progress and transitions to clip review after stopping', async () => {
     const platform = videoPlatformForReview();
     let resolveRecording!: (value: RecordedClip) => void;
@@ -426,6 +441,8 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-recording');
     expect(result.getByText(/0 \/ 15 seconds/)).toBeTruthy();
+    // Unmounting the native camera mid-recording crashes iOS; it must stay.
+    expect(result.getByTestId('video-live-preview')).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Stop and review' }));
     expect(platform.stopRecording).toHaveBeenCalledTimes(1);
     resolveRecording(clip);

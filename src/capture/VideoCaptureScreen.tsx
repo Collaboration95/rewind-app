@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { CameraView } from 'expo-camera';
 import { AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -1293,44 +1293,19 @@ export function VideoCaptureScreen({
           body={error ?? 'Try again.'}
         />
       ) : null}
-      {access === 'ready' && !clip && !recording ? (
-        <View style={styles.captureArea}>
-          <StepLine
-            accessibilityLabel={t('Step {step} of 4', { step: 1 })}
-            active={0}
-            steps={[t('Capture'), t('Review'), t('Submit'), t('Sealed')]}
-          />
-          <CameraView
-            facing="back"
-            mode="video"
-            ref={cameraRef}
-            style={styles.preview}
-            testID="video-live-preview"
-          />
-          <ActionButton
-            full
-            label={t('Start recording')}
-            onPress={() => void startRecording()}
-            testID="video-record"
-            variant="primary"
-          />
-        </View>
-      ) : null}
-      {recording ? (
-        <View style={styles.recordingPanel} testID="video-recording">
-          <Text accessibilityLiveRegion="polite" style={styles.recordingTitle}>
-            {t('Recording…')}
-          </Text>
-          <Text style={styles.timer}>
-            {t('{elapsed} / 15 seconds', { elapsed: Math.floor(elapsedSeconds) })}
-          </Text>
-          <ActionButton label={t('Cancel recording')} onPress={cancelRecording} />
-          <ActionButton
-            label={t('Stop and review')}
-            onPress={() => recorder?.stop()}
-            variant="primary"
-          />
-        </View>
+      {access === 'ready' && !clip ? (
+        // The camera must stay mounted for the whole recording: unmounting a
+        // CameraView while recordAsync is running tears down the native
+        // capture session and crashes iOS (Expo Go) instead of saving a clip.
+        <LiveVideoCapture
+          cameraRef={cameraRef}
+          elapsedSeconds={elapsedSeconds}
+          needsCameraReady={platform.supportsLivePreview}
+          onCancel={cancelRecording}
+          onStart={() => void startRecording()}
+          onStop={() => recorder?.stop()}
+          recording={recording}
+        />
       ) : null}
       {review && clip && !recording ? (
         <View style={styles.reviewPanel} testID="video-review">
@@ -1425,6 +1400,67 @@ export function VideoCaptureScreen({
       />
       {error && access !== 'error' ? <InlineError>{t(error)}</InlineError> : null}
     </ScrollView>
+  );
+}
+
+function LiveVideoCapture({
+  cameraRef,
+  elapsedSeconds,
+  needsCameraReady,
+  onCancel,
+  onStart,
+  onStop,
+  recording,
+}: {
+  cameraRef: RefObject<CameraView | null>;
+  elapsedSeconds: number;
+  needsCameraReady: boolean;
+  onCancel: () => void;
+  onStart: () => void;
+  onStop: () => void;
+  recording: boolean;
+}) {
+  const { t } = useI18n();
+  // Owned here so every remount of the camera waits for its own ready event;
+  // recording before the native session is ready can also crash iOS.
+  const [cameraReady, setCameraReady] = useState(!needsCameraReady);
+  return (
+    <View style={styles.captureArea}>
+      <StepLine
+        accessibilityLabel={t('Step {step} of 4', { step: 1 })}
+        active={0}
+        steps={[t('Capture'), t('Review'), t('Submit'), t('Sealed')]}
+      />
+      <CameraView
+        facing="back"
+        mode="video"
+        onCameraReady={() => setCameraReady(true)}
+        ref={cameraRef}
+        style={styles.preview}
+        testID="video-live-preview"
+      />
+      {recording ? (
+        <View style={styles.recordingPanel} testID="video-recording">
+          <Text accessibilityLiveRegion="polite" style={styles.recordingTitle}>
+            {t('Recording…')}
+          </Text>
+          <Text style={styles.timer}>
+            {t('{elapsed} / 15 seconds', { elapsed: Math.floor(elapsedSeconds) })}
+          </Text>
+          <ActionButton label={t('Cancel recording')} onPress={onCancel} />
+          <ActionButton label={t('Stop and review')} onPress={onStop} variant="primary" />
+        </View>
+      ) : (
+        <ActionButton
+          busy={!cameraReady}
+          full
+          label={cameraReady ? t('Start recording') : t('Preparing camera…')}
+          onPress={onStart}
+          testID="video-record"
+          variant="primary"
+        />
+      )}
+    </View>
   );
 }
 

@@ -187,6 +187,7 @@ export const APP_ZH: Record<string, string> = {
   'Recording access needs checking': '需要检查录制权限',
   'Try again.': '请重试。',
   'Start recording': '开始录制',
+  'Preparing camera…': '正在启动相机…',
   'Recording…': '录制中…',
   '{elapsed} / 15 seconds': '{elapsed} / 15 秒',
   'Cancel recording': '取消录制',
