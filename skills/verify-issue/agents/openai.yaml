@@ -1,0 +1,7 @@
+interface:
+  display_name: "Verify Issue"
+  short_description: "Clarify, draft, then check overlap and Sprint fit"
+  default_prompt: "Use $verify-issue to clarify this Rewind report, draft a detailed Issue, check related open Issues and Sprint fit, then file or update it if requested."
+
+policy:
+  allow_implicit_invocation: false
