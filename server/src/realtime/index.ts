@@ -1,4 +1,4 @@
-import type { ChatMessageEvent } from '../chat';
+import type { ChatEventMetadata, ChatMessageEvent } from '../chat';
 
 export type RealtimeEventWriter = (event: ChatMessageEvent) => void;
 
@@ -40,7 +40,7 @@ export class RealtimeHub {
 }
 
 export function encodeSseEvent(
-  event: ChatMessageEvent,
+  event: ChatMessageEvent | ChatEventMetadata,
   options: { metadataOnly?: boolean } = {},
 ): string {
   const payload = options.metadataOnly

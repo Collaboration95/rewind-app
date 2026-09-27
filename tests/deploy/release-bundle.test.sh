@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 root="$(mktemp -d "${TMPDIR:-/tmp}/rewind-release-test.XXXXXX")"
 trap 'rm -rf -- "$root"' EXIT
+python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/release-extraction.test.py"
 repo="$root/repo"
 mkdir -p "$repo/deploy" "$repo/infra/terraform/demo" "$repo/server/src" "$root/bin"
 cp "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)/deploy/release.py" "$repo/deploy/release.py"

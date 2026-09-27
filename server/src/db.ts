@@ -1862,6 +1862,18 @@ export interface ReleasedArchiveRecord {
     createdAt: string;
     outputPath: string;
   }[];
+  nextFilmCursor: [string, string, string] | null;
+  nextClipCursor: [string, string] | null;
+  hasMoreFilms: boolean;
+  hasMoreClips: boolean;
+}
+
+export interface ReleasedArchivePageOptions {
+  limit?: number;
+  includeFilms?: boolean;
+  includeClips?: boolean;
+  filmCursor?: [publishedAt: string, createdAt: string, id: string] | null;
+  clipCursor?: [createdAt: string, id: string] | null;
 }
 
 /** List only ready, released media. Filesystem paths stay server-side. */
@@ -1869,21 +1881,53 @@ export function listReleasedArchive(
   database: RewindDatabase,
   groupId: string,
   memberId: string,
+  options: ReleasedArchivePageOptions = {},
 ): ReleasedArchiveRecord {
-  const films = database
-    .prepare(
-      `SELECT f.id, c.id AS cycleId, c.release_published_at AS publishedAt,
-              f.output_path AS outputPath
+  const limit =
+    Number.isInteger(options.limit) && options.limit! > 0 ? Math.min(options.limit!, 50) : 50;
+  const filmCursorWhere = options.filmCursor
+    ? `AND (c.release_published_at < ? OR (c.release_published_at = ? AND
+         (f.created_at < ? OR (f.created_at = ? AND f.id < ?))))`
+    : '';
+  const filmParams: (string | number)[] = [groupId];
+  if (options.filmCursor) {
+    const [publishedAt, createdAt, id] = options.filmCursor;
+    filmParams.push(publishedAt, publishedAt, createdAt, createdAt, id);
+  }
+  filmParams.push(limit + 1);
+  const filmRows =
+    options.includeFilms === false
+      ? []
+      : (database
+          .prepare(
+            `SELECT f.id, c.id AS cycleId, c.release_published_at AS publishedAt,
+              f.created_at AS createdAt, f.output_path AS outputPath
        FROM media_jobs f
        JOIN cycles c ON c.id = f.cycle_id AND c.group_id = f.group_id
        WHERE f.group_id = ? AND f.kind = 'film' AND f.status = 'ready'
          AND f.output_path IS NOT NULL AND c.release_status = 'published'
-       ORDER BY c.release_published_at DESC, f.created_at DESC, f.id DESC`,
-    )
-    .all(groupId) as Record<string, unknown>[];
-  const clips = database
-    .prepare(
-      `SELECT clip.id, contribution.id AS contributionId, cycle.id AS cycleId,
+         ${filmCursorWhere}
+       ORDER BY c.release_published_at DESC, f.created_at DESC, f.id DESC LIMIT ?`,
+          )
+          .all(...filmParams) as Record<string, unknown>[]);
+  const hasMoreFilms = options.includeFilms !== false && filmRows.length > limit;
+  const films = filmRows.slice(0, limit);
+
+  const clipCursorWhere = options.clipCursor
+    ? `AND (contribution.created_at < ? OR (contribution.created_at = ? AND clip.id < ?))`
+    : '';
+  const clipParams: (string | number)[] = [groupId, memberId, groupId];
+  if (options.clipCursor) {
+    const [createdAt, id] = options.clipCursor;
+    clipParams.push(createdAt, createdAt, id);
+  }
+  clipParams.push(limit + 1);
+  const clipRows =
+    options.includeClips === false
+      ? []
+      : (database
+          .prepare(
+            `SELECT clip.id, contribution.id AS contributionId, cycle.id AS cycleId,
               contribution.created_at AS createdAt, clip.output_path AS outputPath
        FROM media_jobs clip
        JOIN contributions contribution ON contribution.id = clip.contribution_id
@@ -1892,9 +1936,12 @@ export function listReleasedArchive(
          AND clip.output_path IS NOT NULL AND contribution.member_id = ?
          AND cycle.group_id = ? AND cycle.release_status = 'published'
          AND clip.deleted_at IS NULL
-       ORDER BY contribution.created_at DESC, clip.id DESC`,
-    )
-    .all(groupId, memberId, groupId) as Record<string, unknown>[];
+         ${clipCursorWhere}
+       ORDER BY contribution.created_at DESC, clip.id DESC LIMIT ?`,
+          )
+          .all(...clipParams) as Record<string, unknown>[]);
+  const hasMoreClips = options.includeClips !== false && clipRows.length > limit;
+  const clips = clipRows.slice(0, limit);
   return {
     films: films.map((film) => ({
       id: String(film.id),
@@ -1909,6 +1956,20 @@ export function listReleasedArchive(
       createdAt: String(clip.createdAt),
       outputPath: String(clip.outputPath),
     })),
+    nextFilmCursor:
+      hasMoreFilms && films.length > 0
+        ? [
+            String(films[films.length - 1].publishedAt),
+            String(films[films.length - 1].createdAt),
+            String(films[films.length - 1].id),
+          ]
+        : null,
+    nextClipCursor:
+      hasMoreClips && clips.length > 0
+        ? [String(clips[clips.length - 1].createdAt), String(clips[clips.length - 1].id)]
+        : null,
+    hasMoreFilms,
+    hasMoreClips,
   };
 }
 

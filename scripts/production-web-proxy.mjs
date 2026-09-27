@@ -124,9 +124,15 @@ async function serveStatic(request, response, staticRoot, url) {
     .pipe(response);
 }
 
-function apiTarget(runtimeOrigin, url) {
+export function apiTarget(runtimeOrigin, url) {
   const runtimePath = url.pathname === '/api' ? '/' : url.pathname.slice('/api'.length);
-  return new URL(`${runtimePath}${url.search}`, runtimeOrigin);
+  // Set the path on the trusted runtime URL instead of resolving user-controlled
+  // path text as a URL reference. A path beginning with `//` would otherwise
+  // replace the runtime authority and turn this same-origin proxy into an SSRF.
+  const target = new URL(runtimeOrigin);
+  target.pathname = runtimePath;
+  target.search = url.search;
+  return target;
 }
 
 function proxyApi(request, response, runtimeOrigin, url, runtimeTimeoutMs) {
