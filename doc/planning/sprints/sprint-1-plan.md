@@ -1,4 +1,10 @@
-# Rewind Sprint 2 plan — hosted capture-to-reveal demo
+# Rewind Sprint 1 plan — hosted capture-to-reveal demo
+
+Project label update (26 September 2026): GitHub Project #8 now labels the
+former Sprint 2 hosted Demo work as Sprint 1 and the former Sprint 1 work as
+Sprint 0. The date ranges and stable `s2-*` orchestration keys are unchanged.
+GitHub milestone names were not renamed; milestone #2 retains its Sprint 1
+title.
 
 - **Status:** Proposed for Sprint Planning
 - **Prepared:** 12 September 2026 (Asia/Singapore)
@@ -16,11 +22,11 @@
 This plan uses fresh GitHub, repository, and local verification evidence rather
 than treating issue closure alone as completion.
 
-| Measure                                    |                                               Sprint 1 evidence | Planning interpretation                                                |
+| Measure                                    |                                               Sprint 0 evidence | Planning interpretation                                                |
 | ------------------------------------------ | --------------------------------------------------------------: | ---------------------------------------------------------------------- |
-| Direct Sprint 1 pull requests closed       |                                                               3 | All three merged: #79, #80, and #91.                                   |
-| Canonical Sprint 1 milestone issues closed |                                                              13 | #33–#43, #53, and #69.                                                 |
-| Additional Sprint 1 review defects closed  |                                                               9 | #81–#89; these were not milestone issues.                              |
+| Direct Sprint 0 pull requests closed       |                                                               3 | All three merged: #79, #80, and #91.                                   |
+| Canonical Sprint 0 milestone issues closed |                                                              13 | #33–#43, #53, and #69.                                                 |
+| Additional Sprint 0 review defects closed  |                                                               9 | #81–#89; these were not milestone issues.                              |
 | Report-compatible closed deliverables      |                                                              22 | Useful for continuity, but nine were defects discovered during review. |
 | User stories among the 22 closures         |                                                               4 | #35, #36, #38, and #41.                                                |
 | Project priority distribution              |                                         11 P0, 5 P1, 5 P2, 1 P3 | High-priority work dominated the increment.                            |
@@ -30,17 +36,17 @@ than treating issue closure alone as completion.
 The completed effort was not small. It added the Node/SQLite/FFmpeg local
 runtime boundary, Demo sessions, groups and invitations, capture/review
 contracts, pending clip submission, deterministic cycle controls, central
-authorisation, and nine review-driven fixes. The merged direct Sprint 1 change
+authorisation, and nine review-driven fixes. The merged direct Sprint 0 change
 covered 97 files and roughly +9,043/-181 lines, including about 2,200 lines of
 test churn. These line counts show breadth, not business value.
 
-### Evidence caveats to fix before Sprint 2 implementation
+### Evidence caveats to fix before Sprint 1 implementation
 
-- Sprint 1 was planned for 13–26 September, but its three PRs merged on 10–11
+- Sprint 0 was planned for 13–26 September, but its three PRs merged on 10–11
   September. The count is therefore a milestone-labelled baseline, not a
   trustworthy issues-per-calendar-day velocity.
 - Only issues #33 and #34 are marked `Done` on Project #8. Closed issue #82 is
-  still `Ready`, and the other 19 closed Sprint 1 items remain `Product Backlog`.
+  still `Ready`, and the other 19 closed Sprint 0 items remain `Product Backlog`.
 - All 22 closed issues still have unchecked acceptance checklists. PR-level
   evidence exists, but the issue records are stale.
 - Physical-device recording required by #41/#89 is not proven. Simulator
@@ -85,10 +91,10 @@ test churn. These line counts show breadth, not business value.
 ## 3. What “more than 2x velocity” means
 
 Raw closure count is not the primary target because the 22-item baseline
-contains nine review defects and three large/overlapping PRs. Sprint 2 uses four
+contains nine review defects and three large/overlapping PRs. Sprint 1 uses four
 measures together:
 
-| Measure                               |       Baseline | Sprint 2 minimum |                             Sprint 2 target |
+| Measure                               |       Baseline | Sprint 1 minimum |                             Sprint 1 target |
 | ------------------------------------- | -------------: | ---------------: | ------------------------------------------: |
 | Accepted vertical user outcomes       |      4 stories |                8 |                                          10 |
 | Merged green PRs                      |              3 |                7 |                                       10–12 |
@@ -124,7 +130,7 @@ P0 is the Sprint commitment. If any P0 outcome is threatened, P1 and P2 stop.
 | --------------------- | -------------------------------------------- | -------: | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `s2-release-001`      | Confirm the current `main` release gate      |      1 h | Formatting, lint, architecture, type, and full test checks pass on current `main`.                                                                    |
 | `s2-release-002`      | Record the #90/PR #92 historical disposition |      1 h | PR #92's formatting failure, the succeeding green integrations, and #90 closure are referenced; no duplicate open integration PR remains.             |
-| `s2-release-003`      | Reconcile Sprint 1 issue and Project status  |      2 h | The 22 closed items have honest status and verification references; #41/#89 retain their physical-device proof caveat.                                |
+| `s2-release-003`      | Reconcile Sprint 0 issue and Project status  |      2 h | The 22 closed items have honest status and verification references; #41/#89 retain their physical-device proof caveat.                                |
 | `s2-architecture-001` | Record the hosted Demo appliance decision    |      2 h | The issue decision fixes AWS region, host, storage, HTTPS, CORS, synthetic-media boundary, backup, and rollback without claiming production security. |
 
 #### AWS backend and hosted frontend
@@ -199,7 +205,7 @@ P1 expands usefulness but must not delay the defining demo.
 - Cognito/OIDC and claims of real authentication.
 - PostgreSQL/RDS, SQS, a separately scaled worker, autoscaling, multi-region,
   and production high availability.
-- Real private/personal media. The hosted Sprint 2 service accepts only
+- Real private/personal media. The hosted Sprint 1 service accepts only
   synthetic or explicitly approved non-sensitive demonstration clips.
 - Advanced archive browsing, own-clip downloads, sharing, live filters, gallery
   import, account management, and public links.
@@ -275,7 +281,7 @@ Current platform references:
 ### Transition after the demo
 
 The ports/adapters boundary should keep the following path open without making
-it Sprint 2 scope:
+it Sprint 1 scope:
 
 ```text
 Demo appliance                Production transition
@@ -325,7 +331,7 @@ issue must name one driver and one reviewer before entering `Ready`.
 
 | Day | Parallel work                                                                                                                  | Required exit criterion                                                                                             |
 | --: | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-|   1 | Green/resolve PR #92; reconcile Sprint 1; freeze demo script and hosted-Demo decision; confirm AWS account, region, and budget | `main` is green; no unresolved baseline branch; every P0 issue has driver/reviewer/dependency.                      |
+|   1 | Green/resolve PR #92; reconcile Sprint 0; freeze demo script and hosted-Demo decision; confirm AWS account, region, and budget | `main` is green; no unresolved baseline branch; every P0 issue has driver/reviewer/dependency.                      |
 |   2 | Container, persistent directories, Lightsail provision; synthetic-media contract; compilation fixture harness                  | Runtime container passes preflight locally; AWS host answers HTTPS health or a named blocker is escalated.          |
 |   3 | AWS distribution deploy, hosted session gate, migrate/seed/reset, and server fixture path                                      | Public web shell reaches the AWS health endpoint and a hosted Demo session is accepted. **Hosted checkpoint 1.**    |
 |   4 | Quota/idempotency, FFmpeg happy path, lifecycle transition/job schema, placeholder processing states                           | Hosted fixture produces one processed sealed clip; temporary-success source is removed.                             |
@@ -370,19 +376,19 @@ An issue is Done only when:
 
 | Risk                                      | Trigger                                              | Immediate response                                                                                                                                                    |
 | ----------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PR #92 consumes the sprint                | Not green by Day 1 noon                              | Split or supersede it; merge only the verified baseline needed by Sprint 2.                                                                                           |
+| PR #92 consumes the sprint                | Not green by Day 1 noon                              | Split or supersede it; merge only the verified baseline needed by Sprint 1.                                                                                           |
 | AWS HTTPS distribution blocks deployment  | No working endpoint by Day 2 noon                    | Use the Lightsail container-service default HTTPS endpoint for a stateless fallback, or a temporary external DNS name with Caddy; keep the public API off plain HTTP. |
 | Web camera cannot provide video           | Any browser/permission failure                       | Use the labelled synthetic clip or bounded file-picker path. Physical camera remains stretch evidence.                                                                |
 | Media upload expands the critical path    | Real byte-upload work begins before the film plays   | Keep P0 on the server-owned synthetic fixture; do not pretend JSON `sourceUri` is an upload. Pull real byte upload only from P1.                                      |
 | FFmpeg compilation is unstable            | No playable deterministic film by Day 6 noon         | Reduce to one normalised format and 1–2 fixture clips; cut chat, deletion, filler, and advanced retry.                                                                |
 | SQLite concurrency/restart issue          | Busy/locked or lost data under the five-user fixture | Enforce one host/process, WAL/busy timeout, serial job claims, and restore from the last snapshot; do not add horizontal scale.                                       |
-| Aggregate PR repeats Sprint 1 review cost | PR exceeds three outcomes or waits one day           | Stop adding scope, split at the adapter/API/UI boundary, and merge the smallest green dependency first.                                                               |
+| Aggregate PR repeats Sprint 0 review cost | PR exceeds three outcomes or waits one day           | Stop adding scope, split at the adapter/API/UI boundary, and merge the smallest green dependency first.                                                               |
 | Security claims outrun Demo access        | Real personal media or public users requested        | Stop; require OIDC/private-storage planning before expanding beyond synthetic/non-sensitive Demo data.                                                                |
 | Issue-count pressure reduces quality      | Ticket has no independent acceptance outcome         | Merge it with the parent outcome and track velocity through PRs/checkpoints instead.                                                                                  |
 
 ## 10. UI planning — deliberately last
 
-Sprint 2 implements only the controls and states necessary for the demo script:
+Sprint 1 implements only the controls and states necessary for the demo script:
 
 - `Use synthetic demo clip` / bounded file selection;
 - submit/progress/sealed/failure text states;
@@ -394,7 +400,7 @@ After the Day 10 release candidate is accepted, hold a separate two-hour UI
 planning workshop. Its output is a later-sprint backlog covering information
 architecture, visual system, responsive composition, typography, motion,
 empty/error content, capture ergonomics, archive browsing, and usability-test
-changes. No final UI redesign is allowed to enter the Sprint 2 critical path.
+changes. No final UI redesign is allowed to enter the Sprint 1 critical path.
 
 ## 11. Sprint Review evidence
 
@@ -433,13 +439,13 @@ these answers on Day 1:
 
 - [AWS, IaC, and SCP execution plan](./aws-iac-scp-execution-plan.md)
 - [Sprint 0 plan](./sprint-0-plan.md)
-- [Sprint 0 extension and Sprint 1 plan](./sprint-0-plan-extension.md)
-- [Sprint 1 progress evidence](../sprint-1-progress-report-evidence.txt)
+- [Sprint 0 extension and Sprint 0 plan](./sprint-0-plan-extension.md)
+- [Archived Sprint 1 progress report draft](../sprint-1-progress-report-evidence-archived.txt)
 - [PR #79](https://github.com/Collaboration95/rewind-app/pull/79)
 - [PR #80](https://github.com/Collaboration95/rewind-app/pull/80)
 - [PR #91](https://github.com/Collaboration95/rewind-app/pull/91)
 - [Open PR #92](https://github.com/Collaboration95/rewind-app/pull/92)
-- [Sprint 1 milestone](https://github.com/Collaboration95/rewind-app/milestone/2)
+- [GitHub Sprint 1 milestone (original label retained)](https://github.com/Collaboration95/rewind-app/milestone/2)
 - [GitHub Project #8](https://github.com/users/Collaboration95/projects/8)
 
 ```text
@@ -462,7 +468,7 @@ lands as a small reviewed increment on `main`.
 ### Phase 1 — local foundation and sealed contribution
 
 - Keep the supported baseline at Node 22 LTS; retain the existing CI and
-  container references rather than upgrading the toolchain during Sprint 2.
+  container references rather than upgrading the toolchain during Sprint 1.
 - Build the production-shaped runtime container and persistent database/media
   directories (`s2-cloud-001` and `s2-cloud-002`).
 - Add local migrate, seed, reset, readiness, health, and safe-log behaviour

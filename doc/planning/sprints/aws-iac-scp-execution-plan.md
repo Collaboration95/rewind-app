@@ -2,11 +2,11 @@
 
 **Status:** Proposed for Sprint Planning
 **Prepared:** 17 September 2026 (Asia/Singapore)
-**Scope:** Sprint 2 hosted Demo and the following production-transition sprint
+**Scope:** Sprint 1 hosted Demo and the following production-transition sprint
 
 ## Executive decision
 
-Ship Sprint 2 as a deliberately small AWS Demo appliance in `ap-southeast-1`:
+Ship Sprint 1 as a deliberately small AWS Demo appliance in `ap-southeast-1`:
 
 ```text
 GitHub Actions
@@ -27,7 +27,7 @@ operator scripts for bootstrap, deploy, migrate, reset, and rollback. Keep the
 application boundary unchanged: synthetic Demo access is not authentication,
 the host is not highly available, and no private/personal media is accepted.
 
-This is the fastest credible route to the Sprint 2 outcome. It avoids spending
+This is the fastest credible route to the Sprint 1 outcome. It avoids spending
 the critical path on Cognito, RDS, SQS, Kubernetes, or multi-account account
 factory work before the capture-to-reveal journey works.
 
@@ -76,13 +76,13 @@ hosted path.
 Credentials can be supplied later. They must be used only for bootstrap, never
 committed, and revoked/rotated after the first role-based workflow is working.
 
-## Sprint 2 plan: ship the hosted Demo
+## Sprint 1 plan: ship the hosted Demo
 
 ### Phase 0 — decision and safety gate (half day)
 
 - Record the choices above in `s2-architecture-001` once the account details
   are confirmed.
-- After the account and budget decisions are recorded, add a Sprint 2 milestone
+- After the account and budget decisions are recorded, add a Sprint 1 milestone
   and create small implementation issues from the slices below; do not create
   one aggregate AWS PR.
 - Verify the account identity, region, service quotas, billing access, and
@@ -153,7 +153,7 @@ response; a clean browser can reach the API without a cross-origin workaround.
 - Configure the monthly budget and a cost-anomaly email alert before media
   testing; alerts are warnings, not a hard spending cap.
 
-**Exit:** the hosted URL passes the Sprint 2 acceptance script once, survives a
+**Exit:** the hosted URL passes the Sprint 1 acceptance script once, survives a
 process/container restart, and can be reset without a source edit.
 
 ### Phase 4 — Product critical path (in parallel)
@@ -264,7 +264,7 @@ state.
 ### Runtime secrets
 
 The current Demo runtime has no need for real user authentication secrets. Keep
-it that way in Sprint 2. If a deployment secret becomes necessary, store it in
+it that way in Sprint 1. If a deployment secret becomes necessary, store it in
 SSM Parameter Store/Secrets Manager and inject it at deploy time; do not pass it
 as a Terraform variable that will be written to state.
 
@@ -274,7 +274,7 @@ SCPs are coarse-grained permission ceilings. They do not grant access, do not
 affect the management account, and can block even an administrator in a member
 account. [AWS SCP behavior](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps.html)
 
-### Sprint 2 posture
+### Sprint 1 posture
 
 Do **not** make an SCP a prerequisite for the hosted Demo. If the supplied
 account is standalone, record “not applicable” and enforce the same intent with
@@ -295,7 +295,7 @@ If it is Organization-managed:
 AWS recommends testing SCPs in a separate organization/OU before expanding them
 to broader scope. [SCP creation and testing guidance](https://docs.aws.amazon.com/organizations/latest/userguide/orgs_manage_policies_scps_examples.html)
 
-### Sprint 3 posture
+### Sprint 2 posture
 
 After the hosted path is stable, introduce a versioned baseline SCP with:
 
@@ -321,11 +321,11 @@ private media, AWS keys, or `.env` files.
 AWS documents Session Manager as avoiding open inbound ports and SSH key
 management where supported. [Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html)
 
-## Sprint 3: production-transition plan
+## Sprint 2: production-transition plan
 
-Do not start this work until Sprint 2 proves the hosted journey twice from reset.
+Do not start this work until Sprint 1 proves the hosted journey twice from reset.
 
-### Sprint 3 goals
+### Sprint 2 goals
 
 1. Split environments/accounts: Demo/staging and production under AWS
    Organizations, with IAM Identity Center and reviewed SCP guardrails.
@@ -343,7 +343,7 @@ Do not start this work until Sprint 2 proves the hosted journey twice from reset
 7. Replace synthetic Demo sessions with Cognito/OIDC only as a separate product
    decision; do not silently relabel Demo access as authentication.
 
-### Sprint 3 exit criteria
+### Sprint 2 exit criteria
 
 - Separate account/environment plans apply from GitHub OIDC with approval.
 - Restore drills recover database and media within the agreed demo RTO/RPO.
@@ -351,7 +351,7 @@ Do not start this work until Sprint 2 proves the hosted journey twice from reset
 - A failed deploy and failed compilation can be rolled back without data loss.
 - SCP, IAM, budget, and logging changes have owners and review evidence.
 
-For velocity, make Sprint 3 a private authenticated staging slice first:
+For velocity, make Sprint 2 a private authenticated staging slice first:
 
 1. Commit account guardrails, authentication, private S3 media, audit events,
    and actionable alarms.
@@ -364,7 +364,7 @@ For velocity, make Sprint 3 a private authenticated staging slice first:
 
 ## Proposed issue slicing (not created yet)
 
-The existing Sprint 2 plan already owns the `s2-cloud-*` keys below. Use this
+The existing Sprint 1 plan already owns the `s2-cloud-*` keys below. Use this
 table to sequence and tighten those outcomes; do not create duplicate GitHub
 issues. Create only the explicitly marked decision/security slices after the
 team confirms the account and budget:
@@ -390,7 +390,7 @@ team confirms the account and budget:
 
 These are planning slices, not authorization to create remote issues yet.
 
-## Sprint 2 sequence and shipping-velocity guardrails
+## Sprint 1 sequence and shipping-velocity guardrails
 
 The AWS/IaC portion is about 40 team-hours in total: roughly 32 hours of cloud
 delivery, 6 hours of IAM/SCP controls, and 2 hours for the architecture
