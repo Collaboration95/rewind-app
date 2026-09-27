@@ -18,10 +18,10 @@ The one-day cycle remains a labelled demonstration setting; real groups use
 the four-week cycle. Before real users are invited, non-member requests must
 be denied for group data, chat, source/processed media, film, and downloads.
 
-The initial accounts may be created in the chosen identity provider ahead of
-time. Self-registration and MFA are not required for the first pilot. A
-provider-hosted password reset or an explicit administrator reset path is
-required so a forgotten password does not strand a member. Demo identities
+The initial username/password accounts are created by an administrator in
+Rewind before the pilot. Self-registration and MFA are not required. An
+administrator reset path is required so a forgotten password does not strand
+a member. Passwords are never stored or logged in plaintext. Demo identities
 remain visibly synthetic and separate from real accounts. The Demo identity
 switch belongs in Settings, rather than Home. For planning, treat each photo
 as one weekly contribution and a three-second film segment; count those three
@@ -35,11 +35,11 @@ rule to implement consistently on the client, server, and film worker.
    signed-out device, go to the welcome screen. Never silently create Amber.
 2. **Welcome and login:** explain the private-group product in one short view,
    offer a primary **Sign in** action and a clearly separate **Try Demo** route.
-   The hosted provider accepts a pre-created email/password account. Show
-   cancellation, wrong-password, offline, expired-session, and reset paths.
+   The Rewind login form accepts a pre-created username and password over
+   HTTPS. Show wrong-password, offline, expired-session, and administrator
+   reset paths.
 3. **Choose a group:** if the member has no group, offer **Create group** and
-   **Join with invitation**. Make an incoming invitation survive the login
-   redirect. Existing members choose their group and can switch it in Settings.
+   **Join with invitation**. Make an incoming invitation survive sign-in. Existing members choose their group and can switch it in Settings.
 4. **Home:** show group identity, current prompt, four-week countdown, weekly
    contribution allowance, the member's real contribution history, and one
    clear capture action. Remove the Demo profile picker and hard-coded locked
@@ -63,18 +63,18 @@ not proof of the real-user flow.
 
 ## Journey checkpoints
 
-| Step           | What the person must be able to do                                                                         | Present baseline                                                                                         | Completion evidence                                                                                        |
-| -------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| 1. Open        | See only the Rewind mark/name while the session restores, then a welcome and sign-in route                 | Demo session currently restores or auto-creates the synthetic Amber actor; no configured native splash   | Fresh install, returning signed-in, expired-session and offline states on web/native                       |
-| 2. Sign in     | Use a preset real account, remain signed in, sign out, recover from an expired session                     | Synthetic Demo session only                                                                              | Real identity claim verified server-side; no account selection grants authority; password reset path works |
-| 3. Join        | Create a private group or accept an expiring invitation                                                    | Group/invite paths exist for synthetic members                                                           | Two real accounts join; invalid and cross-group attempts fail safely                                       |
-| 4. Orient      | Read group prompt, cycle countdown, quota and contribution history                                         | Demo Home and ledger exist; #234 moved the picker to Settings on `dev`, while static moment tiles remain | Correct real-group state after restart, on each platform                                                   |
-| 5. Capture     | Record/trim a 15-second video or take a photo, with clear permission and retake states                     | Native video path exists in code; still photo is local-only; web recording uses a file picker            | Physical Android/iPhone video and photo capture; installed PWA camera/mic path                             |
-| 6. Submit      | Upload, retry if interrupted, see queued/processing/sealed or failed state, delete/recapture within limits | MP4 byte upload, processing and ledger exist for Demo                                                    | Server stores the real authorized contribution; media stays sealed before release                          |
-| 7. Participate | Read/send group chat, choose prompts and reminder preferences                                              | Chat exists; reminders are device-local                                                                  | Real-group chat denial and remote Android/PWA reminder delivery                                            |
-| 8. Reveal      | Cycle end automatically compiles, publishes once and starts the next cycle; delayed failures stay private  | Demo owner advance and worker/film code exist                                                            | Timed one-day and four-week transitions, retry, 24-hour premiere and next cycle                            |
-| 9. Return      | Play/download released film and own processed contributions, switch group or sign out                      | Demo Archive and downloads exist                                                                         | Authorized web/APK/native playback; another group cannot fetch media                                       |
-| 10. Operate    | Open a live dev app for team testing and release a reviewed main build                                     | `dev` and `main` branches exist; one live Demo host exists                                               | Distinct preview/release data boundary if both are live; versioned web/APK builds and repeatable smoke     |
+| Step           | What the person must be able to do                                                                         | Present baseline                                                                                         | Completion evidence                                                                                            |
+| -------------- | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 1. Open        | See only the Rewind mark/name while the session restores, then a welcome and sign-in route                 | Demo session currently restores or auto-creates the synthetic Amber actor; no configured native splash   | Fresh install, returning signed-in, expired-session and offline states on web/native                           |
+| 2. Sign in     | Use a preset real account, remain signed in, sign out, recover from an expired session                     | Synthetic Demo session only                                                                              | Real server session verified on each request; no account selection grants authority; administrator reset works |
+| 3. Join        | Create a private group or accept an expiring invitation                                                    | Group/invite paths exist for synthetic members                                                           | Two real accounts join; invalid and cross-group attempts fail safely                                           |
+| 4. Orient      | Read group prompt, cycle countdown, quota and contribution history                                         | Demo Home and ledger exist; #234 moved the picker to Settings on `dev`, while static moment tiles remain | Correct real-group state after restart, on each platform                                                       |
+| 5. Capture     | Record/trim a 15-second video or take a photo, with clear permission and retake states                     | Native video path exists in code; still photo is local-only; web recording uses a file picker            | Physical Android/iPhone video and photo capture; installed PWA camera/mic path                                 |
+| 6. Submit      | Upload, retry if interrupted, see queued/processing/sealed or failed state, delete/recapture within limits | MP4 byte upload, processing and ledger exist for Demo                                                    | Server stores the real authorized contribution; media stays sealed before release                              |
+| 7. Participate | Read/send group chat, choose prompts and reminder preferences                                              | Chat exists; reminders are device-local                                                                  | Real-group chat denial and remote Android/PWA reminder delivery                                                |
+| 8. Reveal      | Cycle end automatically compiles, publishes once and starts the next cycle; delayed failures stay private  | Demo owner advance and worker/film code exist                                                            | Timed one-day and four-week transitions, retry, 24-hour premiere and next cycle                                |
+| 9. Return      | Play/download released film and own processed contributions, switch group or sign out                      | Demo Archive and downloads exist                                                                         | Authorized web/APK/native playback; another group cannot fetch media                                           |
+| 10. Operate    | Open a live dev app for team testing and release a reviewed main build                                     | `dev` and `main` branches exist; one live Demo host exists                                               | Distinct preview/release data boundary if both are live; versioned web/APK builds and repeatable smoke         |
 
 ## Issue map
 
@@ -88,13 +88,14 @@ works on the relevant physical device or hosted app.
 
 | Key    | Proposed issue-sized result                               | Existing link / prerequisite                                                                                                              | Acceptance                                                                                                                                                                           |
 | ------ | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| S2-A01 | Decide the pilot identity, data and release boundary      | Rewrite [#169](https://github.com/Collaboration95/rewind-app/issues/169); remove its dependency on synthetic #145                         | Record provider, preset-account creation, domains, single/dual-host choice, data isolation, retention, rollback and cost limit in the issue                                          |
-| S2-A02 | See a branded loading screen and welcome/login route      | New; independent of provider                                                                                                              | Native splash and app loader show logo/name only; fresh/returning/offline/expired routes work; no automatic synthetic sign-in                                                        |
-| S2-A03 | Sign in on web/native with a preset account               | Split [#168](https://github.com/Collaboration95/rewind-app/issues/168); after A01                                                         | Provider redirect/callback works on web and native development builds, using code + PKCE; stored session restores; logout, reset and error recovery work; no MFA in the pilot        |
-| S2-A04 | Bind a verified provider subject to a real member         | Split #168; parallel server slice after A01                                                                                               | Server validates issuer/audience/expiry, maps subject to member, refuses forged/expired tokens, and distinguishes real from Demo principals                                          |
-| S2-A05 | Create a real private group and accept an invitation      | Split #168; after A03/A04                                                                                                                 | First-run create/join screen; an invitation survives login; two preset accounts create/invite/join; membership and owner rules apply to every route, including media and chat        |
+| S2-A01 | Decide the pilot identity, data and release boundary      | Rewrite [#169](https://github.com/Collaboration95/rewind-app/issues/169); remove its dependency on synthetic #145                         | Record local password/session model, account provisioning, HTTPS origins, dual-host boundary, data isolation, retention, rollback and cost limit in the issue                        |
+| S2-A02 | See a branded loading screen and welcome/login route      | New; independent of the credential API                                                                                                    | Native splash and app loader show logo/name only; fresh/returning/offline/expired routes work; no automatic synthetic sign-in                                                        |
+| S2-A03 | Create pilot accounts and a password/session API          | Split [#168](https://github.com/Collaboration95/rewind-app/issues/168); after A01                                                         | Admin creates/resets accounts without plaintext in repo/logs; slow salted hashes, throttled HTTPS login, opaque expiring/revocable sessions and generic errors work                  |
+| S2-A04 | Sign in on web/native and restore a real session          | Split #168; after A03                                                                                                                     | Login form works on web, Expo Go and APK; web uses secure first-party cookie, native uses SecureStore and auth header; logout, expiry, offline and reset states work                 |
+| S2-A05 | Create a real private group and accept an invitation      | Split #168; after A03/A04                                                                                                                 | First-run create/join screen; an invitation survives login; two preset accounts create/invite/join; group membership and owner rules apply to create/join/switch flows               |
 | S2-A06 | Keep Demo mode separate and move its controls to Settings | [#234](https://github.com/Collaboration95/rewind-app/issues/234) picker change merged to `dev`; remaining shell work can start before A03 | Home has no synthetic profile picker or fake locked moment tiles in the member view; Demo entry/switch/reset are labelled in Settings; real sessions cannot gain Demo data authority |
 | S2-A07 | Show real group Home and first-run empty states           | New; after A05                                                                                                                            | Home shows correct group, prompt, allowance, time, capture action and empty contribution state; restart preserves group choice                                                       |
+| S2-A08 | Protect real-member group, chat, upload and media routes  | Split #168; after A03/A05                                                                                                                 | Every route derives member from the real session, checks group membership, never accepts a Demo/query ID as real authority; cross-group reads and writes fail                        |
 
 ### B. Contribute a moment
 
@@ -125,15 +126,15 @@ works on the relevant physical device or hosted app.
 | S2-D01 | Give dev and release separate infrastructure state and private data | Split [#230](https://github.com/Collaboration95/rewind-app/issues/230); after A01                                                                                  | Separate Terraform state, names, backup targets, IAM scope, domains and cost estimates; no cross-environment private data path                                                               |
 | S2-D02 | Publish `dev` and `main` at stable HTTPS URLs                       | Split #230; after D01                                                                                                                                              | Two independently reachable app/API origins; each reports deployed commit and has a basic health smoke; changes to `dev` cannot mutate release data                                          |
 | S2-D03 | Promote a reviewed `main` build to release                          | [#229](https://github.com/Collaboration95/rewind-app/issues/229) plus deployment slice; after D02                                                                  | Immutable tested commit, reviewed promotion, deploy version/health check and rollback; no daily reviewer schedule                                                                            |
-| S2-D04 | Build and install an Android APK and iOS development build          | New; can start alongside A03                                                                                                                                       | Package IDs, signing/build profiles and HTTPS API URL configured; install on physical Android and iOS test device; real OIDC redirect and camera permissions work                            |
-| S2-D05 | Export and install the web PWA                                      | New release slice; after B02/A03                                                                                                                                   | Public HTTPS, correct login callback/API origin, installability and browser engine checks; iPhone Home Screen journey passes                                                                 |
+| S2-D04 | Build an Android APK and exercise iOS Expo Go                       | New; can start alongside A03                                                                                                                                       | Package IDs, signing/build profiles and HTTPS API URL configured; install Android APK and run iOS via Expo Go; login and camera permissions work                                             |
+| S2-D05 | Export and install the web PWA                                      | New release slice; after B02/A03                                                                                                                                   | Public HTTPS, same-origin authenticated API path, installability and browser engine checks; iPhone Home Screen journey passes                                                                |
 | S2-D06 | Fix only release-blocking host backup/deploy defects                | Narrow [#190](https://github.com/Collaboration95/rewind-app/issues/190)                                                                                            | Reviewed backup/restore and release scripts work without manual architecture/image-ID workarounds; full automatic OFF orchestration is separate                                              |
 | S2-D07 | Run a real-user end-to-end acceptance script                        | Extend [#145](https://github.com/Collaboration95/rewind-app/issues/145); [#203](https://github.com/Collaboration95/rewind-app/issues/203) remains evidence tracker | Non-author with preset accounts completes sign-in → invite → video/photo → sealed → chat/reminder → automatic release → playback/download on live web and APK; repeat and cross-group denial |
 
 ## Shared foundations and dependency order
 
-The same verified principal/group authorization is needed by invites, uploads,
-chat, Archive and downloads. Photo and video should share contribution states,
+The same server-validated member/group authorization is needed by invites,
+uploads, chat, Archive and downloads. Photo and video should share contribution states,
 quota, media integrity and film output rather than create two unrelated
 journeys. One cycle engine must drive the one-day Demo and four-week real group.
 Web/native clients should share the API contract while preserving their
@@ -141,14 +142,14 @@ different camera and notification adapters.
 
 ### Usable increments and sequence
 
-| Order | Increment that a member or teammate can actually use                                                                    | Parallel work that does not block it                                    |
-| ----- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| First | Branded launch → welcome → preset real sign-in → create/join group → truthful Home, on web and an iOS development build | Native camera/backend repair; photo pipeline; separate environment plan |
-| Next  | From that Home, capture and submit either a 15-second video or photo; return to Home with processing/sealed state       | Android APK packaging; installed PWA camera; chat authorization         |
-| Next  | Group chat, prompts and reminder choices work in that same authenticated group                                          | Live dev deployment and remote reminder delivery                        |
-| Next  | The group automatically reaches a safe film premiere, can play/download it, and starts a new four-week cycle            | Release deployment, physical device regression and recovery smoke       |
+| Order | Increment that a member or teammate can actually use                                                              | Parallel work that does not block it                                    |
+| ----- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| First | Branded launch → welcome → preset real sign-in → create/join group → truthful Home, on web and iOS Expo Go        | Native camera/backend repair; photo pipeline; separate environment plan |
+| Next  | From that Home, capture and submit either a 15-second video or photo; return to Home with processing/sealed state | Android APK packaging; installed PWA camera; chat authorization         |
+| Next  | Group chat, prompts and reminder choices work in that same authenticated group                                    | Live dev deployment and remote reminder delivery                        |
+| Next  | The group automatically reaches a safe film premiere, can play/download it, and starts a new four-week cycle      | Release deployment, physical device regression and recovery smoke       |
 
-Start A01, A02, B01, and B03 immediately. A03/A04 unlock A05, then A07 and
+Start A01, A02, B01, and B03 immediately. A03 unlocks A04; together they unlock A05, then A07/A08 and
 real-group integration across B, C and D. B03/B04 and C04/C05 can proceed
 against labelled Demo fixtures before A05 completes, then must be accepted
 again with real members. D04 and the web build can proceed early; D07 closes
@@ -160,31 +161,46 @@ but is not a prerequisite to physical LAN camera work.
 
 ## Identity and environment choice for the pilot
 
-Use an Amazon Cognito Lite user pool with direct email/password accounts,
-administrator-created users, self-sign-up disabled, and MFA off initially.
-The client uses authorization code with PKCE; the server verifies the token
-and applies Rewind's own group membership rules. Cognito's published direct
-user free allowance is 10,000 monthly active users on Lite/Essentials; email
-delivery and some extras are billed separately. WorkOS AuthKit publishes a
-larger free user allowance and an official Expo example, but production
-requires billing details and its optional enterprise SSO and custom domain
-have separate prices. The sponsor page is an endorsement, not a plan or price.
-This recommendation can be changed in A01 before identity implementation.
+Use the existing Lightsail Node API and SQLite database for pre-created local
+username/password accounts and server-managed sessions. This adds no API
+Gateway, Lambda, Cognito, or WorkOS service to the pilot. It is a deliberate
+Sprint 2 exception to the original proposal's OIDC requirement, to keep real
+login usable in Expo Go and remove an unnecessary integration dependency.
+Keep the credential schema and session tables separate from synthetic Demo.
 
-Native OAuth/OIDC redirects require an Expo **development build** with a
-custom scheme; Expo Go cannot test this login path. Keep `make run`/Expo Go
-for camera and unauthenticated shell iteration, then install the development
-build for the real end-to-end native flow. Register distinct web HTTPS and
-native redirect URIs. The two live environments need separate Cognito app
-clients and callback allowlists; use separate user pools if the pilot requires
-strict identity isolation as well as data isolation.
+The login API accepts credentials only over HTTPS. Hash each password with a
+unique salt and a slow password-hashing function such as Node's built-in
+`scrypt`, with parameters benchmarked for the host. Use an interactive admin
+command for account creation/reset; do not seed or commit real passwords.
+Apply per-account and per-source login throttling, generic failure messages,
+and a bounded, revocable session lifetime. Store only a hash of each random
+session token in SQLite. A browser gets an `HttpOnly`, `Secure`, `SameSite`
+cookie from the first-party API; native Expo Go stores its opaque token in
+SecureStore and sends it in an authorization header. Do not put real session
+tokens in query strings, URLs, AsyncStorage, or logs.
 
-The iteration loop is: run `make run` against a local/LAN backend for camera
-and shell work, run `npm run test:fast` for code feedback, install a native
-development build when validating login, and push reviewed `dev` changes to
-the isolated live dev URL for colleagues. Promote a reviewed commit to `main`
-only when a release update is wanted. The live dev environment must report
-its deployed commit so a tester knows exactly which issue change they saw.
+The existing Demo API currently accepts a `sessionId` query parameter for
+protected routes, including media links and chat. Do not extend that pattern
+to real users. Build a real-member authentication path for group metadata,
+invites, uploads, chat streams, source/processed media, films and downloads.
+Web media may use the same-origin session cookie; native media requests must
+carry authorization or use narrowly scoped, short-lived download URLs.
+Separate dev/release SQLite files, session stores, backups, and HTTPS
+origins. The public server currently permits `*` CORS; narrow it
+for authenticated traffic and check request origins for cookie-backed writes.
+
+With this choice, `make run` and Expo Go can exercise real sign-in, camera,
+and API calls from an iPhone without an iOS development build. The phone must
+use the live dev HTTPS backend or a trusted local HTTPS endpoint when sending
+passwords. Expo Go still cannot test **remote native push notifications**;
+that feature needs a development/APK build. The installed web PWA has its own
+browser notification path. Run `npm run test:fast` locally, use the live dev
+URL for colleagues, and promote reviewed `dev` commits to `main` on demand.
+
+Security and platform sources: [OWASP password storage](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html),
+[OWASP session management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html),
+[Expo SecureStore](https://docs.expo.dev/versions/latest/sdk/securestore/),
+and [Expo notifications](https://docs.expo.dev/versions/latest/sdk/notifications/).
 
 Use two simultaneously live Lightsail environments, each with its own app/API,
 web URL and private data. This lets colleagues test the current `dev` build
@@ -193,12 +209,6 @@ and one state key, so #230 must first split state, resource names, backups
 and deploy scripts by environment. Review the concrete plan and cost before
 provisioning; the second environment is an ongoing expense. See
 [Lightsail pricing](https://aws.amazon.com/lightsail/pricing/).
-
-Provider sources: [Cognito pricing](https://aws.amazon.com/cognito/pricing/),
-[Cognito MFA configuration](https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-settings-mfa.html),
-[WorkOS pricing](https://workos.com/pricing),
-[WorkOS production environments](https://workos.com/docs/authkit/environments),
-and [Expo authentication guidance](https://docs.expo.dev/guides/authentication/).
 
 ## Existing issues outside the first product path
 
@@ -210,7 +220,7 @@ and [Expo authentication guidance](https://docs.expo.dev/guides/authentication/)
   storage until a measured user-story or recovery constraint requires a move.
 - [#167](https://github.com/Collaboration95/rewind-app/issues/167) organization
   guardrails and [#174](https://github.com/Collaboration95/rewind-app/issues/174)
-  GitHub-to-AWS OIDC applies are separate from **end-user** OIDC in A03/A04.
+  GitHub-to-AWS OIDC applies are separate from end-user login in A03/A04.
   Their current dependency on #168 should be removed during backlog sync.
 - [#166](https://github.com/Collaboration95/rewind-app/issues/166) broad alarms
   and [#172](https://github.com/Collaboration95/rewind-app/issues/172) measured
@@ -226,9 +236,10 @@ and [Expo authentication guidance](https://docs.expo.dev/guides/authentication/)
 
 ## Working decisions to record when applying the backlog
 
-1. Cognito Lite owns pre-created email/password accounts; self-sign-up and
-   MFA are off for the pilot. The exact callback domains and account reset
-   process must be recorded before A03 is integrated.
+1. The existing Lightsail API owns pre-created username/password accounts;
+   self-sign-up and MFA are off for the pilot. Record admin provisioning,
+   reset, HTTPS origins, session lifetimes, and this OIDC scope exception in
+   #169 before A03/A04 are integrated.
 2. Photos are full sealed group contributions in the released film, using the
    proposed three-second/one-slot policy above. A different product choice
    would change B03–B05, not the need for photo capture.
