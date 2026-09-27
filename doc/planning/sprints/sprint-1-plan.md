@@ -440,7 +440,6 @@ these answers on Day 1:
 - [AWS, IaC, and SCP execution plan](./aws-iac-scp-execution-plan.md)
 - [Sprint 0 plan](./sprint-0-plan.md)
 - [Sprint 0 extension and Sprint 0 plan](./sprint-0-plan-extension.md)
-- [Archived Sprint 1 progress report draft](../sprint-1-progress-report-evidence-archived.txt)
 - [PR #79](https://github.com/Collaboration95/rewind-app/pull/79)
 - [PR #80](https://github.com/Collaboration95/rewind-app/pull/80)
 - [PR #91](https://github.com/Collaboration95/rewind-app/pull/91)
