@@ -1,4 +1,10 @@
-# Rewind Sprint 1 plan — hosted capture-to-reveal demo
+# Rewind hosted capture-to-reveal Demo proposal (superseded Sprint naming)
+
+This is a historical proposal for 27 September–10 October 2026. That period is
+**Sprint 2** in the current GitHub milestones and Project board. Its synthetic
+Demo scope is narrower than the full product now being planned for Sprint 2;
+use the current milestone and Sprint Planning decisions for commitments. The
+Sprint 1 references below preserve the proposal's original wording.
 
 Project label update (26 September 2026): GitHub Project #8 now labels the
 former Sprint 2 hosted Demo work as Sprint 1 and the former Sprint 1 work as

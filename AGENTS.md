@@ -98,5 +98,12 @@ the misleading Expo Go error “Could not connect to the server.” The LAN laun
 advertises the Mac's reachable address and has been verified to start the app
 on an iPhone simulator.
 
-Before native review, run `npm run check`; use `npm run test:responsive` for
-the browser layout regression suite as complementary—not substitute—evidence.
+For a local feedback loop, run `npm run test:fast` after a code change. Run
+`npm run test:slow` for web export, browser behavior, and production-shaped
+journeys. Use `npm run test:coverage:frontend` and
+`npm run test:coverage:server` to inspect separate frontend and server coverage;
+the frontend has a 70% statement gate, while server coverage is measured but
+has no percentage gate yet. For a PR, verify the relevant checks and the
+aggregate Quality check. Before native review, run `npm run check`; use
+`npm run test:responsive` for browser layout regression as complementary
+evidence.
