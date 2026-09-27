@@ -105,6 +105,43 @@ describe('Expo camera adapter contract', () => {
     }
   });
 
+  it('asks for the camera before the microphone so native prompts never overlap', async () => {
+    const order: string[] = [];
+    let finishCamera!: () => void;
+    jest.mocked(Camera.requestCameraPermissionsAsync).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          order.push('camera-open');
+          finishCamera = () => {
+            order.push('camera-closed');
+            resolve({
+              canAskAgain: true,
+              expires: 'never',
+              granted: true,
+              status: PermissionStatus.GRANTED,
+            });
+          };
+        }),
+    );
+    jest.mocked(Camera.requestMicrophonePermissionsAsync).mockImplementation(async () => {
+      order.push('microphone-open');
+      return {
+        canAskAgain: true,
+        expires: 'never',
+        granted: true,
+        status: PermissionStatus.GRANTED,
+      };
+    });
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+
+    const request = platform.requestPermissions();
+    await Promise.resolve();
+    expect(order).toEqual(['camera-open']);
+    finishCamera();
+    await expect(request).resolves.toEqual({ camera: 'granted', microphone: 'granted' });
+    expect(order).toEqual(['camera-open', 'camera-closed', 'microphone-open']);
+  });
+
   it('maps Expo permission responses for both read and request operations', async () => {
     const getCameraPermissionsAsync = jest.mocked(Camera.getCameraPermissionsAsync);
     const getMicrophonePermissionsAsync = jest.mocked(Camera.getMicrophonePermissionsAsync);

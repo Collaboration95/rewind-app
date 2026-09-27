@@ -384,10 +384,10 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async requestPermissions(): Promise<PermissionSnapshot> {
-    const [camera, microphone] = await Promise.all([
-      Camera.requestCameraPermissionsAsync(),
-      Camera.requestMicrophonePermissionsAsync(),
-    ]);
+    // Ask one at a time: Android rejects a second runtime-permission request
+    // while the first system dialog is still open, and iOS queues them anyway.
+    const camera = await Camera.requestCameraPermissionsAsync();
+    const microphone = await Camera.requestMicrophonePermissionsAsync();
     return {
       camera: permissionState(camera),
       microphone: permissionState(microphone),
