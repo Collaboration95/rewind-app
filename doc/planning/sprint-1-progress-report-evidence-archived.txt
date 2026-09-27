@@ -1,3 +1,13 @@
+ARCHIVED — HISTORICAL REPORTING DRAFT
+
+This draft records an evidence snapshot from 12 September 2026. It is retained
+for historical Sprint 1 report preparation only. Do not use or cite it as the
+current state of the repository, issues, pull requests, or GitHub Project. For
+current status, inspect the authoritative `rewind-app` repository and GitHub
+records. The Project Sprint field was renumbered on 26 September: the work this
+draft originally called Sprint 1 is now labelled Sprint 0 there. Its body keeps
+the original labels to preserve the historical report record.
+
 SWE5006 SPRINT 1 PROGRESS REPORT EVIDENCE DRAFT
 Rewind Private Group Time Capsules
 
