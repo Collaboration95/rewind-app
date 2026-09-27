@@ -161,10 +161,12 @@ describe('Rewind Home start screen', () => {
 
     expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
     expect(result.getByLabelText('Local demo data')).toBeTruthy();
-    expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
+    expect(result.queryByRole('header', { name: 'Local demo' })).toBeNull();
     expect(result.getByLabelText('Current capsule. 2 days remaining.')).toBeTruthy();
     expect(result.getByLabelText('Current prompt: What made you pause and smile?')).toBeTruthy();
     expect(result.getByLabelText(/0 of 5 contributions used/)).toBeTruthy();
+    if (result.queryByTestId('nav-settings'))
+      await fireEvent.press(result.getByTestId('nav-settings'));
     await result.findByText('Current member: Amber');
   });
 
@@ -534,6 +536,7 @@ describe('Rewind Home start screen', () => {
     const result = await render(<App cycleRepository={{ getCurrentCycle }} />);
 
     await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByTestId('nav-settings'));
     await fireEvent.press(result.getByRole('button', { name: 'Choose Clover, sample member' }));
     await waitFor(() => expect(getCurrentCycle).toHaveBeenLastCalledWith('demo-group', 'demo-3'));
   });
@@ -577,7 +580,9 @@ describe('Local demo profile flow', () => {
   it('offers five accessible choices, remembers selection on relaunch, and resets cleanly', async () => {
     const result = await render(<App />);
     expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
-    expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
+    expect(result.queryByRole('header', { name: 'Local demo' })).toBeNull();
+    if (result.queryByTestId('nav-settings'))
+      await fireEvent.press(result.getByTestId('nav-settings'));
     await result.findByText('Current member: Amber');
     expect(result.getAllByRole('button', { name: /Choose .*sample member/ })).toHaveLength(5);
     await fireEvent.press(result.getByRole('button', { name: 'Choose Clover, sample member' }));
@@ -588,16 +593,22 @@ describe('Local demo profile flow', () => {
     await waitFor(async () => expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-3'));
     await result.unmount();
     const relaunched = await render(<App />);
+    if (relaunched.queryByTestId('nav-settings'))
+      await fireEvent.press(relaunched.getByTestId('nav-settings'));
     await relaunched.findByText('Current member: Clover');
     await relaunched.unmount();
     await AsyncStorage.clear();
     const reset = await render(<App />);
+    if (reset.queryByTestId('nav-settings'))
+      await fireEvent.press(reset.getByTestId('nav-settings'));
     await reset.findByText('Current member: Amber');
   });
 
   it('falls back to the default for an unknown stored actor', async () => {
     await AsyncStorage.setItem(SELECTION_KEY, 'outsider');
     const result = await render(<App />);
+    if (result.queryByTestId('nav-settings'))
+      await fireEvent.press(result.getByTestId('nav-settings'));
     await result.findByText('Current member: Amber');
   });
 

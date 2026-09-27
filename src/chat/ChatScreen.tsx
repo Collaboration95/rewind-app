@@ -1,3 +1,4 @@
+import { DarkroomSection } from '../capsule/DarkroomSection';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
@@ -481,7 +482,7 @@ export function ChatSessionSurface({
         ListHeaderComponent={
           <View style={styles.content}>
             <View style={styles.header}>
-              <Text style={styles.label}>GROUP CHAT</Text>
+              <DarkroomSection label="GROUP CHAT" />
               <Text accessibilityRole="header" style={styles.title} testID="route-heading-chat">
                 Chat
               </Text>
@@ -743,7 +744,13 @@ const styles = StyleSheet.create({
     maxWidth: '92%',
     padding: 14,
   },
-  currentMessage: { alignSelf: 'flex-end', borderColor: COLORS.accent },
+  currentMessage: {
+    alignSelf: 'flex-end',
+    borderColor: COLORS.filmBorder,
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.accent,
+    backgroundColor: COLORS.celluloid,
+  },
   messageMeta: { alignItems: 'baseline', flexDirection: 'row', gap: 8 },
   messageActions: { flexDirection: 'row', gap: 8, marginTop: 2 },
   actionButton: {

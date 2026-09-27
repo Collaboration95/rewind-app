@@ -1,3 +1,4 @@
+import { DarkroomSection } from '../capsule/DarkroomSection';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
 import {
@@ -367,7 +368,7 @@ export function CameraCaptureScreen({
       testID="camera-screen"
     >
       <View style={styles.heading}>
-        <Text style={styles.eyebrow}>CAPTURE</Text>
+        <DarkroomSection label="CAPTURE" />
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-camera">
           Add a still moment
         </Text>

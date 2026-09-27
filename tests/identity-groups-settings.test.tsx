@@ -81,6 +81,7 @@ describe('local Demo access lifecycle', () => {
 
     await fireEvent.press(result.getByTestId('demo-entry-demo-2'));
     await result.findByRole('header', { name: 'Weekend People' });
+    await fireEvent.press(result.getByTestId('nav-settings'));
     expect(result.getByText('Current member: Birch')).toBeTruthy();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-2');
   });

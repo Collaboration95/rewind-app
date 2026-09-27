@@ -340,3 +340,25 @@ is attached to the PR in place of separate screenshots. Firefox 155 installed
 but failed to launch on Windows with a side-by-side configuration error;
 Firefox UI tests therefore remain blocked, not passed. iOS and independent
 peer reviews remain pending.
+
+## Peer-review revisions — 27 September 2026
+
+Jiayu (`bibi45c`) supplied firsthand iPhone feedback in
+[the PR discussion](https://github.com/Collaboration95/rewind-app/pull/201#issuecomment-5847385621).
+`Big-Fat-Duck` supplied an explicitly Codex-assisted Android review; that is
+retained as assisted evidence, not a human device sign-off.
+
+| Feedback                                                      | Revision and verification                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| iPhone camera unavailable before any permission prompt        | Native iOS no longer calls Expo's web-only availability probe. Physical iPhones reach the permission flow; iOS simulators remain explicitly unsupported unless a fixture is selected. Camera and microphone requests are sequential. Adapter regressions cover physical iOS and simulator behavior; a fresh iPhone permission/capture retest is pending. |
+| Chat reconnecting and messages not received by another member | Merged main through `de9125d`, including the XHR-backed native EventSource fix. Native transport tests, 15 server realtime tests and a two-browser-member send/receive test passed. Two-iPhone connected retest remains pending.                                                                                                                         |
+| Home too long and action below first viewport                 | Moved member selection and runtime diagnostics to Settings. Prompt, allowance and next action now precede the smaller filmstrip. A 390 × 844 browser regression verifies all three are in the initial viewport; large native text still permits scrolling.                                                                                               |
+| Other screens lack Darkroom continuity                        | Added shared compact film-edge section markers to still/clip capture, Chat, Archive and Settings; released archive entries use film-card borders, own Chat messages use the celluloid surface, and the Settings member picker uses the same dark tokens and focus treatment. Existing names, permissions and truthful state copy are preserved.          |
+| Released roll caption says sealed                             | Caption now follows the released state; both sealed and released caption/accessibility states have regression coverage.                                                                                                                                                                                                                                  |
+
+Final local validation: all 42 Jest suites / 365 tests passed. All 13 targeted
+Edge browser checks passed, including initial Home viewport, reset-dialog focus,
+route keyboard navigation and two-member Chat delivery. All 15 server realtime
+tests passed. TypeScript and affected-file lint passed. These results do not
+replace native iPhone owner/peer retesting or the remaining Firefox/Safari and
+joint-comparison requirements.

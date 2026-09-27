@@ -1,3 +1,4 @@
+import { DarkroomSection } from '../capsule/DarkroomSection';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
 import { AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -1042,7 +1043,7 @@ export function VideoCaptureScreen({
             <Text style={styles.backText}>Back to stills</Text>
           </Pressable>
         ) : null}
-        <Text style={styles.eyebrow}>CLIP CAPTURE</Text>
+        <DarkroomSection label="CLIP CAPTURE" />
         <Text accessibilityRole="header" style={styles.title}>
           Record a contribution
         </Text>

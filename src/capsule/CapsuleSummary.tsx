@@ -132,10 +132,6 @@ function ReadyCapsuleSummary({
         </Text>
       </View>
 
-      <DarkroomRoll
-        seconds={revealState === 'locked' ? (countdown?.seconds ?? 0) : 0}
-        released={revealState === 'released'}
-      />
       {countdown && revealState === 'locked' ? (
         <View
           accessible
@@ -177,11 +173,6 @@ function ReadyCapsuleSummary({
         </Text>
       </View>
 
-      <View accessible={false} style={styles.meter}>
-        {Array.from({ length: Math.min(cycle.quota.maxCount, 20) }, (_, i) => (
-          <View key={i} style={[styles.meterSegment, i < countUsed && styles.meterUsed]} />
-        ))}
-      </View>
       <RevealEducationPanel
         actionLabel={revealState === 'locked' ? 'Add to the roll' : 'Open Archive'}
         onAction={
@@ -193,6 +184,15 @@ function ReadyCapsuleSummary({
         surface="home"
         testID={`home-reveal-${revealState}`}
       />
+      <DarkroomRoll
+        seconds={revealState === 'locked' ? (countdown?.seconds ?? 0) : 0}
+        released={revealState === 'released'}
+      />
+      <View accessible={false} style={styles.meter}>
+        {Array.from({ length: Math.min(cycle.quota.maxCount, 20) }, (_, i) => (
+          <View key={i} style={[styles.meterSegment, i < countUsed && styles.meterUsed]} />
+        ))}
+      </View>
     </View>
   );
 }

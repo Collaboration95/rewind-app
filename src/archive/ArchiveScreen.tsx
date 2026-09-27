@@ -1,3 +1,4 @@
+import { DarkroomSection } from '../capsule/DarkroomSection';
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -39,7 +40,7 @@ function PublishedPlayer({ premiere }: { premiere: Extract<Premiere, { state: 'r
         surface="archive"
         testID="archive-reveal-released"
       />
-      <Text style={styles.label}>GROUP PREMIERE</Text>
+      <DarkroomSection label="GROUP PREMIERE" />
       <Text accessibilityRole="header" style={styles.title}>
         Your capsule film
       </Text>
@@ -79,7 +80,7 @@ function ArchiveEntries({
   const cycleById = new Map(cycles.map((cycle) => [cycle.id, cycle]));
   return (
     <View style={styles.panel} testID="archive-released-media">
-      <Text style={styles.label}>RELEASED MEDIA</Text>
+      <DarkroomSection label="RELEASED MEDIA" />
       <Text accessibilityRole="header" style={styles.sectionTitle}>
         Your archive
       </Text>
@@ -372,7 +373,7 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
           Archive
         </Text>
-        <Text style={styles.label}>ARCHIVE</Text>
+        <DarkroomSection label="ARCHIVE" />
         <Text accessibilityLiveRegion="polite" style={styles.title}>
           Checking the group premiere…
         </Text>
@@ -386,7 +387,7 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
           Archive
         </Text>
-        <Text style={styles.label}>ARCHIVE</Text>
+        <DarkroomSection label="ARCHIVE" />
         <Text accessibilityRole="header" style={styles.title}>
           Premiere unavailable
         </Text>
@@ -520,7 +521,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   retryText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  entry: { borderTopColor: COLORS.line, borderTopWidth: 1, gap: 7, paddingTop: 12 },
+  entry: {
+    borderLeftColor: COLORS.filmAmber,
+    borderLeftWidth: 3,
+    backgroundColor: COLORS.deep,
+    borderRadius: 4,
+    gap: 7,
+    padding: 14,
+  },
   entryTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '700' },
   entryMeta: { color: COLORS.muted, fontSize: 13 },
   downloadButton: {

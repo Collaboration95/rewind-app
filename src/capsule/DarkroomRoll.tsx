@@ -104,12 +104,16 @@ export function DarkroomRoll({ seconds, released }: { seconds: number; released:
           </View>
         </View>
       </View>
-      <Text style={styles.caption}>Sealed roll illustration · no media previews</Text>
+      <Text style={styles.caption}>
+        {released
+          ? 'Released roll illustration · watch in Archive'
+          : 'Sealed roll illustration · no media previews'}
+      </Text>
     </View>
   );
 }
 const styles = StyleSheet.create({
-  stage: { paddingVertical: 20, marginHorizontal: -24, overflow: 'hidden' },
+  stage: { paddingVertical: 12, marginHorizontal: -24, overflow: 'hidden' },
   frameInset: {
     position: 'absolute',
     inset: 5,
@@ -179,7 +183,7 @@ const styles = StyleSheet.create({
   clock: { flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
   number: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize: 58,
+    fontSize: 40,
     letterSpacing: -3,
     color: COLORS.ink,
   },
@@ -218,7 +222,7 @@ const styles = StyleSheet.create({
   frames: { flexDirection: 'row', gap: 6 },
   frame: {
     flex: 1,
-    minHeight: 104,
+    minHeight: 68,
     padding: 5,
     gap: 10,
     justifyContent: 'center',

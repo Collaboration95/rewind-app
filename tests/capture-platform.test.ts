@@ -65,6 +65,48 @@ it('treats a missing native availability probe as available on a physical device
 });
 
 describe('Expo camera adapter contract', () => {
+  it.each([true, false])(
+    'bypasses the web-only probe on iOS with isDevice=%s',
+    async (isDevice) => {
+      const os = Platform.OS;
+      const device = Device.isDevice;
+      const cameraView = CameraView as typeof CameraView & {
+        isAvailableAsync?: () => Promise<boolean>;
+      };
+      const previousProbe = cameraView.isAvailableAsync;
+      const probe = jest.fn().mockRejectedValue(new Error('unimplemented native method'));
+      try {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        Object.defineProperty(Device, 'isDevice', { configurable: true, value: isDevice });
+        cameraView.isAvailableAsync = probe;
+        const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+        await expect(platform.getCapabilities()).resolves.toEqual({
+          camera: isDevice ? 'supported' : 'unsupported',
+          microphone: isDevice ? 'supported' : 'unsupported',
+        });
+        expect(probe).not.toHaveBeenCalled();
+        if (isDevice) {
+          const granted = {
+            status: PermissionStatus.GRANTED,
+            granted: true,
+            canAskAgain: true,
+            expires: 'never' as const,
+          };
+          jest.mocked(Camera.requestCameraPermissionsAsync).mockResolvedValue(granted);
+          jest.mocked(Camera.requestMicrophonePermissionsAsync).mockResolvedValue(granted);
+          await expect(platform.requestPermissions()).resolves.toEqual({
+            camera: 'granted',
+            microphone: 'granted',
+          });
+        }
+      } finally {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: os });
+        Object.defineProperty(Device, 'isDevice', { configurable: true, value: device });
+        cameraView.isAvailableAsync = previousProbe;
+      }
+    },
+  );
+
   it('allows an Android virtual camera without calling the unsupported availability probe', async () => {
     const os = Platform.OS;
     const device = Device.isDevice;
@@ -117,7 +159,9 @@ describe('Expo camera adapter contract', () => {
     await expect(platform.getCapabilities()).rejects.toBe(nativeFailure);
   });
 
-  it('falls back to undecided capabilities when the native probe fails', async () => {
+  it('falls back to undecided capabilities when the web probe fails', async () => {
+    const originalOs = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
     const cameraView = CameraView as typeof CameraView & {
       isAvailableAsync?: () => Promise<boolean>;
     };
@@ -130,6 +174,7 @@ describe('Expo camera adapter contract', () => {
         microphone: 'undecided',
       });
     } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: originalOs });
       cameraView.isAvailableAsync = previousProbe;
     }
   });

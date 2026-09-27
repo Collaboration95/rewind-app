@@ -1,3 +1,4 @@
+import { COLORS } from '../theme';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -85,20 +86,20 @@ export function DemoProfilePicker() {
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: '#E4EEE7', borderRadius: 20, padding: 24, gap: 16, maxWidth: 620 },
-  heading: { color: '#1D2622', fontSize: 24, fontWeight: '700' },
-  body: { color: '#3D4B44', fontSize: 16, lineHeight: 24 },
-  current: { color: '#1D2622', fontSize: 20, fontWeight: '600' },
+  card: { backgroundColor: COLORS.paper, borderRadius: 20, padding: 24, gap: 16, maxWidth: 620 },
+  heading: { color: COLORS.ink, fontSize: 24, fontWeight: '700' },
+  body: { color: COLORS.muted, fontSize: 16, lineHeight: 24 },
+  current: { color: COLORS.ink, fontSize: 20, fontWeight: '600' },
   choices: { gap: 12 },
   choice: {
     padding: 14,
     minHeight: 48,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: '#687E70',
-    backgroundColor: '#F5F1EA',
+    borderColor: COLORS.filmBorder,
+    backgroundColor: COLORS.deep,
   },
-  selected: { borderColor: '#236341', backgroundColor: '#CDE4D3' },
-  focused: { borderColor: '#1D2622', borderWidth: 4 },
-  name: { color: '#1D2622', fontSize: 18, fontWeight: '600' },
+  selected: { borderColor: COLORS.accent, backgroundColor: COLORS.celluloid },
+  focused: { borderColor: COLORS.ink, borderWidth: 4 },
+  name: { color: COLORS.ink, fontSize: 18, fontWeight: '600' },
 });

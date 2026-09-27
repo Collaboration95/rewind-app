@@ -1,3 +1,4 @@
+import { DarkroomSection } from './src/capsule/DarkroomSection';
 import { useEffect, useMemo, useRef, useState, type ElementRef, type ReactNode } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
@@ -604,7 +605,7 @@ function SettingsScreen({
       >
         <AppHeader />
         <View>
-          <Text style={styles.label}>SETTINGS</Text>
+          <DarkroomSection label="SETTINGS" />
           <Text
             accessibilityRole="header"
             nativeID="screen-heading-settings"
@@ -624,6 +625,8 @@ function SettingsScreen({
           <Text style={styles.panelTitle}>{groupName}</Text>
           <Text style={styles.bodyText}>{role === 'owner' ? 'Owner' : 'Member'} · local group</Text>
         </View>
+        <DemoProfilePicker />
+        <RuntimeStatusCard client={runtimeClient} />
         <ReminderSettings />
         <InvitePanel
           groupId={session.groupId}
@@ -1313,8 +1316,6 @@ function HomeScreen({
         revealState={revealState}
       />
 
-      <RuntimeStatusCard client={runtimeClient} />
-      <DemoProfilePicker />
       {runtimeClient?.getContributionLedger && ledgerScope ? (
         <ContributionLedgerSection client={runtimeClient} {...ledgerScope} />
       ) : null}

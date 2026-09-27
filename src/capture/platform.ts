@@ -339,37 +339,26 @@ export class ExpoCameraPlatform implements CameraPlatform {
   async getCapabilities(): Promise<CapabilitySnapshot> {
     if (this.options.capabilityProbe) return this.options.capabilityProbe();
 
-    // Android emulators can expose a VirtualScene camera without being physical
-    // devices. The JS availability probe may exist but call a web-only native
-    // method. Permit the native permission/preview flow on Android instead;
-    // onCameraReady and mount/capture errors establish actual camera readiness.
-    if (Platform.OS === 'android') {
-      return { camera: 'supported', microphone: 'supported' };
+    // Native permissions and preview readiness establish device availability.
+    // Expo exposes a JS availability method whose native implementation is web-only.
+    if (Platform.OS !== 'web') {
+      const supported = Platform.OS === 'android' || Device.isDevice;
+      return {
+        camera: supported ? 'supported' : 'unsupported',
+        microphone: supported ? 'supported' : 'unsupported',
+      };
     }
 
     try {
-      // `isAvailableAsync` is currently only registered by Expo Camera on
-      // web. Some native SDK builds therefore expose no probe at all. A
-      // missing probe is not evidence that a physical device is unusable;
-      // permissions plus the native device boundary establish availability.
       const cameraAvailabilityProbe = (
-        CameraView as typeof CameraView & {
-          isAvailableAsync?: () => Promise<boolean>;
-        }
+        CameraView as typeof CameraView & { isAvailableAsync?: () => Promise<boolean> }
       ).isAvailableAsync;
+      const microphoneAvailable =
+        typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia);
       const cameraAvailable =
         typeof cameraAvailabilityProbe === 'function'
           ? await cameraAvailabilityProbe()
-          : Platform.OS === 'web'
-            ? typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
-            : Device.isDevice;
-      // Expo does not expose a microphone-capability probe. On native, a real
-      // device is the supported recording target; simulator capture stays an
-      // explicit unsupported state. On web, ask the browser capability API.
-      const microphoneAvailable =
-        Platform.OS === 'web'
-          ? typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
-          : Device.isDevice;
+          : microphoneAvailable;
 
       return {
         camera: cameraAvailable && microphoneAvailable ? 'supported' : 'unsupported',
@@ -392,10 +381,9 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async requestPermissions(): Promise<PermissionSnapshot> {
-    const [camera, microphone] = await Promise.all([
-      Camera.requestCameraPermissionsAsync(),
-      Camera.requestMicrophonePermissionsAsync(),
-    ]);
+    // Avoid overlapping native permission dialogs, especially on iOS.
+    const camera = await Camera.requestCameraPermissionsAsync();
+    const microphone = await Camera.requestMicrophonePermissionsAsync();
     return {
       camera: permissionState(camera),
       microphone: permissionState(microphone),

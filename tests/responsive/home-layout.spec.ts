@@ -8,6 +8,26 @@ const screenSizes = [
   { height: 800, name: 'desktop browser', width: 1280 },
 ];
 
+test('phone Home exposes the prompt, allowance and next action before the illustration', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const chooser = page.getByTestId('demo-entry-demo-1');
+  await expect(chooser.or(page.getByTestId('main-navigation'))).toBeVisible();
+  if (await chooser.isVisible()) await chooser.click();
+  const action = page.getByTestId(/home-reveal-/).getByRole('button');
+  await expect(action).toBeInViewport({ ratio: 1 });
+  await expect(page.getByTestId('cycle-prompt')).toBeInViewport({ ratio: 1 });
+  await expect(page.getByTestId('cycle-quota')).toBeInViewport({ ratio: 1 });
+  expect((await action.boundingBox())!.y).toBeLessThan(
+    (await page.getByTestId('darkroom-filmstrip').boundingBox())!.y,
+  );
+  await expect(page.getByRole('button', { name: /Choose .*sample member/ })).toHaveCount(0);
+  await page.getByTestId('nav-settings').click();
+  await expect(page.getByRole('button', { name: /Choose .*sample member/ })).toHaveCount(5);
+});
+
 for (const screenSize of screenSizes) {
   test(`${screenSize.name} keeps Home content clear of the main navigation`, async ({ page }) => {
     await page.setViewportSize(screenSize);

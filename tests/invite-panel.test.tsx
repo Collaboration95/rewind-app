@@ -94,7 +94,7 @@ describe('local invite panel', () => {
   it('validates malformed codes before calling the runtime and accepts normalized cross-group codes', async () => {
     const { acceptInvite, runtime, session } = inviteRuntime();
     const result = await render(<App runtimeClient={runtime} />);
-    await result.findByText('Current member: Amber');
+    await result.findByTestId('main-navigation');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
 
     const input = result.getByTestId('invite-code-input');
