@@ -40,6 +40,26 @@ The companion Node service adds local SQLite persistence, media processing,
 and the full capsule flow. It is intended for a trusted development machine or
 LAN only; it is not a hosted service.
 
+For a physical iPhone or a browser connected to the **same local backend**, use
+one command after `npm ci`:
+
+```sh
+make run
+```
+
+The command builds and starts the runtime, checks its health, and starts Expo in
+LAN mode. Scan Expo's QR code with the iPhone Camera app to open it in Expo Go;
+press `w` in the terminal for the web UI. The Mac and iPhone must be on the same
+trusted Wi-Fi network, and both Expo CLI and iPhone Expo Go must be signed in to
+the same Expo account. Open the printed `/health` URL in iPhone Safari first if
+the app cannot connect. Set `REWIND_LAN_IP` to the Mac's reachable IPv4 address
+if the command selects the wrong network interface. Use `make run-demo` for the
+labelled synthetic camera path. The default `make run` leaves real camera
+capture enabled. Press Ctrl-C to stop Expo and the runtime together.
+
+This route uses the local synthetic members and SQLite service, not real user
+authentication or private cloud media. Use non-sensitive test clips only.
+
 ```sh
 npm run server:preflight  # validate SQLite, LAN binding, and FFmpeg
 npm run server:start      # build and run the local service
