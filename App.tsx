@@ -457,6 +457,7 @@ function ActiveAppShell({
               </ScrollView>
             ) : activeRoute === 'camera' ? (
               <CameraCaptureScreen
+                autoRequestPermission={Platform.OS !== 'web'}
                 debug={cameraDebug}
                 onAccepted={() => setStillSavedScope(sessionScope)}
                 onRecordClip={() => setActiveRoute('video')}
@@ -466,6 +467,7 @@ function ActiveAppShell({
               />
             ) : activeRoute === 'video' ? (
               <VideoCaptureScreen
+                autoRequestPermission={Platform.OS !== 'web'}
                 contributionStatusOverride={debugContribution ?? undefined}
                 debug={videoDebug}
                 onBack={() => setActiveRoute('camera')}

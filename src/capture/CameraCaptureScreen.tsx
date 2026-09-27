@@ -51,6 +51,12 @@ export interface CameraCaptureScreenProps {
   revealState?: RevealEducationState;
   /** Settings debug mode: forces a study state without touching capture data. */
   debug?: ScreenDebug<CameraDebugScenario>;
+  /**
+   * Ask for camera and microphone access as soon as the screen finds them
+   * undecided, so the first visit shows the system prompt directly. The
+   * in-app "Allow" panel remains the retry path after a dismissal.
+   */
+  autoRequestPermission?: boolean;
 }
 
 /**
@@ -58,6 +64,7 @@ export interface CameraCaptureScreenProps {
  * still-image preview. It does not know about identity, groups, or reveal.
  */
 export function CameraCaptureScreen({
+  autoRequestPermission = false,
   createCaptureId,
   debug,
   fileStore,
@@ -209,6 +216,15 @@ export function CameraCaptureScreen({
       }));
     }
   }, [platform]);
+
+  const autoRequested = useRef(false);
+  useEffect(() => {
+    if (!autoRequestPermission || debug?.scenario || autoRequested.current) return;
+    if (state.status !== 'permission-undecided') return;
+    autoRequested.current = true;
+    // Defer so the system prompt is requested after this render commits.
+    void Promise.resolve().then(requestAccess);
+  }, [autoRequestPermission, debug?.scenario, requestAccess, state.status]);
 
   const openSettings = useCallback(async () => {
     setSettingsError(null);

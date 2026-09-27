@@ -70,6 +70,8 @@ export interface VideoCaptureScreenProps {
   debug?: ScreenDebug<VideoDebugScenario>;
   /** Metadata-only fixture shown instead of the persisted status in debug mode. */
   contributionStatusOverride?: ContributionStatus;
+  /** Show the system camera + microphone prompt on the first undecided visit. */
+  autoRequestPermission?: boolean;
 }
 
 export type VideoDebugScenario =
@@ -144,6 +146,7 @@ function isUploadCancellation(error: unknown): boolean {
 }
 
 export function VideoCaptureScreen({
+  autoRequestPermission = false,
   contributionStatusOverride,
   debug,
   onBack,
@@ -485,6 +488,15 @@ export function VideoCaptureScreen({
       setError('Camera access could not be checked right now. Try again or open Settings.');
     }
   }, [isCaptureActive, platform, refresh]);
+
+  const autoRequested = useRef(false);
+  useEffect(() => {
+    if (!autoRequestPermission || debug?.scenario || autoRequested.current) return;
+    if (access !== 'permission-undecided') return;
+    autoRequested.current = true;
+    // Defer so the system prompt is requested after this render commits.
+    void Promise.resolve().then(requestAccess);
+  }, [access, autoRequestPermission, debug?.scenario, requestAccess]);
 
   const openSettings = useCallback(async () => {
     if (!isCaptureActive()) return;
