@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "expo start",
+    "dev:lan": "node scripts/run-local-dev.mjs",
     "web": "expo start --web",
     "build:web": "expo export --clear --platform web --output-dir dist",
     "test:pwa": "npm run build:web && node scripts/check-pwa.mjs dist",
