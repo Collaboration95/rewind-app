@@ -618,6 +618,7 @@ function SettingsScreen({
           <Text style={styles.panelTitle}>{session.actor.displayName}</Text>
           <Text style={styles.bodyText}>Synthetic member · Demo access</Text>
         </View>
+        <DemoProfilePicker />
         <View accessible style={styles.settingsPanel} testID="settings-group">
           <Text style={styles.label}>CURRENT GROUP</Text>
           <Text style={styles.panelTitle}>{groupName}</Text>
@@ -1306,8 +1307,6 @@ function HomeScreen({
       <AppHeader />
 
       <RuntimeStatusCard client={runtimeClient} />
-
-      <DemoProfilePicker />
 
       <CapsuleSummary
         clock={clock}
