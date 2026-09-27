@@ -347,6 +347,79 @@ describe('Expo camera adapter contract', () => {
     });
   });
 
+  it('rejects non-blob preview schemes before assigning a video source', async () => {
+    const createElement = jest.fn();
+    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { createElement },
+    });
+    const platform = new ExpoCameraPlatform({
+      browserFilePicker: jest.fn().mockResolvedValue({ size: 42_000, type: 'video/mp4' } as File),
+      browserObjectUrlFactory: jest.fn().mockReturnValue('javascript:alert(1)'),
+      browserVideoContainerReader: jest.fn().mockResolvedValue({
+        hasAudio: true,
+        hasVideo: true,
+        isMp4: true,
+      }),
+      getCameraRef: () => null,
+    });
+
+    try {
+      await expect(platform.pickVideoFile()).rejects.toThrow(
+        'The selected video preview must use a local blob URL.',
+      );
+      expect(createElement).not.toHaveBeenCalled();
+    } finally {
+      if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+      else Reflect.deleteProperty(globalThis, 'document');
+    }
+  });
+
+  it('uses a blob URL for browser video metadata and keeps the local preview working', async () => {
+    let assignedSource = '';
+    const video = {
+      audioTracks: [{ kind: 'audio' }],
+      duration: 4,
+      videoHeight: 1280,
+      onloadedmetadata: null as (() => void) | null,
+      onerror: null as (() => void) | null,
+      preload: '',
+      set src(value: string) {
+        assignedSource = value;
+        queueMicrotask(() => video.onloadedmetadata?.());
+      },
+      videoWidth: 720,
+    };
+    const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { createElement: jest.fn().mockReturnValue(video) },
+    });
+    const platform = new ExpoCameraPlatform({
+      browserFilePicker: jest.fn().mockResolvedValue({ size: 42_000, type: 'video/mp4' } as File),
+      browserObjectUrlFactory: jest.fn().mockReturnValue('blob:https://rewind.example/clip-1'),
+      browserVideoContainerReader: jest.fn().mockResolvedValue({
+        hasAudio: true,
+        hasVideo: true,
+        isMp4: true,
+      }),
+      getCameraRef: () => null,
+    });
+
+    try {
+      await expect(platform.pickVideoFile()).resolves.toMatchObject({
+        durationSeconds: 4,
+        source: 'file',
+        sourceUri: 'blob:https://rewind.example/clip-1',
+      });
+      expect(assignedSource).toBe('blob:https://rewind.example/clip-1');
+    } finally {
+      if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
+      else Reflect.deleteProperty(globalThis, 'document');
+    }
+  });
+
   it('rejects a non-MP4 browser fallback before creating an object URL', async () => {
     const createObjectUrl = jest.fn();
     const platform = new ExpoCameraPlatform({

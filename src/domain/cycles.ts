@@ -13,6 +13,12 @@ export interface CycleHistoryEntry {
   releaseStatus: 'unpublished' | 'published';
 }
 
+export interface CycleHistoryPage {
+  cycles: CycleHistoryEntry[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
 /**
  * The two supported local-demo cycle lengths. The server owns the lifecycle
  * calculation; this type keeps client control ports independent of transport

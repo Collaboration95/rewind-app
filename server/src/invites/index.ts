@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import { getGroup, isOwner } from '../db';
 import type { RewindDatabase } from '../db';
+import { isActiveDemoSession } from '../session';
 
 export const DEFAULT_INVITE_TTL_SECONDS = 24 * 60 * 60;
 export const MIN_INVITE_TTL_SECONDS = 5 * 60;
@@ -20,13 +21,20 @@ export interface LocalInvite {
 
 export type CreateInviteResult =
   | { ok: true; invite: LocalInvite }
-  | { ok: false; reason: 'forbidden' | 'not_found' | 'invalid_expiry' };
+  | { ok: false; reason: 'forbidden' | 'not_found' | 'invalid_expiry' | 'session_inactive' };
 
 export type AcceptInviteResult =
   | { ok: true; invite: LocalInvite; group: NonNullable<ReturnType<typeof getGroup>> }
   | {
       ok: false;
-      reason: 'malformed' | 'not_found' | 'expired' | 'used' | 'cross_group' | 'already_member';
+      reason:
+        | 'malformed'
+        | 'not_found'
+        | 'expired'
+        | 'used'
+        | 'cross_group'
+        | 'already_member'
+        | 'session_inactive';
     };
 
 interface InviteRow {
@@ -83,6 +91,7 @@ export function createInvite(
   groupId: string,
   ttlSeconds = DEFAULT_INVITE_TTL_SECONDS,
   now = new Date(),
+  sessionId?: string,
 ): CreateInviteResult {
   if (!getGroup(database, groupId) || !isOwner(database, groupId, actorMemberId)) {
     return { ok: false, reason: 'forbidden' };
@@ -94,15 +103,31 @@ export function createInvite(
   ) {
     return { ok: false, reason: 'invalid_expiry' };
   }
-  const code = nextCode(database);
+  database.exec('BEGIN IMMEDIATE');
+  let code: string;
   const createdAt = now.toISOString();
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
-  database
-    .prepare(
-      `INSERT INTO invites (id, group_id, status, created_at, code, expires_at)
-       VALUES (?, ?, 'active', ?, ?, ?)`,
-    )
-    .run(inviteId(code), groupId, createdAt, code, expiresAt);
+  try {
+    if (
+      sessionId &&
+      (!isActiveDemoSession(database, sessionId, actorMemberId, now) ||
+        !isOwner(database, groupId, actorMemberId))
+    ) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'session_inactive' };
+    }
+    code = nextCode(database);
+    database
+      .prepare(
+        `INSERT INTO invites (id, group_id, status, created_at, code, expires_at)
+         VALUES (?, ?, 'active', ?, ?, ?)`,
+      )
+      .run(inviteId(code), groupId, createdAt, code, expiresAt);
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
   return {
     ok: true,
     invite: {
@@ -123,6 +148,7 @@ export function acceptInvite(
   rawCode: string,
   requestedGroupId?: string,
   now = new Date(),
+  sessionId?: string,
 ): AcceptInviteResult {
   const code = rawCode.trim().toUpperCase();
   if (!INVITE_CODE_PATTERN.test(code)) return { ok: false, reason: 'malformed' };
@@ -134,25 +160,44 @@ export function acceptInvite(
     )
     .get(code) as InviteRow | undefined;
   if (!row) return { ok: false, reason: 'not_found' };
-  if (requestedGroupId && requestedGroupId !== row.groupId) {
-    return { ok: false, reason: 'cross_group' };
-  }
-  const invite = mapInvite(row, now);
-  if (invite.status === 'expired') {
-    database.prepare("UPDATE invites SET status = 'expired' WHERE id = ?").run(invite.id);
-    return { ok: false, reason: 'expired' };
-  }
-  if (invite.status === 'used') return { ok: false, reason: 'used' };
-  if (
-    database
-      .prepare('SELECT 1 FROM memberships WHERE group_id = ? AND member_id = ?')
-      .get(invite.groupId, actorMemberId)
-  ) {
-    return { ok: false, reason: 'already_member' };
-  }
-
-  database.exec('BEGIN');
+  database.exec('BEGIN IMMEDIATE');
   try {
+    if (sessionId && !isActiveDemoSession(database, sessionId, actorMemberId, now)) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'session_inactive' };
+    }
+    const current = database
+      .prepare(
+        `SELECT id, code, group_id AS groupId, status, created_at AS createdAt,
+                expires_at AS expiresAt, used_at AS usedAt FROM invites WHERE id = ?`,
+      )
+      .get(row.id) as InviteRow | undefined;
+    if (!current) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'not_found' };
+    }
+    if (requestedGroupId && requestedGroupId !== current.groupId) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'cross_group' };
+    }
+    const invite = mapInvite(current, now);
+    if (invite.status === 'expired') {
+      database.prepare("UPDATE invites SET status = 'expired' WHERE id = ?").run(invite.id);
+      database.exec('COMMIT');
+      return { ok: false, reason: 'expired' };
+    }
+    if (invite.status === 'used') {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'used' };
+    }
+    if (
+      database
+        .prepare('SELECT 1 FROM memberships WHERE group_id = ? AND member_id = ?')
+        .get(invite.groupId, actorMemberId)
+    ) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'already_member' };
+    }
     database
       .prepare(
         `INSERT INTO memberships (group_id, member_id, role, accepted_at)
@@ -164,14 +209,18 @@ export function acceptInvite(
         "UPDATE invites SET status = 'used', invitee_member_id = ?, used_at = ? WHERE id = ?",
       )
       .run(actorMemberId, now.toISOString(), invite.id);
+    if (sessionId)
+      database
+        .prepare('UPDATE sessions SET group_id = ? WHERE id = ?')
+        .run(invite.groupId, sessionId);
     database.exec('COMMIT');
+    return {
+      ok: true,
+      invite: { ...invite, status: 'used', usedAt: now.toISOString() },
+      group: getGroup(database, invite.groupId, actorMemberId)!,
+    };
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
   }
-  return {
-    ok: true,
-    invite: { ...invite, status: 'used', usedAt: now.toISOString() },
-    group: getGroup(database, invite.groupId, actorMemberId)!,
-  };
 }

@@ -33,6 +33,13 @@ export interface ChatMessageEvent {
   occurredAt: string;
 }
 
+export interface ChatHistoryPage {
+  events: ChatMessageEvent[];
+  nextCursor: number | null;
+  watermarkEventId: number;
+  hasMore: boolean;
+}
+
 /** Message metadata sent to observers that only maintain unread counts. */
 export interface ChatUnreadMessageEvent {
   eventId: number;

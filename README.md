@@ -8,8 +8,9 @@ account, public hosting, or a cloud media service.
 
 ## Start the app
 
-Use Node.js 22 LTS (22.13.0 or newer), npm 10 or newer, and a current
-Chromium-based browser for the Expo web demo.
+Use the Node.js 22 version in `.nvmrc` (22.23.3), npm 10 or newer, and a
+current Chromium-based browser for the Expo web demo. With nvm, run
+`nvm use` before `npm ci`; the CI workflow reads the same version file.
 
 ```sh
 npm ci

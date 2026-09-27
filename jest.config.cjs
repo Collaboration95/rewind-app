@@ -8,4 +8,7 @@ module.exports = {
   },
   preset: 'jest-expo',
   testMatch: ['<rootDir>/tests/**/*.test.ts', '<rootDir>/tests/**/*.test.tsx'],
+  collectCoverageFrom: ['App.tsx', 'src/**/*.{ts,tsx}', '!src/**/*.d.ts'],
+  coverageReporters: ['text-summary', 'json-summary'],
+  coverageThreshold: { global: { statements: 70 } },
 };

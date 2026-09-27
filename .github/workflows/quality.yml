@@ -3,8 +3,7 @@ name: Quality checks
 on:
   push:
     branches: [main]
-  # PR checks intentionally have no base-branch filter so stacked PRs run the
-  # same validation. Feature-branch pushes stay excluded to avoid duplicate runs.
+  # Include stacked PRs; feature-branch pushes do not duplicate PR runs.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -16,34 +15,148 @@ permissions:
   contents: read
 
 jobs:
-  baseline:
-    name: Format, lint, typecheck, and test
-    runs-on: ubuntu-latest
+  static:
+    name: Static and root tests
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          node-version: 22.x
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
           cache: npm
+      - run: npm ci
+      - name: Check source and production dependencies
+        run: |
+          npm run format:check
+          npm run lint
+          npm run architecture:check
+          npm run typecheck
+          npm audit --omit=dev --audit-level=high
+      - name: Run root and Terraform policy tests
+        run: node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs
+      - name: Test IaC scan gate failure cases
+        run: python3 -m unittest discover -s tests/security -p 'test_*.py'
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install FFmpeg for the local runtime gate
+  server:
+    name: Server tests and coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Install FFmpeg
         run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Run server tests and collect separate coverage
+        run: |
+          npm run server:build
+          mkdir -p coverage/server-v8
+          set -o pipefail
+          NODE_V8_COVERAGE=coverage/server-v8 node --experimental-test-coverage '--test-coverage-include=server/dist/**/*.js' --test server/tests/*.test.mjs | tee coverage/server-summary.txt
+      - name: Retain server coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: server-coverage
+          path: |
+            coverage/server-summary.txt
+            coverage/server-v8/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
-      - name: Install Chromium for accessibility and responsive checks
-        run: npx playwright install --with-deps chromium
+  frontend:
+    name: Frontend tests and coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Run Jest with measured statement gate
+        run: npx jest --runInBand --coverage
+      - name: Retain frontend coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: frontend-coverage
+          path: coverage/coverage-summary.json
+          if-no-files-found: ignore
+          retention-days: 14
 
-      - name: Run baseline checks
-        run: npm run check
+  browser:
+    name: Web export and browser checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Install browser and media runtime
+        run: |
+          command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          npx playwright install --with-deps chromium
+      - name: Export once and check PWA, accessibility, and responsive behavior
+        run: |
+          npm run build:web
+          node scripts/check-pwa.mjs dist
+          npx playwright test
 
-      - name: Build and validate the installable web shell
-        run: npm run test:pwa
+  fixtures:
+    name: Cloud-free deployment fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Run backup, lifecycle, restore, and host fixtures
+        run: |
+          bash tests/deploy/backup-manifest.test.sh
+          bash tests/deploy/wake-recovery-selection.test.sh
+          bash tests/deploy/lifecycle-guards.test.sh
+          bash tests/deploy/recovery-smoke.test.sh
+          bash tests/deploy/restore-atomic.test.sh
+          bash tests/deploy/ownership-contract.test.sh
+          bash tests/deploy/host-preflight.test.sh
+          bash deploy/tests/host-bootstrap.test.sh
+          for fixture in tests/deploy/*release*.test.sh deploy/tests/*release*.test.sh; do
+            if [ -f "$fixture" ]; then bash "$fixture"; fi
+          done
 
-      - name: Run responsive browser checks
-        run: npm run test:responsive
+  gate:
+    # Keep this name stable for the existing branch-protection requirement.
+    name: Format, lint, typecheck, and test
+    needs: [static, server, frontend, browser, fixtures]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every quality job to succeed
+        run: |
+          test '${{ needs.static.result }}' = success
+          test '${{ needs.server.result }}' = success
+          test '${{ needs.frontend.result }}' = success
+          test '${{ needs.browser.result }}' = success
+          test '${{ needs.fixtures.result }}' = success

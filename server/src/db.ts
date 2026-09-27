@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { RuntimeConfig } from './config';
@@ -68,7 +68,7 @@ export interface DemoFixture {
   acceptedAt: string;
   message: { id: string; body: string };
   contribution: { id: string; durationSeconds: number };
-  mediaJobs: { id: string; kind: 'clip' | 'film' | 'download' }[];
+  mediaJobs: { id: string; kind: 'clip' | 'film' | 'download'; status: 'pending' | 'ready' }[];
 }
 
 export type RewindDatabase = DatabaseSync;
@@ -1380,6 +1380,22 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
   }
   const cycleStartsAt = now;
   const cycleEndsAt = new Date(nowDate.getTime() + fixtureDurationMs).toISOString();
+  // The sample is a bundled three-second synthetic portrait MP4 with audio.
+  // Copy actual bytes before publishing ready rows; seeding must not enqueue
+  // source-less work or require an FFmpeg process at startup/reset.
+  const databaseFile = (
+    database.prepare('PRAGMA database_list').all() as { name: string; file: string }[]
+  ).find((entry) => entry.name === 'main')?.file;
+  if (!databaseFile) throw new Error('Demo media seeding requires a file-backed database.');
+  const processedDir = resolve(databaseFile, '..', 'media', 'processed');
+  const sample = readFileSync(resolve(process.cwd(), 'server/fixtures/demo-media.mp4'));
+  const sampleSha256 = createHash('sha256').update(sample).digest('hex');
+  mkdirSync(processedDir, { recursive: true });
+  mkdirSync(resolve(databaseFile, '..', 'media', 'staging'), { recursive: true });
+  const clipPath = resolve(processedDir, 'fixture-demo-clip.mp4');
+  const filmPath = resolve(processedDir, 'fixture-demo-film.mp4');
+  writeFileSync(clipPath, sample);
+  writeFileSync(filmPath, sample);
   database.exec('BEGIN');
   try {
     const profileInsert = database.prepare(
@@ -1438,9 +1454,17 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
         'INSERT INTO invites (id, group_id, invitee_member_id, status, created_at) VALUES (?, ?, ?, ?, ?)',
       )
       .run('demo-invite', FIXTURE.group.id, FIXTURE.profiles[0].id, 'accepted', now);
+    const hasQuotaWindowStart = tableColumns(database, 'contributions').has(
+      'quota_window_start_at',
+    );
     database
       .prepare(
-        'INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at) VALUES (?, ?, ?, ?, ?)',
+        hasQuotaWindowStart
+          ? `INSERT INTO contributions
+              (id, cycle_id, member_id, duration_seconds, created_at, quota_window_start_at)
+             VALUES (?, ?, ?, ?, ?, ?)`
+          : `INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
       )
       .run(
         FIXTURE.contribution.id,
@@ -1448,7 +1472,27 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
         FIXTURE.profiles[0].id,
         FIXTURE.contribution.durationSeconds,
         now,
+        ...(hasQuotaWindowStart ? [cycleStartsAt] : []),
       );
+    if (hasQuotaWindowStart && hasTable(database, 'contribution_quota_windows')) {
+      database
+        .prepare(
+          `INSERT INTO contribution_quota_windows
+            (id, cycle_id, member_id, window_start_at, window_end_at,
+             max_count, max_seconds, count_used, seconds_used)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        )
+        .run(
+          `fixture-quota-${FIXTURE.cycle.id}-${FIXTURE.profiles[0].id}`,
+          FIXTURE.cycle.id,
+          FIXTURE.profiles[0].id,
+          cycleStartsAt,
+          new Date(Date.parse(cycleStartsAt) + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          FIXTURE.cycle.maxCount,
+          FIXTURE.cycle.maxSeconds,
+          FIXTURE.contribution.durationSeconds,
+        );
+    }
     const mediaInsert = tableColumns(database, 'media_jobs').has('updated_at')
       ? database.prepare(
           'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, output_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -1463,8 +1507,8 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
           FIXTURE.group.id,
           job.kind === 'clip' ? FIXTURE.contribution.id : null,
           job.kind,
-          'ready',
-          null,
+          job.status,
+          job.kind === 'clip' ? clipPath : filmPath,
           now,
           now,
         );
@@ -1474,10 +1518,17 @@ export function seedDatabase(database: RewindDatabase, seedNow?: Date | string):
           FIXTURE.group.id,
           job.kind === 'clip' ? FIXTURE.contribution.id : null,
           job.kind,
-          'ready',
-          null,
+          job.status,
+          job.kind === 'clip' ? clipPath : filmPath,
           now,
         );
+      }
+      if (tableColumns(database, 'media_jobs').has('output_sha256')) {
+        database
+          .prepare(
+            `UPDATE media_jobs SET output_sha256 = ?, output_bytes = ?, output_verified_at = ?, progress = 100 WHERE id = ?`,
+          )
+          .run(sampleSha256, sample.byteLength, now, job.id);
       }
     }
     database
@@ -1529,8 +1580,8 @@ export function clearMediaDirectory(mediaDir: string): void {
   }
 }
 
-/** Restore only the SQLite-backed local fixture. Source files and migrations
- * are never touched. This form is used by the in-process reset endpoint. */
+/** Restore the local fixture and its bundled synthetic media outputs.
+ * Source files and migrations are never touched. */
 export function restoreFixture(database: RewindDatabase, seedNow?: Date | string): void {
   database.exec('BEGIN');
   try {
@@ -1811,6 +1862,18 @@ export interface ReleasedArchiveRecord {
     createdAt: string;
     outputPath: string;
   }[];
+  nextFilmCursor: [string, string, string] | null;
+  nextClipCursor: [string, string] | null;
+  hasMoreFilms: boolean;
+  hasMoreClips: boolean;
+}
+
+export interface ReleasedArchivePageOptions {
+  limit?: number;
+  includeFilms?: boolean;
+  includeClips?: boolean;
+  filmCursor?: [publishedAt: string, createdAt: string, id: string] | null;
+  clipCursor?: [createdAt: string, id: string] | null;
 }
 
 /** List only ready, released media. Filesystem paths stay server-side. */
@@ -1818,21 +1881,53 @@ export function listReleasedArchive(
   database: RewindDatabase,
   groupId: string,
   memberId: string,
+  options: ReleasedArchivePageOptions = {},
 ): ReleasedArchiveRecord {
-  const films = database
-    .prepare(
-      `SELECT f.id, c.id AS cycleId, c.release_published_at AS publishedAt,
-              f.output_path AS outputPath
+  const limit =
+    Number.isInteger(options.limit) && options.limit! > 0 ? Math.min(options.limit!, 50) : 50;
+  const filmCursorWhere = options.filmCursor
+    ? `AND (c.release_published_at < ? OR (c.release_published_at = ? AND
+         (f.created_at < ? OR (f.created_at = ? AND f.id < ?))))`
+    : '';
+  const filmParams: (string | number)[] = [groupId];
+  if (options.filmCursor) {
+    const [publishedAt, createdAt, id] = options.filmCursor;
+    filmParams.push(publishedAt, publishedAt, createdAt, createdAt, id);
+  }
+  filmParams.push(limit + 1);
+  const filmRows =
+    options.includeFilms === false
+      ? []
+      : (database
+          .prepare(
+            `SELECT f.id, c.id AS cycleId, c.release_published_at AS publishedAt,
+              f.created_at AS createdAt, f.output_path AS outputPath
        FROM media_jobs f
        JOIN cycles c ON c.id = f.cycle_id AND c.group_id = f.group_id
        WHERE f.group_id = ? AND f.kind = 'film' AND f.status = 'ready'
          AND f.output_path IS NOT NULL AND c.release_status = 'published'
-       ORDER BY c.release_published_at DESC, f.created_at DESC, f.id DESC`,
-    )
-    .all(groupId) as Record<string, unknown>[];
-  const clips = database
-    .prepare(
-      `SELECT clip.id, contribution.id AS contributionId, cycle.id AS cycleId,
+         ${filmCursorWhere}
+       ORDER BY c.release_published_at DESC, f.created_at DESC, f.id DESC LIMIT ?`,
+          )
+          .all(...filmParams) as Record<string, unknown>[]);
+  const hasMoreFilms = options.includeFilms !== false && filmRows.length > limit;
+  const films = filmRows.slice(0, limit);
+
+  const clipCursorWhere = options.clipCursor
+    ? `AND (contribution.created_at < ? OR (contribution.created_at = ? AND clip.id < ?))`
+    : '';
+  const clipParams: (string | number)[] = [groupId, memberId, groupId];
+  if (options.clipCursor) {
+    const [createdAt, id] = options.clipCursor;
+    clipParams.push(createdAt, createdAt, id);
+  }
+  clipParams.push(limit + 1);
+  const clipRows =
+    options.includeClips === false
+      ? []
+      : (database
+          .prepare(
+            `SELECT clip.id, contribution.id AS contributionId, cycle.id AS cycleId,
               contribution.created_at AS createdAt, clip.output_path AS outputPath
        FROM media_jobs clip
        JOIN contributions contribution ON contribution.id = clip.contribution_id
@@ -1841,9 +1936,12 @@ export function listReleasedArchive(
          AND clip.output_path IS NOT NULL AND contribution.member_id = ?
          AND cycle.group_id = ? AND cycle.release_status = 'published'
          AND clip.deleted_at IS NULL
-       ORDER BY contribution.created_at DESC, clip.id DESC`,
-    )
-    .all(groupId, memberId, groupId) as Record<string, unknown>[];
+         ${clipCursorWhere}
+       ORDER BY contribution.created_at DESC, clip.id DESC LIMIT ?`,
+          )
+          .all(...clipParams) as Record<string, unknown>[]);
+  const hasMoreClips = options.includeClips !== false && clipRows.length > limit;
+  const clips = clipRows.slice(0, limit);
   return {
     films: films.map((film) => ({
       id: String(film.id),
@@ -1858,6 +1956,20 @@ export function listReleasedArchive(
       createdAt: String(clip.createdAt),
       outputPath: String(clip.outputPath),
     })),
+    nextFilmCursor:
+      hasMoreFilms && films.length > 0
+        ? [
+            String(films[films.length - 1].publishedAt),
+            String(films[films.length - 1].createdAt),
+            String(films[films.length - 1].id),
+          ]
+        : null,
+    nextClipCursor:
+      hasMoreClips && clips.length > 0
+        ? [String(clips[clips.length - 1].createdAt), String(clips[clips.length - 1].id)]
+        : null,
+    hasMoreFilms,
+    hasMoreClips,
   };
 }
 

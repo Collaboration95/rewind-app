@@ -186,6 +186,15 @@ async function readImageDimensions(uri: string): Promise<{ height: number; width
 }
 
 async function readVideoMetadata(uri: string): Promise<BrowserVideoMetadata> {
+  let protocol: string;
+  try {
+    protocol = new URL(uri).protocol;
+  } catch {
+    throw new Error('The selected video preview must use a local blob URL.');
+  }
+  if (protocol !== 'blob:') {
+    throw new Error('The selected video preview must use a local blob URL.');
+  }
   if (typeof document === 'undefined') {
     throw new Error('This browser cannot inspect the selected video.');
   }

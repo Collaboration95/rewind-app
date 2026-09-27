@@ -38,6 +38,9 @@ async function withDatabase(run) {
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
   const database = openDatabase(config);
   try {
+    database.exec(
+      "DELETE FROM contribution_quota_windows; DELETE FROM contributions WHERE id = 'demo-contribution';",
+    );
     return await run({ config, database, dataDir });
   } finally {
     database.close();
@@ -278,7 +281,8 @@ test('clip submissions enforce five clips and thirty seconds per member window',
     );
     const ledger = database
       .prepare(
-        'SELECT count_used AS countUsed, seconds_used AS secondsUsed FROM contribution_quota_windows',
+        `SELECT count_used AS countUsed, seconds_used AS secondsUsed
+         FROM contribution_quota_windows WHERE window_start_at = '2026-09-08T00:00:00.000Z'`,
       )
       .get();
     assert.deepEqual({ ...ledger }, { countUsed: 5, secondsUsed: MAX_CONTRIBUTION_SECONDS - 0 });
@@ -456,6 +460,9 @@ test('idempotent retries consume one allowance and persisted state survives reop
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
   let database = openDatabase(config);
   try {
+    database.exec(
+      "DELETE FROM contribution_quota_windows; DELETE FROM contributions WHERE id = 'demo-contribution';",
+    );
     registerMetadata(database, { ...validInput, durationSeconds: 8 });
     const first = createClipUpload(
       database,
@@ -649,7 +656,17 @@ test('demo reset clears quota and verified metadata so stale sources cannot be r
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM media_metadata').get().count, 0);
     assert.equal(
       database.prepare('SELECT COUNT(*) AS count FROM contribution_quota_windows').get().count,
-      0,
+      1,
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            'SELECT count_used AS countUsed, seconds_used AS secondsUsed FROM contribution_quota_windows',
+          )
+          .get(),
+      },
+      { countUsed: 1, secondsUsed: 3 },
     );
   });
 });
