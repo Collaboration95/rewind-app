@@ -10,5 +10,12 @@ Module project.
 - [Selected Rewind proposal](planning/proposals/proposal-rewind.md) — the current project scope and acceptance plan.
 - [Sprint 0 plan](planning/sprints/sprint-0-plan.md) — the first capacity-aware implementation slice.
 - [Sprint 0 extension](planning/sprints/sprint-0-plan-extension.md) — the runtime-foundation move and Sprint 1 handoff.
-- [Sprint 1 plan](planning/sprints/sprint-1-plan.md) — the current hosted capture-to-reveal Demo slice.
-- [AWS, IaC, and SCP execution plan](planning/sprints/aws-iac-scp-execution-plan.md) — the Sprint 1 hosted Demo infrastructure slice and Sprint 2 transition.
+
+Sprint names follow the GitHub milestones: Sprint 0 ends 12 September, Sprint 1
+runs 13–26 September, Sprint 2 runs 27 September–10 October, and Sprint 3 runs
+11–24 October 2026. The detailed Sprint 2 product commitment is being set in
+Sprint Planning; the earlier hosted Demo plan below is a superseded proposal,
+not the full product commitment.
+
+- [Earlier hosted Demo proposal](planning/sprints/sprint-1-plan.md) — uses superseded Sprint naming and a narrower synthetic Demo scope.
+- [AWS, IaC, and SCP execution plan](planning/sprints/aws-iac-scp-execution-plan.md) — technical background; its Sprint 1 Demo and Sprint 2 transition labels are superseded by Sprint 2 and Sprint 3, respectively.
