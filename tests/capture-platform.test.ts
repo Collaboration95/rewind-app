@@ -88,18 +88,22 @@ describe('Expo camera adapter contract', () => {
     await expect(platform.getCapabilities()).rejects.toBe(nativeFailure);
   });
 
-  it('falls back to undecided capabilities when the native probe fails', async () => {
+  it('does not let the web-only availability probe block a physical phone', async () => {
     const cameraView = CameraView as typeof CameraView & {
       isAvailableAsync?: () => Promise<boolean>;
     };
     const previousProbe = cameraView.isAvailableAsync;
-    cameraView.isAvailableAsync = jest.fn().mockRejectedValue(new Error('probe unavailable'));
+    // Real expo-camera exposes the static probe on every platform, but on
+    // iOS/Android it throws UnavailabilityError because only web registers it.
+    const probe = jest.fn().mockRejectedValue(new Error('isAvailableAsync is not available'));
+    cameraView.isAvailableAsync = probe;
     try {
       const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
       await expect(platform.getCapabilities()).resolves.toEqual({
-        camera: 'undecided',
-        microphone: 'undecided',
+        camera: 'supported',
+        microphone: 'supported',
       });
+      expect(probe).not.toHaveBeenCalled();
     } finally {
       cameraView.isAvailableAsync = previousProbe;
     }
