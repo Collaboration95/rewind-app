@@ -29,6 +29,27 @@ task, thread, or chat.
   `.claude/skills`, `.codex/skills`, and `.opencode/skills` links point to the
   same canonical `skills/` directory.
 
+## Branch and review workflow
+
+- Start issue branches from the latest `dev` and target `dev` with focused PRs.
+  The protected `dev` branch requires a PR, an up-to-date green aggregate Quality
+  check, and resolved conversations. Routine `dev` PRs do not require a human
+  approval, so do not describe their merge as independent acceptance.
+- Request human review before integrating changes to authentication, access to
+  private media, database migrations, deployment, or infrastructure. Do not
+  bypass a material review need merely because `dev` allows zero approvals.
+- Keep `main` as the reviewed release branch. Promote a small, green `dev` diff
+  to `main` with a PR when an update is wanted; no daily promotion or reviewer
+  schedule is required. The existing `main` approval and Quality rules remain.
+  A merge to `main` is not proof of deployment or user acceptance.
+- Reference issues in `dev` PRs without closing them. Move an issue to Done only
+  when its acceptance criteria are verified, relevant checks pass, the change
+  has been reviewed, and the accepted change is on `main`. Otherwise keep its
+  actual state visible in the Project board.
+- For an urgent fix, target `main` with its normal review and checks, then
+  bring the accepted fix back to `dev` through a PR. Do not force-push either
+  protected branch. A separate production branch is not part of this workflow.
+
 ## Project documentation
 
 - `doc/README.md` is the entry point for the consolidated planning workspace.
@@ -39,6 +60,10 @@ task, thread, or chat.
 
 ## Scrum
 
+- Use zero-based Sprint names consistently: Sprint 0 (foundation), Sprint 1
+  (13–26 Sep 2026), Sprint 2 (27 Sep–10 Oct 2026), and Sprint 3
+  (11–24 Oct 2026). GitHub milestones and the active Project board use these
+  names; do not call the 27 Sep–10 Oct period Sprint 3.
 - Each Sprint has a Sprint Goal and a visible Sprint Backlog. Use the Project
   board to show the current state of work.
 - The team holds the Sprint Planning, Daily Scrum, Sprint Review, and Sprint
@@ -49,12 +74,12 @@ task, thread, or chat.
   checks, mandated agent reviews, and prescribed reporting templates are not
   required unless a specific issue makes one the deliverable.
 
-## Permitted use of `rewind-v1`
+## Workspace boundaries
 
-`rewind-v1` is a local, non-authoritative MVP reference only. It may be read
-to inspect possible feature ideas, local paths, application structure, or
-technical approaches. It must not be used to determine actual project scope,
-implementation status, deployment approach, GitHub workflow, or backlog.
+- `rewind-v1` has been archived as `rewind-v1-source.zip`. Do not inspect,
+  extract, modify, or use the ZIP or the archived `rewind-v1/` directory.
+- The top-level `src/` directory is retired. Do not recreate or use it as a
+  source of project code; current project work belongs in `rewind-app/`.
 
 ## Native iOS simulator verification
 
