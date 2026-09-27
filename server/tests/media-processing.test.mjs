@@ -230,6 +230,53 @@ for (const mode of ['soft-focus', 'high-contrast']) {
   });
 }
 
+test('the shared probe reads phone portrait video by its display rotation', async () => {
+  await withDatabase(async ({ config, dataDir }) => {
+    const landscapePath = `${dataDir}/coded-landscape.mp4`;
+    const rotatedPath = `${dataDir}/phone-portrait.mov`;
+    await execFileAsync('ffmpeg', [
+      '-v',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=320x180:rate=10',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440',
+      '-t',
+      '1',
+      '-shortest',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      landscapePath,
+    ]);
+    // iOS and Android keep landscape-coded frames with a 90° display rotation.
+    await execFileAsync('ffmpeg', [
+      '-v',
+      'error',
+      '-y',
+      '-display_rotation',
+      '90',
+      '-i',
+      landscapePath,
+      '-c',
+      'copy',
+      rotatedPath,
+    ]);
+    const metadata = await probeClipWithFfmpeg(config.ffmpegBin, rotatedPath);
+    assert.equal(metadata.width, 180);
+    assert.equal(metadata.height, 320);
+    await assert.rejects(probeClipWithFfmpeg(config.ffmpegBin, landscapePath));
+  });
+});
+
 test('the shared probe accepts only playable portrait MP4 sources with audio', async () => {
   await withDatabase(async ({ config, dataDir }) => {
     const mp4Path = `${dataDir}/probe.mp4`;
