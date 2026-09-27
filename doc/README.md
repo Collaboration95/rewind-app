@@ -17,5 +17,6 @@ runs 13–26 September, Sprint 2 runs 27 September–10 October, and Sprint 3 ru
 Sprint Planning; the earlier hosted Demo plan below is a superseded proposal,
 not the full product commitment.
 
+- [Sprint 2 user journey and issue map](planning/sprints/sprint-2-user-journey-plan.md) — the draft path from app launch through private group, capture, release, and installable clients.
 - [Earlier hosted Demo proposal](planning/sprints/sprint-1-plan.md) — uses superseded Sprint naming and a narrower synthetic Demo scope.
 - [AWS, IaC, and SCP execution plan](planning/sprints/aws-iac-scp-execution-plan.md) — technical background; its Sprint 1 Demo and Sprint 2 transition labels are superseded by Sprint 2 and Sprint 3, respectively.
