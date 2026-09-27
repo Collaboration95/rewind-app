@@ -4,7 +4,7 @@ import { useChatUnread } from '../chat/unread';
 import { DebugChip } from '../debug/DebugSheet';
 import type { DebugScreen } from '../debug/scenarios';
 import { useI18n } from '../i18n/LanguageProvider';
-import { COLORS } from '../theme';
+import { COLORS, FONTS } from '../theme';
 
 export const ROUTES = [
   { key: 'home', label: 'Home' },
@@ -21,7 +21,10 @@ export function AppHeader({ debugScreen }: { debugScreen?: DebugScreen }) {
   const { t } = useI18n();
   return (
     <View style={styles.header} testID="app-header">
-      <Text style={styles.wordmark}>REWIND</Text>
+      <View accessibilityLabel="Rewind" accessible style={styles.brand}>
+        <Text style={styles.wordmark}>Rewind</Text>
+        <View style={styles.brandDot} />
+      </View>
       <View style={styles.headerRight}>
         {debugScreen ? <DebugChip screen={debugScreen} /> : null}
         <View accessibilityLabel={t('Local demo data')} style={styles.demoBadge}>
@@ -33,7 +36,7 @@ export function AppHeader({ debugScreen }: { debugScreen?: DebugScreen }) {
 }
 
 function NavMark({ route, selected }: { route: RouteKey; selected: boolean }) {
-  const color = selected ? COLORS.ink : COLORS.muted;
+  const color = selected ? COLORS.ink : COLORS.faint;
   switch (route) {
     case 'home':
       return (
@@ -146,16 +149,28 @@ export function MainNavigation({
 const styles = StyleSheet.create({
   header: {
     alignItems: 'center',
-    borderBottomColor: COLORS.line,
-    borderBottomWidth: 1,
     flexDirection: 'row',
     gap: 8,
     justifyContent: 'space-between',
-    paddingBottom: 12,
-    paddingHorizontal: 20,
-    paddingTop: 14,
+    paddingBottom: 6,
+    paddingHorizontal: 24,
+    paddingTop: 10,
   },
-  wordmark: { color: COLORS.ink, fontSize: 13, fontWeight: '800', letterSpacing: 2 },
+  brand: { alignItems: 'flex-end', flexDirection: 'row', gap: 3 },
+  wordmark: {
+    color: COLORS.ink,
+    fontFamily: FONTS.display,
+    fontSize: 27,
+    letterSpacing: -0.3,
+    lineHeight: 32,
+  },
+  brandDot: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 3,
+    height: 6,
+    marginBottom: 8,
+    width: 6,
+  },
   headerRight: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -165,14 +180,19 @@ const styles = StyleSheet.create({
   },
   demoBadge: {
     borderColor: COLORS.line,
-    borderRadius: 4,
+    borderRadius: 999,
     borderWidth: 1,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
-  demoBadgeText: { color: COLORS.muted, fontSize: 10, fontWeight: '700', letterSpacing: 0.6 },
+  demoBadgeText: {
+    color: COLORS.muted,
+    fontFamily: FONTS.sansMedium,
+    fontSize: 10,
+    letterSpacing: 1.4,
+  },
   navigation: {
-    backgroundColor: COLORS.background,
+    backgroundColor: COLORS.deep,
     borderTopColor: COLORS.line,
     borderTopWidth: 1,
     flexDirection: 'row',
@@ -193,7 +213,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 1,
     paddingVertical: 6,
   },
-  selectedTab: { backgroundColor: COLORS.paper },
+  selectedTab: {},
   markRow: { alignItems: 'center', flexDirection: 'row', gap: 3, height: 20 },
   markBox: { alignItems: 'center', height: 18, justifyContent: 'center', width: 20 },
   homeRoof: {
@@ -229,9 +249,9 @@ const styles = StyleSheet.create({
     width: 16,
   },
   gearHub: { borderRadius: 3, borderWidth: 1.5, height: 6, width: 6 },
-  tabLabel: { color: COLORS.muted, fontSize: 11, fontWeight: '600' },
-  selectedTabLabel: { color: COLORS.ink, fontWeight: '800' },
-  tabBar: { height: 2, width: 16 },
+  tabLabel: { color: COLORS.faint, fontFamily: FONTS.sansMedium, fontSize: 10.5, letterSpacing: 0.2 },
+  selectedTabLabel: { color: COLORS.ink, fontFamily: FONTS.sansSemiBold },
+  tabBar: { borderRadius: 2, height: 4, width: 4 },
   tabBarSelected: { backgroundColor: COLORS.accent },
   unreadBadge: {
     backgroundColor: COLORS.accent,

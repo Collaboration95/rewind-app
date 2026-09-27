@@ -44,6 +44,8 @@
     "check": "npm run format:check && npm run lint && npm run architecture:check && npm run typecheck && npm test && npm run test:a11y"
   },
   "dependencies": {
+    "@expo-google-fonts/instrument-serif": "^0.4.1",
+    "@expo-google-fonts/inter": "^0.4.2",
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.21",
     "expo-camera": "~57.0.4",
@@ -51,6 +53,7 @@
     "expo-device": "~57.0.1",
     "expo-file-system": "~57.0.6",
     "expo-image-picker": "~57.0.16",
+    "expo-linear-gradient": "~57.0.2",
     "expo-network": "~57.0.2",
     "expo-notifications": "~57.0.20",
     "expo-status-bar": "~57.0.1",

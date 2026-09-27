@@ -11,6 +11,13 @@ export const APP_ZH: Record<string, string> = {
   '{label}, {count} unread messages': '{label}，{count} 条未读消息',
 
   // Home
+  'YOUR ROLL': '你的胶卷',
+  '{count} of {max} left': '剩 {count}/{max} 次',
+  '{seconds}s of {max}s': '{seconds}/{max} 秒',
+  'Photo or clip · sealed until the reveal': '照片或短片 · 揭晓前一直封存',
+  SEALED: '封存中',
+  DEVELOPING: '冲洗中',
+  DELAYED: '延迟',
   'Make a little room for today.': '给今天留一点空间。',
   'Current prompt: {prompt}': '本期题目：{prompt}',
   '{count} contributions': '剩余 {count} 次贡献',

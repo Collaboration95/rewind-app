@@ -14,6 +14,7 @@ import {
 } from './src/domain/reveal-education';
 import type { AsyncGroupRepository, GroupRepository } from './src/domain/profiles';
 import { COLORS } from './src/theme';
+import { useAppFonts } from './src/ui/fonts';
 import { createConfiguredRuntime } from './src/runtime/config';
 import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
@@ -95,6 +96,7 @@ export default function App({
   runtimeClient,
   cameraPlatform,
 }: AppProps = {}) {
+  useAppFonts();
   const inviteLink = useInviteLinkIntent();
   const configuredRuntime = useMemo(
     () =>
