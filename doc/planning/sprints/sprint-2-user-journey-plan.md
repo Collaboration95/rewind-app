@@ -5,6 +5,16 @@ feature map, not a claim that the features are built or accepted. It assigns no
 individual owners. Sprint 2 runs 27 September–10 October; Sprint 3 is reserved
 for follow-up fixes, documentation, and release/submission work.
 
+The current execution slice is the [Sprint 2 Project](https://github.com/users/Collaboration95/projects/11):
+[#238](https://github.com/Collaboration95/rewind-app/issues/238) designs the AWS
+dev/release lifecycle before implementation in
+[#230](https://github.com/Collaboration95/rewind-app/issues/230);
+[#168](https://github.com/Collaboration95/rewind-app/issues/168) and
+[#239](https://github.com/Collaboration95/rewind-app/issues/239) are the two
+user-flow epics with 13 child issues. The larger issue map below is a product
+planning reference, not a list of committed Sprint 2 issues. The board's
+Sequence, Queue, and blocked-by links show the current implementation order.
+
 ## Product target
 
 A member opens a branded Rewind app, signs in using a real preset account,
