@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
-import type { ComponentProps } from 'react';
+import { StrictMode, type ComponentProps } from 'react';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
@@ -141,6 +141,29 @@ beforeEach(async () => {
 });
 
 describe('persistent group chat timeline', () => {
+  it('retains exactly one live message when StrictMode replays state updates', async () => {
+    const runtime = runtimeMock();
+    const result = await render(
+      <StrictMode>
+        <ScopedChatSurface
+          accessState="known"
+          capsuleStatus="ready"
+          group={group}
+          scope="session-a:demo-group"
+          memberNames={memberNames}
+          retryCapsule={jest.fn()}
+          runtimeClient={runtime.client}
+          session={sessionA}
+        />
+      </StrictMode>,
+    );
+    await result.findByTestId('chat-empty');
+    const message = event(1, 'Strict replay survives', '2026-09-13T01:00:00.000Z');
+    await act(async () => runtime.emit(message));
+    await act(async () => runtime.emit(message));
+    expect(result.getAllByText('Strict replay survives')).toHaveLength(1);
+  });
+
   it('shows connecting, connected, and reconnecting connection states', async () => {
     const runtime = runtimeMock();
     const result = await render(
@@ -227,6 +250,57 @@ describe('persistent group chat timeline', () => {
       expect.objectContaining({ body: 'A new note', messageId: expect.any(String) }),
     );
     expect(result.getByText('Sent from the composer')).toBeTruthy();
+  });
+
+  it('loads a bounded latest page, retrieves older history, and deduplicates SSE arrivals', async () => {
+    const latest = event(100, 'Latest saved message', '2026-09-13T10:00:00.000Z');
+    const older = event(20, 'Older saved message', '2026-09-12T10:00:00.000Z', 'demo-2');
+    const history = jest
+      .fn()
+      .mockResolvedValueOnce({
+        events: [latest],
+        nextCursor: older.eventId,
+        watermarkEventId: latest.eventId,
+        hasMore: true,
+      })
+      .mockResolvedValueOnce({
+        events: [older],
+        nextCursor: null,
+        watermarkEventId: latest.eventId,
+        hasMore: false,
+      });
+    const runtime = runtimeMock({ getChatHistoryPage: history });
+    const result = await render(
+      <ScopedChatSurface
+        accessState="known"
+        capsuleStatus="ready"
+        group={group}
+        scope="session-a:demo-group"
+        memberNames={memberNames}
+        retryCapsule={jest.fn()}
+        runtimeClient={runtime.client}
+        session={sessionA}
+      />,
+    );
+
+    expect(await result.findByText('Latest saved message')).toBeTruthy();
+    expect(history).toHaveBeenCalledWith('session-a', 'demo-group', { limit: 100 });
+    expect(runtime.client.subscribeChat).toHaveBeenCalledWith(
+      'session-a',
+      'demo-group',
+      expect.objectContaining({ sinceEventId: latest.eventId }),
+    );
+    expect(result.getByTestId('chat-screen')).toBeTruthy();
+    await act(async () => fireEvent.press(result.getByTestId('chat-load-older')));
+    expect(await result.findByText('Older saved message')).toBeTruthy();
+    await act(async () =>
+      runtime.emit({
+        ...latest,
+        eventId: latest.eventId + 1,
+      }),
+    );
+    expect(result.getAllByText('Latest saved message')).toHaveLength(1);
+    expect(result.queryByTestId('chat-load-older')).toBeNull();
   });
 
   it('keeps an understandable connection error and supports retry', async () => {

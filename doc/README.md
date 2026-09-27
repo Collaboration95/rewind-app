@@ -10,4 +10,5 @@ Module project.
 - [Selected Rewind proposal](planning/proposals/proposal-rewind.md) — the current project scope and acceptance plan.
 - [Sprint 0 plan](planning/sprints/sprint-0-plan.md) — the first capacity-aware implementation slice.
 - [Sprint 0 extension](planning/sprints/sprint-0-plan-extension.md) — the runtime-foundation move and Sprint 1 handoff.
-- [AWS, IaC, and SCP execution plan](planning/sprints/aws-iac-scp-execution-plan.md) — the Sprint 2 hosted Demo infrastructure slice and Sprint 3 transition.
+- [Sprint 1 plan](planning/sprints/sprint-1-plan.md) — the current hosted capture-to-reveal Demo slice.
+- [AWS, IaC, and SCP execution plan](planning/sprints/aws-iac-scp-execution-plan.md) — the Sprint 1 hosted Demo infrastructure slice and Sprint 2 transition.

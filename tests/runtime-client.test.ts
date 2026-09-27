@@ -261,7 +261,7 @@ describe('LocalRuntimeClient', () => {
       ],
     });
     expect(fetchImpl).toHaveBeenCalledWith(
-      'http://localhost:8787/archive?groupId=group-1&sessionId=session-1',
+      'http://localhost:8787/archive?groupId=group-1&sessionId=session-1&limit=50',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
@@ -294,6 +294,47 @@ describe('LocalRuntimeClient', () => {
     ]);
     expect(fetchImpl.mock.calls[0][0]).toContain(
       '/cycles/history?groupId=group-1&sessionId=session-1',
+    );
+  });
+
+  it('forwards independent archive cursors and chat event cursors', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce(
+        response(200, {
+          archive: { films: [], clips: [] },
+          pagination: {
+            filmCursor: 'film-next',
+            clipCursor: null,
+            hasMoreFilms: true,
+            hasMoreClips: false,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        response(200, {
+          events: [],
+          nextCursor: null,
+          watermarkEventId: 12,
+          hasMore: false,
+        }),
+      );
+    const client = new LocalRuntimeClient('http://localhost:8787', fetchImpl);
+    await expect(
+      client.getReleasedArchivePage('session-1', 'group-1', {
+        filmCursor: 'film-next',
+        includeFilms: true,
+        includeClips: false,
+        limit: 50,
+      }),
+    ).resolves.toMatchObject({ filmCursor: 'film-next', hasMoreFilms: true });
+    await client.getChatHistoryPage('session-1', 'group-1', {
+      beforeEventId: 12,
+      limit: 100,
+    });
+    expect(fetchImpl.mock.calls[0][0]).toContain('includeClips=false&filmCursor=film-next');
+    expect(fetchImpl.mock.calls[1][0]).toBe(
+      'http://localhost:8787/realtime/groups/group-1/messages?sessionId=session-1&limit=100&beforeEventId=12',
     );
   });
 

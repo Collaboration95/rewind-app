@@ -8,8 +8,9 @@ account, public hosting, or a cloud media service.
 
 ## Start the app
 
-Use Node.js 22 LTS (22.13.0 or newer), npm 10 or newer, and a current
-Chromium-based browser for the Expo web demo.
+Use the Node.js 22 version in `.nvmrc` (22.23.3), npm 10 or newer, and a
+current Chromium-based browser for the Expo web demo. With nvm, run
+`nvm use` before `npm ci`; the CI workflow reads the same version file.
 
 ```sh
 npm ci
@@ -114,4 +115,4 @@ npm run server:preflight  # local runtime, SQLite, LAN, and FFmpeg readiness
 - [Local Demo runbook](docs/local-demo-runbook.md)
 - [Hosted Demo persistence](docs/architecture/hosted-demo-persistence.md)
 - [Hosted deployment, backup, and recovery](deploy/README.md)
-- [Current Sprint plan](doc/planning/sprints/sprint-2-plan.md)
+- [Current Sprint plan](doc/planning/sprints/sprint-1-plan.md)

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { createProductionWebServer } from '../scripts/production-web-proxy.mjs';
+import { apiTarget, createProductionWebServer } from '../scripts/production-web-proxy.mjs';
 
 const nginx = await readFile(new URL('../deploy/nginx.conf', import.meta.url), 'utf8');
 const compose = await readFile(new URL('../deploy/compose.yaml', import.meta.url), 'utf8');
@@ -30,16 +30,22 @@ test('Compose starts the web proxy only after the healthy runtime', () => {
   assert.match(compose, /condition: service_healthy/);
   assert.match(
     compose,
-    /\$\{REWIND_WEB_BIND_ADDRESS:-127\.0\.0\.1\}:\$\{REWIND_WEB_PORT:-8080\}:80/,
+    /\$\{REWIND_WEB_BIND_ADDRESS:-127\.0\.0\.1\}:\$\{REWIND_WEB_PORT:-8080\}:8080/,
   );
   assert.match(compose, /127\.0\.0\.1:\$\{REWIND_RUNTIME_PORT:-8787\}:8787/);
   assert.match(compose, /rewind-demo-web/);
+  assert.match(compose, /http:\/\/127\.0\.0\.1:8080\//);
+  assert.doesNotMatch(compose, /cap_add:/);
 });
 
 test('the web image bakes the same-origin API prefix into the Expo artifact', () => {
   assert.match(dockerfile, /EXPO_PUBLIC_LOCAL_BASE_URL=\/api npm run build:web/);
   assert.match(dockerfile, /COPY deploy\/nginx\.conf \/etc\/nginx\/conf\.d\/default\.conf/);
   assert.match(dockerfile, /COPY --from=build \/app\/dist \/usr\/share\/nginx\/html/);
+  assert.match(dockerfile, /USER nginx/);
+  assert.match(dockerfile, /EXPOSE 8080/);
+  assert.match(dockerfile, /pid \/tmp\/nginx\.pid/);
+  assert.match(nginx, /listen 8080;/);
 });
 
 test('runtime-unavailable API responses stay JSON and never fall back to the shell', async () => {
@@ -77,4 +83,26 @@ test('runtime-unavailable API responses stay JSON and never fall back to the she
     });
     await rm(staticDir, { recursive: true, force: true });
   }
+});
+
+test('API path references cannot replace the configured runtime authority', () => {
+  const runtimeOrigin = new URL('http://runtime.internal');
+  const forgedPath = new URL('/api//attacker.example/path?source=test', 'http://rewind-web.local');
+
+  const target = apiTarget(runtimeOrigin, forgedPath);
+
+  assert.equal(target.origin, runtimeOrigin.origin);
+  assert.equal(target.pathname, '//attacker.example/path');
+  assert.equal(target.search, '?source=test');
+});
+
+test('API paths retain same-origin runtime routing and query parameters', () => {
+  const runtimeOrigin = new URL('http://runtime.internal');
+  const requestUrl = new URL('/api/health?check=ready', 'http://rewind-web.local');
+
+  const target = apiTarget(runtimeOrigin, requestUrl);
+
+  assert.equal(target.origin, runtimeOrigin.origin);
+  assert.equal(target.pathname, '/health');
+  assert.equal(target.search, '?check=ready');
 });

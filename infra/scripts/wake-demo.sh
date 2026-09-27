@@ -28,6 +28,8 @@ BACKUP_BUCKET="${BACKUP_BUCKET:-rewind-demo-backups-330599756236}"
 BACKUP_PREFIX="${BACKUP_PREFIX:-rewind-demo}"
 REWIND_ENV_FILE="${REWIND_ENV_FILE:-$REPO_ROOT/deploy/rewind.env}"
 SSH_USER="${SSH_USER:-ubuntu}"
+RELEASE_BUNDLE="${RELEASE_BUNDLE:-}"
+RELEASE_BUNDLE_SHA256="${RELEASE_BUNDLE_SHA256:-}"
 
 MANIFEST_SELECTOR=""
 APPLY=0
@@ -43,7 +45,7 @@ SSH_KNOWN_HOSTS_FILE="${SSH_KNOWN_HOSTS_FILE:-}"
 usage() {
   printf 'Usage: %s [--latest | --manifest s3://bucket/key | --seed] [--dry-run]\n' "$(basename "$0")" >&2
   printf '       %s [--latest | --manifest s3://bucket/key | --seed] --apply --confirm\n' "$(basename "$0")" >&2
-  printf '%s\n' 'Default and --dry-run modes only validate identity, inventory, recovery inputs, and the Terraform plan.' >&2
+  printf '%s\n' 'Set RELEASE_BUNDLE to a verified release archive; default and --dry-run validate it with identity, inventory, recovery inputs, and the Terraform plan.' >&2
   printf '%s\n' '--apply --confirm is required before Terraform apply, SSH, SCP, or rsync can run.' >&2
   printf '%s\n' '--seed is only the explicit first-install path; it is not a historical recovery point.' >&2
 }
@@ -90,6 +92,23 @@ fi
 require_command terraform
 require_command aws
 require_command jq
+require_command python3
+[[ -n "$RELEASE_BUNDLE" && -f "$RELEASE_BUNDLE" ]] || {
+  lifecycle_guard_reject 'RELEASE_BUNDLE must name a built release bundle.'
+  exit 1
+}
+[[ "$RELEASE_BUNDLE_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  lifecycle_guard_reject 'RELEASE_BUNDLE_SHA256 must be the reviewed release digest.'
+  exit 1
+}
+[[ "$(sha256sum "$RELEASE_BUNDLE" | cut -d ' ' -f 1)" == "$RELEASE_BUNDLE_SHA256" ]] || {
+  lifecycle_guard_reject 'the release bundle differs from the reviewed digest.'
+  exit 1
+}
+release_sha="$(python3 "$REPO_ROOT/deploy/release.py" verify "$RELEASE_BUNDLE")" || {
+  lifecycle_guard_reject 'the release bundle failed provenance or checksum verification.'
+  exit 1
+}
 [[ -d "$TF_DIR" ]] || { lifecycle_guard_reject 'the Terraform directory is missing.'; exit 1; }
 [[ -f "$TFVARS_FILE" ]] || { lifecycle_guard_reject 'the Terraform variables file is missing.'; exit 1; }
 [[ -f "$REWIND_ENV_FILE" ]] || {
@@ -100,7 +119,6 @@ require_command jq
 if [[ "$APPLY" == 1 ]]; then
   require_command ssh
   require_command scp
-  require_command rsync
 fi
 
 lifecycle_load_expected_account "$TFVARS_FILE"
@@ -167,6 +185,7 @@ validate_recreate_plan() {
             "aws_lightsail_static_ip.rewind[0]",
             "aws_lightsail_static_ip_attachment.rewind[0]",
             "aws_lightsail_instance_public_ports.rewind[0]",
+            "aws_lightsail_distribution.web[0]",
             "aws_iam_role.power_controller[0]",
             "aws_iam_role_policy.power_controller[0]",
             "aws_iam_role_policy.operator[0]",
@@ -175,6 +194,21 @@ validate_recreate_plan() {
             "aws_scheduler_schedule.automatic_start[0]"
           ] | index($address)
         ) != null and $actions == ["create"]
+      ) or
+      (
+        .address == "aws_iam_role_policy.power_controller[0]" and
+        (.change.actions // []) == ["update"] and
+        (.change.after_unknown.policy == true) and
+        ((.change.after_unknown | keys) == ["policy"]) and
+        ((.change.before | del(.policy)) == (.change.after | del(.policy))) and
+        ((.change.before.policy | fromjson | .Statement) |
+          any(.[];
+            .Sid == "ControlOnlyTheRewindDemo" and
+            .Effect == "Allow" and
+            (.Action | sort) == ["lightsail:StartInstance", "lightsail:StopInstance"] and
+            ((.Resource | if type == "array" then .[0] else . end) |
+              test("^arn:aws:lightsail:[a-z0-9-]+:[0-9]{12}:Instance/[A-Za-z0-9-]+$"))
+          ))
       ) or
       (
         .address as $address |
@@ -256,12 +290,15 @@ done
   exit 1
 }
 
-printf 'Copying the application bundle and private runtime configuration ...\n'
-if ! rsync -az -e "ssh ${SSH_OPTS[*]}" \
-  --exclude '.git/' --exclude '.terraform/' --exclude 'node_modules/' \
-  --exclude '/data/' --exclude '/media/' --exclude '/backups/' --exclude 'rewind.env' \
-  "$REPO_ROOT/" "$SSH_USER@$host_ip:/srv/rewind/" >/dev/null 2>&1; then
+printf 'Copying the verified release and private runtime configuration ...\n'
+if ! scp "${SSH_OPTS[@]}" "$RELEASE_BUNDLE" \
+  "$SSH_USER@$host_ip:/tmp/rewind-release.tar" >/dev/null 2>&1; then
   lifecycle_guard_reject 'the application bundle transfer failed; restore was not attempted.'
+  exit 1
+fi
+if ! scp "${SSH_OPTS[@]}" "$REPO_ROOT/deploy/release.py" "$REPO_ROOT/deploy/release-host.sh" \
+  "$SSH_USER@$host_ip:/tmp/" >/dev/null 2>&1; then
+  lifecycle_guard_reject 'release verifier transfer failed; restore was not attempted.'
   exit 1
 fi
 if ! scp "${SSH_OPTS[@]}" "$REWIND_ENV_FILE" \
@@ -272,7 +309,8 @@ fi
 if ! ssh "${SSH_OPTS[@]}" "$SSH_USER@$host_ip" '
   set -Eeuo pipefail
   sudo install -o ubuntu -g ubuntu -m 0600 /tmp/rewind.env /srv/rewind/rewind.env
-  sudo sh /srv/rewind/infra/terraform/demo/cloud-init.sh --complete
+  test "$(sha256sum /tmp/rewind-release.tar | cut -d " " -f 1)" = "'"$(sha256sum "$RELEASE_BUNDLE" | cut -d ' ' -f 1)"'"
+  bash /tmp/release-host.sh prepare /tmp/rewind-release.tar
 ' >/dev/null 2>&1; then
   lifecycle_guard_reject 'host bundle installation failed; restore was not attempted.'
   exit 1
@@ -282,7 +320,7 @@ if [[ "$SEED" == 1 ]]; then
   if ! ssh "${SSH_OPTS[@]}" "$SSH_USER@$host_ip" '
     set -Eeuo pipefail
     cd /srv/rewind
-    docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml build
+    export REWIND_RELEASE_SHA='"$release_sha"'
     docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml run --rm runtime migrate
     docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
     health_ready=0
@@ -294,6 +332,7 @@ if [[ "$SEED" == 1 ]]; then
       sleep 2
     done
     [[ "$health_ready" == 1 ]]
+    ./deploy/release-host.sh promote
   ' >/dev/null 2>&1; then
     lifecycle_guard_reject 'seed-mode host initialization or health verification failed.'
     exit 1
@@ -313,10 +352,10 @@ else
     install -m 0600 /tmp/$database_name /srv/rewind/backups/$database_name
     install -m 0600 /tmp/$media_name /srv/rewind/backups/$media_name
     cd /srv/rewind
-    docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml build
+    export REWIND_RELEASE_SHA='"$release_sha"'
     ENV_FILE=/srv/rewind/rewind.env COMPOSE_FILE=/srv/rewind/deploy/compose.yaml \
       DATA_DIR=/srv/rewind/data MEDIA_DIR=/srv/rewind/media BACKUP_DIR=/srv/rewind/backups \
-      sudo env ENV_FILE=/srv/rewind/rewind.env COMPOSE_FILE=/srv/rewind/deploy/compose.yaml \
+      sudo env REWIND_RELEASE_SHA=$release_sha ENV_FILE=/srv/rewind/rewind.env COMPOSE_FILE=/srv/rewind/deploy/compose.yaml \
         DATA_DIR=/srv/rewind/data MEDIA_DIR=/srv/rewind/media BACKUP_DIR=/srv/rewind/backups \
         ./deploy/restore.sh --confirm /srv/rewind/backups/$manifest_name
     docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
@@ -329,6 +368,7 @@ else
       sleep 2
     done
     [[ "\$health_ready" == 1 ]]
+    ./deploy/release-host.sh promote
   " >/dev/null 2>&1; then
     lifecycle_guard_reject 'verified recovery restore or final health verification failed.'
     exit 1

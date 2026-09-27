@@ -27,6 +27,8 @@ import {
   createChatMessage,
   latestChatEventId,
   listChatEvents,
+  listChatEventMetadata,
+  listChatHistoryPage,
   toggleChatReaction,
 } from './chat';
 import { encodeSseCheckpoint, encodeSseEvent, RealtimeHub } from './realtime';
@@ -42,7 +44,7 @@ import {
   createDemoSession,
   getDemoSession,
   invalidateDemoSession,
-  updateDemoSessionGroup,
+  isActiveDemoSession,
   validateDemoSession,
 } from './session';
 import { extractDemoRequestIdentity, type DemoRequestIdentity } from './session/request';
@@ -79,12 +81,8 @@ import {
   recordIntegrityFailure,
   verifyMediaIntegrity,
 } from './media/integrity';
-import {
-  cleanupOrphanedStagedSources,
-  getCompilationJob,
-  processClipJob,
-  processCompilationJob,
-} from './jobs';
+import { getCompilationJob, processClipJob, processCompilationJob } from './jobs';
+import { maybeCleanupOrphanedStagedSources } from './jobs/staged-cleanup-scheduler';
 import {
   listQueueJobs,
   parseQueueKind,
@@ -94,6 +92,9 @@ import {
 } from './jobs/queue';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { generateSyntheticDemoClip, probeClipWithFfmpeg } from './ffmpeg';
+import { decodePageCursor, encodePageCursor } from './archive/cursor';
+import { verifyArchiveListingIntegrity } from './archive/integrity-cache';
+import { mediaServingBudget, releaseBudgetWhenSnapshotCloses } from './media/serving-budget';
 
 export interface HealthPayload {
   ok: boolean;
@@ -351,9 +352,33 @@ async function openVerifiedServingFile(
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
-): Promise<{ path: string; handle: FileHandle; size: number } | null> {
+): Promise<
+  | { path: string; handle: FileHandle; size: number; releaseBudget: () => void }
+  | { capacityExceeded: true; reason: 'size_policy' | 'busy' }
+  | null
+> {
   const path = await resolveOwnedProcessedPath(outputPath, dataDir);
-  const opened = await openMediaWithIntegrity(database, jobId, path);
+  if (!path) return null;
+  const sourceDetails = await stat(path).catch(() => null);
+  if (!sourceDetails?.isFile() || sourceDetails.size <= 0) return null;
+  if (sourceDetails.size > mediaServingBudget.maxSnapshotBytes) {
+    return { capacityExceeded: true, reason: 'size_policy' };
+  }
+  const budgetLease = mediaServingBudget.tryAcquire(sourceDetails.size);
+  if (!budgetLease) return { capacityExceeded: true, reason: 'busy' };
+  let opened: Awaited<ReturnType<typeof openMediaWithIntegrity>>;
+  try {
+    opened = await openMediaWithIntegrity(database, jobId, path, {
+      maxSnapshotBytes: sourceDetails.size,
+    });
+  } catch (error) {
+    budgetLease.release();
+    throw error;
+  }
+  if (opened.capacityExceeded) {
+    budgetLease.release();
+    return { capacityExceeded: true, reason: 'size_policy' };
+  }
   if (integrityBlocksServing(opened.result)) {
     recordIntegrityFailure(database, {
       jobId,
@@ -363,13 +388,20 @@ async function openVerifiedServingFile(
       timestamp: now.toISOString(),
     });
     await opened.handle?.close().catch(() => undefined);
+    budgetLease.release();
     return null;
   }
-  if (!path || !opened.handle || !opened.byteLength) {
+  if (!opened.handle || !opened.byteLength || opened.byteLength > sourceDetails.size) {
     await opened.handle?.close().catch(() => undefined);
+    budgetLease.release();
     return null;
   }
-  return { path, handle: opened.handle, size: opened.byteLength };
+  return {
+    path,
+    handle: opened.handle,
+    size: opened.byteLength,
+    releaseBudget: () => budgetLease.release(),
+  };
 }
 
 /** Archive/premiere checks need only a momentary verified read. Actual media
@@ -385,6 +417,33 @@ async function verifiedServingPath(
 ): Promise<{ path: string; size: number } | null> {
   const path = await resolveOwnedProcessedPath(outputPath, dataDir);
   const result = await verifyMediaIntegrity(database, jobId, path);
+  if (integrityBlocksServing(result)) {
+    recordIntegrityFailure(database, {
+      jobId,
+      kind,
+      result,
+      actorMemberId,
+      timestamp: now.toISOString(),
+    });
+    return null;
+  }
+  if (!path) return null;
+  const details = await stat(path).catch(() => null);
+  if (!details || !details.isFile() || details.size <= 0) return null;
+  return { path, size: details.size };
+}
+
+async function verifiedArchiveListingPath(
+  database: RewindDatabase,
+  jobId: string,
+  kind: 'clip' | 'film',
+  outputPath: string,
+  dataDir: string,
+  actorMemberId: string | null,
+  now: Date,
+): Promise<{ path: string; size: number } | null> {
+  const path = await resolveOwnedProcessedPath(outputPath, dataDir);
+  const result = await verifyArchiveListingIntegrity(database, jobId, path);
   if (integrityBlocksServing(result)) {
     recordIntegrityFailure(database, {
       jobId,
@@ -419,7 +478,7 @@ async function filterServableArchive<T extends { id: string; outputPath: string 
   for (let index = 0; index < entries.length; index += 3) {
     const batch = await Promise.all(
       entries.slice(index, index + 3).map(async (entry) => {
-        const served = await verifiedServingPath(
+        const served = await verifiedArchiveListingPath(
           database,
           entry.id,
           kind,
@@ -447,20 +506,25 @@ function streamMp4(
   handle: FileHandle,
   size: number,
   attachmentName?: string,
+  releaseBudget: () => void = () => {},
 ): void {
+  if (response.destroyed || response.writableEnded) {
+    void handle.close().finally(releaseBudget);
+    return;
+  }
   const range = request.headers.range;
   let start = 0;
   let end = size - 1;
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (!match) {
-      void handle.close().catch(() => undefined);
+      void handle.close().finally(releaseBudget);
       response.writeHead(416, { 'Content-Range': `bytes */${size}` });
       response.end();
       return;
     }
     if (!match[1] && !match[2]) {
-      void handle.close().catch(() => undefined);
+      void handle.close().finally(releaseBudget);
       response.writeHead(416, { 'Content-Range': `bytes */${size}` });
       response.end();
       return;
@@ -480,7 +544,7 @@ function streamMp4(
       end < start ||
       start >= size
     ) {
-      void handle.close().catch(() => undefined);
+      void handle.close().finally(releaseBudget);
       response.writeHead(416, { 'Content-Range': `bytes */${size}` });
       response.end();
       return;
@@ -488,20 +552,28 @@ function streamMp4(
     end = Math.min(end, size - 1);
   }
   const status = range ? 206 : 200;
-  response.writeHead(status, {
-    'Accept-Ranges': 'bytes',
-    'Access-Control-Allow-Origin': config.allowOrigin,
-    'Cache-Control': 'no-store',
-    'Content-Length': String(end - start + 1),
-    'Content-Type': 'video/mp4',
-    ...(attachmentName
-      ? { 'Content-Disposition': `attachment; filename="${attachmentName}"` }
-      : {}),
-    ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
-  });
-  handle
-    .createReadStream({ start, end, autoClose: true })
-    .on('error', () => response.destroy())
+  try {
+    response.writeHead(status, {
+      'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': config.allowOrigin,
+      'Cache-Control': 'no-store',
+      'Content-Length': String(end - start + 1),
+      'Content-Type': 'video/mp4',
+      ...(attachmentName
+        ? { 'Content-Disposition': `attachment; filename="${attachmentName}"` }
+        : {}),
+      ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
+    });
+  } catch {
+    void handle.close().finally(releaseBudget);
+    return;
+  }
+  const stream = handle.createReadStream({ start, end, autoClose: true });
+  releaseBudgetWhenSnapshotCloses({ release: releaseBudget }, stream, response);
+  stream
+    .on('error', () => {
+      response.destroy();
+    })
     .pipe(response);
 }
 
@@ -515,6 +587,7 @@ export interface RuntimeServerOptions {
 interface RequestLimiters {
   intake: ConcurrencyLimiter;
   processing: ConcurrencyLimiter;
+  archive: ConcurrencyLimiter;
 }
 
 class ConcurrencyLimiter {
@@ -538,6 +611,7 @@ function createRequestLimiters(config: RuntimeConfig): RequestLimiters {
   return {
     intake: new ConcurrencyLimiter(config.maxConcurrentIntakes),
     processing: new ConcurrencyLimiter(config.maxConcurrentProcessing),
+    archive: new ConcurrencyLimiter(2),
   };
 }
 
@@ -1007,7 +1081,6 @@ export async function handleRequest(
     const releaseStagingLock = await acquireStagedSourceLock(stagingDir);
     try {
       await waitForStagedIntakesIdle();
-      restoreFixture(database, now());
       // The lock prevents a concurrent upload from recreating a staged file
       // while reset is clearing every Demo-owned media artifact. Keep the
       // directory itself because hosted Compose binds it as a mount target.
@@ -1015,11 +1088,53 @@ export async function handleRequest(
       for (const entry of await readdir(mediaDir).catch(() => [])) {
         await rm(resolve(mediaDir, entry), { recursive: true, force: true });
       }
+      restoreFixture(database, now());
       await mkdir(stagingDir, { recursive: true });
       sendJson(response, config, 200, { reset: true });
     } finally {
       releaseStagingLock();
     }
+    return;
+  }
+
+  const realtimeHistoryMessagesMatch = url.pathname.match(
+    /^\/realtime\/groups\/([^/]+)\/messages$/,
+  );
+  if (realtimeHistoryMessagesMatch && request.method === 'GET') {
+    const groupId = decodePathSegment(realtimeHistoryMessagesMatch[1], response, config);
+    if (groupId === null) return;
+    const identity = requireAuthorisedGroup(
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+      'message',
+    );
+    if (!identity) return;
+    const rawLimit = url.searchParams.get('limit');
+    const parsedLimit = rawLimit === null ? 100 : Number(rawLimit);
+    const rawBeforeEventId = url.searchParams.get('beforeEventId');
+    const beforeEventId = rawBeforeEventId === null ? undefined : Number(rawBeforeEventId);
+    if (
+      !Number.isInteger(parsedLimit) ||
+      parsedLimit < 1 ||
+      parsedLimit > 100 ||
+      (beforeEventId !== undefined && (!Number.isSafeInteger(beforeEventId) || beforeEventId < 1))
+    ) {
+      sendJson(response, config, 400, {
+        error: 'invalid_chat_cursor',
+        message: 'The chat history page cursor or size is invalid.',
+      });
+      return;
+    }
+    sendJson(
+      response,
+      config,
+      200,
+      listChatHistoryPage(database, identity.groupId, { beforeEventId, limit: parsedLimit }),
+    );
     return;
   }
 
@@ -1153,7 +1268,9 @@ export async function handleRequest(
       const watermark = latestChatEventId(database, groupId);
       while (lastDeliveredEventId < watermark) {
         if (response.destroyed || response.writableEnded) break;
-        const page = listChatEvents(database, groupId, lastDeliveredEventId, 100);
+        const page = metadataOnly
+          ? listChatEventMetadata(database, groupId, lastDeliveredEventId, 100)
+          : listChatEvents(database, groupId, lastDeliveredEventId, 100);
         let progressed = false;
         for (const event of page) {
           if (event.eventId > watermark) break;
@@ -1309,11 +1426,20 @@ export async function handleRequest(
     const identity = requireSessionIdentity(database, url, response, config, now());
     if (!identity) return;
     const body = await requestBody(request, config);
-    const result = createGroup(database, identity.memberId, {
-      name: typeof body?.name === 'string' ? body.name : '',
-      prompt: typeof body?.prompt === 'string' ? body.prompt : '',
-      now: now(),
-    });
+    const result = createGroup(
+      database,
+      identity.memberId,
+      {
+        name: typeof body?.name === 'string' ? body.name : '',
+        prompt: typeof body?.prompt === 'string' ? body.prompt : '',
+        now: now(),
+      },
+      identity.sessionId,
+    );
+    if (!result.ok && result.field === 'session') {
+      sendSessionRequired(response, config);
+      return;
+    }
     if (!result.ok) {
       sendJson(response, config, 400, {
         error: 'invalid_group',
@@ -1332,23 +1458,10 @@ export async function handleRequest(
       });
       return;
     }
-    const moved = updateDemoSessionGroup(
-      database,
-      identity.sessionId,
-      result.group?.id ?? '',
-      now(),
-    );
-    if (!moved.ok) {
-      sendJson(response, config, 500, {
-        error: 'group_context_error',
-        message: 'The local group was created but its Demo context could not be updated.',
-      });
-      return;
-    }
     sendJson(response, config, 201, {
       group: result.group,
       cycle: result.cycle,
-      session: moved.session,
+      session: getDemoSession(database, identity.sessionId),
     });
     return;
   }
@@ -1364,8 +1477,16 @@ export async function handleRequest(
         : typeof body?.expiresInSeconds === 'string'
           ? Number(body.expiresInSeconds)
           : undefined;
-    const result = createInvite(database, identity.memberId, identity.groupId, ttlSeconds, now());
+    const result = createInvite(
+      database,
+      identity.memberId,
+      identity.groupId,
+      ttlSeconds,
+      now(),
+      identity.sessionId,
+    );
     if (!result.ok) {
+      if (result.reason === 'session_inactive') return sendSessionRequired(response, config);
       if (result.reason === 'forbidden') return sendDenied(response, config);
       sendJson(response, config, 400, {
         error: 'invalid_invite',
@@ -1388,8 +1509,10 @@ export async function handleRequest(
       code,
       url.searchParams.get('groupId') ?? undefined,
       now(),
+      identity.sessionId,
     );
     if (!result.ok) {
+      if (result.reason === 'session_inactive') return sendSessionRequired(response, config);
       const messages = {
         malformed: 'Enter the eight-character invite code.',
         not_found: 'That invite code is not recognized.',
@@ -1404,18 +1527,10 @@ export async function handleRequest(
       });
       return;
     }
-    const moved = updateDemoSessionGroup(database, identity.sessionId, result.group.id, now());
-    if (!moved.ok) {
-      sendJson(response, config, 500, {
-        error: 'invite_context_error',
-        message: 'The membership was created but Demo context could not be updated.',
-      });
-      return;
-    }
     sendJson(response, config, 200, {
       invite: result.invite,
       group: result.group,
-      session: moved.session,
+      session: getDemoSession(database, identity.sessionId),
     });
     return;
   }
@@ -1461,7 +1576,7 @@ export async function handleRequest(
     let releaseStagingLock: (() => void) | null = await acquireStagedSourceLock(stagingDir);
     let releaseActiveIntake: (() => void) | null = null;
     try {
-      await cleanupOrphanedStagedSources(database, stagingDir);
+      await maybeCleanupOrphanedStagedSources(database, stagingDir);
       const sourceId = stagedSourceId(idempotencyKey);
       const sourceUri = `staged://${sourceId}`;
       const existingBeforeClaim = findStagedSource(database, sourceUri);
@@ -1558,6 +1673,17 @@ export async function handleRequest(
         const probed = await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
         database.exec('BEGIN');
         try {
+          if (!isActiveDemoSession(database, identity.sessionId, identity.memberId, now())) {
+            database.exec('ROLLBACK');
+            cleanupFailedStagedClaim(
+              database,
+              sourceUri,
+              claimedSourcePath,
+              claimGeneration,
+              stagingDir,
+            );
+            return sendSessionRequired(response, config);
+          }
           recordClipMediaMetadata(database, {
             sourceUri,
             ...probed,
@@ -1684,7 +1810,7 @@ export async function handleRequest(
             trimEndSeconds: metadata.durationSeconds,
           },
           now(),
-          { stagingDir, requireVerifiedMetadata: true },
+          { stagingDir, requireVerifiedMetadata: true, sessionId: identity.sessionId },
         );
         if (!upload.ok) {
           cleanupFailedStagedClaim(
@@ -1701,6 +1827,7 @@ export async function handleRequest(
             });
             return;
           }
+          if (upload.reason === 'session_inactive') return sendSessionRequired(response, config);
           if (upload.reason === 'not_found') {
             sendJson(response, config, 409, {
               error: 'contribution_window_closed',
@@ -1794,6 +1921,7 @@ export async function handleRequest(
     const result = createClipUpload(database, identity.groupId, identity.memberId, input, now(), {
       stagingDir: resolve(config.dataDir, 'media', 'staging'),
       requireVerifiedMetadata: true,
+      sessionId: identity.sessionId,
     });
     if (!result.ok) {
       if (result.reason === 'not_found') return sendNotFound(response, config);
@@ -1803,6 +1931,7 @@ export async function handleRequest(
       if (result.reason !== 'invalid_key') {
         cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
       }
+      if (result.reason === 'session_inactive') return sendSessionRequired(response, config);
       const conflict =
         result.reason === 'quota_exceeded' || result.reason === 'replacement_conflict';
       sendJson(response, config, conflict ? 409 : 400, {
@@ -2147,16 +2276,38 @@ export async function handleRequest(
       'group',
     );
     if (!identity) return;
-    const cycles = database
+    const parsedLimit = Number(url.searchParams.get('limit'));
+    const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 50) : 50;
+    const rawCursor = url.searchParams.get('cursor');
+    const cursor = decodePageCursor(rawCursor, 2);
+    if (rawCursor !== null && !cursor) {
+      sendJson(response, config, 400, {
+        error: 'invalid_page_cursor',
+        message: 'The cycle history cursor is invalid.',
+      });
+      return;
+    }
+    const rows = database
       .prepare(
         `SELECT id, prompt, starts_at AS startsAt, ends_at AS endsAt, status,
                 release_status AS releaseStatus
          FROM cycles WHERE group_id = ?
-         ORDER BY starts_at DESC, id DESC`,
+           AND (? IS NULL OR starts_at < ? OR (starts_at = ? AND id < ?))
+         ORDER BY starts_at DESC, id DESC LIMIT ?`,
       )
-      .all(identity.groupId) as Record<string, unknown>[];
+      .all(
+        identity.groupId,
+        cursor ? 0 : null,
+        cursor?.[0] ?? '',
+        cursor?.[0] ?? '',
+        cursor?.[1] ?? '',
+        limit + 1,
+      ) as Record<string, unknown>[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
     sendJson(response, config, 200, {
-      cycles: cycles.map((cycle) => ({
+      cycles: page.map((cycle) => ({
         id: String(cycle.id),
         prompt: String(cycle.prompt),
         startsAt: String(cycle.startsAt),
@@ -2164,6 +2315,9 @@ export async function handleRequest(
         status: String(cycle.status),
         releaseStatus: String(cycle.releaseStatus),
       })),
+      hasMore,
+      nextCursor:
+        hasMore && last ? encodePageCursor([String(last.startsAt), String(last.id)]) : null,
     });
     return;
   }
@@ -2329,7 +2483,32 @@ export async function handleRequest(
       now(),
     );
     if (!served) return sendNotFound(response, config);
-    streamMp4(request, response, config, served.handle, served.size);
+    if ('capacityExceeded' in served) {
+      sendJson(
+        response,
+        config,
+        served.reason === 'size_policy' ? 413 : 429,
+        served.reason === 'size_policy'
+          ? {
+              error: 'media_snapshot_size_limit',
+              message: 'This media file exceeds the local temporary storage serving limit.',
+            }
+          : {
+              error: 'media_serving_capacity',
+              message: 'Media delivery is at capacity. Try again shortly.',
+            },
+      );
+      return;
+    }
+    streamMp4(
+      request,
+      response,
+      config,
+      served.handle,
+      served.size,
+      undefined,
+      served.releaseBudget,
+    );
     return;
   }
 
@@ -2345,38 +2524,75 @@ export async function handleRequest(
       'download',
     );
     if (!identity) return;
-    const archive = listReleasedArchive(database, identity.groupId, identity.memberId);
-    // Advertise only entries whose retained bytes still match the digest
-    // recorded at finalization. A tampered or truncated output disappears
-    // from the archive and is audited instead of being offered for playback.
-    const films = await filterServableArchive(
-      database,
-      'film',
-      archive.films,
-      config.dataDir,
-      identity.memberId,
-      now(),
+    const releaseArchiveCapacity = acquireRequestCapacity(
+      requestLimiters.archive,
+      request,
+      response,
+      config,
     );
-    const clips = await filterServableArchive(
-      database,
-      'clip',
-      archive.clips,
-      config.dataDir,
-      identity.memberId,
-      now(),
-    );
-    sendJson(response, config, 200, {
-      archive: {
-        films: films.map((film) => ({
-          ...film,
-          downloadPath: `/films/${encodeURIComponent(film.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
-        })),
-        clips: clips.map((clip) => ({
-          ...clip,
-          downloadPath: `/clips/${encodeURIComponent(clip.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
-        })),
-      },
-    });
+    if (!releaseArchiveCapacity) return;
+    try {
+      const parsedLimit = Number(url.searchParams.get('limit'));
+      const limit =
+        Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 50) : 50;
+      const rawFilmCursor = url.searchParams.get('filmCursor');
+      const rawClipCursor = url.searchParams.get('clipCursor');
+      const filmCursor = decodePageCursor(rawFilmCursor, 3);
+      const clipCursor = decodePageCursor(rawClipCursor, 2);
+      if ((rawFilmCursor !== null && !filmCursor) || (rawClipCursor !== null && !clipCursor)) {
+        sendJson(response, config, 400, {
+          error: 'invalid_page_cursor',
+          message: 'The archive cursor is invalid.',
+        });
+        return;
+      }
+      const archive = listReleasedArchive(database, identity.groupId, identity.memberId, {
+        limit,
+        includeFilms: url.searchParams.get('includeFilms') !== 'false',
+        includeClips: url.searchParams.get('includeClips') !== 'false',
+        filmCursor: filmCursor as [string, string, string] | null,
+        clipCursor: clipCursor as [string, string] | null,
+      });
+      // Advertise only entries whose retained bytes still match the digest
+      // recorded at finalization. A tampered or truncated output disappears
+      // from the archive and is audited instead of being offered for playback.
+      const films = await filterServableArchive(
+        database,
+        'film',
+        archive.films,
+        config.dataDir,
+        identity.memberId,
+        now(),
+      );
+      const clips = await filterServableArchive(
+        database,
+        'clip',
+        archive.clips,
+        config.dataDir,
+        identity.memberId,
+        now(),
+      );
+      sendJson(response, config, 200, {
+        archive: {
+          films: films.map((film) => ({
+            ...film,
+            downloadPath: `/films/${encodeURIComponent(film.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+          })),
+          clips: clips.map((clip) => ({
+            ...clip,
+            downloadPath: `/clips/${encodeURIComponent(clip.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+          })),
+        },
+        pagination: {
+          filmCursor: archive.nextFilmCursor ? encodePageCursor(archive.nextFilmCursor) : null,
+          clipCursor: archive.nextClipCursor ? encodePageCursor(archive.nextClipCursor) : null,
+          hasMoreFilms: archive.hasMoreFilms,
+          hasMoreClips: archive.hasMoreClips,
+        },
+      });
+    } finally {
+      releaseArchiveCapacity();
+    }
     return;
   }
 
@@ -2414,6 +2630,23 @@ export async function handleRequest(
       now(),
     );
     if (!served) return sendNotFound(response, config);
+    if ('capacityExceeded' in served) {
+      sendJson(
+        response,
+        config,
+        served.reason === 'size_policy' ? 413 : 429,
+        served.reason === 'size_policy'
+          ? {
+              error: 'media_snapshot_size_limit',
+              message: 'This media file exceeds the local temporary storage serving limit.',
+            }
+          : {
+              error: 'media_serving_capacity',
+              message: 'Media delivery is at capacity. Try again shortly.',
+            },
+      );
+      return;
+    }
     streamMp4(
       request,
       response,
@@ -2421,6 +2654,7 @@ export async function handleRequest(
       served.handle,
       served.size,
       filmDownloadMatch ? 'rewind-group-film.mp4' : 'rewind-my-clip.mp4',
+      served.releaseBudget,
     );
     return;
   }

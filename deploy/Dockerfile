@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:22.13.0-bookworm-slim AS build
+FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -10,7 +10,7 @@ COPY tsconfig.server.json ./
 COPY server ./server
 RUN npm run server:build
 
-FROM node:22.13.0-bookworm-slim AS runtime
+FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime
 
 ENV NODE_ENV=production \
     REWIND_HOST=0.0.0.0 \
@@ -18,12 +18,11 @@ ENV NODE_ENV=production \
     REWIND_DATA_DIR=/var/lib/rewind \
     REWIND_FFMPEG_BIN=ffmpeg
 
-RUN apt-get update \
-  && apt-get install --no-install-recommends -y ca-certificates ffmpeg \
-  && rm -rf /var/lib/apt/lists/* \
-  && groupadd --system --gid 10001 rewind \
-  && useradd --system --uid 10001 --gid rewind --home-dir /nonexistent \
-       --shell /usr/sbin/nologin rewind \
+RUN apk add --no-cache ca-certificates 'ffmpeg=8.1.2-r0' \
+  && rm -rf /usr/local/lib/node_modules /opt/yarn-v* \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+  && addgroup -S -g 10001 rewind \
+  && adduser -S -D -H -u 10001 -G rewind rewind \
   && mkdir -p /var/lib/rewind \
   && chown -R rewind:rewind /var/lib/rewind
 

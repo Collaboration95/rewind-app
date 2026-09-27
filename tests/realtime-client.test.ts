@@ -3,6 +3,238 @@ import {
   type RealtimeEventSource,
   type RealtimeConnectionState,
 } from '../src/chat';
+import {
+  NativeEventSource,
+  NATIVE_SSE_MAX_RESPONSE_CHARS,
+  createRuntimeEventSource,
+} from '../src/chat/native-event-source';
+import { LocalRuntimeClient } from '../src/runtime/local-runtime-client';
+
+class FakeXhr {
+  readyState = 0;
+  status = 0;
+  responseText = '';
+  onreadystatechange: (() => void) | null = null;
+  onprogress: (() => void) | null = null;
+  onload: (() => void) | null = null;
+  onerror: ((event: unknown) => void) | null = null;
+  ontimeout: ((event: unknown) => void) | null = null;
+  onabort: ((event: unknown) => void) | null = null;
+  opened: [string, string] | null = null;
+  headers: [string, string][] = [];
+  aborted = false;
+  static last: FakeXhr;
+
+  constructor() {
+    FakeXhr.last = this;
+  }
+
+  open(method: string, url: string) {
+    this.opened = [method, url];
+  }
+
+  setRequestHeader(name: string, value: string) {
+    this.headers.push([name, value]);
+  }
+
+  send() {}
+
+  abort() {
+    this.aborted = true;
+  }
+
+  progress(text: string) {
+    this.readyState = 3;
+    this.status = 200;
+    this.responseText = text;
+    this.onreadystatechange?.();
+    this.onprogress?.();
+  }
+}
+
+test('native SSE adapter parses framed events, reports open, and aborts on close', () => {
+  const source = new NativeEventSource('http://127.0.0.1/events', FakeXhr);
+  const messages: string[] = [];
+  const checkpoints: string[] = [];
+  const opened = jest.fn();
+  source.onopen = opened;
+  source.addEventListener('message', (event) => messages.push((event as { data: string }).data));
+  source.addEventListener('checkpoint', (event) =>
+    checkpoints.push((event as { data: string }).data),
+  );
+  const xhr = FakeXhr.last;
+
+  expect(xhr.opened).toEqual(['GET', 'http://127.0.0.1/events']);
+  expect(xhr.headers).toContainEqual(['Accept', 'text/event-stream']);
+  xhr.progress('id: 9\r');
+  expect(checkpoints).toEqual([]);
+  xhr.progress(
+    'id: 9\r\nevent: checkpoint\r\ndata: {"eventId":9}\r\n\r\nevent: message\r\ndata: {"message":\r\ndata: "hello"}\r\n\r\n',
+  );
+
+  expect(opened).toHaveBeenCalledTimes(1);
+  expect(checkpoints).toEqual(['{"eventId":9}']);
+  expect(messages).toEqual(['{"message":\n"hello"}']);
+  source.close();
+  expect(xhr.aborted).toBe(true);
+});
+
+test('native SSE adapter dispatches a terminal double LF without waiting for another chunk', () => {
+  const source = new NativeEventSource('/events', FakeXhr);
+  const received: string[] = [];
+  source.addEventListener('message', (event) => received.push((event as { data: string }).data));
+
+  FakeXhr.last.progress('data: complete\n\n');
+
+  expect(received).toEqual(['complete']);
+  source.close();
+});
+
+test('native SSE adapter aborts oversized line and event buffers', () => {
+  const lineSource = new NativeEventSource('/events', FakeXhr);
+  const lineError = jest.fn();
+  lineSource.onerror = lineError;
+  const lineXhr = FakeXhr.last;
+  lineXhr.progress(`${'x'.repeat(32 * 1024)}\n`);
+  expect(lineError).toHaveBeenCalledTimes(1);
+  expect(lineXhr.aborted).toBe(true);
+  lineSource.close();
+
+  const eventSource = new NativeEventSource('/events', FakeXhr);
+  const eventError = jest.fn();
+  const delivered: string[] = [];
+  eventSource.onerror = eventError;
+  eventSource.addEventListener('message', (event) =>
+    delivered.push((event as { data: string }).data),
+  );
+  const eventXhr = FakeXhr.last;
+  const oversizedEvent = `${Array.from(
+    { length: 5 },
+    () => `data: ${'x'.repeat(14 * 1024)}\n`,
+  ).join('')}\n`;
+  eventXhr.progress(oversizedEvent);
+  expect(eventError).toHaveBeenCalledTimes(1);
+  expect(delivered).toEqual([]);
+  expect(eventXhr.aborted).toBe(true);
+  eventSource.close();
+});
+
+test('native SSE HTTP denial reaches realtime connection state without reconnecting', () => {
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: (url) => new NativeEventSource(url, FakeXhr),
+    reconnectDelayMs: 0,
+  });
+  const states: RealtimeConnectionState[] = [];
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    onEvent: () => {},
+    onConnectionStateChange: (state) => states.push(state),
+  });
+  const xhr = FakeXhr.last;
+  xhr.readyState = 2;
+  xhr.status = 403;
+  xhr.onreadystatechange?.();
+
+  expect(states).toEqual(['connecting', 'denied']);
+  expect(subscription.state).toBe('denied');
+  expect(xhr.aborted).toBe(true);
+  subscription.close();
+});
+
+test('native SSE response rotation reconnects from its delivered cursor without loss or duplicates', async () => {
+  const urls: string[] = [];
+  const received: number[] = [];
+  const factory = (url: string) => {
+    urls.push(url);
+    return new NativeEventSource(url, FakeXhr);
+  };
+  const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+    eventSourceFactory: factory,
+    reconnectDelayMs: 0,
+  });
+  const subscription = client.subscribe('session-1', 'demo-group', {
+    onEvent: (event) => received.push(event.eventId),
+  });
+  const firstXhr = FakeXhr.last;
+  const stream = Array.from({ length: 3_000 }, (_, index) => {
+    const eventId = index + 1;
+    const event = {
+      eventId,
+      type: 'message',
+      occurredAt: '2026-09-26T00:00:00.000Z',
+      message: {
+        id: `message-${eventId}`,
+        groupId: 'demo-group',
+        memberId: 'demo-1',
+        body: 'x',
+        createdAt: '2026-09-26T00:00:00.000Z',
+      },
+    };
+    return `id: ${eventId}\ndata: ${JSON.stringify(event)}\n\n`;
+  }).join('');
+
+  expect(stream.length).toBeGreaterThan(NATIVE_SSE_MAX_RESPONSE_CHARS);
+  firstXhr.progress(stream);
+  expect(firstXhr.aborted).toBe(true);
+  const lastDelivered = received[received.length - 1];
+  expect(lastDelivered).toBeGreaterThan(0);
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(urls).toHaveLength(2);
+  expect(urls[1]).toContain(`&sinceEventId=${lastDelivered}`);
+  const replayEvent = {
+    eventId: lastDelivered + 1,
+    type: 'message',
+    occurredAt: '2026-09-26T00:00:00.000Z',
+    message: {
+      id: `message-${lastDelivered + 1}`,
+      groupId: 'demo-group',
+      memberId: 'demo-1',
+      body: 'replayed',
+      createdAt: '2026-09-26T00:00:00.000Z',
+    },
+  };
+  FakeXhr.last.progress(`id: ${lastDelivered + 1}\ndata: ${JSON.stringify(replayEvent)}\n\n`);
+  expect(received).toEqual(Array.from({ length: lastDelivered + 1 }, (_, index) => index + 1));
+  subscription.close();
+  expect(FakeXhr.last.aborted).toBe(true);
+});
+
+test('runtime EventSource factory preserves browser EventSource and falls back to native XHR', () => {
+  const previousEventSource = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
+  const previousXhr = Object.getOwnPropertyDescriptor(globalThis, 'XMLHttpRequest');
+  class BrowserEventSource extends FakeEventSource {
+    constructor(readonly url: string) {
+      super();
+    }
+  }
+  try {
+    Object.defineProperty(globalThis, 'EventSource', {
+      configurable: true,
+      value: BrowserEventSource,
+    });
+    expect(createRuntimeEventSource('/events')).toBeInstanceOf(BrowserEventSource);
+
+    Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: undefined });
+    Object.defineProperty(globalThis, 'XMLHttpRequest', { configurable: true, value: FakeXhr });
+    expect(createRuntimeEventSource('/events')).toBeInstanceOf(NativeEventSource);
+
+    const subscription = new LocalRuntimeClient('http://127.0.0.1:8787').subscribeChat(
+      'session-1',
+      'demo-group',
+      { onEvent: () => {} },
+    );
+    expect(FakeXhr.last.opened).toEqual([
+      'GET',
+      'http://127.0.0.1:8787/realtime/groups/demo-group/events?sessionId=session-1',
+    ]);
+    subscription.close();
+  } finally {
+    if (previousEventSource) Object.defineProperty(globalThis, 'EventSource', previousEventSource);
+    else Reflect.deleteProperty(globalThis, 'EventSource');
+    if (previousXhr) Object.defineProperty(globalThis, 'XMLHttpRequest', previousXhr);
+    else Reflect.deleteProperty(globalThis, 'XMLHttpRequest');
+  }
+});
 
 class FakeEventSource implements RealtimeEventSource {
   onerror: ((event: unknown) => void) | null = null;

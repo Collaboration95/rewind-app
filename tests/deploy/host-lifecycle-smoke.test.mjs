@@ -37,7 +37,7 @@ test('resolved Compose keeps local ports private and exposes only the hosted web
     const { services } = JSON.parse(stdout);
     const ports = (service) =>
       service.ports.map(({ host_ip, published, target }) => ({ host_ip, published, target }));
-    assert.deepEqual(ports(services.web), [{ host_ip: hostIp, published: port, target: 80 }]);
+    assert.deepEqual(ports(services.web), [{ host_ip: hostIp, published: port, target: 8080 }]);
     assert.deepEqual(ports(services.runtime), [
       { host_ip: '127.0.0.1', published: '8787', target: 8787 },
     ]);
