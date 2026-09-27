@@ -1,12 +1,12 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-
 import {
   getRevealEducationCopy,
   type RevealEducationState,
   type RevealEducationSurface,
 } from '../domain/reveal-education';
-import { COLORS } from '../theme';
+import { useI18n } from '../i18n/LanguageProvider';
+import { ActionButton, SealCard } from '../ui/kit';
 
+/** Concept A seal card: film status in words, then one honest next action. */
 export function RevealEducationPanel({
   actionLabel,
   onAction,
@@ -15,59 +15,31 @@ export function RevealEducationPanel({
   testID,
 }: {
   actionLabel?: string;
-  onAction: () => void | Promise<void>;
+  onAction?: () => void | Promise<void>;
   state: RevealEducationState;
   surface: RevealEducationSurface;
   testID: string;
 }) {
+  const { t } = useI18n();
   const copy = getRevealEducationCopy(surface, state);
-  const label = actionLabel ?? copy.actionLabel;
+  const label = t(actionLabel ?? copy.actionLabel);
   return (
-    <View
-      accessible={false}
-      accessibilityLabel={`${copy.title}. ${copy.body}`}
-      style={styles.panel}
+    <SealCard
+      action={
+        onAction ? (
+          <ActionButton
+            accessibilityHint={t('Next action: {label}', { label })}
+            full
+            label={label}
+            onPress={onAction}
+            variant={state === 'released' ? 'primary' : 'secondary'}
+          />
+        ) : null
+      }
+      body={t(copy.body)}
+      label={t(state === 'released' ? 'RELEASED' : 'REVEAL STATUS')}
       testID={testID}
-    >
-      <Text style={styles.label}>{state === 'released' ? 'RELEASED' : 'REVEAL STATUS'}</Text>
-      <Text accessibilityRole="header" style={styles.title}>
-        {copy.title}
-      </Text>
-      <Text accessibilityLiveRegion="polite" style={styles.body}>
-        {copy.body}
-      </Text>
-      <Pressable
-        accessibilityHint={`Next action: ${label}`}
-        accessibilityRole="button"
-        onPress={onAction}
-        style={styles.action}
-      >
-        <Text style={styles.actionText}>{label}</Text>
-      </Pressable>
-    </View>
+      title={t(copy.title)}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  panel: {
-    backgroundColor: COLORS.deep,
-    borderColor: COLORS.edge,
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 10,
-    padding: 16,
-  },
-  label: { color: COLORS.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 21, fontWeight: '700' },
-  body: { color: COLORS.ink, fontSize: 14, lineHeight: 21 },
-  action: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
-    justifyContent: 'center',
-    minHeight: 48,
-    paddingHorizontal: 16,
-  },
-  actionText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
-});

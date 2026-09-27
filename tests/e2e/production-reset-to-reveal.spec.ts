@@ -130,7 +130,7 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
     window.fetch = window.fetch.bind(window);
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   await expect
     .poll(async () => page.evaluate(async () => (await fetch('/api/health')).ok))
     .toBe(true);
@@ -145,20 +145,21 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   await expect(page.getByTestId('settings-group')).toContainText('Weekend People');
   await page.getByTestId('generate-invite').click();
   const inviteCode = await page
-    .getByTestId('settings-invites')
+    .getByTestId('settings-invite-generate')
     .locator('[aria-label^="Invite code "]')
     .getAttribute('aria-label');
   expect(inviteCode).toMatch(/^Invite code [A-Z0-9]{8}$/);
   const code = inviteCode?.slice('Invite code '.length) ?? '';
 
   await page.getByTestId('sign-out').click();
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   let guestSessionId = '';
   guestSessionId = await waitForDemoSession(page, async () => {
     await page.getByTestId('demo-entry-demo-2').click();
   });
   await expect(page.getByTestId('capsule-ready')).toBeVisible();
   await page.getByTestId('nav-settings').click();
+  await page.getByTestId('open-join-group').click();
   await page.getByTestId('invite-code-input').fill(code);
   await page.getByTestId('accept-invite').click();
   // The deterministic fixture may already include demo-2 in the seeded group.
@@ -178,7 +179,7 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/demo/synthetic-clip',
   );
-  await page.getByRole('button', { name: 'Create synthetic Demo clip' }).click();
+  await page.getByRole('button', { name: 'Create sample clip' }).click();
   const syntheticResponse = await syntheticResponsePromise;
   expect(syntheticResponse.status()).toBe(201);
   const syntheticBody = await syntheticResponse.json();
@@ -211,7 +212,7 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   stage = 'owner advance and release';
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('sign-out').click();
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   ownerSessionId = await waitForDemoSession(page, async () => {
     await page.getByTestId('demo-entry-demo-1').click();
   });
@@ -232,7 +233,7 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   stage = 'released playback';
   await page.getByTestId('nav-archive').click();
   await expect(page.getByTestId('archive-premiere-ready')).toBeVisible({ timeout: 90_000 });
-  await expect(page.getByText('Your capsule film', { exact: true })).toBeVisible();
+  await expect(page.getByText('RELEASED FOR THIS GROUP', { exact: true })).toBeVisible();
   const archive = await runtimeJson(
     page,
     `/api/archive?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,

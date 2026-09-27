@@ -130,7 +130,7 @@ describe('CameraCaptureScreen', () => {
     expect(await metadata.list()).toEqual([]);
 
     await fireEvent.press(result.getByRole('button', { name: 'Use this still' }));
-    await result.findByText('Saved locally. Metadata only is retained.');
+    await result.findByText('Saved locally. No clip uploaded; allowance unchanged.');
     expect(await metadata.list()).toEqual([
       expect.objectContaining({
         capturedAt: '2026-09-10T00:00:00.000Z',
@@ -179,14 +179,14 @@ describe('CameraCaptureScreen', () => {
       { camera: 'supported' as const, microphone: 'supported' as const },
       { camera: 'undetermined' as const, microphone: 'granted' as const },
       'camera-permission-undecided',
-      'Allow access to continue',
+      'Allow camera access',
     ],
     [
       'permission-denied',
       { camera: 'supported' as const, microphone: 'supported' as const },
       { camera: 'denied' as const, microphone: 'granted' as const },
       'camera-permission-denied',
-      'Camera access is off',
+      'Camera access denied',
     ],
     [
       'permission-blocked',

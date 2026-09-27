@@ -159,12 +159,16 @@ describe('Rewind Home start screen', () => {
   it('shows the sample group, local-demo capsule summary, and profile picker', async () => {
     const result = await render(<App />);
 
-    expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
+    expect(result.getByRole('header', { name: 'Make a little room for today.' })).toBeTruthy();
+    expect(result.getByText('Weekend People · 5 members')).toBeTruthy();
     expect(result.getByLabelText('Local demo data')).toBeTruthy();
-    expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
-    expect(result.getByLabelText('Current capsule. 2 days remaining.')).toBeTruthy();
+    expect(result.getByLabelText(/Collection time left: 2 days\./)).toBeTruthy();
     expect(result.getByLabelText('Current prompt: What made you pause and smile?')).toBeTruthy();
     expect(result.getByLabelText(/0 of 5 contributions used/)).toBeTruthy();
+    // Concept A keeps Home focused on the prompt; member switching lives in Settings.
+    expect(result.queryByRole('header', { name: 'Local demo' })).toBeNull();
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
     await result.findByText('Current member: Amber');
   });
 
@@ -214,7 +218,7 @@ describe('Rewind Home start screen', () => {
   it('starts on Home and makes every main area reachable', async () => {
     const result = await render(<App />);
 
-    expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
+    expect(result.getByRole('header', { name: 'Make a little room for today.' })).toBeTruthy();
 
     for (const area of [
       { key: 'camera', label: 'Camera' },
@@ -224,9 +228,10 @@ describe('Rewind Home start screen', () => {
       await fireEvent.press(result.getByTestId(`nav-${area.key}`));
 
       if (area.key === 'camera') {
-        expect(await result.findByRole('header', { name: 'Add a still moment' })).toBeTruthy();
+        expect(await result.findByRole('header', { name: 'Keep a still.' })).toBeTruthy();
       } else if (area.key === 'archive') {
-        expect(await result.findByRole('header', { name: 'Premiere unavailable' })).toBeTruthy();
+        expect(await result.findByRole('header', { name: 'Your group film.' })).toBeTruthy();
+        expect(await result.findByTestId('archive-unavailable')).toBeTruthy();
       } else {
         expect(result.getByRole('header', { name: area.label })).toBeTruthy();
       }
@@ -237,12 +242,11 @@ describe('Rewind Home start screen', () => {
     const result = await render(<App />);
 
     expect(result.getByRole('tab', { name: 'Home', selected: true })).toBeTruthy();
-    expect(result.getByText('SELECTED')).toBeTruthy();
 
     await fireEvent.press(result.getByRole('tab', { name: 'Chat' }));
 
     expect(result.getByRole('tab', { name: 'Chat', selected: true })).toBeTruthy();
-    expect(result.getAllByText('SELECTED')).toHaveLength(1);
+    expect(result.getAllByRole('tab', { selected: true })).toHaveLength(1);
   });
 
   it('uses an honest permission state for Camera and unavailable states elsewhere', async () => {
@@ -343,7 +347,7 @@ describe('Rewind Home start screen', () => {
     await result.findByTestId('capsule-ready');
     await fireEvent.press(result.getByRole('tab', { name: 'Archive' }));
     expect(await result.findByTestId('archive-delayed')).toBeTruthy();
-    expect(result.getByText('Film delayed')).toBeTruthy();
+    expect(result.getByText('Reveal delayed')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Check premiere again' })).toBeTruthy();
     expect(result.queryByTestId('archive-video-player')).toBeNull();
   });
@@ -386,17 +390,21 @@ describe('Rewind Home start screen', () => {
         <App cameraPlatform={new DemoCameraPlatform()} runtimeClient={client} />,
       );
 
+      const archiveAction = released ? 'Watch in Archive' : 'Open Archive';
       await result.findByTestId(`home-reveal-${educationState}`);
-      expect(result.getByRole('button', { name: 'Open Archive' })).toBeTruthy();
+      expect(result.getByRole('button', { name: archiveAction })).toBeTruthy();
+      expect(
+        result.getByRole('button', { name: released ? 'Watch group film' : 'Check Archive' }),
+      ).toBeTruthy();
       expect(result.queryByTestId('archive-video-player')).toBeNull();
       expect(result.queryAllByRole('image')).toHaveLength(0);
 
       await fireEvent.press(result.getByRole('tab', { name: 'Camera' }));
       await result.findByTestId(`capture-reveal-${educationState}`);
-      expect(result.getByRole('button', { name: 'Open Archive' })).toBeTruthy();
+      expect(result.getByRole('button', { name: archiveAction })).toBeTruthy();
       expect(result.queryByTestId('archive-video-player')).toBeNull();
 
-      await fireEvent.press(result.getByRole('button', { name: 'Open Archive' }));
+      await fireEvent.press(result.getByRole('button', { name: archiveAction }));
       await result.findByTestId(archiveTestId);
       if (released) expect(result.getByTestId('archive-video-player')).toBeTruthy();
       else expect(result.queryByTestId('archive-video-player')).toBeNull();
@@ -488,22 +496,21 @@ describe('Rewind Home start screen', () => {
   it('keeps sample moments sealed and routes Add a moment to Camera', async () => {
     const result = await render(<App />);
 
-    expect(result.getByLabelText('Locked demo moment 1 of 3')).toBeTruthy();
-    expect(result.getByLabelText('Locked demo moment 2 of 3')).toBeTruthy();
-    expect(result.getByLabelText('Locked demo moment 3 of 3')).toBeTruthy();
+    expect(result.getByLabelText(/Sealed until reveal/)).toBeTruthy();
+    expect(result.queryAllByRole('image')).toHaveLength(0);
     expect(result.getByRole('button', { name: 'Add a moment' })).toBeTruthy();
 
     await fireEvent.press(result.getByRole('button', { name: 'Add a moment' }));
-    expect(await result.findByRole('header', { name: 'Add a still moment' })).toBeTruthy();
+    expect(await result.findByRole('header', { name: 'Keep a still.' })).toBeTruthy();
   });
 
   it('shows the repository-backed prompt, countdown, quota, and locked-safe state', async () => {
     const result = await render(<App />);
 
     expect(result.getByTestId('cycle-countdown')).toBeTruthy();
-    expect(result.getByText('0 of 5 contributions')).toBeTruthy();
-    expect(result.getByText(/0 of 30 seconds used/)).toBeTruthy();
-    expect(result.getByLabelText(/Contributions are collecting and locked/)).toBeTruthy();
+    expect(result.getByText('5 contributions')).toBeTruthy();
+    expect(result.getByText('30 seconds remaining')).toBeTruthy();
+    expect(result.getByLabelText(/Media stays hidden until the film is released/)).toBeTruthy();
     expect(result.queryAllByRole('image')).toHaveLength(0);
     expect(result.queryByRole('button', { name: /share/i })).toBeNull();
   });
@@ -521,8 +528,8 @@ describe('Rewind Home start screen', () => {
       />,
     );
 
-    await result.findByText('2 of 9 contributions');
-    expect(result.getByText(/11 of 45 seconds used/)).toBeTruthy();
+    await result.findByText('7 contributions');
+    expect(result.getByText('34 seconds remaining')).toBeTruthy();
     expect(result.getByLabelText(/2 of 9 contributions used/)).toBeTruthy();
   });
 
@@ -531,6 +538,7 @@ describe('Rewind Home start screen', () => {
     const result = await render(<App cycleRepository={{ getCurrentCycle }} />);
 
     await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByRole('button', { name: 'Choose Clover, sample member' }));
     await waitFor(() => expect(getCurrentCycle).toHaveBeenLastCalledWith('demo-group', 'demo-3'));
   });
@@ -573,7 +581,8 @@ describe('Rewind Home start screen', () => {
 describe('Local demo profile flow', () => {
   it('offers five accessible choices, remembers selection on relaunch, and resets cleanly', async () => {
     const result = await render(<App />);
-    expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
+    expect(result.getByText('Weekend People · 5 members')).toBeTruthy();
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
     await result.findByText('Current member: Amber');
     expect(result.getAllByRole('button', { name: /Choose .*sample member/ })).toHaveLength(5);
@@ -585,16 +594,22 @@ describe('Local demo profile flow', () => {
     await waitFor(async () => expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-3'));
     await result.unmount();
     const relaunched = await render(<App />);
+    await relaunched.findByText('Clover · synthetic member');
+    await fireEvent.press(relaunched.getByRole('tab', { name: 'Settings' }));
     await relaunched.findByText('Current member: Clover');
     await relaunched.unmount();
     await AsyncStorage.clear();
     const reset = await render(<App />);
+    await reset.findByText('Amber · synthetic member');
+    await fireEvent.press(reset.getByRole('tab', { name: 'Settings' }));
     await reset.findByText('Current member: Amber');
   });
 
   it('falls back to the default for an unknown stored actor', async () => {
     await AsyncStorage.setItem(SELECTION_KEY, 'outsider');
     const result = await render(<App />);
+    await result.findByText('Amber · synthetic member');
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await result.findByText('Current member: Amber');
   });
 

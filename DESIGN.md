@@ -8,10 +8,11 @@ colors:
   deep: '#1D1B1E'
   paper: '#302D30'
   ink: '#F9EBD5'
-  muted: '#B9ABA0'
+  muted: '#C4B7AD'
   edge: '#BBA270'
   accent: '#FFA572'
-  line: '#51474A'
+  accentInk: '#29201C'
+  line: '#635958'
 typography:
   sans:
     fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -76,6 +77,22 @@ honest about what is sealed—rather than a social feed or a media gallery.
   object in `src/theme.ts` remains the runtime source; this file mirrors those
   exact values and documents their semantic roles. A future token extraction
   should update both surfaces together.
+
+## Concept A: "Today's moment" (issue #189)
+
+The implemented direction is action-first. Home reads top to bottom as: acting
+synthetic member, one working card (current prompt, remaining contributions
+and seconds, collection time, primary action), the group line, contribution
+status, and a dashed seal card for the group film. Member switching, runtime
+status, reminders and data actions live in Settings. A fixed app bar sits above
+each screen's own scroll area; the bottom navigation pairs outline marks with
+text labels and marks the current tab with a filled surface plus an accent bar.
+
+Deliberate deviations from the earlier shell: `muted` and `line` are lighter
+for contrast on the paper surface, `accentInk` is the text colour on accent
+fills, page insets are 20px, and the decorative locked-moment tiles were
+removed from Home because the seal card already states the locked status in
+words.
 
 ## Colors
 

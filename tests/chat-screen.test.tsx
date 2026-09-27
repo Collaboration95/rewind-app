@@ -669,7 +669,7 @@ describe('persistent group chat timeline', () => {
         />,
       ),
     );
-    await waitFor(() => expect(result.getByText('Other Group')).toBeTruthy());
+    await waitFor(() => expect(result.getByText(/^Other Group · /)).toBeTruthy());
     await result.findByTestId('chat-empty');
     await act(async () =>
       fireEvent.changeText(result.getByTestId('chat-composer'), 'Second scope message'),

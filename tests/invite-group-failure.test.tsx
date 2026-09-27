@@ -108,7 +108,7 @@ function runtimeFixture(
 
 async function activeApp(runtimeClient: RuntimeClient) {
   const result = await render(<App runtimeClient={runtimeClient} />);
-  await result.findByRole('header', { name: currentGroup.name });
+  await result.findByText(new RegExp(`^${currentGroup.name} · `));
   return result;
 }
 
@@ -156,12 +156,12 @@ describe('group creation and invite failure paths', () => {
 
     expect(createGroup).toHaveBeenCalledTimes(1);
     expect(result.getByTestId('create-group-submit').props.accessibilityState?.disabled).toBe(true);
-    expect(result.getByText('Creating group…')).toBeTruthy();
+    expect(result.getByText('Creating…')).toBeTruthy();
 
     request.resolve({ ok: true, group: createdGroup });
-    await result.findByRole('header', { name: createdGroup.name });
+    await result.findByText(new RegExp(`^${createdGroup.name} · `));
     expect(createGroup).toHaveBeenCalledTimes(1);
-    expect(result.getByText('Current member: Amber')).toBeTruthy();
+    expect(result.getByText('Amber · synthetic member')).toBeTruthy();
   });
 
   it('retries a rejected group creation deterministically and navigates after the single success', async () => {
@@ -188,7 +188,7 @@ describe('group creation and invite failure paths', () => {
     );
 
     await fireEvent.press(result.getByTestId('create-group-submit'));
-    await result.findByRole('header', { name: createdGroup.name });
+    await result.findByText(new RegExp(`^${createdGroup.name} · `));
     expect(createGroup).toHaveBeenCalledTimes(2);
     expect(createGroup.mock.calls[0]).toEqual([
       session.id,
@@ -208,13 +208,14 @@ describe('group creation and invite failure paths', () => {
     const result = await activeApp(runtimeFixture({ acceptInvite }));
 
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await fireEvent.press(result.getByTestId('open-join-group'));
     await fireEvent.changeText(result.getByTestId('invite-code-input'), activeInvite.code);
     await fireEvent.press(result.getByTestId('accept-invite'));
 
     await waitFor(() => expect(result.getByText(error.message)).toBeTruthy());
     expect(acceptInvite).toHaveBeenCalledTimes(1);
     expect(result.getByTestId('accept-invite').props.accessibilityState?.disabled).toBe(false);
-    expect(result.getByText(`Weekend People`)).toBeTruthy();
+    expect(result.getByText('Current group: Weekend People')).toBeTruthy();
     expect(result.queryByText(`Joined ${joinedGroup.name}. The code is now used.`)).toBeNull();
   });
 
@@ -228,6 +229,7 @@ describe('group creation and invite failure paths', () => {
     const result = await activeApp(runtimeFixture({ acceptInvite }, groupState));
 
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await fireEvent.press(result.getByTestId('open-join-group'));
     await fireEvent.changeText(result.getByTestId('invite-code-input'), ` ab12 cd34 `);
     await fireEvent.press(result.getByTestId('accept-invite'));
     await fireEvent.press(result.getByTestId('accept-invite'));
@@ -240,7 +242,7 @@ describe('group creation and invite failure paths', () => {
     await waitFor(() =>
       expect(result.getByText(`Joined ${joinedGroup.name}. The code is now used.`)).toBeTruthy(),
     );
-    expect(result.getByText(joinedGroup.name)).toBeTruthy();
+    await result.findByText(`Current group: ${joinedGroup.name}`);
     expect(result.getByTestId('accept-invite').props.accessibilityState?.disabled).toBe(true);
   });
 
@@ -256,6 +258,7 @@ describe('group creation and invite failure paths', () => {
     const result = await activeApp(runtimeFixture({ acceptInvite }, groupState));
 
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await fireEvent.press(result.getByTestId('open-join-group'));
     await fireEvent.changeText(result.getByTestId('invite-code-input'), ' ab12 cd34 ');
     await fireEvent.press(result.getByTestId('accept-invite'));
     await waitFor(() =>

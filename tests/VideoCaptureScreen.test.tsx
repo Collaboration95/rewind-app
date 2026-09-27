@@ -407,7 +407,7 @@ describe('VideoCaptureScreen', () => {
     await result.findByTestId('demo-session-ready');
     await result.findByTestId('video-unsupported');
     expect(result.getByText(/fresh, non-sensitive synthetic clip/)).toBeTruthy();
-    await fireEvent.press(result.getByRole('button', { name: 'Create synthetic Demo clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Create sample clip' }));
 
     await result.findByTestId('camera-contribution-status-sealed');
     expect(createSyntheticDemoClip).toHaveBeenCalledWith('demo-session-ui', 'demo-group');

@@ -94,6 +94,17 @@ not used.
 - Content scrolls naturally inside the established safe-area shell. Long names,
   prompts, and error messages wrap rather than truncate critical information.
 
+## Language and debug preferences
+
+- Language (English or Simplified Chinese) is a device-local display
+  preference. English is the source copy; untranslated runtime messages are
+  shown as received.
+- Debug mode is off by default and is switched on in Settings. It forces
+  study states per screen for review on a device. Forced states are
+  presentation-only previews labelled in the header chip; they never write
+  sessions, groups, contributions, media, or runtime data, and never reveal
+  sealed media. Released-film previews use a labelled placeholder, not a file.
+
 ## Runtime ownership
 
 `src/domain/session.ts` and `src/domain/groups.ts` own framework-independent

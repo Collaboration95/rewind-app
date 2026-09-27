@@ -167,6 +167,7 @@ describe('invite deep-link app flow', () => {
       ),
     );
 
+    await fireEvent.press(result.getByTestId('open-join-group'));
     const input = result.getByTestId('invite-code-input');
     await fireEvent.changeText(input, 'AB12CD34');
     await fireEvent.press(result.getByTestId('accept-invite'));

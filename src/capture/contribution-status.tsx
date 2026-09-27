@@ -9,9 +9,11 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { useI18n } from '../i18n/LanguageProvider';
 import { COLORS } from '../theme';
+import { ActionButton } from '../ui/kit';
 
 /**
  * The client deliberately exposes only lifecycle metadata for a contribution.
@@ -31,6 +33,8 @@ export interface ContributionStatus {
   retryable: boolean;
   /** Whether the one bounded delete-and-replace action can still be shown. */
   deletionAvailability?: 'available' | 'used' | 'unavailable';
+  /** A terminal failure caused by the exhausted cycle allowance. */
+  reason?: 'quota_exceeded';
 }
 
 export interface ContributionStatusScope {
@@ -106,7 +110,8 @@ function isContributionStatus(value: unknown): value is ContributionStatus {
     (candidate.deletionAvailability === undefined ||
       candidate.deletionAvailability === 'available' ||
       candidate.deletionAvailability === 'used' ||
-      candidate.deletionAvailability === 'unavailable')
+      candidate.deletionAvailability === 'unavailable') &&
+    (candidate.reason === undefined || candidate.reason === 'quota_exceeded')
   );
 }
 
@@ -195,28 +200,41 @@ const lifecycleCopy: Record<
 > = {
   queued: {
     title: 'Contribution queued',
-    body: 'Your contribution is safely queued. It stays sealed while processing begins.',
+    body: 'Clip received; waiting to process.',
   },
   processing: {
     title: 'Processing contribution',
-    body: 'The local runtime is preparing your contribution. Media remains sealed.',
+    body: 'Only status is visible.',
   },
   sealed: {
     title: 'Contribution sealed',
-    body: 'The contribution is ready for the group reveal. Its media stays unavailable until then.',
+    body: 'Waiting for reveal; preview unavailable.',
   },
 };
 
-const failureCopy = (retryable: boolean): { body: string; title: string } =>
-  retryable
-    ? {
-        title: 'Contribution needs a retry',
-        body: 'The contribution could not be prepared. Retry is available without exposing its file.',
-      }
-    : {
-        title: 'Contribution could not be prepared',
-        body: 'This contribution cannot be retried. Retake it to submit a new contribution.',
-      };
+/** Every English title/body the panel can show; used by the copy coverage test. */
+export const CONTRIBUTION_STATUS_COPY: readonly string[] = [
+  ...Object.values(lifecycleCopy).flatMap((copy) => [copy.title, copy.body]),
+  'Contribution limit reached',
+  'No allowance remains.',
+  'Contribution needs a retry',
+  'Processing failed. Retry; media stays sealed.',
+  'Contribution could not be prepared',
+  'This contribution cannot be retried. Retake it to submit a new contribution.',
+];
+
+const failureCopy = (status: ContributionStatus): { body: string; title: string } =>
+  status.reason === 'quota_exceeded'
+    ? { title: 'Contribution limit reached', body: 'No allowance remains.' }
+    : status.retryable
+      ? {
+          title: 'Contribution needs a retry',
+          body: 'Processing failed. Retry; media stays sealed.',
+        }
+      : {
+          title: 'Contribution could not be prepared',
+          body: 'This contribution cannot be retried. Retake it to submit a new contribution.',
+        };
 
 export function ContributionStatusPanel({
   onDelete,
@@ -233,50 +251,53 @@ export function ContributionStatusPanel({
   retryLabel?: string;
   testID?: string;
 }) {
+  const { t } = useI18n();
   if (!status) return null;
-  const copy =
-    status.state === 'failed' ? failureCopy(status.retryable) : lifecycleCopy[status.state];
+  const copy = status.state === 'failed' ? failureCopy(status) : lifecycleCopy[status.state];
+  const title = t(copy.title);
+  const body = t(copy.body);
   const metadata = status.durationSeconds
-    ? `${status.durationSeconds.toFixed(1)} seconds · metadata only`
-    : 'Metadata only · no media is shown';
+    ? t('{seconds} seconds · metadata only', { seconds: status.durationSeconds.toFixed(1) })
+    : t('Metadata only · no media is shown');
   return (
     <View
       accessible
-      accessibilityLabel={`${copy.title}. ${copy.body}${status.message ? ` ${status.message}` : ''}`}
+      accessibilityLabel={`${title}. ${body}${status.message ? ` ${status.message}` : ''}`}
       style={[styles.panel, status.state === 'failed' && styles.failedPanel]}
       testID={`${testID}-${status.state}`}
     >
-      <Text style={styles.label}>CONTRIBUTION STATUS</Text>
-      <Text
-        accessibilityLiveRegion={status.state === 'failed' ? 'assertive' : 'polite'}
-        style={styles.title}
-      >
-        {copy.title}
-      </Text>
-      <Text style={styles.body}>{copy.body}</Text>
+      <Text style={styles.label}>{t('CONTRIBUTION STATUS')}</Text>
+      <View style={styles.titleRow}>
+        <View
+          accessible={false}
+          style={[styles.marker, status.state === 'sealed' && styles.markerSealed]}
+        />
+        <Text
+          accessibilityLiveRegion={status.state === 'failed' ? 'assertive' : 'polite'}
+          style={styles.title}
+        >
+          {title}
+        </Text>
+      </View>
+      <Text style={styles.body}>{body}</Text>
       <Text style={styles.metadata}>{metadata}</Text>
       {status.deletionAvailability === 'used' ? (
         <Text style={styles.availability} testID={`${testID}-delete-used`}>
-          Delete and replace is unavailable because this week&apos;s allowance has already been
-          used.
+          {t('Delete and replace is unavailable because this cycle allowance is already used.')}
         </Text>
       ) : null}
       {status.deletionAvailability === 'unavailable' ? (
         <Text style={styles.availability} testID={`${testID}-delete-unavailable`}>
-          Delete and replace is no longer available for this contribution.
+          {t('Delete and replace is no longer available for this contribution.')}
         </Text>
       ) : null}
       {status.state === 'failed' && status.retryable && onRetry ? (
-        <Pressable accessibilityRole="button" onPress={onRetry} style={styles.retryButton}>
-          <Text style={styles.retryText}>{retryLabel}</Text>
-        </Pressable>
+        <ActionButton label={t(retryLabel)} onPress={onRetry} variant="primary" />
       ) : null}
       {onDelete &&
       status.deletionAvailability !== 'used' &&
       status.deletionAvailability !== 'unavailable' ? (
-        <Pressable accessibilityRole="button" onPress={onDelete} style={styles.deleteButton}>
-          <Text style={styles.deleteText}>{deleteLabel}</Text>
-        </Pressable>
+        <ActionButton label={t(deleteLabel)} onPress={onDelete} />
       ) : null}
     </View>
   );
@@ -286,40 +307,25 @@ const styles = StyleSheet.create({
   panel: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,
-    borderRadius: 10,
+    borderRadius: 9,
     borderWidth: 1,
     gap: 8,
-    padding: 16,
+    padding: 17,
   },
-  failedPanel: { borderColor: COLORS.accent },
-  label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
+  failedPanel: { borderColor: COLORS.accent, borderLeftWidth: 3 },
+  label: { color: COLORS.muted, fontSize: 11, fontWeight: '700', letterSpacing: 1.4 },
+  titleRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+  marker: {
+    borderColor: COLORS.ink,
+    borderRadius: 4,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    height: 8,
+    width: 8,
+  },
+  markerSealed: { borderStyle: 'solid', backgroundColor: COLORS.ink },
+  title: { color: COLORS.ink, flexShrink: 1, fontSize: 18, fontWeight: '700' },
   body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   metadata: { color: COLORS.edge, fontSize: 13, fontWeight: '600' },
   availability: { color: COLORS.muted, fontSize: 13, lineHeight: 19 },
-  error: { color: COLORS.accent, fontSize: 14, lineHeight: 20 },
-  retryButton: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 46,
-    paddingHorizontal: 14,
-  },
-  retryText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  deleteButton: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderColor: COLORS.line,
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 44,
-    justifyContent: 'center',
-    marginTop: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  deleteText: { color: COLORS.muted, fontSize: 14, fontWeight: '700' },
 });

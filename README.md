@@ -34,6 +34,32 @@ upload require a physical device and the optional local runtime. Set
 `EXPO_PUBLIC_DEMO_ACCESS=entry` to start at the Demo member chooser instead of
 the default synthetic Amber session.
 
+## UI concept A, language, and debug mode
+
+This branch implements the "Today's moment" (action-first) concept from the
+`rewind-ui-ab` design study for issue #189. Home puts the current prompt, the
+member's remaining allowance, the collection time and the next action in one
+working card; contribution and reveal status follow below it.
+
+Settings → **Display & developer** has two local preferences, both stored
+only on the device:
+
+- **Language / 语言** switches the visible copy between English and Simplified
+  Chinese. Server messages without a translation stay in English.
+- **Debug mode** adds a `DEBUG` chip to the header. Tap it on any screen to
+  force one of the study states (loading, empty, denied, error, permission,
+  review, uploading, queued, processing, sealed, delayed, released, allowance
+  used) or to simulate a missing local runtime. Forced states are labelled
+  presentation previews: they never write sessions, groups, contributions or
+  media. Choose **Live data** or **Reset every screen to live data** to return.
+
+To try it on a phone, install Expo Go, keep the phone on the same Wi-Fi as the
+computer, and scan the QR code from:
+
+```sh
+npm start -- --lan --clear
+```
+
 ## Optional local runtime
 
 The companion Node service adds local SQLite persistence, media processing,

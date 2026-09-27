@@ -17,6 +17,7 @@ import type { Group } from '../domain/profiles';
 import type { DemoSession } from '../domain/session';
 import { useDemoSession } from '../session/DemoSessionProvider';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
+import { useI18n } from '../i18n/LanguageProvider';
 import { COLORS } from '../theme';
 import {
   createChatMessageDraft,
@@ -76,7 +77,15 @@ function isAccessDeniedError(error: unknown): boolean {
  * security boundary: a changed session or group remounts this surface before
  * any old timeline, draft, or error state can be rendered in the new scope.
  */
-export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
+export type ChatDebugScenario = 'loading' | 'empty' | 'denied' | 'error';
+
+export function ChatScreen({
+  debugScenario = null,
+  runtimeClient,
+}: {
+  debugScenario?: ChatDebugScenario | null;
+  runtimeClient: RuntimeClient | null;
+}) {
   const { session } = useDemoSession();
   const { state, retry } = useCapsule();
   const profiles = useMemo(() => demoRepository.listProfiles(), []);
@@ -94,6 +103,7 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
     <ChatSessionSurface
       accessState={accessState}
       capsuleStatus={state.status}
+      debugScenario={debugScenario}
       group={group}
       key={scopeKey}
       memberNames={memberNames}
@@ -107,6 +117,7 @@ export function ChatScreen({ runtimeClient }: { runtimeClient: RuntimeClient | n
 export function ChatSessionSurface({
   accessState,
   capsuleStatus,
+  debugScenario = null,
   group,
   memberNames,
   retryCapsule,
@@ -115,12 +126,14 @@ export function ChatSessionSurface({
 }: {
   accessState: 'loading' | 'known' | 'denied';
   capsuleStatus: CapsuleState['status'];
+  debugScenario?: ChatDebugScenario | null;
   group: Group | null;
   memberNames: Map<string, string>;
   retryCapsule: () => void;
   runtimeClient: RuntimeClient | null;
   session: DemoSession | null;
 }) {
+  const { t } = useI18n();
   const unread = useOptionalChatUnread();
   const safeAreaInsets = useSafeAreaInsets();
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
@@ -446,7 +459,7 @@ export function ChatSessionSurface({
     [group, reactionBusy, runtimeClient, session],
   );
 
-  const effectiveTimelineState: TimelineState =
+  const liveTimelineState: TimelineState =
     accessState === 'denied' || subscriptionDenied
       ? 'denied'
       : accessState === 'loading'
@@ -454,8 +467,16 @@ export function ChatSessionSurface({
         : !runtimeClient?.subscribeChat
           ? 'unavailable'
           : timelineState;
+  // Debug previews change only what is displayed; the stream keeps running.
+  const effectiveTimelineState: TimelineState =
+    debugScenario === 'empty' ? 'ready' : (debugScenario ?? liveTimelineState);
   const showComposer = effectiveTimelineState === 'ready' || effectiveTimelineState === 'error';
-  const canRenderMessages = accessState === 'known' && effectiveTimelineState !== 'unavailable';
+  const canRenderMessages =
+    accessState === 'known' &&
+    effectiveTimelineState !== 'unavailable' &&
+    effectiveTimelineState !== 'denied' &&
+    effectiveTimelineState !== 'loading' &&
+    debugScenario !== 'empty';
   const displayedConnectionState: ChatConnectionState =
     accessState === 'denied' || subscriptionDenied
       ? 'denied'
@@ -479,14 +500,24 @@ export function ChatSessionSurface({
         extraData={{ reactionActive, reactionBusy, memberId: session?.actor.memberId }}
         keyExtractor={({ message }) => message.id}
         ListHeaderComponent={
-          <View style={styles.content}>
+          <View style={styles.headerContent}>
             <View style={styles.header}>
-              <Text style={styles.label}>GROUP CHAT</Text>
+              <Text style={styles.label}>{t('GROUP CHAT')}</Text>
               <Text accessibilityRole="header" style={styles.title} testID="route-heading-chat">
-                Chat
+                {t('Chat')}
               </Text>
               <Text style={styles.bodyText}>
-                {group?.name ?? 'Messages are visible only to authorised group members.'}
+                {group
+                  ? t(
+                      group.memberIds.length === 1
+                        ? '{group} · {count} member'
+                        : '{group} · {count} members',
+                      {
+                        count: group.memberIds.length,
+                        group: group.name,
+                      },
+                    )
+                  : t('Messages are visible only to authorised group members.')}
               </Text>
             </View>
 
@@ -496,41 +527,41 @@ export function ChatSessionSurface({
                 style={styles.connectionStatus}
                 testID="chat-connection-status"
               >
-                Chat connection: {chatConnectionLabel(displayedConnectionState)}
+                {t('Chat connection: {state}', {
+                  state: t(chatConnectionLabel(displayedConnectionState)),
+                })}
               </Text>
             ) : null}
 
             {effectiveTimelineState === 'loading' ? (
               <View accessible style={styles.statePanel} testID="chat-loading">
-                <Text style={styles.panelTitle}>Loading messages…</Text>
+                <Text style={styles.panelTitle}>{t('Loading messages…')}</Text>
                 <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
-                  Checking the saved group conversation.
+                  {t('Checking the saved group conversation.')}
                 </Text>
               </View>
             ) : null}
 
             {effectiveTimelineState === 'denied' ? (
               <View accessible style={styles.statePanel} testID="chat-denied">
-                <Text style={styles.panelTitle}>Chat unavailable</Text>
-                <Text style={styles.bodyText}>
-                  Choose authorised Demo access to view this group conversation.
-                </Text>
+                <Text style={styles.panelTitle}>{t('Access unavailable')}</Text>
+                <Text style={styles.bodyText}>{t('This member cannot access the group.')}</Text>
               </View>
             ) : null}
 
             {effectiveTimelineState === 'unavailable' ? (
               <View accessible style={styles.statePanel} testID="chat-unavailable">
-                <Text style={styles.panelTitle}>Chat needs the local runtime</Text>
-                <Text style={styles.bodyText}>
-                  Connect the local runtime to load this group chat.
-                </Text>
+                <Text style={styles.panelTitle}>{t('Chat needs the local runtime')}</Text>
+                <Text style={styles.bodyText}>{t('Connect the local runtime to use chat.')}</Text>
               </View>
             ) : null}
 
             {effectiveTimelineState === 'error' ? (
               <View accessible style={styles.errorPanel} testID="chat-error">
                 <Text accessibilityRole="alert" style={styles.errorText}>
-                  {connectionError ?? 'The chat connection could not be established.'}
+                  {debugScenario === 'error' || !connectionError
+                    ? t('Connection lost. Messages and draft kept.')
+                    : t(connectionError)}
                 </Text>
                 <Pressable
                   accessibilityRole="button"
@@ -538,15 +569,16 @@ export function ChatSessionSurface({
                   style={styles.outlineButton}
                   testID="chat-retry"
                 >
-                  <Text style={styles.outlineButtonText}>Retry chat connection</Text>
+                  <Text style={styles.outlineButtonText}>{t('Retry connection')}</Text>
                 </Pressable>
               </View>
             ) : null}
 
-            {effectiveTimelineState === 'ready' && canRenderMessages && messages.length === 0 ? (
+            {effectiveTimelineState === 'ready' &&
+            (debugScenario === 'empty' || (canRenderMessages && messages.length === 0)) ? (
               <View accessible style={styles.statePanel} testID="chat-empty">
-                <Text style={styles.panelTitle}>No messages yet</Text>
-                <Text style={styles.bodyText}>Start the conversation with a short note below.</Text>
+                <Text style={styles.panelTitle}>{t('No messages yet')}</Text>
+                <Text style={styles.bodyText}>{t('Start with a text message.')}</Text>
               </View>
             ) : null}
 
@@ -559,7 +591,7 @@ export function ChatSessionSurface({
                 testID="chat-load-older"
               >
                 <Text style={styles.outlineButtonText}>
-                  {loadingOlderMessages ? 'Loading older messages…' : 'Load older messages'}
+                  {loadingOlderMessages ? t('Loading older messages…') : t('Load older messages')}
                 </Text>
               </Pressable>
             ) : null}
@@ -579,7 +611,7 @@ export function ChatSessionSurface({
               testID="chat-message"
             >
               <View style={styles.messageMeta}>
-                <Text style={styles.author}>{isCurrentMember ? 'You' : author}</Text>
+                <Text style={styles.author}>{isCurrentMember ? t('You') : author}</Text>
                 <Text style={styles.timestamp}>{formatTimestamp(message.createdAt)}</Text>
               </View>
               {message.replyTo ? (
@@ -589,7 +621,7 @@ export function ChatSessionSurface({
                   style={styles.replyContext}
                   testID="chat-reply-context"
                 >
-                  <Text style={styles.replyLabel}>REPLYING TO</Text>
+                  <Text style={styles.replyLabel}>{t('REPLYING TO')}</Text>
                   <Text numberOfLines={2} style={styles.replyText}>
                     {message.replyTo.body}
                   </Text>
@@ -608,7 +640,7 @@ export function ChatSessionSurface({
                       testID={`chat-reaction-${message.id}`}
                     >
                       <Text style={styles.actionText}>
-                        {reactionActive[message.id] ? '✨ Reacted' : '✨'} {reactionCount}
+                        {reactionActive[message.id] ? `✨ ${t('Reacted')}` : '✨'} {reactionCount}
                       </Text>
                     </Pressable>
                   ) : null}
@@ -620,7 +652,7 @@ export function ChatSessionSurface({
                       style={styles.actionButton}
                       testID={`chat-reply-${message.id}`}
                     >
-                      <Text style={styles.actionText}>Reply</Text>
+                      <Text style={styles.actionText}>{t('Reply')}</Text>
                     </Pressable>
                   ) : null}
                 </View>
@@ -644,10 +676,10 @@ export function ChatSessionSurface({
 
       {showComposer && !subscriptionDenied && runtimeClient?.sendChatMessage && group && session ? (
         <View style={styles.composer}>
-          <Text style={styles.fieldLabel}>MESSAGE</Text>
+          <Text style={styles.fieldLabel}>{t('Message')}</Text>
           {replyTarget ? (
             <View accessible={false} style={styles.composerReply} testID="chat-reply-target">
-              <Text style={styles.replyLabel}>REPLYING TO</Text>
+              <Text style={styles.replyLabel}>{t('REPLYING TO')}</Text>
               <Text numberOfLines={1} style={styles.replyText}>
                 {replyTarget.body}
               </Text>
@@ -657,12 +689,12 @@ export function ChatSessionSurface({
                 onPress={() => setReplyTarget(null)}
                 testID="chat-reply-cancel"
               >
-                <Text style={styles.actionText}>Cancel</Text>
+                <Text style={styles.actionText}>{t('Cancel')}</Text>
               </Pressable>
             </View>
           ) : null}
           <TextInput
-            accessibilityLabel="Chat message"
+            accessibilityLabel={t('Chat message')}
             maxLength={MESSAGE_MAX_LENGTH}
             multiline
             onChangeText={(value) => {
@@ -670,7 +702,7 @@ export function ChatSessionSurface({
               setPendingDraft((current) => (current?.body === value ? current : null));
               setSendError(null);
             }}
-            placeholder="Write a message"
+            placeholder={t('Write to your group…')}
             placeholderTextColor={COLORS.muted}
             style={styles.input}
             testID="chat-composer"
@@ -678,7 +710,7 @@ export function ChatSessionSurface({
           />
           <View style={styles.composerFooter}>
             <Text style={styles.counter}>
-              {draft.length}/{MESSAGE_MAX_LENGTH}
+              {t('Text only')} · {draft.length}/{MESSAGE_MAX_LENGTH}
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -687,7 +719,9 @@ export function ChatSessionSurface({
               style={[styles.primaryButton, (sending || !draft.trim()) && styles.disabledButton]}
               testID="chat-send"
             >
-              <Text style={styles.primaryButtonText}>{sending ? 'Sending…' : 'Send message'}</Text>
+              <Text style={styles.primaryButtonText}>
+                {sending ? t('Sending…') : t('Send message')}
+              </Text>
             </Pressable>
           </View>
         </View>
@@ -699,7 +733,7 @@ export function ChatSessionSurface({
           style={styles.outlineButton}
           testID="chat-send-retry"
         >
-          <Text style={styles.outlineButtonText}>Retry sending</Text>
+          <Text style={styles.outlineButtonText}>{t('Retry sending')}</Text>
         </Pressable>
       ) : null}
     </KeyboardAvoidingView>
@@ -709,10 +743,18 @@ export function ChatSessionSurface({
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   timelineScroll: { flex: 1 },
-  content: { gap: 14, padding: 24, paddingBottom: 20 },
+  content: { gap: 14, paddingBottom: 20, paddingHorizontal: 20, paddingTop: 22 },
+  headerContent: { gap: 14 },
   header: { gap: 4 },
-  label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 30, fontWeight: '700', marginTop: 2 },
+  label: { color: COLORS.muted, fontSize: 11, fontWeight: '700', letterSpacing: 1.4 },
+  title: {
+    color: COLORS.ink,
+    fontSize: 27,
+    fontWeight: '600',
+    letterSpacing: -0.6,
+    lineHeight: 33,
+    marginTop: 2,
+  },
   bodyText: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   connectionStatus: { color: COLORS.muted, fontSize: 12, fontWeight: '700' },
   statePanel: {
@@ -725,8 +767,9 @@ const styles = StyleSheet.create({
   },
   errorPanel: {
     backgroundColor: COLORS.paper,
-    borderColor: COLORS.edge,
-    borderRadius: 10,
+    borderColor: COLORS.accent,
+    borderLeftWidth: 3,
+    borderRadius: 9,
     borderWidth: 1,
     gap: 12,
     padding: 16,
@@ -750,7 +793,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.line,
     borderRadius: 6,
     borderWidth: 1,
-    minHeight: 32,
+    minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 9,
     paddingVertical: 5,
@@ -776,7 +819,7 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 16,
   },
-  fieldLabel: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  fieldLabel: { color: COLORS.ink, fontSize: 13, fontWeight: '700' },
   composerReply: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,
@@ -808,7 +851,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
-  primaryButtonText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
+  primaryButtonText: { color: COLORS.accentInk, fontSize: 14, fontWeight: '800' },
   disabledButton: { opacity: 0.5 },
   outlineButton: {
     alignItems: 'center',

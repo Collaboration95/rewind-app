@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import type { ScreenDebug } from '../debug/DebugProvider';
+import { useI18n } from '../i18n/LanguageProvider';
 import { COLORS } from '../theme';
+import {
+  ActionButton,
+  ButtonRow,
+  MockMedia,
+  ScreenIntro,
+  Separator,
+  StepLine,
+  kitStyles,
+} from '../ui/kit';
 import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
 import type { RevealEducationState } from '../domain/reveal-education';
 import {
@@ -38,6 +49,8 @@ export interface CameraCaptureScreenProps {
   onOpenArchive?: () => void;
   onRecordClip?: () => void;
   revealState?: RevealEducationState;
+  /** Settings debug mode: forces a study state without touching capture data. */
+  debug?: ScreenDebug<CameraDebugScenario>;
 }
 
 /**
@@ -46,6 +59,7 @@ export interface CameraCaptureScreenProps {
  */
 export function CameraCaptureScreen({
   createCaptureId,
+  debug,
   fileStore,
   metadataStore,
   now,
@@ -55,6 +69,7 @@ export function CameraCaptureScreen({
   platform: platformProp,
   revealState = 'locked',
 }: CameraCaptureScreenProps = {}) {
+  const { t } = useI18n();
   const cameraRef = useRef<CameraView>(null);
   const platform = useMemo(
     () =>
@@ -274,43 +289,6 @@ export function CameraCaptureScreen({
   const hasFileFallback = platform.supportsFileFallback === true && Boolean(platform.pickStillFile);
   const hasFallback = platform.kind === 'demo' || hasFileFallback;
 
-  const handleRevealAction = useCallback(() => {
-    if (revealState === 'locked') {
-      if (isCaptureReady(state) && (!platform.supportsLivePreview || cameraReady)) {
-        void capture();
-      } else if (state.status === 'permission-blocked') {
-        void openSettings();
-      } else if (state.status === 'unsupported' && hasFallback) {
-        void fallbackAction();
-      } else if (state.status === 'permission-undecided' || state.status === 'permission-denied') {
-        void requestAccess();
-      } else {
-        void refreshAccess();
-      }
-      return;
-    }
-    onOpenArchive?.();
-  }, [
-    cameraReady,
-    capture,
-    fallbackAction,
-    hasFallback,
-    onOpenArchive,
-    openSettings,
-    platform.supportsLivePreview,
-    refreshAccess,
-    requestAccess,
-    revealState,
-    state,
-  ]);
-  const revealActionLabel =
-    revealState === 'locked' && state.status === 'unsupported' && hasFallback
-      ? fallbackLabel
-      : revealState === 'locked' &&
-          (!isCaptureReady(state) || (platform.supportsLivePreview && !cameraReady))
-        ? 'Check capture access'
-        : undefined;
-
   const retake = useCallback(async () => {
     await session.retake();
     setState((current) => ({
@@ -350,156 +328,153 @@ export function CameraCaptureScreen({
     }
   }, [onAccepted, session]);
 
-  return (
-    <View style={styles.screen} testID="camera-screen">
-      <View style={styles.heading}>
-        <Text style={styles.eyebrow}>CAPTURE</Text>
-        <Text accessibilityRole="header" style={styles.title} testID="route-heading-camera">
-          Add a still moment
-        </Text>
-        <Text style={styles.intro}>
-          Camera and microphone access stay on this device. Nothing is uploaded from this screen.
-        </Text>
-      </View>
-      {state.status === 'ready' || state.status === 'preview' || state.status === 'saved' ? (
-        <RevealEducationPanel
-          actionLabel={revealActionLabel}
-          onAction={handleRevealAction}
-          state={revealState}
-          surface="capture"
-          testID={`capture-reveal-${revealState}`}
-        />
-      ) : null}
-      {onRecordClip ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={onRecordClip}
-          style={styles.videoButton}
-          testID="camera-record-clip"
-        >
-          <Text style={styles.videoButtonText}>
-            {state.status === 'ready' && platform.supportsVideoRecording !== false
-              ? 'Record a 15-second clip'
-              : platform.kind === 'demo'
-                ? 'Open synthetic clip fallback'
-                : 'Open clip capture options'}
-          </Text>
-        </Pressable>
-      ) : null}
+  // Debug mode forces one of the study states. Actions then move between the
+  // study states instead of touching the camera, file store, or metadata.
+  const forced = debug?.scenario ? forcedCaptureState(debug.scenario) : null;
+  const view = forced ?? state;
+  const whenForced =
+    (real: () => void | Promise<void>, next: CameraDebugScenario | 'live') =>
+    (): void | Promise<void> => (debug?.scenario ? debug.set(next) : real());
+  const demoPreview = platform.kind === 'demo' || Boolean(forced);
+  const stepIndex = view.status === 'saved' ? 2 : view.activePreview ? 1 : 0;
 
-      <ContributionStatusPanel status={contributionStatus} testID="camera-contribution-status" />
+  return (
+    <ScrollView
+      contentContainerStyle={kitStyles.content}
+      style={kitStyles.scroll}
+      testID="camera-screen"
+    >
+      <ScreenIntro
+        body={t('Stills stay on this device; they are not group-film submissions.')}
+        eyebrow={t('CAMERA / STILL')}
+        headingTestID="route-heading-camera"
+        title={t('Keep a still.')}
+      />
 
       {platform.kind === 'demo' ? (
         <View
-          accessibilityLabel="Simulator demo capture, not a real camera"
+          accessibilityLabel={t('Simulator demo capture, not a real camera')}
           style={styles.demoNotice}
         >
-          <Text style={styles.demoNoticeTitle}>SIMULATOR DEMO</Text>
+          <Text style={styles.demoNoticeTitle}>{t('SIMULATOR DEMO')}</Text>
           <Text style={styles.demoNoticeText}>
-            This uses a fixture preview because the simulator has no physical camera. It does not
-            claim a real capture.
+            {t(
+              'This uses a fixture preview because the simulator has no physical camera. It does not claim a real capture.',
+            )}
           </Text>
         </View>
       ) : null}
 
-      {state.status === 'checking' ? (
+      {view.status === 'checking' ? (
         <StatusPanel
           testID="camera-checking"
-          title="Checking camera access…"
-          body="We are checking device capability and both required permissions."
+          title={t('Checking access…')}
+          body={t('Checking camera and microphone.')}
         />
-      ) : state.status === 'temporarily-unavailable' ? (
+      ) : view.status === 'temporarily-unavailable' ? (
         <StatusPanel
-          actionLabel="Check again"
-          body={
-            state.errorMessage ??
-            'Camera availability needs to be checked before capture can begin.'
-          }
+          actionLabel={t('Check again')}
+          body={t(
+            view.errorMessage ??
+              'Camera availability needs to be checked before capture can begin.',
+          )}
           onAction={refreshAccess}
           onSecondaryAction={hasFallback ? fallbackAction : undefined}
-          secondaryActionLabel={hasFallback ? fallbackLabel : undefined}
+          secondaryActionLabel={hasFallback ? t(fallbackLabel) : undefined}
           testID="camera-temporarily-unavailable"
-          title="Camera is temporarily unavailable"
+          title={t('Camera is temporarily unavailable')}
         />
-      ) : state.status === 'unsupported' ? (
+      ) : view.status === 'unsupported' ? (
         <StatusPanel
-          actionLabel={hasFallback ? fallbackLabel : undefined}
-          body={
+          actionLabel={hasFallback ? t(fallbackLabel) : undefined}
+          body={t(
             hasFallback
               ? platform.kind === 'demo'
                 ? 'This simulator cannot provide a physical camera. The labelled synthetic fixture is available for the local Demo.'
                 : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
-              : 'This device cannot provide the camera needed for a still moment. Use a physical device with camera access.'
-          }
+              : 'This device cannot provide the camera needed for a still moment. Use a physical device with camera access.',
+          )}
           onAction={hasFallback ? fallbackAction : undefined}
           testID="camera-unsupported"
-          title="Camera capture is not supported here"
+          title={t('Camera capture is not supported here')}
         />
-      ) : state.status === 'permission-undecided' ? (
+      ) : view.status === 'permission-undecided' ? (
         <StatusPanel
-          actionLabel="Allow camera and microphone"
-          body="Rewind needs both permissions before the capture control becomes available."
-          onAction={requestAccess}
+          actionLabel={t('Allow camera and microphone')}
+          body={t('Permissions are checked before capture.')}
+          onAction={whenForced(requestAccess, 'live')}
           testID="camera-permission-undecided"
-          title="Allow access to continue"
+          title={t('Allow camera access')}
         />
-      ) : state.status === 'permission-denied' ? (
+      ) : view.status === 'permission-denied' ? (
         <StatusPanel
-          actionLabel={hasFileFallback ? fallbackLabel : 'Try again'}
-          secondaryActionLabel="Open Settings"
-          body={
-            state.errorMessage ??
-            'Camera or microphone access is off. Try again, or allow both permissions in Settings.'
-          }
-          onAction={hasFileFallback ? fallbackAction : requestAccess}
-          onSecondaryAction={openSettings}
+          actionLabel={t(hasFileFallback && !forced ? fallbackLabel : 'Try again')}
+          secondaryActionLabel={t('Open Settings')}
+          body={t(view.errorMessage ?? 'Check camera access in device Settings.')}
+          onAction={whenForced(hasFileFallback ? fallbackAction : requestAccess, 'live')}
+          onSecondaryAction={whenForced(openSettings, 'live')}
           testID="camera-permission-denied"
-          title="Camera access is off"
+          title={t('Camera access denied')}
         />
-      ) : state.status === 'permission-blocked' ? (
+      ) : view.status === 'permission-blocked' ? (
         <StatusPanel
-          actionLabel="Open Settings"
-          body="Camera or microphone access is blocked. Open Settings, allow both permissions, then return and check again."
+          actionLabel={t('Open Settings')}
+          body={t(
+            'Camera or microphone access is blocked. Open Settings, allow both permissions, then return and check again.',
+          )}
           onAction={openSettings}
           testID="camera-permission-blocked"
-          title="Permission is blocked"
+          title={t('Permission is blocked')}
         />
-      ) : state.status === 'capture-failed' || state.status === 'write-failed' ? (
+      ) : view.status === 'capture-failed' || view.status === 'write-failed' ? (
         <StatusPanel
-          actionLabel="Try again"
-          body={
-            state.errorMessage ??
-            'The still image could not be completed. Your previous preview was discarded.'
-          }
-          onAction={state.status === 'write-failed' ? refreshAccess : retryCapture}
-          testID={state.status === 'write-failed' ? 'camera-write-failed' : 'camera-capture-failed'}
-          title={state.status === 'write-failed' ? 'Local save failed' : 'Capture failed'}
+          actionLabel={t('Try again')}
+          alert
+          body={t(view.errorMessage ?? 'Still not saved. No contribution was submitted.')}
+          onAction={whenForced(
+            view.status === 'write-failed' ? refreshAccess : retryCapture,
+            'live',
+          )}
+          testID={view.status === 'write-failed' ? 'camera-write-failed' : 'camera-capture-failed'}
+          title={view.status === 'write-failed' ? t('Local save failed') : t('Capture failed')}
         />
-      ) : state.activePreview ? (
-        <PreviewPanel
-          demo={platform.kind === 'demo'}
-          metadata={state.activePreview.metadata}
-          onAccept={accept}
-          onDiscard={discard}
-          onRetake={retake}
-          previewUri={state.activePreview.uri}
-          saving={state.status === 'saving'}
-          saved={state.status === 'saved'}
-        />
+      ) : view.activePreview ? (
+        <>
+          <StepLine
+            accessibilityLabel={t('Step {step} of 3', { step: stepIndex + 1 })}
+            active={stepIndex}
+            steps={[t('Capture'), t('Review'), t('Accept locally')]}
+          />
+          <PreviewPanel
+            demo={demoPreview}
+            metadata={view.activePreview.metadata}
+            onAccept={whenForced(accept, 'saved')}
+            onDiscard={whenForced(discard, 'live')}
+            onRetake={whenForced(retake, 'live')}
+            previewUri={view.activePreview.uri}
+            saving={view.status === 'saving'}
+            saved={view.status === 'saved'}
+          />
+        </>
       ) : (
         <View style={styles.captureArea}>
+          <StepLine
+            accessibilityLabel={t('Step {step} of 3', { step: 1 })}
+            active={0}
+            steps={[t('Capture'), t('Review'), t('Accept locally')]}
+          />
           <View
-            accessibilityLabel="Camera and microphone access granted"
+            accessibilityLabel={t('Camera and microphone access granted')}
             style={styles.accessGranted}
           >
-            <Text style={styles.accessGrantedTitle}>ACCESS GRANTED</Text>
+            <Text style={styles.accessGrantedTitle}>{t('ACCESS GRANTED')}</Text>
             <Text style={styles.accessGrantedText}>
-              Camera and microphone are ready for a still moment.
+              {t('Camera and microphone are ready for a still moment.')}
             </Text>
           </View>
           {platform.supportsLivePreview ? (
             <CameraView
-              accessibilityLabel="Live camera preview"
+              accessibilityLabel={t('Live camera preview')}
               facing="back"
               onCameraReady={() => setCameraReady(true)}
               ref={cameraRef}
@@ -507,36 +482,98 @@ export function CameraCaptureScreen({
               testID="camera-live-preview"
             />
           ) : (
-            <View accessibilityLabel="Simulator fixture preview area" style={styles.fixturePreview}>
-              <Text style={styles.fixturePreviewText}>READY FOR A FIXTURE PREVIEW</Text>
-            </View>
+            <MockMedia
+              caption={t('No physical image was captured.')}
+              kind="still"
+              title={t('Synthetic still fixture')}
+            />
           )}
-          <Pressable
-            accessibilityHint="Takes one still image and opens a preview"
-            accessibilityLabel="Take still image"
-            accessibilityRole="button"
-            accessibilityState={{ busy: state.status === 'capturing', disabled: !cameraReady }}
-            disabled={!cameraReady || state.status === 'capturing'}
+          <ActionButton
+            accessibilityHint={t('Takes one still image and opens a preview')}
+            accessibilityLabel={t('Take still image')}
+            busy={view.status === 'capturing'}
+            disabled={!cameraReady}
+            full
+            label={view.status === 'capturing' ? t('Capturing…') : t('Take still image')}
             onPress={capture}
-            style={[
-              styles.shutter,
-              (!cameraReady || state.status === 'capturing') && styles.disabledControl,
-            ]}
             testID="camera-capture"
-          >
-            <Text style={styles.shutterText}>
-              {state.status === 'capturing' ? 'Capturing…' : 'Take still image'}
-            </Text>
-          </Pressable>
-          {settingsError ? <Text style={styles.errorText}>{settingsError}</Text> : null}
+            variant="primary"
+          />
+          {settingsError ? <Text style={styles.errorText}>{t(settingsError)}</Text> : null}
         </View>
       )}
-    </View>
+
+      {revealState !== 'locked' &&
+      (view.status === 'ready' || view.status === 'preview' || view.status === 'saved') ? (
+        <RevealEducationPanel
+          onAction={onOpenArchive}
+          state={revealState}
+          surface="capture"
+          testID={`capture-reveal-${revealState}`}
+        />
+      ) : null}
+
+      <Separator />
+      <ContributionStatusPanel status={contributionStatus} testID="camera-contribution-status" />
+      {onRecordClip ? (
+        <ActionButton
+          full
+          label={
+            view.status === 'ready' && platform.supportsVideoRecording !== false
+              ? t('Record a 15-second clip')
+              : platform.kind === 'demo'
+                ? t('Open sample clip path')
+                : t('Open clip capture options')
+          }
+          onPress={onRecordClip}
+          testID="camera-record-clip"
+        />
+      ) : null}
+    </ScrollView>
   );
+}
+
+export type CameraDebugScenario =
+  'permission' | 'denied' | 'loading' | 'preview' | 'saved' | 'error';
+
+function forcedCaptureState(scenario: CameraDebugScenario): CaptureState {
+  const fixturePreview = {
+    uri: '',
+    metadata: {
+      byteLength: 0,
+      capturedAt: '2026-09-27T10:24:00.000Z',
+      format: 'jpg' as const,
+      height: 900,
+      id: 'debug-still-fixture',
+      mimeType: 'image/jpeg' as const,
+      source: 'demo-fixture' as const,
+      width: 1200,
+    },
+  };
+  const base: CaptureState = { ...initialCaptureState };
+  switch (scenario) {
+    case 'permission':
+      return { ...base, status: 'permission-undecided' };
+    case 'denied':
+      return { ...base, status: 'permission-denied' };
+    case 'loading':
+      return { ...base, status: 'checking' };
+    case 'preview':
+      return { ...base, status: 'preview', activePreview: fixturePreview };
+    case 'saved':
+      return { ...base, status: 'saved', activePreview: fixturePreview };
+    case 'error':
+      return {
+        ...base,
+        status: 'write-failed',
+        errorMessage: 'Still not saved. No contribution was submitted.',
+      };
+  }
 }
 
 function StatusPanel({
   actionLabel,
+  alert = false,
   body,
   onAction,
   onSecondaryAction,
@@ -545,6 +582,7 @@ function StatusPanel({
   title,
 }: {
   actionLabel?: string;
+  alert?: boolean;
   body: string;
   onAction?: () => void | Promise<void>;
   onSecondaryAction?: () => void | Promise<void>;
@@ -553,22 +591,18 @@ function StatusPanel({
   title: string;
 }) {
   return (
-    <View accessibilityLiveRegion="polite" style={styles.statusPanel} testID={testID}>
+    <View
+      accessibilityLiveRegion="polite"
+      style={[styles.statusPanel, alert && styles.alertPanel]}
+      testID={testID}
+    >
       <Text style={styles.statusTitle}>{title}</Text>
       <Text style={styles.statusBody}>{body}</Text>
       {actionLabel && onAction ? (
-        <Pressable accessibilityRole="button" onPress={onAction} style={styles.actionButton}>
-          <Text style={styles.actionButtonText}>{actionLabel}</Text>
-        </Pressable>
+        <ActionButton label={actionLabel} onPress={onAction} variant="primary" />
       ) : null}
       {secondaryActionLabel && onSecondaryAction ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={onSecondaryAction}
-          style={styles.secondaryButton}
-        >
-          <Text style={styles.secondaryButtonText}>{secondaryActionLabel}</Text>
-        </Pressable>
+        <ActionButton label={secondaryActionLabel} onPress={onSecondaryAction} />
       ) : null}
     </View>
   );
@@ -593,68 +627,65 @@ function PreviewPanel({
   saved: boolean;
   saving: boolean;
 }) {
+  const { t } = useI18n();
+  if (saved) {
+    return (
+      <View style={styles.previewArea} testID="camera-preview-panel">
+        <View accessibilityLiveRegion="polite" style={styles.statusPanel} testID="camera-saved">
+          <Text style={styles.statusTitle}>{t('Saved locally')}</Text>
+          <Text style={styles.statusBody}>
+            {t('Saved locally. No clip uploaded; allowance unchanged.')}
+          </Text>
+          <Text style={styles.previewMeta}>
+            {metadata.width} × {metadata.height} · {metadata.format.toUpperCase()} ·{' '}
+            {t('metadata only')}
+          </Text>
+          <ActionButton label={t('Take another still')} onPress={onRetake} variant="primary" />
+        </View>
+      </View>
+    );
+  }
   return (
     <View style={styles.previewArea} testID="camera-preview-panel">
       {demo ? (
-        <View
-          accessibilityLabel="Simulator fixture still preview"
-          style={[styles.fixturePreview, styles.previewFixture]}
-          testID="camera-demo-preview"
-        >
-          <Text style={styles.fixturePreviewText}>FIXTURE STILL</Text>
-          <Text style={styles.fixturePreviewSubtext}>No physical image was captured</Text>
+        <View testID="camera-demo-preview">
+          <MockMedia
+            caption={t('No physical image was captured.')}
+            kind="still"
+            title={t('Synthetic still fixture')}
+          />
         </View>
       ) : (
         <Image
-          accessibilityLabel="Captured still preview"
+          accessibilityLabel={t('Captured still preview')}
           source={{ uri: previewUri }}
-          style={[styles.stillPreview, styles.previewImage]}
+          style={styles.stillPreview}
         />
       )}
       {metadata.source === 'file' ? (
         <Text style={styles.previewMeta}>
-          FILE FALLBACK · selected locally, not camera-captured
+          {t('FILE FALLBACK · selected locally, not camera-captured')}
         </Text>
       ) : null}
       <Text style={styles.previewMeta}>
         {metadata.width} × {metadata.height} · {metadata.format.toUpperCase()}
+        {demo ? ` · ${t('synthetic')}` : ''}
       </Text>
-      {saved ? (
-        <Text style={styles.savedText}>Saved locally. Metadata only is retained.</Text>
-      ) : null}
-      {saved ? (
-        <Pressable accessibilityRole="button" onPress={onRetake} style={styles.secondaryButton}>
-          <Text style={styles.secondaryButtonText}>Take another still</Text>
-        </Pressable>
-      ) : (
-        <View style={styles.previewActions}>
-          <Pressable accessibilityRole="button" onPress={onRetake} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>Retake</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ busy: saving, disabled: saving }}
-            disabled={saving}
-            onPress={onAccept}
-            style={[styles.actionButton, saving && styles.disabledControl]}
-          >
-            <Text style={styles.actionButtonText}>{saving ? 'Saving…' : 'Use this still'}</Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" onPress={onDiscard} style={styles.discardButton}>
-            <Text style={styles.discardButtonText}>Discard</Text>
-          </Pressable>
-        </View>
-      )}
+      <ButtonRow>
+        <ActionButton label={t('Retake')} onPress={onRetake} />
+        <ActionButton
+          busy={saving}
+          label={saving ? t('Saving…') : t('Use this still')}
+          onPress={onAccept}
+          variant="primary"
+        />
+        <ActionButton label={t('Discard')} onPress={onDiscard} variant="quiet" />
+      </ButtonRow>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 18, padding: 24 },
-  heading: { gap: 7 },
-  eyebrow: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 30, fontWeight: '700' },
-  intro: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   demoNotice: {
     backgroundColor: COLORS.deep,
     borderColor: COLORS.edge,
@@ -663,51 +694,20 @@ const styles = StyleSheet.create({
     gap: 4,
     padding: 12,
   },
-  videoButton: {
-    alignItems: 'center',
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  videoButtonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
   demoNoticeTitle: { color: COLORS.edge, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   demoNoticeText: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
   statusPanel: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,
-    borderRadius: 10,
+    borderRadius: 9,
     borderWidth: 1,
     gap: 12,
-    padding: 18,
+    padding: 17,
   },
-  statusTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
+  alertPanel: { borderColor: COLORS.accent, borderLeftWidth: 3 },
+  statusTitle: { color: COLORS.ink, fontSize: 19, fontWeight: '700' },
   statusBody: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  actionButton: {
-    alignItems: 'center',
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
-    minHeight: 48,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  actionButtonText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
-  secondaryButton: {
-    alignItems: 'center',
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 48,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  secondaryButtonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  captureArea: { flex: 1, gap: 14, minHeight: 420 },
+  captureArea: { gap: 14 },
   accessGranted: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,
@@ -719,64 +719,21 @@ const styles = StyleSheet.create({
   accessGrantedTitle: { color: COLORS.accent, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   accessGrantedText: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
   livePreview: {
+    aspectRatio: 3 / 4,
     backgroundColor: COLORS.deep,
     borderRadius: 10,
-    flex: 1,
-    minHeight: 300,
+    maxHeight: 420,
     overflow: 'hidden',
-  },
-  fixturePreview: {
-    alignItems: 'center',
-    backgroundColor: COLORS.deep,
-    borderColor: COLORS.edge,
-    borderRadius: 10,
-    borderStyle: 'dashed',
-    borderWidth: 1,
-    flex: 1,
-    gap: 8,
-    justifyContent: 'center',
-    minHeight: 300,
-    padding: 24,
-  },
-  fixturePreviewText: {
-    color: COLORS.edge,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
-  fixturePreviewSubtext: { color: COLORS.muted, fontSize: 12, textAlign: 'center' },
-  shutter: {
-    alignItems: 'center',
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
-    justifyContent: 'center',
-    minHeight: 52,
-    padding: 14,
-  },
-  shutterText: { color: COLORS.deep, fontSize: 15, fontWeight: '800' },
-  disabledControl: { opacity: 0.48 },
-  errorText: { color: COLORS.edge, fontSize: 13, textAlign: 'center' },
-  previewArea: { flex: 1, flexShrink: 1, gap: 12, minHeight: 0 },
-  previewFixture: {
-    flex: 0,
-    flexGrow: 0,
-    flexShrink: 1,
-    height: 360,
-    maxHeight: 360,
-    minHeight: 0,
-  },
-  stillPreview: {
-    backgroundColor: COLORS.deep,
-    borderRadius: 10,
-    flex: 1,
-    minHeight: 300,
     width: '100%',
   },
-  previewImage: { flex: 0, flexGrow: 0, flexShrink: 1, height: 360, maxHeight: 360, minHeight: 0 },
+  errorText: { color: COLORS.edge, fontSize: 13, textAlign: 'center' },
+  previewArea: { gap: 12 },
+  stillPreview: {
+    aspectRatio: 3 / 4,
+    backgroundColor: COLORS.deep,
+    borderRadius: 10,
+    maxHeight: 420,
+    width: '100%',
+  },
   previewMeta: { color: COLORS.muted, fontSize: 12, textAlign: 'center' },
-  previewActions: { gap: 10 },
-  savedText: { color: COLORS.accent, fontSize: 13, textAlign: 'center' },
-  discardButton: { alignItems: 'center', minHeight: 44, justifyContent: 'center', padding: 8 },
-  discardButtonText: { color: COLORS.edge, fontSize: 13, fontWeight: '700' },
 });

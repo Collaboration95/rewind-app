@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { useI18n } from '../i18n/LanguageProvider';
 import { COLORS } from '../theme';
 import { reminderService, type ReminderService, type ReminderSnapshot } from './reminder-service';
 
 export function ReminderSettings({ service = reminderService }: { service?: ReminderService }) {
+  const { t } = useI18n();
   const [reminder, setReminder] = useState<ReminderSnapshot | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,12 +44,14 @@ export function ReminderSettings({ service = reminderService }: { service?: Remi
 
   return (
     <View style={styles.panel} testID="settings-reminders">
-      <Text style={styles.label}>LOCAL REMINDERS</Text>
+      <Text style={styles.label}>{t('LOCAL REMINDERS')}</Text>
       <Text accessibilityRole="header" style={styles.title}>
-        Sunday 7pm reminder
+        {t('Sunday 7pm reminder')}
       </Text>
       <Text style={styles.body}>
-        This is a device-only reminder. It does not use remote push tokens or cloud scheduling.
+        {t(
+          'This is a device-only reminder. It does not use remote push tokens or cloud scheduling.',
+        )}
       </Text>
       {reminder ? (
         <Text
@@ -58,30 +62,32 @@ export function ReminderSettings({ service = reminderService }: { service?: Remi
           ]}
           testID={`reminder-status-${reminder.availability}`}
         >
-          {reminder.message}
+          {t(reminder.message)}
         </Text>
       ) : (
         <Text accessibilityLiveRegion="polite" style={styles.status}>
-          Checking local notification support…
+          {t('Checking local notification support…')}
         </Text>
       )}
       {unavailable ? (
         <Text style={styles.detail} testID="reminder-unsupported">
-          Web browsers cannot schedule this local notification.
+          {t('Web browsers cannot schedule this local notification.')}
         </Text>
       ) : null}
       {denied ? (
         <Text style={styles.detail} testID="reminder-permission-denied">
-          Rewind cannot enable the reminder until notifications are allowed in device settings.
+          {t(
+            'Rewind cannot enable the reminder until notifications are allowed in device settings.',
+          )}
         </Text>
       ) : null}
       {undecided ? (
         <Text style={styles.detail} testID="reminder-permission-undecided">
-          Enabling the reminder will ask for notification permission.
+          {t('Enabling the reminder will ask for notification permission.')}
         </Text>
       ) : null}
       <Pressable
-        accessibilityLabel="Sunday 7pm reminder"
+        accessibilityLabel={t('Sunday 7pm reminder')}
         accessibilityRole="switch"
         aria-checked={reminder?.enabled ?? false}
         accessibilityState={{
@@ -94,11 +100,13 @@ export function ReminderSettings({ service = reminderService }: { service?: Remi
         testID="reminder-toggle"
       >
         <Text style={styles.primaryButtonText}>
-          {pending
-            ? 'Updating reminder…'
-            : reminder?.enabled
-              ? 'Disable reminder'
-              : 'Enable reminder'}
+          {t(
+            pending
+              ? 'Updating reminder…'
+              : reminder?.enabled
+                ? 'Disable reminder'
+                : 'Enable reminder',
+          )}
         </Text>
       </Pressable>
       <Pressable
@@ -108,11 +116,11 @@ export function ReminderSettings({ service = reminderService }: { service?: Remi
         style={[styles.outlineButton, (!reminder || pending || unavailable) && styles.disabled]}
         testID="reminder-test"
       >
-        <Text style={styles.outlineButtonText}>Send a test reminder now</Text>
+        <Text style={styles.outlineButtonText}>{t('Send a test reminder now')}</Text>
       </Pressable>
       {error ? (
         <Text accessibilityRole="alert" style={styles.error}>
-          {error}
+          {t(error)}
         </Text>
       ) : null}
     </View>
@@ -123,13 +131,13 @@ const styles = StyleSheet.create({
   panel: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,
-    borderRadius: 10,
+    borderRadius: 9,
     borderWidth: 1,
     gap: 10,
-    padding: 16,
+    padding: 17,
   },
-  label: { color: COLORS.muted, fontSize: 12, fontWeight: '800', letterSpacing: 1.4 },
-  title: { color: COLORS.ink, fontSize: 20, fontWeight: '800' },
+  label: { color: COLORS.muted, fontSize: 11, fontWeight: '700', letterSpacing: 1.4 },
+  title: { color: COLORS.ink, fontSize: 19, fontWeight: '700' },
   body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   status: { fontSize: 14, lineHeight: 21 },
   statusPositive: { color: COLORS.ink },
@@ -144,11 +152,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
-  primaryButtonText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
+  primaryButtonText: { color: COLORS.accentInk, fontSize: 14, fontWeight: '800' },
   outlineButton: {
     alignItems: 'center',
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.edge,
+    borderColor: COLORS.line,
     borderRadius: 8,
     borderWidth: 1,
     justifyContent: 'center',

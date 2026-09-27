@@ -22,9 +22,9 @@ const cycle: Cycle = {
 
 describe('reveal education', () => {
   it.each([
-    ['locked', 'Add a moment'],
+    ['locked', 'Open Archive'],
     ['delayed', 'Open Archive'],
-    ['released', 'Open Archive'],
+    ['released', 'Watch in Archive'],
   ] as const)('gives Home one honest %s next action', async (state, actionLabel) => {
     const onAction = jest.fn();
     const result = await render(

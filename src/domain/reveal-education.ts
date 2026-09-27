@@ -13,68 +13,68 @@ export interface RevealEducationCopy {
 const COPY: Record<RevealEducationSurface, Record<RevealEducationState, RevealEducationCopy>> = {
   home: {
     locked: {
-      actionLabel: 'Add a moment',
-      body: 'Contributions are collecting and locked. Add a moment now; everyone sees media only after the group reveal.',
+      actionLabel: 'Open Archive',
+      body: 'Media stays hidden until the film is released.',
       title: 'Sealed until reveal',
     },
     delayed: {
       actionLabel: 'Open Archive',
-      body: 'The group film is delayed while processing is resolved. Check Archive for the latest release state.',
+      body: 'Check Archive again later.',
       title: 'Reveal delayed',
     },
     processing: {
       actionLabel: 'Open Archive',
-      body: 'The group film is being prepared. Open Archive to check again after processing completes.',
-      title: 'Preparing the reveal',
+      body: 'Processing. Playback is unavailable.',
+      title: 'Preparing the group film',
     },
     released: {
-      actionLabel: 'Open Archive',
-      body: 'The group film is released. Open Archive to watch the published result.',
-      title: 'Film released',
+      actionLabel: 'Watch in Archive',
+      body: 'Open Archive to watch.',
+      title: 'Your group film is ready',
     },
   },
   capture: {
     locked: {
-      actionLabel: 'Take a still image',
-      body: 'Your next moment can be captured now, but its media stays sealed until the group reveal.',
-      title: 'Capture now, reveal later',
+      actionLabel: 'Open Archive',
+      body: 'Media stays hidden until the film is released.',
+      title: 'Sealed until reveal',
     },
     delayed: {
       actionLabel: 'Open Archive',
-      body: 'The group film is delayed. You can still submit a moment; check Archive for release progress.',
+      body: 'Check Archive again later.',
       title: 'Reveal delayed',
     },
     processing: {
       actionLabel: 'Open Archive',
-      body: 'The group film is being prepared. Open Archive to check release progress.',
-      title: 'Preparing the reveal',
+      body: 'Processing. Playback is unavailable.',
+      title: 'Preparing the group film',
     },
     released: {
-      actionLabel: 'Open Archive',
-      body: 'This cycle is released. Open Archive to watch the published group film.',
-      title: 'Film released',
+      actionLabel: 'Watch in Archive',
+      body: 'Open Archive to watch.',
+      title: 'Your group film is ready',
     },
   },
   archive: {
     locked: {
       actionLabel: 'Check premiere again',
-      body: 'The group film has not been released. Playback and media links remain unavailable until reveal.',
+      body: 'Media stays hidden until the film is released.',
       title: 'Sealed until reveal',
     },
     delayed: {
       actionLabel: 'Check premiere again',
-      body: 'The group film is delayed while processing is resolved. No playback or download is available yet.',
-      title: 'Film delayed',
+      body: 'Processing needs attention. No playback or download yet.',
+      title: 'Reveal delayed',
     },
     processing: {
       actionLabel: 'Check premiere again',
-      body: 'Your accepted moments are compiling. Playback and downloads appear only after release is published.',
-      title: 'Preparing your group film',
+      body: 'Processing. Playback is unavailable.',
+      title: 'Preparing the group film',
     },
     released: {
       actionLabel: 'Play group film',
-      body: 'The released group film is ready above. Start playback when you are ready.',
-      title: 'Film released',
+      body: 'Released for this group. Play it when you are ready.',
+      title: 'Your group film is ready',
     },
   },
 };

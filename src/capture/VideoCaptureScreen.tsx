@@ -1,10 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
+import type { ScreenDebug } from '../debug/DebugProvider';
+import { useI18n } from '../i18n/LanguageProvider';
 import { COLORS } from '../theme';
+import {
+  ActionButton,
+  ButtonRow,
+  InlineError,
+  Micro,
+  MockMedia,
+  Notice,
+  ScreenIntro,
+  StepLine,
+  kitStyles,
+} from '../ui/kit';
 import type {
   CaptureMode,
   ClipUploadInput,
@@ -53,7 +66,22 @@ export interface VideoCaptureScreenProps {
   runtimeClient?: RuntimeClient | null;
   onBack?: () => void;
   onContributionDeleted?: () => void;
+  /** Settings debug mode: forces a study state without touching upload data. */
+  debug?: ScreenDebug<VideoDebugScenario>;
+  /** Metadata-only fixture shown instead of the persisted status in debug mode. */
+  contributionStatusOverride?: ContributionStatus;
 }
+
+export type VideoDebugScenario =
+  | 'permission'
+  | 'denied'
+  | 'preview'
+  | 'uploading'
+  | 'queued'
+  | 'processing'
+  | 'sealed'
+  | 'error'
+  | 'quota';
 
 function isVideoPlatform(
   platform: CameraPlatform,
@@ -68,6 +96,7 @@ function isVideoPlatform(
 interface ContributionFailure {
   message: string;
   retryable: boolean;
+  reason?: 'quota_exceeded';
 }
 
 /**
@@ -81,6 +110,9 @@ function classifyContributionFailure(error: unknown): ContributionFailure {
     return { message, retryable: error.retryable };
   }
   if (error instanceof LocalRuntimeError) {
+    if (error.code === 'quota_exceeded') {
+      return { message, retryable: false, reason: 'quota_exceeded' };
+    }
     if (error.status !== undefined && error.status >= 400 && error.status < 500) {
       return { message, retryable: false };
     }
@@ -112,11 +144,15 @@ function isUploadCancellation(error: unknown): boolean {
 }
 
 export function VideoCaptureScreen({
+  contributionStatusOverride,
+  debug,
   onBack,
   onContributionDeleted,
   platform: platformProp,
   runtimeClient = null,
 }: VideoCaptureScreenProps = {}) {
+  const { t } = useI18n();
+  const [debugNotice, setDebugNotice] = useState<string | null>(null);
   const cameraRef = useRef<CameraView>(null);
   const getCameraRef = useCallback(() => cameraRef.current, []);
   const platform = useMemo(
@@ -1029,22 +1065,117 @@ export function VideoCaptureScreen({
     runtimeClient,
     setContributionStatus,
   ]);
-  return (
-    <View style={styles.screen} testID="video-capture-screen">
-      <View style={styles.header}>
-        {onBack ? (
-          <Pressable accessibilityRole="button" onPress={leaveCapture} style={styles.backButton}>
-            <Text style={styles.backText}>Back to stills</Text>
-          </Pressable>
+  const header = (
+    <View style={styles.header}>
+      {onBack ? (
+        <ActionButton
+          accessibilityLabel={t('Back to stills')}
+          label={`← ${t('Back to stills')}`}
+          onPress={debug?.scenario ? onBack : leaveCapture}
+          variant="quiet"
+        />
+      ) : null}
+      <ScreenIntro
+        body={t('Portrait video with audio · up to 15 seconds.')}
+        eyebrow={t('CAMERA / CLIP')}
+        headingTestID="route-heading-video"
+        title={t('Contribute a clip.')}
+      />
+    </View>
+  );
+
+  if (debug?.scenario) {
+    const scenario = debug.scenario;
+    const submitFlow = (): void => {
+      setDebugNotice(null);
+      debug.play(['uploading', 'queued', 'processing', 'sealed']);
+    };
+    return (
+      <ScrollView
+        contentContainerStyle={kitStyles.content}
+        style={kitStyles.scroll}
+        testID="video-capture-screen"
+      >
+        {header}
+        {scenario === 'permission' || scenario === 'denied' ? (
+          <Panel
+            actionLabel="Check again"
+            body="Physical capture needs both permissions. This is a simulation."
+            onAction={() => debug.set('live')}
+            testID={scenario === 'denied' ? 'video-permission-denied' : 'video-permission'}
+            title={
+              scenario === 'denied' ? 'Recording access denied' : 'Allow camera and microphone'
+            }
+          />
         ) : null}
-        <Text style={styles.eyebrow}>CLIP CAPTURE</Text>
-        <Text accessibilityRole="header" style={styles.title}>
-          Record a contribution
-        </Text>
-        <Text style={styles.body}>
-          Portrait video with microphone audio. Maximum duration: 15 seconds.
-        </Text>
-      </View>
+        {scenario === 'preview' ? (
+          <View style={styles.reviewStack} testID="video-review">
+            <StepLine
+              accessibilityLabel={t('Step {step} of 4', { step: 2 })}
+              active={1}
+              steps={[t('Capture'), t('Review'), t('Submit'), t('Sealed')]}
+            />
+            <MockMedia
+              caption={t('No physical video was captured.')}
+              kind="clip"
+              title={t('Clip preview fixture')}
+            />
+            <Micro>{t('2.0 seconds · simulated physical-capture review')}</Micro>
+            <ButtonRow>
+              <ActionButton label={t('Retake')} onPress={() => debug.set('live')} />
+              <ActionButton label={t('Submit clip')} onPress={submitFlow} variant="primary" />
+              <ActionButton
+                label={t('Discard')}
+                onPress={() => debug.set('live')}
+                variant="quiet"
+              />
+            </ButtonRow>
+          </View>
+        ) : null}
+        {scenario === 'uploading' ? (
+          <Panel
+            actionLabel="Cancel upload"
+            body="Uploading sample; film not yet released."
+            onAction={() => {
+              setDebugNotice(t('Upload cancelled. Review the clip before retrying.'));
+              debug.set('preview');
+            }}
+            testID="video-uploading"
+            title="Uploading clip…"
+          />
+        ) : null}
+        {contributionStatusOverride ? (
+          <ContributionStatusPanel
+            onDelete={
+              scenario === 'sealed'
+                ? () => {
+                    setDebugNotice(t('Sample deleted; allowance restored.'));
+                    debug.set('live');
+                  }
+                : undefined
+            }
+            onRetry={
+              scenario === 'error'
+                ? () => debug.play(['queued', 'processing', 'sealed'])
+                : undefined
+            }
+            status={contributionStatusOverride}
+            testID="camera-contribution-status"
+          />
+        ) : null}
+        {debugNotice ? <Notice>{debugNotice}</Notice> : null}
+      </ScrollView>
+    );
+  }
+
+  return (
+    <ScrollView
+      contentContainerStyle={kitStyles.content}
+      keyboardShouldPersistTaps="handled"
+      style={kitStyles.scroll}
+      testID="video-capture-screen"
+    >
+      {header}
       {access === 'checking' ? (
         <Panel title="Checking recording access…" body="Camera and microphone are being checked." />
       ) : null}
@@ -1056,7 +1187,7 @@ export function VideoCaptureScreen({
             demoSession?.session
               ? creatingSyntheticClip
                 ? 'Preparing synthetic Demo clip…'
-                : 'Create synthetic Demo clip'
+                : 'Create sample clip'
               : platform.supportsFileFallback && platform.pickVideoFile
                 ? 'Choose a video file'
                 : undefined
@@ -1072,15 +1203,23 @@ export function VideoCaptureScreen({
                 : undefined
           }
           testID="video-unsupported"
-          title="Recording is not supported here"
+          title={
+            platform.kind === 'demo' &&
+            runtimeClient?.createSyntheticDemoClip &&
+            demoSession?.session
+              ? 'Synthetic clip path'
+              : 'Recording is not supported here'
+          }
           body={
             platform.kind === 'demo' &&
             runtimeClient?.createSyntheticDemoClip &&
             demoSession?.session
-              ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
+              ? 'Create a fresh, non-sensitive synthetic clip to see queue, processing and sealing. Use a physical device to record a real contribution.'
               : platform.supportsFileFallback && platform.pickVideoFile
                 ? 'Live recording is not supported here. Choose a portrait MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
-                : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.'
+                : !runtimeClient
+                  ? 'Offline sample cannot record or upload. Connect the local runtime.'
+                  : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.'
           }
         />
       ) : null}
@@ -1121,7 +1260,7 @@ export function VideoCaptureScreen({
               : requestAccess
           }
           testID="video-permission-denied"
-          title="Camera or microphone access is denied"
+          title="Recording access denied"
           body="Recording needs both permissions. Try again or choose a labelled video file fallback when it is available."
         />
       ) : null}
@@ -1144,6 +1283,11 @@ export function VideoCaptureScreen({
       ) : null}
       {access === 'ready' && !clip && !recording ? (
         <View style={styles.captureArea}>
+          <StepLine
+            accessibilityLabel={t('Step {step} of 4', { step: 1 })}
+            active={0}
+            steps={[t('Capture'), t('Review'), t('Submit'), t('Sealed')]}
+          />
           <CameraView
             facing="back"
             mode="video"
@@ -1151,112 +1295,111 @@ export function VideoCaptureScreen({
             style={styles.preview}
             testID="video-live-preview"
           />
-          <Pressable
-            accessibilityRole="button"
+          <ActionButton
+            full
+            label={t('Start recording')}
             onPress={() => void startRecording()}
-            style={styles.recordButton}
             testID="video-record"
-          >
-            <Text style={styles.recordButtonText}>Start recording</Text>
-          </Pressable>
+            variant="primary"
+          />
         </View>
       ) : null}
       {recording ? (
         <View style={styles.recordingPanel} testID="video-recording">
-          <Text style={styles.recordingTitle}>Recording…</Text>
-          <Text style={styles.timer}>{Math.floor(elapsedSeconds)} / 15 seconds</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={cancelRecording}
-            style={styles.outlineButton}
-          >
-            <Text style={styles.outlineText}>Cancel recording</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
+          <Text accessibilityLiveRegion="polite" style={styles.recordingTitle}>
+            {t('Recording…')}
+          </Text>
+          <Text style={styles.timer}>
+            {t('{elapsed} / 15 seconds', { elapsed: Math.floor(elapsedSeconds) })}
+          </Text>
+          <ActionButton label={t('Cancel recording')} onPress={cancelRecording} />
+          <ActionButton
+            label={t('Stop and review')}
             onPress={() => recorder?.stop()}
-            style={styles.recordButton}
-          >
-            <Text style={styles.recordButtonText}>Stop and review</Text>
-          </Pressable>
+            variant="primary"
+          />
         </View>
       ) : null}
       {review && clip && !recording ? (
         <View style={styles.reviewPanel} testID="video-review">
-          <Text style={styles.panelTitle}>Review your clip</Text>
+          <StepLine
+            accessibilityLabel={t('Step {step} of 4', { step: 2 })}
+            active={1}
+            steps={[t('Capture'), t('Review'), t('Submit'), t('Sealed')]}
+          />
+          <Text style={styles.panelTitle}>{t('Review your clip')}</Text>
           <Text style={styles.body}>
             {clip.source === 'file'
-              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio track detected; server verifies`
-              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio included`}
+              ? t(
+                  'Selected MP4 {seconds} seconds · {width} × {height} portrait · audio track detected; server verifies',
+                  {
+                    height: clip.height,
+                    seconds: clip.durationSeconds.toFixed(1),
+                    width: clip.width,
+                  },
+                )
+              : t('Recorded {seconds} seconds · {width} × {height} portrait · audio included', {
+                  height: clip.height,
+                  seconds: clip.durationSeconds.toFixed(1),
+                  width: clip.width,
+                })}
           </Text>
           {clip.source === 'file' ? (
             <Text style={styles.body}>
-              FILE FALLBACK · selected locally, not recorded in Rewind
+              {t('FILE FALLBACK · selected locally, not recorded in Rewind')}
             </Text>
           ) : null}
-          <Text style={styles.fieldLabel}>Start seconds</Text>
+          <Text style={styles.fieldLabel}>{t('Start seconds')}</Text>
           <TextInput
+            accessibilityLabel={t('Start seconds')}
             keyboardType="decimal-pad"
             onChangeText={setStartText}
             style={styles.input}
             value={startText}
           />
-          <Text style={styles.fieldLabel}>End seconds</Text>
+          <Text style={styles.fieldLabel}>{t('End seconds')}</Text>
           <TextInput
+            accessibilityLabel={t('End seconds')}
             keyboardType="decimal-pad"
             onChangeText={setEndText}
             style={styles.input}
             value={endText}
           />
-          <Text style={styles.fieldLabel}>Original capture mode</Text>
+          <Text style={styles.fieldLabel}>{t('Original capture mode')}</Text>
           <View style={styles.modeRow}>
             {(['soft-focus', 'high-contrast'] as const).map((option) => (
               <Pressable
                 accessibilityRole="radio"
-                accessibilityState={{ selected: mode === option }}
+                accessibilityState={{ checked: mode === option, selected: mode === option }}
+                aria-checked={mode === option}
                 key={option}
                 onPress={() => setMode(option)}
                 style={[styles.modeButton, mode === option && styles.modeSelected]}
               >
-                <Text style={styles.outlineText}>
-                  {option === 'soft-focus' ? 'Soft Focus' : 'High Contrast'}
+                <Text style={[styles.outlineText, mode === option && styles.modeSelectedText]}>
+                  {option === 'soft-focus' ? t('Soft Focus') : t('High Contrast')}
                 </Text>
               </Pressable>
             ))}
           </View>
-          <Pressable accessibilityRole="button" onPress={saveReview} style={styles.outlineButton}>
-            <Text style={styles.outlineText}>Save trim and mode</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void retake()}
-            style={styles.outlineButton}
-          >
-            <Text style={styles.outlineText}>Retake</Text>
-          </Pressable>
+          <ActionButton label={t('Save trim and mode')} onPress={saveReview} />
+          <ActionButton label={t('Retake')} onPress={() => void retake()} />
           {uploadProgress.status === 'complete' && !contributionFailed ? (
-            <Text style={styles.success}>Upload queued as one pending contribution.</Text>
+            <Text style={styles.success}>{t('Upload queued as one pending contribution.')}</Text>
           ) : uploadProgress.status === 'failed' || contributionFailed ? null : (
-            <Pressable
-              accessibilityRole="button"
+            <ActionButton
+              busy={uploadProgress.status === 'uploading'}
+              label={
+                uploadProgress.status === 'uploading'
+                  ? t('Uploading {percent}%', { percent: uploadProgress.percent })
+                  : t('Upload clip')
+              }
               onPress={() => void upload()}
-              style={styles.primaryButton}
-            >
-              <Text style={styles.primaryText}>
-                {uploadProgress.status === 'uploading'
-                  ? `Uploading ${uploadProgress.percent}%`
-                  : 'Upload clip'}
-              </Text>
-            </Pressable>
+              variant="primary"
+            />
           )}
           {uploadProgress.status === 'uploading' ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void cancelUpload()}
-              style={styles.outlineButton}
-            >
-              <Text style={styles.outlineText}>Cancel upload</Text>
-            </Pressable>
+            <ActionButton label={t('Cancel upload')} onPress={() => void cancelUpload()} />
           ) : null}
         </View>
       ) : null}
@@ -1265,15 +1408,11 @@ export function VideoCaptureScreen({
         onDelete={canDeleteContribution ? deleteContributionForReplacement : undefined}
         onRetry={canRetryContribution ? () => void retryUpload() : undefined}
         retryLabel="Retry upload"
-        status={contributionStatus}
+        status={contributionStatusOverride ?? contributionStatus}
         testID="camera-contribution-status"
       />
-      {error && access !== 'error' ? (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {error}
-        </Text>
-      ) : null}
-    </View>
+      {error && access !== 'error' ? <InlineError>{t(error)}</InlineError> : null}
+    </ScrollView>
   );
 }
 
@@ -1292,31 +1431,26 @@ function Panel({
   testID?: string;
   title: string;
 }) {
+  const { t } = useI18n();
   return (
     <View style={styles.panel} testID={testID}>
-      <Text style={styles.panelTitle}>{title}</Text>
-      <Text style={styles.body}>{body}</Text>
+      <Text style={styles.panelTitle}>{t(title)}</Text>
+      <Text style={styles.body}>{t(body)}</Text>
       {actionLabel && onAction ? (
-        <Pressable
-          accessibilityRole="button"
+        <ActionButton
           disabled={disabled}
+          label={t(actionLabel)}
           onPress={onAction}
-          style={styles.outlineButton}
-        >
-          <Text style={styles.outlineText}>{actionLabel}</Text>
-        </Pressable>
+          variant="primary"
+        />
       ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 16, padding: 24 },
-  header: { gap: 7 },
-  backButton: { alignSelf: 'flex-start', paddingVertical: 4 },
-  backText: { color: COLORS.accent, fontSize: 14, fontWeight: '700' },
-  eyebrow: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 28, fontWeight: '700' },
+  header: { alignItems: 'flex-start', gap: 6 },
+  reviewStack: { gap: 12 },
   body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   panel: {
     backgroundColor: COLORS.paper,
@@ -1327,8 +1461,14 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   panelTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  captureArea: { flex: 1, gap: 14, minHeight: 440 },
-  preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 320 },
+  captureArea: { gap: 14 },
+  preview: {
+    aspectRatio: 9 / 16,
+    backgroundColor: COLORS.deep,
+    borderRadius: 12,
+    maxHeight: 460,
+    width: '100%',
+  },
   recordButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
@@ -1377,6 +1517,7 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   modeSelected: { backgroundColor: COLORS.accent },
+  modeSelectedText: { color: COLORS.accentInk },
   outlineButton: {
     alignItems: 'center',
     borderColor: COLORS.edge,

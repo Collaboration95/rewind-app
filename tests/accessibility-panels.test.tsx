@@ -98,16 +98,18 @@ describe('native accessibility panels', () => {
 
   it('keeps invite actions as separate native accessibility elements', async () => {
     const result = await render(<App runtimeClient={inviteRuntime()} />);
-    await result.findByText('Current member: Amber');
+    await result.findByText('Amber · synthetic member');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
 
-    const panel = result.getByTestId('settings-invites');
+    const panel = await result.findByTestId('settings-invite-generate');
     expect(panel.props.accessible).toBe(false);
     expect(result.getByRole('button', { name: 'Generate invite code' })).toBeTruthy();
-    expect(result.getByRole('button', { name: 'Accept invitation', disabled: true })).toBeTruthy();
 
     await fireEvent.press(result.getByRole('button', { name: 'Generate invite code' }));
     await result.findByText(invite.code);
     expect(result.getByRole('button', { name: 'Copy invite code' })).toBeTruthy();
+
+    await fireEvent.press(result.getByRole('button', { name: 'Have an invite?' }));
+    expect(result.getByRole('button', { name: 'Accept invitation', disabled: true })).toBeTruthy();
   });
 });

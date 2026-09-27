@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
@@ -30,7 +30,7 @@ beforeEach(async () => {
 
 async function activeApp() {
   const result = await render(<App />);
-  await result.findByRole('header', { name: 'Weekend People' });
+  await result.findByText('Weekend People · 5 members');
   return result;
 }
 
@@ -73,15 +73,14 @@ describe('local Demo access lifecycle', () => {
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).not.toBeNull();
 
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
-    expect(result.getByTestId('settings-identity')).toBeTruthy();
-    expect(result.getByText('Amber')).toBeTruthy();
+    expect(within(result.getByTestId('settings-identity')).getByText('Amber')).toBeTruthy();
     await fireEvent.press(result.getByTestId('sign-out'));
-    await result.findByRole('header', { name: 'Choose who you are showing' });
+    await result.findByRole('header', { name: 'Choose a Demo member' });
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
 
     await fireEvent.press(result.getByTestId('demo-entry-demo-2'));
-    await result.findByRole('header', { name: 'Weekend People' });
-    expect(result.getByText('Current member: Birch')).toBeTruthy();
+    await result.findByText('Weekend People · 5 members');
+    expect(result.getByText('Birch · synthetic member')).toBeTruthy();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-2');
   });
 
@@ -120,7 +119,7 @@ describe('local Demo access lifecycle', () => {
 
       await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
       await fireEvent.press(result.getByTestId('sign-out'));
-      await result.findByRole('header', { name: 'Choose who you are showing' });
+      await result.findByRole('header', { name: 'Choose a Demo member' });
 
       expect(
         JSON.parse((await AsyncStorage.getItem(CONTRIBUTION_STATUS_STORAGE_KEY)) ?? '{}'),
@@ -149,8 +148,8 @@ describe('local Demo access lifecycle', () => {
     process.env.EXPO_PUBLIC_DEMO_ACCESS = 'entry';
     try {
       const result = await render(<App />);
-      await result.findByRole('header', { name: 'Choose who you are showing' });
-      expect(result.getByText(/Pick a synthetic member to enter the local Demo/)).toBeTruthy();
+      await result.findByRole('header', { name: 'Choose a Demo member' });
+      expect(result.getByText(/Synthetic Demo members\. No real account\./)).toBeTruthy();
       result.unmount();
     } finally {
       if (previous === undefined) delete process.env.EXPO_PUBLIC_DEMO_ACCESS;
@@ -164,10 +163,10 @@ describe('local Demo access lifecycle', () => {
       new LocalRuntimeError('Demo access was not found.', 404),
     );
     const result = await render(<App runtimeClient={runtime} />);
-    await result.findByRole('header', { name: 'Weekend People' });
+    await result.findByText('Weekend People · 5 members');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByTestId('sign-out'));
-    await result.findByRole('header', { name: 'Choose who you are showing' });
+    await result.findByRole('header', { name: 'Choose a Demo member' });
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
   });
 
@@ -177,7 +176,7 @@ describe('local Demo access lifecycle', () => {
       new LocalRuntimeError('The local runtime failed to end Demo access.', 500),
     );
     const result = await render(<App runtimeClient={runtime} />);
-    await result.findByRole('header', { name: 'Weekend People' });
+    await result.findByText('Weekend People · 5 members');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByTestId('sign-out'));
 
@@ -196,11 +195,11 @@ describe('local Demo access lifecycle', () => {
       new LocalRuntimeError('This Demo access is already inactive.', 409),
     );
     const result = await render(<App runtimeClient={runtime} />);
-    await result.findByRole('header', { name: 'Weekend People' });
+    await result.findByText('Weekend People · 5 members');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByTestId('reset-demo-data'));
     await fireEvent.press(result.getByTestId('reset-confirm-action'));
-    await result.findByRole('header', { name: 'Choose who you are showing' });
+    await result.findByRole('header', { name: 'Choose a Demo member' });
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(LOCAL_GROUPS_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBeNull();
@@ -214,7 +213,7 @@ describe('local Demo access lifecycle', () => {
       new LocalRuntimeError('The local runtime failed to reset Demo data.', 500),
     );
     const result = await render(<App runtimeClient={runtime} />);
-    await result.findByRole('header', { name: 'Weekend People' });
+    await result.findByText('Weekend People · 5 members');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByTestId('reset-demo-data'));
     await fireEvent.press(result.getByTestId('reset-confirm-action'));
@@ -238,12 +237,12 @@ describe('local group creation', () => {
 
     await fireEvent.changeText(result.getByTestId('group-name-input'), 'Saturday table');
     await fireEvent.press(result.getByTestId('create-group-submit'));
-    await result.findByRole('header', { name: 'Saturday table' });
+    await result.findByText('Saturday table · 1 member');
     expect(result.getByText('What made you pause and smile?')).toBeTruthy();
     expect(await AsyncStorage.getItem(LOCAL_GROUPS_STORAGE_KEY)).toContain('Saturday table');
     await result.unmount();
     const relaunched = await render(<App />);
-    await relaunched.findByRole('header', { name: 'Saturday table' });
+    await relaunched.findByText('Saturday table · 1 member');
   });
 
   it('validates an overlong custom prompt before any local write', async () => {
@@ -271,7 +270,7 @@ describe('settings reset', () => {
 
     await fireEvent.press(result.getByTestId('reset-demo-data'));
     await fireEvent.press(result.getByTestId('reset-confirm-action'));
-    await result.findByRole('header', { name: 'Choose who you are showing' });
+    await result.findByRole('header', { name: 'Choose a Demo member' });
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(LOCAL_GROUPS_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBeNull();

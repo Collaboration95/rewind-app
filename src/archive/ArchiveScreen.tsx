@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
 import type { ReleasedArchive, ReleasedArchiveMedia, ReleasedArchivePage } from '../domain/archive';
@@ -10,7 +10,20 @@ import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
 import { useDemoSession } from '../session/DemoSessionProvider';
 import { revealStateForPremiere } from '../domain/reveal-education';
 import { RUNTIME_OFFLINE_MESSAGE, type RuntimeClient } from '../runtime/local-runtime-client';
+import type { ScreenDebug } from '../debug/DebugProvider';
+import { useI18n } from '../i18n/LanguageProvider';
 import { COLORS } from '../theme';
+import {
+  ActionButton,
+  ButtonRow,
+  Eyebrow,
+  MockMedia,
+  Notice,
+  Panel,
+  Quiet,
+  ScreenIntro,
+  kitStyles,
+} from '../ui/kit';
 import { createArchiveDownloadQueue } from './archive-download';
 
 type ArchiveState =
@@ -27,33 +40,37 @@ type ArchiveState =
 
 const EMPTY_ARCHIVE: ReleasedArchive = { films: [], clips: [] };
 
-function PublishedPlayer({ premiere }: { premiere: Extract<Premiere, { state: 'ready' }> }) {
+function PublishedPlayer({
+  groupName,
+  premiere,
+}: {
+  groupName: string | null;
+  premiere: Extract<Premiere, { state: 'ready' }>;
+}) {
+  const { t } = useI18n();
   const player = useVideoPlayer(premiere.playbackUrl, (instance) => {
     instance.loop = false;
   });
   return (
     <View style={styles.panel} testID="archive-premiere-ready">
-      <RevealEducationPanel
-        onAction={() => player.play()}
-        state="released"
-        surface="archive"
-        testID="archive-reveal-released"
-      />
-      <Text style={styles.label}>GROUP PREMIERE</Text>
-      <Text accessibilityRole="header" style={styles.title}>
-        Your capsule film
-      </Text>
-      <Text style={styles.bodyText}>
-        Released for this group. Play it together when you are ready.
+      <Eyebrow>{t('RELEASED FOR THIS GROUP')}</Eyebrow>
+      <Text accessibilityRole="header" style={styles.sectionTitle}>
+        {groupName ?? t('Your group film')}
       </Text>
       <VideoView
         accessible
-        accessibilityLabel="Published capsule film player"
+        accessibilityLabel={t('Published capsule film player')}
         contentFit="contain"
         nativeControls
         player={player}
         style={styles.player}
         testID="archive-video-player"
+      />
+      <RevealEducationPanel
+        onAction={() => player.play()}
+        state="released"
+        surface="archive"
+        testID="archive-reveal-released"
       />
     </View>
   );
@@ -76,109 +93,121 @@ function ArchiveEntries({
   download: (media: ReleasedArchiveMedia) => void;
   notice: string | null;
 }) {
+  const { t } = useI18n();
   const cycleById = new Map(cycles.map((cycle) => [cycle.id, cycle]));
   return (
     <View style={styles.panel} testID="archive-released-media">
-      <Text style={styles.label}>RELEASED MEDIA</Text>
+      <Eyebrow>{t('RELEASED MEDIA')}</Eyebrow>
       <Text accessibilityRole="header" style={styles.sectionTitle}>
-        Your archive
+        {t('Your archive')}
       </Text>
       {archive.films.length === 0 ? (
         <Text style={styles.bodyText} testID="archive-empty-films">
-          No released group films yet.
+          {t('No released group films yet.')}
         </Text>
       ) : (
         archive.films.map((film) => (
           <View key={film.id} style={styles.entry}>
-            <Text style={styles.entryTitle}>Group film</Text>
+            <Text style={styles.entryTitle}>{t('Group film')}</Text>
             <Text style={styles.entryMeta} testID={`archive-film-cycle-${film.id}`}>
-              Cycle: {cycleById.get(film.cycleId)?.prompt ?? 'Previous cycle'}
+              {t('Cycle: {prompt}', {
+                prompt: t(cycleById.get(film.cycleId)?.prompt ?? 'Previous cycle'),
+              })}
             </Text>
             <Text style={styles.entryMeta}>
-              Released {new Date(film.publishedAt).toLocaleDateString()}
+              {t('Released {date}', { date: new Date(film.publishedAt).toLocaleDateString() })}
             </Text>
-            <Pressable
-              accessibilityLabel="Download released group film"
-              accessibilityRole="button"
+            <ActionButton
+              accessibilityLabel={t('Download released group film')}
+              label={t('Download film')}
               onPress={() => download(film)}
-              style={styles.downloadButton}
-            >
-              <Text style={styles.downloadText}>Download film</Text>
-            </Pressable>
+            />
           </View>
         ))
       )}
-      <Text style={styles.subhead}>Your released clips</Text>
+      <Text style={styles.subhead}>{t('Your released clips')}</Text>
       {archive.clips.length === 0 ? (
         <Text style={styles.bodyText} testID="archive-empty-clips">
-          Your released clips will appear here.
+          {t('Your released clips will appear here.')}
         </Text>
       ) : (
         archive.clips.map((clip) => (
           <View key={clip.id} style={styles.entry}>
-            <Text style={styles.entryTitle}>Your clip</Text>
+            <Text style={styles.entryTitle}>{t('Your clip')}</Text>
             <Text style={styles.entryMeta} testID={`archive-clip-cycle-${clip.id}`}>
-              Cycle: {cycleById.get(clip.cycleId)?.prompt ?? 'Previous cycle'}
+              {t('Cycle: {prompt}', {
+                prompt: t(cycleById.get(clip.cycleId)?.prompt ?? 'Previous cycle'),
+              })}
             </Text>
-            <Pressable
-              accessibilityLabel="Download your released clip"
-              accessibilityRole="button"
+            <ActionButton
+              accessibilityLabel={t('Download your released clip')}
+              label={t('Download clip')}
               onPress={() => download(clip)}
-              style={styles.downloadButton}
-            >
-              <Text style={styles.downloadText}>Download clip</Text>
-            </Pressable>
+            />
           </View>
         ))
       )}
       {notice ? (
         <Text accessibilityLiveRegion="polite" style={styles.notice}>
-          {notice}
+          {t(notice)}
         </Text>
       ) : null}
       <Text accessibilityRole="header" style={styles.subhead}>
-        Cycle history
+        {t('Cycle history')}
       </Text>
       {cycles.map((cycle) => (
         <View key={cycle.id} style={styles.entry} testID={`archive-cycle-${cycle.id}`}>
-          <Text style={styles.entryTitle}>{cycle.prompt}</Text>
+          <Text style={styles.entryTitle}>{t(cycle.prompt)}</Text>
           <Text style={styles.entryMeta}>
             {new Date(cycle.startsAt).toLocaleDateString()} –{' '}
             {new Date(cycle.endsAt).toLocaleDateString()}
           </Text>
-          <Text style={styles.entryMeta}>{cycle.status}</Text>
+          <Text style={styles.entryMeta}>{t(cycle.status)}</Text>
           {cycle.releaseStatus === 'unpublished' ? (
             <Text style={styles.bodyText} testID={`archive-cycle-locked-${cycle.id}`}>
-              This cycle is locked. Only its prompt and dates are available.
+              {t('This cycle is locked. Only its prompt and dates are available.')}
             </Text>
           ) : null}
         </View>
       ))}
       {hasMoreCycles ? (
-        <Pressable
-          accessibilityRole="button"
-          disabled={loadingMore}
+        <ActionButton
+          busy={loadingMore}
+          label={loadingMore ? t('Loading…') : t('Load older archive items')}
           onPress={loadMore}
-          style={styles.retryButton}
           testID="archive-load-more"
-        >
-          <Text style={styles.retryText}>
-            {loadingMore ? 'Loading…' : 'Load older archive items'}
-          </Text>
-        </Pressable>
+        />
       ) : null}
     </View>
   );
 }
 
-export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
+export type ArchiveDebugScenario =
+  'loading' | 'empty' | 'denied' | 'error' | 'processing' | 'delayed' | 'released';
+
+export function ArchiveScreen({
+  debug,
+  runtimeClient,
+}: {
+  debug?: ScreenDebug<ArchiveDebugScenario>;
+  runtimeClient: RuntimeClient | null;
+}) {
   const { session } = useDemoSession();
   const { state } = useCapsule();
   const scope = state.status === 'ready' ? `${state.group?.id}:${state.cycle?.id}` : state.status;
-  return <ArchiveSurface key={`${session?.id}:${scope}`} runtimeClient={runtimeClient} />;
+  return (
+    <ArchiveSurface debug={debug} key={`${session?.id}:${scope}`} runtimeClient={runtimeClient} />
+  );
 }
 
-function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
+function ArchiveSurface({
+  debug,
+  runtimeClient,
+}: {
+  debug?: ScreenDebug<ArchiveDebugScenario>;
+  runtimeClient: RuntimeClient | null;
+}) {
+  const { t } = useI18n();
   const { session } = useDemoSession();
   const { state: capsuleState, retry: retryCapsule } = useCapsule();
   const [state, setState] = useState<ArchiveState>({ status: 'loading' });
@@ -353,100 +382,191 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
       );
   };
 
-  if (state.status === 'loading') {
-    return (
-      <View style={styles.panel} testID="archive-loading">
-        <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
-          Archive
-        </Text>
-        <Text style={styles.label}>ARCHIVE</Text>
-        <Text accessibilityLiveRegion="polite" style={styles.title}>
-          Checking the group premiere…
-        </Text>
-      </View>
+  const groupName = group?.name ?? capsuleState.group?.name ?? null;
+  const scenario = debug?.scenario ?? null;
+  const frame = (children: ReactNode) => (
+    <ScrollView contentContainerStyle={kitStyles.content} style={kitStyles.scroll}>
+      <ScreenIntro
+        body={groupName ?? undefined}
+        eyebrow={t('ARCHIVE')}
+        headingTestID="route-heading-archive"
+        title={t('Your group film.')}
+      />
+      {children}
+      {downloadNotice && scenario ? <Notice>{t(downloadNotice)}</Notice> : null}
+    </ScrollView>
+  );
+
+  if (scenario === 'loading' || (!scenario && state.status === 'loading')) {
+    return frame(
+      <Panel live="polite" testID="archive-loading" title={t('Checking the group premiere…')}>
+        <Quiet>{t('Your place is kept.')}</Quiet>
+      </Panel>,
     );
   }
 
-  if (state.status === 'unavailable') {
-    return (
-      <View style={styles.panel} testID="archive-unavailable">
-        <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
-          Archive
-        </Text>
-        <Text style={styles.label}>ARCHIVE</Text>
-        <Text accessibilityRole="header" style={styles.title}>
-          Premiere unavailable
-        </Text>
+  if (scenario === 'denied') {
+    return frame(
+      <Panel
+        body={t('This member cannot access the group.')}
+        testID="archive-denied"
+        title={t('Access unavailable')}
+      />,
+    );
+  }
+
+  if (scenario === 'error') {
+    return frame(
+      <Panel
+        body={t('Connection unavailable. Try again.')}
+        testID="archive-error"
+        title={t('Could not load the premiere')}
+        tone="alert"
+      >
+        <ActionButton label={t('Retry')} onPress={() => debug?.set('live')} />
+      </Panel>,
+    );
+  }
+
+  if (scenario === 'empty') {
+    return frame(
+      <Panel
+        body={t('A contribution is not a released film.')}
+        testID="archive-empty"
+        title={t('No released films yet')}
+      >
+        <ActionButton
+          label={t('Check premiere again')}
+          onPress={() => setDownloadNotice('No change. Try another debug state.')}
+        />
+      </Panel>,
+    );
+  }
+
+  if (scenario === 'released') {
+    return frame(
+      <>
+        <View style={styles.panel} testID="archive-premiere-ready">
+          <Eyebrow>{t('RELEASED FOR THIS GROUP')}</Eyebrow>
+          <Text accessibilityRole="header" style={styles.sectionTitle}>
+            {groupName ?? t('Your group film')}
+          </Text>
+          <MockMedia
+            caption={t('Debug preview · no video file attached')}
+            kind="clip"
+            title={t('Released film placeholder')}
+          />
+          <ActionButton
+            full
+            label={t('Play film · preview')}
+            onPress={() => setDownloadNotice('Playback preview only; no film attached.')}
+            variant="primary"
+          />
+        </View>
+        <Panel
+          body={`${t('Group film · released sample')}\n${t('Your clip · synthetic, 2.0 seconds')}`}
+          title={t('Your released media')}
+        >
+          <ButtonRow>
+            <ActionButton
+              label={t('Download film · preview')}
+              onPress={() => setDownloadNotice('Download preview only.')}
+            />
+            <ActionButton
+              label={t('Download clip · preview')}
+              onPress={() => setDownloadNotice('Download preview only.')}
+            />
+          </ButtonRow>
+        </Panel>
+      </>,
+    );
+  }
+
+  if (!scenario && state.status === 'unavailable') {
+    return frame(
+      <Panel testID="archive-unavailable" title={t('Premiere unavailable')}>
         <Text accessibilityLiveRegion="assertive" style={styles.bodyText}>
-          {state.message}
+          {state.message ===
+          'Server-backed archive actions are unavailable without the local runtime.'
+            ? t('Connect the local runtime to check the film.')
+            : t(state.message)}
         </Text>
-        <Pressable
-          accessibilityRole="button"
+        <ActionButton
+          label={t('Retry premiere')}
           onPress={() => {
             retryCapsule();
             load();
           }}
-          style={styles.retryButton}
-        >
-          <Text style={styles.retryText}>Retry premiere</Text>
-        </Pressable>
-      </View>
+        />
+      </Panel>,
     );
   }
 
+  const ready = state.status === 'ready' ? state : null;
+  const cycles = ready?.cycles ?? [];
+  const archive = ready?.archive ?? EMPTY_ARCHIVE;
   const releasedCycleIds = new Set(
-    state.cycles.filter((cycle) => cycle.releaseStatus === 'published').map((cycle) => cycle.id),
+    cycles.filter((entry) => entry.releaseStatus === 'published').map((entry) => entry.id),
   );
-  const premierePanel =
-    state.premiere.state === 'ready' ? (
-      releasedCycleIds.has(state.premiere.cycleId) ? (
-        <PublishedPlayer premiere={state.premiere} />
-      ) : (
-        <PremiereStatus
-          premiere={{ state: 'locked', cycleId: state.premiere.cycleId }}
-          reload={load}
-          hasOlderReleasedMedia={state.archive.films.length > 0 || state.archive.clips.length > 0}
-        />
-      )
+  const hasOlderReleasedMedia = archive.films.length > 0 || archive.clips.length > 0;
+  const forcedPremiere =
+    scenario === 'processing' || scenario === 'delayed'
+      ? ({ state: scenario, cycleId: cycle?.id ?? 'debug-fixture-cycle' } as const)
+      : null;
+  const premierePanel = forcedPremiere ? (
+    <PremiereStatus
+      hasOlderReleasedMedia={hasOlderReleasedMedia}
+      premiere={forcedPremiere}
+      reload={() => setDownloadNotice('No change. Try another debug state.')}
+    />
+  ) : !ready ? null : ready.premiere.state === 'ready' ? (
+    releasedCycleIds.has(ready.premiere.cycleId) ? (
+      <PublishedPlayer groupName={groupName} premiere={ready.premiere} />
     ) : (
       <PremiereStatus
-        premiere={state.premiere}
+        premiere={{ state: 'locked', cycleId: ready.premiere.cycleId }}
         reload={load}
-        hasOlderReleasedMedia={state.archive.films.length > 0 || state.archive.clips.length > 0}
+        hasOlderReleasedMedia={hasOlderReleasedMedia}
       />
-    );
+    )
+  ) : (
+    <PremiereStatus
+      premiere={ready.premiere}
+      reload={load}
+      hasOlderReleasedMedia={hasOlderReleasedMedia}
+    />
+  );
   // The server restricts real archive pages to published cycles. If locally
   // supplied cycle metadata is available, also hide any explicitly locked
   // entry; an older paged cycle with no metadata remains visible.
-  const cycleById = new Map(state.cycles.map((entry) => [entry.id, entry]));
+  const cycleById = new Map(cycles.map((entry) => [entry.id, entry]));
   const releasedArchive: ReleasedArchive = {
-    films: state.archive.films.filter(
+    films: archive.films.filter(
       (film) => cycleById.get(film.cycleId)?.releaseStatus !== 'unpublished',
     ),
-    clips: state.archive.clips.filter(
+    clips: archive.clips.filter(
       (clip) => cycleById.get(clip.cycleId)?.releaseStatus !== 'unpublished',
     ),
   };
-  return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stack}>
-      <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
-        Archive
-      </Text>
+  return frame(
+    <>
       {premierePanel}
       <ArchiveEntries
         archive={releasedArchive}
-        cycles={state.cycles}
+        cycles={cycles}
         hasMoreCycles={
-          state.archivePage.hasMoreFilms ||
-          state.archivePage.hasMoreClips ||
-          state.cyclePage.hasMore
+          ready
+            ? ready.archivePage.hasMoreFilms ||
+              ready.archivePage.hasMoreClips ||
+              ready.cyclePage.hasMore
+            : false
         }
         loadingMore={loadingMore}
         loadMore={() => void loadMore()}
         download={download}
-        notice={downloadNotice}
+        notice={scenario ? null : downloadNotice}
       />
-    </ScrollView>
+    </>,
   );
 }
 
@@ -459,6 +579,7 @@ function PremiereStatus({
   reload: () => void;
   hasOlderReleasedMedia?: boolean;
 }) {
+  const { t } = useI18n();
   const state = revealStateForPremiere(premiere);
   return (
     <View style={styles.stack}>
@@ -470,7 +591,9 @@ function PremiereStatus({
       />
       {hasOlderReleasedMedia ? (
         <Text style={styles.bodyText} testID="archive-current-cycle-context">
-          This status is for the current cycle. Previously released media remains available below.
+          {t(
+            'This status is for the current cycle. Previously released media remains available below.',
+          )}
         </Text>
       ) : null}
     </View>
@@ -482,41 +605,17 @@ const styles = StyleSheet.create({
   panel: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,
-    borderRadius: 10,
+    borderRadius: 9,
     borderWidth: 1,
     gap: 12,
-    padding: 18,
+    padding: 17,
   },
-  label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 26, fontWeight: '700' },
-  sectionTitle: { color: COLORS.ink, fontSize: 22, fontWeight: '700' },
-  subhead: { color: COLORS.ink, fontSize: 16, fontWeight: '700', marginTop: 4 },
-  bodyText: { color: COLORS.muted, fontSize: 15, lineHeight: 22 },
+  sectionTitle: { color: COLORS.ink, fontSize: 19, fontWeight: '700' },
+  subhead: { color: COLORS.ink, fontSize: 15, fontWeight: '700', marginTop: 4 },
+  bodyText: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   player: { backgroundColor: COLORS.deep, borderRadius: 8, height: 360, width: '100%' },
-  retryButton: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: COLORS.background,
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 48,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  retryText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
   entry: { borderTopColor: COLORS.line, borderTopWidth: 1, gap: 7, paddingTop: 12 },
-  entryTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '700' },
+  entryTitle: { color: COLORS.ink, fontSize: 15, fontWeight: '700' },
   entryMeta: { color: COLORS.muted, fontSize: 13 },
-  downloadButton: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: COLORS.deep,
-    borderRadius: 8,
-    minHeight: 42,
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-  },
-  downloadText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
   notice: { color: COLORS.muted, fontSize: 14 },
 });

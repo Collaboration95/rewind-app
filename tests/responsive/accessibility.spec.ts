@@ -116,7 +116,7 @@ test('Demo access error state has no serious or critical Axe violations', async 
     });
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   await page.getByTestId('demo-entry-demo-1').click();
   await expect(page.getByRole('alert')).toContainText('local runtime is offline');
   await expect(page.getByRole('button', { name: 'Retry Demo access' })).toBeVisible();
@@ -125,7 +125,7 @@ test('Demo access error state has no serious or critical Axe violations', async 
 
 test('entry chooser has no serious or critical Axe violations', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   await expectNoSeriousAxeViolations(page, 'entry');
 });
 
@@ -137,7 +137,7 @@ test('keyboard navigation keeps focus on visible controls and reaches each main 
   page,
 }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   await tabUntilFocused(page, page.getByTestId('demo-entry-demo-1'));
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('main-navigation')).toBeVisible();
