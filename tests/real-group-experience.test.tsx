@@ -1,7 +1,10 @@
 import { fireEvent, render } from '@testing-library/react-native';
 
 import { useRealAccount } from '../src/auth/RealAccountProvider';
-import { RealAccountGroupExperience } from '../src/groups/RealAccountGroupExperience';
+import {
+  photoContributionStatusForJob,
+  RealAccountGroupExperience,
+} from '../src/groups/RealAccountGroupExperience';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
@@ -26,6 +29,36 @@ const persistedGroup = {
 };
 
 describe('real account group journey', () => {
+  it('keeps an already-processing photo queued or processing and reserves retryable failure for terminal jobs', () => {
+    const details = {
+      contributionId: 'contribution-photo-1',
+      createdAt: '2026-09-29T00:00:00.000Z',
+      durationSeconds: 3,
+      jobId: 'photo-job-1',
+    };
+
+    expect(photoContributionStatusForJob('pending', details)).toMatchObject({
+      state: 'queued',
+      retryable: false,
+    });
+    expect(photoContributionStatusForJob('processing', details)).toMatchObject({
+      state: 'processing',
+      retryable: false,
+    });
+    expect(photoContributionStatusForJob('ready', details)).toMatchObject({
+      state: 'sealed',
+      retryable: false,
+    });
+    expect(photoContributionStatusForJob('failed', details)).toMatchObject({
+      state: 'failed',
+      retryable: true,
+    });
+    expect(photoContributionStatusForJob('cancelled', details)).toMatchObject({
+      state: 'failed',
+      retryable: true,
+    });
+  });
+
   it('creates from the first-run choice and restores persisted group Home after remount', async () => {
     let saved: typeof persistedGroup | null = null;
     const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {

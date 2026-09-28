@@ -17,8 +17,38 @@ import { createInviteLink, type InviteLinkPayload } from '../invites/deep-links'
 import { COLORS } from '../theme';
 import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
 import { CameraCaptureScreen } from '../capture/CameraCaptureScreen';
-import { ContributionStatusProvider } from '../capture/contribution-status';
+import {
+  ContributionStatusProvider,
+  type ContributionStatus,
+} from '../capture/contribution-status';
 import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
+import type { PendingClipUpload } from '../domain/video';
+
+type PhotoJobStatus = PendingClipUpload['job']['status'];
+type PhotoStatusDetails = Pick<
+  ContributionStatus,
+  'contributionId' | 'createdAt' | 'durationSeconds' | 'jobId'
+>;
+
+export function photoContributionStatusForJob(
+  status: PhotoJobStatus,
+  details: PhotoStatusDetails,
+): ContributionStatus {
+  if (status === 'ready') return { state: 'sealed', ...details, retryable: false };
+  if (status === 'failed' || status === 'cancelled') {
+    return {
+      state: 'failed',
+      ...details,
+      message: 'The photo could not be processed. Retry this contribution.',
+      retryable: true,
+    };
+  }
+  return {
+    state: status === 'pending' ? 'queued' : 'processing',
+    ...details,
+    retryable: false,
+  };
+}
 
 interface RealInvite extends InviteLinkPayload {
   id: string;
@@ -251,16 +281,9 @@ export function RealAccountGroupExperience({
                   group.group.id,
                   upload.job.id,
                 );
-                if (job.status !== 'ready') {
-                  throw new Error(
-                    'The photo is uploaded but still processing. Retry to check its status.',
-                  );
-                }
-                return {
-                  state: 'sealed',
-                  ...sharedStatus,
-                  retryable: false,
-                };
+                const finalStatus = photoContributionStatusForJob(job.status, sharedStatus);
+                onProgress(finalStatus);
+                return finalStatus;
               }}
             />
           ) : (
