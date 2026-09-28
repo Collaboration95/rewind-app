@@ -47,7 +47,11 @@ export class NativeEventSource implements RealtimeEventSource {
   private failed = false;
   private xhrAborted = false;
 
-  constructor(url: string, Xhr: NativeXhrConstructor = getXhrConstructor()) {
+  constructor(
+    url: string,
+    Xhr: NativeXhrConstructor = getXhrConstructor(),
+    headers: Record<string, string> = {},
+  ) {
     this.xhr = new Xhr();
     this.xhr.onreadystatechange = () => this.handleReadyState();
     this.xhr.onprogress = () => {
@@ -66,6 +70,9 @@ export class NativeEventSource implements RealtimeEventSource {
     };
     this.xhr.open('GET', url);
     this.xhr.setRequestHeader('Accept', 'text/event-stream');
+    for (const [name, value] of Object.entries(headers)) {
+      this.xhr.setRequestHeader(name, value);
+    }
     this.xhr.send();
   }
 
@@ -219,7 +226,10 @@ function getXhrConstructor(): NativeXhrConstructor {
 }
 
 /** Keep browser EventSource behavior, using XHR only on platforms without it. */
-export function createRuntimeEventSource(url: string): RealtimeEventSource {
+export function createRuntimeEventSource(
+  url: string,
+  headers: Record<string, string> = {},
+): RealtimeEventSource {
   const EventSourceConstructor = (
     globalThis as typeof globalThis & {
       EventSource?: new (source: string) => RealtimeEventSource;
@@ -227,5 +237,5 @@ export function createRuntimeEventSource(url: string): RealtimeEventSource {
   ).EventSource;
   return EventSourceConstructor
     ? (new EventSourceConstructor(url) as unknown as RealtimeEventSource)
-    : new NativeEventSource(url);
+    : new NativeEventSource(url, getXhrConstructor(), headers);
 }

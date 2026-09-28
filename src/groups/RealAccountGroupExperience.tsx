@@ -17,6 +17,7 @@ import { createInviteLink, type InviteLinkPayload } from '../invites/deep-links'
 import { COLORS } from '../theme';
 import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
 import { CameraCaptureScreen } from '../capture/CameraCaptureScreen';
+import { RealAccountChatScreen } from '../chat/RealAccountChatScreen';
 import {
   ContributionStatusProvider,
   type ContributionStatus,
@@ -58,6 +59,7 @@ interface RealInvite extends InviteLinkPayload {
 }
 
 interface RealGroup {
+  memberId?: string;
   group: { id: string; name: string; role: 'owner' | 'member'; maxMembers: number };
   cycle: {
     id: string;
@@ -72,7 +74,7 @@ interface RealGroup {
 
 interface RealGroupMembers {
   group: { id: string; name: string };
-  members: { displayName: string; role: 'owner' | 'member'; joinedAt: string }[];
+  members: { memberId: string; displayName: string; role: 'owner' | 'member'; joinedAt: string }[];
   pendingInviteCount: number;
 }
 
@@ -296,6 +298,26 @@ export function RealAccountGroupExperience({
             />
           )}
         </ContributionStatusProvider>
+      </View>
+    );
+  }
+
+  if (screen === 'chat' && group) {
+    return (
+      <View style={styles.captureContainer}>
+        <View style={styles.brand}>
+          <Text style={styles.wordmark}>REWIND</Text>
+          <Text style={styles.label}>REAL ACCOUNT · {displayName}</Text>
+        </View>
+        <RealAccountChatScreen
+          key={`${group.group.id}:${group.memberId ?? ''}`}
+          groupId={group.group.id}
+          groupName={group.group.name}
+          members={groupMembers?.members ?? []}
+          memberProfilesError={groupMembersError}
+          currentMemberId={group.memberId}
+          onBack={() => setScreen('home')}
+        />
       </View>
     );
   }
@@ -821,21 +843,6 @@ export function RealAccountGroupExperience({
             disabled={auth.pending}
             onPress={() => void auth.signOut()}
             testID="real-group-sign-out"
-          />
-        </View>
-      ) : screen === 'chat' && group ? (
-        <View style={styles.panel} testID="real-group-chat-placeholder">
-          <Text style={styles.label} testID="real-group-chat-context">
-            ACTIVE GROUP · {group.group.name}
-          </Text>
-          <Text accessibilityRole="header" style={styles.title}>
-            Chat
-          </Text>
-          <Text style={styles.body}>Group messaging is not available for real accounts yet.</Text>
-          <Action
-            title="Back to Home"
-            onPress={() => setScreen('home')}
-            testID="real-group-chat-back"
           />
         </View>
       ) : null}

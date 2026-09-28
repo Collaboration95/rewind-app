@@ -21,6 +21,7 @@ import {
 import { signOutMarkerStore, type SignOutMarker } from './sign-out-marker';
 
 interface RealAccountContextValue {
+  baseUrl: string | null;
   state: AuthState;
   session: RealAccountSession | null;
   notice: AuthNotice;
@@ -31,6 +32,7 @@ interface RealAccountContextValue {
   retryLocalCredentialRemoval: () => Promise<void>;
   retryRestore: () => void;
   authenticatedRequest: (path: string, init?: RequestInit) => Promise<Response>;
+  realtimeAuthorizationHeader: () => string | undefined;
 }
 
 const RealAccountContext = createContext<RealAccountContextValue | null>(null);
@@ -343,6 +345,11 @@ export function RealAccountProvider({
     [clearLocalSession, client, session, state],
   );
 
+  const realtimeAuthorizationHeader = useCallback(
+    () => client?.realtimeAuthorizationHeader(tokenRef.current),
+    [client],
+  );
+
   useEffect(() => {
     if (state !== 'active' || !session) return;
     const remaining = Date.parse(session.idleExpiresAt) - Date.now();
@@ -358,6 +365,7 @@ export function RealAccountProvider({
 
   const value = useMemo<RealAccountContextValue>(
     () => ({
+      baseUrl,
       state,
       session,
       notice,
@@ -372,9 +380,12 @@ export function RealAccountProvider({
         setRestoreAttempt((attempt) => attempt + 1);
       },
       authenticatedRequest,
+      realtimeAuthorizationHeader,
     }),
     [
       authenticatedRequest,
+      realtimeAuthorizationHeader,
+      baseUrl,
       client,
       notice,
       pending,
