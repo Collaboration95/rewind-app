@@ -2,6 +2,7 @@ import { Platform, Linking } from 'react-native';
 import { Camera, CameraView, type CameraCapturedPicture } from 'expo-camera';
 import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system/legacy';
+import { createVideoPlayer } from 'expo-video';
 
 import type {
   CameraPlatform,
@@ -14,6 +15,61 @@ import type {
 import type { RecordedClip } from '../domain/video';
 
 export const VIDEO_CACHE_FOLDER = 'rewind-clips';
+const RECORDED_METADATA_TIMEOUT_MS = 5000;
+
+/** Duration and displayed size read back from a recorded file. */
+export interface RecordedVideoMetadata {
+  durationSeconds: number;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * Loads the recorded file in a detached player to read what was actually
+ * written. The app is locked to portrait, so the displayed frame is portrait
+ * even when a track reports its coded (pre-rotation) landscape size.
+ * Resolves null on a load error or timeout; the caller then falls back.
+ */
+export async function readRecordedVideoMetadata(
+  uri: string,
+): Promise<RecordedVideoMetadata | null> {
+  const player = createVideoPlayer({ uri });
+  try {
+    return await new Promise<RecordedVideoMetadata | null>((resolve) => {
+      const subscriptions: { remove(): void }[] = [];
+      let settled = false;
+      const settle = (result: RecordedVideoMetadata | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        for (const subscription of subscriptions) subscription.remove();
+        resolve(result);
+      };
+      const timer = setTimeout(() => settle(null), RECORDED_METADATA_TIMEOUT_MS);
+      subscriptions.push(
+        player.addListener('sourceLoad', (payload) => {
+          const size = payload.availableVideoTracks[0]?.size;
+          settle({
+            durationSeconds: payload.duration,
+            ...(size && size.width > 0 && size.height > 0
+              ? {
+                  width: Math.min(size.width, size.height),
+                  height: Math.max(size.width, size.height),
+                }
+              : {}),
+          });
+        }),
+        // An unreadable file never loads; fall back now instead of waiting
+        // out the timeout before the review screen can appear.
+        player.addListener('statusChange', ({ status }) => {
+          if (status === 'error') settle(null);
+        }),
+      );
+    });
+  } finally {
+    player.release();
+  }
+}
 
 type BrowserVideoElement = HTMLVideoElement & {
   audioTracks?: { length: number };
@@ -325,6 +381,14 @@ export interface ExpoCameraPlatformOptions {
   browserObjectUrlFactory?: (file: File) => string;
   browserVideoContainerReader?: (file: File) => Promise<BrowserVideoContainerMetadata>;
   browserVideoMetadataReader?: (uri: string) => Promise<BrowserVideoMetadata>;
+  /** Native seam for reading a recorded file's real duration and size. */
+  recordedVideoMetadataReader?: (uri: string) => Promise<RecordedVideoMetadata | null>;
+}
+
+async function webCameraAvailable(): Promise<boolean> {
+  const probe = (CameraView as typeof CameraView & { isAvailableAsync?: () => Promise<boolean> })
+    .isAvailableAsync;
+  return typeof probe === 'function' ? probe.call(CameraView) : true;
 }
 
 /** Expo SDK 57 adapter. No Expo or React Native types cross the capture port. */
@@ -340,21 +404,17 @@ export class ExpoCameraPlatform implements CameraPlatform {
     if (this.options.capabilityProbe) return this.options.capabilityProbe();
 
     try {
-      // `isAvailableAsync` is currently only registered by Expo Camera on
-      // web. Some native SDK builds therefore expose no probe at all. A
-      // missing probe is not evidence that a physical device is unusable;
-      // permissions plus the native device boundary establish availability.
-      const cameraAvailabilityProbe = (
-        CameraView as typeof CameraView & {
-          isAvailableAsync?: () => Promise<boolean>;
-        }
-      ).isAvailableAsync;
+      // `CameraView.isAvailableAsync` always exists as a static method, but
+      // Expo Camera only registers its native side on web. On iOS/Android it
+      // throws UnavailabilityError, so calling it there would report every
+      // physical phone as "temporarily unavailable" and never reach the
+      // permission prompt. Native availability is the device boundary.
       const cameraAvailable =
-        typeof cameraAvailabilityProbe === 'function'
-          ? await cameraAvailabilityProbe()
-          : Platform.OS === 'web'
-            ? typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
-            : Device.isDevice;
+        Platform.OS === 'web'
+          ? typeof navigator !== 'undefined' &&
+            Boolean(navigator.mediaDevices?.getUserMedia) &&
+            (await webCameraAvailable())
+          : Device.isDevice;
       // Expo does not expose a microphone-capability probe. On native, a real
       // device is the supported recording target; simulator capture stays an
       // explicit unsupported state. On web, ask the browser capability API.
@@ -384,10 +444,10 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async requestPermissions(): Promise<PermissionSnapshot> {
-    const [camera, microphone] = await Promise.all([
-      Camera.requestCameraPermissionsAsync(),
-      Camera.requestMicrophonePermissionsAsync(),
-    ]);
+    // Ask one at a time: Android rejects a second runtime-permission request
+    // while the first system dialog is still open, and iOS queues them anyway.
+    const camera = await Camera.requestCameraPermissionsAsync();
+    const microphone = await Camera.requestMicrophonePermissionsAsync();
     return {
       camera: permissionState(camera),
       microphone: permissionState(microphone),
@@ -506,16 +566,37 @@ export class ExpoCameraPlatform implements CameraPlatform {
       mute: false,
       quality: '480p',
     });
+    const measuredDuration = (Date.now() - startedAt) / 1000;
     if (!video) throw new Error('The recording was cancelled before a clip was saved.');
     const managed = await moveVideoToManagedCache(video.uri);
-    const measuredDuration = (Date.now() - startedAt) / 1000;
+    // expo-camera resolves recordAsync with only a URI on both iOS and Android
+    // (no duration or size), so in practice this read always runs; the native
+    // fields are honoured only for adapters that do report them. Wall-clock
+    // time includes camera start-up and file finalisation and overstates the
+    // clip by about a second, which puts the default trim end past the real
+    // end and makes the server reject it. The timer is a last resort.
+    const fileMetadata =
+      video.duration === undefined
+        ? await (this.options.recordedVideoMetadataReader ?? readRecordedVideoMetadata)(
+            managed.uri,
+          ).catch(() => null)
+        : null;
+    const fileDuration =
+      fileMetadata &&
+      Number.isFinite(fileMetadata.durationSeconds) &&
+      fileMetadata.durationSeconds > 0
+        ? fileMetadata.durationSeconds
+        : undefined;
     return {
       sourceUri: managed.uri,
       format: 'mp4',
       mimeType: 'video/mp4',
-      width: video.width ?? 720,
-      height: video.height ?? 1280,
-      durationSeconds: Math.min(maxDurationSeconds, video.duration ?? measuredDuration),
+      width: video.width ?? fileMetadata?.width ?? 720,
+      height: video.height ?? fileMetadata?.height ?? 1280,
+      durationSeconds: Math.min(
+        maxDurationSeconds,
+        video.duration ?? fileDuration ?? measuredDuration,
+      ),
       hasAudio: true,
       byteLength: managed.byteLength,
       source: 'camera',

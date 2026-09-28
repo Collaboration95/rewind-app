@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 import { COLORS } from '../theme';
-import type {
-  CaptureMode,
-  ClipUploadInput,
-  PendingClipUpload,
-  RecordedClip,
+import {
+  formatDurationSeconds,
+  type CaptureMode,
+  type ClipUploadInput,
+  type PendingClipUpload,
+  type RecordedClip,
 } from '../domain/video';
+import { useAutoRequestPermission, usePreviewFrameSize } from './capture-screen-hooks';
 import { ClipUploadError, ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
 import {
   EXHAUSTED_UPLOAD_MESSAGE,
@@ -53,6 +55,8 @@ export interface VideoCaptureScreenProps {
   runtimeClient?: RuntimeClient | null;
   onBack?: () => void;
   onContributionDeleted?: () => void;
+  /** Show the system camera + microphone prompt on the first undecided visit. */
+  autoRequestPermission?: boolean;
 }
 
 function isVideoPlatform(
@@ -112,6 +116,7 @@ function isUploadCancellation(error: unknown): boolean {
 }
 
 export function VideoCaptureScreen({
+  autoRequestPermission = false,
   onBack,
   onContributionDeleted,
   platform: platformProp,
@@ -144,6 +149,10 @@ export function VideoCaptureScreen({
   const [startText, setStartText] = useState('0');
   const [endText, setEndText] = useState('0');
   const [mode, setMode] = useState<CaptureMode>('soft-focus');
+  // Trim and mode edits apply to the review only when saved (or on upload);
+  // this tracks whether the visible values are the applied ones.
+  const [reviewSaved, setReviewSaved] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<ClipUploadProgress>({
     status: 'idle',
     percent: 0,
@@ -310,6 +319,8 @@ export function VideoCaptureScreen({
       setStartText('0');
       setEndText(String(selected.durationSeconds));
       setMode('soft-focus');
+      setReviewSaved(false);
+      setReviewError(null);
       return true;
     },
     [isCaptureActive, releaseOwnedClip, reviewStore],
@@ -450,6 +461,8 @@ export function VideoCaptureScreen({
     }
   }, [isCaptureActive, platform, refresh]);
 
+  useAutoRequestPermission(autoRequestPermission, access === 'permission-undecided', requestAccess);
+
   const openSettings = useCallback(async () => {
     if (!isCaptureActive()) return;
     setError(null);
@@ -559,19 +572,35 @@ export function VideoCaptureScreen({
     setError(null);
   };
 
-  const saveReview = () => {
-    if (!review || !clip) return;
+  const applyReview = (): boolean => {
+    if (!review || !clip) return false;
     const trim = review.setTrim(Number(startText), Number(endText));
     if (!trim.ok) {
-      setError(
+      setReviewSaved(false);
+      setReviewError(
         trim.reason === 'too_short'
           ? 'Keep at least half a second in the clip.'
           : 'Choose trim bounds inside the recorded clip.',
       );
-      return;
+      return false;
     }
     review.setMode(mode);
+    setReviewError(null);
+    return true;
+  };
+
+  const saveReview = () => {
+    if (!applyReview()) return;
+    setReviewSaved(true);
+    // As before the trim/mode refactor: a successful save clears a stale
+    // top-level error (e.g. an earlier rejected upload) left on the screen.
     setError(null);
+  };
+
+  const editReview = (apply: () => void) => {
+    apply();
+    setReviewSaved(false);
+    setReviewError(null);
   };
 
   const describeUpload = useCallback(
@@ -655,6 +684,9 @@ export function VideoCaptureScreen({
       );
       return;
     }
+    // Upload what the person sees: unsaved trim or mode edits are applied
+    // here rather than silently dropped in favour of the last saved values.
+    if (!applyReview()) return;
     if (!clip.hasAudio || clip.mimeType !== 'video/mp4') {
       setError(
         'The selected clip must be an MP4 with an audio track; the server verifies it before accepting the upload.',
@@ -1029,8 +1061,16 @@ export function VideoCaptureScreen({
     runtimeClient,
     setContributionStatus,
   ]);
+  // Review fields, the live camera, and the recording controls are taller
+  // than a phone viewport, so the route scrolls instead of running under the
+  // main navigation. Taps must reach Save/Upload while the keyboard is open.
   return (
-    <View style={styles.screen} testID="video-capture-screen">
+    <ScrollView
+      contentContainerStyle={styles.screen}
+      keyboardShouldPersistTaps="handled"
+      style={styles.scroll}
+      testID="video-capture-screen"
+    >
       <View style={styles.header}>
         {onBack ? (
           <Pressable accessibilityRole="button" onPress={leaveCapture} style={styles.backButton}>
@@ -1142,52 +1182,27 @@ export function VideoCaptureScreen({
           body={error ?? 'Try again.'}
         />
       ) : null}
-      {access === 'ready' && !clip && !recording ? (
-        <View style={styles.captureArea}>
-          <CameraView
-            facing="back"
-            mode="video"
-            ref={cameraRef}
-            style={styles.preview}
-            testID="video-live-preview"
-          />
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void startRecording()}
-            style={styles.recordButton}
-            testID="video-record"
-          >
-            <Text style={styles.recordButtonText}>Start recording</Text>
-          </Pressable>
-        </View>
-      ) : null}
-      {recording ? (
-        <View style={styles.recordingPanel} testID="video-recording">
-          <Text style={styles.recordingTitle}>Recording…</Text>
-          <Text style={styles.timer}>{Math.floor(elapsedSeconds)} / 15 seconds</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={cancelRecording}
-            style={styles.outlineButton}
-          >
-            <Text style={styles.outlineText}>Cancel recording</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => recorder?.stop()}
-            style={styles.recordButton}
-          >
-            <Text style={styles.recordButtonText}>Stop and review</Text>
-          </Pressable>
-        </View>
+      {access === 'ready' && !clip ? (
+        // The camera must stay mounted for the whole recording: unmounting a
+        // CameraView while recordAsync is running tears down the native
+        // capture session and crashes iOS (Expo Go) instead of saving a clip.
+        <LiveVideoCapture
+          cameraRef={cameraRef}
+          elapsedSeconds={elapsedSeconds}
+          needsCameraReady={platform.supportsLivePreview}
+          onCancel={cancelRecording}
+          onStart={() => void startRecording()}
+          onStop={() => recorder?.stop()}
+          recording={recording}
+        />
       ) : null}
       {review && clip && !recording ? (
         <View style={styles.reviewPanel} testID="video-review">
           <Text style={styles.panelTitle}>Review your clip</Text>
           <Text style={styles.body}>
             {clip.source === 'file'
-              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio track detected; server verifies`
-              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio included`}
+              ? `Selected MP4 ${formatDurationSeconds(clip.durationSeconds)} · ${clip.width} × ${clip.height} portrait · audio track detected; server verifies`
+              : `Recorded ${formatDurationSeconds(clip.durationSeconds)} · ${clip.width} × ${clip.height} portrait · audio included`}
           </Text>
           {clip.source === 'file' ? (
             <Text style={styles.body}>
@@ -1197,14 +1212,14 @@ export function VideoCaptureScreen({
           <Text style={styles.fieldLabel}>Start seconds</Text>
           <TextInput
             keyboardType="decimal-pad"
-            onChangeText={setStartText}
+            onChangeText={(text) => editReview(() => setStartText(text))}
             style={styles.input}
             value={startText}
           />
           <Text style={styles.fieldLabel}>End seconds</Text>
           <TextInput
             keyboardType="decimal-pad"
-            onChangeText={setEndText}
+            onChangeText={(text) => editReview(() => setEndText(text))}
             style={styles.input}
             value={endText}
           />
@@ -1215,7 +1230,7 @@ export function VideoCaptureScreen({
                 accessibilityRole="radio"
                 accessibilityState={{ selected: mode === option }}
                 key={option}
-                onPress={() => setMode(option)}
+                onPress={() => editReview(() => setMode(option))}
                 style={[styles.modeButton, mode === option && styles.modeSelected]}
               >
                 <Text style={styles.outlineText}>
@@ -1227,6 +1242,19 @@ export function VideoCaptureScreen({
           <Pressable accessibilityRole="button" onPress={saveReview} style={styles.outlineButton}>
             <Text style={styles.outlineText}>Save trim and mode</Text>
           </Pressable>
+          {reviewError ? (
+            <Text accessibilityRole="alert" style={styles.error} testID="video-review-error">
+              {reviewError}
+            </Text>
+          ) : reviewSaved ? (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={styles.success}
+              testID="video-review-saved"
+            >
+              Trim and mode saved.
+            </Text>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             onPress={() => void retake()}
@@ -1273,6 +1301,78 @@ export function VideoCaptureScreen({
           {error}
         </Text>
       ) : null}
+    </ScrollView>
+  );
+}
+
+const SCREEN_PADDING = 24;
+// A fixed portrait ratio for the live video frame, capped at this height.
+const PREVIEW_FRAME = {
+  aspectRatio: 9 / 16,
+  horizontalPadding: SCREEN_PADDING,
+  maxHeight: 460,
+} as const;
+
+function LiveVideoCapture({
+  cameraRef,
+  elapsedSeconds,
+  needsCameraReady,
+  onCancel,
+  onStart,
+  onStop,
+  recording,
+}: {
+  cameraRef: RefObject<CameraView | null>;
+  elapsedSeconds: number;
+  needsCameraReady: boolean;
+  onCancel: () => void;
+  onStart: () => void;
+  onStop: () => void;
+  recording: boolean;
+}) {
+  // Owned here so every remount of the camera waits for its own ready event;
+  // recording before the native session is ready can also crash iOS.
+  const [cameraReady, setCameraReady] = useState(!needsCameraReady);
+  const previewFrameSize = usePreviewFrameSize(PREVIEW_FRAME);
+  return (
+    <View style={styles.captureArea}>
+      <View style={styles.previewFrame}>
+        <CameraView
+          facing="back"
+          mode="video"
+          onCameraReady={() => setCameraReady(true)}
+          ref={cameraRef}
+          style={[styles.preview, previewFrameSize]}
+          testID="video-live-preview"
+        />
+      </View>
+      {recording ? (
+        <View style={styles.recordingPanel} testID="video-recording">
+          <Text accessibilityLiveRegion="polite" style={styles.recordingTitle}>
+            Recording…
+          </Text>
+          <Text style={styles.timer}>{Math.floor(elapsedSeconds)} / 15 seconds</Text>
+          <Pressable accessibilityRole="button" onPress={onCancel} style={styles.outlineButton}>
+            <Text style={styles.outlineText}>Cancel recording</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={onStop} style={styles.recordButton}>
+            <Text style={styles.recordButtonText}>Stop and review</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ busy: !cameraReady, disabled: !cameraReady }}
+          disabled={!cameraReady}
+          onPress={onStart}
+          style={[styles.recordButton, !cameraReady && styles.disabledControl]}
+          testID="video-record"
+        >
+          <Text style={styles.recordButtonText}>
+            {cameraReady ? 'Start recording' : 'Preparing camera…'}
+          </Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -1311,7 +1411,8 @@ function Panel({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 16, padding: 24 },
+  scroll: { flex: 1 },
+  screen: { flexGrow: 1, gap: 16, padding: SCREEN_PADDING },
   header: { gap: 7 },
   backButton: { alignSelf: 'flex-start', paddingVertical: 4 },
   backText: { color: COLORS.accent, fontSize: 14, fontWeight: '700' },
@@ -1327,8 +1428,14 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   panelTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  captureArea: { flex: 1, gap: 14, minHeight: 440 },
-  preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 320 },
+  captureArea: { gap: 14 },
+  // Sized in JS (usePreviewFrameSize) so the frame keeps its true ratio and
+  // is centered rather than stretched full-width and squashed by a cap.
+  previewFrame: { alignItems: 'center', width: '100%' },
+  preview: {
+    backgroundColor: COLORS.deep,
+    borderRadius: 12,
+  },
   recordButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
@@ -1337,6 +1444,7 @@ const styles = StyleSheet.create({
     minHeight: 50,
     padding: 12,
   },
+  disabledControl: { opacity: 0.48 },
   recordButtonText: { color: COLORS.deep, fontSize: 15, fontWeight: '800' },
   recordingPanel: {
     backgroundColor: COLORS.deep,

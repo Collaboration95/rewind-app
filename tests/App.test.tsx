@@ -504,7 +504,7 @@ describe('Rewind Home start screen', () => {
 
     expect(result.getByTestId('cycle-countdown')).toBeTruthy();
     expect(result.getByText('0 of 5 contributions')).toBeTruthy();
-    expect(result.getByText(/0 of 30 seconds used/)).toBeTruthy();
+    expect(result.getByText(/0\.0 seconds of 30\.0 seconds used/)).toBeTruthy();
     expect(result.getByLabelText(/Contributions are collecting and locked/)).toBeTruthy();
     expect(result.queryAllByRole('image')).toHaveLength(0);
     expect(result.queryByRole('button', { name: /share/i })).toBeNull();
@@ -524,7 +524,7 @@ describe('Rewind Home start screen', () => {
     );
 
     await result.findByText('2 of 9 contributions');
-    expect(result.getByText(/11 of 45 seconds used/)).toBeTruthy();
+    expect(result.getByText(/11\.0 seconds of 45\.0 seconds used/)).toBeTruthy();
     expect(result.getByLabelText(/2 of 9 contributions used/)).toBeTruthy();
   });
 

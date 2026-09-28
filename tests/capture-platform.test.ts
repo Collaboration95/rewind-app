@@ -5,6 +5,7 @@ import { PermissionStatus } from 'expo-modules-core';
 import {
   ExpoCameraPlatform,
   permissionState,
+  readRecordedVideoMetadata,
   removeManagedRecordedClip,
   VIDEO_CACHE_FOLDER,
 } from '../src/capture/platform';
@@ -24,6 +25,29 @@ jest.mock('expo-camera', () => ({
 }));
 
 jest.mock('expo-device', () => ({ isDevice: true }));
+
+type MockListener = (payload: unknown) => void;
+const mockVideoPlayers: {
+  emit(event: string, payload: unknown): void;
+  release: jest.Mock;
+  uri: string;
+}[] = [];
+jest.mock('expo-video', () => ({
+  createVideoPlayer: ({ uri }: { uri: string }) => {
+    const listeners = new Map<string, MockListener>();
+    const player = {
+      addListener: (event: string, listener: MockListener) => {
+        listeners.set(event, listener);
+        return { remove: () => listeners.delete(event) };
+      },
+      emit: (event: string, payload: unknown) => listeners.get(event)?.(payload),
+      release: jest.fn(),
+      uri,
+    };
+    mockVideoPlayers.push(player);
+    return player;
+  },
+}));
 
 jest.mock('expo-file-system/legacy', () => ({
   copyAsync: jest.fn(),
@@ -88,21 +112,62 @@ describe('Expo camera adapter contract', () => {
     await expect(platform.getCapabilities()).rejects.toBe(nativeFailure);
   });
 
-  it('falls back to undecided capabilities when the native probe fails', async () => {
+  it('does not let the web-only availability probe block a physical phone', async () => {
     const cameraView = CameraView as typeof CameraView & {
       isAvailableAsync?: () => Promise<boolean>;
     };
     const previousProbe = cameraView.isAvailableAsync;
-    cameraView.isAvailableAsync = jest.fn().mockRejectedValue(new Error('probe unavailable'));
+    // Real expo-camera exposes the static probe on every platform, but on
+    // iOS/Android it throws UnavailabilityError because only web registers it.
+    const probe = jest.fn().mockRejectedValue(new Error('isAvailableAsync is not available'));
+    cameraView.isAvailableAsync = probe;
     try {
       const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
       await expect(platform.getCapabilities()).resolves.toEqual({
-        camera: 'undecided',
-        microphone: 'undecided',
+        camera: 'supported',
+        microphone: 'supported',
       });
+      expect(probe).not.toHaveBeenCalled();
     } finally {
       cameraView.isAvailableAsync = previousProbe;
     }
+  });
+
+  it('asks for the camera before the microphone so native prompts never overlap', async () => {
+    const order: string[] = [];
+    let finishCamera!: () => void;
+    jest.mocked(Camera.requestCameraPermissionsAsync).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          order.push('camera-open');
+          finishCamera = () => {
+            order.push('camera-closed');
+            resolve({
+              canAskAgain: true,
+              expires: 'never',
+              granted: true,
+              status: PermissionStatus.GRANTED,
+            });
+          };
+        }),
+    );
+    jest.mocked(Camera.requestMicrophonePermissionsAsync).mockImplementation(async () => {
+      order.push('microphone-open');
+      return {
+        canAskAgain: true,
+        expires: 'never',
+        granted: true,
+        status: PermissionStatus.GRANTED,
+      };
+    });
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+
+    const request = platform.requestPermissions();
+    await Promise.resolve();
+    expect(order).toEqual(['camera-open']);
+    finishCamera();
+    await expect(request).resolves.toEqual({ camera: 'granted', microphone: 'granted' });
+    expect(order).toEqual(['camera-open', 'camera-closed', 'microphone-open']);
   });
 
   it('maps Expo permission responses for both read and request operations', async () => {
@@ -262,6 +327,87 @@ describe('Expo camera adapter contract', () => {
       width: 720,
     });
     expect(recordAsync).toHaveBeenCalledWith({ maxDuration: 10, mute: false, quality: '480p' });
+  });
+
+  it('reads the real duration and size from the file when iOS returns only a URI', async () => {
+    // iOS reports no duration; the wall-clock estimate ran ~1.3 s long on a
+    // 5.2 s clip and pushed the default trim end past the real end.
+    const recordAsync = jest.fn().mockResolvedValue({ uri: 'file://ios-capture.mov' });
+    jest.mocked(FileSystem.getInfoAsync).mockResolvedValue({
+      exists: true,
+      isDirectory: false,
+      modificationTime: 1,
+      size: 3_752_579,
+      uri: 'file://ios-capture.mov',
+    });
+    const recordedVideoMetadataReader = jest
+      .fn()
+      .mockResolvedValue({ durationSeconds: 5.175011, width: 1080, height: 1920 });
+    const platform = new ExpoCameraPlatform({
+      getCameraRef: () => cameraHandle({ recordAsync }),
+      recordedVideoMetadataReader,
+    });
+
+    await expect(platform.recordClip()).resolves.toMatchObject({
+      durationSeconds: 5.175011,
+      height: 1920,
+      width: 1080,
+    });
+    expect(recordedVideoMetadataReader).toHaveBeenCalledWith('file://ios-capture.mov');
+  });
+
+  it('falls back to the timer when the recorded file cannot be read back', async () => {
+    const recordAsync = jest.fn().mockResolvedValue({ uri: 'file://unreadable.mov' });
+    jest.mocked(FileSystem.getInfoAsync).mockResolvedValue({
+      exists: true,
+      isDirectory: false,
+      modificationTime: 1,
+      size: 1_000,
+      uri: 'file://unreadable.mov',
+    });
+    const platform = new ExpoCameraPlatform({
+      getCameraRef: () => cameraHandle({ recordAsync }),
+      recordedVideoMetadataReader: jest.fn().mockRejectedValue(new Error('no player')),
+    });
+
+    const clip = await platform.recordClip();
+    expect(clip.durationSeconds).toBeGreaterThanOrEqual(0);
+    expect(clip.durationSeconds).toBeLessThanOrEqual(MAX_CLIP_DURATION_SECONDS);
+    expect({ width: clip.width, height: clip.height }).toEqual({ width: 720, height: 1280 });
+  });
+
+  it('reads a recorded file as a portrait frame and releases the player', async () => {
+    mockVideoPlayers.length = 0;
+    const metadata = readRecordedVideoMetadata('file://read-back.mov');
+    const [player] = mockVideoPlayers;
+    // Tracks report the coded (pre-rotation) landscape size.
+    player.emit('sourceLoad', {
+      availableVideoTracks: [{ size: { width: 1920, height: 1080 } }],
+      duration: 5.175011,
+    });
+    await expect(metadata).resolves.toEqual({
+      durationSeconds: 5.175011,
+      height: 1920,
+      width: 1080,
+    });
+    expect(player.uri).toBe('file://read-back.mov');
+    expect(player.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives up at once when the recorded file cannot be loaded', async () => {
+    jest.useFakeTimers();
+    try {
+      mockVideoPlayers.length = 0;
+      const metadata = readRecordedVideoMetadata('file://unreadable.mov');
+      const [player] = mockVideoPlayers;
+      player.emit('statusChange', { status: 'error' });
+      // Resolves without advancing the fallback timeout.
+      await expect(metadata).resolves.toBeNull();
+      expect(player.release).toHaveBeenCalledTimes(1);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('moves native video into the app-owned cache and can remove it', async () => {

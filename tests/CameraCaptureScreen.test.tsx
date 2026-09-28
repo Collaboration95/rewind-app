@@ -222,6 +222,50 @@ describe('CameraCaptureScreen', () => {
     expect(result.getByRole('button', { name: 'Take still image' })).toBeEnabled();
   });
 
+  it('shows the system permission prompt on the first undecided visit when enabled', async () => {
+    const platform = new DemoCameraPlatform({
+      permissions: { camera: 'undetermined', microphone: 'undetermined' },
+    });
+    const requestPermissions = jest.spyOn(platform, 'requestPermissions').mockResolvedValue({
+      camera: 'granted',
+      microphone: 'granted',
+    });
+    const result = await render(
+      <CameraCaptureScreen
+        autoRequestPermission
+        fileStore={new InMemoryCaptureFileStore()}
+        metadataStore={new InMemoryImageMetadataStore()}
+        platform={platform}
+      />,
+    );
+    await result.findByTestId('camera-capture');
+    expect(requestPermissions).toHaveBeenCalledTimes(1);
+    expect(result.getByRole('button', { name: 'Take still image' })).toBeEnabled();
+  });
+
+  it('keeps the Allow panel as the retry path after the first prompt is declined', async () => {
+    const platform = new DemoCameraPlatform({
+      permissions: { camera: 'undetermined', microphone: 'undetermined' },
+    });
+    const requestPermissions = jest
+      .spyOn(platform, 'requestPermissions')
+      .mockResolvedValueOnce({ camera: 'undetermined', microphone: 'undetermined' })
+      .mockResolvedValue({ camera: 'granted', microphone: 'granted' });
+    const result = await render(
+      <CameraCaptureScreen
+        autoRequestPermission
+        fileStore={new InMemoryCaptureFileStore()}
+        metadataStore={new InMemoryImageMetadataStore()}
+        platform={platform}
+      />,
+    );
+    await waitFor(() => expect(requestPermissions).toHaveBeenCalledTimes(1));
+    await result.findByTestId('camera-permission-undecided');
+    await fireEvent.press(result.getByRole('button', { name: 'Allow camera and microphone' }));
+    await result.findByTestId('camera-capture');
+    expect(requestPermissions).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps a capture failure actionable', async () => {
     const platform = new DemoCameraPlatform();
     jest.spyOn(platform, 'captureStill').mockRejectedValue(new Error('camera warm-up failed'));

@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  AppState,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { COLORS } from '../theme';
 import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
@@ -18,6 +27,7 @@ import {
   isCaptureReady,
   type CaptureState,
 } from './capture-state';
+import { useAutoRequestPermission, usePreviewFrameSize } from './capture-screen-hooks';
 import { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } from './file-store';
 import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './metadata-store';
 import { ExpoCameraPlatform } from './platform';
@@ -38,13 +48,29 @@ export interface CameraCaptureScreenProps {
   onOpenArchive?: () => void;
   onRecordClip?: () => void;
   revealState?: RevealEducationState;
+  /**
+   * Ask for camera and microphone access as soon as the screen finds them
+   * undecided, so the first visit shows the system prompt directly. The
+   * in-app "Allow" panel remains the retry path after a dismissal.
+   */
+  autoRequestPermission?: boolean;
 }
+
+const SCREEN_PADDING = 24;
+// A fixed portrait ratio, capped at this height, shared by the live frame and
+// the captured-still preview so the two states do not jump in size.
+const PREVIEW_FRAME = {
+  aspectRatio: 3 / 4,
+  horizontalPadding: SCREEN_PADDING,
+  maxHeight: 420,
+} as const;
 
 /**
  * Camera route UI with honest capability/permission states and a local-only
  * still-image preview. It does not know about identity, groups, or reveal.
  */
 export function CameraCaptureScreen({
+  autoRequestPermission = false,
   createCaptureId,
   fileStore,
   metadataStore,
@@ -56,6 +82,7 @@ export function CameraCaptureScreen({
   revealState = 'locked',
 }: CameraCaptureScreenProps = {}) {
   const cameraRef = useRef<CameraView>(null);
+  const previewFrameSize = usePreviewFrameSize(PREVIEW_FRAME);
   const platform = useMemo(
     () =>
       platformProp ??
@@ -194,6 +221,12 @@ export function CameraCaptureScreen({
       }));
     }
   }, [platform]);
+
+  useAutoRequestPermission(
+    autoRequestPermission,
+    state.status === 'permission-undecided',
+    requestAccess,
+  );
 
   const openSettings = useCallback(async () => {
     setSettingsError(null);
@@ -350,8 +383,11 @@ export function CameraCaptureScreen({
     }
   }, [onAccepted, session]);
 
+  // The live preview plus the reveal and access panels are taller than a
+  // phone viewport, so the route scrolls instead of overflowing under the
+  // main navigation and hiding the shutter.
   return (
-    <View style={styles.screen} testID="camera-screen">
+    <ScrollView contentContainerStyle={styles.screen} style={styles.scroll} testID="camera-screen">
       <View style={styles.heading}>
         <Text style={styles.eyebrow}>CAPTURE</Text>
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-camera">
@@ -497,20 +533,25 @@ export function CameraCaptureScreen({
               Camera and microphone are ready for a still moment.
             </Text>
           </View>
-          {platform.supportsLivePreview ? (
-            <CameraView
-              accessibilityLabel="Live camera preview"
-              facing="back"
-              onCameraReady={() => setCameraReady(true)}
-              ref={cameraRef}
-              style={styles.livePreview}
-              testID="camera-live-preview"
-            />
-          ) : (
-            <View accessibilityLabel="Simulator fixture preview area" style={styles.fixturePreview}>
-              <Text style={styles.fixturePreviewText}>READY FOR A FIXTURE PREVIEW</Text>
-            </View>
-          )}
+          <View style={styles.previewFrame}>
+            {platform.supportsLivePreview ? (
+              <CameraView
+                accessibilityLabel="Live camera preview"
+                facing="back"
+                onCameraReady={() => setCameraReady(true)}
+                ref={cameraRef}
+                style={[styles.livePreview, previewFrameSize]}
+                testID="camera-live-preview"
+              />
+            ) : (
+              <View
+                accessibilityLabel="Simulator fixture preview area"
+                style={[styles.fixturePreview, previewFrameSize]}
+              >
+                <Text style={styles.fixturePreviewText}>READY FOR A FIXTURE PREVIEW</Text>
+              </View>
+            )}
+          </View>
           <Pressable
             accessibilityHint="Takes one still image and opens a preview"
             accessibilityLabel="Take still image"
@@ -531,7 +572,7 @@ export function CameraCaptureScreen({
           {settingsError ? <Text style={styles.errorText}>{settingsError}</Text> : null}
         </View>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -593,24 +634,27 @@ function PreviewPanel({
   saved: boolean;
   saving: boolean;
 }) {
+  const previewFrameSize = usePreviewFrameSize(PREVIEW_FRAME);
   return (
     <View style={styles.previewArea} testID="camera-preview-panel">
-      {demo ? (
-        <View
-          accessibilityLabel="Simulator fixture still preview"
-          style={[styles.fixturePreview, styles.previewFixture]}
-          testID="camera-demo-preview"
-        >
-          <Text style={styles.fixturePreviewText}>FIXTURE STILL</Text>
-          <Text style={styles.fixturePreviewSubtext}>No physical image was captured</Text>
-        </View>
-      ) : (
-        <Image
-          accessibilityLabel="Captured still preview"
-          source={{ uri: previewUri }}
-          style={[styles.stillPreview, styles.previewImage]}
-        />
-      )}
+      <View style={styles.previewFrame}>
+        {demo ? (
+          <View
+            accessibilityLabel="Simulator fixture still preview"
+            style={[styles.fixturePreview, previewFrameSize]}
+            testID="camera-demo-preview"
+          >
+            <Text style={styles.fixturePreviewText}>FIXTURE STILL</Text>
+            <Text style={styles.fixturePreviewSubtext}>No physical image was captured</Text>
+          </View>
+        ) : (
+          <Image
+            accessibilityLabel="Captured still preview"
+            source={{ uri: previewUri }}
+            style={[styles.stillPreview, previewFrameSize]}
+          />
+        )}
+      </View>
       {metadata.source === 'file' ? (
         <Text style={styles.previewMeta}>
           FILE FALLBACK · selected locally, not camera-captured
@@ -650,7 +694,8 @@ function PreviewPanel({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 18, padding: 24 },
+  scroll: { flex: 1 },
+  screen: { flexGrow: 1, gap: 18, padding: SCREEN_PADDING },
   heading: { gap: 7 },
   eyebrow: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
   title: { color: COLORS.ink, fontSize: 30, fontWeight: '700' },
@@ -707,7 +752,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   secondaryButtonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  captureArea: { flex: 1, gap: 14, minHeight: 420 },
+  captureArea: { gap: 14 },
   accessGranted: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,
@@ -718,11 +763,12 @@ const styles = StyleSheet.create({
   },
   accessGrantedTitle: { color: COLORS.accent, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   accessGrantedText: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
+  // Sized in JS (usePreviewFrameSize) so the frame keeps its true ratio and
+  // is centered rather than stretched full-width and squashed by a cap.
+  previewFrame: { alignItems: 'center', width: '100%' },
   livePreview: {
     backgroundColor: COLORS.deep,
     borderRadius: 10,
-    flex: 1,
-    minHeight: 300,
     overflow: 'hidden',
   },
   fixturePreview: {
@@ -732,10 +778,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderStyle: 'dashed',
     borderWidth: 1,
-    flex: 1,
     gap: 8,
     justifyContent: 'center',
-    minHeight: 300,
     padding: 24,
   },
   fixturePreviewText: {
@@ -757,23 +801,11 @@ const styles = StyleSheet.create({
   shutterText: { color: COLORS.deep, fontSize: 15, fontWeight: '800' },
   disabledControl: { opacity: 0.48 },
   errorText: { color: COLORS.edge, fontSize: 13, textAlign: 'center' },
-  previewArea: { flex: 1, flexShrink: 1, gap: 12, minHeight: 0 },
-  previewFixture: {
-    flex: 0,
-    flexGrow: 0,
-    flexShrink: 1,
-    height: 360,
-    maxHeight: 360,
-    minHeight: 0,
-  },
+  previewArea: { gap: 12 },
   stillPreview: {
     backgroundColor: COLORS.deep,
     borderRadius: 10,
-    flex: 1,
-    minHeight: 300,
-    width: '100%',
   },
-  previewImage: { flex: 0, flexGrow: 0, flexShrink: 1, height: 360, maxHeight: 360, minHeight: 0 },
   previewMeta: { color: COLORS.muted, fontSize: 12, textAlign: 'center' },
   previewActions: { gap: 10 },
   savedText: { color: COLORS.accent, fontSize: 13, textAlign: 'center' },

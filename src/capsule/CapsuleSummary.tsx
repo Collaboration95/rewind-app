@@ -5,6 +5,7 @@ import { useCycleCountdown } from './cycle-time';
 import { RevealEducationPanel } from './RevealEducationPanel';
 import type { Cycle } from '../domain/cycles';
 import { revealStateForCycle, type RevealEducationState } from '../domain/reveal-education';
+import { formatDurationSeconds } from '../domain/video';
 import { COLORS } from '../theme';
 import {
   ContributionStatusPanel,
@@ -118,7 +119,12 @@ function ReadyCapsuleSummary({
   const { countUsed, secondsUsed } = cycle.contributionUsage;
   const remainingCount = Math.max(0, cycle.quota.maxCount - countUsed);
   const remainingSeconds = Math.max(0, cycle.quota.maxSeconds - secondsUsed);
-  const quotaLabel = `${countUsed} of ${cycle.quota.maxCount} contributions used. ${secondsUsed} of ${cycle.quota.maxSeconds} seconds used. ${remainingCount} contributions and ${remainingSeconds} seconds remaining.`;
+  // Recorded durations are floating-point seconds (e.g. 17.993333333333332);
+  // format to one decimal place everywhere they reach the screen.
+  const secondsUsedLabel = formatDurationSeconds(secondsUsed);
+  const maxSecondsLabel = formatDurationSeconds(cycle.quota.maxSeconds);
+  const remainingSecondsLabel = formatDurationSeconds(remainingSeconds);
+  const quotaLabel = `${countUsed} of ${cycle.quota.maxCount} contributions used. ${secondsUsedLabel} of ${maxSecondsLabel} used. ${remainingCount} contributions and ${remainingSecondsLabel} remaining.`;
 
   return (
     <View style={styles.stack} testID="capsule-ready">
@@ -168,8 +174,8 @@ function ReadyCapsuleSummary({
           {countUsed} of {cycle.quota.maxCount} contributions
         </Text>
         <Text style={styles.bodyText}>
-          {secondsUsed} of {cycle.quota.maxSeconds} seconds used · {remainingCount} contributions
-          and {remainingSeconds} seconds remaining
+          {secondsUsedLabel} of {maxSecondsLabel} used · {remainingCount} contributions and{' '}
+          {remainingSecondsLabel} remaining
         </Text>
       </View>
 

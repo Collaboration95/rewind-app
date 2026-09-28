@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { ContributionLedgerEntry, ContributionLedgerPage } from '../domain/contributions';
+import { formatDurationSeconds } from '../domain/video';
 import { COLORS } from '../theme';
 
 export type ContributionLedgerView =
@@ -23,10 +24,6 @@ const stateCopy: Record<ContributionLedgerEntry['state'], string> = {
   replaced: 'Replaced',
 };
 
-function seconds(value: number): string {
-  return `${Number.isInteger(value) ? value : value.toFixed(1)} seconds`;
-}
-
 function createdLabel(value: string): string {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : 'Time unavailable';
@@ -34,9 +31,9 @@ function createdLabel(value: string): string {
 
 function impact(entry: ContributionLedgerEntry): string {
   if (entry.state === 'deleted' || entry.state === 'replaced') {
-    return `Restored 1 contribution and ${seconds(entry.restored?.seconds ?? entry.durationSeconds)} of allowance.`;
+    return `Restored 1 contribution and ${formatDurationSeconds(entry.restored?.seconds ?? entry.durationSeconds)} of allowance.`;
   }
-  return `Uses 1 contribution and ${seconds(entry.durationSeconds)} of allowance.`;
+  return `Uses 1 contribution and ${formatDurationSeconds(entry.durationSeconds)} of allowance.`;
 }
 
 function failureDetail(entry: ContributionLedgerEntry): string | null {
@@ -56,7 +53,7 @@ function allowanceText(page: ContributionLedgerPage): string {
     used: 'This week’s correction has been used.',
     unavailable: 'Corrections are unavailable for this cycle.',
   }[allowance.deletionAvailability];
-  return `${allowance.countUsed} of ${allowance.maxCount} contributions and ${seconds(allowance.secondsUsed)} of ${seconds(allowance.maxSeconds)} used. ${correction}`;
+  return `${allowance.countUsed} of ${allowance.maxCount} contributions and ${formatDurationSeconds(allowance.secondsUsed)} of ${formatDurationSeconds(allowance.maxSeconds)} used. ${correction}`;
 }
 
 function LedgerRow({ entry, position }: { entry: ContributionLedgerEntry; position: number }) {
@@ -70,7 +67,7 @@ function LedgerRow({ entry, position }: { entry: ContributionLedgerEntry; positi
   return (
     <View
       accessible
-      accessibilityLabel={`${title}, reference ${reference}. ${status}. Duration ${seconds(entry.durationSeconds)}. ${allowanceImpact}${retry ? ` ${retry}` : ''}`}
+      accessibilityLabel={`${title}, reference ${reference}. ${status}. Duration ${formatDurationSeconds(entry.durationSeconds)}. ${allowanceImpact}${retry ? ` ${retry}` : ''}`}
       style={styles.row}
       testID={`contribution-ledger-entry-${position}`}
     >
@@ -78,7 +75,7 @@ function LedgerRow({ entry, position }: { entry: ContributionLedgerEntry; positi
       <Text style={styles.reference}>Reference {reference}</Text>
       <Text style={styles.status}>{status}</Text>
       <Text style={styles.body}>Recorded {createdLabel(entry.createdAt)}</Text>
-      <Text style={styles.body}>Duration {seconds(entry.durationSeconds)}</Text>
+      <Text style={styles.body}>Duration {formatDurationSeconds(entry.durationSeconds)}</Text>
       <Text style={styles.body}>{allowanceImpact}</Text>
       {retry ? <Text style={styles.body}>{retry}</Text> : null}
     </View>

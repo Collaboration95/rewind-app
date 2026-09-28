@@ -26,9 +26,16 @@ jest.mock('expo-camera', () => {
   const ReactModule = require('react');
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { View } = require('react-native');
-  const CameraView = ReactModule.forwardRef((props: Record<string, unknown>, _ref: unknown) => (
-    <View {...props} />
-  ));
+  const CameraView = ReactModule.forwardRef(
+    (props: Record<string, unknown> & { onCameraReady?: () => void }, _ref: unknown) => {
+      // Native CameraView reports readiness after its session starts.
+      const { onCameraReady } = props;
+      ReactModule.useEffect(() => {
+        onCameraReady?.();
+      }, [onCameraReady]);
+      return <View {...props} />;
+    },
+  );
   return { CameraView };
 });
 
@@ -389,6 +396,24 @@ describe('VideoCaptureScreen', () => {
     expect(platform.requestPermissions).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the system permission prompt once on the first undecided visit when enabled', async () => {
+    const permissions = { camera: 'undetermined' as const, microphone: 'undetermined' as const };
+    const platform = videoPlatform(permissions);
+    // A dismissed prompt leaves access undecided; the Allow panel is the retry.
+    const result = await render(<VideoCaptureScreen autoRequestPermission platform={platform} />);
+
+    await waitFor(() => expect(platform.requestPermissions).toHaveBeenCalledTimes(1));
+    await result.findByTestId('video-permission');
+    (platform.getPermissions as jest.Mock).mockResolvedValue({
+      camera: 'granted',
+      microphone: 'granted',
+    });
+    await fireEvent.press(result.getByRole('button', { name: 'Allow camera and microphone' }));
+
+    await result.findByTestId('video-live-preview');
+    expect(platform.requestPermissions).toHaveBeenCalledTimes(2);
+  });
+
   it('offers an authenticated fresh synthetic clip only in the local Demo fixture', async () => {
     const createSyntheticDemoClip = jest.fn().mockResolvedValue(upload);
     const processClipJob = jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' as const });
@@ -414,6 +439,14 @@ describe('VideoCaptureScreen', () => {
     expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
   });
 
+  it('waits for the camera to be ready before recording can start', async () => {
+    const platform = videoPlatformForReview();
+    const result = await render(<VideoCaptureScreen platform={platform} />);
+    await result.findByTestId('video-live-preview');
+    fireEvent(result.getByTestId('video-live-preview'), 'cameraReady');
+    expect(result.getByRole('button', { name: 'Start recording' })).toBeEnabled();
+  });
+
   it('shows recording progress and transitions to clip review after stopping', async () => {
     const platform = videoPlatformForReview();
     let resolveRecording!: (value: RecordedClip) => void;
@@ -426,6 +459,8 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-recording');
     expect(result.getByText(/0 \/ 15 seconds/)).toBeTruthy();
+    // Unmounting the native camera mid-recording crashes iOS; it must stay.
+    expect(result.getByTestId('video-live-preview')).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Stop and review' }));
     expect(platform.stopRecording).toHaveBeenCalledTimes(1);
     resolveRecording(clip);
@@ -486,6 +521,56 @@ describe('VideoCaptureScreen', () => {
       }),
     );
     expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
+  });
+
+  it('confirms a saved trim and clears the confirmation once the values change again', async () => {
+    const result = await renderReview();
+    await fireEvent.changeText(result.getByDisplayValue('8'), '6');
+    await fireEvent.press(result.getByRole('button', { name: 'Save trim and mode' }));
+    expect(await result.findByText('Trim and mode saved.')).toBeTruthy();
+
+    await fireEvent.press(result.getByRole('radio', { name: 'High Contrast' }));
+    expect(result.queryByText('Trim and mode saved.')).toBeNull();
+  });
+
+  it('clears a stale screen error once the trim is saved', async () => {
+    // Without a runtime, Upload leaves a top-level error while review stays open.
+    const result = await renderReview();
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    expect(await result.findByText(/Server-backed clip upload is unavailable/)).toBeTruthy();
+
+    await fireEvent.press(result.getByRole('button', { name: 'Save trim and mode' }));
+    expect(await result.findByText('Trim and mode saved.')).toBeTruthy();
+    expect(result.queryByText(/Server-backed clip upload is unavailable/)).toBeNull();
+  });
+
+  it('uploads the visible trim and mode even when they were not saved first', async () => {
+    const uploadClip = jest.fn().mockResolvedValue(upload);
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ uploadClip, processClipJob: jest.fn().mockResolvedValue(upload.job) }),
+    );
+    await fireEvent.changeText(result.getByDisplayValue('0'), '2');
+    await fireEvent.press(result.getByRole('radio', { name: 'High Contrast' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await waitFor(() => expect(uploadClip).toHaveBeenCalledTimes(1));
+    expect(uploadClip).toHaveBeenCalledWith(
+      'demo-session-ui',
+      'demo-group',
+      expect.objectContaining({ mode: 'high-contrast', trimEndSeconds: 8, trimStartSeconds: 2 }),
+    );
+  });
+
+  it('does not upload while the visible trim is invalid', async () => {
+    const uploadClip = jest.fn().mockResolvedValue(upload);
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ uploadClip }),
+    );
+    await fireEvent.changeText(result.getByDisplayValue('8'), '0.25');
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    expect(await result.findByText('Keep at least half a second in the clip.')).toBeTruthy();
+    expect(uploadClip).not.toHaveBeenCalled();
   });
 
   it('carries the selected contribution ID through delete and its replacement upload', async () => {

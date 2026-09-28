@@ -1,5 +1,15 @@
 export const MAX_CLIP_DURATION_SECONDS = 15;
 
+/**
+ * Renders a duration to one decimal place everywhere it reaches the screen.
+ * Recorded and server-verified durations are floating-point seconds (e.g.
+ * 5.843333333333334); this is the one place that rounds them for display so
+ * every screen agrees on the same precision.
+ */
+export function formatDurationSeconds(value: number): string {
+  return `${value.toFixed(1)} seconds`;
+}
+
 export type ClipSource = 'camera' | 'demo-fixture' | 'file';
 
 export interface RecordedClip {

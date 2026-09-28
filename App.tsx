@@ -408,6 +408,7 @@ function ActiveAppShell({
               />
             ) : activeRoute === 'camera' ? (
               <CameraCaptureScreen
+                autoRequestPermission={Platform.OS !== 'web'}
                 onRecordClip={() => setActiveRoute('video')}
                 onOpenArchive={() => setActiveRoute('archive')}
                 revealState={revealState}
@@ -415,6 +416,7 @@ function ActiveAppShell({
               />
             ) : activeRoute === 'video' ? (
               <VideoCaptureScreen
+                autoRequestPermission={Platform.OS !== 'web'}
                 onBack={() => setActiveRoute('camera')}
                 onContributionDeleted={refreshCapsule}
                 platform={resolvedCameraPlatform}

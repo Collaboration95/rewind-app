@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { formatDurationSeconds } from '../domain/video';
 import { COLORS } from '../theme';
 
 /**
@@ -237,7 +238,7 @@ export function ContributionStatusPanel({
   const copy =
     status.state === 'failed' ? failureCopy(status.retryable) : lifecycleCopy[status.state];
   const metadata = status.durationSeconds
-    ? `${status.durationSeconds.toFixed(1)} seconds · metadata only`
+    ? `${formatDurationSeconds(status.durationSeconds)} · metadata only`
     : 'Metadata only · no media is shown';
   return (
     <View
