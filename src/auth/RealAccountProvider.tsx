@@ -27,6 +27,7 @@ interface RealAccountContextValue {
   secureTransportAvailable: boolean;
   signIn: (username: string, password: string) => Promise<boolean>;
   signOut: () => Promise<void>;
+  retryLocalCredentialRemoval: () => Promise<void>;
   retryRestore: () => void;
   authenticatedRequest: (path: string, init?: RequestInit) => Promise<Response>;
 }
@@ -80,10 +81,18 @@ export function RealAccountProvider({
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof AuthRequestError && error.status === 401) {
-        if (Platform.OS !== 'web') await client.logout(tokenRef.current).catch(() => undefined);
+        let localCredentialRemovalFailed = false;
+        if (Platform.OS !== 'web') {
+          await client.logout(tokenRef.current).catch(() => undefined);
+          try {
+            await client.clearStoredToken();
+          } catch {
+            localCredentialRemovalFailed = true;
+          }
+        }
         setSession(null);
         tokenRef.current = undefined;
-        setNotice('expired');
+        setNotice(localCredentialRemovalFailed ? 'local-credential-removal-failed' : 'expired');
         setState('entry');
       } else if (error instanceof AuthRequestError && error.reason === 'insecure-transport') {
         setSession(null);
@@ -146,28 +155,81 @@ export function RealAccountProvider({
     }
   }, [client]);
 
+  const retryLocalCredentialRemoval = useCallback(async () => {
+    if (!client || Platform.OS === 'web') return;
+    setPending(true);
+    try {
+      await client.clearStoredToken();
+      tokenRef.current = undefined;
+      setSession(null);
+      setState('entry');
+      setNotice(null);
+    } catch {
+      setNotice('local-credential-removal-failed');
+    } finally {
+      setPending(false);
+    }
+  }, [client]);
+
   const signOut = useCallback(async () => {
     setPending(true);
-    if (client) {
-      try {
-        await client.logout(tokenRef.current);
-      } catch {
-        if (Platform.OS === 'web') {
-          // HttpOnly cookies cannot be cleared in JavaScript. Keep this browser
-          // session active until the server confirms revocation.
-          setPending(false);
-          setNotice('revocation-unconfirmed');
-          return;
-        }
-        // Native can safely remove this device's bearer token, but the remote
-        // session may remain valid until expiry or administrator reset.
-        await clearLocalSession();
-        setNotice('revocation-unconfirmed');
-        return;
-      }
+    if (!client) {
+      await clearLocalSession();
+      setNotice(null);
+      return;
     }
-    await clearLocalSession();
-    setNotice(null);
+
+    let remoteRevoked = false;
+    try {
+      await client.logout(tokenRef.current);
+      remoteRevoked = true;
+    } catch {
+      // Keep server revocation status separate from local credential deletion.
+    }
+
+    if (Platform.OS === 'web') {
+      if (remoteRevoked) {
+        await clearLocalSession();
+        setNotice(null);
+      } else {
+        // HttpOnly cookies cannot be cleared in JavaScript. Keep this browser
+        // session active until the server confirms revocation.
+        setPending(false);
+        setNotice('revocation-unconfirmed');
+      }
+      return;
+    }
+
+    let localCredentialRemoved = false;
+    try {
+      await client.clearStoredToken();
+      localCredentialRemoved = true;
+    } catch {
+      // SecureStore can fail independently of server-side revocation.
+    }
+
+    if (localCredentialRemoved) {
+      tokenRef.current = undefined;
+      setSession(null);
+      setState('entry');
+      setPending(false);
+      setNotice(remoteRevoked ? null : 'revocation-unconfirmed');
+    } else if (remoteRevoked) {
+      // The server has revoked this token, so close protected UI even though
+      // SecureStore may restore the now-invalid credential after restart.
+      tokenRef.current = undefined;
+      setSession(null);
+      setState('entry');
+      setPending(false);
+      setNotice('local-credential-removal-failed');
+    } else {
+      // The token may still be stored and valid. Hide protected UI while
+      // retaining the credential only for the explicit retry path.
+      setSession(null);
+      setState('entry');
+      setPending(false);
+      setNotice('sign-out-incomplete');
+    }
   }, [clearLocalSession, client]);
 
   const authenticatedRequest = useCallback(
@@ -208,6 +270,7 @@ export function RealAccountProvider({
       secureTransportAvailable: Boolean(client?.canConnectSecurely()),
       signIn,
       signOut,
+      retryLocalCredentialRemoval,
       retryRestore: () => {
         setState('loading');
         setNotice(null);
@@ -215,7 +278,17 @@ export function RealAccountProvider({
       },
       authenticatedRequest,
     }),
-    [authenticatedRequest, client, notice, pending, session, signIn, signOut, state],
+    [
+      authenticatedRequest,
+      client,
+      notice,
+      pending,
+      retryLocalCredentialRemoval,
+      session,
+      signIn,
+      signOut,
+      state,
+    ],
   );
 
   return <RealAccountContext.Provider value={value}>{children}</RealAccountContext.Provider>;

@@ -110,6 +110,8 @@ describe('real-account client transport and storage', () => {
     expect(
       new Headers((fetcher.mock.calls[2][1] as RequestInit).headers).get('Authorization'),
     ).toBe(`Bearer ${token}`);
+    expect(storedToken).toBe(token);
+    await client.clearStoredToken();
     expect(storedToken).toBeNull();
   });
 
@@ -123,6 +125,7 @@ describe('real-account client transport and storage', () => {
       new Headers((fetcher.mock.calls[0][1] as RequestInit).headers).get('Authorization'),
     ).toBe(`Bearer ${token}`);
     await client.logout(token).catch(() => undefined);
+    await client.clearStoredToken();
     expect(storedToken).toBeNull();
   });
 
@@ -145,6 +148,8 @@ describe('real-account client transport and storage', () => {
     expect(
       new Headers((fetcher.mock.calls[1][1] as RequestInit).headers).get('Authorization'),
     ).toBe(`Bearer ${token}`);
+    expect(storedToken).toBe(token);
+    await client.clearStoredToken();
     expect(storedToken).toBeNull();
   });
 
@@ -210,13 +215,32 @@ describe('real-account client transport and storage', () => {
     ).toBe(`Bearer ${token}`);
   });
 
-  it('clears native secure storage after local sign-out even when the server is offline', async () => {
+  it('keeps server logout and local token deletion as separate operations when offline', async () => {
     storedToken = token;
     const fetcher = jest.fn().mockRejectedValue(new Error('offline'));
     const client = new RealAccountClient('https://api.rewind.example', tokenStore, fetcher);
 
     await expect(client.logout(token)).rejects.toThrow('offline');
+    expect(storedToken).toBe(token);
+    await client.clearStoredToken();
     expect(storedToken).toBeNull();
+  });
+
+  it('keeps remote revocation confirmed when SecureStore token deletion rejects', async () => {
+    storedToken = token;
+    const failingStore: TokenStore = {
+      ...tokenStore,
+      clear: async () => {
+        throw new Error('SecureStore unavailable');
+      },
+    };
+    const fetcher = jest.fn().mockResolvedValue(response(200, { signedOut: true }));
+    const client = new RealAccountClient('https://api.rewind.example', failingStore, fetcher);
+
+    await expect(client.logout(token)).resolves.toBeUndefined();
+    expect(storedToken).toBe(token);
+    await expect(client.clearStoredToken()).rejects.toThrow('SecureStore unavailable');
+    expect(storedToken).toBe(token);
   });
 
   it('rejects auth tokens and session identifiers in protected request URLs', async () => {

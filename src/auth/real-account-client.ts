@@ -17,7 +17,14 @@ export interface RealAccountSession {
 
 export type AuthState = 'loading' | 'entry' | 'active' | 'error';
 export type AuthNotice =
-  'expired' | 'revoked' | 'offline' | 'sign-in-failed' | 'revocation-unconfirmed' | null;
+  | 'expired'
+  | 'revoked'
+  | 'offline'
+  | 'sign-in-failed'
+  | 'revocation-unconfirmed'
+  | 'local-credential-removal-failed'
+  | 'sign-out-incomplete'
+  | null;
 
 const SECURE_SESSION_KEY = 'rewind.real-account.session-token';
 
@@ -150,27 +157,24 @@ export class RealAccountClient {
 
   async logout(token?: string): Promise<void> {
     this.assertSecureTransport();
-    try {
-      const credential =
-        Platform.OS === 'web'
-          ? undefined
-          : (token ?? this.activeToken ?? (await this.tokenStore.read()) ?? undefined);
-      const response = await this.fetcher(
-        authUrl(this.baseUrl, '/auth/logout'),
-        requestOptions({ method: 'POST' }, credential),
-      );
-      if (!response.ok) throw new AuthRequestError(response.status, 'logout');
-      const body = await readJson(response);
-      if (body.signedOut !== true) throw new AuthRequestError(502, 'logout');
-    } finally {
-      this.activeToken = undefined;
-      if (Platform.OS !== 'web') await this.tokenStore.clear();
-    }
+    const credential =
+      Platform.OS === 'web'
+        ? undefined
+        : (token ?? this.activeToken ?? (await this.tokenStore.read()) ?? undefined);
+    const response = await this.fetcher(
+      authUrl(this.baseUrl, '/auth/logout'),
+      requestOptions({ method: 'POST' }, credential),
+    );
+    if (!response.ok) throw new AuthRequestError(response.status, 'logout');
+    const body = await readJson(response);
+    if (body.signedOut !== true) throw new AuthRequestError(502, 'logout');
+    this.activeToken = undefined;
   }
 
-  clearStoredToken(): Promise<void> {
+  async clearStoredToken(): Promise<void> {
+    if (Platform.OS === 'web') return;
+    await this.tokenStore.clear();
     this.activeToken = undefined;
-    return Platform.OS === 'web' ? Promise.resolve() : this.tokenStore.clear();
   }
 
   async request(path: string, init: RequestInit, token?: string): Promise<Response> {

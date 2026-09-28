@@ -5,7 +5,7 @@ import { Platform } from 'react-native';
 
 import App from '../App';
 
-const secureStoreMock = { token: null as string | null };
+const secureStoreMock = { token: null as string | null, failClear: false };
 
 jest.mock('expo-secure-store', () => ({
   getItemAsync: async () => secureStoreMock.token,
@@ -13,6 +13,7 @@ jest.mock('expo-secure-store', () => ({
     secureStoreMock.token = value;
   },
   deleteItemAsync: async () => {
+    if (secureStoreMock.failClear) throw new Error('SecureStore unavailable');
     secureStoreMock.token = null;
   },
 }));
@@ -78,6 +79,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   secureStoreMock.token = null;
+  secureStoreMock.failClear = false;
   await AsyncStorage.clear();
 });
 
@@ -166,6 +168,28 @@ describe('real account entry flow', () => {
     expect(result.queryByTestId('main-navigation')).toBeNull();
   });
 
+  it('reports and retries SecureStore cleanup failure after a restored session is expired', async () => {
+    secureStoreMock.token = nativeToken;
+    secureStoreMock.failClear = true;
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+      /server says this session has ended.*could not confirm deletion/i,
+    );
+    expect(secureStoreMock.token).toBe(nativeToken);
+    expect(await result.findByRole('button', { name: 'Retry local cleanup' })).toBeTruthy();
+
+    secureStoreMock.failClear = false;
+    await fireEvent.press(result.getByRole('button', { name: 'Retry local cleanup' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
+  });
+
   it.each([
     ['non-2xx response', () => jsonResponse(503, { signedOut: false })],
     ['network failure', () => Promise.reject(new Error('offline'))],
@@ -220,6 +244,63 @@ describe('real account entry flow', () => {
       expect(new Headers(logoutInit.headers).get('Authorization')).toBe(`Bearer ${nativeToken}`);
     },
   );
+
+  it('closes protected UI but offers retry when remote revocation succeeds and SecureStore deletion fails', async () => {
+    secureStoreMock.token = nativeToken;
+    secureStoreMock.failClear = true;
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(activeSessionResponse())
+      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+      /server says this session has ended.*could not confirm deletion.*credential may remain/i,
+    );
+    expect(result.getByTestId('real-account-session-status')).not.toHaveTextContent(
+      /signed out on this device/i,
+    );
+    expect(secureStoreMock.token).toBe(nativeToken);
+    expect(await result.findByRole('button', { name: 'Retry local cleanup' })).toBeTruthy();
+
+    secureStoreMock.failClear = false;
+    await fireEvent.press(result.getByRole('button', { name: 'Retry local cleanup' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('hides protected UI and offers retry when revocation and SecureStore deletion both fail', async () => {
+    secureStoreMock.token = nativeToken;
+    secureStoreMock.failClear = true;
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(activeSessionResponse())
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.queryByRole('header', { name: 'You’re signed in' })).toBeNull();
+    expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+      /could not confirm deletion.*server did not confirm revocation.*credential may remain/i,
+    );
+    expect(await result.findByRole('button', { name: 'Retry sign out' })).toBeTruthy();
+    expect(secureStoreMock.token).toBe(nativeToken);
+
+    secureStoreMock.failClear = false;
+    await fireEvent.press(result.getByRole('button', { name: 'Retry sign out' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
+  });
 
   it('returns web to entry only after the server confirms cookie revocation', async () => {
     useWebPlatform();

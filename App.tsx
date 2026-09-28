@@ -503,7 +503,11 @@ function DemoAccessEntry() {
               ? Platform.OS === 'web'
                 ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
                 : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'
-              : null;
+              : auth.notice === 'local-credential-removal-failed'
+                ? 'The server says this session has ended, but this device could not confirm deletion of its saved sign-in. The credential may remain in SecureStore; retry local cleanup before treating this device as signed out.'
+                : auth.notice === 'sign-out-incomplete'
+                  ? 'Sign-out is incomplete: this device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in. Retry sign out.'
+                  : null;
 
   const submitSignIn = async () => {
     setAuthPending(true);
@@ -702,7 +706,9 @@ function DemoAccessEntry() {
         {(auth.notice === 'offline' ||
           auth.notice === 'expired' ||
           auth.notice === 'revoked' ||
-          auth.notice === 'revocation-unconfirmed') &&
+          auth.notice === 'revocation-unconfirmed' ||
+          auth.notice === 'local-credential-removal-failed' ||
+          auth.notice === 'sign-out-incomplete') &&
         mode !== 'sign-in' &&
         !(auth.notice === 'offline' && error) ? (
           <View
@@ -723,6 +729,30 @@ function DemoAccessEntry() {
                 style={styles.retryButton}
               >
                 <Text style={styles.retryButtonText}>Retry session check</Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'local-credential-removal-failed' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={() => void auth.retryLocalCredentialRemoval()}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Retrying…' : 'Retry local cleanup'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'sign-out-incomplete' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={() => void auth.signOut()}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Signing out…' : 'Retry sign out'}
+                </Text>
               </Pressable>
             ) : null}
           </View>
@@ -780,11 +810,13 @@ function RealAccountHome({ displayName }: { displayName: string }) {
           <Text style={styles.entryChoiceBody}>
             Group and capsule access will appear here when your pilot group is ready.
           </Text>
-          {auth.notice === 'revocation-unconfirmed' ? (
+          {auth.notice === 'revocation-unconfirmed' || auth.notice === 'sign-out-incomplete' ? (
             <Text accessibilityRole="alert" style={styles.errorText} testID="logout-unconfirmed">
-              {auth.notice === 'revocation-unconfirmed' && Platform.OS === 'web'
-                ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
-                : 'Sign-out on this device succeeded, but the server did not confirm revocation. Another device may remain signed in until the session expires or an administrator resets it.'}
+              {auth.notice === 'sign-out-incomplete'
+                ? 'Sign-out is incomplete. This device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in; retry sign out.'
+                : Platform.OS === 'web'
+                  ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
+                  : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'}
             </Text>
           ) : null}
           <Pressable
@@ -796,7 +828,7 @@ function RealAccountHome({ displayName }: { displayName: string }) {
             <Text style={styles.primaryEntryButtonText}>
               {auth.pending
                 ? 'Signing out…'
-                : auth.notice === 'revocation-unconfirmed'
+                : auth.notice === 'revocation-unconfirmed' || auth.notice === 'sign-out-incomplete'
                   ? 'Retry sign out'
                   : 'Sign out'}
             </Text>
