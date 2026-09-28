@@ -180,6 +180,7 @@ export function VideoCaptureScreen({
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [clip, setClip] = useState<RecordedClip | null>(null);
+  const [previewLocked, setPreviewLocked] = useState(false);
   const [review, setReview] = useState<ClipReviewSession | null>(null);
   const [startText, setStartText] = useState('0');
   const [endText, setEndText] = useState('0');
@@ -288,6 +289,7 @@ export function VideoCaptureScreen({
 
   const isCaptureActive = useCallback(() => mountedRef.current && !captureLeftRef.current, []);
   const beginContributionWork = useCallback((upload: boolean): number => {
+    if (upload) setPreviewLocked(true);
     const operation = ++contributionOperationRef.current;
     contributionWorkRef.current = true;
     activeUploadRef.current = upload;
@@ -346,6 +348,8 @@ export function VideoCaptureScreen({
       clipRef.current = selected;
       reviewRef.current = nextReview;
       setClip(selected);
+      setPreviewLocked(false);
+      setPreviewOpen(false);
       setReview(nextReview);
       setStartText('0');
       setEndText(String(selected.durationSeconds));
@@ -1395,12 +1399,14 @@ export function VideoCaptureScreen({
               </Pressable>
             ))}
           </View>
-          <ActionButton
-            label={previewOpen ? t('Hide preview') : t('Preview clip')}
-            onPress={() => setPreviewOpen((open) => !open)}
-            testID="video-preview-toggle"
-          />
-          {previewOpen ? <ClipPreview clip={clip} /> : null}
+          {!previewLocked ? (
+            <ActionButton
+              label={previewOpen ? t('Hide preview') : t('Preview clip')}
+              onPress={() => setPreviewOpen((open) => !open)}
+              testID="video-preview-toggle"
+            />
+          ) : null}
+          {!previewLocked && previewOpen ? <ClipPreview clip={clip} /> : null}
           <ActionButton label={t('Save trim and mode')} onPress={saveReview} />
           <ActionButton label={t('Retake')} onPress={() => void retake()} />
           {!runtimeClient ? (

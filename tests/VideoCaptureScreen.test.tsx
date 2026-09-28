@@ -421,6 +421,35 @@ describe('VideoCaptureScreen', () => {
     expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
   });
 
+  it('unmounts preview on submission and keeps sealed clips unpreviewable', async () => {
+    let finishUpload!: (value: PendingClipUpload) => void;
+    const uploadClip = jest.fn(
+      () =>
+        new Promise<PendingClipUpload>((resolve) => {
+          finishUpload = resolve;
+        }),
+    );
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({
+        uploadClip,
+        processClipJob: jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' }),
+      }),
+    );
+    await fireEvent.press(result.getByTestId('video-preview-toggle'));
+    expect(result.getByTestId('video-clip-preview-player')).toBeTruthy();
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await waitFor(() => expect(uploadClip).toHaveBeenCalledTimes(1));
+    expect(result.queryByTestId('video-clip-preview-player')).toBeNull();
+    expect(result.queryByTestId('video-preview-toggle')).toBeNull();
+
+    await act(async () => finishUpload(upload));
+    await result.findByTestId('camera-contribution-status-sealed');
+    expect(result.queryByTestId('video-clip-preview-player')).toBeNull();
+    expect(result.queryByTestId('video-preview-toggle')).toBeNull();
+  });
+
   it('reviews a chosen phone video, previews it locally, and explains the runtime need', async () => {
     const platform: TestVideoPlatform = {
       ...videoPlatformForReview(),

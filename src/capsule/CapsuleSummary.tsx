@@ -634,7 +634,7 @@ const styles = StyleSheet.create({
   },
   frameUsed: { backgroundColor: COLORS.accent },
   frameNumber: {
-    color: '#4E473F',
+    color: COLORS.muted,
     fontFamily: FONTS.sansSemiBold,
     fontSize: 8.5,
     letterSpacing: 0.6,
