@@ -29,6 +29,7 @@ The page reads the reaction counts from the public GitHub API when it loads (60 
 - Compare the **dock variants**: A icons with the active label, B labels always, C shrinks while scrolling (tap the small pill to expand).
 - Switch the **shutter state**: collecting, allowance used up, sealing, just sealed, and premiere (the shutter becomes _watch together_, with the time left on its ring).
 - Toggle **chat unread** to see the badges; the Archive tab shows a dot during the premiere.
+- **Motion:** press the shutter and a photo flies into the direction's main visual, flips to its sealed back and is absorbed; the ring gains a segment. Use _replay entrance_ to see the Darkroom film slide in and keep running, and the Premiere ticket drift down. The photos are generated on the page (out-of-focus lights, grain and a light leak in the contributor's colour); they contain no people and no member media.
 
 ## Shared decisions across all directions
 
@@ -38,14 +39,15 @@ The page reads the reaction counts from the public GitHub API when it loads (60 
 
 ## Files
 
-| File                                           | Purpose                                          |
-| ---------------------------------------------- | ------------------------------------------------ |
-| `index.html`                                   | Review page shell and review table               |
-| `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                |
-| `styles-nav.css`                               | Shared dock, variants, shutter states, badges    |
-| `app.js`                                       | Synthetic data, direction markup, vote reading   |
-| `review-config.js`                             | Review issue number                              |
-| `shots/`                                       | Screenshots for the issue: phones, dock, shutter |
+| File                                           | Purpose                                             |
+| ---------------------------------------------- | --------------------------------------------------- |
+| `index.html`                                   | Review page shell and review table                  |
+| `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                   |
+| `styles-nav.css`                               | Shared dock, variants, shutter states, badges       |
+| `styles-motion.css`                            | Realistic film and ticket, entrance and seal motion |
+| `app.js`                                       | Synthetic data, direction markup, vote reading      |
+| `review-config.js`                             | Review issue number                                 |
+| `shots/`                                       | Screenshots for the issue: phones, dock, shutter    |
 
 ## References
 

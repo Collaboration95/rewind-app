@@ -50,6 +50,94 @@ const POOL = [
   { name: 'Jun', c: 2 },
 ].map((p, i) => ({ ...p, col: COLORS[i] }));
 const DEFAULT_C = POOL.map((p) => p.c);
+
+/* ---------- 程序生成的“照片” ---------- */
+// 揭晓前不能出现任何成员媒体，所以这里只画虚焦的街灯、咖啡馆、海边、夜城、公园光斑，
+// 看起来像真实冲洗的照片，但没有人物和内容；漏光用贡献者的专属色。
+const rng = (seed) => () => {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+const SCENES = [
+  ['#1b1a2e', '#6b3b3a', '#f0a35e', ['#ffd9a0', '#ff9f6b', '#ffe7c2']],
+  ['#2a1a12', '#6e4424', '#d99a52', ['#ffe0a3', '#ffc873', '#fff1d0']],
+  ['#123043', '#3f7a86', '#f2b48a', ['#fff2dc', '#ffd0a6', '#bfe6ea']],
+  ['#1c1233', '#5a2d5e', '#e0708a', ['#ff9ec0', '#ffd6e6', '#9fb4ff']],
+  ['#1d2a18', '#4e6b35', '#e3c070', ['#fff0b8', '#e8f5c0', '#ffd98a']],
+];
+const photoCache = {};
+function photoFor(seed, tint) {
+  const key = seed + tint;
+  if (photoCache[key]) return photoCache[key];
+  const W = 180,
+    H = 120,
+    cv = document.createElement('canvas');
+  cv.width = W;
+  cv.height = H;
+  const x = cv.getContext('2d');
+  if (!x) return '';
+  const r = rng(seed * 9973 + 17);
+  const [top, mid, glow, lights] = SCENES[seed % SCENES.length];
+  let g = x.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, top);
+  g.addColorStop(0.6, mid);
+  g.addColorStop(1, glow);
+  x.fillStyle = g;
+  x.fillRect(0, 0, W, H);
+  g = x.createRadialGradient(W * (0.3 + r() * 0.4), H * 0.75, 0, W * 0.5, H * 0.75, W * 0.8);
+  g.addColorStop(0, glow + 'cc');
+  g.addColorStop(1, glow + '00');
+  x.fillStyle = g;
+  x.fillRect(0, 0, W, H);
+  for (let i = 0; i < 3; i++) {
+    const cx = r() * W,
+      cy = H * (0.55 + r() * 0.4),
+      rr = 25 + r() * 45;
+    g = x.createRadialGradient(cx, cy, 0, cx, cy, rr);
+    g.addColorStop(0, 'rgba(10,6,4,.55)');
+    g.addColorStop(1, 'rgba(10,6,4,0)');
+    x.fillStyle = g;
+    x.fillRect(0, 0, W, H);
+  }
+  x.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 20; i++) {
+    const cx = r() * W,
+      cy = r() * H * 0.8,
+      rr = 5 + r() * 15,
+      col = lights[i % lights.length];
+    g = x.createRadialGradient(cx, cy, rr * 0.2, cx, cy, rr);
+    g.addColorStop(0, col + 'aa');
+    g.addColorStop(0.7, col + '50');
+    g.addColorStop(1, col + '00');
+    x.fillStyle = g;
+    x.beginPath();
+    x.arc(cx, cy, rr, 0, 7);
+    x.fill();
+  }
+  g = x.createLinearGradient(W, 0, W * 0.45, H * 0.6);
+  g.addColorStop(0, tint + 'b0');
+  g.addColorStop(1, tint + '00');
+  x.fillStyle = g;
+  x.fillRect(0, 0, W, H);
+  x.globalCompositeOperation = 'source-over';
+  g = x.createRadialGradient(W / 2, H / 2, W * 0.25, W / 2, H / 2, W * 0.7);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,.55)');
+  x.fillStyle = g;
+  x.fillRect(0, 0, W, H);
+  const img = x.getImageData(0, 0, W, H),
+    px = img.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const n = (r() - 0.5) * 26;
+    px[i] += n;
+    px[i + 1] += n;
+    px[i + 2] += n;
+  }
+  x.putImageData(img, 0, 0);
+  return (photoCache[key] = cv.toDataURL('image/jpeg', 0.82));
+}
 let size = 5;
 let anon = true; // 未参与成员不点名（借鉴 Reveal “no streak, no scolding”）
 const WORDS = [
@@ -216,7 +304,27 @@ const tex = (i, k = 0) =>
 
 /* ---------- 各方案 ---------- */
 const bodies = {
-  c1: (d) => `
+  c1: (d) => {
+    // 整组已封存的片段做成一条倾斜的胶片，斜向下缓慢走片
+    const shots = [];
+    d.members.forEach((x, i) => {
+      for (let k = 0; k < x.c; k++) shots.push({ x, seed: i * 7 + k * 3 + 1 });
+    });
+    const base = shots.length ? shots : Array(4).fill(null);
+    let reel = [];
+    while (reel.length < 8) reel = reel.concat(base);
+    const num = (j) => String((j % base.length) + 1).padStart(2, '0');
+    const cells = reel
+      .map(
+        (f, j) =>
+          `<div class="cell">${holes(3)}<p class="edge">${j % 2 ? '◂ ' + num(j) : 'REWIND 400'}</p>${
+            f
+              ? `<div class="fr sealed" style="background-image:url(${photoFor(f.seed, f.x.col)})">${ic('lock')}</div>`
+              : '<div class="fr blank"></div>'
+          }<p class="edge low">${num(j)} ▸ ${num(j)}A</p>${holes(3)}</div>`,
+      )
+      .join('');
+    return `
     <header class="top">${me()}<span class="tag">ROLL 036</span></header>
     <p class="eyebrow"><i></i>Developing · private roll</p>
     <h1 class="title">Weekend People</h1>
@@ -224,20 +332,12 @@ const bodies = {
       <div><b>02</b><span>Days</span></div><em>:</em><div><b>14</b><span>Hours</span></div>
     </div>
     <p class="when">Lights on for all of us at once · Sun 8:00 PM</p>
-    <section class="strip" aria-label="Your roll: ${d.me.c} of 5 frames exposed and sealed">
-      ${holes(24)}
-      <div class="edge"><span>REWIND 400</span><span>YOUR ROLL · NO PEEKING ▸</span></div>
-      <div class="frames">${Array.from({ length: 5 }, (_, k) =>
-        k < d.me.c
-          ? `<div class="fr sealed">${ic('lock')}<span>0${k + 1}</span></div>`
-          : `<div class="fr${k === d.me.c ? ' next' : ''}">${k === d.me.c ? '<small>NEXT</small>' : ''}<span>0${k + 1}</span></div>`,
-      ).join('')}</div>
-      <div class="edge low"><span>01A</span><span>02A</span><span>03A</span><span>04A</span><span>05A</span></div>
-      ${holes(24)}
+    <section class="strip" data-seal aria-label="The group's roll: ${plural(d.m, 'moment')} sealed, not even you can peek">
+      <div class="track" style="--dur:${reel.length * 3.2}s">${cells}${cells}</div>
     </section>
-    <div class="meta"><span><b>${d.me.c}</b> of 5 exposed</span><span><b>${secs(d.me.c)}</b> / 30 sec</span></div>
-    <section class="prompt"><p class="lbl">This week's prompt</p><h2>What made you pause and smile?</h2></section>
-    <div class="crew"><div class="stack">${crew(d)}</div><p><b>${d.added} of ${d.n}</b> are in</p></div>`,
+    <div class="meta"><span><b>${d.me.c}</b> of 5 yours · <b>${secs(d.me.c)}</b>/30 sec</span><span class="mini-crew"><span class="stack">${crew(d)}</span>${d.added}/${d.n}</span></div>
+    <section class="prompt"><p class="lbl">This week's prompt</p><h2>What made you pause and smile?</h2></section>`;
+  },
 
   c2: (d) => {
     const rh = Math.round(Math.max(15, Math.min(30, 150 / d.n)));
@@ -245,7 +345,7 @@ const bodies = {
     <header class="top">${me()}<span class="tag">W36 · SEP</span></header>
     <p class="eyebrow">A week with your people</p>
     <h1 class="title">Weekend <i>People</i></h1>
-    <figure class="neg" aria-label="Contact sheet: one row per member, ${plural(d.m, 'moment')} sealed until Sunday">
+    <figure class="neg" data-seal aria-label="Contact sheet: one row per member, ${plural(d.m, 'moment')} sealed until Sunday">
       ${holes(20)}
       <div class="rows" style="--rh:${rh}px">${d.shown
         .map(
@@ -268,7 +368,7 @@ const bodies = {
   c3: (d) => `
     <div class="orb" aria-hidden="true"><i></i><i></i><i></i></div>
     <header class="top">${me(false)}<button type="button" class="grp">Weekend People ${ic('chev')}</button><span class="tag">W36</span></header>
-    <section class="hero" aria-label="${plural(d.m, 'moment')} developing, sealed until reveal">
+    <section class="hero" data-seal aria-label="${plural(d.m, 'moment')} developing, sealed until reveal">
       <b>${d.m}</b><span>${d.m === 1 ? 'moment' : 'moments'} developing</span>
       <p class="chip">${ic('lock')} Sealed · not even you can peek</p>
     </section>
@@ -284,8 +384,9 @@ const bodies = {
     <header class="top">${me(false)}<span class="mark">Rewind</span><span class="tag">Nº 036</span></header>
     <p class="eyebrow">Private premiere · all at once</p>
     <article class="ticket" aria-label="Premiere ticket: Weekend People, Sunday 28 September, 8:00 PM">
-      <div class="t-main">
-        <div class="t-row"><span>Admit ${word(d.n)}</span><span>Roll 036</span></div>
+      <div class="t-main" data-seal>
+        <span class="foil" aria-hidden="true">${ic('rewind')}</span>
+        <div class="t-row"><span>Admit ${word(d.n)}</span></div>
         <h1>Weekend People</h1>
         <p class="by">a film by ${word(d.n)} friends</p>
         <dl>
@@ -293,6 +394,7 @@ const bodies = {
           <div><dt>Doors</dt><dd>8:00 PM</dd></div>
           <div><dt>Reels</dt><dd>${d.m} sealed</dd></div>
         </dl>
+        <div class="t-foot"><span class="barcode" aria-hidden="true"></span><span class="serial">Roll 036 · Nº ${String(d.m).padStart(4, '0')}</span></div>
       </div>
       <div class="t-stub">
         <div class="curtain"><small>Curtain in</small><p><b>02</b><span>d</span><b>14</b><span>h</span></p></div>
@@ -310,7 +412,7 @@ const bodies = {
   c5: (d) => `
     <header class="top">${me(false)}<span class="tag">Weekend People <em>— W36</em></span></header>
     <p class="eyebrow"><i></i>Developing · ${plural(d.m, 'moment')} sealed</p>
-    <div class="big" role="img" aria-label="Opens in 2 days 14 hours, Sunday 20:00"><b>02</b><div><span>days</span><strong>14 hrs</strong><span>Sun · 20:00</span></div></div>
+    <div class="big" data-seal role="img" aria-label="Opens in 2 days 14 hours, Sunday 20:00"><b>02</b><div><span>days</span><strong>14 hrs</strong><span>Sun · 20:00</span></div></div>
     <p class="lead">until it opens for all ${word(d.n)} of us at once.</p>
     <section class="prompt"><small>01 — Prompt</small><h2>What made you pause and smile?</h2></section>
     <section class="table"><small>02 — This week · not even you can peek</small>
@@ -329,7 +431,7 @@ const bodies = {
   c6: (d) => `
     <div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>
     <header class="top">${me(false)}<button type="button" class="grp">Weekend People ${ic('chev')}</button><span class="tag">W36</span></header>
-    <section class="hero" aria-label="${plural(d.m, 'moment')}, sealed until Sunday">
+    <section class="hero" data-seal aria-label="${plural(d.m, 'moment')}, sealed until Sunday">
       <p class="kept">kept warm for the ${word(d.n)} of us</p>
       <b>${d.m}</b>
       <span>little ${d.m === 1 ? 'moment' : 'moments'}</span>
@@ -362,7 +464,7 @@ const bodies = {
       .join('');
     return `
     <header class="top">${me(false)}<button type="button" class="grp">Weekend People ${ic('chev')}</button><span class="tag">W36</span></header>
-    <section class="hearth" style="--heat:${heat}" aria-label="${d.n} members around the fire, ${plural(d.m, 'moment')} sealed">
+    <section class="hearth" data-seal style="--heat:${heat}" aria-label="${d.n} members around the fire, ${plural(d.m, 'moment')} sealed">
       <div class="fire" aria-hidden="true"><i></i><i></i></div>
       ${embers}
       <div class="mid"><strong>2d 14h</strong><span>until we gather</span><span>Sunday · 8 PM</span></div>
@@ -380,7 +482,7 @@ const bodies = {
   c8: (d) => `
     <header class="top">${me()}<span class="tag">W36</span></header>
     <p class="eyebrow">A letter to ourselves</p>
-    <article class="env" aria-label="Sealed letter with ${plural(d.m, 'moment')} inside, opens Sunday 8 PM">
+    <article class="env" data-seal aria-label="Sealed letter with ${plural(d.m, 'moment')} inside, opens Sunday 8 PM">
       <div class="flap-shadow"></div><div class="flap"></div>
       <span class="seal">${ic('rewind')}</span>
       <div class="addr"><small>To</small><p class="hand">Weekend People</p><small>From</small><p class="hand sm">the ${word(d.n)} of us</p></div>
@@ -411,7 +513,7 @@ const bodies = {
     <header class="top">${me(false)}<button type="button" class="grp">Weekend People ${ic('chev')}</button><span class="tag">W36</span></header>
     <section class="jarwrap" aria-label="${plural(d.m, 'moment')} caught in the jar, sealed until Sunday">
       <div class="jarglow" aria-hidden="true"></div>
-      <div class="jar" aria-hidden="true"><span class="lid"></span><span class="neck"></span><div class="body">${fl}</div><span class="label"><em>open</em> Sun · 8 PM</span></div>
+      <div class="jar" aria-hidden="true"><span class="lid"></span><span class="neck"></span><div class="body" data-seal>${fl}</div><span class="label"><em>open</em> Sun · 8 PM</span></div>
     </section>
     <p class="caught"><b>${d.m}</b> ${d.m === 1 ? 'moment' : 'moments'} caught this week</p>
     <p class="sealed">${ic('lock')} Sealed · not even you can peek</p>
@@ -439,7 +541,7 @@ const bodies = {
     <section class="theatre" aria-label="Premiere Sunday 8 PM for all members at once">
       <span class="projector" aria-hidden="true"></span>
       <span class="beam" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
-      <div class="screen-card">
+      <div class="screen-card" data-seal>
         <small>Coming Sunday · 8 PM</small>
         <h1>Weekend People</h1>
         <p>in 2 days, 14 hours · for all ${word(d.n)} of us at once</p>
@@ -459,7 +561,7 @@ const bodies = {
     <header class="top">${me()}<span class="tag">W36</span></header>
     <h1 class="title">Weekend People</h1>
     <p class="pill-count"><span class="dot"></span>Premieres in <b>2d 14h</b> · Sun 8 PM, to all ${word(d.n)} at once</p>
-    <section class="board" aria-label="Our reel: ${plural(d.m, 'clip')} from ${d.added} of ${d.n} members, sealed">
+    <section class="board" data-seal aria-label="Our reel: ${plural(d.m, 'clip')} from ${d.added} of ${d.n} members, sealed">
       <div class="board-h"><div><small>Our reel so far</small><strong>${plural(d.m, 'clip')}</strong></div><span class="lock">${ic('lock')} not even you can peek</span></div>
       <div class="lanes" style="--n:${d.n}">${d.shown
         .map(
@@ -774,11 +876,88 @@ function pick(id) {
   current = id;
   applyPick();
   setZoom(id === 'all' ? 72 : 100);
+  playIntro();
   try {
     history.replaceState(null, '', id === 'all' ? location.pathname + location.search : '#' + id);
   } catch {
     /* 在受限的框架里改不了地址栏也没关系 */
   }
+}
+
+/* ---------- 动效：入场，与按快门的“封存” ---------- */
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+let introTimer;
+// 只在页面可见时播放（requestAnimationFrame 在隐藏页面不触发），避免缩略图停在动画起点
+function playIntro() {
+  requestAnimationFrame(() => {
+    const g = $('gallery');
+    g.classList.remove('intro');
+    void g.offsetWidth;
+    g.classList.add('intro');
+    clearTimeout(introTimer);
+    introTimer = setTimeout(() => g.classList.remove('intro'), 2600);
+  });
+}
+
+function flashTip(btn, text) {
+  btn.querySelector('.tip.flash')?.remove();
+  const tip = document.createElement('span');
+  tip.className = 'tip flash';
+  tip.setAttribute('aria-hidden', 'true');
+  tip.textContent = text;
+  btn.appendChild(tip);
+  setTimeout(() => tip.remove(), 1900);
+}
+
+// 一张照片从快门飞向主视觉，途中翻到“已封存”的背面，然后被吸收：放下它，等大家一起打开
+function sealFlight(scr, btn) {
+  if (NAV.shutter !== 'collect') return;
+  const mine = POOL[0];
+  if (mine.c >= 5) return flashTip(btn, 'All 5 used · resets Sun');
+  const id = scr.classList[1];
+  const done = () => {
+    mine.c += 1;
+    render();
+    const ns = document.querySelector(`.card[data-id="${id}"] .screen`);
+    ns?.querySelector('[data-seal]')?.classList.add('absorb');
+    const nb = ns?.querySelector('.shutter');
+    if (nb) flashTip(nb, 'Sealed · not even you can peek');
+  };
+  const target = scr.querySelector('[data-seal]');
+  if (!target || reduceMotion()) return done();
+  const sr = scr.getBoundingClientRect(),
+    k = sr.width / 390,
+    br = btn.getBoundingClientRect(),
+    tr = target.getBoundingClientRect();
+  const fx = (br.left + br.width / 2 - sr.left) / k,
+    fy = (br.top + br.height / 2 - sr.top) / k,
+    dx = (tr.left + tr.width / 2 - sr.left) / k - fx,
+    dy = (tr.top + tr.height / 2 - sr.top) / k - fy;
+  const fl = document.createElement('div');
+  fl.className = 'flyer';
+  fl.style.left = fx + 'px';
+  fl.style.top = fy + 'px';
+  fl.innerHTML = `<i class="face front" style="background-image:url(${photoFor(mine.c * 5 + 3, mine.col)})"></i><i class="face back">${ic('lock')}</i>`;
+  scr.appendChild(fl);
+  const at = (p, lift, extra) =>
+    `perspective(600px) translate(calc(-50% + ${dx * p}px), calc(-50% + ${dy * p - lift}px)) ${extra}`;
+  const anim = fl.animate(
+    [
+      { transform: at(0, 0, 'scale(.4) rotateY(0deg)'), opacity: 0 },
+      {
+        transform: at(0.2, 70, 'scale(1.15) rotateY(0deg) rotate(-6deg)'),
+        opacity: 1,
+        offset: 0.3,
+      },
+      { transform: at(0.6, 40, 'scale(1) rotateY(180deg) rotate(4deg)'), opacity: 1, offset: 0.68 },
+      { transform: at(1, 0, 'scale(.3) rotateY(180deg)'), opacity: 0 },
+    ],
+    { duration: 1300, easing: 'cubic-bezier(.3,.7,.3,1)' },
+  );
+  anim.onfinish = () => {
+    fl.remove();
+    done();
+  };
 }
 
 const closeSheets = () =>
@@ -807,6 +986,7 @@ document.addEventListener('click', (e) => {
     POOL.forEach((p) => (p.c = bag[Math.floor(Math.random() * bag.length)]));
     return render();
   }
+  if (t.id === 'replay') return playIntro();
   if (t.id === 'restore') {
     POOL.forEach((p, i) => (p.c = DEFAULT_C[i]));
     return render();
@@ -835,6 +1015,7 @@ document.addEventListener('click', (e) => {
     t.classList.remove('press');
     void t.offsetWidth;
     t.classList.add('press');
+    sealFlight(scr, t);
   }
 });
 document.addEventListener('keydown', (e) => e.key === 'Escape' && closeSheets());
@@ -882,3 +1063,4 @@ addEventListener('load', openFromHash);
 addEventListener('hashchange', openFromHash);
 setTimeout(openFromHash, 400);
 loadVotes();
+playIntro();
