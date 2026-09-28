@@ -87,13 +87,27 @@ function stubAppState(): { emit: (state: string) => void; restore: () => void } 
 }
 
 describe('CameraCaptureScreen', () => {
+  it('allows a still when camera is granted and microphone access is denied', async () => {
+    const platform = new DemoCameraPlatform({
+      permissions: { camera: 'granted', microphone: 'denied' },
+    });
+    const result = await screen(platform);
+    await result.findByTestId('camera-capture');
+    await expect(platform.getCameraPermission()).resolves.toBe('granted');
+    expect(result.getByRole('button', { name: 'Take still image' })).toBeEnabled();
+  });
+
   it('offers a labelled image file fallback when live camera support is unavailable', async () => {
     const platform: CameraPlatform = {
       captureStill: jest.fn(),
       getCapabilities: jest
         .fn()
         .mockResolvedValue({ camera: 'unsupported', microphone: 'supported' }),
-      getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      getCameraPermission: jest.fn().mockResolvedValue('granted'),
+      requestCameraPermission: jest.fn(),
+      getVideoPermissions: jest
+        .fn()
+        .mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
       kind: 'expo',
       openSettings: jest.fn().mockResolvedValue(undefined),
       pickStillFile: jest.fn().mockResolvedValue({
@@ -103,7 +117,7 @@ describe('CameraCaptureScreen', () => {
         sourceUri: 'blob:test-image',
         width: 1200,
       }),
-      requestPermissions: jest.fn(),
+      requestVideoPermissions: jest.fn(),
       supportsFileFallback: true,
       supportsLivePreview: true,
     };
@@ -206,17 +220,16 @@ describe('CameraCaptureScreen', () => {
     },
   );
 
-  it('requests undetermined permissions and enables the control only after both are granted', async () => {
+  it('requests only camera access and enables still capture when camera is granted', async () => {
     const platform = new DemoCameraPlatform({
       permissions: { camera: 'undetermined', microphone: 'undetermined' },
     });
-    const requestPermissions = jest.spyOn(platform, 'requestPermissions').mockResolvedValue({
-      camera: 'granted',
-      microphone: 'granted',
-    });
+    const requestPermissions = jest
+      .spyOn(platform, 'requestCameraPermission')
+      .mockResolvedValue('granted');
     const result = await screen(platform);
     await result.findByTestId('camera-permission-undecided');
-    await fireEvent.press(result.getByRole('button', { name: 'Allow camera and microphone' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Allow camera' }));
     await waitFor(() => expect(requestPermissions).toHaveBeenCalled());
     await result.findByTestId('camera-capture');
     expect(result.getByRole('button', { name: 'Take still image' })).toBeEnabled();
@@ -226,10 +239,9 @@ describe('CameraCaptureScreen', () => {
     const platform = new DemoCameraPlatform({
       permissions: { camera: 'undetermined', microphone: 'undetermined' },
     });
-    const requestPermissions = jest.spyOn(platform, 'requestPermissions').mockResolvedValue({
-      camera: 'granted',
-      microphone: 'granted',
-    });
+    const requestPermissions = jest
+      .spyOn(platform, 'requestCameraPermission')
+      .mockResolvedValue('granted');
     const result = await render(
       <CameraCaptureScreen
         autoRequestPermission
@@ -248,9 +260,9 @@ describe('CameraCaptureScreen', () => {
       permissions: { camera: 'undetermined', microphone: 'undetermined' },
     });
     const requestPermissions = jest
-      .spyOn(platform, 'requestPermissions')
-      .mockResolvedValueOnce({ camera: 'undetermined', microphone: 'undetermined' })
-      .mockResolvedValue({ camera: 'granted', microphone: 'granted' });
+      .spyOn(platform, 'requestCameraPermission')
+      .mockResolvedValueOnce('undetermined')
+      .mockResolvedValue('granted');
     const result = await render(
       <CameraCaptureScreen
         autoRequestPermission
@@ -261,7 +273,7 @@ describe('CameraCaptureScreen', () => {
     );
     await waitFor(() => expect(requestPermissions).toHaveBeenCalledTimes(1));
     await result.findByTestId('camera-permission-undecided');
-    await fireEvent.press(result.getByRole('button', { name: 'Allow camera and microphone' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Allow camera' }));
     await result.findByTestId('camera-capture');
     expect(requestPermissions).toHaveBeenCalledTimes(2);
   });
@@ -386,10 +398,16 @@ describe('CameraCaptureScreen', () => {
       getCapabilities: jest
         .fn()
         .mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
-      getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      getCameraPermission: jest.fn().mockResolvedValue('granted'),
+      requestCameraPermission: jest.fn().mockResolvedValue('granted'),
+      getVideoPermissions: jest
+        .fn()
+        .mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
       kind: 'expo',
       openSettings: jest.fn().mockResolvedValue(undefined),
-      requestPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      requestVideoPermissions: jest
+        .fn()
+        .mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
       supportsLivePreview: false,
     };
     const originalExists = files.exists.bind(files);

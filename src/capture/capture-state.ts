@@ -1,10 +1,4 @@
-import type {
-  CapabilitySnapshot,
-  DeviceCapability,
-  ImageMetadata,
-  PermissionSnapshot,
-  PermissionState,
-} from './contracts';
+import type { CapabilitySnapshot, ImageMetadata, PermissionSnapshot } from './contracts';
 
 export type CaptureStatus =
   | 'checking'
@@ -47,35 +41,16 @@ export function cameraAccessStatus(
   CaptureStatus,
   'checking' | 'capturing' | 'preview' | 'saving' | 'saved' | 'capture-failed' | 'write-failed'
 > {
-  const capabilityStatus = firstCapabilityStatus(capabilities.camera, capabilities.microphone);
+  const capabilityStatus = capabilities.camera;
   if (capabilityStatus === 'unsupported') return 'unsupported';
   if (capabilityStatus === 'undecided') return 'temporarily-unavailable';
 
-  const permissionStatus = firstPermissionStatus(permissions.camera, permissions.microphone);
+  const permissionStatus = permissions.camera;
   if (permissionStatus === 'blocked') return 'permission-blocked';
   if (permissionStatus === 'denied') return 'permission-denied';
   if (permissionStatus === 'undetermined') return 'permission-undecided';
 
   return 'ready';
-}
-
-function firstCapabilityStatus(
-  camera: DeviceCapability,
-  microphone: DeviceCapability,
-): 'supported' | 'unsupported' | 'undecided' {
-  if (camera === 'unsupported' || microphone === 'unsupported') return 'unsupported';
-  if (camera === 'undecided' || microphone === 'undecided') return 'undecided';
-  return 'supported';
-}
-
-function firstPermissionStatus(
-  camera: PermissionState,
-  microphone: PermissionState,
-): 'granted' | 'denied' | 'blocked' | 'undetermined' {
-  if (camera === 'blocked' || microphone === 'blocked') return 'blocked';
-  if (camera === 'denied' || microphone === 'denied') return 'denied';
-  if (camera === 'undetermined' || microphone === 'undetermined') return 'undetermined';
-  return 'granted';
 }
 
 export function isCaptureReady(state: CaptureState): boolean {

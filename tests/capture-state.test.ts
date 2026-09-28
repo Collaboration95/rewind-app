@@ -10,12 +10,16 @@ describe('camera capability and permission matrix', () => {
       'temporarily-unavailable',
     ],
     [
-      'microphone capability undecided',
+      'microphone capability undecided does not block still capture',
       { ...supported, microphone: 'undecided' as const },
-      'temporarily-unavailable',
+      'ready',
     ],
     ['camera unsupported', { ...supported, camera: 'unsupported' as const }, 'unsupported'],
-    ['microphone unsupported', { ...supported, microphone: 'unsupported' as const }, 'unsupported'],
+    [
+      'microphone unsupported does not block still capture',
+      { ...supported, microphone: 'unsupported' as const },
+      'ready',
+    ],
   ])('%s is distinct', (_label, capabilities, expected) => {
     expect(cameraAccessStatus(capabilities, { camera: 'granted', microphone: 'granted' })).toBe(
       expected,
@@ -39,9 +43,9 @@ describe('camera capability and permission matrix', () => {
       'permission-blocked',
     ],
     [
-      'microphone denied',
+      'microphone denied does not block still capture',
       { camera: 'granted' as const, microphone: 'denied' as const },
-      'permission-denied',
+      'ready',
     ],
   ])('%s is distinct', (_label, permissions, expected) => {
     expect(cameraAccessStatus(supported, permissions)).toBe(expected);

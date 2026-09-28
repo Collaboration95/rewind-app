@@ -11,6 +11,7 @@ import {
 } from 'react';
 
 import { isDebugScreen, isScenarioFor, type DebugRuntimeMode, type DebugScreen } from './scenarios';
+import { DEBUG_BUILD_ENABLED } from './build-mode';
 
 export const DEBUG_STORAGE_KEY = '@rewind/debug-state-v1';
 
@@ -89,14 +90,18 @@ export function DebugProvider({
   children: ReactNode;
   initialState?: Partial<DebugState>;
 }) {
-  const [state, setState] = useState<DebugState>({
-    enabled: initialState?.enabled ?? false,
-    runtime: initialState?.runtime ?? 'live',
-    scenarios: initialState?.scenarios ?? {},
-  });
+  const [state, setState] = useState<DebugState>(() =>
+    DEBUG_BUILD_ENABLED
+      ? {
+          enabled: initialState?.enabled ?? false,
+          runtime: initialState?.runtime ?? 'live',
+          scenarios: initialState?.scenarios ?? {},
+        }
+      : { enabled: false, runtime: 'live', scenarios: {} },
+  );
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetScreen, setSheetScreen] = useState<DebugScreen | null>(null);
-  const hydrated = useRef(Boolean(initialState));
+  const hydrated = useRef(Boolean(initialState) || !DEBUG_BUILD_ENABLED);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const clearTimers = useCallback(() => {
@@ -105,6 +110,10 @@ export function DebugProvider({
   }, []);
 
   useEffect(() => {
+    if (!DEBUG_BUILD_ENABLED) {
+      void AsyncStorage.removeItem(DEBUG_STORAGE_KEY).catch(() => undefined);
+      return;
+    }
     if (hydrated.current) return;
     let mounted = true;
     void AsyncStorage.getItem(DEBUG_STORAGE_KEY)
@@ -124,6 +133,7 @@ export function DebugProvider({
   useEffect(() => clearTimers, [clearTimers]);
 
   const update = useCallback((recipe: (current: DebugState) => DebugState) => {
+    if (!DEBUG_BUILD_ENABLED) return;
     setState((current) => {
       const next = recipe(current);
       void AsyncStorage.setItem(DEBUG_STORAGE_KEY, JSON.stringify(next)).catch(() => undefined);

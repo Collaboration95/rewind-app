@@ -102,6 +102,14 @@ interface ContributionFailure {
   reason?: 'quota_exceeded';
 }
 
+function isQuotaExceededCode(code: string | undefined): boolean {
+  return (
+    code === 'quota_exceeded' ||
+    code === 'upload_quota_exceeded' ||
+    code === 'contribution_quota_exceeded'
+  );
+}
+
 /**
  * A retry is only safe when the same contribution may be submitted again.
  * Runtime errors carry status/code metadata; do not infer retryability from
@@ -110,10 +118,14 @@ interface ContributionFailure {
 function classifyContributionFailure(error: unknown): ContributionFailure {
   const message = error instanceof Error ? error.message : 'The clip could not be uploaded.';
   if (error instanceof ClipUploadError) {
-    return { message, retryable: error.retryable };
+    return {
+      message,
+      retryable: error.retryable,
+      ...(isQuotaExceededCode(error.code) ? { reason: 'quota_exceeded' as const } : {}),
+    };
   }
   if (error instanceof LocalRuntimeError) {
-    if (error.code === 'quota_exceeded') {
+    if (isQuotaExceededCode(error.code)) {
       return { message, retryable: false, reason: 'quota_exceeded' };
     }
     if (error.status !== undefined && error.status >= 400 && error.status < 500) {
@@ -411,7 +423,7 @@ export function VideoCaptureScreen({
     try {
       const [capabilities, permissions] = await Promise.all([
         platform.getCapabilities(),
-        platform.getPermissions(),
+        platform.getVideoPermissions(),
       ]);
       if (!isCaptureActive()) return;
       if (capabilities.camera === 'undecided' || capabilities.microphone === 'undecided') {
@@ -486,7 +498,7 @@ export function VideoCaptureScreen({
     if (!isCaptureActive()) return;
     setError(null);
     try {
-      await platform.requestPermissions();
+      await platform.requestVideoPermissions();
       if (isCaptureActive()) await refresh();
     } catch {
       if (!isCaptureActive()) return;
@@ -647,7 +659,7 @@ export function VideoCaptureScreen({
     (
       uploaded: PendingClipUpload,
       state: ContributionStatus['state'],
-      options: Pick<ContributionStatus, 'message' | 'retryable'> = {
+      options: Pick<ContributionStatus, 'message' | 'reason' | 'retryable'> = {
         retryable: state === 'failed',
       },
     ): ContributionStatus => ({
@@ -818,9 +830,9 @@ export function VideoCaptureScreen({
       const failure = classifyContributionFailure(uploadError);
       const cancelled = isUploadCancellation(uploadError);
       const retryable = uploadSession.canRetry() && (failure.retryable || cancelled);
-      const reported = cancelled
+      const reported: ContributionFailure = cancelled
         ? { message: INTERRUPTED_UPLOAD_MESSAGE, retryable }
-        : { message: failure.message, retryable };
+        : { ...failure, retryable };
       if (cancelled) setUploadProgress({ status: 'cancelled', percent: 0 });
       const uploaded = latestUploadRef.current;
       setContributionStatus(
@@ -919,11 +931,11 @@ export function VideoCaptureScreen({
       // Once the bounded budget is spent the failure is terminal. Reporting it
       // as retryable would offer an action that can never succeed.
       const exhausted = !uploadSession.canRetry();
-      const reported = exhausted
-        ? { message: EXHAUSTED_UPLOAD_MESSAGE, retryable: false }
+      const reported: ContributionFailure = exhausted
+        ? { ...failure, message: EXHAUSTED_UPLOAD_MESSAGE, retryable: false }
         : cancelled
           ? { message: INTERRUPTED_UPLOAD_MESSAGE, retryable: true }
-          : { message: failure.message, retryable: failure.retryable };
+          : failure;
       if (cancelled) setUploadProgress({ status: 'cancelled', percent: 0 });
       if (uploaded) setContributionStatus(describeUpload(uploaded, 'failed', reported));
       else

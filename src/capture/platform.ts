@@ -401,7 +401,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
           : Device.isDevice;
 
       return {
-        camera: cameraAvailable && microphoneAvailable ? 'supported' : 'unsupported',
+        camera: cameraAvailable ? 'supported' : 'unsupported',
         microphone: microphoneAvailable ? 'supported' : 'unsupported',
       };
     } catch {
@@ -409,7 +409,15 @@ export class ExpoCameraPlatform implements CameraPlatform {
     }
   }
 
-  async getPermissions(): Promise<PermissionSnapshot> {
+  async getCameraPermission(): Promise<PermissionState> {
+    return permissionState(await Camera.getCameraPermissionsAsync());
+  }
+
+  async requestCameraPermission(): Promise<PermissionState> {
+    return permissionState(await Camera.requestCameraPermissionsAsync());
+  }
+
+  async getVideoPermissions(): Promise<PermissionSnapshot> {
     const [camera, microphone] = await Promise.all([
       Camera.getCameraPermissionsAsync(),
       Camera.getMicrophonePermissionsAsync(),
@@ -420,7 +428,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
     };
   }
 
-  async requestPermissions(): Promise<PermissionSnapshot> {
+  async requestVideoPermissions(): Promise<PermissionSnapshot> {
     // Ask one at a time: Android rejects a second runtime-permission request
     // while the first system dialog is still open, and iOS queues them anyway.
     const camera = await Camera.requestCameraPermissionsAsync();
@@ -547,7 +555,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
       throw new Error('The video length could not be read. Choose another video.');
     }
     // Library durations can overshoot a 15-second recording by a few frames.
-    if (durationSeconds > MAX_LIBRARY_VIDEO_SECONDS + 0.1) {
+    if (durationSeconds > MAX_LIBRARY_VIDEO_SECONDS) {
       throw new Error('Choose a video that is 15 seconds or shorter.');
     }
     const width = Math.round(asset.width);
@@ -558,7 +566,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
     const managed = await moveVideoToManagedCache(asset.uri);
     return {
       byteLength: managed.byteLength ?? asset.fileSize,
-      durationSeconds: Math.min(MAX_LIBRARY_VIDEO_SECONDS, durationSeconds),
+      durationSeconds,
       format: 'mp4',
       // Picker assets do not report audio; the server rejects silent clips.
       hasAudio: true,
@@ -641,11 +649,19 @@ export class DemoCameraPlatform implements CameraPlatform {
     return { ...this.capabilities };
   }
 
-  async getPermissions(): Promise<PermissionSnapshot> {
+  async getCameraPermission(): Promise<PermissionState> {
+    return this.permissions.camera;
+  }
+
+  async requestCameraPermission(): Promise<PermissionState> {
+    return this.permissions.camera;
+  }
+
+  async getVideoPermissions(): Promise<PermissionSnapshot> {
     return { ...this.permissions };
   }
 
-  async requestPermissions(): Promise<PermissionSnapshot> {
+  async requestVideoPermissions(): Promise<PermissionSnapshot> {
     return { ...this.permissions };
   }
 

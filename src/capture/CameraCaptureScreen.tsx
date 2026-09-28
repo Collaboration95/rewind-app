@@ -52,7 +52,7 @@ export interface CameraCaptureScreenProps {
   /** Settings debug mode: forces a study state without touching capture data. */
   debug?: ScreenDebug<CameraDebugScenario>;
   /**
-   * Ask for camera and microphone access as soon as the screen finds them
+   * Ask for camera access as soon as the screen finds it
    * undecided, so the first visit shows the system prompt directly. The
    * in-app "Allow" panel remains the retry path after a dismissal.
    */
@@ -142,7 +142,8 @@ export function CameraCaptureScreen({
     );
     try {
       const capabilities = await platform.getCapabilities();
-      const permissions = await platform.getPermissions();
+      const camera = await platform.getCameraPermission();
+      const permissions = { camera, microphone: 'undetermined' as const };
       setState((current) => {
         const next = accessState(capabilities, permissions);
         if (current.activePreview) {
@@ -200,7 +201,8 @@ export function CameraCaptureScreen({
     setSettingsError(null);
     setState((current) => ({ ...current, status: 'checking', errorMessage: null }));
     try {
-      const permissions = await platform.requestPermissions();
+      const camera = await platform.requestCameraPermission();
+      const permissions = { camera, microphone: 'undetermined' as const };
       const capabilities = await platform.getCapabilities();
       setState((current) => ({
         ...current,
@@ -385,7 +387,7 @@ export function CameraCaptureScreen({
         <StatusPanel
           testID="camera-checking"
           title={t('Checking access…')}
-          body={t('Checking camera and microphone.')}
+          body={t('Checking camera access.')}
         />
       ) : view.status === 'temporarily-unavailable' ? (
         <StatusPanel
@@ -416,7 +418,7 @@ export function CameraCaptureScreen({
         />
       ) : view.status === 'permission-undecided' ? (
         <StatusPanel
-          actionLabel={t('Allow camera and microphone')}
+          actionLabel={t('Allow camera')}
           body={t('Permissions are checked before capture.')}
           onAction={whenForced(requestAccess, 'live')}
           testID="camera-permission-undecided"
@@ -436,7 +438,7 @@ export function CameraCaptureScreen({
         <StatusPanel
           actionLabel={t('Open Settings')}
           body={t(
-            'Camera or microphone access is blocked. Open Settings, allow both permissions, then return and check again.',
+            'Camera access is blocked. Open Settings, allow access, then return and check again.',
           )}
           onAction={openSettings}
           testID="camera-permission-blocked"
@@ -479,14 +481,9 @@ export function CameraCaptureScreen({
             active={0}
             steps={[t('Capture'), t('Review'), t('Accept locally')]}
           />
-          <View
-            accessibilityLabel={t('Camera and microphone access granted')}
-            style={styles.accessGranted}
-          >
+          <View accessibilityLabel={t('Camera access granted')} style={styles.accessGranted}>
             <Text style={styles.accessGrantedTitle}>{t('ACCESS GRANTED')}</Text>
-            <Text style={styles.accessGrantedText}>
-              {t('Camera and microphone are ready for a still moment.')}
-            </Text>
+            <Text style={styles.accessGrantedText}>{t('Camera is ready for a still moment.')}</Text>
           </View>
           {platform.supportsLivePreview ? (
             <CameraView

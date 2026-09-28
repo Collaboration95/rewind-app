@@ -64,6 +64,27 @@ it('treats a missing native availability probe as available on a physical device
 });
 
 describe('Expo camera adapter contract', () => {
+  it('checks and requests only camera permission for still capture', async () => {
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+    jest.mocked(Camera.getCameraPermissionsAsync).mockResolvedValue({
+      canAskAgain: true,
+      expires: 'never',
+      granted: true,
+      status: PermissionStatus.GRANTED,
+    });
+    jest.mocked(Camera.requestCameraPermissionsAsync).mockResolvedValue({
+      canAskAgain: true,
+      expires: 'never',
+      granted: true,
+      status: PermissionStatus.GRANTED,
+    });
+
+    await expect(platform.getCameraPermission()).resolves.toBe('granted');
+    await expect(platform.requestCameraPermission()).resolves.toBe('granted');
+    expect(Camera.getMicrophonePermissionsAsync).not.toHaveBeenCalled();
+    expect(Camera.requestMicrophonePermissionsAsync).not.toHaveBeenCalled();
+  });
+
   it('uses an injected capability probe and preserves its device matrix', async () => {
     const capabilityProbe = jest.fn().mockResolvedValue({
       camera: 'unsupported',
@@ -138,7 +159,7 @@ describe('Expo camera adapter contract', () => {
     });
     const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
 
-    const request = platform.requestPermissions();
+    const request = platform.requestVideoPermissions();
     await Promise.resolve();
     expect(order).toEqual(['camera-open']);
     finishCamera();
@@ -177,11 +198,11 @@ describe('Expo camera adapter contract', () => {
     });
     const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
 
-    await expect(platform.getPermissions()).resolves.toEqual({
+    await expect(platform.getVideoPermissions()).resolves.toEqual({
       camera: 'blocked',
       microphone: 'denied',
     });
-    await expect(platform.requestPermissions()).resolves.toEqual({
+    await expect(platform.requestVideoPermissions()).resolves.toEqual({
       camera: 'granted',
       microphone: 'undetermined',
     });
@@ -196,7 +217,7 @@ describe('Expo camera adapter contract', () => {
     jest.mocked(Camera.getCameraPermissionsAsync).mockRejectedValue(nativeFailure);
     const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
 
-    await expect(platform.getPermissions()).rejects.toBe(nativeFailure);
+    await expect(platform.getCameraPermission()).rejects.toBe(nativeFailure);
   });
 
   it('maps a still capture and forwards the adapter capture options', async () => {
@@ -301,6 +322,8 @@ describe('Expo camera adapter contract', () => {
 
     libraryVideoPicker.mockResolvedValueOnce(null);
     await expect(platform.pickLibraryVideo()).resolves.toBeNull();
+    libraryVideoPicker.mockResolvedValueOnce({ ...picked, duration: 15_030 });
+    await expect(platform.pickLibraryVideo()).rejects.toThrow('15 seconds or shorter');
     libraryVideoPicker.mockResolvedValueOnce({ ...picked, duration: 16_000 });
     await expect(platform.pickLibraryVideo()).rejects.toThrow('15 seconds or shorter');
     libraryVideoPicker.mockResolvedValueOnce({ ...picked, height: 1080, width: 1920 });

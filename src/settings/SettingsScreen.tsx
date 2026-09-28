@@ -3,6 +3,7 @@ import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from '
 
 import { useCapsule } from '../capsule/CapsuleProvider';
 import { useDebug } from '../debug/DebugProvider';
+import { DEBUG_BUILD_ENABLED } from '../debug/build-mode';
 import type { DemoRevealState } from '../domain/cycles';
 import { InviteGeneratePanel } from '../groups/GroupScreens';
 import { useI18n, type Language } from '../i18n/LanguageProvider';
@@ -299,30 +300,32 @@ function DisplayAndDeveloperPanel() {
           );
         })}
       </View>
-      <View style={[styles.switchRow, styles.divided]}>
-        <View style={styles.switchText}>
-          <Text nativeID="debug-mode-label" style={styles.fieldLabel}>
-            {t('Debug mode')}
-          </Text>
-          <Text style={styles.body}>
-            {t(
-              'Shows a DEBUG chip in the header. Tap it on any screen to force loading, empty, denied, error, sealed and released states.',
-            )}
-          </Text>
+      {DEBUG_BUILD_ENABLED ? (
+        <View style={[styles.switchRow, styles.divided]}>
+          <View style={styles.switchText}>
+            <Text nativeID="debug-mode-label" style={styles.fieldLabel}>
+              {t('Debug mode')}
+            </Text>
+            <Text style={styles.body}>
+              {t(
+                'Shows a DEBUG chip in the header. Tap it on any screen to force loading, empty, denied, error, sealed and released states.',
+              )}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityLabel={t('Debug mode')}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: enabled }}
+            aria-checked={enabled}
+            hitSlop={8}
+            onPress={() => setEnabled(!enabled)}
+            style={[styles.toggle, enabled && styles.toggleOn]}
+            testID="debug-mode-switch"
+          >
+            <View style={[styles.knob, enabled && styles.knobOn]} />
+          </Pressable>
         </View>
-        <Pressable
-          accessibilityLabel={t('Debug mode')}
-          accessibilityRole="switch"
-          accessibilityState={{ checked: enabled }}
-          aria-checked={enabled}
-          hitSlop={8}
-          onPress={() => setEnabled(!enabled)}
-          style={[styles.toggle, enabled && styles.toggleOn]}
-          testID="debug-mode-switch"
-        >
-          <View style={[styles.knob, enabled && styles.knobOn]} />
-        </Pressable>
-      </View>
+      ) : null}
       {enabled ? (
         <ActionButton
           label={t('Open state picker')}

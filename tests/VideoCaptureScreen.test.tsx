@@ -62,11 +62,13 @@ function videoPlatform(permissions: PermissionSnapshot): TestVideoPlatform {
     cancelRecording: jest.fn(),
     captureStill: jest.fn(),
     getCapabilities: jest.fn().mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
-    getPermissions: jest.fn().mockResolvedValue(permissions),
+    getCameraPermission: jest.fn().mockResolvedValue(permissions.camera),
+    requestCameraPermission: jest.fn().mockResolvedValue(permissions.camera),
+    getVideoPermissions: jest.fn().mockResolvedValue(permissions),
     kind: 'expo',
     openSettings: jest.fn().mockResolvedValue(undefined),
     recordClip: jest.fn().mockResolvedValue(clip),
-    requestPermissions: jest.fn().mockResolvedValue(permissions),
+    requestVideoPermissions: jest.fn().mockResolvedValue(permissions),
     stopRecording: jest.fn(),
     supportsLivePreview: true,
   };
@@ -378,10 +380,10 @@ describe('VideoCaptureScreen', () => {
   it('keeps recording unavailable until both permissions are granted', async () => {
     const permissions = { camera: 'undetermined' as const, microphone: 'undetermined' as const };
     const platform = videoPlatform(permissions);
-    (platform.getPermissions as jest.Mock)
+    (platform.getVideoPermissions as jest.Mock)
       .mockResolvedValueOnce(permissions)
       .mockResolvedValue({ camera: 'granted', microphone: 'granted' });
-    (platform.requestPermissions as jest.Mock).mockResolvedValue({
+    (platform.requestVideoPermissions as jest.Mock).mockResolvedValue({
       camera: 'granted',
       microphone: 'granted',
     });
@@ -393,7 +395,7 @@ describe('VideoCaptureScreen', () => {
 
     await result.findByTestId('video-live-preview');
     expect(result.getByTestId('video-record')).toBeEnabled();
-    expect(platform.requestPermissions).toHaveBeenCalledTimes(1);
+    expect(platform.requestVideoPermissions).toHaveBeenCalledTimes(1);
   });
 
   it('offers an authenticated fresh synthetic clip only in the local Demo fixture', async () => {
@@ -698,6 +700,26 @@ describe('VideoCaptureScreen', () => {
     expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
     expect(result.queryByText('Upload queued as one pending contribution.')).toBeNull();
   });
+
+  it('shows the contribution limit after a real upload returns quota_exceeded', async () => {
+    const uploadClip = jest
+      .fn()
+      .mockRejectedValue(
+        new LocalRuntimeError('Contribution limit reached.', 409, 'upload_quota_exceeded'),
+      );
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ uploadClip }),
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByTestId('camera-contribution-status-failed');
+    expect(result.getByText('Contribution limit reached')).toBeTruthy();
+    expect(result.getByText('No allowance remains.')).toBeTruthy();
+    expect(result.queryByText(/Retake it/)).toBeNull();
+    expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
+  });
+
   it('surfaces an upload failure and retries the same review successfully', async () => {
     const uploadClip = jest
       .fn()
@@ -848,7 +870,7 @@ describe('VideoCaptureScreen', () => {
     const granted = { camera: 'granted' as const, microphone: 'granted' as const };
     const platform = videoPlatform(blocked);
     const getPermissions = jest.fn().mockResolvedValueOnce(blocked).mockResolvedValue(granted);
-    platform.getPermissions = getPermissions;
+    platform.getVideoPermissions = getPermissions;
     const appState = stubAppState();
     const result = await render(<VideoCaptureScreen platform={platform} />);
 

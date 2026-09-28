@@ -18,10 +18,14 @@ function platform(overrides: Partial<CameraPlatform> = {}): CameraPlatform {
   return {
     captureStill: jest.fn().mockResolvedValue(fixture),
     getCapabilities: jest.fn().mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
-    getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+    getCameraPermission: jest.fn().mockResolvedValue('granted'),
+    getVideoPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
     kind: 'demo',
     openSettings: jest.fn().mockResolvedValue(undefined),
-    requestPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+    requestCameraPermission: jest.fn().mockResolvedValue('granted'),
+    requestVideoPermissions: jest
+      .fn()
+      .mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
     supportsLivePreview: false,
     ...overrides,
   };

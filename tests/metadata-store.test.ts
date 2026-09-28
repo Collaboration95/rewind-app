@@ -56,10 +56,12 @@ describe('AsyncStorageImageMetadataStore', () => {
         width: 720,
       }),
       getCapabilities: jest.fn(),
-      getPermissions: jest.fn(),
+      getCameraPermission: jest.fn(),
+      requestCameraPermission: jest.fn(),
+      getVideoPermissions: jest.fn(),
       kind: 'expo',
       openSettings: jest.fn(),
-      requestPermissions: jest.fn(),
+      requestVideoPermissions: jest.fn(),
       supportsLivePreview: false,
     };
     const store = new AsyncStorageImageMetadataStore();

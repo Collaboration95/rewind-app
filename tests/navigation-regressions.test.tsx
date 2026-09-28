@@ -51,8 +51,12 @@ function videoPlatform() {
       source: 'camera',
     }),
     getCapabilities: jest.fn().mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
-    getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
-    requestPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+    getCameraPermission: jest.fn().mockResolvedValue('granted'),
+    requestCameraPermission: jest.fn().mockResolvedValue('granted'),
+    getVideoPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+    requestVideoPermissions: jest
+      .fn()
+      .mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
     openSettings: jest.fn().mockResolvedValue(undefined),
     recordClip,
     stopRecording: jest.fn(),

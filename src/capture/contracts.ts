@@ -107,8 +107,12 @@ export interface CameraPlatform {
   readonly supportsLibraryVideo?: boolean;
 
   getCapabilities(): Promise<CapabilitySnapshot>;
-  getPermissions(): Promise<PermissionSnapshot>;
-  requestPermissions(): Promise<PermissionSnapshot>;
+  /** Still capture asks for and checks only camera access. */
+  getCameraPermission(): Promise<PermissionState>;
+  requestCameraPermission(): Promise<PermissionState>;
+  /** Clip recording checks camera and microphone and requests them in order. */
+  getVideoPermissions(): Promise<PermissionSnapshot>;
+  requestVideoPermissions(): Promise<PermissionSnapshot>;
   openSettings(): Promise<void>;
   captureStill(): Promise<PlatformStillImage>;
   /** Browser-only fallback when a live camera cannot be used. */
