@@ -26,6 +26,50 @@ operate inside the already-provisioned host rather than create cloud resources.
   encrypted, versioned, and ignored by Git; the `.tf` files and provider lock
   file belong in Git.
 
+## Sprint 2 dev/prod transition boundary (#230)
+
+The current `demo` root and its remote state are preserved until a read-only
+inventory reconciles the live Demo resources, S3 buckets, Terraform addresses,
+state keys, and resource ownership. Do not parameterize, move, import, or retire
+the Demo resources based only on this checkout: the coding profile cannot read
+the remote state or enumerate the S3 buckets. In particular, a proposed
+dev/prod backend key must first be checked against the remote state bucket for
+an existing object.
+
+The approved end state is one AWS account with separate `rewind-dev` and
+`rewind-prod` Lightsail hosts, SQLite disks, private media buckets, Terraform
+states, and operations identities. The existing Demo stays intact through
+that transition. The accepted lifecycle has no routine auto-shutdown and no
+application database backups; OFF means stopped, while Demo retirement is a
+separate reviewed destroy operation. #167 Organizations/SCP work and #261
+database migration are outside this slice. OIDC environment claims must be
+coordinated with #174 without introducing multi-account assumptions.
+
+The remaining Demo-specific procedures in this README describe the existing
+implementation only. They do not override the dev/prod decisions above or
+authorize applying that legacy lifecycle to either new environment.
+
+No environment resources, state migration, IAM grants, or deployment workflows
+are ready for live use until all of these gates have evidence:
+
+1. Reconcile the live Demo resources, S3 buckets, Terraform state addresses,
+   ownership, and existing state keys with read-only access.
+2. Verify Lightsail's supported runtime identity path; do not guess at static
+   credentials or commit credentials to deliver them.
+3. Coordinate exact GitHub OIDC repository/branch/environment claims and
+   environment-scoped roles with #174.
+4. Verify a supported distribution-to-origin trust control and test direct
+   forged-forwarded-protocol requests against the origin.
+5. Record a dated, complete estimate including Demo overlap, then review the
+   $100/month planning ceiling, proposed $80/$100 alerts, recipients, and
+   escalation owners. Budgets are alerts, not spend caps.
+6. Review the exact Terraform plan before any human-run apply. No automated
+   apply is permitted.
+
+Static checks can protect the known Demo addresses and document these gates;
+they cannot prove remote-state separation, bucket isolation, HTTPS behavior,
+or cost acceptance. Those remain live/human verification requirements.
+
 ## Accepted live-Demo ownership and operating model
 
 The live-Demo owners accepted the following operating model on 23 September
