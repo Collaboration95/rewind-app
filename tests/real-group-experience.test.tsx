@@ -82,6 +82,8 @@ describe('real account group journey', () => {
     ]);
     expect(first.queryByText('LOCKED')).toBeNull();
     await fireEvent.press(first.getByTestId('real-group-capture-action'));
+    expect(first.getByTestId('camera-screen')).toBeTruthy();
+    await fireEvent.press(first.getByText('Video'));
     await first.findByTestId('video-capture-screen');
     expect(first.getByText('Record a contribution')).toBeTruthy();
     expect(first.queryByTestId('real-group-capture-unavailable')).toBeNull();

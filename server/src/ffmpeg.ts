@@ -20,6 +20,12 @@ export interface FfmpegProcessInput {
   mode: CaptureMode;
 }
 
+export interface FfmpegPhotoProcessInput {
+  inputPath: string;
+  outputPath: string;
+  mode: CaptureMode;
+}
+
 export interface FfmpegProcessResult {
   outputPath: string;
   durationSeconds: number;
@@ -290,6 +296,162 @@ export async function processClipWithFfmpeg(
         ? 'The temporary media source is unavailable.'
         : 'FFmpeg could not process the clip. Retry the job.',
     );
+  }
+}
+
+/** Turn one validated still into the film's standard three-second portrait clip. */
+export async function processPhotoWithFfmpeg(
+  ffmpegBin: string,
+  input: FfmpegPhotoProcessInput,
+): Promise<FfmpegProcessResult> {
+  if (!input.inputPath || !input.outputPath || !SUPPORTED_CAPTURE_MODES.includes(input.mode)) {
+    throw new FfmpegProcessingError(
+      'invalid_metadata',
+      'The photo processing metadata is invalid.',
+    );
+  }
+  try {
+    await execFileAsync(
+      ffmpegBin,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-loop',
+        '1',
+        '-framerate',
+        '12',
+        '-i',
+        input.inputPath,
+        '-f',
+        'lavfi',
+        '-i',
+        'anullsrc=r=44100:cl=stereo',
+        '-t',
+        '3',
+        '-vf',
+        `${modeFilter(input.mode)},scale=180:320:force_original_aspect_ratio=increase,crop=180:320,setsar=1,fps=12`,
+        '-map',
+        '0:v:0',
+        '-map',
+        '1:a:0',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-ar',
+        '44100',
+        '-ac',
+        '2',
+        '-shortest',
+        '-t',
+        '3',
+        '-movflags',
+        '+faststart',
+        input.outputPath,
+      ],
+      { timeout: 60_000, maxBuffer: 2_000_000 },
+    );
+    const output = await probeClipWithFfmpeg(ffmpegBin, input.outputPath);
+    if (
+      Math.abs(output.durationSeconds - 3) > 0.1 ||
+      output.width !== 180 ||
+      output.height !== 320
+    ) {
+      throw new Error('invalid processed photo');
+    }
+    return { outputPath: input.outputPath, durationSeconds: 3 };
+  } catch (error) {
+    if (error instanceof FfmpegProcessingError) throw error;
+    throw new FfmpegProcessingError(
+      'process_failed',
+      'The photo could not be processed. Retry the job.',
+    );
+  }
+}
+
+export interface FfmpegPhotoProbeResult {
+  mimeType: 'image/jpeg' | 'image/png';
+  byteLength: number;
+  durationSeconds: 3;
+  width: number;
+  height: number;
+  hasAudio: true;
+}
+
+export async function probePhotoWithFfmpeg(
+  ffmpegBin: string,
+  inputPath: string,
+  stagingDir?: string,
+): Promise<FfmpegPhotoProbeResult> {
+  const ffmpegDirectory = dirname(ffmpegBin);
+  const probeBin =
+    basename(ffmpegBin).startsWith('ffmpeg') && ffmpegDirectory !== '.'
+      ? `${ffmpegDirectory}/ffprobe`
+      : 'ffprobe';
+  try {
+    const safeInputPath = stagingDir
+      ? await resolveStagedMediaPath(inputPath, stagingDir)
+      : resolveLocalMediaPath(inputPath);
+    const [probe, file] = await Promise.all([
+      execFileAsync(
+        probeBin,
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-show_entries',
+          'format=format_name:stream=codec_name,width,height:stream_tags=rotate:stream_side_data=rotation',
+          '-of',
+          'json',
+          safeInputPath,
+        ],
+        { timeout: 20_000, maxBuffer: 2_000_000 },
+      ),
+      stat(safeInputPath),
+    ]);
+    const parsed = JSON.parse(probe.stdout) as {
+      format?: { format_name?: string };
+      streams?: {
+        codec_name?: string;
+        width?: number;
+        height?: number;
+        tags?: { rotate?: string };
+        side_data_list?: { rotation?: number }[];
+      }[];
+    };
+    const image = parsed.streams?.[0];
+    const rawWidth = Number(image?.width);
+    const rawHeight = Number(image?.height);
+    const rotation = Number(image?.side_data_list?.[0]?.rotation ?? image?.tags?.rotate ?? 0);
+    const width = Math.abs(rotation) % 180 === 90 ? rawHeight : rawWidth;
+    const height = Math.abs(rotation) % 180 === 90 ? rawWidth : rawHeight;
+    const format = parsed.format?.format_name?.split(',') ?? [];
+    const mimeType =
+      format.includes('png_pipe') || image?.codec_name === 'png' ? 'image/png' : 'image/jpeg';
+    if (
+      !Number.isInteger(file.size) ||
+      file.size <= 0 ||
+      file.size > 10 * 1024 * 1024 ||
+      !Number.isInteger(width) ||
+      !Number.isInteger(height) ||
+      width <= 0 ||
+      height <= 0 ||
+      width > 12000 ||
+      height > 12000 ||
+      ![0, 90, -90, 180, -180].includes(rotation) ||
+      (mimeType === 'image/png' ? image?.codec_name !== 'png' : image?.codec_name !== 'mjpeg')
+    )
+      throw new Error('invalid photo');
+    return { mimeType, byteLength: file.size, durationSeconds: 3, width, height, hasAudio: true };
+  } catch {
+    throw new FfmpegProcessingError('invalid_metadata', 'The staged photo could not be verified.');
   }
 }
 

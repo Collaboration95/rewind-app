@@ -3,6 +3,9 @@ import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { useRealAccount } from '../src/auth/RealAccountProvider';
 import { RealAccountGroupExperience } from '../src/groups/RealAccountGroupExperience';
 
+jest.mock('@react-native-async-storage/async-storage', () =>
+  jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
 jest.mock('../src/auth/RealAccountProvider', () => ({ useRealAccount: jest.fn() }));
 jest.mock('../src/capture/VideoCaptureScreen', () => ({ VideoCaptureScreen: () => null }));
 

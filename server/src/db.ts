@@ -54,6 +54,7 @@ const MIGRATIONS = [
     key: 'real-media-profile-bridge-v1',
     fileName: '022-real-media-profile-bridge.sql',
   },
+  { version: 23, key: 'photo-media-v1', fileName: '023-photo-media.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -198,6 +199,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         rebuildAuditEventsForConsistencyRepair(database);
       } else if (migration.key === 'real-media-profile-bridge-v1') {
         applyRealMediaProfileBridge(database);
+      } else if (migration.key === 'photo-media-v1') {
+        ensurePhotoMediaSchema(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -335,7 +338,28 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'consistency-repair-audit-v1')
     return !auditEventTypesAllowConsistencyRepair(database);
   if (key === 'real-media-profile-bridge-v1') return !realMediaProfileBridgeReady(database);
+  if (key === 'photo-media-v1') {
+    return (
+      !tableColumns(database, 'media_jobs').has('media_type') ||
+      !tableColumns(database, 'media_metadata').has('media_type')
+    );
+  }
   return false;
+}
+
+function ensurePhotoMediaSchema(database: RewindDatabase): void {
+  if (!tableColumns(database, 'media_jobs').has('media_type')) {
+    database.exec(
+      `ALTER TABLE media_jobs ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'
+       CHECK (media_type IN ('video', 'photo'))`,
+    );
+  }
+  if (!tableColumns(database, 'media_metadata').has('media_type')) {
+    database.exec(
+      `ALTER TABLE media_metadata ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'
+       CHECK (media_type IN ('video', 'photo'))`,
+    );
+  }
 }
 
 function realMediaProfileBridgeReady(database: RewindDatabase): boolean {

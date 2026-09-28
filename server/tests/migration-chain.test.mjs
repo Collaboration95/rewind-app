@@ -6,7 +6,7 @@ import test from 'node:test';
 const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, openDatabase, schemaReadiness } = await import('../dist/db.js');
 
-test('real invite and media migrations 020–022 apply once and participate in schema readiness', async () => {
+test('real invite and media migrations 020–023 apply once and participate in schema readiness', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-migration-chain-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
   const database = openDatabase(config);
@@ -15,6 +15,7 @@ test('real invite and media migrations 020–022 apply once and participate in s
       [20, 'real-group-invites-v1'],
       [21, 'real-group-invite-acceptance-v1'],
       [22, 'real-media-profile-bridge-v1'],
+      [23, 'photo-media-v1'],
     ];
     const assertChainReceipts = () => {
       for (const [version, key] of expectedReceipts) {
@@ -48,8 +49,20 @@ test('real invite and media migrations 020–022 apply once and participate in s
 
     assertChainReceipts();
     assertInviteSchema();
-    assert.equal(schemaReadiness(database).expectedMigrationVersion, 22);
+    assert.equal(schemaReadiness(database).expectedMigrationVersion, 23);
     assert.deepEqual(schemaReadiness(database).missingMigrationKeys, []);
+    assert.ok(
+      database
+        .prepare('PRAGMA table_info(media_jobs)')
+        .all()
+        .some((column) => column.name === 'media_type'),
+    );
+    assert.ok(
+      database
+        .prepare('PRAGMA table_info(media_metadata)')
+        .all()
+        .some((column) => column.name === 'media_type'),
+    );
 
     migrateDatabase(database);
     assertChainReceipts();

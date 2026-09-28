@@ -92,7 +92,7 @@ import {
   QueueQueryError,
 } from './jobs/queue';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import { generateSyntheticDemoClip, probeClipWithFfmpeg } from './ffmpeg';
+import { generateSyntheticDemoClip, probeClipWithFfmpeg, probePhotoWithFfmpeg } from './ffmpeg';
 import { decodePageCursor, encodePageCursor } from './archive/cursor';
 import { verifyArchiveListingIntegrity } from './archive/integrity-cache';
 import { mediaServingBudget, releaseBudgetWhenSnapshotCloses } from './media/serving-budget';
@@ -962,13 +962,18 @@ async function stageSourceBody(
   stagingDir: string,
   sourcePath: string,
   config: RuntimeConfig,
+  maxBytes = MAX_STAGED_SOURCE_BYTES,
 ): Promise<number> {
   const contentLength = Number(request.headers['content-length'] ?? Number.NaN);
   if (Number.isFinite(contentLength) && contentLength <= 0) {
     throw new Error('empty source');
   }
-  if (Number.isFinite(contentLength) && contentLength > MAX_STAGED_SOURCE_BYTES) {
-    throw payloadTooLargeError('The clip source must be 50 MiB or smaller.');
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw payloadTooLargeError(
+      maxBytes < MAX_STAGED_SOURCE_BYTES
+        ? 'The photo source must be 10 MiB or smaller.'
+        : 'The clip source must be 50 MiB or smaller.',
+    );
   }
   await mkdir(stagingDir, { recursive: true });
   const partialPath = `${sourcePath}.${randomUUID()}.part`;
@@ -985,10 +990,13 @@ async function stageSourceBody(
     // escape the request promise and leave the intake claim behind.
     output.on('error', onOutputError);
     const bytes = await consumeRequestBody(request, {
-      maxBytes: MAX_STAGED_SOURCE_BYTES,
+      maxBytes,
       idleTimeoutMs: config.httpIdleTimeoutMs,
       totalTimeoutMs: config.uploadTimeoutMs,
-      tooLargeMessage: 'The clip source must be 50 MiB or smaller.',
+      tooLargeMessage:
+        maxBytes < MAX_STAGED_SOURCE_BYTES
+          ? 'The photo source must be 10 MiB or smaller.'
+          : 'The clip source must be 50 MiB or smaller.',
       onChunk: async (buffer) => {
         if (outputError || !output) throw outputError ?? new Error('staged source output closed');
         await writeStagedChunk(output, buffer);
@@ -1701,10 +1709,11 @@ export async function handleRequest(
     const contentType = String(request.headers['content-type'] ?? '')
       .split(';', 1)[0]
       .trim();
-    if (contentType !== 'video/mp4' && contentType !== 'application/octet-stream') {
+    const photoType = contentType === 'image/jpeg' || contentType === 'image/png';
+    if (contentType !== 'video/mp4' && contentType !== 'application/octet-stream' && !photoType) {
       sendJson(response, config, 400, {
         error: 'upload_invalid_media',
-        message: 'Upload the clip as an MP4 source.',
+        message: 'Upload a JPEG or PNG photo, or an MP4 clip.',
       });
       return;
     }
@@ -1812,8 +1821,19 @@ export async function handleRequest(
       releaseStagingLock();
       releaseStagingLock = null;
       try {
-        await stageSourceBody(request, stagingDir, claimedSourcePath, config);
-        const probed = await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
+        await stageSourceBody(
+          request,
+          stagingDir,
+          claimedSourcePath,
+          config,
+          photoType ? 10 * 1024 * 1024 : MAX_STAGED_SOURCE_BYTES,
+        );
+        const probed = photoType
+          ? await probePhotoWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir)
+          : await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
+        if (photoType && probed.mimeType !== contentType) {
+          throw new Error('photo type does not match its verified bytes');
+        }
         database.exec('BEGIN');
         try {
           if (!mediaIdentityIsCurrent(request, database, identity, now())) {
@@ -1829,6 +1849,7 @@ export async function handleRequest(
           }
           recordClipMediaMetadata(database, {
             sourceUri,
+            mediaType: photoType ? 'photo' : 'video',
             ...probed,
             // FFprobe's stat is authoritative; the stream byte count is only a
             // transport guard and is never persisted as media truth.
@@ -2036,6 +2057,7 @@ export async function handleRequest(
       return;
     }
     const input: ClipUploadInput = {
+      mediaType: body?.mediaType === 'photo' ? 'photo' : 'video',
       idempotencyKey: typeof body?.idempotencyKey === 'string' ? body.idempotencyKey : '',
       sourceUri: typeof body?.sourceUri === 'string' ? body.sourceUri : '',
       mimeType: typeof body?.mimeType === 'string' ? body.mimeType : '',
@@ -2186,6 +2208,45 @@ export async function handleRequest(
 
   if (url.pathname === '/profiles') {
     sendJson(response, config, 200, { profiles: listProfiles(database) });
+    return;
+  }
+
+  const clipStatusMatch = url.pathname.match(/^\/clips\/([^/]+)$/);
+  if (clipStatusMatch && request.method === 'GET') {
+    const jobId = decodePathSegment(clipStatusMatch[1], response, config);
+    if (jobId === null) return;
+    const identity = requireAuthorisedMediaGroup(
+      request,
+      database,
+      url,
+      response,
+      config,
+      now(),
+      url.searchParams.get('groupId'),
+      'contribution',
+    );
+    if (!identity) return;
+    const job = database
+      .prepare(
+        `SELECT j.id, j.status FROM media_jobs j
+         JOIN contributions c ON c.id = j.contribution_id
+         WHERE j.id = ? AND j.group_id = ? AND c.member_id = ? AND j.kind = 'clip'`,
+      )
+      .get(jobId, identity.groupId, identity.memberId) as
+      { id: string; status: string } | undefined;
+    if (!job) return sendNotFound(response, config);
+    sendJson(response, config, 200, {
+      clip: {
+        id: job.id,
+        status:
+          job.status === 'processing' ||
+          job.status === 'ready' ||
+          job.status === 'failed' ||
+          job.status === 'cancelled'
+            ? job.status
+            : 'pending',
+      },
+    });
     return;
   }
 

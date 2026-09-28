@@ -68,6 +68,8 @@ export interface ImageMetadataStore {
 export interface CaptureFileStore {
   copyToManagedCache(image: PlatformStillImage, imageId: string): Promise<ManagedImageFile>;
   exists(uri: string): Promise<boolean>;
+  readAsBase64(uri: string): Promise<string>;
+  resolveManagedFile(imageId: string, format: 'jpg' | 'png'): Promise<ManagedImageFile | null>;
   remove(uri: string): Promise<void>;
 }
 
