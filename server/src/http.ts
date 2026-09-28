@@ -1,8 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createWriteStream, existsSync } from 'node:fs';
 import { mkdir, readdir, realpath, rename, rm, stat, type FileHandle } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
+import { isIP } from 'node:net';
 import { URL } from 'node:url';
 
 import { SERVICE_VERSION, type RuntimeConfig } from './config';
@@ -95,6 +96,12 @@ import { generateSyntheticDemoClip, probeClipWithFfmpeg } from './ffmpeg';
 import { decodePageCursor, encodePageCursor } from './archive/cursor';
 import { verifyArchiveListingIntegrity } from './archive/integrity-cache';
 import { mediaServingBudget, releaseBudgetWhenSnapshotCloses } from './media/serving-budget';
+import {
+  authenticateRealAccount,
+  REAL_SESSION_COOKIE,
+  revokeRealSession,
+  validateRealSession,
+} from './auth';
 
 export interface HealthPayload {
   ok: boolean;
@@ -980,6 +987,17 @@ export async function handleRequest(
   const requestLimiters = options.requestLimiters ?? createRequestLimiters(config);
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   if (request.method === 'OPTIONS') {
+    if (url.pathname.startsWith('/auth/')) {
+      const corsHeaders = authCorsHeaders(request, config);
+      response.writeHead(204, {
+        ...corsHeaders,
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Cache-Control': 'no-store',
+      });
+      response.end();
+      return;
+    }
     response.writeHead(204, {
       'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -989,10 +1007,18 @@ export async function handleRequest(
     return;
   }
   if (!['GET', 'POST', 'DELETE'].includes(request.method ?? '')) {
-    sendJson(response, config, 405, {
+    const send = url.pathname.startsWith('/auth/')
+      ? authJson.bind(null, request, response, config)
+      : sendJson.bind(null, response, config);
+    send(405, {
       error: 'method_not_allowed',
       message: 'Only GET, POST, and DELETE are supported.',
     });
+    return;
+  }
+
+  if (url.pathname.startsWith('/auth/')) {
+    await handleRealAuthRequest(request, response, config, database, url, now());
     return;
   }
 
@@ -2685,6 +2711,245 @@ export async function handleRequest(
   sendNotFound(response, config);
 }
 
+function isLoopbackAddress(address: string | undefined): boolean {
+  return Boolean(
+    address && (address === '::1' || address === '127.0.0.1' || address.startsWith('::ffff:127.')),
+  );
+}
+
+function authenticatedProxyHttps(request: IncomingMessage, config: RuntimeConfig): boolean {
+  const secret = config.originAuthSecret;
+  const received = request.headers['x-rewind-origin-auth'];
+  const forwardedProtocol = request.headers['x-forwarded-proto'];
+  if (!secret || typeof received !== 'string' || forwardedProtocol !== 'https') return false;
+  const expectedBytes = Buffer.from(secret);
+  const receivedBytes = Buffer.from(received);
+  return (
+    expectedBytes.length === receivedBytes.length && timingSafeEqual(expectedBytes, receivedBytes)
+  );
+}
+
+export function authTransportIsSecure(request: IncomingMessage, config: RuntimeConfig): boolean {
+  if ((request.socket as typeof request.socket & { encrypted?: boolean }).encrypted) return true;
+  if (allowsLocalHttpAuth(request, config)) return true;
+  return authenticatedProxyHttps(request, config);
+}
+
+function allowsLocalHttpAuth(request: IncomingMessage, config: RuntimeConfig): boolean {
+  if (!config.allowInsecureLocalAuth || !isLoopbackAddress(request.socket.remoteAddress))
+    return false;
+  // The hosted reverse proxy supplies this header for either viewer scheme.
+  // Its presence takes the request out of the explicitly local-dev exception.
+  if (request.headers['x-forwarded-proto'] !== undefined) return false;
+  const host = request.headers.host ?? '';
+  try {
+    const hostname = new URL(`http://${host}`).hostname.replace(/^\[|\]$/g, '');
+    return hostname === 'localhost' || hostname === '::1' || hostname.startsWith('127.');
+  } catch {
+    return false;
+  }
+}
+
+export function authClientSource(request: IncomingMessage, config: RuntimeConfig): string | null {
+  if (allowsLocalHttpAuth(request, config)) return request.socket.remoteAddress ?? null;
+  if ((request.socket as typeof request.socket & { encrypted?: boolean }).encrypted) {
+    return request.socket.remoteAddress ?? null;
+  }
+  if (!authenticatedProxyHttps(request, config)) return null;
+  const forwarded = request.headers['x-rewind-client-address'];
+  return typeof forwarded === 'string' && isIP(forwarded) ? forwarded : null;
+}
+
+function authCorsHeaders(request: IncomingMessage, config: RuntimeConfig): Record<string, string> {
+  const origin = request.headers.origin;
+  if (typeof origin !== 'string' || !origin) return {};
+  // Wildcard CORS is never emitted on real-auth endpoints. A configured
+  // browser origin is exact; same-origin local requests need no CORS grant.
+  if (config.allowOrigin !== '*' && origin === config.allowOrigin) {
+    return {
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Credentials': 'true',
+      Vary: 'Origin',
+    };
+  }
+  return { Vary: 'Origin' };
+}
+
+function authOriginIsAllowed(request: IncomingMessage, config: RuntimeConfig): boolean {
+  const origin = request.headers.origin;
+  if (typeof origin !== 'string' || !origin) return true;
+  if (config.allowOrigin !== '*') return origin === config.allowOrigin;
+  if (authenticatedProxyHttps(request, config)) {
+    return origin === `https://${request.headers.host ?? ''}`;
+  }
+  if (allowsLocalHttpAuth(request, config)) {
+    return origin === `http://${request.headers.host ?? ''}`;
+  }
+  return false;
+}
+
+function authJson(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): void {
+  response.writeHead(status, {
+    ...authCorsHeaders(request, config),
+    'Cache-Control': 'no-store',
+    'Content-Type': 'application/json; charset=utf-8',
+    ...headers,
+  });
+  response.end(JSON.stringify(body));
+}
+
+function authToken(request: IncomingMessage): string | null {
+  const authorization = request.headers.authorization;
+  const bearer =
+    typeof authorization === 'string'
+      ? /^Bearer ([A-Za-z0-9_-]{43})$/.exec(authorization)?.[1]
+      : undefined;
+  const cookieHeader = request.headers.cookie;
+  const cookieValue =
+    typeof cookieHeader === 'string'
+      ? cookieHeader
+          .split(';')
+          .map((part) => part.trim())
+          .find((part) => part.startsWith(`${REAL_SESSION_COOKIE}=`))
+          ?.slice(REAL_SESSION_COOKIE.length + 1)
+      : undefined;
+  if (bearer && cookieValue && bearer !== cookieValue) return null;
+  if (bearer) return bearer;
+  return cookieValue && /^[A-Za-z0-9_-]{43}$/.test(cookieValue) ? cookieValue : null;
+}
+
+async function handleRealAuthRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  database: RewindDatabase,
+  url: URL,
+  now: Date,
+): Promise<void> {
+  if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
+    authJson(request, response, config, 403, {
+      error: 'auth_transport_unavailable',
+      message: 'Sign-in is unavailable on this connection.',
+    });
+    return;
+  }
+
+  if (url.pathname === '/auth/login' && request.method === 'POST') {
+    const body = await requestBody(request, config);
+    const username = typeof body?.username === 'string' ? body.username : '';
+    const password = typeof body?.password === 'string' ? body.password : '';
+    const clientType = body?.clientType;
+    if (
+      !username ||
+      username.length > 128 ||
+      !password ||
+      password.length > 1024 ||
+      (clientType !== 'browser' && clientType !== 'native')
+    ) {
+      authJson(request, response, config, 401, {
+        error: 'sign_in_failed',
+        message: 'Sign-in failed. Check your details or try later.',
+      });
+      return;
+    }
+    const source = authClientSource(request, config);
+    if (!source) {
+      authJson(request, response, config, 403, {
+        error: 'auth_transport_unavailable',
+        message: 'Sign-in is unavailable on this connection.',
+      });
+      return;
+    }
+    const result = await authenticateRealAccount(database, username, password, source, now);
+    if (result.status !== 'authenticated') {
+      authJson(request, response, config, 401, {
+        error: 'sign_in_failed',
+        message: 'Sign-in failed. Check your details or try later.',
+      });
+      return;
+    }
+    if (clientType === 'browser') {
+      const maxAge = Math.max(0, Math.floor((Date.parse(result.expiresAt) - now.getTime()) / 1000));
+      authJson(
+        request,
+        response,
+        config,
+        200,
+        { account: result.account, expiresAt: result.expiresAt },
+        {
+          'Set-Cookie': `${REAL_SESSION_COOKIE}=${result.token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`,
+        },
+      );
+    } else {
+      authJson(request, response, config, 200, {
+        account: result.account,
+        token: result.token,
+        expiresAt: result.expiresAt,
+      });
+    }
+    return;
+  }
+
+  if (url.pathname === '/auth/session' && request.method === 'GET') {
+    const token = authToken(request);
+    const session = token
+      ? validateRealSession(database, token, now)
+      : { status: 'invalid' as const };
+    if (session.status !== 'valid') {
+      authJson(request, response, config, 401, {
+        error: 'session_required',
+        message: 'A valid sign-in is required.',
+      });
+      return;
+    }
+    authJson(
+      request,
+      response,
+      config,
+      200,
+      {
+        account: session.account,
+        idleExpiresAt: session.idleExpiresAt,
+        absoluteExpiresAt: session.absoluteExpiresAt,
+      },
+      request.headers.cookie && !request.headers.authorization
+        ? {
+            'Set-Cookie': `${REAL_SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.max(0, Math.floor((Date.parse(session.idleExpiresAt) - now.getTime()) / 1000))}`,
+          }
+        : {},
+    );
+    return;
+  }
+
+  if (url.pathname === '/auth/logout' && request.method === 'POST') {
+    const token = authToken(request);
+    if (token) revokeRealSession(database, token, now);
+    authJson(
+      request,
+      response,
+      config,
+      200,
+      { signedOut: true },
+      {
+        'Set-Cookie': `${REAL_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+      },
+    );
+    return;
+  }
+
+  authJson(request, response, config, 404, {
+    error: 'not_found',
+    message: 'The requested resource was not found.',
+  });
+}
+
 export function createRuntimeServer(
   config: RuntimeConfig,
   database: RewindDatabase,
@@ -2698,16 +2963,26 @@ export function createRuntimeServer(
       realtimeHub,
       requestLimiters,
     }).catch((error: unknown) => {
+      const authRequest = (request.url ?? '').split('?', 1)[0].startsWith('/auth/');
       if (error instanceof RequestPolicyError) {
-        sendRequestPolicyError(response, config, error);
+        if (authRequest) {
+          authJson(request, response, config, error.status, {
+            error: error.code,
+            message: error.message,
+          });
+        } else {
+          sendRequestPolicyError(response, config, error);
+        }
         finishRejectedRequest(request, response);
         return;
       }
       if (!response.headersSent) {
-        sendJson(response, config, 500, {
+        const body = {
           error: 'internal_error',
           message: 'The local runtime could not complete the request.',
-        });
+        };
+        if (authRequest) authJson(request, response, config, 500, body);
+        else sendJson(response, config, 500, body);
       } else {
         response.destroy();
       }
