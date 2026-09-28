@@ -388,11 +388,6 @@ async function authenticateRealAccountUnlocked(
     return { status: 'invalid' };
   }
 
-  for (const scope of ['account', 'source'] as const) {
-    database
-      .prepare('DELETE FROM auth_login_throttles WHERE scope = ? AND subject_hash = ?')
-      .run(scope, digest(scope === 'account' ? normalized : source));
-  }
   const token = randomBytes(32).toString('base64url');
   const tokenHash = digest(token);
   const createdAt = now.toISOString();
@@ -400,13 +395,38 @@ async function authenticateRealAccountUnlocked(
   const idleExpiresAt = new Date(
     Math.min(now.getTime() + SESSION_IDLE_MS, Date.parse(absoluteExpiresAt)),
   ).toISOString();
-  database
+  // Verification above is asynchronous, so another process can reset the
+  // password before this insert runs. Bind the insert to the exact credential
+  // version we verified; SQLite evaluates this predicate atomically with the
+  // insert. A reset that committed first therefore cannot leave an old-password
+  // session behind.
+  const inserted = database
     .prepare(
       `INSERT INTO real_account_sessions
     (token_hash, account_id, created_at, last_seen_at, idle_expires_at, absolute_expires_at)
-    VALUES (?, ?, ?, ?, ?, ?)`,
+    SELECT ?, id, ?, ?, ?, ? FROM real_accounts
+    WHERE id = ? AND password_salt = ? AND password_hash = ?
+      AND password_scrypt_n = ? AND password_scrypt_r = ? AND password_scrypt_p = ?`,
     )
-    .run(tokenHash, String(row.id), createdAt, createdAt, idleExpiresAt, absoluteExpiresAt);
+    .run(
+      tokenHash,
+      createdAt,
+      createdAt,
+      idleExpiresAt,
+      absoluteExpiresAt,
+      String(row.id),
+      String(row.passwordSalt),
+      String(row.passwordHash),
+      n,
+      r,
+      p,
+    );
+  if (Number(inserted.changes) !== 1) return { status: 'invalid' };
+  for (const scope of ['account', 'source'] as const) {
+    database
+      .prepare('DELETE FROM auth_login_throttles WHERE scope = ? AND subject_hash = ?')
+      .run(scope, digest(scope === 'account' ? normalized : source));
+  }
   return { status: 'authenticated', account: mapAccount(row), token, expiresAt: idleExpiresAt };
 }
 

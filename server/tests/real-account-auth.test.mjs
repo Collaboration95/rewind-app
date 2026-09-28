@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
+import { Worker } from 'node:worker_threads';
 import test from 'node:test';
 
 const { parseConfig } = await import('../dist/config.js');
@@ -9,7 +11,8 @@ const { openDatabase, fixtureSummary } = await import('../dist/db.js');
 const { createRuntimeServer, authClientSource, authTransportIsSecure } =
   await import('../dist/http.js');
 const { createDemoSession } = await import('../dist/session/index.js');
-const { createRealAccount, resetRealAccountPassword } = await import('../dist/auth/index.js');
+const { createRealAccount, resetRealAccountPassword, validateRealSession } =
+  await import('../dist/auth/index.js');
 
 async function withRuntime(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-real-auth-`);
@@ -41,6 +44,97 @@ async function postLogin(baseUrl, username, password, clientType = 'native', ext
     headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify({ username, password, clientType }),
   });
+}
+
+async function raceLoginWithReset(databasePath, account, ordering, reset) {
+  const gate = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  const worker = new Worker(
+    `(async () => {
+       const { parentPort, workerData } = require('node:worker_threads');
+       const { DatabaseSync } = require('node:sqlite');
+       const gate = new Int32Array(workerData.gateBuffer);
+       const database = new DatabaseSync(workerData.databasePath);
+       database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+       const wrapped = {
+         prepare(sql) {
+           const statement = database.prepare(sql);
+           if (!sql.includes('INSERT INTO real_account_sessions') || !sql.includes('SELECT ?, id')) {
+             return statement;
+           }
+           return new Proxy(statement, {
+             get(target, property) {
+               if (property === 'run') {
+                 return (...parameters) => {
+                   if (workerData.ordering === 'reset-first') {
+                     parentPort.postMessage({ phase: 'verified-before-insert' });
+                     if (Atomics.wait(gate, 0, 0, 10000) === 'timed-out') {
+                       throw new Error('timed out waiting for reset to commit');
+                     }
+                     return target.run(...parameters);
+                   }
+                   const result = target.run(...parameters);
+                   parentPort.postMessage({ phase: 'inserted-before-reset' });
+                   if (Atomics.wait(gate, 0, 0, 10000) === 'timed-out') {
+                     throw new Error('timed out waiting for reset to commit');
+                   }
+                   return result;
+                 };
+               }
+               const value = Reflect.get(target, property, target);
+               return typeof value === 'function' ? value.bind(target) : value;
+             },
+           });
+         },
+       };
+       try {
+         const { authenticateRealAccount } = await import(workerData.authModuleUrl);
+         const result = await authenticateRealAccount(
+           wrapped,
+           workerData.username,
+           workerData.password,
+           'race-test-source',
+           new Date('2026-09-28T00:00:00.000Z'),
+         );
+         parentPort.postMessage({ result });
+       } catch (error) {
+         parentPort.postMessage({ error: String(error && error.stack ? error.stack : error) });
+       } finally {
+         database.close();
+       }
+     })();`,
+    {
+      eval: true,
+      workerData: {
+        authModuleUrl: new URL('../dist/auth/index.js', import.meta.url).href,
+        databasePath,
+        gateBuffer: gate.buffer,
+        ordering,
+        password: 'old correct password',
+        username: account.username,
+      },
+    },
+  );
+
+  try {
+    const [pause] = await once(worker, 'message');
+    assert.equal(
+      pause.phase,
+      ordering === 'reset-first' ? 'verified-before-insert' : 'inserted-before-reset',
+    );
+    const resetResult = await reset();
+    assert.equal(resetResult.ok, true);
+    Atomics.store(gate, 0, 1);
+    Atomics.notify(gate, 0);
+    const [completion] = await once(worker, 'message');
+    if (completion.error) throw new Error(completion.error);
+    return completion.result;
+  } finally {
+    if (Atomics.load(gate, 0) === 0) {
+      Atomics.store(gate, 0, 1);
+      Atomics.notify(gate, 0);
+    }
+    await worker.terminate();
+  }
 }
 
 test('additive auth migration and account reset preserve synthetic Demo data and sessions', async () => {
@@ -448,6 +542,66 @@ test('session idle and absolute expiry are enforced, and reset revokes tokens', 
       headers: { Authorization: `Bearer ${finalSession.token}` },
     });
     assert.equal(absoluteExpired.status, 401);
+  });
+});
+
+test('a reset committed after password verification blocks session insertion on a separate connection', async () => {
+  await withRuntime(async ({ database, dataDir }) => {
+    const account = await createRealAccount(
+      database,
+      'race.user',
+      'Race User',
+      'old correct password',
+    );
+    assert.equal(account.ok, true);
+    const separateConnection = new DatabaseSync(`${dataDir}/rewind.sqlite`);
+    separateConnection.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+    try {
+      const result = await raceLoginWithReset(
+        `${dataDir}/rewind.sqlite`,
+        account.account,
+        'reset-first',
+        () => resetRealAccountPassword(separateConnection, 'race.user', 'new correct password'),
+      );
+      assert.deepEqual(result, { status: 'invalid' });
+      assert.equal(
+        database.prepare('SELECT COUNT(*) AS count FROM real_account_sessions').get().count,
+        0,
+      );
+    } finally {
+      separateConnection.close();
+    }
+  });
+});
+
+test('a reset committed after guarded session insertion revokes that session', async () => {
+  await withRuntime(async ({ database, dataDir }) => {
+    const account = await createRealAccount(
+      database,
+      'race.after',
+      'Race After',
+      'old correct password',
+    );
+    assert.equal(account.ok, true);
+    const separateConnection = new DatabaseSync(`${dataDir}/rewind.sqlite`);
+    separateConnection.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
+    try {
+      const result = await raceLoginWithReset(
+        `${dataDir}/rewind.sqlite`,
+        account.account,
+        'login-first',
+        () => resetRealAccountPassword(separateConnection, 'race.after', 'new correct password'),
+      );
+      assert.equal(result.status, 'authenticated');
+      assert.equal(validateRealSession(database, result.token).status, 'invalid');
+      assert.ok(
+        database
+          .prepare('SELECT revoked_at FROM real_account_sessions ORDER BY created_at DESC LIMIT 1')
+          .get().revoked_at,
+      );
+    } finally {
+      separateConnection.close();
+    }
   });
 });
 
