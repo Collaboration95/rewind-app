@@ -54,11 +54,14 @@ describe('first-run and session entry navigation', () => {
 
     expect(result.getByLabelText('Rewind')).toBeTruthy();
     expect(result.getByText('REWIND')).toBeTruthy();
+    expect(result.getByText('PRIVATE MOMENTS, SHARED TOGETHER')).toBeTruthy();
+    expect(result.queryByRole('button', { name: 'Create account' })).toBeNull();
     expect(result.queryByRole('button', { name: 'Sign in' })).toBeNull();
     expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
 
     await act(async () => finishLoad(null));
     expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Create account' })).toBeTruthy();
   });
 
   it('shows branded welcome on a fresh install without creating Amber', async () => {
@@ -72,17 +75,22 @@ describe('first-run and session entry navigation', () => {
     expect(await store.load()).toBeNull();
   });
 
-  it('keeps Sign in truthful and creates no session until an explicit Demo choice', async () => {
+  it('opens real account sign-in and administrator guidance without creating a Demo session', async () => {
     const store = sessionStore();
     const result = await render(<App sessionStore={store} />);
 
     await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
-    expect(
-      result.getByText(/Real account sign-in is not available in this build yet/),
-    ).toBeTruthy();
+    expect(result.getByText('PRIVATE MOMENTS, SHARED TOGETHER')).toBeTruthy();
+    expect(result.getByLabelText('Username')).toBeTruthy();
+    expect(result.getByLabelText('Password')).toBeTruthy();
+    expect(result.getByText(/password will not be sent over an insecure connection/)).toBeTruthy();
     expect(await store.load()).toBeNull();
 
     await fireEvent.press(result.getByRole('button', { name: 'Back to welcome' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Create account' }));
+    expect(result.getByText(/accounts are created by an administrator/)).toBeTruthy();
+    expect(await store.load()).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Back' }));
     await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
     expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
     await fireEvent.press(
