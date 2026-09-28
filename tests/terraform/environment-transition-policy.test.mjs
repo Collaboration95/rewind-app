@@ -15,7 +15,7 @@ const terraformRunbook = await readFile(
   'utf8',
 );
 
-test('keeps the existing Demo names, resource addresses, and state key pinned', () => {
+test('pins Demo Lightsail names/addresses and the example backend key', () => {
   assert.match(demoTerraform, /instance_name\s*=\s*"rewind-demo"/);
   assert.match(demoTerraform, /static_ip_name\s*=\s*"rewind-demo-ip"/);
   assert.match(demoTerraform, /resource "aws_lightsail_instance" "rewind"/);
@@ -41,7 +41,15 @@ test('records remote inventory and human review as pre-provision gates', () => {
   assert.match(boundary, /Review the exact Terraform plan before any human-run apply/);
   assert.match(
     boundary,
-    /cannot prove remote-state separation,\s*bucket isolation, HTTPS behavior,\s*or cost acceptance/,
+    /offline preservation test pins only the Demo Lightsail instance name and\s*resource address, static-IP name and resource address, static-IP attachment\s*address, public-ports address, and example backend key/,
+  );
+  assert.match(
+    boundary,
+    /does not pin or\s*verify CloudTrail, S3, budgets, IAM, Lambda, scheduler, or any other Demo\s*resources/,
+  );
+  assert.match(
+    boundary,
+    /Static checks cannot prove remote-state separation, bucket isolation,\s*HTTPS behavior, or cost acceptance/,
   );
   assert.match(
     boundary,

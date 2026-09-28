@@ -66,9 +66,14 @@ are ready for live use until all of these gates have evidence:
 6. Review the exact Terraform plan before any human-run apply. No automated
    apply is permitted.
 
-Static checks can protect the known Demo addresses and document these gates;
-they cannot prove remote-state separation, bucket isolation, HTTPS behavior,
-or cost acceptance. Those remain live/human verification requirements.
+The offline preservation test pins only the Demo Lightsail instance name and
+resource address, static-IP name and resource address, static-IP attachment
+address, public-ports address, and example backend key. It does not pin or
+verify CloudTrail, S3, budgets, IAM, Lambda, scheduler, or any other Demo
+resources. The inventory gate above covers the broader resource/state safety
+boundary. Static checks cannot prove remote-state separation, bucket isolation,
+HTTPS behavior, or cost acceptance; those remain live/human verification
+requirements.
 
 ## Accepted live-Demo ownership and operating model
 
