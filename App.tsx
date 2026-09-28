@@ -206,9 +206,27 @@ function SessionGate({
   if (realAccount.state === 'active' && realAccount.session)
     return (
       <SafeAreaFrame>
-        <RealAccountGroupExperience displayName={realAccount.session.account.displayName} />
+        <RealAccountGroupExperience
+          displayName={realAccount.session.account.displayName}
+          inviteIntent={
+            inviteLink?.kind === 'valid' && typeof inviteLink.groupId === 'string'
+              ? {
+                  code: inviteLink.code,
+                  expiresAt: inviteLink.expiresAt,
+                  groupId: inviteLink.groupId,
+                }
+              : null
+          }
+          inviteWebOrigin={
+            Platform.OS === 'web' && typeof window !== 'undefined'
+              ? window.location.origin
+              : runtimeClient?.baseUrl
+          }
+        />
       </SafeAreaFrame>
     );
+  if (inviteLink?.kind === 'valid' && inviteLink.groupId)
+    return <DemoAccessEntry inviteGroupId={inviteLink.groupId} />;
   if (realAccount.state === 'error') return <DemoAccessEntry />;
   if (status === 'entry' || status === 'error' || !session) return <DemoAccessEntry />;
   return (
@@ -488,13 +506,16 @@ function AppHeader() {
   );
 }
 
-function DemoAccessEntry() {
+function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const { profiles, chooseMember, error, entryReason, pending, retryRestore } = useDemoSession();
   const auth = useRealAccount();
-  const [mode, setMode] = useState<'welcome' | 'demo' | 'sign-in' | 'create-account'>('welcome');
+  const [mode, setMode] = useState<'welcome' | 'demo' | 'sign-in' | 'create-account'>(
+    inviteGroupId ? 'sign-in' : 'welcome',
+  );
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [authPending, setAuthPending] = useState(false);
+  const visibleMode = inviteGroupId ? 'sign-in' : mode;
   const authMessage =
     auth.notice === 'expired'
       ? 'Your session expired or an administrator reset your password. Sign in again to continue.'
@@ -543,7 +564,7 @@ function DemoAccessEntry() {
           </View>
           <Text style={styles.entryTagline}>PRIVATE MOMENTS, SHARED TOGETHER</Text>
         </View>
-        {mode === 'welcome' ? (
+        {visibleMode === 'welcome' ? (
           <View style={styles.entryIntro}>
             <Text style={styles.label}>PRIVATE MOMENTS, SHARED TOGETHER</Text>
             <Text accessibilityRole="header" style={styles.title}>
@@ -578,7 +599,7 @@ function DemoAccessEntry() {
               Demo uses synthetic sample members and never signs you in to a real account.
             </Text>
           </View>
-        ) : mode === 'create-account' ? (
+        ) : visibleMode === 'create-account' ? (
           <View style={styles.entryIntro}>
             <Text style={styles.label}>PILOT ACCOUNT</Text>
             <Text accessibilityRole="header" style={styles.title}>
@@ -597,7 +618,7 @@ function DemoAccessEntry() {
               <Text style={styles.entryActionButtonText}>Back</Text>
             </Pressable>
           </View>
-        ) : mode === 'sign-in' ? (
+        ) : visibleMode === 'sign-in' ? (
           <View style={styles.entryIntro}>
             <Text style={styles.label}>REAL ACCOUNT</Text>
             <Text accessibilityRole="header" style={styles.title}>
@@ -606,6 +627,11 @@ function DemoAccessEntry() {
             <Text style={styles.bodyText}>
               Use the username and password provided by your Rewind administrator.
             </Text>
+            {inviteGroupId ? (
+              <Text style={styles.bodyText} testID="invite-sign-in-intent">
+                Invitation for group {inviteGroupId} saved. Sign in to continue.
+              </Text>
+            ) : null}
             <Text accessibilityRole="text" style={styles.authFieldLabel}>
               Username
             </Text>
@@ -678,13 +704,15 @@ function DemoAccessEntry() {
             >
               <Text style={styles.entryActionButtonText}>Back to welcome</Text>
             </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setMode('demo')}
-              style={styles.primaryEntryButton}
-            >
-              <Text style={styles.primaryEntryButtonText}>Try Demo</Text>
-            </Pressable>
+            {inviteGroupId ? null : (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => setMode('demo')}
+                style={styles.primaryEntryButton}
+              >
+                <Text style={styles.primaryEntryButtonText}>Try Demo</Text>
+              </Pressable>
+            )}
           </View>
         ) : (
           <View style={styles.entryIntro}>
@@ -729,7 +757,7 @@ function DemoAccessEntry() {
           auth.notice === 'sign-out-recovery-pending' ||
           auth.notice === 'sign-out-marker-cleanup-failed' ||
           auth.notice === 'sign-out-marker-unavailable') &&
-        (mode !== 'sign-in' ||
+        (visibleMode !== 'sign-in' ||
           auth.notice === 'sign-out-recovery-pending' ||
           auth.notice === 'sign-out-marker-cleanup-failed' ||
           auth.notice === 'sign-out-marker-unavailable' ||
