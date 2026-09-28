@@ -80,12 +80,17 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 
 export class RealAccountClient {
   private activeToken: string | undefined;
+  private readonly fetcher: typeof fetch;
 
   constructor(
     private readonly baseUrl: string,
     private readonly tokenStore: TokenStore = secureTokenStore,
-    private readonly fetcher: typeof fetch = fetch,
-  ) {}
+    fetcher: typeof fetch = globalThis.fetch,
+  ) {
+    // Browser fetch requires the global object as its receiver. Store a bound
+    // function because requests invoke this.fetcher from the client instance.
+    this.fetcher = fetcher.bind(globalThis);
+  }
 
   canConnectSecurely(): boolean {
     return isSecureAuthUrl(this.baseUrl);
