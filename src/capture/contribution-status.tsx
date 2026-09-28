@@ -51,23 +51,27 @@ export interface ContributionStatusStore {
 }
 
 export function latestContributionStatus(page: ContributionLedgerPage): ContributionStatus | null {
-  const entry = [...page.entries]
-    .reverse()
-    .find(
-      (candidate) =>
-        candidate.state === 'queued' ||
-        candidate.state === 'processing' ||
-        candidate.state === 'sealed' ||
-        candidate.state === 'failed',
-    );
-  if (!entry) return null;
-  const state: ContributionLifecycle =
-    entry.state === 'queued' ||
-    entry.state === 'processing' ||
-    entry.state === 'sealed' ||
-    entry.state === 'failed'
-      ? entry.state
-      : 'failed';
+  const entry =
+    page.latestContribution === undefined
+      ? [...page.entries]
+          .reverse()
+          .find(
+            (candidate) =>
+              candidate.state === 'queued' ||
+              candidate.state === 'processing' ||
+              candidate.state === 'sealed' ||
+              candidate.state === 'failed',
+          )
+      : page.latestContribution;
+  if (
+    !entry ||
+    (entry.state !== 'queued' &&
+      entry.state !== 'processing' &&
+      entry.state !== 'sealed' &&
+      entry.state !== 'failed')
+  )
+    return null;
+  const state: ContributionLifecycle = entry.state;
   return {
     state,
     contributionId: entry.contributionId,

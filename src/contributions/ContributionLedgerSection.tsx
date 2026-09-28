@@ -21,6 +21,7 @@ interface ScopedView {
 export function ContributionLedgerSection({
   client,
   loadPage,
+  onPageLoaded,
   sessionId,
   groupId,
   memberId,
@@ -28,6 +29,7 @@ export function ContributionLedgerSection({
 }: {
   client?: RuntimeClient;
   loadPage?: LedgerPageLoader;
+  onPageLoaded?: (page: ContributionLedgerPage | null) => void;
   sessionId: string;
   groupId: string;
   memberId: string;
@@ -57,22 +59,23 @@ export function ContributionLedgerSection({
     void Promise.resolve()
       .then(() => {
         if (request !== generation.current) return null;
+        onPageLoaded?.(null);
         return readPage();
       })
       .then(
         (page) => {
           if (request !== generation.current) return;
           if (!page) return;
+          const valid = page.cycleId === cycleId && page.memberId === memberId;
           setScoped({
             scopeKey,
-            view:
-              page.cycleId === cycleId && page.memberId === memberId
-                ? { status: 'ready', page }
-                : { status: 'error' },
+            view: valid ? { status: 'ready', page } : { status: 'error' },
           });
+          onPageLoaded?.(valid ? page : null);
         },
         (error: unknown) => {
           if (request === generation.current) {
+            onPageLoaded?.(null);
             setScoped({ scopeKey, view: { status: denied(error) ? 'denied' : 'error' } });
           }
         },
@@ -80,7 +83,7 @@ export function ContributionLedgerSection({
     return () => {
       generation.current += 1;
     };
-  }, [readPage, memberId, cycleId, retryAttempt, scopeKey]);
+  }, [readPage, memberId, cycleId, retryAttempt, scopeKey, onPageLoaded]);
 
   const loadMore = () => {
     if (

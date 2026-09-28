@@ -19,6 +19,7 @@ import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
 import { CameraCaptureScreen } from '../capture/CameraCaptureScreen';
 import { RealAccountChatScreen } from '../chat/RealAccountChatScreen';
 import { ContributionLedgerSection } from '../contributions/ContributionLedgerSection';
+import type { ContributionLedgerAllowance, ContributionLedgerPage } from '../domain/contributions';
 import {
   ContributionStatusProvider,
   type ContributionStatus,
@@ -113,6 +114,7 @@ export function RealAccountGroupExperience({
   );
   const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
   const [group, setGroup] = useState<RealGroup | null>(null);
+  const [homeAllowance, setHomeAllowance] = useState<ContributionLedgerAllowance | null>(null);
   const loadContributionLedger = useCallback(
     () =>
       group
@@ -120,6 +122,9 @@ export function RealAccountGroupExperience({
         : Promise.reject(new Error('No active group.')),
     [group, mediaClient],
   );
+  const handleHomeLedgerPage = useCallback((page: ContributionLedgerPage | null) => {
+    setHomeAllowance(page?.allowance ?? null);
+  }, []);
   const [memberGroups, setMemberGroups] = useState<RealGroup[]>([]);
   const [groupMembers, setGroupMembers] = useState<RealGroupMembers | null>(null);
   const [groupMembersError, setGroupMembersError] = useState<string | null>(null);
@@ -826,15 +831,16 @@ export function RealAccountGroupExperience({
             {group.cycle.prompt}
           </Text>
           <Text style={styles.label}>MY ALLOWANCE</Text>
-          <Text style={styles.body}>
-            {group.cycle.contributionUsage.countUsed} of {group.cycle.quota.maxCount} contributions
-            · {group.cycle.contributionUsage.secondsUsed} of {group.cycle.quota.maxSeconds} seconds
-            used
+          <Text style={styles.body} testID="real-group-allowance">
+            {homeAllowance
+              ? `${homeAllowance.countUsed} of ${homeAllowance.maxCount} contributions · ${homeAllowance.secondsUsed} of ${homeAllowance.maxSeconds} seconds used`
+              : 'Loading allowance…'}
           </Text>
           <ContributionLedgerSection
             cycleId={group.cycle.id}
             groupId={group.group.id}
             loadPage={loadContributionLedger}
+            onPageLoaded={handleHomeLedgerPage}
             memberId={group.memberId ?? auth.session?.account.id ?? ''}
             sessionId="real-account-session"
           />
@@ -855,11 +861,19 @@ export function RealAccountGroupExperience({
             title="Capture a moment"
             onPress={() => {
               setMessage(null);
+              setHomeAllowance(null);
               setScreen('capture');
             }}
             testID="real-group-capture-action"
           />
-          <Action title="Chat" onPress={() => setScreen('chat')} testID="real-group-chat-action" />
+          <Action
+            title="Chat"
+            onPress={() => {
+              setHomeAllowance(null);
+              setScreen('chat');
+            }}
+            testID="real-group-chat-action"
+          />
           <Action
             title={
               auth.pending
