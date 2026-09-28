@@ -20,6 +20,7 @@ const {
   findStagedSource,
   markStagedSourceReady,
   recordClipMediaMetadata,
+  SOURCE_DURATION_TOLERANCE_SECONDS,
   stagedSourceId,
 } = await import('../dist/media/index.js');
 
@@ -525,20 +526,73 @@ test('the thirty-second limit is independent from the five-clip limit', async ()
   });
 });
 
-test('duration above fifteen seconds is rejected before policy state is written', async () => {
+test('a source beyond the recording allowance is rejected before policy state is written', async () => {
   await withDatabase(async ({ database }) => {
     registerMetadata(database);
     const result = createClipUpload(
       database,
       'demo-group',
       'demo-1',
-      { ...validInput, idempotencyKey: 'quota-too-long', durationSeconds: 15.01 },
+      {
+        ...validInput,
+        idempotencyKey: 'quota-too-long',
+        durationSeconds: 15 + SOURCE_DURATION_TOLERANCE_SECONDS + 0.01,
+      },
       new Date('2026-09-09T00:00:00.000Z'),
     );
     assert.deepEqual(result, { ok: false, reason: 'invalid_media' });
     assert.equal(
       database.prepare('SELECT COUNT(*) AS count FROM contribution_quota_windows').get().count,
       0,
+    );
+    assert.throws(() =>
+      registerMetadata(database, {
+        ...validInput,
+        sourceUri: 'file:///tmp/too-long.mp4',
+        durationSeconds: 15 + SOURCE_DURATION_TOLERANCE_SECONDS + 0.01,
+      }),
+    );
+  });
+});
+
+test('a full-length phone recording slightly over 15 s is accepted when trimmed to 15 s', async () => {
+  await withDatabase(async ({ database }) => {
+    // Phones stop at 15 s but the audio track outlasts the video by a few
+    // frames, so FFprobe reports e.g. 15.06 s for a max-length recording.
+    const phoneRecording = { ...validInput, durationSeconds: 15.06 };
+    registerMetadata(database, phoneRecording);
+    const now = new Date('2026-09-09T00:00:00.000Z');
+    const accepted = createClipUpload(
+      database,
+      'demo-group',
+      'demo-1',
+      {
+        ...phoneRecording,
+        idempotencyKey: 'full-length-phone',
+        trimStartSeconds: 0,
+        trimEndSeconds: 15,
+      },
+      now,
+    );
+    assert.equal(accepted.ok, true);
+    if (!accepted.ok) return;
+    assert.equal(accepted.upload.contribution.durationSeconds, 15);
+
+    // The submitted clip itself may still never exceed 15 s.
+    assert.deepEqual(
+      createClipUpload(
+        database,
+        'demo-group',
+        'demo-2',
+        {
+          ...phoneRecording,
+          idempotencyKey: 'full-length-untrimmed',
+          trimStartSeconds: 0,
+          trimEndSeconds: 15.06,
+        },
+        now,
+      ),
+      { ok: false, reason: 'invalid_media' },
     );
   });
 });

@@ -412,7 +412,7 @@ export async function probeClipWithFfmpeg(
           '-v',
           'error',
           '-show_entries',
-          'format=format_name,duration:stream=codec_type,width,height',
+          'format=format_name,duration:stream=codec_type,width,height:stream_side_data=rotation:stream_tags=rotate',
           '-of',
           'json',
           safeInputPath,
@@ -425,12 +425,27 @@ export async function probeClipWithFfmpeg(
     ]);
     const parsed = JSON.parse(probe.stdout) as {
       format?: { format_name?: string; duration?: string };
-      streams?: { codec_type?: string; width?: number; height?: number }[];
+      streams?: {
+        codec_type?: string;
+        width?: number;
+        height?: number;
+        side_data_list?: { rotation?: number | string }[];
+        tags?: { rotate?: string };
+      }[];
     };
     const video = parsed.streams?.find((stream) => stream.codec_type === 'video');
     const durationSeconds = Number(parsed.format?.duration);
-    const width = Number(video?.width);
-    const height = Number(video?.height);
+    // Phones store portrait video as landscape frames plus a display
+    // rotation. Judge orientation as displayed; FFmpeg applies the same
+    // rotation when the clip is processed.
+    const rotation = Number(
+      video?.side_data_list?.find((entry) => entry.rotation !== undefined)?.rotation ??
+        video?.tags?.rotate ??
+        0,
+    );
+    const quarterTurn = Number.isFinite(rotation) && Math.abs(rotation) % 180 === 90;
+    const width = Number(quarterTurn ? video?.height : video?.width);
+    const height = Number(quarterTurn ? video?.width : video?.height);
     const hasAudio = parsed.streams?.some((stream) => stream.codec_type === 'audio') === true;
     const formatNames = parsed.format?.format_name?.split(',').map((value) => value.trim()) ?? [];
     if (

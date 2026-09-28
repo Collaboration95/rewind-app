@@ -11,6 +11,15 @@ import { isActiveDemoSession } from '../session';
 
 export const MAX_CLIP_BYTES = 50 * 1024 * 1024;
 export const MAX_CLIP_DURATION_SECONDS = 15;
+// A recording stopped at the 15-second limit is written slightly longer than
+// 15 s: the audio track (AAC priming/padding) routinely outlasts the video by
+// a few tens of milliseconds, and FFprobe reports the longest stream. The
+// submitted clip is the trim, which stays strictly within 15 s; only the
+// untrimmed source gets this allowance. It applies to every upload source:
+// the app itself rejects any clip over 15 s before upload, so only direct API
+// callers can use it, and their submitted trim is still capped at 15 s.
+export const SOURCE_DURATION_TOLERANCE_SECONDS = 0.5;
+const MAX_SOURCE_DURATION_SECONDS = MAX_CLIP_DURATION_SECONDS + SOURCE_DURATION_TOLERANCE_SECONDS;
 export const MIN_CLIP_DURATION_SECONDS = 0.5;
 /** A body/probe claim is kept alive long enough for a bounded local upload. */
 export const STAGED_SOURCE_LEASE_MS = 2 * 60 * 60 * 1000;
@@ -754,7 +763,7 @@ export function recordClipMediaMetadata(
     metadata.byteLength > MAX_CLIP_BYTES ||
     !Number.isFinite(metadata.durationSeconds) ||
     metadata.durationSeconds <= 0 ||
-    metadata.durationSeconds > MAX_CLIP_DURATION_SECONDS ||
+    metadata.durationSeconds > MAX_SOURCE_DURATION_SECONDS ||
     !Number.isInteger(metadata.width) ||
     metadata.width <= 0 ||
     !Number.isInteger(metadata.height) ||
@@ -782,7 +791,10 @@ export function recordClipMediaMetadata(
       metadata.sourceUri,
       metadata.mimeType,
       metadata.byteLength,
-      metadata.durationSeconds,
+      // The schema caps a source at the 15-second recording limit. A source
+      // inside the tolerance was recorded to that limit, so store it there;
+      // the worker still re-probes the real file before trimming.
+      Math.min(metadata.durationSeconds, MAX_CLIP_DURATION_SECONDS),
       metadata.width,
       metadata.height,
       metadata.verifiedAt ?? verifiedAt.toISOString(),
@@ -871,7 +883,7 @@ export function validateClipUpload(
     input.byteLength > MAX_CLIP_BYTES ||
     !Number.isFinite(input.durationSeconds) ||
     input.durationSeconds <= 0 ||
-    input.durationSeconds > MAX_CLIP_DURATION_SECONDS ||
+    input.durationSeconds > MAX_SOURCE_DURATION_SECONDS ||
     !Number.isInteger(input.width) ||
     input.width <= 0 ||
     !Number.isInteger(input.height) ||
