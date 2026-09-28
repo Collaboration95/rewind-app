@@ -299,29 +299,27 @@ function ActiveAppShell({
     if (typeof document === 'undefined') return;
     const route = document.getElementById(`screen-route-${activeRoute}`);
     if (!route) return;
+    let focused: HTMLElement | null = null;
     const focusHeading = () => {
       const heading = route.querySelector<HTMLElement>(
         `[data-testid="route-heading-${activeRoute}"]`,
       );
-      if (!heading) return false;
+      if (!heading) return;
       heading.tabIndex = -1;
       heading.focus();
-      return true;
+      focused = heading;
     };
-    if (focusHeading()) return;
-    let timeout: ReturnType<typeof setTimeout>;
-    const observer = new MutationObserver(() => {
-      if (focusHeading()) {
-        observer.disconnect();
-        clearTimeout(timeout);
+    // A screen may replace its heading while loading finishes; refocus only if that
+    // dropped focus to <body>, so a user who has already moved on keeps their place.
+    const restoreFocus = () => {
+      if (!focused || (!focused.isConnected && document.activeElement === document.body)) {
+        focusHeading();
       }
-    });
-    timeout = setTimeout(() => observer.disconnect(), 5000);
+    };
+    restoreFocus();
+    const observer = new MutationObserver(restoreFocus);
+    const timeout = setTimeout(() => observer.disconnect(), 5000);
     observer.observe(route, { childList: true, subtree: true });
-    if (focusHeading()) {
-      observer.disconnect();
-      clearTimeout(timeout);
-    }
     return () => {
       observer.disconnect();
       clearTimeout(timeout);
