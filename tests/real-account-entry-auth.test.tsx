@@ -198,6 +198,15 @@ describe('real account entry flow', () => {
       .mockResolvedValueOnce(jsonResponse(200, { group: realGroup }))
       .mockResolvedValueOnce(jsonResponse(200, { groups: [realGroup] }))
       .mockResolvedValueOnce(
+        jsonResponse(200, {
+          group: { id: groupId, name: 'Saturday table' },
+          members: [
+            { displayName: 'Pilot User', role: 'owner', joinedAt: new Date().toISOString() },
+          ],
+          pendingInviteCount: 0,
+        }),
+      )
+      .mockResolvedValueOnce(
         jsonResponse(201, {
           invite: {
             id: 'real-invite-1',
@@ -228,7 +237,7 @@ describe('real account entry flow', () => {
     await waitFor(() =>
       expect(share).toHaveBeenCalledWith(expect.objectContaining({ url: inviteLink })),
     );
-    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(5);
     result.unmount();
   });
 
@@ -261,6 +270,15 @@ describe('real account entry flow', () => {
       .mockResolvedValueOnce(jsonResponse(200, { group: realGroup }))
       .mockResolvedValueOnce(jsonResponse(200, { groups: [realGroup] }))
       .mockResolvedValueOnce(
+        jsonResponse(200, {
+          group: { id: groupId, name: 'Sunday walk' },
+          members: [
+            { displayName: 'Pilot User', role: 'owner', joinedAt: new Date().toISOString() },
+          ],
+          pendingInviteCount: 0,
+        }),
+      )
+      .mockResolvedValueOnce(
         jsonResponse(201, {
           invite: {
             id: 'real-invite-native-1',
@@ -288,7 +306,7 @@ describe('real account entry flow', () => {
     expect(new URL(inviteLink).origin).toBe('https://share.rewind.example');
     expect(inviteLink).not.toContain('https://rewind.example');
     expect(inviteLink).not.toMatch(/session|token|password|authorization/i);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(5);
     result.unmount();
   });
 

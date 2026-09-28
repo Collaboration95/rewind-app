@@ -37,10 +37,21 @@ interface RealGroup {
   };
 }
 
+interface RealGroupMembers {
+  group: { id: string; name: string };
+  members: { displayName: string; role: 'owner' | 'member'; joinedAt: string }[];
+  pendingInviteCount: number;
+}
+
 async function readGroup(response: Response): Promise<RealGroup | null> {
   if (!response.ok) throw new Error('Your group could not be loaded. Retry when connected.');
   const body = (await response.json()) as { group?: RealGroup | null };
   return body.group ?? null;
+}
+
+async function readGroupMembers(response: Response): Promise<RealGroupMembers> {
+  if (!response.ok) throw new Error('Group members could not be loaded. Retry when connected.');
+  return (await response.json()) as RealGroupMembers;
 }
 
 function remainingLabel(endsAt: string): string {
@@ -62,6 +73,8 @@ export function RealAccountGroupExperience({
   const auth = useRealAccount();
   const [group, setGroup] = useState<RealGroup | null>(null);
   const [memberGroups, setMemberGroups] = useState<RealGroup[]>([]);
+  const [groupMembers, setGroupMembers] = useState<RealGroupMembers | null>(null);
+  const [groupMembersError, setGroupMembersError] = useState<string | null>(null);
   const [screen, setScreen] = useState<
     'loading' | 'choices' | 'create' | 'home' | 'capture' | 'error'
   >('loading');
@@ -77,6 +90,27 @@ export function RealAccountGroupExperience({
   const [invitePending, setInvitePending] = useState(false);
   const [acceptPending, setAcceptPending] = useState(false);
 
+  const loadGroupMembers = useCallback(
+    async (groupId: string) => {
+      setGroupMembers(null);
+      setGroupMembersError(null);
+      try {
+        const response = await auth.authenticatedRequest(
+          `/real/groups/${encodeURIComponent(groupId)}/members`,
+        );
+        const summary = await readGroupMembers(response);
+        if (summary.group.id !== groupId)
+          throw new Error('Group members could not be matched to the selected group.');
+        setGroupMembers(summary);
+      } catch (error) {
+        setGroupMembersError(
+          error instanceof Error ? error.message : 'Group members could not be loaded.',
+        );
+      }
+    },
+    [auth],
+  );
+
   const load = useCallback(async () => {
     try {
       const [currentResponse, membershipsResponse] = await Promise.all([
@@ -90,11 +124,16 @@ export function RealAccountGroupExperience({
       setMemberGroups(memberships.groups ?? []);
       setGroup(result);
       setScreen(result ? 'home' : 'choices');
+      if (result) await loadGroupMembers(result.group.id);
+      else {
+        setGroupMembers(null);
+        setGroupMembersError(null);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Your group could not be loaded.');
       setScreen('error');
     }
-  }, [auth]);
+  }, [auth, loadGroupMembers]);
 
   useEffect(() => {
     void Promise.resolve().then(load);
@@ -102,13 +141,18 @@ export function RealAccountGroupExperience({
 
   if (screen === 'capture' && group) {
     return (
-      <VideoCaptureScreen
-        onBack={() => setScreen('home')}
-        realAccount={{
-          groupId: group.group.id,
-          authenticatedRequest: auth.authenticatedRequest,
-        }}
-      />
+      <View style={styles.captureContainer}>
+        <Text style={styles.label} testID="real-group-capture-context">
+          ACTIVE GROUP · {group.group.name}
+        </Text>
+        <VideoCaptureScreen
+          onBack={() => setScreen('home')}
+          realAccount={{
+            groupId: group.group.id,
+            authenticatedRequest: auth.authenticatedRequest,
+          }}
+        />
+      </View>
     );
   }
 
@@ -140,6 +184,7 @@ export function RealAccountGroupExperience({
       const created = (await response.json()) as RealGroup;
       setGroup(created);
       setScreen('home');
+      await loadGroupMembers(created.group.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The group could not be created.');
     } finally {
@@ -228,6 +273,7 @@ export function RealAccountGroupExperience({
         throw new Error(body.message ?? 'The invitation could not be accepted.');
       }
       setGroup(body.group);
+      await loadGroupMembers(body.group.group.id);
       setMemberGroups((current) =>
         current.some((membership) => membership.group.id === body.group?.group.id)
           ? current
@@ -256,6 +302,7 @@ export function RealAccountGroupExperience({
       const selected = await readGroup(response);
       if (!selected) throw new Error('That group is not available to this account.');
       setGroup(selected);
+      await loadGroupMembers(selected.group.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The group could not be selected.');
     } finally {
@@ -458,10 +505,46 @@ export function RealAccountGroupExperience({
             </Text>
           ) : null}
           <Text style={styles.label}>PRIVATE GROUP · {group.group.role.toUpperCase()}</Text>
+          <Text style={styles.label} testID="real-group-active-context">
+            ACTIVE GROUP · {group.group.name}
+          </Text>
           <Text accessibilityRole="header" style={styles.title} testID="real-group-name-heading">
             {group.group.name}
           </Text>
           <Text style={styles.body}>Up to {group.group.maxMembers} members</Text>
+          <View style={styles.invitationPanel} testID="real-group-members">
+            <Text accessibilityRole="header" style={styles.label}>
+              MEMBERS · {groupMembers?.members.length ?? 0}/{group.group.maxMembers}
+            </Text>
+            {groupMembers?.members.length ? (
+              groupMembers.members.map((member, index) => (
+                <Text
+                  key={`${member.role}-${member.joinedAt}-${index}`}
+                  accessibilityLabel={`${member.displayName}, ${member.role}`}
+                  style={styles.body}
+                  testID={`real-group-member-${index}`}
+                >
+                  {member.displayName} · {member.role === 'owner' ? 'Owner' : 'Member'}
+                </Text>
+              ))
+            ) : (
+              <Text style={styles.body} testID="real-group-members-empty">
+                {groupMembers
+                  ? 'No member profiles are available.'
+                  : (groupMembersError ?? 'Loading group members…')}
+              </Text>
+            )}
+            <Text style={styles.body} testID="real-group-pending-invites">
+              {groupMembers?.pendingInviteCount
+                ? `${groupMembers.pendingInviteCount} pending ${groupMembers.pendingInviteCount === 1 ? 'invitation' : 'invitations'}`
+                : 'No pending invitations'}
+            </Text>
+          </View>
+          {message ? (
+            <Text accessibilityRole="alert" style={styles.error} testID="real-group-switch-error">
+              {message}
+            </Text>
+          ) : null}
           {memberGroups.length > 1 ? (
             <View style={styles.invitationPanel} testID="real-group-switcher">
               <Text style={styles.label}>YOUR GROUPS</Text>
@@ -610,6 +693,7 @@ function Action({
 
 const styles = StyleSheet.create({
   content: { gap: 18, padding: 22 },
+  captureContainer: { flex: 1 },
   brand: { gap: 4 },
   wordmark: { color: COLORS.ink, fontSize: 15, fontWeight: '800', letterSpacing: 2 },
   label: { color: COLORS.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginTop: 8 },
