@@ -112,10 +112,19 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   test.setTimeout(120_000);
   stage = 'demo access';
   let ownerSessionId = '';
+  let initialSession: { id?: string; actor?: { memberId?: string } } | null = null;
   page.on('response', (response) => {
     const url = new URL(response.url());
     if (url.pathname.startsWith('/api/')) {
       apiEvents.push(`${response.request().method()} ${url.pathname} ${response.status()}`);
+    }
+    if (response.request().method() === 'POST' && url.pathname === '/api/sessions/demo') {
+      void response
+        .json()
+        .then((body) => {
+          initialSession = body.session;
+        })
+        .catch(() => undefined);
     }
   });
   page.on('requestfailed', (request) => {
@@ -130,13 +139,24 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
     window.fetch = window.fetch.bind(window);
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  const entryHeading = page.getByRole('heading', { name: 'Choose who you are showing' });
+  await expect(entryHeading.or(page.getByTestId('capsule-ready'))).toBeVisible();
   await expect
     .poll(async () => page.evaluate(async () => (await fetch('/api/health')).ok))
     .toBe(true);
-  ownerSessionId = await waitForDemoSession(page, async () => {
-    await page.getByTestId('demo-entry-demo-1').click();
-  });
+  if (await entryHeading.isVisible()) {
+    ownerSessionId = await waitForDemoSession(page, async () => {
+      await page.getByTestId('demo-entry-demo-1').click();
+    });
+  } else {
+    await expect
+      .poll(() => initialSession?.id ?? null, {
+        message: 'The default synthetic Demo session should be created on first load',
+      })
+      .toEqual(expect.any(String));
+    expect(initialSession?.actor?.memberId).toBe('demo-1');
+    ownerSessionId = initialSession?.id ?? '';
+  }
   await expect(page.getByTestId('capsule-ready')).toBeVisible();
   await expect(page.getByTestId('settings-group')).toHaveCount(0);
 
