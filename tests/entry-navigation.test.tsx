@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
@@ -43,6 +43,24 @@ function sessionStore(initial: DemoSession | null = null): DemoSessionStore {
 }
 
 describe('first-run and session entry navigation', () => {
+  it('shows only Rewind branding while the saved session is being restored', async () => {
+    let finishLoad!: (value: DemoSession | null) => void;
+    const store: DemoSessionStore = {
+      load: () => new Promise((resolve) => (finishLoad = resolve)),
+      save: async () => {},
+      clear: async () => {},
+    };
+    const result = await render(<App sessionStore={store} />);
+
+    expect(result.getByLabelText('Rewind')).toBeTruthy();
+    expect(result.getByText('REWIND')).toBeTruthy();
+    expect(result.queryByRole('button', { name: 'Sign in' })).toBeNull();
+    expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
+
+    await act(async () => finishLoad(null));
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+  });
+
   it('shows branded welcome on a fresh install without creating Amber', async () => {
     const store = sessionStore();
     const result = await render(<App sessionStore={store} />);
