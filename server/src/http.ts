@@ -2750,14 +2750,19 @@ function allowsLocalHttpAuth(request: IncomingMessage, config: RuntimeConfig): b
   }
 }
 
-export function authClientSource(request: IncomingMessage, config: RuntimeConfig): string | null {
-  if (allowsLocalHttpAuth(request, config)) return request.socket.remoteAddress ?? null;
+export function authClientSource(request: IncomingMessage, config: RuntimeConfig): string {
+  if (allowsLocalHttpAuth(request, config)) return request.socket.remoteAddress ?? 'unknown';
   if ((request.socket as typeof request.socket & { encrypted?: boolean }).encrypted) {
-    return request.socket.remoteAddress ?? null;
+    return request.socket.remoteAddress ?? 'unknown';
   }
-  if (!authenticatedProxyHttps(request, config)) return null;
-  const forwarded = request.headers['x-rewind-client-address'];
-  return typeof forwarded === 'string' && isIP(forwarded) ? forwarded : null;
+  if (authenticatedProxyHttps(request, config)) {
+    const forwarded = request.headers['x-rewind-client-address'];
+    if (typeof forwarded === 'string' && isIP(forwarded)) return forwarded;
+  }
+  // The transport check runs before this helper. An authenticated proxy peer
+  // remains a valid shared source bucket when its client-address header is
+  // absent or malformed; that header affects rate-limit grouping, not auth.
+  return request.socket.remoteAddress ?? 'unknown';
 }
 
 function authCorsHeaders(request: IncomingMessage, config: RuntimeConfig): Record<string, string> {
@@ -2860,13 +2865,6 @@ async function handleRealAuthRequest(
       return;
     }
     const source = authClientSource(request, config);
-    if (!source) {
-      authJson(request, response, config, 403, {
-        error: 'auth_transport_unavailable',
-        message: 'Sign-in is unavailable on this connection.',
-      });
-      return;
-    }
     const result = await authenticateRealAccount(database, username, password, source, now);
     if (result.status !== 'authenticated') {
       authJson(request, response, config, 401, {

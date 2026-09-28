@@ -149,6 +149,20 @@ test('external auth transport rejects forged forwarded HTTPS without the origin 
     '203.0.113.9',
   );
   assert.equal(
+    authClientSource(
+      {
+        socket: { remoteAddress: '127.0.0.1', encrypted: false },
+        headers: {
+          host: 'api.example.test',
+          'x-forwarded-proto': 'https',
+          'x-rewind-origin-auth': 'edge-only-secret',
+        },
+      },
+      config,
+    ),
+    '127.0.0.1',
+  );
+  assert.equal(
     authTransportIsSecure(
       {
         ...request,
