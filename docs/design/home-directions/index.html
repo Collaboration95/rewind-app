@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="styles-r2.css" />
     <link rel="stylesheet" href="styles-r3.css" />
+    <link rel="stylesheet" href="styles-nav.css" />
     <script defer src="review-config.js"></script>
     <script defer src="app.js"></script>
   </head>
@@ -77,13 +78,31 @@
         </div>
 
         <div class="grp">
-          <p class="lbl">统一导航</p>
-          <ul class="rules">
-            <li>首页 / 聊天 / 档案 三栏</li>
-            <li>快门独立：拍摄是动作，不是页面</li>
-            <li>快门外圈 5 段 = 本周额度</li>
-            <li>设置并入左上角头像</li>
-          </ul>
+          <p class="lbl">底栏变体</p>
+          <div class="seg" role="group" aria-label="底栏变体">
+            <button type="button" data-nav="a" aria-pressed="true">选中展开</button
+            ><button type="button" data-nav="b" aria-pressed="false">始终有字</button
+            ><button type="button" data-nav="c" aria-pressed="false">滚动缩小</button>
+          </div>
+          <label class="lbl lbl-gap" for="shutter-state">快门状态</label>
+          <select id="shutter-state">
+            <option value="collect">收集中</option>
+            <option value="quota">额度用完</option>
+            <option value="upload">封存中</option>
+            <option value="sealed">刚封存</option>
+            <option value="premiere">首映期（24 小时）</option>
+          </select>
+          <label class="check" for="unread"
+            ><input type="checkbox" id="unread" checked /> 聊天有 3 条未读</label
+          >
+          <p class="hint">
+            11 个方向统一用玻璃底栏，只随主题换色：首页 / 聊天 / 档案三栏 + 独立快门，快门外圈 =
+            本周额度，设置并入左上角头像。这里只切换底栏，首页内容的状态稍后做。
+          </p>
+          <div class="nav-votes" aria-label="底栏变体投票">
+            <span>A</span><span data-vote="nav-a"></span> <span>B</span
+            ><span data-vote="nav-b"></span> <span>C</span><span data-vote="nav-c"></span>
+          </div>
         </div>
 
         <div class="grp">
@@ -91,7 +110,8 @@
           <ul class="rules">
             <li>点头像：打开个人与设置</li>
             <li>点底栏：切换选中态</li>
-            <li>按快门：按压反馈</li>
+            <li>按快门：按压反馈（额度用完时不可按）</li>
+            <li>“滚动缩小”：点左下小胶囊展开，往下滚再缩小</li>
           </ul>
         </div>
 

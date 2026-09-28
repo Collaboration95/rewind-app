@@ -26,22 +26,26 @@ The page reads the reaction counts from the public GitHub API when it loads (60 
 - Drag **group size** (2–10) and use **shuffle contributions**. No direction assumes a fixed number of moments.
 - Switch **waiting members** between _not named_ (default) and _named_.
 - Tap the avatar for the merged profile and settings sheet, tap the dock tabs, and press the shutter.
+- Compare the **dock variants**: A icons with the active label, B labels always, C shrinks while scrolling (tap the small pill to expand).
+- Switch the **shutter state**: collecting, allowance used up, sealing, just sealed, and premiere (the shutter becomes _watch together_, with the time left on its ring).
+- Toggle **chat unread** to see the badges; the Archive tab shows a dot during the premiere.
 
 ## Shared decisions across all directions
 
-- Navigation: Home / Chat / Archive plus a separate shutter; its ring shows the member's weekly allowance (5 moments, 30 seconds). Settings moves into the avatar.
+- Navigation: one glass dock for every direction, tinted by its theme. Home / Chat / Archive plus a separate shutter; its ring shows the member's weekly allowance (5 moments, 30 seconds). Settings moves into the avatar. Every tab has an accessible name, including unread counts.
 - Information architecture: prompt → action → status.
 - From the product scan: waiting members are not named (Reveal), each member has a colour (Reveal), sealed copy says _not even you can peek_ (Capsule, Reveal), and the reveal is framed as everyone opening at once (Capsl, Reveal).
 
 ## Files
 
-| File                                           | Purpose                                        |
-| ---------------------------------------------- | ---------------------------------------------- |
-| `index.html`                                   | Review page shell and review table             |
-| `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11              |
-| `app.js`                                       | Synthetic data, direction markup, vote reading |
-| `review-config.js`                             | Review issue number                            |
-| `shots/`                                       | Phone screenshots used in the issue comments   |
+| File                                           | Purpose                                          |
+| ---------------------------------------------- | ------------------------------------------------ |
+| `index.html`                                   | Review page shell and review table               |
+| `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                |
+| `styles-nav.css`                               | Shared dock, variants, shutter states, badges    |
+| `app.js`                                       | Synthetic data, direction markup, vote reading   |
+| `review-config.js`                             | Review issue number                              |
+| `shots/`                                       | Screenshots for the issue: phones, dock, shutter |
 
 ## References
 

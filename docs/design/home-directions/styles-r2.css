@@ -56,7 +56,7 @@
   padding: 0 16px;
   color: var(--muted);
 }
-.gnav .tab span {
+.gnav .tab .tlbl {
   display: none;
 }
 .gnav .tab.on {
@@ -64,7 +64,7 @@
   background: var(--gn-on);
   color: var(--ink);
 }
-.gnav .tab.on span {
+.gnav .tab.on .tlbl {
   display: inline;
   font-size: 13px;
 }

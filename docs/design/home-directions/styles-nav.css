@@ -1,0 +1,234 @@
+/* 第四轮：11 个方向统一玻璃底栏、底栏变体、快门状态、角标 */
+
+/* ============ 侧栏控件 ============ */
+.lbl-gap {
+  margin-top: 14px;
+}
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  font-size: 13px;
+}
+.check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--page-ink);
+}
+.nav-votes {
+  display: none;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: center;
+  margin-top: 12px;
+  font:
+    500 11px/1 'DM Mono',
+    monospace;
+  color: var(--page-muted);
+}
+body.has-issue .nav-votes {
+  display: grid;
+}
+
+/* ============ 01 / 02 / 04 / 05 的玻璃底栏配色 ============ */
+.c1 {
+  --gn-bg: rgba(33, 30, 27, 0.62);
+  --gn-edge: rgba(243, 237, 228, 0.12);
+  --gn-hi: rgba(255, 255, 255, 0.08);
+  --gn-shadow: rgba(0, 0, 0, 0.6);
+  --gn-on: rgba(243, 237, 228, 0.1);
+}
+.c2 {
+  --gn-bg: rgba(248, 244, 236, 0.72);
+  --gn-edge: rgba(31, 26, 21, 0.12);
+  --gn-hi: rgba(255, 255, 255, 0.9);
+  --gn-shadow: rgba(60, 40, 20, 0.25);
+  --gn-on: rgba(31, 26, 21, 0.07);
+}
+.c4 {
+  --gn-bg: rgba(40, 20, 20, 0.62);
+  --gn-edge: rgba(221, 166, 79, 0.24);
+  --gn-hi: rgba(255, 230, 190, 0.1);
+  --gn-shadow: rgba(0, 0, 0, 0.7);
+  --gn-on: rgba(221, 166, 79, 0.14);
+}
+.c5 {
+  --gn-bg: rgba(255, 255, 255, 0.72);
+  --gn-edge: rgba(17, 17, 16, 0.1);
+  --gn-hi: #fff;
+  --gn-shadow: rgba(0, 0, 0, 0.18);
+  --gn-on: rgba(17, 17, 16, 0.08);
+}
+
+/* ============ 统一：覆盖各方案原有的底栏写法 ============ */
+.screen.gnav .tab {
+  font: 500 11px/1 var(--f-body);
+  letter-spacing: 0;
+  text-transform: none;
+}
+.screen.gnav .tab .ic {
+  display: block;
+}
+.screen.gnav .tab.on::before,
+.screen.gnav .tab.on::after {
+  content: none;
+}
+.screen.gnav .tab.on {
+  color: var(--ink);
+}
+.c1.gnav .tab.on .ic,
+.c4.gnav .tab.on,
+.c8.gnav .tab.on {
+  color: var(--accent);
+}
+.tab .ico {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.tabs {
+  transition: flex-basis 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.shutter {
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ============ 变体 B：文字一直显示 ============ */
+.screen.nav-b .tab,
+.screen.nav-b .tab.on {
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0;
+}
+.screen.nav-b .tab .tlbl,
+.screen.nav-b .tab.on .tlbl {
+  display: block;
+  font-size: 10.5px;
+}
+
+/* ============ 变体 C：滚动时缩小 ============ */
+.screen.mini .dock {
+  justify-content: space-between;
+}
+.screen.mini .tabs {
+  flex: 0 0 64px;
+  padding: 6px;
+}
+.screen.mini .tab:not(.on) {
+  display: none;
+}
+.screen.mini .tab.on {
+  padding: 0;
+}
+.screen.mini .tab.on .tlbl {
+  display: none;
+}
+.screen.mini .shutter {
+  transform: scale(0.84);
+  transform-origin: 100% 50%;
+}
+
+/* ============ 快门状态 ============ */
+.shutter .tip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  padding: 8px 12px;
+  border-radius: 12px;
+  white-space: nowrap;
+  font: 500 12px/1 var(--f-body);
+  color: var(--ink);
+  background: var(--sheet);
+  box-shadow:
+    0 12px 24px -10px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px var(--line);
+  pointer-events: none;
+}
+.shutter .tip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 32px;
+  border: 6px solid transparent;
+  border-top-color: var(--sheet);
+}
+.ring .base,
+.ring .arc {
+  fill: none;
+  stroke-width: 3;
+}
+.ring .base {
+  stroke: var(--ring-off);
+}
+.ring .arc {
+  stroke: var(--ring-on);
+  stroke-linecap: round;
+}
+.ring.spin {
+  animation: spin 1.1s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.sh-quota .shutter {
+  cursor: not-allowed;
+}
+.sh-quota .shutter .core {
+  filter: grayscale(0.9);
+  opacity: 0.45;
+  box-shadow: none;
+}
+.sh-sealed .shutter .core {
+  animation: sealpop 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes sealpop {
+  40% {
+    transform: scale(1.12);
+  }
+}
+
+/* ============ 角标 ============ */
+.badge {
+  position: absolute;
+  top: -6px;
+  left: 13px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font: 600 10px/17px var(--f-body);
+  font-style: normal;
+  text-align: center;
+  color: #fff;
+  background: #e5484d;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.badge.dot {
+  top: -2px;
+  left: 17px;
+  width: 9px;
+  min-width: 0;
+  height: 9px;
+  padding: 0;
+}
+
+/* 缩小态：其他页签被收起时，在小胶囊上汇总显示一个红点 */
+.tabs {
+  position: relative;
+}
+.screen.mini .tabs.has-badge::after {
+  content: '';
+  position: absolute;
+  top: 9px;
+  right: 11px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #e5484d;
+  box-shadow: 0 0 0 2px var(--bg);
+}

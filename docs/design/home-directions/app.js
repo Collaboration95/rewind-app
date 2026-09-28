@@ -17,6 +17,8 @@ const I = {
   bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M5.6 18.4l1.6-1.6M16.8 7.2l1.6-1.6"/>',
   rewind: '<path d="M11.5 7 6.5 12l5 5M18 7l-5 5 5 5"/>',
+  check: '<path d="m5.5 12.5 4.2 4.2L18.5 8"/>',
+  play: '<path d="M8.5 5.8v12.4a.6.6 0 0 0 .9.5l10-6.2a.6.6 0 0 0 0-1l-10-6.2a.6.6 0 0 0-.9.5Z"/>',
 };
 const ic = (n, cls = '') =>
   `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
@@ -97,11 +99,12 @@ function waitLine(d) {
 
 /* ---------- 共用部件 ---------- */
 // 5 段额度环：已用的段点亮。快门、围炉座位共用。
+const polar = (c, r, deg) => {
+  const a = (deg * Math.PI) / 180;
+  return `${(c + r * Math.cos(a)).toFixed(2)} ${(c + r * Math.sin(a)).toFixed(2)}`;
+};
 function ring(used = 2, total = 5, r = 35, c = 38, gap = 9) {
-  const pt = (deg) => {
-    const a = (deg * Math.PI) / 180;
-    return `${(c + r * Math.cos(a)).toFixed(2)} ${(c + r * Math.sin(a)).toFixed(2)}`;
-  };
+  const pt = (deg) => polar(c, r, deg);
   let segs = '';
   for (let i = 0; i < total; i++) {
     const a0 = -90 + (i * 360) / total + gap / 2;
@@ -109,6 +112,11 @@ function ring(used = 2, total = 5, r = 35, c = 38, gap = 9) {
     segs += `<path class="seg${i < used ? ' on' : ''}" d="M${pt(a0)}A${r} ${r} 0 0 1 ${pt(a1)}"/>`;
   }
   return `<svg class="ring" viewBox="0 0 ${c * 2} ${c * 2}" aria-hidden="true">${segs}</svg>`;
+}
+// 连续弧：首映剩余时间，或封存中的转圈
+function arcRing(frac, spin = false) {
+  const end = -90 + 360 * Math.min(frac, 0.999);
+  return `<svg class="ring${spin ? ' spin' : ''}" viewBox="0 0 76 76" aria-hidden="true"><circle class="base" cx="38" cy="38" r="35"/><path class="arc" d="M${polar(38, 35, -90)}A35 35 0 ${frac > 0.5 ? 1 : 0} 1 ${polar(38, 35, end)}"/></svg>`;
 }
 
 const statusBar = () =>
@@ -118,19 +126,61 @@ const statusBar = () =>
   `<svg viewBox="0 0 27 12"><rect x=".5" y=".5" width="23" height="11" rx="3.2" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="17" height="8" rx="2"/><rect x="24.5" y="4" width="1.8" height="4" rx=".9" opacity=".4"/></svg>` +
   `</span></div>`;
 
-const dock = (d) =>
-  `<nav class="dock" aria-label="Main navigation"><div class="tabs">` +
-  [
-    ['home', 'Home'],
-    ['chat', 'Chat'],
-    ['archive', 'Archive'],
-  ]
-    .map(
-      ([k, l], i) =>
-        `<button type="button" class="tab${i === 0 ? ' on' : ''}"${i === 0 ? ' aria-current="page"' : ''}>${ic(k)}<span>${l}</span></button>`,
-    )
-    .join('') +
-  `</div><button type="button" class="shutter" aria-label="Add a moment · ${5 - d.me.c} of 5 left">${ring(d.me.c)}<span class="core">${ic('camera')}</span></button></nav>`;
+/* ---------- 底栏：统一玻璃底栏 + 变体 + 快门状态 + 角标 ---------- */
+const NAV = { variant: 'a', shutter: 'collect', unread: true };
+
+function shutter(d) {
+  const left = 5 - d.me.c;
+  const s = {
+    collect: [ring(d.me.c), 'camera', `Add a moment · ${left} of 5 left`, ''],
+    quota: [
+      ring(5),
+      'camera',
+      'Weekly allowance used up · resets Sunday',
+      'All 5 used · resets Sun',
+    ],
+    upload: [arcRing(0.28, true), 'camera', 'Sealing your moment', 'Sealing…'],
+    sealed: [
+      ring(Math.min(5, d.me.c + 1)),
+      'check',
+      `Moment sealed · ${Math.max(0, left - 1)} of 5 left`,
+      'Sealed · not even you can peek',
+    ],
+    premiere: [
+      arcRing(0.75),
+      'play',
+      'Watch the premiere together · 18 hours left',
+      'Premiere · 18h left',
+    ],
+  }[NAV.shutter];
+  return (
+    `<button type="button" class="shutter" aria-label="${s[2]}"${NAV.shutter === 'quota' ? ' aria-disabled="true"' : ''}>` +
+    `${s[0]}<span class="core">${ic(s[1])}</span>${s[3] ? `<span class="tip" aria-hidden="true">${s[3]}</span>` : ''}</button>`
+  );
+}
+
+function dock(d) {
+  const tabs = [
+    ['home', 'Home', '', ''],
+    ['chat', 'Chat', NAV.unread ? '<i class="badge">3</i>' : '', NAV.unread ? ', 3 unread' : ''],
+    [
+      'archive',
+      'Archive',
+      NAV.shutter === 'premiere' ? '<i class="badge dot"></i>' : '',
+      NAV.shutter === 'premiere' ? ', new film' : '',
+    ],
+  ];
+  return (
+    `<nav class="dock" aria-label="Main navigation"><div class="tabs${tabs.some((t) => t[2]) ? ' has-badge' : ''}">` +
+    tabs
+      .map(
+        ([k, l, badge, extra], i) =>
+          `<button type="button" class="tab${i === 0 ? ' on' : ''}" aria-label="${l}${extra}"${i === 0 ? ' aria-current="page"' : ''}><span class="ico">${ic(k)}${badge}</span><span class="tlbl">${l}</span></button>`,
+      )
+      .join('') +
+    `</div>${shutter(d)}</nav>`
+  );
+}
 
 const me = (withName = true) =>
   `<button type="button" class="me" aria-label="Alex · profile and settings" aria-haspopup="dialog"><span class="avatar">A</span>${
@@ -603,7 +653,7 @@ const concepts = [
 const GROUPS = { r3: '第三轮 · 借鉴竞品的新方向', r2: '第二轮 · 温馨方向', r1: '第一轮' };
 
 const screen = (c, d) =>
-  `<div class="device"><div class="screen ${c.id}${c.nav === 'glass' ? ' gnav' : ''}">${statusBar()}<div class="scroll">${bodies[c.id](d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}<div class="scroll">${bodies[c.id](d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
 
 let current = 'all';
 
@@ -657,6 +707,7 @@ async function loadVotes() {
     st.textContent = '投票 Issue 尚未发布。';
     return;
   }
+  document.body.classList.add('has-issue');
   st.innerHTML = `投票与评论在 <a href="https://github.com/${REPO}/issues/${n}" target="_blank" rel="noreferrer">#${n}</a>，票数打开页面时读取。`;
   try {
     let all = [];
@@ -673,7 +724,7 @@ async function loadVotes() {
       if (list.length < 100) break;
     }
     for (const c of all) {
-      const m = /<!--\s*rewind-concept:(c\d+)\s*-->/.exec(c.body || '');
+      const m = /<!--\s*rewind-concept:(c\d+|nav-[abc])\s*-->/.exec(c.body || '');
       if (m)
         votes[m[1]] = {
           up: c.reactions?.['+1'] ?? 0,
@@ -737,6 +788,13 @@ document.addEventListener('click', (e) => {
   const t = e.target.closest('button, [data-close]');
   if (!t) return;
   if (t.dataset.pick) return pick(t.dataset.pick);
+  if (t.dataset.nav) {
+    NAV.variant = t.dataset.nav;
+    document
+      .querySelectorAll('[data-nav]')
+      .forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
+    return render();
+  }
   if (t.dataset.anon) {
     anon = t.dataset.anon === '1';
     document
@@ -763,6 +821,8 @@ document.addEventListener('click', (e) => {
   }
   if (t.hasAttribute('data-close')) return scr.classList.remove('open');
   if (t.classList.contains('tab')) {
+    // 缩小态下，点小胶囊先展开
+    if (scr.classList.contains('mini')) return scr.classList.remove('mini');
     t.parentElement.querySelectorAll('.tab').forEach((b) => {
       b.classList.toggle('on', b === t);
       if (b === t) b.setAttribute('aria-current', 'page');
@@ -771,6 +831,7 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (t.classList.contains('shutter')) {
+    if (t.getAttribute('aria-disabled') === 'true') return;
     t.classList.remove('press');
     void t.offsetWidth;
     t.classList.add('press');
@@ -778,6 +839,28 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => e.key === 'Escape' && closeSheets());
 $('zoom').addEventListener('input', (e) => setZoom(e.target.value));
+$('shutter-state').addEventListener('change', (e) => {
+  NAV.shutter = e.target.value;
+  render();
+});
+$('unread').addEventListener('change', (e) => {
+  NAV.unread = e.target.checked;
+  render();
+});
+// “滚动缩小”变体：往下滚缩小，往上滚展开
+document.addEventListener(
+  'scroll',
+  (e) => {
+    const el = e.target;
+    if (NAV.variant !== 'c' || !el.classList?.contains('scroll')) return;
+    const last = Number(el.dataset.y || 0);
+    const scr = el.closest('.screen');
+    if (el.scrollTop > last + 4 && el.scrollTop > 24) scr.classList.add('mini');
+    else if (el.scrollTop < last - 4) scr.classList.remove('mini');
+    el.dataset.y = el.scrollTop;
+  },
+  true,
+);
 $('members').addEventListener('input', (e) => {
   size = Number(e.target.value);
   $('membersv').textContent = size + ' 人';
