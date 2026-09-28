@@ -795,7 +795,7 @@ const openFromHash = () => {
   if (h !== current && concepts.some((c) => c.id === h)) pick(h);
 };
 openFromHash();
-addEventListener("load", openFromHash);
-addEventListener("hashchange", openFromHash);
+addEventListener('load', openFromHash);
+addEventListener('hashchange', openFromHash);
 setTimeout(openFromHash, 400);
 loadVotes();
