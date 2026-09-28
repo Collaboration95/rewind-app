@@ -1,6 +1,7 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import type { RewindDatabase } from '../db';
+import { getRealGroup } from './real';
 
 export const DEFAULT_REAL_INVITE_TTL_SECONDS = 24 * 60 * 60;
 export const MIN_REAL_INVITE_TTL_SECONDS = 5 * 60;
@@ -13,6 +14,18 @@ export interface RealGroupInvite {
   groupId: string;
   status: 'active';
   createdAt: string;
+  expiresAt: string;
+}
+
+export type AcceptRealGroupInviteResult =
+  | { ok: true; status: 'accepted'; group: NonNullable<ReturnType<typeof getRealGroup>> }
+  | { ok: false; status: 'expired' | 'replayed' | 'malformed' | 'denied' | 'full' };
+
+interface RealInviteRow {
+  id: string;
+  groupId: string;
+  code: string;
+  status: 'active' | 'accepted' | 'expired';
   expiresAt: string;
 }
 
@@ -81,6 +94,113 @@ export function createRealGroupInvite(
       ok: true,
       invite: { id, code, groupId, status: 'active', createdAt, expiresAt },
     };
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+export function acceptRealGroupInvite(
+  database: RewindDatabase,
+  account: { id: string; displayName: string },
+  rawCode: unknown,
+  requestedGroupId?: unknown,
+  now = new Date(),
+): AcceptRealGroupInviteResult {
+  if (typeof rawCode !== 'string') return { ok: false, status: 'malformed' };
+  const code = rawCode.trim().toUpperCase();
+  if (!REAL_INVITE_CODE_PATTERN.test(code)) return { ok: false, status: 'malformed' };
+
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    const invite = database
+      .prepare(
+        `SELECT id, group_id AS groupId, code, status, expires_at AS expiresAt
+         FROM real_group_invites WHERE code = ?`,
+      )
+      .get(code) as RealInviteRow | undefined;
+    if (!invite) {
+      database.exec('ROLLBACK');
+      return { ok: false, status: 'malformed' };
+    }
+    if (requestedGroupId !== undefined && requestedGroupId !== invite.groupId) {
+      database.exec('ROLLBACK');
+      return { ok: false, status: 'denied' };
+    }
+    if (invite.status === 'accepted' || invite.status === 'expired') {
+      database.exec('ROLLBACK');
+      return {
+        ok: false,
+        status: invite.status === 'accepted' ? 'replayed' : 'expired',
+      };
+    }
+    if (Date.parse(invite.expiresAt) <= now.getTime()) {
+      database
+        .prepare("UPDATE real_group_invites SET status = 'expired' WHERE id = ?")
+        .run(invite.id);
+      database.exec('COMMIT');
+      return { ok: false, status: 'expired' };
+    }
+
+    const group = database
+      .prepare('SELECT max_members AS maxMembers FROM real_group_metadata WHERE group_id = ?')
+      .get(invite.groupId) as { maxMembers: number } | undefined;
+    if (!group) {
+      database.exec('ROLLBACK');
+      return { ok: false, status: 'denied' };
+    }
+    const existing = database
+      .prepare('SELECT 1 FROM real_group_memberships WHERE group_id = ? AND account_id = ?')
+      .get(invite.groupId, account.id);
+    if (existing) {
+      database.exec('ROLLBACK');
+      return { ok: false, status: 'replayed' };
+    }
+    const count = database
+      .prepare('SELECT COUNT(*) AS count FROM real_group_memberships WHERE group_id = ?')
+      .get(invite.groupId) as { count: number };
+    if (Number(count.count) >= Number(group.maxMembers)) {
+      database.exec('ROLLBACK');
+      return { ok: false, status: 'full' };
+    }
+
+    const acceptedAt = now.toISOString();
+    let profile = database
+      .prepare('SELECT id FROM real_profiles WHERE account_id = ?')
+      .get(account.id) as { id: string } | undefined;
+    if (!profile) {
+      const profileId = `real-profile-${randomUUID()}`;
+      database
+        .prepare(
+          'INSERT INTO real_profiles (id, account_id, display_name, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .run(profileId, account.id, account.displayName, acceptedAt);
+      profile = { id: profileId };
+    }
+    database
+      .prepare(
+        `INSERT INTO real_group_memberships
+          (group_id, account_id, profile_id, role, accepted_at)
+         VALUES (?, ?, ?, 'member', ?)`,
+      )
+      .run(invite.groupId, account.id, profile.id, acceptedAt);
+    database
+      .prepare(
+        `UPDATE real_group_invites
+         SET status = 'accepted', accepted_by_account_id = ?, accepted_at = ?
+         WHERE id = ? AND status = 'active'`,
+      )
+      .run(account.id, acceptedAt, invite.id);
+    database
+      .prepare(
+        `INSERT INTO real_account_group_selections (account_id, group_id) VALUES (?, ?)
+         ON CONFLICT(account_id) DO UPDATE SET group_id = excluded.group_id`,
+      )
+      .run(account.id, invite.groupId);
+    const joinedGroup = getRealGroup(database, account.id, invite.groupId);
+    if (!joinedGroup) throw new Error('Accepted real-group membership could not be loaded.');
+    database.exec('COMMIT');
+    return { ok: true, status: 'accepted', group: joinedGroup };
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;

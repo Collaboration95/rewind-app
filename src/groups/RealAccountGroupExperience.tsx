@@ -60,6 +60,7 @@ export function RealAccountGroupExperience({
 }) {
   const auth = useRealAccount();
   const [group, setGroup] = useState<RealGroup | null>(null);
+  const [memberGroups, setMemberGroups] = useState<RealGroup[]>([]);
   const [screen, setScreen] = useState<
     'loading' | 'choices' | 'create' | 'home' | 'capture' | 'error'
   >('loading');
@@ -73,10 +74,19 @@ export function RealAccountGroupExperience({
   const [invite, setInvite] = useState<RealInvite | null>(null);
   const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
   const [invitePending, setInvitePending] = useState(false);
+  const [acceptPending, setAcceptPending] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const result = await readGroup(await auth.authenticatedRequest('/real/groups/current'));
+      const [currentResponse, membershipsResponse] = await Promise.all([
+        auth.authenticatedRequest('/real/groups/current'),
+        auth.authenticatedRequest('/real/groups'),
+      ]);
+      const result = await readGroup(currentResponse);
+      if (!membershipsResponse.ok)
+        throw new Error('Your groups could not be loaded. Retry when connected.');
+      const memberships = (await membershipsResponse.json()) as { groups?: RealGroup[] };
+      setMemberGroups(memberships.groups ?? []);
       setGroup(result);
       setScreen(result ? 'home' : 'choices');
     } catch (error) {
@@ -186,6 +196,60 @@ export function RealAccountGroupExperience({
     }
   };
 
+  const acceptInvitation = async () => {
+    if (!inviteIntent || acceptPending) return;
+    setAcceptPending(true);
+    setInviteFeedback(null);
+    try {
+      const response = await auth.authenticatedRequest('/real/invites/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: inviteIntent.code, groupId: inviteIntent.groupId }),
+      });
+      const body = (await response.json()) as {
+        status?: string;
+        group?: RealGroup;
+        message?: string;
+      };
+      if (!response.ok || !body.group) {
+        throw new Error(body.message ?? 'The invitation could not be accepted.');
+      }
+      setGroup(body.group);
+      setMemberGroups((current) =>
+        current.some((membership) => membership.group.id === body.group?.group.id)
+          ? current
+          : [...current, body.group!],
+      );
+      setScreen('home');
+      setInviteFeedback('Invitation accepted. You joined the group.');
+    } catch (error) {
+      setInviteFeedback(
+        error instanceof Error ? error.message : 'The invitation could not be accepted.',
+      );
+    } finally {
+      setAcceptPending(false);
+    }
+  };
+
+  const switchGroup = async (groupId: string) => {
+    setPending(true);
+    setMessage(null);
+    try {
+      const response = await auth.authenticatedRequest('/real/groups/current', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupId }),
+      });
+      const selected = await readGroup(response);
+      if (!selected) throw new Error('That group is not available to this account.');
+      setGroup(selected);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The group could not be selected.');
+    } finally {
+      setPending(false);
+    }
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.content} testID="real-group-experience">
       <View style={styles.brand}>
@@ -200,8 +264,19 @@ export function RealAccountGroupExperience({
             Expires {new Date(inviteIntent.expiresAt).toLocaleString()}
           </Text>
           <Text style={styles.body}>
-            Sign-in is complete. Joining will be available in a follow-on update.
+            Sign-in is complete. Accept the invitation to join this private group.
           </Text>
+          <Action
+            title={acceptPending ? 'Joining…' : 'Accept invitation'}
+            disabled={acceptPending}
+            onPress={() => void acceptInvitation()}
+            testID="real-invite-accept"
+          />
+          {inviteFeedback ? (
+            <Text accessibilityRole="alert" style={styles.body} testID="real-invite-feedback">
+              {inviteFeedback}
+            </Text>
+          ) : null}
         </View>
       ) : null}
       {screen === 'loading' ? (
@@ -253,7 +328,7 @@ export function RealAccountGroupExperience({
             testID="real-group-create-choice"
           />
           <Action
-            title="Join with invitation · not available yet"
+            title={inviteIntent ? 'Invitation shown above' : 'Open an invitation link to join'}
             disabled
             onPress={() => undefined}
             testID="real-group-join-choice"
@@ -374,6 +449,22 @@ export function RealAccountGroupExperience({
             {group.group.name}
           </Text>
           <Text style={styles.body}>Up to {group.group.maxMembers} members</Text>
+          {memberGroups.length > 1 ? (
+            <View style={styles.invitationPanel} testID="real-group-switcher">
+              <Text style={styles.label}>YOUR GROUPS</Text>
+              {memberGroups
+                .filter((membership) => membership.group.id !== group.group.id)
+                .map((membership) => (
+                  <Action
+                    key={membership.group.id}
+                    title={`Switch to ${membership.group.name}`}
+                    disabled={pending}
+                    onPress={() => void switchGroup(membership.group.id)}
+                    testID={`switch-real-group-${membership.group.id}`}
+                  />
+                ))}
+            </View>
+          ) : null}
           {group.group.role === 'owner' ? (
             <View style={styles.invitationPanel} testID="real-group-invitations">
               <Text style={styles.label}>GROUP INVITATION</Text>
