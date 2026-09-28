@@ -64,6 +64,16 @@ function webAccountFetch(logout: () => Response | Promise<Response>) {
   }) as typeof fetch;
 }
 
+function nativeAccountFetch(logout: () => Response | Promise<Response>) {
+  return jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/auth/session')) return activeSessionResponse();
+    if (url.endsWith('/real/groups/current')) return jsonResponse(200, { group: null });
+    if (url.endsWith('/auth/logout')) return logout();
+    throw new Error(`Unexpected real-account request: ${url}`);
+  }) as typeof fetch;
+}
+
 function useWebPlatform() {
   Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web', writable: true });
   Object.defineProperty(globalThis, 'window', {
@@ -258,13 +268,10 @@ describe('real account entry flow', () => {
   it('closes protected UI but offers retry when remote revocation succeeds and SecureStore deletion fails', async () => {
     secureStoreMock.token = nativeToken;
     secureStoreMock.failClear = true;
-    globalThis.fetch = jest
-      .fn()
-      .mockResolvedValueOnce(activeSessionResponse())
-      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    globalThis.fetch = nativeAccountFetch(() => jsonResponse(200, { signedOut: true }));
     const result = await render(<App runtimeClient={runtimeClient} />);
 
-    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
     expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
@@ -283,23 +290,31 @@ describe('real account entry flow', () => {
     await waitFor(() => expect(secureStoreMock.token).toBeNull());
     expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
     expect(result.queryByTestId('real-account-session-status')).toBeNull();
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(
+      (globalThis.fetch as jest.Mock).mock.calls.filter(([url]) =>
+        String(url).endsWith('/auth/logout'),
+      ),
+    ).toHaveLength(1);
   });
 
   it('retains the native credential under a pending marker after remote failure and retries across restart', async () => {
     secureStoreMock.token = nativeToken;
-    globalThis.fetch = jest
-      .fn()
-      .mockResolvedValueOnce(activeSessionResponse())
-      .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    const logoutResults: (() => Response | Promise<Response>)[] = [
+      () => Promise.reject(new Error('offline')),
+      () => jsonResponse(200, { signedOut: true }),
+    ];
+    globalThis.fetch = nativeAccountFetch(() => {
+      const result = logoutResults.shift();
+      if (!result) throw new Error('Unexpected extra logout request');
+      return result();
+    });
     const result = await render(<App runtimeClient={runtimeClient} />);
 
-    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
     expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
-    expect(result.queryByRole('header', { name: 'You’re signed in' })).toBeNull();
+    expect(result.queryByRole('header', { name: 'Choose a group' })).toBeNull();
     expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
       /could not confirm deletion.*server did not confirm revocation.*credential may remain/i,
     );
