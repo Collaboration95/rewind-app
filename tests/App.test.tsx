@@ -156,7 +156,7 @@ describe('Rewind Home start screen', () => {
     expect(mockStatusBar).toHaveBeenCalledWith({ style: 'light' });
   });
 
-  it('shows the sample group, local-demo capsule summary, and profile picker', async () => {
+  it('shows the sample group and capsule summary without account switching on Home', async () => {
     const result = await render(<App />);
 
     expect(result.getByRole('header', { name: 'Make a little room for today.' })).toBeTruthy();
@@ -546,6 +546,7 @@ describe('Rewind Home start screen', () => {
     await result.findByTestId('capsule-ready');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByRole('button', { name: 'Choose Clover, sample member' }));
+    await fireEvent.press(result.getByRole('tab', { name: 'Home' }));
     await waitFor(() => expect(getCurrentCycle).toHaveBeenLastCalledWith('demo-group', 'demo-3'));
   });
 

@@ -100,6 +100,7 @@ describe('native accessibility panels', () => {
     const result = await render(<App runtimeClient={inviteRuntime()} />);
     await result.findByText('Amber · synthetic member');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await result.findByText('Current member: Amber');
 
     const panel = await result.findByTestId('settings-invite-generate');
     expect(panel.props.accessible).toBe(false);
