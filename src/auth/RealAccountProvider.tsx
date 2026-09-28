@@ -18,6 +18,7 @@ import {
   type RealAccount,
   type RealAccountSession,
 } from './real-account-client';
+import { signOutMarkerStore, type SignOutMarker } from './sign-out-marker';
 
 interface RealAccountContextValue {
   state: AuthState;
@@ -67,6 +68,32 @@ export function RealAccountProvider({
     if (!client) {
       setState('entry');
       return;
+    }
+    if (Platform.OS !== 'web') {
+      let marker: SignOutMarker | null;
+      try {
+        marker = await signOutMarkerStore.read();
+      } catch {
+        if (!mounted.current) return;
+        tokenRef.current = undefined;
+        setSession(null);
+        setState('entry');
+        setNotice('sign-out-marker-unavailable');
+        return;
+      }
+      if (marker) {
+        if (!mounted.current) return;
+        tokenRef.current = undefined;
+        setSession(null);
+        setState('entry');
+        setNotice(
+          marker === 'remote-revoked'
+            ? 'local-credential-removal-failed'
+            : 'sign-out-recovery-pending',
+        );
+        return;
+      }
+      if (!mounted.current) return;
     }
     try {
       const restored = await client.restore();
@@ -125,6 +152,28 @@ export function RealAccountProvider({
       setPending(true);
       setNotice(null);
       try {
+        if (Platform.OS !== 'web') {
+          let marker: SignOutMarker | null;
+          try {
+            marker = await signOutMarkerStore.read();
+          } catch {
+            if (mounted.current) {
+              setState('entry');
+              setNotice('sign-out-marker-unavailable');
+            }
+            return false;
+          }
+          if (marker) {
+            setState('entry');
+            setNotice(
+              marker === 'remote-revoked'
+                ? 'local-credential-removal-failed'
+                : 'sign-out-recovery-pending',
+            );
+            return false;
+          }
+          if (!mounted.current) return false;
+        }
         const result = await client.login(username, password);
         if (!mounted.current) return false;
         tokenRef.current = result.token;
@@ -163,9 +212,18 @@ export function RealAccountProvider({
       tokenRef.current = undefined;
       setSession(null);
       setState('entry');
+    } catch {
+      setSession(null);
+      setState('entry');
+      setNotice('local-credential-removal-failed');
+      setPending(false);
+      return;
+    }
+    try {
+      await signOutMarkerStore.clear();
       setNotice(null);
     } catch {
-      setNotice('local-credential-removal-failed');
+      setNotice('sign-out-marker-cleanup-failed');
     } finally {
       setPending(false);
     }
@@ -177,6 +235,22 @@ export function RealAccountProvider({
       await clearLocalSession();
       setNotice(null);
       return;
+    }
+
+    if (Platform.OS !== 'web') {
+      try {
+        await signOutMarkerStore.write('pending');
+      } catch {
+        // Keep the active session visible and truthful if durable recovery
+        // state cannot be written. No request or credential deletion starts.
+        setPending(false);
+        setNotice('sign-out-marker-unavailable');
+        return;
+      }
+      tokenRef.current = undefined;
+      setSession(null);
+      setState('entry');
+      setNotice('sign-out-recovery-pending');
     }
 
     let remoteRevoked = false;
@@ -201,6 +275,16 @@ export function RealAccountProvider({
     }
 
     let localCredentialRemoved = false;
+    if (remoteRevoked) {
+      // Preserve the confirmed remote state across restart if local deletion
+      // fails. If this write fails, the original pending marker still fails
+      // closed and retry remains safe.
+      try {
+        await signOutMarkerStore.write('remote-revoked');
+      } catch {
+        // The pending marker remains fail-closed if this update cannot persist.
+      }
+    }
     try {
       await client.clearStoredToken();
       localCredentialRemoved = true;
@@ -213,7 +297,12 @@ export function RealAccountProvider({
       setSession(null);
       setState('entry');
       setPending(false);
-      setNotice(remoteRevoked ? null : 'revocation-unconfirmed');
+      try {
+        await signOutMarkerStore.clear();
+        setNotice(remoteRevoked ? null : 'revocation-unconfirmed');
+      } catch {
+        setNotice(remoteRevoked ? 'sign-out-marker-cleanup-failed' : 'sign-out-recovery-pending');
+      }
     } else if (remoteRevoked) {
       // The server has revoked this token, so close protected UI even though
       // SecureStore may restore the now-invalid credential after restart.

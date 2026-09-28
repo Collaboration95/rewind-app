@@ -507,7 +507,15 @@ function DemoAccessEntry() {
                 ? 'The server says this session has ended, but this device could not confirm deletion of its saved sign-in. The credential may remain in SecureStore; retry local cleanup before treating this device as signed out.'
                 : auth.notice === 'sign-out-incomplete'
                   ? 'Sign-out is incomplete: this device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in. Retry sign out.'
-                  : null;
+                  : auth.notice === 'sign-out-recovery-pending'
+                    ? 'Sign-out recovery is pending. This device will not restore a saved sign-in automatically until recovery finishes. Server revocation may still be unconfirmed.'
+                    : auth.notice === 'sign-out-marker-unavailable'
+                      ? auth.state === 'active'
+                        ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                        : 'This device could not verify sign-out recovery state, so the saved sign-in was not restored. Retry sign out to recover safely.'
+                      : auth.notice === 'sign-out-marker-cleanup-failed'
+                        ? 'The server confirmed sign-out and this device deleted its saved sign-in, but it could not clear the recovery marker. Account restore stays blocked on this device until cleanup is retried.'
+                        : null;
 
   const submitSignIn = async () => {
     setAuthPending(true);
@@ -632,7 +640,11 @@ function DemoAccessEntry() {
                 Your password will not be sent over an insecure connection.
               </Text>
             ) : null}
-            {authMessage ? (
+            {authMessage &&
+            auth.notice !== 'sign-out-recovery-pending' &&
+            auth.notice !== 'sign-out-marker-unavailable' &&
+            auth.notice !== 'sign-out-marker-cleanup-failed' &&
+            auth.notice !== 'local-credential-removal-failed' ? (
               <Text accessibilityRole="alert" style={styles.errorText}>
                 {authMessage}
               </Text>
@@ -708,8 +720,15 @@ function DemoAccessEntry() {
           auth.notice === 'revoked' ||
           auth.notice === 'revocation-unconfirmed' ||
           auth.notice === 'local-credential-removal-failed' ||
-          auth.notice === 'sign-out-incomplete') &&
-        mode !== 'sign-in' &&
+          auth.notice === 'sign-out-incomplete' ||
+          auth.notice === 'sign-out-recovery-pending' ||
+          auth.notice === 'sign-out-marker-cleanup-failed' ||
+          auth.notice === 'sign-out-marker-unavailable') &&
+        (mode !== 'sign-in' ||
+          auth.notice === 'sign-out-recovery-pending' ||
+          auth.notice === 'sign-out-marker-cleanup-failed' ||
+          auth.notice === 'sign-out-marker-unavailable' ||
+          auth.notice === 'local-credential-removal-failed') &&
         !(auth.notice === 'offline' && error) ? (
           <View
             style={styles.errorPanel}
@@ -735,7 +754,19 @@ function DemoAccessEntry() {
               <Pressable
                 accessibilityRole="button"
                 disabled={auth.pending}
-                onPress={() => void auth.retryLocalCredentialRemoval()}
+                onPress={auth.retryLocalCredentialRemoval}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Retrying…' : 'Retry local cleanup'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'sign-out-marker-cleanup-failed' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.retryLocalCredentialRemoval}
                 style={styles.retryButton}
               >
                 <Text style={styles.retryButtonText}>
@@ -747,7 +778,20 @@ function DemoAccessEntry() {
               <Pressable
                 accessibilityRole="button"
                 disabled={auth.pending}
-                onPress={() => void auth.signOut()}
+                onPress={auth.signOut}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Signing out…' : 'Retry sign out'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'sign-out-recovery-pending' ||
+            auth.notice === 'sign-out-marker-unavailable' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.signOut}
                 style={styles.retryButton}
               >
                 <Text style={styles.retryButtonText}>
@@ -810,25 +854,31 @@ function RealAccountHome({ displayName }: { displayName: string }) {
           <Text style={styles.entryChoiceBody}>
             Group and capsule access will appear here when your pilot group is ready.
           </Text>
-          {auth.notice === 'revocation-unconfirmed' || auth.notice === 'sign-out-incomplete' ? (
+          {auth.notice === 'revocation-unconfirmed' ||
+          auth.notice === 'sign-out-incomplete' ||
+          auth.notice === 'sign-out-marker-unavailable' ? (
             <Text accessibilityRole="alert" style={styles.errorText} testID="logout-unconfirmed">
               {auth.notice === 'sign-out-incomplete'
                 ? 'Sign-out is incomplete. This device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in; retry sign out.'
-                : Platform.OS === 'web'
-                  ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
-                  : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'}
+                : auth.notice === 'sign-out-marker-unavailable'
+                  ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                  : Platform.OS === 'web'
+                    ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
+                    : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'}
             </Text>
           ) : null}
           <Pressable
             accessibilityRole="button"
             disabled={auth.pending}
-            onPress={() => void auth.signOut()}
+            onPress={auth.signOut}
             style={styles.primaryEntryButton}
           >
             <Text style={styles.primaryEntryButtonText}>
               {auth.pending
                 ? 'Signing out…'
-                : auth.notice === 'revocation-unconfirmed' || auth.notice === 'sign-out-incomplete'
+                : auth.notice === 'revocation-unconfirmed' ||
+                    auth.notice === 'sign-out-incomplete' ||
+                    auth.notice === 'sign-out-marker-unavailable'
                   ? 'Retry sign out'
                   : 'Sign out'}
             </Text>

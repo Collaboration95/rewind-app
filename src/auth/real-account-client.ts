@@ -24,6 +24,9 @@ export type AuthNotice =
   | 'revocation-unconfirmed'
   | 'local-credential-removal-failed'
   | 'sign-out-incomplete'
+  | 'sign-out-recovery-pending'
+  | 'sign-out-marker-cleanup-failed'
+  | 'sign-out-marker-unavailable'
   | null;
 
 const SECURE_SESSION_KEY = 'rewind.real-account.session-token';
