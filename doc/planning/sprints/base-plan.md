@@ -12,8 +12,8 @@ approved unless separately authorized after that evaluation.
 
 It deliberately leaves out:
 
-- final pricing and budget values (a cost estimate and approved budget revision
-  are nevertheless required before provisioning; see §2.2);
+- a final resource-by-resource AWS quote (a dated estimate and budget/alert
+  review are nevertheless required before provisioning; see §2.2);
 - the final domain and hostnames;
 - exact variable and resource names;
 - team process.
@@ -125,23 +125,28 @@ state as sensitive; redact before retaining evidence.
 
 ### 2.2 Cost estimate and budget gate
 
-The current AWS budget is US$15/month, with actual-cost alerts at US$10 and
-US$15. Before provisioning any replacement or additional environment, estimate
-monthly costs for the target resources **and the live Demo during overlap**. Include
+The existing AWS budget is US$15/month, with actual-cost alerts at US$10 and
+US$15. The Sprint 2 planning preference is to allow **up to US$100/month total
+AWS spend** for the account while dev and release coexist, including the live
+Demo overlap until it is retired. Treat US$100 as the reviewed monthly planning
+ceiling, not as a hard AWS spending cap. Before provisioning any replacement or
+additional environment, prepare a dated estimate against that ceiling. Include
 Lightsail instances/distributions, static-IP behavior, S3 storage and requests,
 transfer and included allowances, shared services, snapshots/backups if any,
-taxes/credits, and the overlap window. Compare with the current account budget;
-revise the budget and actual/forecast alerts, confirm recipients, and record
-assumptions, source date, and approval in the implementation issue. AWS Budgets
-monitors costs but does not cap spending, and billing data may lag. Verify
-current [Lightsail pricing](https://aws.amazon.com/lightsail/pricing/) and
-[S3 pricing](https://aws.amazon.com/s3/pricing/) before the gate.
+taxes/credits, and the overlap window. Review and, if necessary, revise the
+budget and actual/forecast alerts (US$80 warning and US$100 ceiling alert are
+the proposed thresholds); confirm recipients and escalation ownership, and
+record assumptions, source date, and approval in the implementation issue.
+AWS Budgets monitors costs but does not cap spending, and billing data may lag.
+Verify current [Lightsail pricing](https://aws.amazon.com/lightsail/pricing/)
+and [S3 pricing](https://aws.amazon.com/s3/pricing/) before the gate.
 
 Planning floor only: public pricing lists a 2 GB Linux Lightsail bundle at
 about US$12/month and a small distribution at about US$2.50/month, so two of
-each begin around **US$29/month**. This excludes Demo overlap, S3, shared
-services, variable transfer, taxes, and other charges. Confirm regional rates
-and stopped-instance billing before relying on the estimate.
+each begin around **US$29/month**. This fits within the preferred US$100/month
+planning ceiling before Demo overlap, S3, shared services, variable transfer,
+taxes, and other charges. It is not the required complete estimate. Confirm
+regional rates and stopped-instance billing before provisioning.
 
 ## 3. Decisions
 
