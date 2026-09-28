@@ -219,7 +219,10 @@ test('runtime EventSource factory preserves browser EventSource and falls back t
   const previousEventSource = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
   const previousXhr = Object.getOwnPropertyDescriptor(globalThis, 'XMLHttpRequest');
   class BrowserEventSource extends FakeEventSource {
-    constructor(readonly url: string) {
+    constructor(
+      readonly url: string,
+      readonly options?: { withCredentials?: boolean },
+    ) {
       super();
     }
   }
@@ -228,7 +231,9 @@ test('runtime EventSource factory preserves browser EventSource and falls back t
       configurable: true,
       value: BrowserEventSource,
     });
-    expect(createRuntimeEventSource('/events')).toBeInstanceOf(BrowserEventSource);
+    const browserSource = createRuntimeEventSource('/events', {}, { withCredentials: true });
+    expect(browserSource).toBeInstanceOf(BrowserEventSource);
+    expect(browserSource).toMatchObject({ url: '/events', options: { withCredentials: true } });
 
     Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: undefined });
     Object.defineProperty(globalThis, 'XMLHttpRequest', { configurable: true, value: FakeXhr });

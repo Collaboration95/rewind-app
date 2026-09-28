@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useRealAccount } from '../auth/RealAccountProvider';
@@ -22,10 +22,15 @@ interface RealChatMember {
 }
 
 function appendMessage(rows: ChatRow[], event: ChatMessageEvent): ChatRow[] {
-  if (rows.some(({ message }) => message.id === event.message.id)) return rows;
-  const next = { eventId: event.eventId, message: event.message };
-  const index = rows.findIndex(({ eventId }) => eventId > event.eventId);
-  return index < 0 ? [...rows, next] : [...rows.slice(0, index), next, ...rows.slice(index)];
+  return mergeRows(rows, [{ eventId: event.eventId, message: event.message }]);
+}
+
+function mergeRows(current: ChatRow[], incoming: ChatRow[]): ChatRow[] {
+  const merged = new Map(current.map((row) => [row.message.id, row]));
+  for (const row of incoming) {
+    if (!merged.has(row.message.id)) merged.set(row.message.id, row);
+  }
+  return [...merged.values()].sort((left, right) => left.eventId - right.eventId);
 }
 
 function statusForError(error: unknown): number | undefined {
@@ -78,6 +83,7 @@ export function RealAccountChatScreen({
           return createRuntimeEventSource(
             url,
             authorization ? { Authorization: authorization } : {},
+            { withCredentials: true },
           );
         },
       },
@@ -93,13 +99,20 @@ export function RealAccountChatScreen({
   const [sending, setSending] = useState(false);
   const [reactionBusy, setReactionBusy] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const olderCursor = useRef<number | null>(null);
+  const activeScope = `${session?.account.id ?? 'signed-out'}:${groupId}`;
+  const activeScopeRef = useRef<string | null>(null);
   const effectiveState = !client || !session ? 'error' : state;
   const effectiveError = !client || !session ? 'Sign in again to open this group chat.' : error;
 
   useEffect(() => {
     if (!client || !session) return;
+    activeScopeRef.current = activeScope;
     let active = true;
     let subscription: { close(): void } | null = null;
+    olderCursor.current = null;
     void (async () => {
       const query = new URLSearchParams({ limit: '100' });
       const pageResponse = await authenticatedRequest(
@@ -116,10 +129,13 @@ export function RealAccountChatScreen({
       const page = (await pageResponse.json()) as {
         events: ChatMessageEvent[];
         nextCursor: number | null;
+        hasMore: boolean;
         watermarkEventId: number;
       };
       if (!active) return;
       setRows(page.events.map(({ eventId, message }) => ({ eventId, message })));
+      olderCursor.current = page.nextCursor;
+      setHasOlderMessages(page.hasMore);
       setState('ready');
       subscription = client.subscribe('', groupId, {
         sinceEventId: page.watermarkEventId,
@@ -166,8 +182,52 @@ export function RealAccountChatScreen({
     return () => {
       active = false;
       subscription?.close();
+      olderCursor.current = null;
+      if (activeScopeRef.current === activeScope) activeScopeRef.current = null;
     };
-  }, [authenticatedRequest, client, groupId, retryKey, session]);
+  }, [activeScope, authenticatedRequest, client, groupId, retryKey, session]);
+
+  const loadOlderMessages = async () => {
+    const cursor = olderCursor.current;
+    const scope = activeScope;
+    if (!cursor || loadingOlderMessages || state !== 'ready') return;
+    setLoadingOlderMessages(true);
+    try {
+      const query = new URLSearchParams({ limit: '100', beforeEventId: String(cursor) });
+      const pageResponse = await authenticatedRequest(
+        `/realtime/groups/${encodeURIComponent(groupId)}/messages?${query}`,
+      );
+      if (!pageResponse.ok) {
+        const body = (await pageResponse.json().catch(() => ({}))) as { message?: string };
+        throw Object.assign(new Error(body.message ?? 'Older chat history could not be loaded.'), {
+          status: pageResponse.status,
+        });
+      }
+      const page = (await pageResponse.json()) as {
+        events: ChatMessageEvent[];
+        nextCursor: number | null;
+        hasMore: boolean;
+      };
+      if (activeScopeRef.current !== scope) return;
+      const older = page.events.map(({ eventId, message }) => ({ eventId, message }));
+      setRows((current) => mergeRows(current, older));
+      olderCursor.current = page.nextCursor;
+      setHasOlderMessages(page.hasMore);
+      setError(null);
+    } catch (historyError) {
+      if (activeScopeRef.current !== scope) return;
+      if (statusForError(historyError) === 401 || statusForError(historyError) === 403) {
+        setRows([]);
+        setState('denied');
+        setConnection('denied');
+        setError('Your access to this group chat has ended.');
+      } else {
+        setError(friendlyError(historyError));
+      }
+    } finally {
+      if (activeScopeRef.current === scope) setLoadingOlderMessages(false);
+    }
+  };
 
   const send = async () => {
     if (!client || !draft.trim() || sending || effectiveState === 'denied') return;
@@ -253,7 +313,15 @@ export function RealAccountChatScreen({
           <Text accessibilityRole="alert" style={styles.error}>
             {effectiveError}
           </Text>
-          <Pressable accessibilityRole="button" onPress={() => setRetryKey((key) => key + 1)}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              olderCursor.current = null;
+              setHasOlderMessages(false);
+              setLoadingOlderMessages(false);
+              setRetryKey((key) => key + 1);
+            }}
+          >
             <Text style={styles.action}>Retry chat</Text>
           </Pressable>
         </View>
@@ -262,6 +330,18 @@ export function RealAccountChatScreen({
         <Text style={styles.empty} testID="real-chat-empty">
           No messages yet. Start the conversation.
         </Text>
+      ) : null}
+      {effectiveState === 'ready' && hasOlderMessages ? (
+        <Pressable
+          accessibilityRole="button"
+          disabled={loadingOlderMessages}
+          onPress={() => void loadOlderMessages()}
+          testID="real-chat-load-older"
+        >
+          <Text style={styles.action}>
+            {loadingOlderMessages ? 'Loading older messages…' : 'Load older messages'}
+          </Text>
+        </Pressable>
       ) : null}
       <FlatList
         data={rows}

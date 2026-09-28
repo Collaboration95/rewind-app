@@ -229,13 +229,19 @@ function getXhrConstructor(): NativeXhrConstructor {
 export function createRuntimeEventSource(
   url: string,
   headers: Record<string, string> = {},
+  options: { withCredentials?: boolean } = {},
 ): RealtimeEventSource {
   const EventSourceConstructor = (
     globalThis as typeof globalThis & {
-      EventSource?: new (source: string) => RealtimeEventSource;
+      EventSource?: new (
+        source: string,
+        init?: { withCredentials?: boolean },
+      ) => RealtimeEventSource;
     }
   ).EventSource;
   return EventSourceConstructor
-    ? (new EventSourceConstructor(url) as unknown as RealtimeEventSource)
+    ? (new EventSourceConstructor(url, {
+        withCredentials: options.withCredentials ?? false,
+      }) as unknown as RealtimeEventSource)
     : new NativeEventSource(url, getXhrConstructor(), headers);
 }
