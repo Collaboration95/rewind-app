@@ -181,6 +181,7 @@ export function VideoCaptureScreen({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [clip, setClip] = useState<RecordedClip | null>(null);
   const [previewLocked, setPreviewLocked] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [review, setReview] = useState<ClipReviewSession | null>(null);
   const [startText, setStartText] = useState('0');
   const [endText, setEndText] = useState('0');
@@ -580,7 +581,6 @@ export function VideoCaptureScreen({
     }
   };
   const canChooseLibraryVideo = Boolean(platform.supportsLibraryVideo && platform.pickLibraryVideo);
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   const cancelRecording = () => {
     recorder?.cancel();
