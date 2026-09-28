@@ -88,21 +88,63 @@ describe('Expo camera adapter contract', () => {
     await expect(platform.getCapabilities()).rejects.toBe(nativeFailure);
   });
 
-  it('falls back to undecided capabilities when the native probe fails', async () => {
+  it('does not call the web-only availability probe on native devices', async () => {
     const cameraView = CameraView as typeof CameraView & {
       isAvailableAsync?: () => Promise<boolean>;
     };
     const previousProbe = cameraView.isAvailableAsync;
-    cameraView.isAvailableAsync = jest.fn().mockRejectedValue(new Error('probe unavailable'));
+    const probe = jest.fn().mockRejectedValue(new Error('probe unavailable'));
+    cameraView.isAvailableAsync = probe;
     try {
       const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
       await expect(platform.getCapabilities()).resolves.toEqual({
-        camera: 'undecided',
-        microphone: 'undecided',
+        camera: 'supported',
+        microphone: 'supported',
       });
+      if (Platform.OS !== 'web') expect(probe).not.toHaveBeenCalled();
     } finally {
       cameraView.isAvailableAsync = previousProbe;
     }
+  });
+
+  it('requests video permissions serially, opening the microphone prompt after camera resolves', async () => {
+    let resolveCamera!: (
+      value: Awaited<ReturnType<typeof Camera.requestCameraPermissionsAsync>>,
+    ) => void;
+    const order: string[] = [];
+    jest.mocked(Camera.requestCameraPermissionsAsync).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          order.push('camera-open');
+          resolveCamera = (value) => {
+            order.push('camera-resolved');
+            resolve(value);
+          };
+        }),
+    );
+    jest.mocked(Camera.requestMicrophonePermissionsAsync).mockImplementation(async () => {
+      order.push('microphone-open');
+      return {
+        canAskAgain: true,
+        expires: 'never',
+        granted: true,
+        status: PermissionStatus.GRANTED,
+      };
+    });
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+
+    const request = platform.requestVideoPermissions();
+    await Promise.resolve();
+    expect(order).toEqual(['camera-open']);
+    expect(Camera.requestMicrophonePermissionsAsync).not.toHaveBeenCalled();
+    resolveCamera({
+      canAskAgain: true,
+      expires: 'never',
+      granted: true,
+      status: PermissionStatus.GRANTED,
+    });
+    await expect(request).resolves.toEqual({ camera: 'granted', microphone: 'granted' });
+    expect(order).toEqual(['camera-open', 'camera-resolved', 'microphone-open']);
   });
 
   it('maps Expo permission responses for both read and request operations', async () => {

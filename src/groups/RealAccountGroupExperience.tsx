@@ -15,6 +15,7 @@ import { useRealAccount } from '../auth/RealAccountProvider';
 import { BUILT_IN_PROMPTS, GROUP_NAME_MAX_LENGTH, PROMPT_MAX_LENGTH } from '../domain/groups';
 import { createInviteLink, type InviteLinkPayload } from '../invites/deep-links';
 import { COLORS } from '../theme';
+import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
 
 interface RealInvite extends InviteLinkPayload {
   id: string;
@@ -98,6 +99,18 @@ export function RealAccountGroupExperience({
   useEffect(() => {
     void Promise.resolve().then(load);
   }, [load]);
+
+  if (screen === 'capture' && group) {
+    return (
+      <VideoCaptureScreen
+        onBack={() => setScreen('home')}
+        realAccount={{
+          groupId: group.group.id,
+          authenticatedRequest: auth.authenticatedRequest,
+        }}
+      />
+    );
+  }
 
   const create = async () => {
     const cleanName = name.trim();
@@ -566,22 +579,7 @@ export function RealAccountGroupExperience({
             testID="real-group-sign-out"
           />
         </View>
-      ) : (
-        <View style={styles.panel} testID="real-group-capture-unavailable">
-          <Text accessibilityRole="header" style={styles.title}>
-            Capture a moment
-          </Text>
-          <Text style={styles.body}>
-            Capture and media submission are not part of group setup yet. Your group and cycle are
-            saved; no contribution has been created.
-          </Text>
-          <Action
-            title="Back to Home"
-            onPress={() => setScreen('home')}
-            testID="real-group-capture-back"
-          />
-        </View>
-      )}
+      ) : null}
     </ScrollView>
   );
 }
