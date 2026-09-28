@@ -3,6 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
 import {
   Linking,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -37,6 +38,7 @@ import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
 import { DemoSessionProvider, useDemoSession } from './src/session/DemoSessionProvider';
+import type { DemoSessionStore } from './src/domain/session';
 import {
   CameraCaptureScreen,
   ContributionStatusProvider,
@@ -98,6 +100,8 @@ export interface AppProps {
   runtimeClient?: RuntimeClient | null;
   /** Inject a deterministic fixture platform for simulator evidence/tests. */
   cameraPlatform?: CameraPlatform;
+  /** Session persistence adapter for deterministic restoration and entry flows. */
+  sessionStore?: DemoSessionStore;
 }
 
 export default function App({
@@ -106,6 +110,7 @@ export default function App({
   groupRepository,
   runtimeClient,
   cameraPlatform,
+  sessionStore,
 }: AppProps = {}) {
   const inviteLink = useInviteLinkIntent();
   const configuredRuntime = useMemo(
@@ -119,7 +124,10 @@ export default function App({
   );
   return (
     <SafeAreaProvider>
-      <DemoSessionProvider runtimeClient={configuredRuntime?.client ?? null}>
+      <DemoSessionProvider
+        runtimeClient={configuredRuntime?.client ?? null}
+        {...(sessionStore ? { store: sessionStore } : {})}
+      >
         <DemoProfileProvider>
           <SessionGate
             clock={clock}
@@ -224,14 +232,18 @@ function SessionLoadingScreen() {
   return (
     <SafeAreaFrame>
       <View style={styles.entryContent}>
-        <AppHeader />
-        <Text style={styles.label}>DEMO ACCESS</Text>
-        <Text accessibilityRole="header" style={styles.title}>
-          Restoring local access…
-        </Text>
-        <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
-          Checking the saved synthetic session on this device.
-        </Text>
+        <View
+          accessibilityLabel="Rewind"
+          accessibilityRole="progressbar"
+          style={styles.loadingBrand}
+        >
+          <Image
+            accessibilityLabel="Rewind mark"
+            source={require('./public/icons/rewind-icon-192.png')}
+            style={styles.brandMark}
+          />
+          <Text style={styles.loadingWordmark}>REWIND</Text>
+        </View>
       </View>
     </SafeAreaFrame>
   );
@@ -448,7 +460,14 @@ function ActiveAppShell({
 function AppHeader() {
   return (
     <View style={styles.topBar}>
-      <Text style={styles.wordmark}>REWIND</Text>
+      <View style={styles.brandLockup}>
+        <Image
+          accessibilityLabel="Rewind mark"
+          source={require('./public/icons/rewind-icon-192.png')}
+          style={styles.headerMark}
+        />
+        <Text style={styles.wordmark}>REWIND</Text>
+      </View>
       <View accessibilityLabel="Local demo data" style={styles.demoBadge}>
         <Text style={styles.demoBadgeText}>LOCAL DEMO</Text>
       </View>
@@ -457,57 +476,129 @@ function AppHeader() {
 }
 
 function DemoAccessEntry() {
-  const { profiles, chooseMember, error, pending, retryRestore } = useDemoSession();
+  const { profiles, chooseMember, error, entryReason, pending, retryRestore } = useDemoSession();
+  const [mode, setMode] = useState<'welcome' | 'demo' | 'sign-in'>('welcome');
 
   return (
     <SafeAreaFrame>
       <ScrollView contentContainerStyle={styles.entryContent}>
-        <AppHeader />
-        <View style={styles.entryIntro}>
-          <Text style={styles.label}>DEMO ACCESS</Text>
-          <Text accessibilityRole="header" style={styles.title}>
-            Choose who you are showing
-          </Text>
-          <Text style={styles.bodyText}>
-            Pick a synthetic member to enter the local Demo. This is not a secure account or
-            sign-in.
-          </Text>
+        <View style={styles.brandLockup}>
+          <Image
+            accessibilityLabel="Rewind mark"
+            source={require('./public/icons/rewind-icon-192.png')}
+            style={styles.headerMark}
+          />
+          <Text style={styles.wordmark}>REWIND</Text>
         </View>
+        {mode === 'welcome' ? (
+          <View style={styles.entryIntro}>
+            <Text style={styles.label}>PRIVATE MOMENTS, SHARED TOGETHER</Text>
+            <Text accessibilityRole="header" style={styles.title}>
+              Welcome to Rewind
+            </Text>
+            <Text style={styles.bodyText}>
+              Make a private time capsule with your group. Sign in with a Rewind account, or explore
+              with sample Demo data.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('sign-in')}
+              style={styles.primaryEntryButton}
+            >
+              <Text style={styles.primaryEntryButtonText}>Sign in</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('demo')}
+              style={styles.entryActionButton}
+            >
+              <Text style={styles.entryActionButtonText}>Try Demo</Text>
+            </Pressable>
+            <Text style={styles.entryChoiceBody}>
+              Demo uses synthetic sample members and never signs you in to a real account.
+            </Text>
+          </View>
+        ) : mode === 'sign-in' ? (
+          <View style={styles.entryIntro}>
+            <Text style={styles.label}>REAL ACCOUNT</Text>
+            <Text accessibilityRole="header" style={styles.title}>
+              Sign in
+            </Text>
+            <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
+              Real account sign-in is not available in this build yet. No account has been signed
+              in. You can return when sign-in is ready or explore the sample Demo.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('welcome')}
+              style={styles.entryActionButton}
+            >
+              <Text style={styles.entryActionButtonText}>Back to welcome</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('demo')}
+              style={styles.primaryEntryButton}
+            >
+              <Text style={styles.primaryEntryButtonText}>Try Demo</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.entryIntro}>
+            <Text style={styles.label}>SYNTHETIC SAMPLE DATA</Text>
+            <Text accessibilityRole="header" style={styles.title}>
+              Choose a Demo member
+            </Text>
+            <Text style={styles.bodyText}>
+              This starts a local sample session only. Demo members do not represent real accounts
+              or grant real-member access.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('welcome')}
+              style={styles.entryActionButton}
+            >
+              <Text style={styles.entryActionButtonText}>Back to welcome</Text>
+            </Pressable>
+          </View>
+        )}
         {error ? (
           <View
             accessible={false}
-            accessibilityLabel="Demo access error"
+            accessibilityLabel={entryReason === 'offline' ? 'Offline status' : 'Session status'}
             style={styles.errorPanel}
-            testID="demo-access-error"
+            testID="entry-session-status"
           >
             <Text accessibilityRole="alert" style={styles.errorText}>
               {error}
             </Text>
             <Pressable accessibilityRole="button" onPress={retryRestore} style={styles.retryButton}>
-              <Text style={styles.retryButtonText}>Retry Demo access</Text>
+              <Text style={styles.retryButtonText}>Retry session check</Text>
             </Pressable>
           </View>
         ) : null}
-        <View style={styles.entryChoices}>
-          {profiles.map((profile) => (
-            <Pressable
-              accessibilityHint="Starts local Demo access for this synthetic member"
-              accessibilityLabel={`Enter Demo as ${profile.displayName}, sample member`}
-              accessibilityRole="button"
-              disabled={pending}
-              key={profile.id}
-              onPress={() => void chooseMember(profile.id)}
-              style={[styles.entryChoice, pending && styles.disabledChoice]}
-              testID={`demo-entry-${profile.id}`}
-            >
-              <Text style={styles.entryChoiceName}>{profile.displayName}</Text>
-              <Text style={styles.entryChoiceBody}>Sample member · local only</Text>
-            </Pressable>
-          ))}
-        </View>
+        {mode === 'demo' ? (
+          <View style={styles.entryChoices}>
+            {profiles.map((profile) => (
+              <Pressable
+                accessibilityHint="Starts local Demo access for this synthetic member"
+                accessibilityLabel={`Enter Demo as ${profile.displayName}, sample member`}
+                accessibilityRole="button"
+                disabled={pending}
+                key={profile.id}
+                onPress={() => void chooseMember(profile.id)}
+                style={[styles.entryChoice, pending && styles.disabledChoice]}
+                testID={`demo-entry-${profile.id}`}
+              >
+                <Text style={styles.entryChoiceName}>{profile.displayName}</Text>
+                <Text style={styles.entryChoiceBody}>Sample member · local only</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         {pending ? (
           <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
-            Starting Demo access…
+            Starting the sample Demo…
           </Text>
         ) : null}
       </ScrollView>
@@ -1448,6 +1539,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  brandLockup: { alignItems: 'center', flexDirection: 'row', gap: 10 },
+  headerMark: { height: 30, width: 30 },
+  brandMark: { height: 64, width: 64 },
+  loadingBrand: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center' },
+  loadingWordmark: { color: COLORS.ink, fontSize: 17, fontWeight: '800', letterSpacing: 3 },
   wordmark: {
     color: COLORS.ink,
     fontSize: 14,
@@ -1612,8 +1708,30 @@ const styles = StyleSheet.create({
   routeContent: { flex: 1, minHeight: 0 },
   settingsScreen: { flex: 1 },
   entryContent: { flexGrow: 1, gap: 24, padding: 24, paddingBottom: 36 },
-  entryIntro: { gap: 8 },
+  entryIntro: { gap: 12 },
   entryChoices: { gap: 12 },
+  primaryEntryButton: {
+    alignItems: 'center',
+    backgroundColor: COLORS.accent,
+    borderRadius: 10,
+    justifyContent: 'center',
+    minHeight: 52,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  primaryEntryButtonText: { color: COLORS.deep, fontSize: 16, fontWeight: '800' },
+  entryActionButton: {
+    alignItems: 'center',
+    backgroundColor: COLORS.paper,
+    borderColor: COLORS.edge,
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 52,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  entryActionButtonText: { color: COLORS.ink, fontSize: 16, fontWeight: '700' },
   entryChoice: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.edge,

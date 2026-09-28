@@ -16,11 +16,16 @@ for (const screenSize of screenSizes) {
     const navigation = page.getByTestId('main-navigation');
     const lastHomeContent = page.getByTestId('home-content-end');
     const entryChoice = page.getByTestId('demo-entry-demo-1');
+    const welcome = page.getByRole('heading', { name: 'Welcome to Rewind' });
 
-    // A clean browser context can either restore the offline Demo fixture or
-    // show the explicit chooser when stale local access was invalidated.
-    await expect(navigation.or(entryChoice)).toBeVisible();
-    if (await entryChoice.isVisible()) await entryChoice.click();
+    // A clean browser context starts at Welcome and requires an explicit Demo choice.
+    await expect(navigation.or(entryChoice).or(welcome)).toBeVisible();
+    if (await entryChoice.isVisible()) {
+      await entryChoice.click();
+    } else {
+      await page.getByRole('button', { name: 'Try Demo' }).click();
+      await entryChoice.click();
+    }
 
     await expect(navigation).toBeVisible();
 
