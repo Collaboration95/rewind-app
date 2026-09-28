@@ -215,6 +215,15 @@ describe('real-account client transport and storage', () => {
     ).toBe(`Bearer ${token}`);
   });
 
+  it('rejects native logout without a credential before accepting a tokenless success response', async () => {
+    const fetcher = jest.fn().mockResolvedValue(response(200, { signedOut: true }));
+    const client = new RealAccountClient('https://api.rewind.example', tokenStore, fetcher);
+
+    await expect(client.logout()).rejects.toMatchObject({ status: 0, reason: 'logout' });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(storedToken).toBeNull();
+  });
+
   it('keeps server logout and local token deletion as separate operations when offline', async () => {
     storedToken = token;
     const fetcher = jest.fn().mockRejectedValue(new Error('offline'));

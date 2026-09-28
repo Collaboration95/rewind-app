@@ -274,17 +274,30 @@ export function RealAccountProvider({
       return;
     }
 
-    let localCredentialRemoved = false;
-    if (remoteRevoked) {
-      // Preserve the confirmed remote state across restart if local deletion
-      // fails. If this write fails, the original pending marker still fails
-      // closed and retry remains safe.
-      try {
-        await signOutMarkerStore.write('remote-revoked');
-      } catch {
-        // The pending marker remains fail-closed if this update cannot persist.
-      }
+    if (!remoteRevoked) {
+      // Keep the SecureStore credential under the pending marker so a retry
+      // after restart can still ask the server to revoke this exact token.
+      setSession(null);
+      setState('entry');
+      setPending(false);
+      setNotice('sign-out-incomplete');
+      return;
     }
+
+    // Record server confirmation durably before deleting the only credential
+    // that a restart retry could use. A failed update leaves the original
+    // pending marker and SecureStore token in place.
+    try {
+      await signOutMarkerStore.write('remote-revoked');
+    } catch {
+      setSession(null);
+      setState('entry');
+      setPending(false);
+      setNotice('sign-out-recovery-pending');
+      return;
+    }
+
+    let localCredentialRemoved = false;
     try {
       await client.clearStoredToken();
       localCredentialRemoved = true;
@@ -303,7 +316,7 @@ export function RealAccountProvider({
       } catch {
         setNotice(remoteRevoked ? 'sign-out-marker-cleanup-failed' : 'sign-out-recovery-pending');
       }
-    } else if (remoteRevoked) {
+    } else {
       // The server has revoked this token, so close protected UI even though
       // SecureStore may restore the now-invalid credential after restart.
       tokenRef.current = undefined;
@@ -311,13 +324,6 @@ export function RealAccountProvider({
       setState('entry');
       setPending(false);
       setNotice('local-credential-removal-failed');
-    } else {
-      // The token may still be stored and valid. Hide protected UI while
-      // retaining the credential only for the explicit retry path.
-      setSession(null);
-      setState('entry');
-      setPending(false);
-      setNotice('sign-out-incomplete');
     }
   }, [clearLocalSession, client]);
 

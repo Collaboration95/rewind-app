@@ -164,6 +164,7 @@ export class RealAccountClient {
       Platform.OS === 'web'
         ? undefined
         : (token ?? this.activeToken ?? (await this.tokenStore.read()) ?? undefined);
+    if (Platform.OS !== 'web' && !credential) throw new AuthRequestError(0, 'logout');
     const response = await this.fetcher(
       authUrl(this.baseUrl, '/auth/logout'),
       requestOptions({ method: 'POST' }, credential),
