@@ -126,6 +126,12 @@ export function RealAccountGroupExperience({
 
   const createInvitation = async () => {
     if (!group || group.group.role !== 'owner') return;
+    if (!inviteWebOrigin) {
+      setInviteFeedback(
+        'Invitation links are unavailable because this app has no configured public HTTPS web origin.',
+      );
+      return;
+    }
     setInvitePending(true);
     setInviteFeedback(null);
     try {

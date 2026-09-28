@@ -39,6 +39,7 @@ const runtimeClient = { baseUrl: 'https://rewind.example' } as never;
 const originalFetch = globalThis.fetch;
 const originalPlatformOS = Platform.OS;
 const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+const originalInviteWebOrigin = process.env.EXPO_PUBLIC_INVITE_WEB_ORIGIN;
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -115,6 +116,8 @@ beforeEach(async () => {
 afterEach(() => {
   jest.restoreAllMocks();
   globalThis.fetch = originalFetch;
+  if (originalInviteWebOrigin === undefined) delete process.env.EXPO_PUBLIC_INVITE_WEB_ORIGIN;
+  else process.env.EXPO_PUBLIC_INVITE_WEB_ORIGIN = originalInviteWebOrigin;
   restorePlatform();
 });
 
@@ -221,6 +224,65 @@ describe('real account entry flow', () => {
     await waitFor(() =>
       expect(share).toHaveBeenCalledWith(expect.objectContaining({ url: inviteLink })),
     );
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    result.unmount();
+  });
+
+  it('uses the configured public web origin for native invite links, not the API origin', async () => {
+    Object.defineProperty(Platform, 'OS', {
+      configurable: true,
+      value: 'ios',
+      writable: true,
+    });
+    process.env.EXPO_PUBLIC_INVITE_WEB_ORIGIN = 'https://share.rewind.example/';
+    const groupId = 'real-group-native-789';
+    const inviteExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const realGroup = {
+      group: { id: groupId, name: 'Sunday walk', role: 'owner', maxMembers: 5 },
+      cycle: {
+        id: 'cycle-native-1',
+        prompt: 'What stayed with you?',
+        startsAt: new Date().toISOString(),
+        endsAt: inviteExpiry,
+        quota: { maxCount: 5, maxSeconds: 30 },
+        contributionUsage: { countUsed: 0, secondsUsed: 0 },
+        contributionCount: 0,
+      },
+    };
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, { account: apiAccount, token: nativeToken, expiresAt }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { group: realGroup }))
+      .mockResolvedValueOnce(
+        jsonResponse(201, {
+          invite: {
+            id: 'real-invite-native-1',
+            code: 'EF56GH78',
+            groupId,
+            status: 'active',
+            createdAt: new Date().toISOString(),
+            expiresAt: inviteExpiry,
+          },
+        }),
+      ) as typeof fetch;
+
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'pilot.user');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
+    await fireEvent.press(result.getByTestId('real-account-submit'));
+    await result.findByRole('header', { name: 'Sunday walk' });
+    await fireEvent.press(result.getByTestId('real-group-create-invite'));
+
+    const inviteLink = `https://share.rewind.example/invite?groupId=${groupId}&code=EF56GH78&expiresAt=${encodeURIComponent(inviteExpiry)}`;
+    await waitFor(() =>
+      expect(result.getByTestId('real-group-invite-link').props.children).toBe(inviteLink),
+    );
+    expect(new URL(inviteLink).origin).toBe('https://share.rewind.example');
+    expect(inviteLink).not.toContain('https://rewind.example');
+    expect(inviteLink).not.toMatch(/session|token|password|authorization/i);
     expect(globalThis.fetch).toHaveBeenCalledTimes(3);
     result.unmount();
   });

@@ -33,7 +33,7 @@ import type {
   GroupRepository,
 } from './src/domain/profiles';
 import { COLORS } from './src/theme';
-import { createConfiguredRuntime } from './src/runtime/config';
+import { createConfiguredRuntime, getConfiguredInviteWebOrigin } from './src/runtime/config';
 import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
@@ -220,7 +220,7 @@ function SessionGate({
           inviteWebOrigin={
             Platform.OS === 'web' && typeof window !== 'undefined'
               ? window.location.origin
-              : runtimeClient?.baseUrl
+              : (getConfiguredInviteWebOrigin() ?? undefined)
           }
         />
       </SafeAreaFrame>
