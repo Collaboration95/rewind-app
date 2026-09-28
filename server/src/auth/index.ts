@@ -439,7 +439,7 @@ export function validateRealSession(
   const tokenHash = digest(token);
   const row = database
     .prepare(
-      `SELECT s.account_id AS accountId, s.last_seen_at AS lastSeenAt,
+      `SELECT s.account_id AS id, s.account_id AS accountId, s.last_seen_at AS lastSeenAt,
     s.idle_expires_at AS idleExpiresAt, s.absolute_expires_at AS absoluteExpiresAt,
     s.revoked_at AS revokedAt, a.username, a.display_name AS displayName,
     a.created_at AS createdAt, a.updated_at AS updatedAt

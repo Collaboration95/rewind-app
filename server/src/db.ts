@@ -42,6 +42,7 @@ const MIGRATIONS = [
   { version: 16, key: 'contribution-ledger-v1', fileName: '016-contribution-ledger.sql' },
   { version: 17, key: 'consistency-repair-audit-v1', fileName: '017-consistency-repair-audit.sql' },
   { version: 18, key: 'real-account-auth-v1', fileName: '018-real-account-auth.sql' },
+  { version: 19, key: 'real-groups-v1', fileName: '019-real-groups.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),

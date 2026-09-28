@@ -72,6 +72,7 @@ import { ChatUnreadProvider, useChatUnread } from './src/chat/unread';
 import { ArchiveScreen } from './src/archive/ArchiveScreen';
 import { ReminderSettings } from './src/reminders/ReminderSettings';
 import { RealAccountProvider, useRealAccount } from './src/auth/RealAccountProvider';
+import { RealAccountGroupExperience } from './src/groups/RealAccountGroupExperience';
 
 const lockedMoments = [1, 2, 3];
 
@@ -203,7 +204,11 @@ function SessionGate({
   );
   if (realAccount.state === 'loading' || status === 'loading') return <SessionLoadingScreen />;
   if (realAccount.state === 'active' && realAccount.session)
-    return <RealAccountHome displayName={realAccount.session.account.displayName} />;
+    return (
+      <SafeAreaFrame>
+        <RealAccountGroupExperience displayName={realAccount.session.account.displayName} />
+      </SafeAreaFrame>
+    );
   if (realAccount.state === 'error') return <DemoAccessEntry />;
   if (status === 'entry' || status === 'error' || !session) return <DemoAccessEntry />;
   return (
@@ -826,65 +831,6 @@ function DemoAccessEntry() {
           </Text>
         ) : null}
       </ScrollView>
-    </SafeAreaFrame>
-  );
-}
-
-function RealAccountHome({ displayName }: { displayName: string }) {
-  const auth = useRealAccount();
-  return (
-    <SafeAreaFrame>
-      <View style={[styles.entryContent, styles.realAccountHome]}>
-        <View style={styles.brandLockup}>
-          <Image
-            accessibilityLabel="Rewind mark"
-            source={require('./public/icons/rewind-icon-192.png')}
-            style={styles.headerMark}
-          />
-          <Text style={styles.wordmark}>REWIND</Text>
-        </View>
-        <View style={styles.entryIntro}>
-          <Text style={styles.label}>REAL ACCOUNT</Text>
-          <Text accessibilityRole="header" style={styles.title}>
-            You’re signed in
-          </Text>
-          <Text style={styles.bodyText}>
-            Signed in as {displayName}. Your account is separate from the synthetic Demo.
-          </Text>
-          <Text style={styles.entryChoiceBody}>
-            Group and capsule access will appear here when your pilot group is ready.
-          </Text>
-          {auth.notice === 'revocation-unconfirmed' ||
-          auth.notice === 'sign-out-incomplete' ||
-          auth.notice === 'sign-out-marker-unavailable' ? (
-            <Text accessibilityRole="alert" style={styles.errorText} testID="logout-unconfirmed">
-              {auth.notice === 'sign-out-incomplete'
-                ? 'Sign-out is incomplete. This device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in; retry sign out.'
-                : auth.notice === 'sign-out-marker-unavailable'
-                  ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
-                  : Platform.OS === 'web'
-                    ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
-                    : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'}
-            </Text>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            disabled={auth.pending}
-            onPress={auth.signOut}
-            style={styles.primaryEntryButton}
-          >
-            <Text style={styles.primaryEntryButtonText}>
-              {auth.pending
-                ? 'Signing out…'
-                : auth.notice === 'revocation-unconfirmed' ||
-                    auth.notice === 'sign-out-incomplete' ||
-                    auth.notice === 'sign-out-marker-unavailable'
-                  ? 'Retry sign out'
-                  : 'Sign out'}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
     </SafeAreaFrame>
   );
 }
