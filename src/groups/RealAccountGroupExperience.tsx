@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useRealAccount } from '../auth/RealAccountProvider';
 import { BUILT_IN_PROMPTS, GROUP_NAME_MAX_LENGTH, PROMPT_MAX_LENGTH } from '../domain/groups';
@@ -128,6 +128,16 @@ export function RealAccountGroupExperience({ displayName }: { displayName: strin
           <Text accessibilityRole="header" style={styles.title}>
             Choose a group
           </Text>
+          {auth.notice === 'revocation-unconfirmed' ||
+          auth.notice === 'sign-out-marker-unavailable' ? (
+            <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
+              {auth.notice === 'sign-out-marker-unavailable'
+                ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                : Platform.OS === 'web'
+                  ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
+                  : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
+            </Text>
+          ) : null}
           <Text style={styles.body}>
             Create a private group for your account, or join later with an invitation.
           </Text>
@@ -146,7 +156,15 @@ export function RealAccountGroupExperience({ displayName }: { displayName: strin
             testID="real-group-join-choice"
           />
           <Action
-            title="Sign out"
+            title={
+              auth.pending
+                ? 'Signing out…'
+                : auth.notice === 'revocation-unconfirmed' ||
+                    auth.notice === 'sign-out-marker-unavailable'
+                  ? 'Retry sign out'
+                  : 'Sign out'
+            }
+            disabled={auth.pending}
             onPress={() => void auth.signOut()}
             testID="real-group-sign-out"
           />
@@ -240,6 +258,16 @@ export function RealAccountGroupExperience({ displayName }: { displayName: strin
         </View>
       ) : screen === 'home' && group ? (
         <View style={styles.panel} testID="real-group-home">
+          {auth.notice === 'revocation-unconfirmed' ||
+          auth.notice === 'sign-out-marker-unavailable' ? (
+            <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
+              {auth.notice === 'sign-out-marker-unavailable'
+                ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                : Platform.OS === 'web'
+                  ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
+                  : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
+            </Text>
+          ) : null}
           <Text style={styles.label}>PRIVATE GROUP · {group.group.role.toUpperCase()}</Text>
           <Text accessibilityRole="header" style={styles.title} testID="real-group-name-heading">
             {group.group.name}
@@ -282,7 +310,15 @@ export function RealAccountGroupExperience({ displayName }: { displayName: strin
             testID="real-group-capture-action"
           />
           <Action
-            title="Sign out"
+            title={
+              auth.pending
+                ? 'Signing out…'
+                : auth.notice === 'revocation-unconfirmed' ||
+                    auth.notice === 'sign-out-marker-unavailable'
+                  ? 'Retry sign out'
+                  : 'Sign out'
+            }
+            disabled={auth.pending}
             onPress={() => void auth.signOut()}
             testID="real-group-sign-out"
           />

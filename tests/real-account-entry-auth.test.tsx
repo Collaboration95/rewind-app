@@ -74,6 +74,12 @@ function nativeAccountFetch(logout: () => Response | Promise<Response>) {
   }) as typeof fetch;
 }
 
+function logoutRequestCount() {
+  return (globalThis.fetch as jest.Mock).mock.calls.filter(([url]) =>
+    String(url).endsWith('/auth/logout'),
+  ).length;
+}
+
 function useWebPlatform() {
   Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web', writable: true });
   Object.defineProperty(globalThis, 'window', {
@@ -330,13 +336,13 @@ describe('real account entry flow', () => {
     expect(restarted.getByTestId('real-account-session-status')).toHaveTextContent(
       /sign-out recovery is pending.*will not restore.*revocation may still be unconfirmed/i,
     );
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(logoutRequestCount()).toBe(1);
 
     await fireEvent.press(restarted.getByRole('button', { name: 'Sign in' }));
     await fireEvent.changeText(restarted.getByLabelText('Username'), 'pilot.user');
     await fireEvent.changeText(restarted.getByLabelText('Password'), 'new password');
     await fireEvent.press(restarted.getByTestId('real-account-submit'));
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(logoutRequestCount()).toBe(1);
     expect(restarted.getByTestId('real-account-session-status')).toHaveTextContent(
       /sign-out recovery is pending/i,
     );
@@ -346,11 +352,11 @@ describe('real account entry flow', () => {
     });
     await waitFor(() => expect(secureStoreMock.token).toBeNull());
     expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    expect(logoutRequestCount()).toBe(2);
     expect(restarted.queryByTestId('real-account-session-status')).toBeNull();
     expect(await restarted.findByRole('header', { name: 'Sign in' })).toBeTruthy();
     await waitFor(() => expect(restarted.queryByTestId('real-account-session-status')).toBeNull());
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    expect(logoutRequestCount()).toBe(2);
   });
 
   it('retains the token if confirmed revocation cannot be recorded, then retries after restart', async () => {
@@ -401,41 +407,35 @@ describe('real account entry flow', () => {
 
   it('aborts native sign-out when the recovery marker cannot be saved and keeps the account active', async () => {
     secureStoreMock.token = nativeToken;
-    globalThis.fetch = jest
-      .fn()
-      .mockResolvedValueOnce(activeSessionResponse())
-      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    globalThis.fetch = nativeAccountFetch(() => jsonResponse(200, { signedOut: true }));
     const result = await render(<App runtimeClient={runtimeClient} />);
-    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
 
     const markerWrite = jest
       .spyOn(signOutMarkerStore, 'write')
       .mockRejectedValueOnce(new Error('AsyncStorage unavailable'));
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
-    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
     expect(result.getByTestId('logout-unconfirmed')).toHaveTextContent(
       /sign-out did not start.*could not save its recovery state.*still signed in/i,
     );
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(logoutRequestCount()).toBe(0);
     expect(secureStoreMock.token).toBe(nativeToken);
     expect(markerWrite).toHaveBeenCalledWith('pending');
 
     markerWrite.mockRestore();
     await fireEvent.press(result.getByRole('button', { name: 'Retry sign out' }));
     await waitFor(() => expect(secureStoreMock.token).toBeNull());
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(logoutRequestCount()).toBe(1);
     expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
   });
 
   it('keeps recovery durable when marker deletion fails after confirmed logout', async () => {
     secureStoreMock.token = nativeToken;
-    globalThis.fetch = jest
-      .fn()
-      .mockResolvedValueOnce(activeSessionResponse())
-      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    globalThis.fetch = nativeAccountFetch(() => jsonResponse(200, { signedOut: true }));
     const result = await render(<App runtimeClient={runtimeClient} />);
-    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
 
     const markerClear = jest
       .spyOn(signOutMarkerStore, 'clear')
@@ -456,13 +456,13 @@ describe('real account entry flow', () => {
     expect(restarted.getByTestId('real-account-session-status')).toHaveTextContent(
       /server says this session has ended.*could not confirm deletion/i,
     );
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(logoutRequestCount()).toBe(1);
 
     await fireEvent.press(restarted.getByRole('button', { name: 'Retry local cleanup' }));
     expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
     await waitFor(() => expect(restarted.queryByTestId('real-account-session-status')).toBeNull());
     expect(secureStoreMock.token).toBeNull();
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(logoutRequestCount()).toBe(1);
   });
 
   it('fails closed when the startup marker cannot be read and allows recovery retry', async () => {
