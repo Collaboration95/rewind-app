@@ -788,6 +788,14 @@ renderPick();
 renderReview();
 render();
 setZoom($('zoom').value);
-// 支持 index.html#c9 直接打开某个方案
-if (concepts.some((c) => c.id === location.hash.slice(1))) pick(location.hash.slice(1));
+// 支持 index.html#c9 直接打开某个方案。
+// htmlpreview 会把脚本改成内联执行，那时锚点可能还没就位，所以加载完成后再检查一次。
+const openFromHash = () => {
+  const h = location.hash.slice(1);
+  if (h !== current && concepts.some((c) => c.id === h)) pick(h);
+};
+openFromHash();
+addEventListener("load", openFromHash);
+addEventListener("hashchange", openFromHash);
+setTimeout(openFromHash, 400);
 loadVotes();

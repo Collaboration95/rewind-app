@@ -6,7 +6,8 @@ sealed moments are drawn as abstract textures, never as media.
 
 ## Open it
 
-- Hosted from this branch: https://raw.githack.com/Collaboration95/rewind-app/ui-concept/bibi45c-home-directions/docs/design/home-directions/index.html
+- Hosted from this branch: https://htmlpreview.github.io/?https://github.com/Collaboration95/rewind-app/blob/ui-concept/bibi45c-home-directions/docs/design/home-directions/index.html
+- Backup host (shows a one-click notice first): https://raw.githack.com/Collaboration95/rewind-app/ui-concept/bibi45c-home-directions/docs/design/home-directions/index.html
 - Or open `index.html` locally in a browser.
 - Jump to one direction with its anchor, for example `index.html#c7`.
 
