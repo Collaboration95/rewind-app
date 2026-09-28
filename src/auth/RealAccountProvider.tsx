@@ -152,7 +152,18 @@ export function RealAccountProvider({
       try {
         await client.logout(tokenRef.current);
       } catch {
+        if (Platform.OS === 'web') {
+          // HttpOnly cookies cannot be cleared in JavaScript. Keep this browser
+          // session active until the server confirms revocation.
+          setPending(false);
+          setNotice('revocation-unconfirmed');
+          return;
+        }
+        // Native can safely remove this device's bearer token, but the remote
+        // session may remain valid until expiry or administrator reset.
         await clearLocalSession();
+        setNotice('revocation-unconfirmed');
+        return;
       }
     }
     await clearLocalSession();

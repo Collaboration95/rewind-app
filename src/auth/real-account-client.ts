@@ -16,7 +16,8 @@ export interface RealAccountSession {
 }
 
 export type AuthState = 'loading' | 'entry' | 'active' | 'error';
-export type AuthNotice = 'expired' | 'revoked' | 'offline' | 'sign-in-failed' | null;
+export type AuthNotice =
+  'expired' | 'revoked' | 'offline' | 'sign-in-failed' | 'revocation-unconfirmed' | null;
 
 const SECURE_SESSION_KEY = 'rewind.real-account.session-token';
 
@@ -68,6 +69,8 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 }
 
 export class RealAccountClient {
+  private activeToken: string | undefined;
+
   constructor(
     private readonly baseUrl: string,
     private readonly tokenStore: TokenStore = secureTokenStore,
@@ -114,6 +117,7 @@ export class RealAccountClient {
         ).catch(() => undefined);
         throw new AuthRequestError(0, 'secure-storage');
       }
+      this.activeToken = token;
     }
     return { account: body.account, expiresAt: body.expiresAt, ...(token ? { token } : {}) };
   }
@@ -122,6 +126,7 @@ export class RealAccountClient {
     this.assertSecureTransport();
     const token = Platform.OS === 'web' ? undefined : await this.tokenStore.read();
     if (Platform.OS !== 'web' && !token) return null;
+    this.activeToken = token ?? undefined;
     const response = await this.fetcher(
       authUrl(this.baseUrl, '/auth/session'),
       requestOptions({ method: 'GET' }, token ?? undefined),
@@ -146,16 +151,25 @@ export class RealAccountClient {
   async logout(token?: string): Promise<void> {
     this.assertSecureTransport();
     try {
-      await this.fetcher(
+      const credential =
+        Platform.OS === 'web'
+          ? undefined
+          : (token ?? this.activeToken ?? (await this.tokenStore.read()) ?? undefined);
+      const response = await this.fetcher(
         authUrl(this.baseUrl, '/auth/logout'),
-        requestOptions({ method: 'POST' }, Platform.OS === 'web' ? undefined : token),
+        requestOptions({ method: 'POST' }, credential),
       );
+      if (!response.ok) throw new AuthRequestError(response.status, 'logout');
+      const body = await readJson(response);
+      if (body.signedOut !== true) throw new AuthRequestError(502, 'logout');
     } finally {
+      this.activeToken = undefined;
       if (Platform.OS !== 'web') await this.tokenStore.clear();
     }
   }
 
   clearStoredToken(): Promise<void> {
+    this.activeToken = undefined;
     return Platform.OS === 'web' ? Promise.resolve() : this.tokenStore.clear();
   }
 
@@ -177,7 +191,10 @@ export class RealAccountClient {
     ) {
       throw new AuthRequestError(0, 'response');
     }
-    const response = await this.fetcher(target.toString(), requestOptions(init, token));
+    const response = await this.fetcher(
+      target.toString(),
+      requestOptions(init, token ?? this.activeToken),
+    );
     if (response.status === 401) throw new AuthRequestError(401, 'expired');
     return response;
   }
@@ -203,7 +220,13 @@ export class AuthRequestError extends Error {
   constructor(
     readonly status: number,
     readonly reason:
-      'sign-in' | 'response' | 'restore' | 'expired' | 'insecure-transport' | 'secure-storage',
+      | 'sign-in'
+      | 'response'
+      | 'restore'
+      | 'expired'
+      | 'insecure-transport'
+      | 'secure-storage'
+      | 'logout',
   ) {
     super(
       reason === 'expired'

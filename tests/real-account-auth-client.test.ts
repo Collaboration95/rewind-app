@@ -126,6 +126,28 @@ describe('real-account client transport and storage', () => {
     expect(storedToken).toBeNull();
   });
 
+  it('reuses a restored native token for successful logout after app restart', async () => {
+    storedToken = token;
+    const fetcher = jest
+      .fn()
+      .mockResolvedValueOnce(
+        response(200, {
+          account,
+          idleExpiresAt: expiresAt,
+          absoluteExpiresAt: '2026-10-28T00:00:00.000Z',
+        }),
+      )
+      .mockResolvedValueOnce(response(200, { signedOut: true }));
+    const client = new RealAccountClient('https://api.rewind.example', tokenStore, fetcher);
+
+    await client.restore();
+    await client.logout();
+    expect(
+      new Headers((fetcher.mock.calls[1][1] as RequestInit).headers).get('Authorization'),
+    ).toBe(`Bearer ${token}`);
+    expect(storedToken).toBeNull();
+  });
+
   it('uses same-origin browser cookies and never reads or stores a JavaScript token', async () => {
     setPlatform('web');
     Object.defineProperty(globalThis, 'window', {
@@ -148,7 +170,8 @@ describe('real-account client transport and storage', () => {
           absoluteExpiresAt: '2026-10-28T00:00:00.000Z',
         }),
       )
-      .mockResolvedValueOnce(response(200, {}));
+      .mockResolvedValueOnce(response(200, {}))
+      .mockResolvedValueOnce(response(200, { signedOut: true }));
     const client = new RealAccountClient('https://rewind.example', tokenStore, fetcher);
 
     await client.login('pilot.user', 'secret input');
@@ -168,6 +191,23 @@ describe('real-account client transport and storage', () => {
     expect(
       new Headers((fetcher.mock.calls[2][1] as RequestInit).headers).has('Authorization'),
     ).toBe(false);
+    await client.logout();
+    expect(fetcher.mock.calls[3][0]).toBe('https://rewind.example/auth/logout');
+    expect((fetcher.mock.calls[3][1] as RequestInit).credentials).toBe('include');
+  });
+
+  it('rejects non-2xx and success-shaped-but-unconfirmed logout responses', async () => {
+    const fetcher = jest
+      .fn()
+      .mockResolvedValueOnce(response(503, { signedOut: false }))
+      .mockResolvedValueOnce(response(200, { signedOut: false }));
+    const client = new RealAccountClient('https://api.rewind.example', tokenStore, fetcher);
+
+    await expect(client.logout(token)).rejects.toMatchObject({ status: 503, reason: 'logout' });
+    await expect(client.logout(token)).rejects.toMatchObject({ status: 502, reason: 'logout' });
+    expect(
+      new Headers((fetcher.mock.calls[0][1] as RequestInit).headers).get('Authorization'),
+    ).toBe(`Bearer ${token}`);
   });
 
   it('clears native secure storage after local sign-out even when the server is offline', async () => {

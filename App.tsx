@@ -499,7 +499,11 @@ function DemoAccessEntry() {
           ? 'Sign-in failed. Check your username and password, or try again later.'
           : auth.notice === 'offline'
             ? 'Sign-in needs a secure HTTPS connection. Check your connection and try again.'
-            : null;
+            : auth.notice === 'revocation-unconfirmed'
+              ? Platform.OS === 'web'
+                ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
+                : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'
+              : null;
 
   const submitSignIn = async () => {
     setAuthPending(true);
@@ -695,7 +699,10 @@ function DemoAccessEntry() {
             </Pressable>
           </View>
         ) : null}
-        {(auth.notice === 'offline' || auth.notice === 'expired' || auth.notice === 'revoked') &&
+        {(auth.notice === 'offline' ||
+          auth.notice === 'expired' ||
+          auth.notice === 'revoked' ||
+          auth.notice === 'revocation-unconfirmed') &&
         mode !== 'sign-in' &&
         !(auth.notice === 'offline' && error) ? (
           <View
@@ -773,6 +780,13 @@ function RealAccountHome({ displayName }: { displayName: string }) {
           <Text style={styles.entryChoiceBody}>
             Group and capsule access will appear here when your pilot group is ready.
           </Text>
+          {auth.notice === 'revocation-unconfirmed' ? (
+            <Text accessibilityRole="alert" style={styles.errorText} testID="logout-unconfirmed">
+              {auth.notice === 'revocation-unconfirmed' && Platform.OS === 'web'
+                ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
+                : 'Sign-out on this device succeeded, but the server did not confirm revocation. Another device may remain signed in until the session expires or an administrator resets it.'}
+            </Text>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             disabled={auth.pending}
@@ -780,7 +794,11 @@ function RealAccountHome({ displayName }: { displayName: string }) {
             style={styles.primaryEntryButton}
           >
             <Text style={styles.primaryEntryButtonText}>
-              {auth.pending ? 'Signing out…' : 'Sign out'}
+              {auth.pending
+                ? 'Signing out…'
+                : auth.notice === 'revocation-unconfirmed'
+                  ? 'Retry sign out'
+                  : 'Sign out'}
             </Text>
           </Pressable>
         </View>

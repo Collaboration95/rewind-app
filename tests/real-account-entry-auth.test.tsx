@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
+import { Platform } from 'react-native';
 
 import App from '../App';
 
@@ -32,12 +33,43 @@ const nativeToken = 't'.repeat(43);
 const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 const runtimeClient = { baseUrl: 'https://rewind.example' } as never;
 const originalFetch = globalThis.fetch;
+const originalPlatformOS = Platform.OS;
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function activeSessionResponse() {
+  return jsonResponse(200, {
+    account: apiAccount,
+    idleExpiresAt: expiresAt,
+    absoluteExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+}
+
+function useWebPlatform() {
+  Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web', writable: true });
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      location: { href: 'https://rewind.example/', origin: 'https://rewind.example' },
+    },
+    writable: true,
+  });
+}
+
+function restorePlatform() {
+  Object.defineProperty(Platform, 'OS', {
+    configurable: true,
+    value: originalPlatformOS,
+    writable: true,
+  });
+  if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+  else delete (globalThis as { window?: unknown }).window;
 }
 
 beforeAll(() => {
@@ -51,6 +83,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  restorePlatform();
 });
 
 describe('real account entry flow', () => {
@@ -131,5 +164,74 @@ describe('real account entry flow', () => {
     ).toBeTruthy();
     expect(secureStoreMock.token).toBeNull();
     expect(result.queryByTestId('main-navigation')).toBeNull();
+  });
+
+  it.each([
+    ['non-2xx response', () => jsonResponse(503, { signedOut: false })],
+    ['network failure', () => Promise.reject(new Error('offline'))],
+  ])(
+    'keeps the web account active after logout %s without server confirmation',
+    async (_, logoutResult) => {
+      useWebPlatform();
+      globalThis.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(activeSessionResponse())
+        .mockImplementationOnce(logoutResult) as typeof fetch;
+      const result = await render(<App runtimeClient={runtimeClient} />);
+
+      expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+      await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+      expect(await result.findByRole('button', { name: 'Retry sign out' })).toBeTruthy();
+      expect(result.getByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+      expect(result.getByTestId('logout-unconfirmed')).toHaveTextContent(
+        /You are still signed in on this browser/,
+      );
+      expect(result.queryByRole('header', { name: 'Welcome to Rewind' })).toBeNull();
+      expect((globalThis.fetch as jest.Mock).mock.calls[1][1].credentials).toBe('include');
+    },
+  );
+
+  it.each([
+    ['non-2xx response', () => jsonResponse(503, { signedOut: false })],
+    ['network failure', () => Promise.reject(new Error('offline'))],
+  ])(
+    'allows local native sign-out but reports revocation uncertainty after %s',
+    async (_, logoutResult) => {
+      secureStoreMock.token = nativeToken;
+      globalThis.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(activeSessionResponse())
+        .mockImplementationOnce(logoutResult) as typeof fetch;
+      const result = await render(<App runtimeClient={runtimeClient} />);
+
+      expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+      await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+      expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+      expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+        /Signed out on this device/,
+      );
+      expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+        /server did not confirm revocation/i,
+      );
+      expect(secureStoreMock.token).toBeNull();
+      const [, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[1] as [string, RequestInit];
+      expect(new Headers(logoutInit.headers).get('Authorization')).toBe(`Bearer ${nativeToken}`);
+    },
+  );
+
+  it('returns web to entry only after the server confirms cookie revocation', async () => {
+    useWebPlatform();
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(activeSessionResponse())
+      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.queryByTestId('logout-unconfirmed')).toBeNull();
   });
 });
