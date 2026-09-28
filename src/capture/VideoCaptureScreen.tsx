@@ -667,6 +667,7 @@ export function VideoCaptureScreen({
       } else {
         setContributionStatus(describeUpload(uploaded, 'queued'));
       }
+      await statusContext?.refreshStatus();
       return processed;
     },
     [
@@ -674,6 +675,7 @@ export function VideoCaptureScreen({
       describeUpload,
       isContributionWorkActive,
       setContributionStatus,
+      statusContext,
       uploadGroupId,
       uploadSessionId,
     ],
@@ -1014,7 +1016,9 @@ export function VideoCaptureScreen({
 
   const canDeleteContribution = Boolean(
     contributionStatus?.contributionId &&
-    runtimeClient?.deleteContribution &&
+    activeRuntimeClient?.deleteContribution &&
+    uploadSessionId &&
+    uploadGroupId &&
     contributionStatus.state !== 'processing' &&
     contributionStatus.deletionAvailability !== 'used' &&
     contributionStatus.deletionAvailability !== 'unavailable',
@@ -1025,14 +1029,15 @@ export function VideoCaptureScreen({
       !isCaptureActive() ||
       !canDeleteContribution ||
       !contributionStatus?.contributionId ||
-      !runtimeClient?.deleteContribution ||
-      !demoSession?.session
+      !activeRuntimeClient?.deleteContribution ||
+      !uploadSessionId ||
+      !uploadGroupId
     )
       return;
     try {
-      await runtimeClient.deleteContribution(
-        demoSession.session.id,
-        demoSession.session.groupId,
+      await activeRuntimeClient.deleteContribution(
+        uploadSessionId,
+        uploadGroupId,
         contributionStatus.contributionId,
       );
       replacementTargetRef.current = contributionStatus.contributionId;
@@ -1044,6 +1049,7 @@ export function VideoCaptureScreen({
       setUploadProgress({ status: 'idle', percent: 0 });
       latestUploadRef.current = null;
       clearContributionStatus();
+      await statusContext?.refreshStatus();
       onContributionDeleted?.();
       setError('Contribution deleted. Your weekly allowance is restored for a replacement.');
     } catch (deleteError) {
@@ -1069,15 +1075,17 @@ export function VideoCaptureScreen({
     }
   }, [
     canDeleteContribution,
+    activeRuntimeClient,
     clearContributionStatus,
     contributionStatus,
-    demoSession,
     isCaptureActive,
     onContributionDeleted,
     recorder,
     releaseOwnedClip,
-    runtimeClient,
     setContributionStatus,
+    statusContext,
+    uploadGroupId,
+    uploadSessionId,
   ]);
   return (
     <View style={styles.screen} testID="video-capture-screen">

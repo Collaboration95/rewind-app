@@ -2,6 +2,7 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 import {
   ContributionStatusPanel,
   ContributionStatusProvider,
+  latestContributionStatus,
   useOptionalContributionStatus,
   type ContributionLifecycle,
   type ContributionStatus,
@@ -23,6 +24,44 @@ const base: ContributionStatus = {
 };
 
 describe('ContributionStatusPanel', () => {
+  it('derives the capture state and correction availability from the latest server ledger entry', () => {
+    expect(
+      latestContributionStatus({
+        cycleId: 'cycle-1',
+        memberId: 'member-1',
+        allowance: {
+          maxCount: 5,
+          maxSeconds: 30,
+          countUsed: 2,
+          secondsUsed: 6,
+          deletionsUsed: 1,
+          deletionAvailability: 'used',
+        },
+        entries: [
+          {
+            contributionId: 'contribution-1',
+            jobId: 'job-1',
+            state: 'sealed',
+            durationSeconds: 3,
+            createdAt: '2026-09-14T00:00:00.000Z',
+            updatedAt: '2026-09-14T00:00:01.000Z',
+            attempts: 1,
+            progress: 100,
+            failureCategory: null,
+            retryable: false,
+            replaced: false,
+            restored: null,
+          },
+        ],
+        pagination: { limit: 50, hasMore: false, nextCursor: null },
+      }),
+    ).toMatchObject({
+      state: 'sealed',
+      contributionId: 'contribution-1',
+      deletionAvailability: 'used',
+    });
+  });
+
   it.each(['queued', 'processing', 'sealed'] as ContributionLifecycle[])(
     'renders the %s lifecycle using metadata only',
     async (state) => {

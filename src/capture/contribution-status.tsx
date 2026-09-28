@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { ContributionLedgerPage } from '../domain/contributions';
 import {
   createContext,
   useCallback,
@@ -32,6 +33,7 @@ export interface ContributionStatus {
   retryable: boolean;
   /** Whether the one bounded delete-and-replace action can still be shown. */
   deletionAvailability?: 'available' | 'used' | 'unavailable';
+  allowance?: ContributionLedgerPage['allowance'];
 }
 
 export interface ContributionStatusScope {
@@ -46,6 +48,37 @@ export interface ContributionStatusStore {
   load(scope: ContributionStatusScope): Promise<ContributionStatus | null>;
   save(scope: ContributionStatusScope, value: ContributionStatus): Promise<void>;
   clear(scope: ContributionStatusScope): Promise<void>;
+}
+
+export function latestContributionStatus(page: ContributionLedgerPage): ContributionStatus | null {
+  const entry = [...page.entries]
+    .reverse()
+    .find(
+      (candidate) =>
+        candidate.state === 'queued' ||
+        candidate.state === 'processing' ||
+        candidate.state === 'sealed' ||
+        candidate.state === 'failed',
+    );
+  if (!entry) return null;
+  const state: ContributionLifecycle =
+    entry.state === 'queued' ||
+    entry.state === 'processing' ||
+    entry.state === 'sealed' ||
+    entry.state === 'failed'
+      ? entry.state
+      : 'failed';
+  return {
+    state,
+    contributionId: entry.contributionId,
+    jobId: entry.jobId ?? undefined,
+    durationSeconds: entry.durationSeconds,
+    createdAt: entry.createdAt,
+    retryable: entry.retryable,
+    deletionAvailability: page.allowance.deletionAvailability,
+    allowance: page.allowance,
+    ...(entry.failureCategory ? { message: 'Processing failed. Retry this contribution.' } : {}),
+  };
 }
 
 class AsyncStorageStatusStore implements ContributionStatusStore {
@@ -108,7 +141,14 @@ function isContributionStatus(value: unknown): value is ContributionStatus {
     (candidate.deletionAvailability === undefined ||
       candidate.deletionAvailability === 'available' ||
       candidate.deletionAvailability === 'used' ||
-      candidate.deletionAvailability === 'unavailable')
+      candidate.deletionAvailability === 'unavailable') &&
+    (candidate.allowance === undefined ||
+      (typeof candidate.allowance === 'object' &&
+        candidate.allowance !== null &&
+        Number.isFinite(candidate.allowance.maxCount) &&
+        Number.isFinite(candidate.allowance.maxSeconds) &&
+        Number.isFinite(candidate.allowance.countUsed) &&
+        Number.isFinite(candidate.allowance.secondsUsed)))
   );
 }
 
@@ -116,6 +156,7 @@ interface ContributionStatusContextValue {
   status: ContributionStatus | null;
   setStatus: (status: ContributionStatus) => void;
   clearStatus: () => void;
+  refreshStatus: () => Promise<void>;
 }
 
 const ContributionStatusContext = createContext<ContributionStatusContextValue | null>(null);
@@ -124,12 +165,15 @@ export function ContributionStatusProvider({
   children,
   scope: { groupId, memberId, sessionId },
   store = defaultStatusStore,
+  loadStatus,
 }: {
   children: ReactNode;
   scope: ContributionStatusScope;
   store?: ContributionStatusStore;
+  loadStatus?: () => Promise<ContributionLedgerPage>;
 }) {
   const [status, setStatusState] = useState<ContributionStatus | null>(null);
+  const statusRef = useRef<ContributionStatus | null>(null);
   const generation = useRef(0);
   const writeChain = useRef(Promise.resolve());
   const stableScope = useMemo(
@@ -138,26 +182,52 @@ export function ContributionStatusProvider({
   );
   const scopeIdentity = scopeKey(stableScope);
 
+  const refreshStatus = useCallback(async () => {
+    if (!loadStatus) return;
+    const request = generation.current;
+    try {
+      const page = await loadStatus();
+      if (request !== generation.current) return;
+      const serverStatus = latestContributionStatus(page);
+      statusRef.current = serverStatus;
+      setStatusState(serverStatus);
+      if (serverStatus) await store.save(stableScope, serverStatus);
+      else await store.clear(stableScope);
+    } catch {
+      // Keep the persisted recovery hint when the authenticated ledger is
+      // temporarily unavailable; the Home ledger reports its own error.
+    }
+  }, [loadStatus, stableScope, store]);
+
   useEffect(() => {
     const request = ++generation.current;
     void Promise.resolve().then(async () => {
       if (request !== generation.current) return;
       setStatusState(null);
       const loaded = await store.load(stableScope);
-      if (request === generation.current) setStatusState(loaded);
+      if (request === generation.current) {
+        statusRef.current = loaded;
+        setStatusState(loaded);
+        await refreshStatus();
+      }
     });
     return () => {
       generation.current += 1;
     };
-  }, [scopeIdentity, stableScope, store]);
+  }, [scopeIdentity, stableScope, store, refreshStatus]);
 
   const setStatus = useCallback(
     (next: ContributionStatus) => {
       const request = generation.current;
-      setStatusState(next);
+      const hydrated =
+        next.allowance || !statusRef.current?.allowance
+          ? next
+          : { ...next, allowance: statusRef.current.allowance };
+      statusRef.current = hydrated;
+      setStatusState(hydrated);
       writeChain.current = writeChain.current
         .catch(() => undefined)
-        .then(() => store.save(stableScope, next))
+        .then(() => store.save(stableScope, hydrated))
         .catch(() => {
           // A status write is recovery metadata. The visible state remains
           // useful for this session even when local storage is unavailable.
@@ -168,6 +238,7 @@ export function ContributionStatusProvider({
   );
 
   const clearStatus = useCallback(() => {
+    statusRef.current = null;
     setStatusState(null);
     writeChain.current = writeChain.current
       .catch(() => undefined)
@@ -176,8 +247,8 @@ export function ContributionStatusProvider({
   }, [stableScope, store]);
 
   const value = useMemo(
-    () => ({ status, setStatus, clearStatus }),
-    [clearStatus, setStatus, status],
+    () => ({ status, setStatus, clearStatus, refreshStatus }),
+    [clearStatus, refreshStatus, setStatus, status],
   );
   return (
     <ContributionStatusContext.Provider value={value}>
@@ -258,6 +329,12 @@ export function ContributionStatusPanel({
       </Text>
       <Text style={styles.body}>{copy.body}</Text>
       <Text style={styles.metadata}>{metadata}</Text>
+      {status.allowance ? (
+        <Text style={styles.availability} testID={`${testID}-allowance`}>
+          {status.allowance.countUsed} of {status.allowance.maxCount} contributions ·{' '}
+          {status.allowance.secondsUsed} of {status.allowance.maxSeconds} seconds used
+        </Text>
+      ) : null}
       {status.deletionAvailability === 'used' ? (
         <Text style={styles.availability} testID={`${testID}-delete-used`}>
           Delete and replace is unavailable because this week&apos;s allowance has already been

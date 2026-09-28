@@ -1,4 +1,5 @@
 import type { ClipUploadInput, PendingClipUpload } from '../domain/video';
+import { parseContributionLedgerPage, type ContributionLedgerPage } from '../domain/contributions';
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 
 export type AuthenticatedRequest = (path: string, init?: RequestInit) => Promise<Response>;
@@ -41,6 +42,8 @@ export function createRealAccountVideoRuntimeClient(
   RuntimeClient,
   'baseUrl' | 'stageClipSource' | 'uploadClip' | 'cancelClipUpload' | 'processClipJob'
 > & {
+  getContributionLedger(groupId: string): Promise<ContributionLedgerPage>;
+  deleteContribution(sessionId: string, groupId: string, contributionId: string): Promise<void>;
   stagePhotoSource(
     sessionId: string,
     groupId: string,
@@ -52,6 +55,26 @@ export function createRealAccountVideoRuntimeClient(
   const groupQuery = (groupId: string) => `groupId=${encodeURIComponent(groupId)}`;
   return {
     baseUrl: '',
+    async getContributionLedger(groupId) {
+      const response = await authenticatedRequest(`/contributions?${groupQuery(groupId)}`);
+      const body = await readResponse<unknown>(response);
+      const page = parseContributionLedgerPage(body);
+      if (!page)
+        throw new LocalRuntimeError(
+          'Contributions could not be loaded.',
+          undefined,
+          'invalid_contribution_ledger',
+        );
+      return page;
+    },
+    async deleteContribution(_sessionId, groupId, contributionId) {
+      await readResponse(
+        await authenticatedRequest(
+          `/contributions/${encodeURIComponent(contributionId)}?${groupQuery(groupId)}`,
+          { method: 'DELETE' },
+        ),
+      );
+    },
     async stageClipSource(_sessionId, groupId, idempotencyKey, base64) {
       const bytes = decodeBase64(base64);
       const body = await readResponse<{ source: { uri: string; byteLength: number } }>(

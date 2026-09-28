@@ -2670,7 +2670,8 @@ export async function handleRequest(
     const contributionId = decodePathSegment(contributionMatch[1], response, config);
     if (contributionId === null) return;
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,

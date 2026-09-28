@@ -39,7 +39,9 @@ export interface CameraCaptureScreenProps {
     metadata: Awaited<ReturnType<StillImageCaptureSession['accept']>>['metadata'],
     base64: string,
     onProgress: (status: import('./contribution-status').ContributionStatus) => void,
+    replacesContributionId?: string,
   ) => Promise<import('./contribution-status').ContributionStatus>;
+  onDeletePhotoContribution?: (contributionId: string) => Promise<void>;
   onOpenArchive?: () => void;
   onRecordClip?: () => void;
   revealState?: RevealEducationState;
@@ -56,6 +58,7 @@ export function CameraCaptureScreen({
   now,
   onAccepted,
   onSubmitPhoto,
+  onDeletePhotoContribution,
   onOpenArchive,
   onRecordClip,
   platform: platformProp,
@@ -110,6 +113,7 @@ export function CameraCaptureScreen({
   // was backgrounded. The sequence makes a stale completion a no-op so it
   // cannot publish a preview that nothing on this mount can act on.
   const captureSequence = useRef(0);
+  const replacementTarget = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     void session.restorePendingUpload().then((pending) => {
@@ -391,11 +395,18 @@ export function CameraCaptureScreen({
       await session.retainForUpload();
       const base64 = await resolvedFileStore.readAsBase64(active.previewUri);
       contributionStatusContext?.setStatus(latestStatus);
-      const submittedStatus = await onSubmitPhoto(active.metadata, base64, (status) => {
-        latestStatus = status;
-        contributionStatusContext?.setStatus(status);
-      });
+      const submittedStatus = await onSubmitPhoto(
+        active.metadata,
+        base64,
+        (status) => {
+          latestStatus = status;
+          contributionStatusContext?.setStatus(status);
+        },
+        replacementTarget.current,
+      );
+      replacementTarget.current = undefined;
       contributionStatusContext?.setStatus(submittedStatus);
+      await contributionStatusContext?.refreshStatus();
       await session.discard(active);
       setState((current) => ({
         ...current,
@@ -419,6 +430,28 @@ export function CameraCaptureScreen({
       setPhotoSubmitPending(false);
     }
   }, [contributionStatusContext, onSubmitPhoto, resolvedFileStore, session]);
+
+  const deletePhotoForReplacement = useCallback(async () => {
+    if (
+      !contributionStatus?.contributionId ||
+      !onDeletePhotoContribution ||
+      contributionStatus.state === 'processing' ||
+      contributionStatus.deletionAvailability === 'used' ||
+      contributionStatus.deletionAvailability === 'unavailable'
+    )
+      return;
+    try {
+      await onDeletePhotoContribution(contributionStatus.contributionId);
+      replacementTarget.current = contributionStatus.contributionId;
+      contributionStatusContext?.clearStatus();
+      await contributionStatusContext?.refreshStatus();
+      setPhotoSubmitError(null);
+    } catch (error) {
+      setPhotoSubmitError(
+        error instanceof Error ? error.message : 'The contribution could not be deleted.',
+      );
+    }
+  }, [contributionStatus, contributionStatusContext, onDeletePhotoContribution]);
 
   return (
     <View style={styles.screen} testID="camera-screen">
@@ -459,7 +492,14 @@ export function CameraCaptureScreen({
         </Pressable>
       ) : null}
 
-      <ContributionStatusPanel status={contributionStatus} testID="camera-contribution-status" />
+      <ContributionStatusPanel
+        deleteLabel="Delete and replace"
+        onDelete={onDeletePhotoContribution ? deletePhotoForReplacement : undefined}
+        onRetry={contributionStatus?.state === 'failed' ? () => void submitPhoto() : undefined}
+        retryLabel="Retry photo upload"
+        status={contributionStatus}
+        testID="camera-contribution-status"
+      />
 
       {platform.kind === 'demo' ? (
         <View
