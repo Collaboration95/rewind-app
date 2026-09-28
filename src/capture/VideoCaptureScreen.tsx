@@ -40,7 +40,7 @@ import {
   readManagedRecordedClipBase64,
   removeManagedRecordedClip,
 } from './platform';
-import type { CameraPlatform } from './contracts';
+import type { CameraPlatform, PermissionSnapshot } from './contracts';
 
 type AccessStatus =
   | 'checking'
@@ -391,45 +391,56 @@ export function VideoCaptureScreen({
     };
   }, [cancelActiveWork]);
 
-  const refresh = useCallback(async () => {
-    if (!isCaptureActive()) return;
-    setAccess('checking');
-    setError(null);
-    if (platform.kind === 'demo' || platform.supportsVideoRecording === false || !recorder) {
-      setAccess('unsupported');
-      return;
-    }
-    try {
-      const [capabilities, permissions] = await Promise.all([
-        platform.getCapabilities(),
-        platform.getVideoPermissions?.() ?? platform.getPermissions(),
-      ]);
+  const refresh = useCallback(
+    async (videoPermissionSnapshot?: PermissionSnapshot) => {
       if (!isCaptureActive()) return;
-      if (capabilities.camera === 'undecided' || capabilities.microphone === 'undecided') {
-        setAccess('temporarily-unavailable');
-      } else if (capabilities.camera !== 'supported' || capabilities.microphone !== 'supported') {
+      setAccess('checking');
+      setError(null);
+      if (platform.kind === 'demo' || platform.supportsVideoRecording === false || !recorder) {
         setAccess('unsupported');
-      } else if (permissions.camera === 'blocked' || permissions.microphone === 'blocked') {
-        setAccess('permission-blocked');
-      } else if (
-        permissions.camera === 'undetermined' ||
-        permissions.microphone === 'undetermined'
-      ) {
-        setAccess('permission-undecided');
-      } else if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
-        setAccess('permission-denied');
-      } else {
-        setAccess('ready');
+        return;
       }
-    } catch {
-      if (!isCaptureActive()) return;
-      setAccess('temporarily-unavailable');
-      setError('We could not check recording access yet. Try again.');
-    }
-  }, [isCaptureActive, platform, recorder]);
+      try {
+        const permissionCheck =
+          videoPermissionSnapshot ??
+          (Platform.OS === 'web'
+            ? platform.getVideoPermissions?.()
+            : (platform.getVideoPermissions?.() ?? platform.getPermissions()));
+        if (!permissionCheck) {
+          throw new Error('The video permission status is unavailable on this platform.');
+        }
+        const [capabilities, permissions] = await Promise.all([
+          platform.getCapabilities(),
+          permissionCheck,
+        ]);
+        if (!isCaptureActive()) return;
+        if (capabilities.camera === 'undecided' || capabilities.microphone === 'undecided') {
+          setAccess('temporarily-unavailable');
+        } else if (capabilities.camera !== 'supported' || capabilities.microphone !== 'supported') {
+          setAccess('unsupported');
+        } else if (permissions.camera === 'blocked' || permissions.microphone === 'blocked') {
+          setAccess('permission-blocked');
+        } else if (
+          permissions.camera === 'undetermined' ||
+          permissions.microphone === 'undetermined'
+        ) {
+          setAccess('permission-undecided');
+        } else if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
+          setAccess('permission-denied');
+        } else {
+          setAccess('ready');
+        }
+      } catch {
+        if (!isCaptureActive()) return;
+        setAccess('temporarily-unavailable');
+        setError('We could not check recording access yet. Try again.');
+      }
+    },
+    [isCaptureActive, platform, recorder],
+  );
 
   useEffect(() => {
-    void Promise.resolve().then(refresh);
+    void Promise.resolve().then(() => refresh());
   }, [refresh]);
 
   useEffect(
@@ -492,14 +503,28 @@ export function VideoCaptureScreen({
     if (!isCaptureActive()) return;
     setError(null);
     try {
-      const permissions = await (platform.requestVideoPermissions?.() ??
-        platform.requestPermissions());
+      const permissionRequest =
+        Platform.OS === 'web'
+          ? platform.requestVideoPermissions?.()
+          : (platform.requestVideoPermissions?.() ?? platform.requestPermissions());
+      if (!permissionRequest) {
+        throw new Error('Video permission requests are unavailable on this platform.');
+      }
+      const permissions = await permissionRequest;
       setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
       if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
         setAccess('permission-denied');
         return;
       }
-      if (isCaptureActive()) await refresh();
+      if (isCaptureActive() && Platform.OS === 'web') {
+        if (!platform.getVideoPermissions) {
+          throw new Error('Browser video permissions could not be refreshed. Try again.');
+        }
+        const refreshedPermissions = await platform.getVideoPermissions();
+        if (isCaptureActive()) await refresh(refreshedPermissions);
+      } else if (isCaptureActive()) {
+        await refresh();
+      }
     } catch (permissionError) {
       if (!isCaptureActive()) return;
       setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
@@ -1157,16 +1182,18 @@ export function VideoCaptureScreen({
           }
           testID="video-unsupported"
           title="Recording is not supported here"
-          body={
-            platform.getVideoCaptureUnavailableReason?.() ??
-            (platform.kind === 'demo' &&
+          body={[
+            platform.getVideoCaptureUnavailableReason?.(),
+            platform.kind === 'demo' &&
             runtimeClient?.createSyntheticDemoClip &&
             demoSession?.session
               ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
               : platform.supportsFileFallback && platform.pickVideoFile
                 ? 'Live recording is not supported here. Choose a portrait MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
-                : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.')
-          }
+                : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.',
+          ]
+            .filter((message): message is string => Boolean(message))
+            .join(' ')}
         />
       ) : null}
       {access === 'temporarily-unavailable' ? (

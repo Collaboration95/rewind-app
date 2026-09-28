@@ -18,7 +18,14 @@ async function openVideoFallback(page: Page) {
     });
   });
   await openVideoRoute(page);
-  await expect(page.getByTestId('video-unsupported')).toBeVisible();
+  const unsupported = page.getByTestId('video-unsupported');
+  await expect(unsupported).toBeVisible();
+  await expect(unsupported).toContainText(
+    'This browser cannot record the MP4 format required for upload.',
+  );
+  await expect(unsupported).toContainText(
+    'Choose a portrait MP4 no longer than 15 seconds with an audio track',
+  );
 }
 
 async function openVideoRoute(page: Page) {
