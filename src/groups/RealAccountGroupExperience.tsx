@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import {
   Platform,
@@ -75,8 +75,11 @@ export function RealAccountGroupExperience({
   const [memberGroups, setMemberGroups] = useState<RealGroup[]>([]);
   const [groupMembers, setGroupMembers] = useState<RealGroupMembers | null>(null);
   const [groupMembersError, setGroupMembersError] = useState<string | null>(null);
+  const groupContextVersion = useRef(0);
+  const groupMembersRequest = useRef(0);
+  const selectedGroupId = useRef<string | null>(null);
   const [screen, setScreen] = useState<
-    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'error'
+    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'error'
   >('loading');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState<string>(BUILT_IN_PROMPTS[0]);
@@ -91,7 +94,10 @@ export function RealAccountGroupExperience({
   const [acceptPending, setAcceptPending] = useState(false);
 
   const loadGroupMembers = useCallback(
-    async (groupId: string) => {
+    async (groupId: string, contextVersion: number) => {
+      if (contextVersion !== groupContextVersion.current || selectedGroupId.current !== groupId)
+        return;
+      const requestId = ++groupMembersRequest.current;
       setGroupMembers(null);
       setGroupMembersError(null);
       try {
@@ -101,17 +107,28 @@ export function RealAccountGroupExperience({
         const summary = await readGroupMembers(response);
         if (summary.group.id !== groupId)
           throw new Error('Group members could not be matched to the selected group.');
-        setGroupMembers(summary);
+        if (
+          contextVersion === groupContextVersion.current &&
+          selectedGroupId.current === groupId &&
+          requestId === groupMembersRequest.current
+        )
+          setGroupMembers(summary);
       } catch (error) {
-        setGroupMembersError(
-          error instanceof Error ? error.message : 'Group members could not be loaded.',
-        );
+        if (
+          contextVersion === groupContextVersion.current &&
+          selectedGroupId.current === groupId &&
+          requestId === groupMembersRequest.current
+        )
+          setGroupMembersError(
+            error instanceof Error ? error.message : 'Group members could not be loaded.',
+          );
       }
     },
     [auth],
   );
 
   const load = useCallback(async () => {
+    const contextVersion = groupContextVersion.current;
     try {
       const [currentResponse, membershipsResponse] = await Promise.all([
         auth.authenticatedRequest('/real/groups/current'),
@@ -121,15 +138,19 @@ export function RealAccountGroupExperience({
       if (!membershipsResponse.ok)
         throw new Error('Your groups could not be loaded. Retry when connected.');
       const memberships = (await membershipsResponse.json()) as { groups?: RealGroup[] };
+      if (contextVersion !== groupContextVersion.current) return;
       setMemberGroups(memberships.groups ?? []);
+      selectedGroupId.current = result?.group.id ?? null;
       setGroup(result);
       setScreen(result ? 'home' : 'choices');
-      if (result) await loadGroupMembers(result.group.id);
+      if (result) await loadGroupMembers(result.group.id, contextVersion);
       else {
+        groupMembersRequest.current += 1;
         setGroupMembers(null);
         setGroupMembersError(null);
       }
     } catch (error) {
+      if (contextVersion !== groupContextVersion.current) return;
       setMessage(error instanceof Error ? error.message : 'Your group could not be loaded.');
       setScreen('error');
     }
@@ -182,9 +203,11 @@ export function RealAccountGroupExperience({
       if (!response.ok)
         throw new Error('The group could not be created. Check the details and retry.');
       const created = (await response.json()) as RealGroup;
+      const contextVersion = ++groupContextVersion.current;
+      selectedGroupId.current = created.group.id;
       setGroup(created);
       setScreen('home');
-      await loadGroupMembers(created.group.id);
+      await loadGroupMembers(created.group.id, contextVersion);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The group could not be created.');
     } finally {
@@ -272,8 +295,10 @@ export function RealAccountGroupExperience({
       if (!response.ok || !body.group) {
         throw new Error(body.message ?? 'The invitation could not be accepted.');
       }
+      const contextVersion = ++groupContextVersion.current;
+      selectedGroupId.current = body.group.group.id;
       setGroup(body.group);
-      await loadGroupMembers(body.group.group.id);
+      await loadGroupMembers(body.group.group.id, contextVersion);
       setMemberGroups((current) =>
         current.some((membership) => membership.group.id === body.group?.group.id)
           ? current
@@ -291,6 +316,8 @@ export function RealAccountGroupExperience({
   };
 
   const switchGroup = async (groupId: string) => {
+    const previousGroupId = selectedGroupId.current;
+    const contextVersion = ++groupContextVersion.current;
     setPending(true);
     setMessage(null);
     try {
@@ -301,12 +328,16 @@ export function RealAccountGroupExperience({
       });
       const selected = await readGroup(response);
       if (!selected) throw new Error('That group is not available to this account.');
+      if (contextVersion !== groupContextVersion.current) return;
+      selectedGroupId.current = selected.group.id;
       setGroup(selected);
-      await loadGroupMembers(selected.group.id);
+      await loadGroupMembers(selected.group.id, contextVersion);
     } catch (error) {
+      if (contextVersion !== groupContextVersion.current) return;
       setMessage(error instanceof Error ? error.message : 'The group could not be selected.');
+      if (previousGroupId) await loadGroupMembers(previousGroupId, contextVersion);
     } finally {
-      setPending(false);
+      if (contextVersion === groupContextVersion.current) setPending(false);
     }
   };
 
@@ -514,7 +545,9 @@ export function RealAccountGroupExperience({
           <Text style={styles.body}>Up to {group.group.maxMembers} members</Text>
           <View style={styles.invitationPanel} testID="real-group-members">
             <Text accessibilityRole="header" style={styles.label}>
-              MEMBERS · {groupMembers?.members.length ?? 0}/{group.group.maxMembers}
+              {groupMembers
+                ? `MEMBERS · ${groupMembers.members.length}/${group.group.maxMembers}`
+                : 'MEMBERS'}
             </Text>
             {groupMembers?.members.length ? (
               groupMembers.members.map((member, index) => (
@@ -537,7 +570,11 @@ export function RealAccountGroupExperience({
             <Text style={styles.body} testID="real-group-pending-invites">
               {groupMembers?.pendingInviteCount
                 ? `${groupMembers.pendingInviteCount} pending ${groupMembers.pendingInviteCount === 1 ? 'invitation' : 'invitations'}`
-                : 'No pending invitations'}
+                : groupMembers
+                  ? 'No pending invitations'
+                  : groupMembersError
+                    ? 'Invitation status unavailable.'
+                    : 'Loading invitation status…'}
             </Text>
           </View>
           {message ? (
@@ -648,6 +685,7 @@ export function RealAccountGroupExperience({
             }}
             testID="real-group-capture-action"
           />
+          <Action title="Chat" onPress={() => setScreen('chat')} testID="real-group-chat-action" />
           <Action
             title={
               auth.pending
@@ -660,6 +698,21 @@ export function RealAccountGroupExperience({
             disabled={auth.pending}
             onPress={() => void auth.signOut()}
             testID="real-group-sign-out"
+          />
+        </View>
+      ) : screen === 'chat' && group ? (
+        <View style={styles.panel} testID="real-group-chat-placeholder">
+          <Text style={styles.label} testID="real-group-chat-context">
+            ACTIVE GROUP · {group.group.name}
+          </Text>
+          <Text accessibilityRole="header" style={styles.title}>
+            Chat
+          </Text>
+          <Text style={styles.body}>Group messaging is not available for real accounts yet.</Text>
+          <Action
+            title="Back to Home"
+            onPress={() => setScreen('home')}
+            testID="real-group-chat-back"
           />
         </View>
       ) : null}
