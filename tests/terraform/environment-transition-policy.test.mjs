@@ -31,7 +31,10 @@ test('records remote inventory and human review as pre-provision gates', () => {
   assert.ok(boundary, 'the #230 transition boundary is documented');
   assert.match(boundary, /remote state or enumerate the S3 buckets/);
   assert.match(boundary, /checked against the remote state bucket/);
-  assert.match(boundary, /No environment resources, state migration, IAM grants, or deployment workflows/);
+  assert.match(
+    boundary,
+    /No environment resources, state migration, IAM grants, or deployment workflows/,
+  );
   assert.match(boundary, /exact GitHub OIDC repository\/branch\/environment claims/);
   assert.match(boundary, /Verify a supported distribution-to-origin trust control/);
   assert.match(boundary, /dated, complete estimate including Demo overlap/);
