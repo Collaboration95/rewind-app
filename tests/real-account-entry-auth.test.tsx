@@ -54,6 +54,16 @@ function activeSessionResponse() {
   });
 }
 
+function webAccountFetch(logout: () => Response | Promise<Response>) {
+  return jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/auth/session')) return activeSessionResponse();
+    if (url.endsWith('/real/groups/current')) return jsonResponse(200, { group: null });
+    if (url.endsWith('/auth/logout')) return logout();
+    throw new Error(`Unexpected real-account request: ${url}`);
+  }) as typeof fetch;
+}
+
 function useWebPlatform() {
   Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web', writable: true });
   Object.defineProperty(globalThis, 'window', {
@@ -121,6 +131,7 @@ describe('real account entry flow', () => {
       .mockResolvedValueOnce(
         jsonResponse(200, { account: apiAccount, token: nativeToken, expiresAt }),
       )
+      .mockResolvedValueOnce(jsonResponse(200, { group: null }))
       .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
     const result = await render(<App runtimeClient={runtimeClient} />);
 
@@ -128,9 +139,9 @@ describe('real account entry flow', () => {
     await fireEvent.changeText(result.getByLabelText('Username'), 'pilot.user');
     await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
     await fireEvent.press(result.getByTestId('real-account-submit'));
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
 
-    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
     expect(secureStoreMock.token).toBe(nativeToken);
     const demoStorage = JSON.stringify(await AsyncStorage.getAllKeys());
     expect(demoStorage).not.toContain('real-account');
@@ -146,7 +157,9 @@ describe('real account entry flow', () => {
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
     await waitFor(() => expect(secureStoreMock.token).toBeNull());
     expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
-    const [logoutUrl, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[1] as [
+    const [groupUrl] = (globalThis.fetch as jest.Mock).mock.calls[1] as [string, RequestInit];
+    expect(groupUrl).toBe('https://rewind.example/real/groups/current');
+    const [logoutUrl, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[2] as [
       string,
       RequestInit,
     ];
@@ -200,22 +213,22 @@ describe('real account entry flow', () => {
     'keeps the web account active after logout %s without server confirmation',
     async (_, logoutResult) => {
       useWebPlatform();
-      globalThis.fetch = jest
-        .fn()
-        .mockResolvedValueOnce(activeSessionResponse())
-        .mockImplementationOnce(logoutResult) as typeof fetch;
+      globalThis.fetch = webAccountFetch(logoutResult);
       const result = await render(<App runtimeClient={runtimeClient} />);
 
-      expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+      expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
       await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
       expect(await result.findByRole('button', { name: 'Retry sign out' })).toBeTruthy();
-      expect(result.getByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+      expect(result.getByRole('header', { name: 'Choose a group' })).toBeTruthy();
       expect(result.getByTestId('logout-unconfirmed')).toHaveTextContent(
         /You are still signed in on this browser/,
       );
       expect(result.queryByRole('header', { name: 'Welcome to Rewind' })).toBeNull();
-      expect((globalThis.fetch as jest.Mock).mock.calls[1][1].credentials).toBe('include');
+      const logoutCall = (globalThis.fetch as jest.Mock).mock.calls.find(([url]) =>
+        String(url).endsWith('/auth/logout'),
+      );
+      expect(logoutCall?.[1].credentials).toBe('include');
     },
   );
 
@@ -226,13 +239,10 @@ describe('real account entry flow', () => {
     'retains the native credential and reports incomplete sign-out after %s',
     async (_, logoutResult) => {
       secureStoreMock.token = nativeToken;
-      globalThis.fetch = jest
-        .fn()
-        .mockResolvedValueOnce(activeSessionResponse())
-        .mockImplementationOnce(logoutResult) as typeof fetch;
+      globalThis.fetch = webAccountFetch(logoutResult);
       const result = await render(<App runtimeClient={runtimeClient} />);
 
-      expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+      expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
       await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
       expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
@@ -466,13 +476,10 @@ describe('real account entry flow', () => {
 
   it('returns web to entry only after the server confirms cookie revocation', async () => {
     useWebPlatform();
-    globalThis.fetch = jest
-      .fn()
-      .mockResolvedValueOnce(activeSessionResponse())
-      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    globalThis.fetch = webAccountFetch(() => jsonResponse(200, { signedOut: true }));
     const result = await render(<App runtimeClient={runtimeClient} />);
 
-    expect(await result.findByRole('header', { name: 'You’re signed in' })).toBeTruthy();
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
     expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
     expect(result.queryByTestId('logout-unconfirmed')).toBeNull();
