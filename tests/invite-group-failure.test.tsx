@@ -108,7 +108,7 @@ function runtimeFixture(
 
 async function activeApp(runtimeClient: RuntimeClient) {
   const result = await render(<App runtimeClient={runtimeClient} />);
-  await result.findByText(new RegExp(`^${currentGroup.name} · `));
+  await result.findByRole('header', { name: new RegExp(`^${currentGroup.name} · `) });
   return result;
 }
 
@@ -159,7 +159,7 @@ describe('group creation and invite failure paths', () => {
     expect(result.getByText('Creating…')).toBeTruthy();
 
     request.resolve({ ok: true, group: createdGroup });
-    await result.findByText(new RegExp(`^${createdGroup.name} · `));
+    await result.findByRole('header', { name: new RegExp(`^${createdGroup.name} · `) });
     expect(createGroup).toHaveBeenCalledTimes(1);
     expect(result.getByText('Amber · synthetic member')).toBeTruthy();
   });
@@ -188,7 +188,7 @@ describe('group creation and invite failure paths', () => {
     );
 
     await fireEvent.press(result.getByTestId('create-group-submit'));
-    await result.findByText(new RegExp(`^${createdGroup.name} · `));
+    await result.findByRole('header', { name: new RegExp(`^${createdGroup.name} · `) });
     expect(createGroup).toHaveBeenCalledTimes(2);
     expect(createGroup.mock.calls[0]).toEqual([
       session.id,

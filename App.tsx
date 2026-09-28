@@ -54,14 +54,14 @@ import { SettingsScreen, type SettingsDebugScenario } from './src/settings/Setti
 import { AppHeader, MainNavigation, type RouteKey } from './src/shell/AppChrome';
 import { kitStyles } from './src/ui/kit';
 
-type ShellRoute = RouteKey | 'create-group' | 'video' | 'join' | 'entry-preview';
+type ShellRoute = RouteKey | 'create-group' | 'video' | 'join' | 'entry';
 
 const DEBUG_SCREEN_FOR_ROUTE: Record<ShellRoute, DebugScreen> = {
   archive: 'archive',
   camera: 'camera',
   chat: 'chat',
   'create-group': 'group',
-  'entry-preview': 'entry',
+  entry: 'entry',
   home: 'home',
   join: 'join',
   settings: 'settings',
@@ -72,7 +72,7 @@ const ROUTE_FOR_DEBUG_SCREEN: Record<DebugScreen, ShellRoute> = {
   archive: 'archive',
   camera: 'camera',
   chat: 'chat',
-  entry: 'entry-preview',
+  entry: 'entry',
   group: 'create-group',
   home: 'home',
   join: 'join',
@@ -388,7 +388,7 @@ function ActiveAppShell({
 
   const debugScreen = DEBUG_SCREEN_FOR_ROUTE[activeRoute];
   const navRoute: RouteKey =
-    activeRoute === 'create-group' || activeRoute === 'join' || activeRoute === 'entry-preview'
+    activeRoute === 'create-group' || activeRoute === 'join' || activeRoute === 'entry'
       ? 'settings'
       : activeRoute === 'video'
         ? 'camera'
@@ -450,7 +450,7 @@ function ActiveAppShell({
                 onCancel={() => setActiveRoute('settings')}
                 runtimeClient={runtimeClient}
               />
-            ) : activeRoute === 'entry-preview' ? (
+            ) : activeRoute === 'entry' ? (
               <ScrollView contentContainerStyle={kitStyles.content} style={kitStyles.scroll}>
                 <DemoAccessChooser
                   debugScenario={entryDebug.scenario}

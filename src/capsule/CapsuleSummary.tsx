@@ -455,7 +455,7 @@ function ReadyCapsuleSummary({
             </View>
           ))}
         </View>
-        <Text style={styles.groupText}>
+        <Text accessibilityRole="header" style={styles.groupText}>
           {t(memberCount === 1 ? '{group} · {count} member' : '{group} · {count} members', {
             count: memberCount,
             group: groupName,
