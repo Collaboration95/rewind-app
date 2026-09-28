@@ -1,5 +1,19 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
+test('fresh web install presents welcome before any Demo member is active', async ({ page }) => {
+  await page.goto('/');
+
+  await expect(page.getByRole('heading', { name: 'Welcome to Rewind' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Weekend People' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Try Demo' }).click();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
+  await page.getByRole('button', { name: 'Enter Demo as Amber, sample member' }).click();
+  await expect(page.getByRole('heading', { name: 'Weekend People' })).toBeVisible();
+});
+
 test('deep application routes return the exported web shell', async ({ page }) => {
   const response = await page.goto('/groups/demo-group/capsule');
 
