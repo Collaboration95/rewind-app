@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rewind Home 方向</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..700;1,6..96,400..700&family=Caveat:wght@400..600&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..600,0..100;1,9..144,300..600,0..100&family=Geist:wght@200..600&family=Instrument+Serif:ital@0;1&family=Inter+Tight:wght@300..700&family=Inter:wght@400..600&family=JetBrains+Mono:wght@300..500&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles-r2.css" />
+    <link rel="stylesheet" href="styles-r3.css" />
+    <script defer src="review-config.js"></script>
+    <script defer src="app.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="side" aria-label="设计控制">
+        <div class="brand">
+          <span class="logo" aria-hidden="true">r.</span>
+          <div><strong>REWIND</strong><span>Home 方向探索</span></div>
+        </div>
+
+        <div class="grp">
+          <p class="lbl">方案</p>
+          <div class="pick" id="pick" role="group" aria-label="选择方案"></div>
+        </div>
+
+        <div class="grp">
+          <p class="lbl">投票</p>
+          <p class="hint" id="vote-status">正在读取投票 Issue…</p>
+          <p class="hint">
+            每人最多给 3 个方案 👍，给最喜欢的 1 个 ❤️；具体意见请在 Issue 里用 “Quote reply”
+            回复对应方案的评论。
+          </p>
+        </div>
+
+        <div class="grp">
+          <label class="lbl" for="members">小组人数 <output id="membersv">5 人</output></label>
+          <input type="range" id="members" min="2" max="10" value="5" />
+          <div class="btns">
+            <button type="button" class="ghost" id="shuffle">随机贡献</button>
+            <button type="button" class="ghost" id="restore">恢复示例</button>
+          </div>
+          <p class="hint">片段总数、座位、成员行都随人数与贡献实时计算；演示默认 5 人。</p>
+        </div>
+
+        <div class="grp">
+          <p class="lbl">还没贡献的成员</p>
+          <div class="seg" role="group" aria-label="还没贡献的成员如何显示">
+            <button type="button" data-anon="1" aria-pressed="true">不点名</button
+            ><button type="button" data-anon="0" aria-pressed="false">显示名字</button>
+          </div>
+          <p class="hint">默认不点名（借鉴 Reveal），显示为空位 / 空邮票；可切换对比。</p>
+        </div>
+
+        <div class="grp">
+          <label class="lbl" for="state">状态 · 模拟</label>
+          <select id="state">
+            <option>正常收集中</option>
+            <option disabled>加载中 · 稍后</option>
+            <option disabled>尚无周期 · 稍后</option>
+            <option disabled>加载失败 · 稍后</option>
+            <option disabled>影片处理中 · 稍后</option>
+            <option disabled>影片已发布 · 稍后</option>
+            <option disabled>额度用尽 · 稍后</option>
+          </select>
+          <p class="hint">其他状态稍后接入，先确认视觉方向。</p>
+        </div>
+
+        <div class="grp">
+          <label class="lbl" for="zoom">缩放 <output id="zoomv">72%</output></label>
+          <input type="range" id="zoom" min="50" max="100" value="72" />
+        </div>
+
+        <div class="grp">
+          <p class="lbl">统一导航</p>
+          <ul class="rules">
+            <li>首页 / 聊天 / 档案 三栏</li>
+            <li>快门独立：拍摄是动作，不是页面</li>
+            <li>快门外圈 5 段 = 本周额度</li>
+            <li>设置并入左上角头像</li>
+          </ul>
+        </div>
+
+        <div class="grp">
+          <p class="lbl">可以试试</p>
+          <ul class="rules">
+            <li>点头像：打开个人与设置</li>
+            <li>点底栏：切换选中态</li>
+            <li>按快门：按压反馈</li>
+          </ul>
+        </div>
+
+        <p class="foot">设计模拟 · 画面均为抽象纹理，不含任何未揭晓媒体</p>
+      </aside>
+
+      <main>
+        <header class="main-h">
+          <p class="k">HOME · 第三轮 · 评审稿</p>
+          <h1>11 个方向，一起评审</h1>
+          <p>
+            同一信息架构（题目 → 行动 → 状态）与同一导航（3 栏 +
+            快门，设置并入头像）。本轮根据竞品调研统一调整了全部方案，并新增 09–11。
+          </p>
+          <ul class="learn" aria-label="本轮依据竞品的统一调整">
+            <li>
+              <b>不点名</b><span>还没贡献的人显示为空位，文案“Waiting on one more”</span
+              ><em>Reveal</em>
+            </li>
+            <li>
+              <b>成员专属色</b><span>头像、额度环、座位、邮票、音轨都用每人自己的颜色</span
+              ><em>Reveal</em>
+            </li>
+            <li>
+              <b>连你也看不到</b><span>封存提示统一为 “not even you can peek”</span
+              ><em>Capsule · Reveal</em>
+            </li>
+            <li>
+              <b>一起揭晓</b><span>倒计时强调“所有人同时打开”，把揭晓当首映</span
+              ><em>Capsl · Reveal</em>
+            </li>
+            <li>
+              <b>数量 + 人数 + 倒计时</b><span>揭晓前只给这三类信息，不给任何内容</span
+              ><em>Capsl · Capsule</em>
+            </li>
+          </ul>
+        </header>
+        <div class="gallery" id="gallery"></div>
+        <section class="review" aria-labelledby="review-title">
+          <h2 id="review-title">评审对照表</h2>
+          <p class="hint">
+            “核心隐喻 / 实现成本 / 主要风险”为作者草拟（AI 辅助），不是评审意见；评审以 Issue
+            里每个人自己的投票和评论为准。
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">方案</th>
+                  <th scope="col">核心隐喻</th>
+                  <th scope="col">Expo 实现成本（估计）</th>
+                  <th scope="col">主要风险</th>
+                  <th scope="col">Issue 投票</th>
+                </tr>
+              </thead>
+              <tbody id="review-body"></tbody>
+            </table>
+          </div>
+          <div class="asks">
+            <h3>建议评审时回答</h3>
+            <ol>
+              <li>哪 2–3 个方向最像“和亲密朋友的私密时间胶囊”？</li>
+              <li>还没贡献的人：不点名还是显示名字？</li>
+              <li>是否展示每个人贡献了几条（02、07、11 会展示）？</li>
+              <li>揭晓要不要做成“同一时刻一起看”的首映？（影响 04、07、10）</li>
+            </ol>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
