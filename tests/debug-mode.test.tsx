@@ -54,7 +54,7 @@ describe('Settings debug mode', () => {
     await forceState(result, 'home', 'quota');
     expect(await result.findByTestId('home-allowance-used')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Add a moment', disabled: true })).toBeTruthy();
-    expect(result.getByText('0 contributions')).toBeTruthy();
+    expect(result.getByLabelText(/0 contributions and 0 seconds remaining/)).toBeTruthy();
 
     await forceState(result, 'home', 'released');
     expect(await result.findByTestId('home-reveal-released')).toBeTruthy();
@@ -65,7 +65,7 @@ describe('Settings debug mode', () => {
 
     await forceState(result, 'home', 'live');
     expect(await result.findByTestId('capsule-ready')).toBeTruthy();
-    expect(result.getByText('5 contributions')).toBeTruthy();
+    expect(result.getByLabelText(/5 contributions and 30 seconds remaining/)).toBeTruthy();
   });
 
   it('shows a sealed fixture contribution on Video and Home, then moves through study states', async () => {

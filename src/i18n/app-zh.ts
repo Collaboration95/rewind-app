@@ -14,7 +14,8 @@ export const APP_ZH: Record<string, string> = {
   'YOUR ROLL': '你的胶卷',
   '{count} of {max} left': '剩 {count}/{max} 次',
   '{seconds}s of {max}s': '{seconds}/{max} 秒',
-  'Photo or clip · sealed until the reveal': '照片或短片 · 揭晓前一直封存',
+  'Photos stay on this device. Submitted clips stay sealed until reveal.':
+    '照片保存在本设备上。已提交的短片在揭晓前保持封存。',
   SEALED: '封存中',
   DEVELOPING: '冲洗中',
   DELAYED: '延迟',

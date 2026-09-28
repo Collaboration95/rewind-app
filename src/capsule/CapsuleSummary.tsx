@@ -322,7 +322,13 @@ function ReadyCapsuleSummary({
                   key={size}
                   style={[
                     styles.glowRing,
-                    { borderRadius: size / 2, height: size, marginLeft: -size / 2, marginTop: -size / 2, width: size },
+                    {
+                      borderRadius: size / 2,
+                      height: size,
+                      marginLeft: -size / 2,
+                      marginTop: -size / 2,
+                      width: size,
+                    },
                   ]}
                 />
               ))}
@@ -426,7 +432,9 @@ function ReadyCapsuleSummary({
         {actionDisabled ? (
           <Quiet testID="home-allowance-used">{t('Allowance used. Chat remains available.')}</Quiet>
         ) : collecting ? (
-          <Text style={styles.actionHint}>{t('Photo or clip · sealed until the reveal')}</Text>
+          <Text style={styles.actionHint}>
+            {t('Photos stay on this device. Submitted clips stay sealed until reveal.')}
+          </Text>
         ) : null}
       </View>
 
@@ -595,7 +603,12 @@ const styles = StyleSheet.create({
 
   roll: { gap: 12 },
   rollHead: { alignItems: 'baseline', flexDirection: 'row', justifyContent: 'space-between' },
-  rollLabel: { color: COLORS.edge, fontFamily: FONTS.sansSemiBold, fontSize: 10.5, letterSpacing: 1.8 },
+  rollLabel: {
+    color: COLORS.edge,
+    fontFamily: FONTS.sansSemiBold,
+    fontSize: 10.5,
+    letterSpacing: 1.8,
+  },
   rollFigures: { color: COLORS.muted, fontFamily: FONTS.sans, fontSize: 12.5 },
   rollFigureStrong: { color: COLORS.ink, fontFamily: FONTS.sansMedium },
   strip: {
@@ -620,7 +633,12 @@ const styles = StyleSheet.create({
     padding: 5,
   },
   frameUsed: { backgroundColor: COLORS.accent },
-  frameNumber: { color: '#4E473F', fontFamily: FONTS.sansSemiBold, fontSize: 8.5, letterSpacing: 0.6 },
+  frameNumber: {
+    color: '#4E473F',
+    fontFamily: FONTS.sansSemiBold,
+    fontSize: 8.5,
+    letterSpacing: 0.6,
+  },
   frameNumberUsed: { color: COLORS.accentInk },
 
   actionBlock: { gap: 12 },

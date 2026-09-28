@@ -48,7 +48,9 @@ export function HomeScreen({
       testID="home-scroll"
     >
       <View style={styles.meta}>
-        <Text style={[styles.date, language === 'zh' && styles.dateZh]}>{language === 'zh' ? today : today.toUpperCase()}</Text>
+        <Text style={[styles.date, language === 'zh' && styles.dateZh]}>
+          {language === 'zh' ? today : today.toUpperCase()}
+        </Text>
         {session ? (
           <View
             accessible

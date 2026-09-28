@@ -34,12 +34,34 @@ upload require a physical device and the optional local runtime. Set
 `EXPO_PUBLIC_DEMO_ACCESS=entry` to start at the Demo member chooser instead of
 the default synthetic Amber session.
 
-## UI concept A, language, and debug mode
+## Atelier Home concept, language, and debug mode
 
-This branch implements the "Today's moment" (action-first) concept from the
-`rewind-ui-ab` design study for issue #189. Home puts the current prompt, the
-member's remaining allowance, the collection time and the next action in one
-working card; contribution and reveal status follow below it.
+This branch presents the Atelier Home concept for #253 and #189, built on the
+"Today's moment" concept. Home uses an illustrated sealed print for the prompt
+and reveal status, a film strip for the remaining allowance, and one main action.
+The countdown is collection time remaining, not a guaranteed film release time.
+Photos are saved locally; submitted clips stay sealed until release in Archive.
+The print is decorative and never displays unrevealed group media.
+
+The Atelier presentation starts at commit `5c2a840`; its inherited Today baseline
+is `cab41d8`. The full branch also includes earlier camera permission, clip
+preview/library selection, and server orientation handling changes. This is a
+draft UI alternative, not approval to merge or deploy.
+
+For peer review, run the labelled Demo using the commands above, then:
+
+1. On Home, identify the prompt, collection time, remaining count and seconds.
+2. Choose **Add a moment**, use the labelled fixture, and accept a still locally.
+   Confirm that the save message says no clip was uploaded and allowance is unchanged.
+3. Enable Debug mode as described below. In **DEBUG**, select Home and preview
+   processing, delayed, released, and allowance-used states. Follow the main action
+   into Archive. A forced released state is a presentation preview, not proof of
+   a real compiled film or a successful upload.
+4. Return each screen to **Live data**. For actual clip submission and film playback,
+   use the optional local runtime and its capture-to-release flow.
+5. Record the commit, environment, tasks tried, hesitation or defects, and preferred
+   design elements in #253. Both peer contributors must try the branch and post
+   their own observations; a recording alone does not complete #189's cross-use.
 
 Settings → **Display & developer** has two local preferences, both stored
 only on the device:

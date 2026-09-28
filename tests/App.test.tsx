@@ -392,12 +392,16 @@ describe('Rewind Home start screen', () => {
 
       const archiveAction = released ? 'Watch in Archive' : 'Open Archive';
       await result.findByTestId(`home-reveal-${educationState}`);
-      expect(result.getByRole('button', { name: archiveAction })).toBeTruthy();
       expect(
         result.getByRole('button', { name: released ? 'Watch group film' : 'Check Archive' }),
       ).toBeTruthy();
       expect(result.queryByTestId('archive-video-player')).toBeNull();
       expect(result.queryAllByRole('image')).toHaveLength(0);
+
+      await fireEvent.press(result.getByTestId('home-primary-action'));
+      await result.findByTestId(archiveTestId);
+      if (released) expect(result.getByTestId('archive-video-player')).toBeTruthy();
+      else expect(result.queryByTestId('archive-video-player')).toBeNull();
 
       await fireEvent.press(result.getByRole('tab', { name: 'Camera' }));
       await result.findByTestId(`capture-reveal-${educationState}`);
@@ -508,8 +512,10 @@ describe('Rewind Home start screen', () => {
     const result = await render(<App />);
 
     expect(result.getByTestId('cycle-countdown')).toBeTruthy();
-    expect(result.getByText('5 contributions')).toBeTruthy();
-    expect(result.getByText('30 seconds remaining')).toBeTruthy();
+    expect(result.getByLabelText(/5 contributions and 30 seconds remaining/)).toBeTruthy();
+    expect(
+      result.getByText('Photos stay on this device. Submitted clips stay sealed until reveal.'),
+    ).toBeTruthy();
     expect(result.getByLabelText(/Media stays hidden until the film is released/)).toBeTruthy();
     expect(result.queryAllByRole('image')).toHaveLength(0);
     expect(result.queryByRole('button', { name: /share/i })).toBeNull();
@@ -528,8 +534,8 @@ describe('Rewind Home start screen', () => {
       />,
     );
 
-    await result.findByText('7 contributions');
-    expect(result.getByText('34 seconds remaining')).toBeTruthy();
+    await result.findByLabelText(/7 contributions and 34 seconds remaining/);
+    expect(result.getByText('7 of 9 left')).toBeTruthy();
     expect(result.getByLabelText(/2 of 9 contributions used/)).toBeTruthy();
   });
 

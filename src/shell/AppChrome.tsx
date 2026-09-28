@@ -249,7 +249,12 @@ const styles = StyleSheet.create({
     width: 16,
   },
   gearHub: { borderRadius: 3, borderWidth: 1.5, height: 6, width: 6 },
-  tabLabel: { color: COLORS.faint, fontFamily: FONTS.sansMedium, fontSize: 10.5, letterSpacing: 0.2 },
+  tabLabel: {
+    color: COLORS.faint,
+    fontFamily: FONTS.sansMedium,
+    fontSize: 10.5,
+    letterSpacing: 0.2,
+  },
   selectedTabLabel: { color: COLORS.ink, fontFamily: FONTS.sansSemiBold },
   tabBar: { borderRadius: 2, height: 4, width: 4 },
   tabBarSelected: { backgroundColor: COLORS.accent },
