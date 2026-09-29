@@ -40,7 +40,15 @@ export function createRealAccountVideoRuntimeClient(
 ): Pick<
   RuntimeClient,
   'baseUrl' | 'stageClipSource' | 'uploadClip' | 'cancelClipUpload' | 'processClipJob'
-> {
+> & {
+  stagePhotoSource(
+    sessionId: string,
+    groupId: string,
+    idempotencyKey: string,
+    base64: string,
+    mimeType: 'image/jpeg' | 'image/png',
+  ): Promise<{ uri: string; byteLength: number }>;
+} {
   const groupQuery = (groupId: string) => `groupId=${encodeURIComponent(groupId)}`;
   return {
     baseUrl: '',
@@ -52,6 +60,20 @@ export function createRealAccountVideoRuntimeClient(
           {
             method: 'POST',
             headers: { 'Content-Type': 'video/mp4' },
+            body: bytes as unknown as BodyInit,
+          },
+        ),
+      );
+      return body.source;
+    },
+    async stagePhotoSource(_sessionId, groupId, idempotencyKey, base64, mimeType) {
+      const bytes = decodeBase64(base64);
+      const body = await readResponse<{ source: { uri: string; byteLength: number } }>(
+        await authenticatedRequest(
+          `/contributions/upload/source?${groupQuery(groupId)}&idempotencyKey=${encodeURIComponent(idempotencyKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': mimeType },
             body: bytes as unknown as BodyInit,
           },
         ),

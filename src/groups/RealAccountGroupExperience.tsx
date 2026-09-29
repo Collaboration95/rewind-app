@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import {
   Platform,
@@ -16,6 +16,39 @@ import { BUILT_IN_PROMPTS, GROUP_NAME_MAX_LENGTH, PROMPT_MAX_LENGTH } from '../d
 import { createInviteLink, type InviteLinkPayload } from '../invites/deep-links';
 import { COLORS } from '../theme';
 import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
+import { CameraCaptureScreen } from '../capture/CameraCaptureScreen';
+import {
+  ContributionStatusProvider,
+  type ContributionStatus,
+} from '../capture/contribution-status';
+import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
+import type { PendingClipUpload } from '../domain/video';
+
+type PhotoJobStatus = PendingClipUpload['job']['status'];
+type PhotoStatusDetails = Pick<
+  ContributionStatus,
+  'contributionId' | 'createdAt' | 'durationSeconds' | 'jobId'
+>;
+
+export function photoContributionStatusForJob(
+  status: PhotoJobStatus,
+  details: PhotoStatusDetails,
+): ContributionStatus {
+  if (status === 'ready') return { state: 'sealed', ...details, retryable: false };
+  if (status === 'failed' || status === 'cancelled') {
+    return {
+      state: 'failed',
+      ...details,
+      message: 'The photo could not be processed. Retry this contribution.',
+      retryable: true,
+    };
+  }
+  return {
+    state: status === 'pending' ? 'queued' : 'processing',
+    ...details,
+    retryable: false,
+  };
+}
 
 interface RealInvite extends InviteLinkPayload {
   id: string;
@@ -71,6 +104,11 @@ export function RealAccountGroupExperience({
   inviteWebOrigin?: string;
 }) {
   const auth = useRealAccount();
+  const mediaClient = useMemo(
+    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest),
+    [auth.authenticatedRequest],
+  );
+  const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
   const [group, setGroup] = useState<RealGroup | null>(null);
   const [memberGroups, setMemberGroups] = useState<RealGroup[]>([]);
   const [groupMembers, setGroupMembers] = useState<RealGroupMembers | null>(null);
@@ -166,13 +204,98 @@ export function RealAccountGroupExperience({
         <Text style={styles.label} testID="real-group-capture-context">
           ACTIVE GROUP · {group.group.name}
         </Text>
-        <VideoCaptureScreen
-          onBack={() => setScreen('home')}
-          realAccount={{
+        <View style={styles.captureModes}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setScreen('home')}
+            style={styles.modeButton}
+          >
+            <Text style={styles.modeButtonText}>Back to group</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setCaptureMode('photo')}
+            style={styles.modeButton}
+          >
+            <Text style={styles.modeButtonText}>Photo</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setCaptureMode('video')}
+            style={styles.modeButton}
+          >
+            <Text style={styles.modeButtonText}>Video</Text>
+          </Pressable>
+        </View>
+        <ContributionStatusProvider
+          scope={{
+            sessionId: 'real-account-session',
             groupId: group.group.id,
-            authenticatedRequest: auth.authenticatedRequest,
+            memberId: auth.session?.account.id ?? '',
           }}
-        />
+        >
+          {captureMode === 'photo' ? (
+            <CameraCaptureScreen
+              onRecordClip={() => setCaptureMode('video')}
+              onSubmitPhoto={async (metadata, base64, onProgress) => {
+                if (!mediaClient.uploadClip || !mediaClient.processClipJob) {
+                  throw new Error('Photo contribution upload is unavailable. Retry shortly.');
+                }
+                const { id: idempotencyKey, mimeType } = metadata;
+                const staged = await mediaClient.stagePhotoSource(
+                  'real-account-session',
+                  group.group.id,
+                  idempotencyKey,
+                  base64,
+                  mimeType,
+                );
+                const upload = await mediaClient.uploadClip(
+                  'real-account-session',
+                  group.group.id,
+                  {
+                    mediaType: 'photo',
+                    idempotencyKey,
+                    sourceUri: staged.uri,
+                    mimeType,
+                    byteLength: staged.byteLength,
+                    durationSeconds: 3,
+                    width: metadata.width,
+                    height: metadata.height,
+                    hasAudio: true,
+                    mode: 'soft-focus',
+                    trimStartSeconds: 0,
+                    trimEndSeconds: 3,
+                  },
+                );
+                const sharedStatus = {
+                  contributionId: upload.contribution.id,
+                  jobId: upload.job.id,
+                  durationSeconds: 3,
+                  createdAt: upload.contribution.createdAt,
+                  retryable: true,
+                };
+                onProgress({ state: 'queued', ...sharedStatus });
+                onProgress({ state: 'processing', ...sharedStatus });
+                const job = await mediaClient.processClipJob(
+                  'real-account-session',
+                  group.group.id,
+                  upload.job.id,
+                );
+                const finalStatus = photoContributionStatusForJob(job.status, sharedStatus);
+                onProgress(finalStatus);
+                return finalStatus;
+              }}
+            />
+          ) : (
+            <VideoCaptureScreen
+              onBack={() => setCaptureMode('photo')}
+              realAccount={{
+                groupId: group.group.id,
+                authenticatedRequest: auth.authenticatedRequest,
+              }}
+            />
+          )}
+        </ContributionStatusProvider>
       </View>
     );
   }
@@ -746,7 +869,10 @@ function Action({
 
 const styles = StyleSheet.create({
   content: { gap: 18, padding: 22 },
-  captureContainer: { flex: 1 },
+  captureContainer: { flex: 1, gap: 12 },
+  captureModes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  modeButton: { borderColor: COLORS.edge, borderRadius: 8, borderWidth: 1, padding: 10 },
+  modeButtonText: { color: COLORS.ink, fontWeight: '700' },
   brand: { gap: 4 },
   wordmark: { color: COLORS.ink, fontSize: 15, fontWeight: '800', letterSpacing: 2 },
   label: { color: COLORS.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginTop: 8 },

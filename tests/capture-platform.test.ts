@@ -360,12 +360,12 @@ describe('Expo camera adapter contract', () => {
     });
     await expect(platform.requestPermissions()).resolves.toEqual({
       camera: 'granted',
-      microphone: 'undetermined',
+      microphone: 'denied',
     });
     expect(getCameraPermissionsAsync).toHaveBeenCalledTimes(1);
-    expect(getMicrophonePermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(getMicrophonePermissionsAsync).toHaveBeenCalledTimes(2);
     expect(requestCameraPermissionsAsync).toHaveBeenCalledTimes(1);
-    expect(requestMicrophonePermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(requestMicrophonePermissionsAsync).not.toHaveBeenCalled();
   });
 
   it('preserves native permission errors for callers to handle', async () => {

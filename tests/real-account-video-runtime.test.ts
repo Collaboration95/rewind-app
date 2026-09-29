@@ -74,4 +74,44 @@ describe('real account video runtime', () => {
     expect(authenticatedRequest.mock.calls[0]?.[1]?.method).toBe('POST');
     expect(authenticatedRequest.mock.calls[1]?.[1]?.body).toBe(JSON.stringify(input));
   });
+
+  it('checks the authenticated group-scoped job status after an already-processing response', async () => {
+    jest.useFakeTimers();
+    try {
+      const processing = { id: pending.job.id, status: 'processing' };
+      const authenticatedRequest = jest
+        .fn()
+        .mockResolvedValueOnce(response({ error: 'media_processing' }, 409))
+        .mockResolvedValue(response({ clip: processing }));
+      const client = createRealAccountVideoRuntimeClient(authenticatedRequest);
+      const result = client.processClipJob?.('ignored-session', 'real/group-1', pending.job.id);
+      await jest.runAllTimersAsync();
+      await expect(result).resolves.toMatchObject({ status: 'processing' });
+
+      const paths = authenticatedRequest.mock.calls.map(([path]) => String(path));
+      expect(paths[0]).toBe('/contributions/jobs/clip-job-1/process?groupId=real%2Fgroup-1');
+      expect(
+        paths.slice(1).every((path) => path === '/clips/clip-job-1?groupId=real%2Fgroup-1'),
+      ).toBe(true);
+      expect(paths.length).toBeGreaterThan(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('reports a retryable processing failure only after the scoped status confirms failure', async () => {
+    const authenticatedRequest = jest
+      .fn()
+      .mockResolvedValueOnce(response({ error: 'media_processing' }, 409))
+      .mockResolvedValueOnce(response({ clip: { id: pending.job.id, status: 'failed' } }));
+    const client = createRealAccountVideoRuntimeClient(authenticatedRequest);
+
+    await expect(
+      client.processClipJob?.('ignored-session', 'real/group-1', pending.job.id),
+    ).rejects.toMatchObject({ code: 'media_processing_failed', status: 503 });
+    expect(authenticatedRequest).toHaveBeenCalledTimes(2);
+    expect(authenticatedRequest.mock.calls[1]?.[0]).toBe(
+      '/clips/clip-job-1?groupId=real%2Fgroup-1',
+    );
+  });
 });

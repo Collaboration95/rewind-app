@@ -561,7 +561,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
       const microphoneAvailable = Device.isDevice;
 
       return {
-        camera: cameraAvailable && microphoneAvailable ? 'supported' : 'unsupported',
+        camera: cameraAvailable ? 'supported' : 'unsupported',
         microphone: microphoneAvailable ? 'supported' : 'unsupported',
       };
     } catch {
@@ -581,10 +581,8 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async requestPermissions(): Promise<PermissionSnapshot> {
-    const [camera, microphone] = await Promise.all([
-      Camera.requestCameraPermissionsAsync(),
-      Camera.requestMicrophonePermissionsAsync(),
-    ]);
+    const camera = await Camera.requestCameraPermissionsAsync();
+    const microphone = await Camera.getMicrophonePermissionsAsync();
     return {
       camera: permissionState(camera),
       microphone: permissionState(microphone),

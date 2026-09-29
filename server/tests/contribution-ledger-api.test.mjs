@@ -124,7 +124,7 @@ function insertFixtures(database) {
 test('migration 016 records readiness and repairs a malformed index after receipt', async () => {
   await withRuntime(async ({ database }) => {
     assert.equal(schemaReadiness(database).ready, true);
-    assert.equal(schemaReadiness(database).expectedMigrationVersion, 22);
+    assert.equal(schemaReadiness(database).expectedMigrationVersion, 23);
     assert.equal(
       database.prepare('SELECT version FROM schema_migrations WHERE version = 17').get()?.version,
       17,
