@@ -215,9 +215,9 @@ export function RealAccountGroupExperience({
 
   if (screen === 'capture' && group) {
     return (
-      <View style={styles.captureContainer}>
+      <ScrollView contentContainerStyle={styles.captureContent} style={styles.captureContainer}>
         <Text style={styles.label} testID="real-group-capture-context">
-          ACTIVE GROUP · {group.group.name}
+          Group · {group.group.name}
         </Text>
         <View style={styles.captureModes}>
           <Pressable
@@ -325,7 +325,7 @@ export function RealAccountGroupExperience({
             />
           )}
         </ContributionStatusProvider>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -334,7 +334,7 @@ export function RealAccountGroupExperience({
       <View style={styles.captureContainer}>
         <View style={styles.brand}>
           <Text style={styles.wordmark}>REWIND</Text>
-          <Text style={styles.label}>REAL ACCOUNT · {displayName}</Text>
+          <Text style={styles.label}>{displayName}</Text>
         </View>
         <RealAccountChatScreen
           key={`${group.group.id}:${group.memberId ?? ''}`}
@@ -517,7 +517,7 @@ export function RealAccountGroupExperience({
     <ScrollView contentContainerStyle={styles.content} testID="real-group-experience">
       <View style={styles.brand}>
         <Text style={styles.wordmark}>REWIND</Text>
-        <Text style={styles.label}>REAL ACCOUNT · {displayName}</Text>
+        <Text style={styles.label}>{displayName}</Text>
       </View>
       {inviteIntent ? (
         <View style={styles.inviteIntent} testID="real-invite-intent">
@@ -707,13 +707,13 @@ export function RealAccountGroupExperience({
                   : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
             </Text>
           ) : null}
-          <Text style={styles.label}>PRIVATE GROUP · {group.group.role.toUpperCase()}</Text>
           <Text style={styles.label} testID="real-group-active-context">
-            ACTIVE GROUP · {group.group.name}
+            Your group
           </Text>
           <Text accessibilityRole="header" style={styles.title} testID="real-group-name-heading">
             {group.group.name}
           </Text>
+          <Text style={styles.body}>{group.group.role === 'owner' ? 'Owner' : 'Member'}</Text>
           <Text style={styles.body}>Up to {group.group.maxMembers} members</Text>
           <View style={styles.invitationPanel} testID="real-group-members">
             <Text accessibilityRole="header" style={styles.label}>
@@ -919,7 +919,8 @@ function Action({
 
 const styles = StyleSheet.create({
   content: { gap: 18, padding: 22 },
-  captureContainer: { flex: 1, gap: 12 },
+  captureContainer: { flex: 1 },
+  captureContent: { flexGrow: 1, gap: 12, padding: 22 },
   captureModes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   modeButton: { borderColor: COLORS.edge, borderRadius: 8, borderWidth: 1, padding: 10 },
   modeButtonText: { color: COLORS.ink, fontWeight: '700' },
