@@ -15,6 +15,8 @@ export interface RuntimeConfig {
   databasePath: string;
   ffmpegBin: string;
   allowOrigin: string;
+  originAuthSecret: string | null;
+  allowInsecureLocalAuth: boolean;
   httpIdleTimeoutMs: number;
   uploadTimeoutMs: number;
   maxConcurrentIntakes: number;
@@ -97,6 +99,12 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
     databasePath,
     ffmpegBin,
     allowOrigin: env.REWIND_ALLOW_ORIGIN?.trim() || '*',
+    // Only configure when a verified edge overwrites this header on every
+    // origin request; it is not a substitute for enforcing viewer HTTPS.
+    originAuthSecret: env.REWIND_ORIGIN_AUTH_SECRET?.trim() || null,
+    allowInsecureLocalAuth: ['1', 'true'].includes(
+      env.REWIND_ALLOW_INSECURE_LOCAL_AUTH?.trim().toLowerCase() ?? '',
+    ),
     httpIdleTimeoutMs: parsePositiveInteger(
       env.REWIND_HTTP_IDLE_TIMEOUT_MS,
       'REWIND_HTTP_IDLE_TIMEOUT_MS',

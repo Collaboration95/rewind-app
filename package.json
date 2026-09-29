@@ -20,6 +20,7 @@
     "server:worker": "npm run server:build && node server/dist/cli.js worker",
     "server:migrate": "npm run server:build && node server/dist/cli.js migrate",
     "server:reset": "npm run server:build && node server/dist/cli.js reset",
+    "server:accounts": "npm run server:build && node server/dist/cli.js accounts",
     "server:diagnostics": "npm run server:build && node server/dist/cli.js diagnostics",
     "test:backup-manifest": "bash tests/deploy/backup-manifest.test.sh",
     "test:wake-recovery-selection": "bash tests/deploy/wake-recovery-selection.test.sh",
