@@ -541,7 +541,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
         : auth.notice === 'sign-in-failed'
           ? 'Sign-in failed. Check your username and password, or try again later.'
           : auth.notice === 'offline'
-            ? 'Sign-in needs a secure HTTPS connection. Check your connection and try again.'
+            ? 'The sign-in service could not be reached. Check your connection and try again.'
             : auth.notice === 'revocation-unconfirmed'
               ? Platform.OS === 'web'
                 ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
@@ -692,7 +692,8 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             auth.notice !== 'sign-out-recovery-pending' &&
             auth.notice !== 'sign-out-marker-unavailable' &&
             auth.notice !== 'sign-out-marker-cleanup-failed' &&
-            auth.notice !== 'local-credential-removal-failed' ? (
+            auth.notice !== 'local-credential-removal-failed' &&
+            !(auth.notice === 'offline' && !auth.secureTransportAvailable) ? (
               <Text accessibilityRole="alert" style={styles.errorText}>
                 {authMessage}
               </Text>
@@ -779,6 +780,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
           auth.notice === 'sign-out-marker-cleanup-failed' ||
           auth.notice === 'sign-out-marker-unavailable' ||
           auth.notice === 'local-credential-removal-failed') &&
+        !(auth.notice === 'offline' && !auth.secureTransportAvailable) &&
         !(auth.notice === 'offline' && error) ? (
           <View
             style={styles.errorPanel}
