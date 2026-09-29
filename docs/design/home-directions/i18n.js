@@ -245,8 +245,8 @@ Object.assign(I18N, {
   'rv.sent': ['Sent ✓', '已发送 ✓'],
   'rv.prog': ['Reviewed {done} / {total}', '已评价 {done} / {total}'],
   'rv.st.empty': [
-    'Nothing yet. Tap 👍, ❤️ or 💬 under any phone.',
-    '还没写。在任意一台手机下面点 👍、❤️ 或 💬。',
+    'Nothing yet. Under any phone, tap 👍 or ❤️, or add a pro or con.',
+    '还没写。在任意一台手机下面点 👍、❤️，或写一条优缺点。',
   ],
   'rv.st.unsent': ['Saved in this browser, not sent yet.', '已存在这个浏览器里，还没发送。'],
   'rv.st.copied': [
