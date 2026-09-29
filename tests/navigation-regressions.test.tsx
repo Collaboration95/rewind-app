@@ -138,7 +138,7 @@ describe('application navigation regressions', () => {
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-recording');
 
-    await fireEvent.press(result.getByRole('button', { name: 'Back to stills' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Back' }));
     expect(fixture.cancelRecording).toHaveBeenCalledTimes(1);
     expect(await result.findByTestId('camera-screen')).toBeTruthy();
     expect(result.queryByTestId('video-capture-screen')).toBeNull();

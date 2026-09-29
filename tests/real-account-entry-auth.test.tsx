@@ -1,0 +1,694 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Clipboard from 'expo-clipboard';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
+import { Platform, Share } from 'react-native';
+
+import App from '../App';
+import { signOutMarkerStore } from '../src/auth/sign-out-marker';
+
+const secureStoreMock = { token: null as string | null, failClear: false };
+
+jest.mock('expo-secure-store', () => ({
+  getItemAsync: async () => secureStoreMock.token,
+  setItemAsync: async (_key: string, value: string) => {
+    secureStoreMock.token = value;
+  },
+  deleteItemAsync: async () => {
+    if (secureStoreMock.failClear) throw new Error('SecureStore unavailable');
+    secureStoreMock.token = null;
+  },
+}));
+jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
+jest.mock('@react-native-async-storage/async-storage', () =>
+  jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
+jest.mock('react-native-safe-area-context', () => mockSafeAreaContext);
+
+const apiAccount = {
+  id: 'account-1',
+  username: 'pilot.user',
+  displayName: 'Pilot User',
+  createdAt: '2026-09-28T00:00:00.000Z',
+  updatedAt: '2026-09-28T00:00:00.000Z',
+};
+const nativeToken = 't'.repeat(43);
+const signOutMarkerKey = 'rewind.real-account.sign-out-pending';
+const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+const runtimeClient = { baseUrl: 'https://rewind.example' } as never;
+const originalFetch = globalThis.fetch;
+const originalPlatformOS = Platform.OS;
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+const originalInviteWebOrigin = process.env.EXPO_PUBLIC_INVITE_WEB_ORIGIN;
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function activeSessionResponse() {
+  return jsonResponse(200, {
+    account: apiAccount,
+    idleExpiresAt: expiresAt,
+    absoluteExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+}
+
+function emptyContributionLedger(cycleId: string) {
+  return jsonResponse(200, {
+    cycleId,
+    memberId: apiAccount.id,
+    allowance: {
+      maxCount: 5,
+      maxSeconds: 30,
+      countUsed: 0,
+      secondsUsed: 0,
+      deletionsUsed: 0,
+      deletionAvailability: 'available',
+    },
+    entries: [],
+    pagination: { limit: 50, hasMore: false, nextCursor: null },
+  });
+}
+
+function webAccountFetch(logout: () => Response | Promise<Response>) {
+  return jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/auth/session')) return activeSessionResponse();
+    if (url.endsWith('/real/groups/current')) return jsonResponse(200, { group: null });
+    if (url.endsWith('/real/groups')) return jsonResponse(200, { groups: [] });
+    if (url.endsWith('/auth/logout')) return logout();
+    throw new Error(`Unexpected real-account request: ${url}`);
+  }) as typeof fetch;
+}
+
+function nativeAccountFetch(logout: () => Response | Promise<Response>) {
+  return jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith('/auth/session')) return activeSessionResponse();
+    if (url.endsWith('/real/groups/current')) return jsonResponse(200, { group: null });
+    if (url.endsWith('/real/groups')) return jsonResponse(200, { groups: [] });
+    if (url.endsWith('/auth/logout')) return logout();
+    throw new Error(`Unexpected real-account request: ${url}`);
+  }) as typeof fetch;
+}
+
+function logoutRequestCount() {
+  return (globalThis.fetch as jest.Mock).mock.calls.filter(([url]) =>
+    String(url).endsWith('/auth/logout'),
+  ).length;
+}
+
+function useWebPlatform() {
+  Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web', writable: true });
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      location: { href: 'https://rewind.example/', origin: 'https://rewind.example' },
+    },
+    writable: true,
+  });
+}
+
+function restorePlatform() {
+  Object.defineProperty(Platform, 'OS', {
+    configurable: true,
+    value: originalPlatformOS,
+    writable: true,
+  });
+  if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+  else delete (globalThis as { window?: unknown }).window;
+}
+
+beforeAll(() => {
+  process.env.REWIND_TEST_DEMO_FIXTURE = 'false';
+});
+
+beforeEach(async () => {
+  secureStoreMock.token = null;
+  secureStoreMock.failClear = false;
+  await AsyncStorage.clear();
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+  globalThis.fetch = originalFetch;
+  if (originalInviteWebOrigin === undefined) delete process.env.EXPO_PUBLIC_INVITE_WEB_ORIGIN;
+  else process.env.EXPO_PUBLIC_INVITE_WEB_ORIGIN = originalInviteWebOrigin;
+  restorePlatform();
+});
+
+describe('real account entry flow', () => {
+  it('shows generic wrong-password feedback and keeps Demo identity untouched', async () => {
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(401, { error: 'sign_in_failed', message: 'Sign-in failed.' }),
+      ) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'pilot.user');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'wrong password');
+    await fireEvent.press(result.getByTestId('real-account-submit'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled());
+
+    expect(
+      await result.findByText(
+        'Sign-in failed. Check your username and password, or try again later.',
+      ),
+    ).toBeTruthy();
+    expect(secureStoreMock.token).toBeNull();
+    expect(result.queryByTestId('demo-entry-demo-1')).toBeNull();
+  });
+
+  it('routes a signed-out HTTPS invite through sign-in and retains its intent afterward', async () => {
+    useWebPlatform();
+    const groupId = 'real-group-invite-123';
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const windowValue = (globalThis as { window: { location: { href: string; origin: string } } })
+      .window;
+    windowValue.location.href = `https://rewind.example/invite?groupId=${groupId}&code=AB12CD34&expiresAt=${encodeURIComponent(expiresAt)}`;
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(jsonResponse(200, { account: apiAccount, expiresAt }))
+      .mockResolvedValueOnce(jsonResponse(200, { group: null }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [] })) as typeof fetch;
+
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    expect(await result.findByTestId('invite-sign-in-intent')).toHaveTextContent(
+      new RegExp(groupId),
+    );
+    expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
+    await fireEvent.changeText(result.getByLabelText('Username'), 'pilot.user');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
+    await fireEvent.press(result.getByTestId('real-account-submit'));
+
+    expect(await result.findByTestId('real-invite-intent')).toHaveTextContent(new RegExp(groupId));
+    expect(result.getByTestId('real-invite-intent')).toHaveTextContent(/Invitation retained/);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+    result.unmount();
+  });
+
+  it('lets a real owner create, copy, and share a group-specific HTTPS invite', async () => {
+    useWebPlatform();
+    const groupId = 'real-group-owner-456';
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const realGroup = {
+      group: { id: groupId, name: 'Saturday table', role: 'owner', maxMembers: 4 },
+      cycle: {
+        id: 'cycle-1',
+        prompt: 'A moment?',
+        startsAt: new Date().toISOString(),
+        endsAt: expiresAt,
+        quota: { maxCount: 5, maxSeconds: 30 },
+        contributionUsage: { countUsed: 0, secondsUsed: 0 },
+        contributionCount: 0,
+      },
+    };
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(activeSessionResponse())
+      .mockResolvedValueOnce(jsonResponse(200, { group: realGroup }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [realGroup] }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          group: { id: groupId, name: 'Saturday table' },
+          members: [
+            { displayName: 'Pilot User', role: 'owner', joinedAt: new Date().toISOString() },
+          ],
+          pendingInviteCount: 0,
+        }),
+      )
+      .mockResolvedValueOnce(emptyContributionLedger('cycle-1'))
+      .mockResolvedValueOnce(
+        jsonResponse(201, {
+          invite: {
+            id: 'real-invite-1',
+            code: 'AB12CD34',
+            groupId,
+            status: 'active',
+            createdAt: new Date().toISOString(),
+            expiresAt,
+          },
+        }),
+      ) as typeof fetch;
+    const copy = jest.spyOn(Clipboard, 'setStringAsync').mockResolvedValue(true);
+    const share = jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' });
+
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    await result.findByRole('header', { name: 'Saturday table' });
+    await fireEvent.press(result.getByTestId('real-group-create-invite'));
+    const inviteLink = `https://rewind.example/invite?groupId=${groupId}&code=AB12CD34&expiresAt=${encodeURIComponent(expiresAt)}`;
+    await waitFor(() =>
+      expect(result.getByTestId('real-group-invite-link').props.children).toBe(inviteLink),
+    );
+    expect(result.getByTestId('real-group-invite-expiry')).toHaveTextContent(/Active/);
+    expect(inviteLink).not.toMatch(/session|token|password|authorization/i);
+
+    await fireEvent.press(result.getByTestId('real-group-copy-invite'));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(inviteLink));
+    await fireEvent.press(result.getByTestId('real-group-share-invite'));
+    await waitFor(() =>
+      expect(share).toHaveBeenCalledWith(expect.objectContaining({ url: inviteLink })),
+    );
+    expect(globalThis.fetch).toHaveBeenCalledTimes(6);
+    result.unmount();
+  });
+
+  it('uses the configured public web origin for native invite links, not the API origin', async () => {
+    Object.defineProperty(Platform, 'OS', {
+      configurable: true,
+      value: 'ios',
+      writable: true,
+    });
+    process.env.EXPO_PUBLIC_INVITE_WEB_ORIGIN = 'https://share.rewind.example/';
+    const groupId = 'real-group-native-789';
+    const inviteExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const realGroup = {
+      group: { id: groupId, name: 'Sunday walk', role: 'owner', maxMembers: 5 },
+      cycle: {
+        id: 'cycle-native-1',
+        prompt: 'What stayed with you?',
+        startsAt: new Date().toISOString(),
+        endsAt: inviteExpiry,
+        quota: { maxCount: 5, maxSeconds: 30 },
+        contributionUsage: { countUsed: 0, secondsUsed: 0 },
+        contributionCount: 0,
+      },
+    };
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, { account: apiAccount, token: nativeToken, expiresAt }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { group: realGroup }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [realGroup] }))
+      .mockResolvedValueOnce(
+        jsonResponse(200, {
+          group: { id: groupId, name: 'Sunday walk' },
+          members: [
+            { displayName: 'Pilot User', role: 'owner', joinedAt: new Date().toISOString() },
+          ],
+          pendingInviteCount: 0,
+        }),
+      )
+      .mockResolvedValueOnce(emptyContributionLedger('cycle-native-1'))
+      .mockResolvedValueOnce(
+        jsonResponse(201, {
+          invite: {
+            id: 'real-invite-native-1',
+            code: 'EF56GH78',
+            groupId,
+            status: 'active',
+            createdAt: new Date().toISOString(),
+            expiresAt: inviteExpiry,
+          },
+        }),
+      ) as typeof fetch;
+
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'pilot.user');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
+    await fireEvent.press(result.getByTestId('real-account-submit'));
+    await result.findByRole('header', { name: 'Sunday walk' });
+    await fireEvent.press(result.getByTestId('real-group-create-invite'));
+
+    const inviteLink = `https://share.rewind.example/invite?groupId=${groupId}&code=EF56GH78&expiresAt=${encodeURIComponent(inviteExpiry)}`;
+    await waitFor(() =>
+      expect(result.getByTestId('real-group-invite-link').props.children).toBe(inviteLink),
+    );
+    expect(new URL(inviteLink).origin).toBe('https://share.rewind.example');
+    expect(inviteLink).not.toContain('https://rewind.example');
+    expect(inviteLink).not.toMatch(/session|token|password|authorization/i);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(6);
+    result.unmount();
+  });
+
+  it('stores the native token securely, restores the account, and clears it on sign-out', async () => {
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(200, { account: apiAccount, token: nativeToken, expiresAt }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { group: null }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [] }))
+      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'pilot.user');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
+    await fireEvent.press(result.getByTestId('real-account-submit'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(3));
+
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+    expect(secureStoreMock.token).toBe(nativeToken);
+    const demoStorage = JSON.stringify(await AsyncStorage.getAllKeys());
+    expect(demoStorage).not.toContain('real-account');
+    expect(demoStorage).not.toContain(nativeToken);
+    const [loginUrl, loginInit] = (globalThis.fetch as jest.Mock).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(loginUrl).toBe('https://rewind.example/auth/login');
+    expect(loginInit.body).toContain('"clientType":"native"');
+    expect(loginInit.credentials).toBe('omit');
+
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    const [groupUrl] = (globalThis.fetch as jest.Mock).mock.calls[1] as [string, RequestInit];
+    expect(groupUrl).toBe('https://rewind.example/real/groups/current');
+    const [logoutUrl, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[3] as [
+      string,
+      RequestInit,
+    ];
+    expect(logoutUrl).toBe('https://rewind.example/auth/logout');
+    expect(new Headers(logoutInit.headers).get('Authorization')).toBe(`Bearer ${nativeToken}`);
+  });
+
+  it('keeps entry visible offline, offers retry, then explains expiry or administrator reset', async () => {
+    secureStoreMock.token = nativeToken;
+    globalThis.fetch = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByTestId('real-account-offline-status')).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Retry session check' }));
+    expect(
+      await result.findByText(/session expired or an administrator reset your password/i),
+    ).toBeTruthy();
+    expect(secureStoreMock.token).toBeNull();
+    expect(result.queryByTestId('main-navigation')).toBeNull();
+  });
+
+  it('reports and retries SecureStore cleanup failure after a restored session is expired', async () => {
+    secureStoreMock.token = nativeToken;
+    secureStoreMock.failClear = true;
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+      /server says this session has ended.*could not confirm deletion/i,
+    );
+    expect(secureStoreMock.token).toBe(nativeToken);
+    expect(await result.findByRole('button', { name: 'Retry local cleanup' })).toBeTruthy();
+
+    secureStoreMock.failClear = false;
+    await fireEvent.press(result.getByRole('button', { name: 'Retry local cleanup' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
+  });
+
+  it.each([
+    ['non-2xx response', () => jsonResponse(503, { signedOut: false })],
+    ['network failure', () => Promise.reject(new Error('offline'))],
+  ])(
+    'keeps the web account active after logout %s without server confirmation',
+    async (_, logoutResult) => {
+      useWebPlatform();
+      globalThis.fetch = webAccountFetch(logoutResult);
+      const result = await render(<App runtimeClient={runtimeClient} />);
+
+      expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+      await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+      expect(await result.findByRole('button', { name: 'Retry sign out' })).toBeTruthy();
+      expect(result.getByRole('header', { name: 'Choose a group' })).toBeTruthy();
+      expect(result.getByTestId('logout-unconfirmed')).toHaveTextContent(
+        /You are still signed in on this browser/,
+      );
+      expect(result.queryByRole('header', { name: 'Welcome to Rewind' })).toBeNull();
+      const logoutCall = (globalThis.fetch as jest.Mock).mock.calls.find(([url]) =>
+        String(url).endsWith('/auth/logout'),
+      );
+      expect(logoutCall?.[1].credentials).toBe('include');
+    },
+  );
+
+  it.each([
+    ['non-2xx response', () => jsonResponse(503, { signedOut: false })],
+    ['network failure', () => Promise.reject(new Error('offline'))],
+  ])(
+    'retains the native credential and reports incomplete sign-out after %s',
+    async (_, logoutResult) => {
+      secureStoreMock.token = nativeToken;
+      globalThis.fetch = webAccountFetch(logoutResult);
+      const result = await render(<App runtimeClient={runtimeClient} />);
+
+      expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+      await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+      expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+      expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+        /server did not confirm revocation.*credential may remain and you may still be signed in/i,
+      );
+      expect(secureStoreMock.token).toBe(nativeToken);
+      const [, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[3] as [string, RequestInit];
+      expect(new Headers(logoutInit.headers).get('Authorization')).toBe(`Bearer ${nativeToken}`);
+    },
+  );
+
+  it('closes protected UI but offers retry when remote revocation succeeds and SecureStore deletion fails', async () => {
+    secureStoreMock.token = nativeToken;
+    secureStoreMock.failClear = true;
+    globalThis.fetch = nativeAccountFetch(() => jsonResponse(200, { signedOut: true }));
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+      /server says this session has ended.*could not confirm deletion.*credential may remain/i,
+    );
+    expect(result.getByTestId('real-account-session-status')).not.toHaveTextContent(
+      /signed out on this device/i,
+    );
+    expect(secureStoreMock.token).toBe(nativeToken);
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBe('remote-revoked');
+    expect(await result.findByRole('button', { name: 'Retry local cleanup' })).toBeTruthy();
+
+    secureStoreMock.failClear = false;
+    await fireEvent.press(result.getByRole('button', { name: 'Retry local cleanup' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
+    expect(
+      (globalThis.fetch as jest.Mock).mock.calls.filter(([url]) =>
+        String(url).endsWith('/auth/logout'),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('retains the native credential under a pending marker after remote failure and retries across restart', async () => {
+    secureStoreMock.token = nativeToken;
+    const logoutResults: (() => Response | Promise<Response>)[] = [
+      () => Promise.reject(new Error('offline')),
+      () => jsonResponse(200, { signedOut: true }),
+    ];
+    globalThis.fetch = nativeAccountFetch(() => {
+      const result = logoutResults.shift();
+      if (!result) throw new Error('Unexpected extra logout request');
+      return result();
+    });
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.queryByRole('header', { name: 'Choose a group' })).toBeNull();
+    expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+      /could not confirm deletion.*server did not confirm revocation.*credential may remain/i,
+    );
+    expect(await result.findByRole('button', { name: 'Retry sign out' })).toBeTruthy();
+    expect(secureStoreMock.token).toBe(nativeToken);
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBe('pending');
+
+    await result.unmount();
+    secureStoreMock.failClear = false;
+    const restarted = await render(<App runtimeClient={runtimeClient} />);
+    expect(await restarted.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(restarted.queryByRole('header', { name: 'You’re signed in' })).toBeNull();
+    expect(restarted.getByTestId('real-account-session-status')).toHaveTextContent(
+      /sign-out recovery is pending.*will not restore.*revocation may still be unconfirmed/i,
+    );
+    expect(logoutRequestCount()).toBe(1);
+
+    await fireEvent.press(restarted.getByRole('button', { name: 'Sign in' }));
+    await fireEvent.changeText(restarted.getByLabelText('Username'), 'pilot.user');
+    await fireEvent.changeText(restarted.getByLabelText('Password'), 'new password');
+    await fireEvent.press(restarted.getByTestId('real-account-submit'));
+    expect(logoutRequestCount()).toBe(1);
+    expect(restarted.getByTestId('real-account-session-status')).toHaveTextContent(
+      /sign-out recovery is pending/i,
+    );
+
+    await act(async () => {
+      await fireEvent.press(restarted.getByRole('button', { name: 'Retry sign out' }));
+    });
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
+    expect(logoutRequestCount()).toBe(2);
+    expect(restarted.queryByTestId('real-account-session-status')).toBeNull();
+    expect(await restarted.findByRole('header', { name: 'Sign in' })).toBeTruthy();
+    await waitFor(() => expect(restarted.queryByTestId('real-account-session-status')).toBeNull());
+    expect(logoutRequestCount()).toBe(2);
+  });
+
+  it('retains the token if confirmed revocation cannot be recorded, then retries after restart', async () => {
+    secureStoreMock.token = nativeToken;
+    const logoutResults = [
+      () => jsonResponse(200, { signedOut: true }),
+      () => jsonResponse(200, { signedOut: true }),
+    ];
+    globalThis.fetch = nativeAccountFetch(() => {
+      const result = logoutResults.shift();
+      if (!result) throw new Error('Unexpected extra logout request');
+      return result();
+    });
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+
+    const originalWrite = signOutMarkerStore.write;
+    const markerWrite = jest
+      .spyOn(signOutMarkerStore, 'write')
+      .mockImplementation((marker) =>
+        marker === 'remote-revoked'
+          ? Promise.reject(new Error('AsyncStorage unavailable'))
+          : originalWrite(marker),
+      );
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+      /sign-out recovery is pending.*will not restore/i,
+    );
+    expect(secureStoreMock.token).toBe(nativeToken);
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBe('pending');
+    expect(logoutRequestCount()).toBe(1);
+    markerWrite.mockRestore();
+
+    await result.unmount();
+    const restarted = await render(<App runtimeClient={runtimeClient} />);
+    expect(await restarted.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(restarted.queryByRole('header', { name: 'You’re signed in' })).toBeNull();
+    expect(logoutRequestCount()).toBe(1);
+
+    await fireEvent.press(restarted.getByRole('button', { name: 'Retry sign out' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
+    expect(logoutRequestCount()).toBe(2);
+    const logoutCall = (globalThis.fetch as jest.Mock).mock.calls.filter(([url]) =>
+      String(url).endsWith('/auth/logout'),
+    )[1] as [string, RequestInit];
+    expect(new Headers(logoutCall[1].headers).get('Authorization')).toBe(`Bearer ${nativeToken}`);
+  });
+
+  it('aborts native sign-out when the recovery marker cannot be saved and keeps the account active', async () => {
+    secureStoreMock.token = nativeToken;
+    globalThis.fetch = nativeAccountFetch(() => jsonResponse(200, { signedOut: true }));
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+
+    const markerWrite = jest
+      .spyOn(signOutMarkerStore, 'write')
+      .mockRejectedValueOnce(new Error('AsyncStorage unavailable'));
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+    expect(result.getByTestId('logout-unconfirmed')).toHaveTextContent(
+      /sign-out did not start.*could not save its recovery state.*still signed in/i,
+    );
+    expect(logoutRequestCount()).toBe(0);
+    expect(secureStoreMock.token).toBe(nativeToken);
+    expect(markerWrite).toHaveBeenCalledWith('pending');
+
+    markerWrite.mockRestore();
+    await fireEvent.press(result.getByRole('button', { name: 'Retry sign out' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(logoutRequestCount()).toBe(1);
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
+  });
+
+  it('keeps recovery durable when marker deletion fails after confirmed logout', async () => {
+    secureStoreMock.token = nativeToken;
+    globalThis.fetch = nativeAccountFetch(() => jsonResponse(200, { signedOut: true }));
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+
+    const markerClear = jest
+      .spyOn(signOutMarkerStore, 'clear')
+      .mockRejectedValueOnce(new Error('AsyncStorage unavailable'));
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(secureStoreMock.token).toBeNull();
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBe('remote-revoked');
+    expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+      /server confirmed sign-out.*deleted its saved sign-in.*could not clear the recovery marker/i,
+    );
+    markerClear.mockRestore();
+
+    await result.unmount();
+    const restarted = await render(<App runtimeClient={runtimeClient} />);
+    expect(await restarted.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(restarted.getByTestId('real-account-session-status')).toHaveTextContent(
+      /server says this session has ended.*could not confirm deletion/i,
+    );
+    expect(logoutRequestCount()).toBe(1);
+
+    await fireEvent.press(restarted.getByRole('button', { name: 'Retry local cleanup' }));
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
+    await waitFor(() => expect(restarted.queryByTestId('real-account-session-status')).toBeNull());
+    expect(secureStoreMock.token).toBeNull();
+    expect(logoutRequestCount()).toBe(1);
+  });
+
+  it('fails closed when the startup marker cannot be read and allows recovery retry', async () => {
+    secureStoreMock.token = nativeToken;
+    const markerRead = jest
+      .spyOn(signOutMarkerStore, 'read')
+      .mockRejectedValueOnce(new Error('AsyncStorage unavailable'));
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
+      /could not verify sign-out recovery state.*saved sign-in was not restored/i,
+    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(secureStoreMock.token).toBe(nativeToken);
+
+    markerRead.mockRestore();
+    await fireEvent.press(result.getByRole('button', { name: 'Retry sign out' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(await AsyncStorage.getItem(signOutMarkerKey)).toBeNull();
+  });
+
+  it('returns web to entry only after the server confirms cookie revocation', async () => {
+    useWebPlatform();
+    globalThis.fetch = webAccountFetch(() => jsonResponse(200, { signedOut: true }));
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(result.queryByTestId('logout-unconfirmed')).toBeNull();
+  });
+});

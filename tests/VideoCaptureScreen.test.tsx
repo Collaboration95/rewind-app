@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AppState, Pressable, Text, View } from 'react-native';
+import { AppState, Platform, Pressable, Text, View } from 'react-native';
 import { ClipUploadSession } from '../src/capture/clip-uploader';
 import { ContributionStatusProvider } from '../src/capture/contribution-status';
 
@@ -213,10 +213,18 @@ describe('VideoCaptureScreen', () => {
 
   it('offers a labelled video file fallback without exposing unsupported recording', async () => {
     const platform = fileFallbackPlatform();
+    platform.getVideoCaptureUnavailableReason = jest
+      .fn()
+      .mockReturnValue('This browser cannot record the MP4 format required for upload.');
     const result = await render(<VideoCaptureScreen platform={platform} />);
 
     await result.findByTestId('video-unsupported');
     expect(result.queryByTestId('video-record')).toBeNull();
+    expect(
+      result.getByText(
+        /This browser cannot record the MP4 format required for upload\. Live recording is not supported here\. Choose a portrait MP4 no longer than 15 seconds/,
+      ),
+    ).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
     await result.findByTestId('video-review');
     expect(platform.pickVideoFile).toHaveBeenCalledTimes(1);
@@ -360,7 +368,7 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByTestId('video-record'));
     await waitFor(() => expect(result.getByTestId('video-recording')).toBeTruthy());
 
-    await fireEvent.press(result.getByRole('button', { name: 'Back to stills' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Back' }));
     expect(platform.cancelRecording).toHaveBeenCalledTimes(1);
     expect(result.queryByTestId('video-capture-screen')).toBeNull();
 
@@ -387,6 +395,42 @@ describe('VideoCaptureScreen', () => {
     await result.findByTestId('video-live-preview');
     expect(result.getByTestId('video-record')).toBeEnabled();
     expect(platform.requestPermissions).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes browser video permission after grant without calling Expo permission APIs', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    const undecided = {
+      camera: 'undetermined' as const,
+      microphone: 'undetermined' as const,
+    };
+    const granted = { camera: 'granted' as const, microphone: 'granted' as const };
+    const platform = videoPlatform(undecided);
+    const getVideoPermissions = jest
+      .fn()
+      .mockResolvedValueOnce(undecided)
+      .mockResolvedValue(granted);
+    platform.getVideoPermissions = getVideoPermissions;
+    platform.requestVideoPermissions = jest.fn().mockResolvedValue(granted);
+    platform.getPermissions = jest.fn(() => {
+      throw new Error('Expo permission APIs must not be used by the browser video flow.');
+    });
+    platform.requestPermissions = jest.fn(() => {
+      throw new Error('Expo permission APIs must not be used by the browser video flow.');
+    });
+
+    try {
+      const result = await render(<VideoCaptureScreen platform={platform} />);
+      await result.findByTestId('video-permission');
+      await fireEvent.press(result.getByRole('button', { name: 'Allow camera and microphone' }));
+
+      await result.findByTestId('video-record');
+      expect(platform.requestVideoPermissions).toHaveBeenCalledTimes(1);
+      expect(getVideoPermissions).toHaveBeenCalledTimes(2);
+      expect(platform.getPermissions).not.toHaveBeenCalled();
+      expect(platform.requestPermissions).not.toHaveBeenCalled();
+    } finally {
+      platformOs.restore();
+    }
   });
 
   it('offers an authenticated fresh synthetic clip only in the local Demo fixture', async () => {
@@ -615,6 +659,74 @@ describe('VideoCaptureScreen', () => {
     expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
     expect(result.queryByText('Upload queued as one pending contribution.')).toBeNull();
   });
+  it('shows quota rejection as a non-retryable contribution limit', async () => {
+    const uploadClip = jest
+      .fn()
+      .mockRejectedValue(
+        new LocalRuntimeError('Contribution limit reached.', 409, 'upload_quota_exceeded'),
+      );
+    const result = await renderReviewWithRuntime(
+      videoPlatformForReview(),
+      runtimeClient({ uploadClip }),
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await result.findByTestId('camera-contribution-status-failed');
+    expect(result.getByText('Contribution limit reached')).toBeTruthy();
+    expect(result.getByText('No allowance remains.')).toBeTruthy();
+    expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
+    expect(result.queryByText(/Retake it/)).toBeNull();
+  });
+
+  it('uploads and processes through the authenticated real selected-group route', async () => {
+    const realGroupUpload: PendingClipUpload = {
+      ...upload,
+      contribution: { ...upload.contribution, groupId: 'real-group-1', memberId: 'real-profile-1' },
+      job: { ...upload.job, groupId: 'real-group-1', status: 'pending' },
+    };
+    const authenticatedRequest = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ source: { uri: 'staged://real-source', byteLength: 2048 } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 201,
+        json: async () => ({ upload: realGroupUpload }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ job: { ...realGroupUpload.job, status: 'ready' } }),
+      });
+    const readSource = jest
+      .spyOn(capturePlatform, 'readManagedRecordedClipBase64')
+      .mockResolvedValue('AQID');
+    try {
+      const result = await render(
+        <VideoCaptureScreen
+          platform={videoPlatformForReview()}
+          realAccount={{ groupId: 'real-group-1', authenticatedRequest }}
+        />,
+      );
+      await result.findByTestId('video-live-preview');
+      await fireEvent.press(result.getByTestId('video-record'));
+      await result.findByTestId('video-review');
+      await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+      await result.findByTestId('camera-contribution-status-sealed');
+
+      const paths = authenticatedRequest.mock.calls.map(([path]) => String(path));
+      expect(paths[0]).toContain('/contributions/upload/source?groupId=real-group-1&');
+      expect(paths[1]).toBe('/contributions/upload?groupId=real-group-1');
+      expect(paths[2]).toMatch(/\/contributions\/jobs\/job-ui\/process\?groupId=real-group-1/);
+      expect(paths.join('&')).not.toMatch(/sessionId|token|authorization/i);
+    } finally {
+      readSource.mockRestore();
+    }
+  });
+
   it('surfaces an upload failure and retries the same review successfully', async () => {
     const uploadClip = jest
       .fn()
