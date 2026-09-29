@@ -51,7 +51,9 @@ function tidy(r) {
           .trim()
           .slice(0, 500),
       }))
-      .filter((n) => n.t);
+      .filter((n) => n.t)
+      // 优点在前、缺点在后（和发出去的评论顺序一致），同类保持先后
+      .sort((x, y) => '+-?'.indexOf(x.k) - '+-?'.indexOf(y.k));
     if (list.length) notes[id] = list;
   }
   return {
@@ -121,6 +123,14 @@ function progress() {
 /* ---------- 读 Issue ---------- */
 const pub = { state: 'none', by: {}, free: [] }; // state：none | loading | live | fail | sample
 
+// 写进评论时转义：GitHub 按原文显示，不会把一条优点渲染成标题、引用或图片；解析时再还原
+const mdEsc = (t) =>
+  t
+    .replace(/[\\<]/g, '\\$&')
+    .replace(/^([#>+*-])/, '\\$1')
+    .replace(/^(\d+)([.)])/, '$1\\$2');
+const mdUnesc = (t) => t.replace(/\\([\\<#>+*.)-])/g, '$1');
+
 // 页面生成的评论：第一行是隐藏标记（投票），后面按方向分节，“优点 / 缺点”下各列一行
 const MARK = /<!--\s*rewind-review v1\b([^>]*)-->/;
 function parseReview(body) {
@@ -144,7 +154,8 @@ function parseReview(body) {
     else if (/^#{1,6}\s/.test(s)) id = '';
     else if (/^\*\*\s*(pros?|优点)\s*\*\*/i.test(s)) k = '+';
     else if (/^\*\*\s*(cons?|缺点)\s*\*\*/i.test(s)) k = '-';
-    else if (id && (x = /^[-*+]\s+(.+)/.exec(s))) (r.notes[id] ||= []).push({ k, t: x[1] });
+    else if (id && (x = /^[-*+]\s+(.+)/.exec(s)))
+      (r.notes[id] ||= []).push({ k, t: mdUnesc(x[1]) });
   }
   return { h: attr('h'), ...tidy(r) };
 }
@@ -321,7 +332,7 @@ function toMarkdown() {
       ['-', 'rv.cons'],
     ]) {
       const items = list.filter((n) => n.k === k);
-      if (items.length) lines.push('', `**${t(key)}**`, '', ...items.map((n) => '- ' + n.t));
+      if (items.length) lines.push('', `**${t(key)}**`, '', ...items.map((n) => '- ' + mdEsc(n.t)));
     }
   }
   lines.push('', `<sub>${t('rv.md.foot')}</sub>`);
@@ -365,10 +376,14 @@ function askDock() {
   }
 }
 
+let sending = false;
 async function send(skipDock) {
+  if (sending) return;
   flushTyping();
   if (!filled(mine)) return;
   if (!mine.docks.length && !skipDock) return askDock();
+  sending = true;
+  setTimeout(() => (sending = false), 1500);
   lastMd = toMarkdown();
   // 先复制（需要页面仍在前台），再打开 Issue
   const copied = await copyText(lastMd);
@@ -400,7 +415,7 @@ function openDialog(copied, opened) {
     `<div class="rv-dlg-b"><button type="button" class="ghost" data-rv-dlg-close>${t('rv.dlg.close')}</button>` +
     (n
       ? `<button type="button" class="ghost" data-rv-posted>${t('rv.dlg.posted')}</button>` +
-        `<button type="button" class="rv-send" data-rv-go-issue>${t('rv.dlg.go', { n: '#' + n })}</button>`
+        `<a class="rv-send" href="${issueUrl()}#new_comment_field" target="_blank" rel="noopener noreferrer" data-rv-copy-go>${t('rv.dlg.go', { n: '#' + n })}</a>`
       : `<button type="button" class="rv-send" data-rv-copy>${t('rv.dlg.copy')}</button>`) +
     `</div>`;
   if (!d.open) {
@@ -607,7 +622,7 @@ function addNote(input) {
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
-    '[data-rv-like],[data-rv-fav],[data-rv-go],[data-rv-try],[data-rv-del],[data-rv-edit],[data-rv-send],[data-rv-copy],[data-rv-go-issue],[data-rv-addbtn],[data-rv-skip-dock],[data-rv-pick-dock],[data-rv-posted],[data-rv-dlg-close],[data-rv-clear],[data-rv-refresh]',
+    '[data-rv-like],[data-rv-fav],[data-rv-go],[data-rv-try],[data-rv-del],[data-rv-edit],[data-rv-send],[data-rv-copy],[data-rv-copy-go],[data-rv-addbtn],[data-rv-skip-dock],[data-rv-pick-dock],[data-rv-posted],[data-rv-dlg-close],[data-rv-clear],[data-rv-refresh]',
   );
   if (!b) return;
   const d = b.dataset;
@@ -643,7 +658,9 @@ document.addEventListener('click', (e) => {
     if (d.rvEdit) document.querySelector(`[data-rv-add="${id}"][data-k="${n.k}"]`)?.focus();
     return;
   }
-  if ('rvSend' in d || 'rvGoIssue' in d) return send();
+  if ('rvSend' in d) return send();
+  // 链接照常打开 Issue，这里只负责再复制一次
+  if ('rvCopyGo' in d) return copyText(lastMd);
   if ('rvSkipDock' in d) return send(true);
   if ('rvPickDock' in d) {
     $('rv-dlg').close();
@@ -677,6 +694,13 @@ document.addEventListener('keydown', (e) => {
   addNote(e.target);
 });
 $('vote-sample')?.addEventListener('change', (e) => sample(e.target.checked));
+addEventListener('storage', (e) => {
+  if (e.key !== RV_KEY) return;
+  Object.keys(typing).forEach((k) => delete typing[k]);
+  mine = blank();
+  loadMine();
+  paintReview();
+});
 
 // 切换语言：重建文字；示例数据也换成对应语言
 function relangReview() {
