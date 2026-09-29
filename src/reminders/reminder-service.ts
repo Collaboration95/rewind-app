@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
+import type * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 export const REMINDER_PREFERENCE_KEY = '@rewind/reminder-preference';
@@ -61,17 +62,36 @@ const TEST_REMINDER_CONTENT: Notifications.NotificationContentInput = {
   sound: 'default',
 };
 
-const nativeNotifications: ReminderNotificationAdapter = {
-  getPermissionsAsync: Notifications.getPermissionsAsync,
-  requestPermissionsAsync: () =>
-    Notifications.requestPermissionsAsync({
-      ios: { allowAlert: true, allowBadge: false, allowSound: true },
-    }),
-  scheduleNotificationAsync: Notifications.scheduleNotificationAsync,
-  cancelScheduledNotificationAsync: Notifications.cancelScheduledNotificationAsync,
-  setNotificationChannelAsync: Notifications.setNotificationChannelAsync,
-  setNotificationHandler: Notifications.setNotificationHandler,
-};
+// Importing expo-notifications itself throws in Android Expo Go, before the
+// account entry screen can render. Local reminders are unavailable there.
+const androidExpoGo = Platform.OS === 'android' && Constants.expoGoConfig !== null;
+function loadNativeNotifications(): typeof import('expo-notifications') | null {
+  if (androidExpoGo) return null;
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- Android Expo Go must skip module evaluation.
+  return require('expo-notifications') as typeof import('expo-notifications');
+}
+const notificationModule = loadNativeNotifications();
+
+const nativeNotifications: ReminderNotificationAdapter = notificationModule
+  ? {
+      getPermissionsAsync: notificationModule.getPermissionsAsync,
+      requestPermissionsAsync: () =>
+        notificationModule.requestPermissionsAsync({
+          ios: { allowAlert: true, allowBadge: false, allowSound: true },
+        }),
+      scheduleNotificationAsync: notificationModule.scheduleNotificationAsync,
+      cancelScheduledNotificationAsync: notificationModule.cancelScheduledNotificationAsync,
+      setNotificationChannelAsync: notificationModule.setNotificationChannelAsync,
+      setNotificationHandler: notificationModule.setNotificationHandler,
+    }
+  : {
+      getPermissionsAsync: async () => ({ granted: false, status: 'denied' }),
+      requestPermissionsAsync: async () => ({ granted: false, status: 'denied' }),
+      scheduleNotificationAsync: async () => {
+        throw new Error('Local reminders are unavailable in Android Expo Go.');
+      },
+      cancelScheduledNotificationAsync: async () => {},
+    };
 
 const asyncStorage: ReminderStorage = {
   getItem: (key) => AsyncStorage.getItem(key),
@@ -80,7 +100,7 @@ const asyncStorage: ReminderStorage = {
 };
 
 function isSupported(platform: string) {
-  return platform !== 'web';
+  return platform !== 'web' && !(platform === 'android' && androidExpoGo);
 }
 
 function isGranted(status: { granted: boolean; status: string }) {
@@ -104,7 +124,9 @@ function unsupportedSnapshot(): ReminderSnapshot {
   return snapshot(
     'unsupported',
     false,
-    'Local notifications are unavailable in the web demo. Use a supported iOS or Android device.',
+    androidExpoGo
+      ? 'Local reminders are unavailable in Android Expo Go. Use a development build.'
+      : 'Local notifications are unavailable in the web demo. Use a supported iOS or Android device.',
   );
 }
 
@@ -184,14 +206,14 @@ export function createReminderService({
       trigger:
         platform === 'android'
           ? {
-              type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+              type: notificationModule!.SchedulableTriggerInputTypes.WEEKLY,
               weekday: 1,
               hour: 19,
               minute: 0,
               channelId: REMINDER_CHANNEL_ID,
             }
           : {
-              type: Notifications.SchedulableTriggerInputTypes.CALENDAR,
+              type: notificationModule!.SchedulableTriggerInputTypes.CALENDAR,
               weekday: 1,
               hour: 19,
               minute: 0,
@@ -204,7 +226,7 @@ export function createReminderService({
     if (platform === 'android' && notifications.setNotificationChannelAsync) {
       await notifications.setNotificationChannelAsync(REMINDER_CHANNEL_ID, {
         name: 'Weekly reminders',
-        importance: Notifications.AndroidImportance.DEFAULT,
+        importance: notificationModule!.AndroidImportance.DEFAULT,
       });
     }
   }
