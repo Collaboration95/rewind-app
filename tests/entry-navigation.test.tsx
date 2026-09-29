@@ -94,7 +94,7 @@ describe('first-run and session entry navigation', () => {
 
     await fireEvent.press(result.getByRole('button', { name: 'Back to welcome' }));
     await fireEvent.press(result.getByRole('button', { name: 'Create account' }));
-    expect(result.getByText(/accounts are created by an administrator/)).toBeTruthy();
+    expect(result.getByText(/Sign-up is coming soon/)).toBeTruthy();
     expect(await store.load()).toBeNull();
     await fireEvent.press(result.getByRole('button', { name: 'Back' }));
     await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));

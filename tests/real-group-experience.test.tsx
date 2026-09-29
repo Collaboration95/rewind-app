@@ -158,10 +158,8 @@ describe('real account group journey', () => {
     await first.findByTestId('real-group-home');
     await first.findByTestId('real-group-member-0');
     expect(first.getByTestId('real-group-empty-contributions')).toBeTruthy();
-    expect(first.getByTestId('real-group-active-context').props.children).toEqual([
-      'ACTIVE GROUP · ',
-      'Saturday table',
-    ]);
+    expect(first.getByTestId('real-group-active-context').props.children).toBe('Your group');
+    expect(first.getByTestId('real-group-name-heading').props.children).toBe('Saturday table');
     expect(first.getByTestId('real-group-member-0').props.children).toEqual([
       'Real Owner',
       ' · ',

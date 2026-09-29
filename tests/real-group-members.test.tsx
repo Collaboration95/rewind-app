@@ -127,24 +127,22 @@ it('updates group members and active context when switching selected groups', as
 
   await fireEvent.press(screen.getByTestId(`switch-real-group-${joinedGroup.group.id}`));
   expect(await screen.findByText('Cy Owner · Owner')).toBeTruthy();
-  expect(screen.getByTestId('real-group-active-context').props.children).toEqual([
-    'ACTIVE GROUP · ',
-    'Garden circle',
-  ]);
+  expect(screen.getByTestId('real-group-active-context').props.children).toBe('Your group');
+  expect(screen.getByTestId('real-group-name-heading').props.children).toBe('Garden circle');
   expect(screen.queryByText('Ada Owner · Owner')).toBeNull();
   expect(screen.getByTestId('real-group-pending-invites').props.children).toBe(
     'No pending invitations',
   );
   await fireEvent.press(screen.getByTestId('real-group-chat-action'));
   expect(screen.getByTestId('real-chat-context').props.children).toEqual([
-    'ACTIVE GROUP · ',
+    'Group · ',
     'Garden circle',
   ]);
   expect(await screen.findByTestId('real-chat-empty')).toBeTruthy();
   await fireEvent.press(screen.getByTestId('real-group-chat-back'));
   await fireEvent.press(screen.getByTestId('real-group-capture-action'));
   expect(screen.getByTestId('real-group-capture-context').props.children).toEqual([
-    'ACTIVE GROUP · ',
+    'Group · ',
     'Garden circle',
   ]);
   screen.unmount();
@@ -207,10 +205,8 @@ it('keeps loading summaries honest and ignores a delayed prior-group response af
     );
   });
   await waitFor(() => {
-    expect(screen.getByTestId('real-group-active-context').props.children).toEqual([
-      'ACTIVE GROUP · ',
-      'Garden circle',
-    ]);
+    expect(screen.getByTestId('real-group-active-context').props.children).toBe('Your group');
+    expect(screen.getByTestId('real-group-name-heading').props.children).toBe('Garden circle');
     expect(screen.getByText('Cy Owner · Owner')).toBeTruthy();
     expect(screen.queryByText('Ada Owner · Owner')).toBeNull();
   });

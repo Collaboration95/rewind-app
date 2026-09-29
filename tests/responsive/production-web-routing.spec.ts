@@ -14,14 +14,14 @@ test('fresh web install presents welcome before any Demo member is active', asyn
   await expect(page.getByRole('heading', { name: 'Weekend People' })).toBeVisible();
 });
 
-test('web entry explains administrator provisioning and blocks sign-in without HTTPS configuration', async ({
+test('web entry explains pending sign-up and blocks sign-in without HTTPS configuration', async ({
   page,
 }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
-  await expect(page.getByText(/accounts are created by an administrator/i)).toBeVisible();
-  await expect(page.getByText(/does not create an account/i)).toBeVisible();
+  await expect(page.getByText(/Sign-up is coming soon/i)).toBeVisible();
+  await expect(page.getByText(/Ask your Rewind contact/i)).toBeVisible();
 
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Sign in' }).click();
