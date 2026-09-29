@@ -123,3 +123,40 @@
 .hints .screen .tabs .tab:nth-child(2) {
   animation-delay: 1.2s;
 }
+
+/* ============ 右上角版本号 ============ */
+main {
+  position: relative;
+}
+.ver {
+  position: absolute;
+  top: 28px;
+  right: 40px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font:
+    500 11px/1 'DM Mono',
+    monospace;
+  letter-spacing: 0.06em;
+  color: var(--page-muted);
+  box-shadow: inset 0 0 0 1px var(--page-line);
+}
+/* 给版本号让出位置 */
+@media (min-width: 861px) {
+  .ask-banner {
+    margin-right: 72px;
+  }
+}
+/* 窄屏时侧栏在上面：版本号放在整页右上角（REWIND 标志那一行） */
+@media (max-width: 860px) {
+  .app {
+    position: relative;
+  }
+  main {
+    position: static;
+  }
+  .ver {
+    top: 30px;
+    right: 16px;
+  }
+}
