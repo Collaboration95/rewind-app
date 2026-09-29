@@ -43,6 +43,7 @@ const MIGRATIONS = [
   { version: 17, key: 'consistency-repair-audit-v1', fileName: '017-consistency-repair-audit.sql' },
   { version: 18, key: 'real-account-auth-v1', fileName: '018-real-account-auth.sql' },
   { version: 19, key: 'real-groups-v1', fileName: '019-real-groups.sql' },
+  { version: 20, key: 'real-group-invites-v1', fileName: '020-real-group-invites.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),

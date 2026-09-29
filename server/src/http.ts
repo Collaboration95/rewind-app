@@ -103,6 +103,7 @@ import {
   validateRealSession,
 } from './auth';
 import { createRealGroup, getCurrentRealGroup } from './groups/real';
+import { createRealGroupInvite } from './groups/invites';
 
 export interface HealthPayload {
   ok: boolean;
@@ -2903,6 +2904,50 @@ async function handleRealGroupRequest(
       return;
     }
     authJson(request, response, config, 201, created);
+    return;
+  }
+
+  const inviteMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/invites$/);
+  if (inviteMatch && request.method === 'POST') {
+    const groupId = decodePathSegment(inviteMatch[1], response, config);
+    if (groupId === null) return;
+    const body = await requestBody(request, config);
+    if (body === null) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_invite',
+        message: 'The invitation expiry is invalid.',
+      });
+      return;
+    }
+    const ttlSeconds =
+      typeof body.expiresInSeconds === 'number'
+        ? body.expiresInSeconds
+        : typeof body.expiresInSeconds === 'string'
+          ? Number(body.expiresInSeconds)
+          : undefined;
+    let result: ReturnType<typeof createRealGroupInvite>;
+    try {
+      result = createRealGroupInvite(database, groupId, session.account.id, ttlSeconds, now);
+    } catch {
+      authJson(request, response, config, 409, {
+        error: 'invite_create_failed',
+        message: 'The invitation could not be created. No partial invitation was saved.',
+      });
+      return;
+    }
+    if (!result.ok) {
+      const status =
+        result.reason === 'not_found' ? 404 : result.reason === 'forbidden' ? 403 : 400;
+      authJson(request, response, config, status, {
+        error: `invite_${result.reason}`,
+        message:
+          result.reason === 'invalid_expiry'
+            ? 'Choose an invitation expiry between five minutes and seven days.'
+            : 'You cannot create an invitation for this group.',
+      });
+      return;
+    }
+    authJson(request, response, config, 201, { invite: result.invite });
     return;
   }
 

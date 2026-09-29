@@ -1,9 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import {
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { useRealAccount } from '../auth/RealAccountProvider';
 import { BUILT_IN_PROMPTS, GROUP_NAME_MAX_LENGTH, PROMPT_MAX_LENGTH } from '../domain/groups';
+import { createInviteLink, type InviteLinkPayload } from '../invites/deep-links';
 import { COLORS } from '../theme';
+
+interface RealInvite extends InviteLinkPayload {
+  id: string;
+  groupId: string;
+  status: 'active';
+  createdAt: string;
+}
 
 interface RealGroup {
   group: { id: string; name: string; role: 'owner' | 'member'; maxMembers: number };
@@ -31,7 +49,15 @@ function remainingLabel(endsAt: string): string {
   return `${days} ${days === 1 ? 'day' : 'days'} remaining`;
 }
 
-export function RealAccountGroupExperience({ displayName }: { displayName: string }) {
+export function RealAccountGroupExperience({
+  displayName,
+  inviteIntent,
+  inviteWebOrigin,
+}: {
+  displayName: string;
+  inviteIntent?: (InviteLinkPayload & { groupId: string }) | null;
+  inviteWebOrigin?: string;
+}) {
   const auth = useRealAccount();
   const [group, setGroup] = useState<RealGroup | null>(null);
   const [screen, setScreen] = useState<
@@ -44,6 +70,9 @@ export function RealAccountGroupExperience({ displayName }: { displayName: strin
   const [maxMembers, setMaxMembers] = useState(10);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [invite, setInvite] = useState<RealInvite | null>(null);
+  const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
+  const [invitePending, setInvitePending] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -95,12 +124,86 @@ export function RealAccountGroupExperience({ displayName }: { displayName: strin
     }
   };
 
+  const createInvitation = async () => {
+    if (!group || group.group.role !== 'owner') return;
+    if (!inviteWebOrigin) {
+      setInviteFeedback(
+        'Invitation links are unavailable because this app has no configured public HTTPS web origin.',
+      );
+      return;
+    }
+    setInvitePending(true);
+    setInviteFeedback(null);
+    try {
+      const response = await auth.authenticatedRequest(
+        `/real/groups/${encodeURIComponent(group.group.id)}/invites`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      );
+      const body = (await response.json()) as { invite?: RealInvite; message?: string };
+      if (!response.ok || !body.invite) {
+        throw new Error(
+          body.message ?? 'The invitation could not be created. Retry when connected.',
+        );
+      }
+      setInvite(body.invite);
+    } catch (error) {
+      setInviteFeedback(
+        error instanceof Error ? error.message : 'The invitation could not be created.',
+      );
+    } finally {
+      setInvitePending(false);
+    }
+  };
+
+  const inviteLink = invite
+    ? createInviteLink(invite, {
+        platform: 'web',
+        webOrigin: inviteWebOrigin,
+        groupId: invite.groupId,
+      })
+    : null;
+
+  const copyInvitation = async () => {
+    if (!inviteLink) return;
+    try {
+      await Clipboard.setStringAsync(inviteLink);
+      setInviteFeedback('Invitation link copied.');
+    } catch {
+      setInviteFeedback('Copy is unavailable here. Select the invitation link to copy it.');
+    }
+  };
+
+  const shareInvitation = async () => {
+    if (!inviteLink) return;
+    try {
+      await Share.share({
+        message: `Join my Rewind group with this invitation link: ${inviteLink}`,
+        url: inviteLink,
+      });
+      setInviteFeedback('Invitation link ready to share.');
+    } catch {
+      setInviteFeedback('Share is unavailable here. Copy the invitation link to share it.');
+    }
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.content} testID="real-group-experience">
       <View style={styles.brand}>
         <Text style={styles.wordmark}>REWIND</Text>
         <Text style={styles.label}>REAL ACCOUNT · {displayName}</Text>
       </View>
+      {inviteIntent ? (
+        <View style={styles.inviteIntent} testID="real-invite-intent">
+          <Text style={styles.panelTitle}>Invitation retained</Text>
+          <Text style={styles.body}>Group {inviteIntent.groupId}</Text>
+          <Text style={styles.body}>
+            Expires {new Date(inviteIntent.expiresAt).toLocaleString()}
+          </Text>
+          <Text style={styles.body}>
+            Sign-in is complete. Joining will be available in a follow-on update.
+          </Text>
+        </View>
+      ) : null}
       {screen === 'loading' ? (
         <View testID="real-group-loading">
           <Text style={styles.title}>Restoring your group…</Text>
@@ -233,9 +336,7 @@ export function RealAccountGroupExperience({ displayName }: { displayName: strin
               testID="real-group-capacity-increase"
             />
           </View>
-          <Text style={styles.body}>
-            You are the first member. Inviting others will be available later.
-          </Text>
+          <Text style={styles.body}>You are the first member in this private group.</Text>
           {message ? (
             <Text accessibilityRole="alert" style={styles.error}>
               {message}
@@ -273,6 +374,57 @@ export function RealAccountGroupExperience({ displayName }: { displayName: strin
             {group.group.name}
           </Text>
           <Text style={styles.body}>Up to {group.group.maxMembers} members</Text>
+          {group.group.role === 'owner' ? (
+            <View style={styles.invitationPanel} testID="real-group-invitations">
+              <Text style={styles.label}>GROUP INVITATION</Text>
+              <Text style={styles.body}>
+                Create a private invite link that expires in 24 hours.
+              </Text>
+              <Action
+                title={invitePending ? 'Creating invitation…' : 'Create invitation link'}
+                disabled={invitePending}
+                onPress={() => void createInvitation()}
+                testID="real-group-create-invite"
+              />
+              {invite ? (
+                <>
+                  <Text style={styles.body} testID="real-group-invite-expiry">
+                    Expires {new Date(invite.expiresAt).toLocaleString()} · Active
+                  </Text>
+                  {inviteLink ? (
+                    <>
+                      <Text selectable style={styles.body} testID="real-group-invite-link">
+                        {inviteLink}
+                      </Text>
+                      <Action
+                        title="Copy invitation link"
+                        onPress={() => void copyInvitation()}
+                        testID="real-group-copy-invite"
+                      />
+                      <Action
+                        title="Share invitation link"
+                        onPress={() => void shareInvitation()}
+                        testID="real-group-share-invite"
+                      />
+                    </>
+                  ) : (
+                    <Text accessibilityRole="alert" style={styles.error}>
+                      A secure HTTPS link is unavailable. Connect the app to its HTTPS web origin.
+                    </Text>
+                  )}
+                </>
+              ) : null}
+              {inviteFeedback ? (
+                <Text
+                  accessibilityLiveRegion="polite"
+                  accessibilityRole="alert"
+                  style={styles.body}
+                >
+                  {inviteFeedback}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           <View style={styles.divider} />
           <Text style={styles.label}>FOUR-WEEK CYCLE</Text>
           <Text style={styles.body} testID="real-group-countdown">
@@ -417,4 +569,17 @@ const styles = StyleSheet.create({
   error: { color: '#ffb8a9', fontSize: 14 },
   divider: { borderTopColor: COLORS.edge, borderTopWidth: 1, marginVertical: 4 },
   empty: { borderColor: COLORS.edge, borderRadius: 8, borderWidth: 1, gap: 6, padding: 14 },
+  invitationPanel: {
+    backgroundColor: COLORS.paper,
+    borderRadius: 12,
+    gap: 10,
+    marginTop: 8,
+    padding: 14,
+  },
+  inviteIntent: {
+    backgroundColor: COLORS.paper,
+    borderRadius: 12,
+    gap: 8,
+    padding: 16,
+  },
 });
