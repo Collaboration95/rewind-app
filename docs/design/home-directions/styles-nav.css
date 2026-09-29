@@ -17,21 +17,6 @@
   margin: 0;
   accent-color: var(--page-ink);
 }
-.nav-votes {
-  display: none;
-  grid-template-columns: auto 1fr;
-  gap: 6px 10px;
-  align-items: center;
-  margin-top: 12px;
-  font:
-    500 11px/1 'DM Mono',
-    monospace;
-  color: var(--page-muted);
-}
-body.has-issue .nav-votes {
-  display: grid;
-}
-
 /* ============ 01 / 02 / 04 / 05 的玻璃底栏配色 ============ */
 .c1 {
   --gn-bg: rgba(33, 30, 27, 0.62);

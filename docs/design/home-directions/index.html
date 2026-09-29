@@ -19,9 +19,11 @@
     <link rel="stylesheet" href="styles-nav2.css" />
     <link rel="stylesheet" href="styles-fx.css" />
     <link rel="stylesheet" href="styles-side.css" />
+    <link rel="stylesheet" href="styles-review.css" />
     <script defer src="review-config.js"></script>
     <script defer src="i18n.js"></script>
     <script defer src="app.js"></script>
+    <script defer src="review.js"></script>
   </head>
   <body>
     <div class="app">
@@ -49,6 +51,20 @@
             aria-label="Choose a direction"
           ></div>
         </details>
+
+        <div class="grp rv-side">
+          <p class="lbl" data-i18n="rv.label">Your review</p>
+          <div id="rv-mine"></div>
+          <p class="hint" data-i18n="rv.how">
+            Write right under each phone and each dock. Nothing leaves this browser until you send
+            it. Changed your mind? Edit and send again; your latest comment counts.
+          </p>
+          <p class="hint" id="vote-status">Reading the review issue…</p>
+          <label class="check vote-sample" for="vote-sample"
+            ><input type="checkbox" id="vote-sample" />
+            <span data-i18n="vote.sample">Preview with sample data</span></label
+          >
+        </div>
 
         <div class="grp">
           <p class="lbl" data-i18n="try.label">Things you can tap</p>
@@ -85,11 +101,13 @@
             A keeps three tabs and a separate shutter; D, E and G change the structure. Every
             direction uses the same glass dock, tinted by its theme.
           </p>
-          <div class="nav-votes" data-i18n-aria="nav.votes" aria-label="Dock votes">
-            <span>A</span><span data-vote="nav-a"></span> <span>D</span
-            ><span data-vote="nav-d"></span> <span>E</span><span data-vote="nav-e"></span>
-            <span>G</span><span data-vote="nav-g"></span>
-          </div>
+          <div
+            class="rv-docks"
+            id="rv-docks"
+            role="group"
+            data-i18n-aria="nav.votes"
+            aria-label="Dock votes"
+          ></div>
         </div>
 
         <div class="grp">
@@ -154,20 +172,6 @@
         </div>
 
         <div class="grp">
-          <p class="lbl" data-i18n="vote.label">Vote</p>
-          <p class="hint" id="vote-status">Loading the review issue…</p>
-          <p class="hint" data-i18n="vote.rules">
-            Vote on GitHub: 👍 up to three directions and ❤️ one favourite. To comment, quote-reply
-            a direction’s comment or start with its number (for example “07:”); the page files it
-            under that direction.
-          </p>
-          <label class="check vote-sample" for="vote-sample"
-            ><input type="checkbox" id="vote-sample" />
-            <span data-i18n="vote.sample">Preview the vote bar (sample data)</span></label
-          >
-        </div>
-
-        <div class="grp">
           <label class="lbl" for="zoom"
             ><span data-i18n="zoom.label">Zoom</span> <output id="zoomv">72%</output></label
           >
@@ -184,9 +188,11 @@
           <div class="ask-banner" role="note">
             <b data-i18n="ask.title">Please leave the pros and cons of each direction</b>
             <span data-i18n="ask.body"
-              >Comment in the review issue: quote-reply a direction, or start with its number (for
-              example “07:”). We will combine everyone’s notes and pick one direction
-              together.</span
+              >Write them right under each phone: 👍 up to three directions, ❤️ your favourite, and
+              pros and cons. Everything stays in your browser. When you have reviewed them all,
+              press <b>Copy, then comment in the issue</b> at the bottom: it copies one comment and
+              opens the issue; paste it and click Comment. We will combine everyone’s notes and pick
+              one direction together.</span
             >
           </div>
           <p class="k" data-i18n="main.k">HOME · ROUND 3 · FOR REVIEW</p>
@@ -234,11 +240,19 @@
           </ul>
         </header>
         <div class="gallery hints" id="gallery"></div>
+        <section class="dock-rv" aria-labelledby="dock-rv-h">
+          <h2 class="gal-h" id="dock-rv-h" data-i18n="dock.h">Dock · pick one</h2>
+          <p class="hint" data-i18n="dock.hint">
+            Every direction uses the same dock. Try one on all the phones, then 👍 the one you
+            prefer and write its pros and cons here.
+          </p>
+          <div class="dock-cards" id="dock-cards"></div>
+        </section>
         <section class="review" aria-labelledby="review-title">
           <h2 id="review-title" data-i18n="review.title">Review table</h2>
           <p class="hint" data-i18n="review.hint">
             Metaphor, cost and risk are the author’s draft (AI-assisted), not review feedback. The
-            review is everyone’s own votes and comments in the issue.
+            review is everyone’s own votes and notes, sent to the review issue.
           </p>
           <div class="table-wrap">
             <table>
@@ -248,7 +262,7 @@
                   <th scope="col" data-i18n="th.meta">Metaphor</th>
                   <th scope="col" data-i18n="th.cost">Expo build cost (estimate)</th>
                   <th scope="col" data-i18n="th.risk">Main risk</th>
-                  <th scope="col" data-i18n="th.vote">Issue votes</th>
+                  <th scope="col" data-i18n="th.vote">Votes and notes</th>
                 </tr>
               </thead>
               <tbody id="review-body"></tbody>

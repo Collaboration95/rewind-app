@@ -15,41 +15,6 @@ const I18N = {
   'group.r2': ['Round 2 · warmer directions', '第二轮 · 温馨方向'],
   'group.r1': ['Round 1', '第一轮'],
 
-  'vote.label': ['Vote', '投票'],
-  'vote.rules': [
-    'Vote on GitHub: 👍 up to three directions and ❤️ one favourite. To comment, quote-reply a direction’s comment or start with its number (for example “07:”); the page files it under that direction.',
-    '在 GitHub 上投票：每人最多给 3 个方向 👍，给最喜欢的 1 个 ❤️。评论请引用回复对应方向的评论，或以编号开头（如 “07:”），这里会自动归到那个方向下。',
-  ],
-  'vote.sample': ['Preview the vote bar (sample data)', '预览投票区样式（示例数据）'],
-  'vote.loading': ['Loading the review issue…', '正在读取投票 Issue…'],
-  'vote.none': [
-    'The review issue is not published yet, so the vote bars are empty.',
-    '评审 Issue 尚未发布，投票栏暂时为空。',
-  ],
-  'vote.live': [
-    'Votes and comments live in {n}; they are read when the page opens.',
-    '投票与评论在 {n}，打开页面时读取。',
-  ],
-  'vote.fail': [
-    ' Could not read the votes (the public GitHub API allows 60 requests an hour). Open the issue directly.',
-    ' 票数暂时读取失败（GitHub 公共接口每小时限 60 次），请直接打开 Issue 查看。',
-  ],
-  'vb.off': [
-    'Once the review issue is published, this shows the votes and latest comments, with a link to vote or comment on GitHub.',
-    '评审 Issue 发布后，这里显示票数和最新评论，并可一键去 GitHub 投票、评论。',
-  ],
-  'vb.empty': [
-    'No comment for this direction in the issue yet.',
-    '这个方向在 Issue 里还没有对应的评论。',
-  ],
-  'vb.go': ['Vote / comment ↗', '去投票 / 评论 ↗'],
-  'vb.sample': ['Sample data', '示例数据'],
-  'vb.sampleWho': ['Sample', '示例'],
-  'vb.sampleText': [
-    'The latest quote reply, or comment starting with this number, appears here.',
-    '组员引用回复这个方向、或以编号开头的评论，最新的会显示在这里。',
-  ],
-
   'members.label': ['Group size', '小组人数'],
   'members.unit': ['{n} people', '{n} 人'],
   shuffle: ['Shuffle', '随机贡献'],
@@ -255,6 +220,139 @@ Object.assign(I18N, {
     '还没发片段的朋友：显示为空位，还是显示名字？',
   ],
   'asks.5': ['Which dock: A, D, E or G?', '底栏选 A、D、E、G 中的哪一个？'],
+});
+
+// 页面内评审（本地草稿 → 一键复制发到 Issue）
+Object.assign(I18N, {
+  'vote.sample': ['Preview with sample data', '用示例数据预览'],
+  'th.vote': ['Votes and notes', '投票与优缺点'],
+  'ask.body': [
+    'Write them right under each phone: 👍 up to three directions, ❤️ your favourite, and pros and cons. Everything stays in your browser. When you have reviewed them all, press <b>Copy, then comment in the issue</b> at the bottom: it copies one comment and opens the issue; paste it and click Comment. We will combine everyone’s notes and pick one direction together.',
+    '直接写在每台手机下面：最多给 3 个方向 👍，给最喜欢的 1 个 ❤️，再写优点和缺点。内容先存在你的浏览器里；全部评价完后，点页面底部的<b>一键复制，跳转到 Issue 发布评论</b>，它会复制整理好的一条评论并打开 Issue，粘贴后点 Comment 就行。我们会汇总大家的意见，一起挑出一个方向。',
+  ],
+  'review.hint': [
+    'Metaphor, cost and risk are the author’s draft (AI-assisted), not review feedback. The review is everyone’s own votes and notes, sent to the review issue.',
+    '“核心隐喻 / 实现成本 / 主要风险”为作者草拟（AI 辅助），不是评审意见；评审以每个人自己发到评审 Issue 的投票和优缺点为准。',
+  ],
+  'rv.label': ['Your review', '我的评审'],
+  'rv.how': [
+    'Write right under each phone and each dock. Nothing leaves this browser until you send it. Changed your mind? Edit and send again; your latest comment counts.',
+    '直接在每台手机和每种底栏下面写。发送之前，内容不会离开这个浏览器。改主意了就改完再发一次，以你最新的一条为准。',
+  ],
+  'rv.cta': ['Reviewed them all? Click here', '评价完所有方向后，点这里'],
+  'rv.send': ['Copy, then comment in the issue ↗', '一键复制，跳转到 Issue 发布评论'],
+  'rv.again': ['Copy again, then comment in the issue ↗', '重新复制，跳转到 Issue 发布评论'],
+  'rv.sent': ['Sent ✓', '已发送 ✓'],
+  'rv.prog': ['Reviewed {done} / {total}', '已评价 {done} / {total}'],
+  'rv.st.empty': [
+    'Nothing yet. Tap 👍, ❤️ or 💬 under any phone.',
+    '还没写。在任意一台手机下面点 👍、❤️ 或 💬。',
+  ],
+  'rv.st.unsent': ['Saved in this browser, not sent yet.', '已存在这个浏览器里，还没发送。'],
+  'rv.st.copied': [
+    'Copied. Paste it in the issue and click Comment.',
+    '已复制。去 Issue 里粘贴，点 Comment。',
+  ],
+  'rv.st.sent': ['Your latest version is in the issue.', 'Issue 里已经是你的最新版本。'],
+  'rv.clear': ['Clear my draft', '清空我的草稿'],
+  'rv.clearQ': [
+    'Clear your 👍, ❤️ and notes in this browser? Anything already sent stays in the issue.',
+    '清空这个浏览器里你的 👍、❤️ 和优缺点？已经发到 Issue 的不受影响。',
+  ],
+  'rv.is.none': [
+    'The review issue isn’t open yet. You can already write; sending works once it’s open.',
+    '评审 Issue 还没开。现在就可以写，Issue 开了之后就能发送。',
+  ],
+  'rv.is.loading': ['Reading issue {n}…', '正在读取 Issue {n}…'],
+  'rv.is.live': ['Issue {n} · {p} people have sent a review.', 'Issue {n} · 已有 {p} 人发送评审。'],
+  'rv.is.fail': [
+    'Couldn’t read issue {n} (GitHub allows 60 reads an hour). Your draft is safe.',
+    '暂时读不到 Issue {n}（GitHub 每小时限 60 次），你的草稿不受影响。',
+  ],
+  'rv.is.sample': ['Showing sample data.', '正在显示示例数据。'],
+  'rv.refresh': ['Refresh', '刷新'],
+  'rv.likeT': ['Worth taking forward (up to 3)', '值得继续（最多 3 个）'],
+  'rv.likeDockT': ['My dock (pick one)', '我选这个底栏（只能选一个）'],
+  'rv.favT': ['My top pick (pick one)', '最喜欢（只能选一个）'],
+  'rv.max': ['Up to {n} 👍. Remove one first.', '最多 {n} 个 👍，先取消一个。'],
+  'rv.v.like': ['Shortlist', '值得继续'],
+  'dock.h': ['Dock · pick one', '底栏 · 选一个'],
+  'dock.hint': [
+    'Every direction uses the same dock. Try one on all the phones, then 👍 the one you prefer and write its pros and cons here.',
+    '所有方向共用同一种底栏。先在所有手机上试一下，再给你喜欢的那个 👍，并在这里写优缺点。',
+  ],
+  'dock.try': ['Show it on all phones ↑', '在所有手机上试试 ↑'],
+  'dock.desc.a': [
+    'Home, Chat and Archive, plus a separate shutter; the active tab shows its label.',
+    'Home、Chat、Archive 三栏加独立快门，选中的页签展开文字。',
+  ],
+  'dock.desc.d': [
+    'Home · shutter · Archive, with the shutter in the middle; Chat moves to the top right.',
+    'Home · 快门 · Archive，快门居中；Chat 移到右上角。',
+  ],
+  'dock.desc.e': [
+    'Only the shutter at the bottom; Archive and Chat sit at the top right, like Locket or BeReal.',
+    '底部只有快门；Archive 和 Chat 放在右上角，类似 Locket、BeReal。',
+  ],
+  'dock.desc.g': [
+    'A live pill that shows “2d 14h · 3 left”; tap it to open the tabs.',
+    '一颗实时胶囊，显示 “2d 14h · 3 left”，点开才是页签。',
+  ],
+  'rv.v.fav': ['Top pick', '最喜欢'],
+  'rv.v.dock': ['My dock', '我选这个'],
+  'rv.dock': ['Dock', '底栏'],
+  'rv.pros': ['Pros', '优点'],
+  'rv.cons': ['Cons', '缺点'],
+  'rv.other': ['Other comments', '其他评论'],
+  'rv.none': ['None yet', '还没有'],
+  'rv.you': ['You', '你'],
+  'rv.edit': ['Edit', '改'],
+  'rv.del': ['Delete', '删'],
+  'rv.ph.pro': ['+ Add a pro, press Enter', '+ 写一条优点，回车添加'],
+  'rv.ph.con': ['− Add a con, press Enter', '− 写一条缺点，回车添加'],
+  'rv.barAria': ['Send your review', '发送评审'],
+  'rv.md.votes': ['Votes', '投票'],
+  'rv.md.foot': ['Sent from the Home directions review page', '来自 Home 方向评审页'],
+  'rv.dlg.h': ['Send your review', '发送评审'],
+  'rv.dlg.copied': ['Copied to the clipboard ✓', '已复制到剪贴板 ✓'],
+  'rv.dlg.copyManual': [
+    'Copy the text below (Ctrl+C / ⌘C). The browser didn’t allow automatic copying.',
+    '浏览器不允许自动复制，请手动复制下面的文字（Ctrl+C / ⌘C）。',
+  ],
+  'rv.dlg.paste': [
+    'In the issue tab that just opened, paste it into the comment box at the bottom (Ctrl+V / ⌘V).',
+    '在刚打开的 Issue 标签页里，粘贴到最下面的评论框（Ctrl+V / ⌘V）。',
+  ],
+  'rv.dlg.blocked': [
+    'Press the orange button below to open the issue, then paste into the comment box at the bottom (Ctrl+V / ⌘V).',
+    '点下面的橙色按钮打开 Issue，粘贴到最下面的评论框（Ctrl+V / ⌘V）。',
+  ],
+  'rv.dlg.noIssue': [
+    'The review issue isn’t open yet. Your draft stays here; send it once the issue is up.',
+    '评审 Issue 还没开。草稿会留在这里，Issue 开了之后再发送。',
+  ],
+  'rv.dlg.comment': [
+    'Click “Comment”, then come back and press “I’ve posted it”.',
+    '点 “Comment”，然后回到这里点“我发好了”。',
+  ],
+  'rv.dlg.text': ['Comment to paste', '要粘贴的评论'],
+  'rv.dlg.go': ['Copy, then comment in issue {n} ↗', '一键复制，跳转到 Issue {n} 发布评论'],
+  'rv.dlg.copy': ['Copy the text', '复制文字'],
+  'rv.dlg.posted': ['I’ve posted it', '我发好了'],
+  'rv.dlg.close': ['Close', '关闭'],
+  'rv.found': ['Found it in the issue ✓', '在 Issue 里找到了 ✓'],
+  'rv.notYet': [
+    'Not in the issue yet. GitHub can take a minute; try again shortly.',
+    'Issue 里还没读到。GitHub 可能有一分钟延迟，稍后再点一次。',
+  ],
+  'rv.copiedToast': ['Copied', '已复制'],
+  'rv.copyFail': [
+    'Couldn’t copy. Select the text and press Ctrl+C.',
+    '复制失败，请选中文字按 Ctrl+C。',
+  ],
+  'rv.sampleWho': ['Sample {n}', '示例 {n}'],
+  'rv.samplePro': ['(sample) A pro appears here', '（示例）这里显示一条优点'],
+  'rv.sampleCon': ['(sample) A con appears here', '（示例）这里显示一条缺点'],
 });
 
 let LANG = 'en';

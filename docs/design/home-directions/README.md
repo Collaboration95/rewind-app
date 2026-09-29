@@ -6,7 +6,7 @@ sealed moments are drawn as abstract textures, never as media.
 
 ## Please leave pros and cons
 
-Comment on each direction in the review issue with what works and what does not. We will combine everyone's notes and pick one direction together.
+Write them right on the page, under each phone and each dock. We will combine everyone's notes and pick one direction together.
 
 ## Open it
 
@@ -15,15 +15,18 @@ Comment on each direction in the review issue with what works and what does not.
 - Or open `index.html` locally in a browser.
 - Jump to one direction with its anchor, for example `index.html#c7`.
 
-## Vote and comment
+## Review on the page, then send it to the issue
 
-Voting happens in the review issue (number set in `review-config.js`). Each direction has its own comment there.
+Everything happens on the page; nobody has to write in the issue by hand.
 
-- 👍 up to **three** directions you would take forward.
-- ❤️ **one** favourite.
-- Use **Quote reply** on a direction's comment for specific feedback, or start your comment with the direction number (for example `07:` or `Dock A:`).
+1. Under each phone: 👍 **Shortlist** (up to three directions), ❤️ **Top pick** (one), and a pros and a cons box; press Enter to add a note. Under _Dock · pick one_, 👍 one dock and write its pros and cons.
+2. Everything is saved in your own browser (`localStorage`) until you send it. The bar at the bottom shows how many of the 15 you have reviewed.
+3. When you have reviewed them all, press **Copy, then comment in the issue**. The page copies one formatted comment and opens the review issue (number set in `review-config.js`); paste it into the comment box and click Comment.
+4. Changed your mind? Edit on the page and send again. For each person, only their latest comment counts.
 
-The page reads the review issue through the public GitHub API when it loads (60 unauthenticated requests per hour per network). Each direction shows its 👍 and ❤️ counts, how many comments refer to it, the two latest comments, and a link to vote or comment on GitHub. Comment text is escaped before it is shown. Before the issue exists, tick _preview vote bar_ to see the layout with sample numbers.
+The page never signs in and stores no token. It reads the review issue through the public GitHub API when it loads (60 unauthenticated requests per hour per network), splits each person's comment by direction and shows everyone's votes, pros and cons under each phone. A comment written by hand that starts with a direction number (for example `07:` or `Dock D:`) is listed under that direction as another comment. Comment text is escaped before it is shown. Before the issue exists, tick _Preview with sample data_ to see the layout.
+
+The comment format is plain Markdown: a hidden first line holds the votes (`<!-- rewind-review v1 … -->`), then one `#### 07 · Hearth` section per direction with **Pros** and **Cons** lists.
 
 ## What to try on the page
 
@@ -32,11 +35,11 @@ The page reads the review issue through the public GitHub API when it loads (60 
 - Tap the avatar for the profile and settings panel (a draft; it could become a full Settings page), tap the dock tabs, and press the shutter. The orange rings on the phones mark what you can tap; turn them off under _Things you can tap_.
 - Compare the **docks**: A keeps three tabs and a separate shutter; D centre shutter (Home · shutter · Archive, Chat at the top right); E shutter only (Archive and Chat at the top right, like Locket or BeReal); G live pill (shows “2d 14h · 3 left”; tap it for the tabs).
 - Directions are grouped by round, with 05 Quiet Swiss as a separate baseline; the zoom fits four phones per row on a landscape screen.
-- Switch the page between **EN** (default) and **中文** at the top of the sidebar; open it with `?lang=zh` for Chinese. The phones stay in English.
+- Switch the page between **EN** (default) and **中文** at the top of the sidebar; open it with `?lang=zh` for Chinese. The phones stay in English; in Chinese each direction also shows its English name.
 - Switch the **shutter state**: collecting, allowance used up, sealing, just sealed, and premiere (the shutter becomes _watch together_, with the time left on its ring).
 - Toggle **chat unread** to see the badges; the Archive tab shows a dot during the premiere.
 - **Play** (next to each phone) resets that phone and plays the whole cycle: ① a friend joins, ② you press the shutter, ③ at 8 PM everyone opens it at once. The first two are deliberately different. A friend joining comes from outside the screen and uses the direction's own metaphor, never a photo, because you cannot see what they captured: a safelight sweeps the film, an enlarger flashes, their seat is stamped, their stamp slaps down, a firefly in their colour circles into the jar and turns gold, their name types into the credits. Your own moment starts at the shutter and turns into that metaphor: the photo flips to its own negative, melts into light, becomes an ember added to the fire, slips into the envelope, shrinks into a firefly in your colour, or is loaded into the projector. Each direction also has its own reveal.
-- **Motion:** pressing the shutter on its own also seals a moment. Use _replay entrance_ to see the Darkroom film slide in and the Premiere ticket drift down. The photos are generated on the page (out-of-focus lights, grain, a light leak); they contain no people and no member media.
+- **Motion:** pressing the shutter on its own also seals a moment. The photos are generated on the page (out-of-focus lights, grain, a light leak); they contain no people and no member media.
 - **Data scope (proposal A):** Home shows who is in (yes or no) but never how many moments each other person added. Your own count comes from your contribution ledger and the group total from the cycle summary, as on `dev` today; who is in needs a new, small API.
 
 ## Shared decisions across all directions
@@ -47,20 +50,22 @@ The page reads the review issue through the public GitHub API when it loads (60 
 
 ## Files
 
-| File                                           | Purpose                                                            |
-| ---------------------------------------------- | ------------------------------------------------------------------ |
-| `index.html`                                   | Review page shell and review table                                 |
-| `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                                  |
-| `i18n.js`                                      | English and Chinese text for the review page                       |
-| `styles-side.css`                              | Sidebar layout, the pros-and-cons banner and tap hints             |
-| `styles-fx.css`                                | Themed motion for a friend joining and for sealing your own moment |
-| `styles-nav2.css`                              | Language switch and dock variants D–G                              |
-| `styles-nav.css`                               | Shared dock, variants, shutter states, badges                      |
-| `styles-story.css`                             | Play sequence, reveal motion, who-is-in visuals                    |
-| `styles-motion.css`                            | Realistic film and ticket, entrance and seal motion                |
-| `app.js`                                       | Synthetic data, direction markup, vote reading                     |
-| `review-config.js`                             | Review issue number                                                |
-| `shots/`                                       | Screenshots for the issue: phones, dock, shutter                   |
+| File                                           | Purpose                                                                     |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| `index.html`                                   | Review page shell and review table                                          |
+| `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                                           |
+| `i18n.js`                                      | English and Chinese text for the review page                                |
+| `styles-side.css`                              | Sidebar layout, the pros-and-cons banner and tap hints                      |
+| `styles-fx.css`                                | Themed motion for a friend joining and for sealing your own moment          |
+| `styles-nav2.css`                              | Language switch and dock variants D–G                                       |
+| `styles-nav.css`                               | Shared dock, variants, shutter states, badges                               |
+| `styles-story.css`                             | Play sequence, reveal motion, who-is-in visuals                             |
+| `styles-motion.css`                            | Realistic film and ticket, entrance and seal motion                         |
+| `app.js`                                       | Synthetic data and direction markup                                         |
+| `review.js`                                    | On-page review: local draft, copy to the issue, reading everyone's comments |
+| `styles-review.css`                            | Review blocks under each phone, dock section, send bar                      |
+| `review-config.js`                             | Review issue number                                                         |
+| `shots/`                                       | Screenshots for the issue: phones, dock, shutter                            |
 
 ## References
 
