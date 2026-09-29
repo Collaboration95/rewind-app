@@ -401,3 +401,11 @@
 .revealed.c8 .eyebrow {
   opacity: 0;
 }
+
+/* ============ 09 萤火虫：由脚本驱动位置与明灭 ============ */
+.c9 .jar .fly.js,
+.revealed.c9 .jar .fly.js {
+  left: 0 !important;
+  top: 0 !important;
+  animation: none;
+}

@@ -984,14 +984,139 @@ function keepFilm(root, pos) {
     tr.style.animationDelay = `-${t.toFixed(3)}s`;
   });
 }
+/* ---------- 萤火虫：随机游走与明灭 ----------
+   每只各自随机挑落点：多数时候在附近慢慢飘，偶尔飞远，偶尔悬停；路线是平滑的弧线。
+   明灭各自随机、互不同步。重绘时从原位置接着飞，你的和别人的分开对应，新来的从瓶口进来。 */
+const JAR_W = 196,
+  JAR_H = 220; // 罐身内部尺寸（与 styles-r3.css 的 .c9 .jar / .body 一致）
+const rand = (a, b) => a + Math.random() * (b - a);
+const clampTo = (v, a, b) => Math.max(a, Math.min(b, v));
+const flyXY = (f) => {
+  const m = new DOMMatrix(getComputedStyle(f).transform);
+  return { x: m.m41, y: m.m42 };
+};
+function flyPos(root) {
+  const m = {};
+  root?.querySelectorAll('.card').forEach((card) => {
+    const flies = card.querySelectorAll('.c9 .fly.js');
+    if (!flies.length) return;
+    const saved = { mine: [], other: [] };
+    flies.forEach((f) => saved[f.classList.contains('mine') ? 'mine' : 'other'].push(flyXY(f)));
+    m[card.dataset.id] = saved;
+  });
+  return m;
+}
+function startFlies(root, keep = {}) {
+  if (reduceMotion()) return;
+  const cards = root?.classList?.contains('card') ? [root] : root?.querySelectorAll('.card') || [];
+  cards.forEach((card) => {
+    const flies = card.querySelectorAll('.c9 .jar .fly');
+    if (!flies.length) return;
+    const saved = keep[card.dataset.id];
+    const left = saved ? { mine: [...saved.mine], other: [...saved.other] } : null;
+    flies.forEach((f) => {
+      const kind = f.classList.contains('mine') ? 'mine' : 'other';
+      // 有旧位置就接着飞；多出来的那只从瓶口进来；首次渲染用初始位置
+      const p = left
+        ? left[kind].shift() || { x: JAR_W / 2 - 4, y: 6 }
+        : {
+            x: (parseFloat(f.style.left) / 100) * JAR_W,
+            y: (parseFloat(f.style.top) / 100) * JAR_H,
+          };
+      f.classList.add('js');
+      f._p = p;
+      f.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      setTimeout(() => wander(f), rand(0, 600));
+      setTimeout(() => blink(f), rand(0, 2500));
+    });
+  });
+}
+// 沿二次贝塞尔弧线飞到下一个随机落点
+function wander(f) {
+  if (!f.isConnected || f.dataset.free) return;
+  const p = f._p;
+  const far = Math.random() < 0.22;
+  const r = far ? 95 : 36;
+  const q = {
+    x: clampTo(p.x + rand(-r, r), 8, JAR_W - 18),
+    y: clampTo(p.y + rand(-r, r), 12, JAR_H - 20),
+  };
+  // 控制点也限制在罐内，弧线就不会穿出玻璃
+  const c = {
+    x: clampTo((p.x + q.x) / 2 + rand(-34, 34), 8, JAR_W - 18),
+    y: clampTo((p.y + q.y) / 2 + rand(-34, 34), 12, JAR_H - 20),
+  };
+  const frames = [];
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8,
+      u = 1 - t;
+    const x = u * u * p.x + 2 * u * t * c.x + t * t * q.x;
+    const y = u * u * p.y + 2 * u * t * c.y + t * t * q.y;
+    frames.push({ transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)` });
+  }
+  const dist = Math.hypot(q.x - p.x, q.y - p.y);
+  const a = f.animate(frames, {
+    duration: 600 + dist * rand(16, 34),
+    easing: 'ease-in-out',
+    fill: 'forwards',
+  });
+  a.onfinish = () => {
+    if (!f.isConnected || f.dataset.free) return;
+    f._p = q;
+    f.style.transform = `translate(${q.x}px, ${q.y}px)`;
+    a.cancel();
+    setTimeout(() => wander(f), Math.random() < 0.3 ? rand(400, 1600) : rand(0, 120));
+  };
+}
+// 一闪一闪：暗下去再亮起来，间隔随机
+function blink(f) {
+  if (!f.isConnected || f.dataset.free) return;
+  f.animate(
+    [
+      { opacity: 1, filter: 'brightness(1)' },
+      { opacity: 0.2, filter: 'brightness(.6)', offset: 0.45 },
+      { opacity: 1, filter: 'brightness(1.4)' },
+    ],
+    { duration: rand(700, 1600), easing: 'ease-in-out' },
+  ).onfinish = () => setTimeout(() => blink(f), rand(500, 3200));
+}
+// 揭晓：每只从当前位置绕向瓶口，再依次飞出去
+function freeFlies(scr) {
+  scr.querySelectorAll('.c9 .jar .fly').forEach((f, i) => {
+    const p = f.classList.contains('js') ? flyXY(f) : { x: JAR_W / 2, y: JAR_H / 2 };
+    f.dataset.free = '1';
+    f.getAnimations().forEach((a) => a.cancel());
+    f.classList.add('js');
+    const neck = { x: JAR_W / 2 - 4 + rand(-14, 14), y: -12 };
+    // 先在罐内绕向瓶口（避开上方圆角），再从瓶口飞出
+    const mid = {
+      x: clampTo((p.x + neck.x) / 2 + rand(-40, 40), 40, JAR_W - 48),
+      y: clampTo((p.y + neck.y) / 2 + rand(-10, 20), 40, JAR_H - 30),
+    };
+    const out = { x: neck.x + rand(-130, 130), y: rand(-360, -260) };
+    const tr = (o) => `translate(${o.x.toFixed(1)}px, ${o.y.toFixed(1)}px)`;
+    f.animate(
+      [
+        { transform: tr(p), opacity: 1 },
+        { transform: tr(mid), opacity: 1, offset: 0.35 },
+        { transform: tr(neck), opacity: 1, offset: 0.6 },
+        { transform: tr(out), opacity: 0 },
+      ],
+      { duration: rand(2400, 3400), delay: 500 + i * 90, easing: 'ease-in', fill: 'forwards' },
+    );
+  });
+}
+
 function renderCard(id) {
   const c = concepts.find((x) => x.id === id);
   const card = document.querySelector(`.card[data-id="${id}"]`);
   const wrap = card?.querySelector('.phone-wrap');
   if (c && wrap) {
     const pos = filmPos(card.parentElement);
+    const fpos = flyPos(card.parentElement);
     wrap.innerHTML = screen(c, dataFor(id));
     keepFilm(card.parentElement, { [id]: pos[id] });
+    startFlies(card, { [id]: fpos[id] });
   }
   return wrap?.querySelector('.screen');
 }
@@ -1018,8 +1143,10 @@ function render() {
       `</article>`;
   }
   const pos = filmPos($('gallery'));
+  const fpos = flyPos($('gallery'));
   $('gallery').innerHTML = html;
   keepFilm($('gallery'), pos);
+  startFlies($('gallery'), fpos);
   applyPick();
   paintVotes();
 }
@@ -1652,6 +1779,7 @@ function toast(scr, who, text) {
 // 揭晓：周日 8 点，所有人同一时刻打开；每个方向有自己的拆封动效
 function reveal(scr) {
   scr.classList.add('revealed');
+  if (scr.classList.contains('c9') && !reduceMotion()) freeFlies(scr);
   const btn = scr.querySelector('.shutter');
   if (btn) {
     btn.setAttribute('aria-label', 'Watch the premiere together');
