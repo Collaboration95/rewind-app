@@ -29,7 +29,9 @@ The page reads the reaction counts from the public GitHub API when it loads (60 
 - Compare the **dock variants**: A icons with the active label, B labels always, C shrinks while scrolling (tap the small pill to expand).
 - Switch the **shutter state**: collecting, allowance used up, sealing, just sealed, and premiere (the shutter becomes _watch together_, with the time left on its ring).
 - Toggle **chat unread** to see the badges; the Archive tab shows a dot during the premiere.
-- **Motion:** press the shutter and a photo flies into the direction's main visual, flips to its sealed back and is absorbed; the ring gains a segment. Use _replay entrance_ to see the Darkroom film slide in and keep running, and the Premiere ticket drift down. The photos are generated on the page (out-of-focus lights, grain and a light leak in the contributor's colour); they contain no people and no member media.
+- **Play** (next to each phone) resets that phone and plays the whole cycle: ① a friend joins, and a light in their colour drifts into the main visual; ② you press the shutter, and a photo flies in and flips to its sealed back; ③ at 8 PM everyone opens it at once. Each direction has its own reveal: the film develops, the ticket stub tears off, the wax seal cracks, the jar lid comes off, a 3-2-1 leader counts down, a playhead sweeps the reel.
+- **Motion:** pressing the shutter on its own also seals a moment. Use _replay entrance_ to see the Darkroom film slide in and the Premiere ticket drift down. The photos are generated on the page (out-of-focus lights, grain, a light leak); they contain no people and no member media.
+- **Data scope (proposal A):** Home shows who is in (yes or no) but never how many moments each other person added. Your own count comes from your contribution ledger and the group total from the cycle summary, as on `dev` today; who is in needs a new, small API.
 
 ## Shared decisions across all directions
 
@@ -44,6 +46,7 @@ The page reads the reaction counts from the public GitHub API when it loads (60 
 | `index.html`                                   | Review page shell and review table                  |
 | `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                   |
 | `styles-nav.css`                               | Shared dock, variants, shutter states, badges       |
+| `styles-story.css`                             | Play sequence, reveal motion, who-is-in visuals     |
 | `styles-motion.css`                            | Realistic film and ticket, entrance and seal motion |
 | `app.js`                                       | Synthetic data, direction markup, vote reading      |
 | `review-config.js`                             | Review issue number                                 |

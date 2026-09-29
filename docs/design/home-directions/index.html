@@ -15,6 +15,7 @@
     <link rel="stylesheet" href="styles-r3.css" />
     <link rel="stylesheet" href="styles-nav.css" />
     <link rel="stylesheet" href="styles-motion.css" />
+    <link rel="stylesheet" href="styles-story.css" />
     <script defer src="review-config.js"></script>
     <script defer src="app.js"></script>
   </head>
@@ -47,7 +48,11 @@
             <button type="button" class="ghost" id="shuffle">随机贡献</button>
             <button type="button" class="ghost" id="restore">恢复示例</button>
           </div>
-          <p class="hint">片段总数、座位、成员行都随人数与贡献实时计算；演示默认 5 人。</p>
+          <p class="hint">
+            数据口径（提案 A）：只显示谁参与了（是 /
+            否），不显示别人各贡献了几条；你自己的条数来自你的台账，全组总数来自周期汇总。演示默认 5
+            人。
+          </p>
         </div>
 
         <div class="grp">
@@ -82,7 +87,8 @@
           <p class="lbl">动效</p>
           <button type="button" class="ghost" id="replay">重播入场动效</button>
           <p class="hint">
-            入场：暗房胶片斜向滑入并持续走片，首映票根从上方飘落。按快门：一张照片飞向主视觉、翻面封存，额度环加一格（“恢复示例”可复原）。
+            入场：暗房胶片斜向滑入并持续走片，首映票根从上方飘落。每台手机旁的“播放”会依次演示：①朋友加入
+            → ②你按快门封存 → ③周日 8 点一起揭晓；每次点“播放”都会先把这台手机重置，再从头开始。
           </p>
         </div>
 

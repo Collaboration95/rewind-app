@@ -161,8 +161,10 @@ const hidden = (x) => anon && x.c === 0 && !x.me;
 const init = (x) => (hidden(x) ? '' : x.name[0]);
 const label = (x) => (hidden(x) ? '' : x.me ? 'You' : x.name);
 
-function data() {
-  const members = POOL.slice(0, size);
+// 数据口径（提案 A）：只知道每个成员“参与了没有”，不显示别人各贡献了几条；
+// 你自己的条数来自你的台账，全组总数来自周期汇总。成员的 c 只用来模拟这些数字。
+function data(pool = POOL) {
+  const members = pool.slice(0, size);
   const waiting = members.filter((x) => x.c === 0);
   return {
     members,
@@ -175,6 +177,18 @@ function data() {
     me: members[0],
   };
 }
+// 全组片段（不标注作者）：只有你自己的那几条能认出来
+const WARM = ['#E9A15B', '#F2C07A', '#E48A6A', '#F5D39B', '#D98E5F'];
+function moments(d) {
+  const arr = Array.from({ length: d.m }, (_, i) => ({ mine: false, seed: i * 5 + 2 }));
+  for (let j = 0; j < d.me.c; j++)
+    arr[Math.min(d.m - 1, Math.floor(((j + 0.5) * d.m) / d.me.c))].mine = true;
+  return arr;
+}
+const tintOf = (mo, d, i) => (mo.mine ? d.me.col : WARM[i % WARM.length]);
+// 揭晓前 / 揭晓后两套文案
+const pp = (a, b) => `<span class="is-pre">${a}</span><span class="is-now">${b}</span>`;
+
 function waitLine(d) {
   const k = d.waiting.length;
   if (!k) return "Everyone's in.";
@@ -305,62 +319,62 @@ const tex = (i, k = 0) =>
 /* ---------- 各方案 ---------- */
 const bodies = {
   c1: (d) => {
-    // 整组已封存的片段做成一条倾斜的胶片，斜向下缓慢走片
-    const shots = [];
-    d.members.forEach((x, i) => {
-      for (let k = 0; k < x.c; k++) shots.push({ x, seed: i * 7 + k * 3 + 1 });
-    });
-    const base = shots.length ? shots : Array(4).fill(null);
+    // 全组已封存的片段做成一条倾斜的胶片，斜向下缓慢走片；只有你的那几格带你的颜色
+    const ms = moments(d);
+    const base = ms.length ? ms : Array(4).fill(null);
     let reel = [];
     while (reel.length < 8) reel = reel.concat(base);
-    const num = (j) => String((j % base.length) + 1).padStart(2, '0');
+    const num = (k) => String((k % base.length) + 1).padStart(2, '0');
     const cells = reel
       .map(
-        (f, j) =>
-          `<div class="cell">${holes(3)}<p class="edge">${j % 2 ? '◂ ' + num(j) : 'REWIND 400'}</p>${
-            f
-              ? `<div class="fr sealed" style="background-image:url(${photoFor(f.seed, f.x.col)})">${ic('lock')}</div>`
+        (mo, k) =>
+          `<div class="cell">${holes(3)}<p class="edge">${k % 2 ? '◂ ' + num(k) : 'REWIND 400'}</p>${
+            mo
+              ? `<div class="fr sealed${mo.mine ? ' mine' : ''}" style="background-image:url(${photoFor(mo.seed, tintOf(mo, d, k))})">${ic('lock')}</div>`
               : '<div class="fr blank"></div>'
-          }<p class="edge low">${num(j)} ▸ ${num(j)}A</p>${holes(3)}</div>`,
+          }<p class="edge low">${num(k)} ▸ ${num(k)}A</p>${holes(3)}</div>`,
       )
       .join('');
     return `
     <header class="top">${me()}<span class="tag">ROLL 036</span></header>
-    <p class="eyebrow"><i></i>Developing · private roll</p>
+    <p class="eyebrow"><i></i>${pp('Developing · private roll', 'Developed · premiere now')}</p>
     <h1 class="title">Weekend People</h1>
-    <div class="count" role="img" aria-label="2 days 14 hours until reveal">
+    <div class="count is-pre" role="img" aria-label="2 days 14 hours until reveal">
       <div><b>02</b><span>Days</span></div><em>:</em><div><b>14</b><span>Hours</span></div>
     </div>
-    <p class="when">Lights on for all of us at once · Sun 8:00 PM</p>
-    <section class="strip" data-seal aria-label="The group's roll: ${plural(d.m, 'moment')} sealed, not even you can peek">
+    <p class="now is-now">Lights on.</p>
+    <p class="when">${pp('Lights on for all of us at once · Sun 8:00 PM', 'Everyone got it at 8:00 PM · watch together')}</p>
+    <section class="strip" data-seal style="--me:${d.me.col}" aria-label="The group's roll: ${plural(d.m, 'moment')} sealed, not even you can peek">
       <div class="track" style="--dur:${reel.length * 3.2}s">${cells}${cells}</div>
     </section>
-    <div class="meta"><span><b>${d.me.c}</b> of 5 yours · <b>${secs(d.me.c)}</b>/30 sec</span><span class="mini-crew"><span class="stack">${crew(d)}</span>${d.added}/${d.n}</span></div>
+    <div class="meta"><span><b>${d.me.c}</b> of 5 yours · <b>${secs(d.me.c)}</b>/30 sec</span><span class="mini-crew"><span class="stack">${crew(d)}</span>${d.added}/${d.n} in</span></div>
     <section class="prompt"><p class="lbl">This week's prompt</p><h2>What made you pause and smile?</h2></section>`;
   },
 
   c2: (d) => {
-    const rh = Math.round(Math.max(15, Math.min(30, 150 / d.n)));
+    // 全组片段排成小样，不标注是谁拍的；只有你的几格有你的颜色小点
+    const ms = moments(d);
+    const rows = Math.max(1, Math.ceil(ms.length / 5));
+    const cells = [...ms, ...Array(rows * 5 - ms.length).fill(null)];
+    const fh = Math.round(Math.max(16, Math.min(44, 176 / rows)));
     return `
     <header class="top">${me()}<span class="tag">W36 · SEP</span></header>
     <p class="eyebrow">A week with your people</p>
     <h1 class="title">Weekend <i>People</i></h1>
-    <figure class="neg" data-seal aria-label="Contact sheet: one row per member, ${plural(d.m, 'moment')} sealed until Sunday">
+    <figure class="neg" data-seal aria-label="Contact sheet: ${plural(d.m, 'moment')} sealed until Sunday">
       ${holes(20)}
-      <div class="rows" style="--rh:${rh}px">${d.shown
-        .map(
-          (x, i) =>
-            `<div class="row${x.me ? ' me' : ''}" style="--mc:${x.col}"><b>${init(x)}</b>${Array.from(
-              { length: 5 },
-              (_, k) => `<i class="fr ${k < x.c ? 'sealed' : 'blank'}" style="${tex(i, k)}"></i>`,
-            ).join('')}</div>`,
+      <div class="grid5" style="--fh:${fh}px;--me:${d.me.col}">${cells
+        .map((mo, k) =>
+          mo
+            ? `<i class="fr sealed${mo.mine ? ' mine' : ''}" style="${tex(k)};--ph:url(${photoFor(mo.seed, tintOf(mo, d, k))})"></i>`
+            : '<i class="fr blank"></i>',
         )
         .join('')}</div>
       ${holes(20)}
-      <figcaption><strong>${d.m} little ${d.m === 1 ? 'moment' : 'moments'}.</strong><span>Not even you can peek</span></figcaption>
+      <figcaption><strong>${pp(`${d.m} little ${d.m === 1 ? 'moment' : 'moments'}.`, 'Developed.')}</strong><span>${pp('Not even you can peek', 'Watch together now')}</span></figcaption>
     </figure>
-    <p class="cap"><i>${d.added} of ${d.n} in · <em>${waitLine(d)}</em></i><span style="color:${d.me.col}">● you</span></p>
-    <div class="when"><div><small>Open together in</small><strong>2 days, 14 hours</strong></div><div class="r"><small>Sunday</small><strong>8:00 PM</strong></div></div>
+    <p class="cap"><i>${d.added} of ${d.n} in · <em>${waitLine(d)}</em></i><span style="color:${d.me.col}">● yours</span></p>
+    <div class="when"><div><small>${pp('Open together in', 'Opened together')}</small><strong>${pp('2 days, 14 hours', 'Just now')}</strong></div><div class="r"><small>Sunday</small><strong>8:00 PM</strong></div></div>
     <section class="prompt"><small>This week's prompt</small><h2>What made you pause and smile?</h2></section>
     <div class="week"><div><small>Your week</small>${bars('sq', d.me.c)}</div><p>${d.me.c} / 5 moments<br><span>${secs(d.me.c)} / 30 sec</span></p></div>`;
   },
@@ -369,10 +383,10 @@ const bodies = {
     <div class="orb" aria-hidden="true"><i></i><i></i><i></i></div>
     <header class="top">${me(false)}<button type="button" class="grp">Weekend People ${ic('chev')}</button><span class="tag">W36</span></header>
     <section class="hero" data-seal aria-label="${plural(d.m, 'moment')} developing, sealed until reveal">
-      <b>${d.m}</b><span>${d.m === 1 ? 'moment' : 'moments'} developing</span>
-      <p class="chip">${ic('lock')} Sealed · not even you can peek</p>
+      <b>${pp(d.m, 'Now')}</b><span>${pp(`${d.m === 1 ? 'moment' : 'moments'} developing`, 'showing, for all of us')}</span>
+      <p class="chip">${pp(`${ic('lock')} Sealed · not even you can peek`, 'Opened for everyone at once')}</p>
     </section>
-    <div class="count"><strong>2d 14h</strong><span>opens for all of us at once<br>Sunday · 8:00 PM</span></div>
+    <div class="count"><strong>${pp('2d 14h', 'Now')}</strong><span>${pp('opens for all of us at once<br>Sunday · 8:00 PM', 'everyone got it at 8:00 PM<br>watch together')}</span></div>
     <section class="glass">
       <small>This week's prompt</small>
       <h2>What made you pause and smile?</h2>
@@ -382,7 +396,7 @@ const bodies = {
 
   c4: (d) => `
     <header class="top">${me(false)}<span class="mark">Rewind</span><span class="tag">Nº 036</span></header>
-    <p class="eyebrow">Private premiere · all at once</p>
+    <p class="eyebrow">${pp('Private premiere · all at once', 'Now showing · all at once')}</p>
     <article class="ticket" aria-label="Premiere ticket: Weekend People, Sunday 28 September, 8:00 PM">
       <div class="t-main" data-seal>
         <span class="foil" aria-hidden="true">${ic('rewind')}</span>
@@ -391,7 +405,7 @@ const bodies = {
         <p class="by">a film by ${word(d.n)} friends</p>
         <dl>
           <div><dt>Date</dt><dd>Sun 28 Sep</dd></div>
-          <div><dt>Doors</dt><dd>8:00 PM</dd></div>
+          <div><dt>Doors</dt><dd>${pp('8:00 PM', 'Open now')}</dd></div>
           <div><dt>Reels</dt><dd>${d.m} sealed</dd></div>
         </dl>
         <div class="t-foot"><span class="barcode" aria-hidden="true"></span><span class="serial">Roll 036 · Nº ${String(d.m).padStart(4, '0')}</span></div>
@@ -406,14 +420,14 @@ const bodies = {
           .join('')}</div></div>
       </div>
     </article>
-    <section class="feature"><small>Tonight's feature</small><h2>What made you pause and smile?</h2></section>
+    <section class="feature"><small>${pp("Tonight's feature", 'Now showing')}</small><h2>What made you pause and smile?</h2></section>
     <div class="reel"><small>Your reel</small>${bars('rf', d.me.c)}<span>${d.me.c} of 5 · ${secs(d.me.c)}/30 sec</span></div>`,
 
   c5: (d) => `
     <header class="top">${me(false)}<span class="tag">Weekend People <em>— W36</em></span></header>
-    <p class="eyebrow"><i></i>Developing · ${plural(d.m, 'moment')} sealed</p>
-    <div class="big" data-seal role="img" aria-label="Opens in 2 days 14 hours, Sunday 20:00"><b>02</b><div><span>days</span><strong>14 hrs</strong><span>Sun · 20:00</span></div></div>
-    <p class="lead">until it opens for all ${word(d.n)} of us at once.</p>
+    <p class="eyebrow"><i></i>${pp(`Developing · ${plural(d.m, 'moment')} sealed`, `Open · ${plural(d.m, 'moment')}`)}</p>
+    <div class="big" data-seal role="img" aria-label="Opens in 2 days 14 hours, Sunday 20:00"><b>${pp('02', '00')}</b><div><span>days</span><strong>${pp('14 hrs', 'Now')}</strong><span>Sun · 20:00</span></div></div>
+    <p class="lead">${pp(`until it opens for all ${word(d.n)} of us at once.`, `open now, for all ${word(d.n)} of us at once.`)}</p>
     <section class="prompt"><small>01 — Prompt</small><h2>What made you pause and smile?</h2></section>
     <section class="table"><small>02 — This week · not even you can peek</small>
       ${[
@@ -432,12 +446,12 @@ const bodies = {
     <div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>
     <header class="top">${me(false)}<button type="button" class="grp">Weekend People ${ic('chev')}</button><span class="tag">W36</span></header>
     <section class="hero" data-seal aria-label="${plural(d.m, 'moment')}, sealed until Sunday">
-      <p class="kept">kept warm for the ${word(d.n)} of us</p>
-      <b>${d.m}</b>
+      <p class="kept">${pp(`kept warm for the ${word(d.n)} of us`, `opened for the ${word(d.n)} of us`)}</p>
+      <b>${pp(d.m, 'Open')}</b>
       <span>little ${d.m === 1 ? 'moment' : 'moments'}</span>
-      <p class="chip">${ic('lock')} Sealed · not even you can peek</p>
+      <p class="chip">${pp(`${ic('lock')} Sealed · not even you can peek`, 'Opened for everyone at once')}</p>
     </section>
-    <div class="count"><strong>2 days, 14 hours</strong><span>opens for all of us at once · Sun 8 PM</span></div>
+    <div class="count"><strong>${pp('2 days, 14 hours', 'Right now')}</strong><span>${pp('opens for all of us at once · Sun 8 PM', 'everyone got it at 8 PM · watch together')}</span></div>
     <section class="glass">
       <small>This week's prompt</small>
       <h2>What made you pause and smile?</h2>
@@ -450,10 +464,19 @@ const bodies = {
       CX = 165,
       CY = 170;
     const heat = (0.45 + 0.55 * Math.min(1, d.m / (d.n * 3))).toFixed(2);
+    // 只显示谁到了：到了的人一圈满光；只有你自己的座位显示你的 5 段额度
     const seats = d.shown
       .map((x, i) => {
         const a = ((-90 + (i * 360) / d.n) * Math.PI) / 180;
-        return `<div class="seat${x.c ? '' : ' cold'}${x.me ? ' me' : ''}" style="--mc:${x.col};--ring-on:${x.col};left:${(CX + R * Math.cos(a)).toFixed(1)}px;top:${(CY + R * Math.sin(a)).toFixed(1)}px" title="${hidden(x) ? 'Saved seat' : `${x.name} · ${x.c}/5`}">${ring(x.c, 5, 24, 26, 14)}<span class="avatar">${init(x)}</span><small>${label(x)}</small></div>`;
+        const rg = x.me
+          ? ring(x.c, 5, 24, 26, 14)
+          : `<svg class="ring" viewBox="0 0 52 52" aria-hidden="true"><circle class="${x.c ? 'full' : 'none'}" cx="26" cy="26" r="24"/></svg>`;
+        const tip = hidden(x)
+          ? 'Saved seat'
+          : x.me
+            ? `You · ${x.c}/5`
+            : `${x.name} · ${x.c ? 'in' : 'not yet'}`;
+        return `<div class="seat${x.c ? '' : ' cold'}${x.me ? ' me' : ''}" style="--mc:${x.col};--ring-on:${x.col};left:${(CX + R * Math.cos(a)).toFixed(1)}px;top:${(CY + R * Math.sin(a)).toFixed(1)}px" title="${tip}">${rg}<span class="avatar">${init(x)}</span><small>${label(x)}</small></div>`;
       })
       .join('');
     const embers = [-18, 10, -4, 22, -26, 4, 16]
@@ -464,13 +487,13 @@ const bodies = {
       .join('');
     return `
     <header class="top">${me(false)}<button type="button" class="grp">Weekend People ${ic('chev')}</button><span class="tag">W36</span></header>
-    <section class="hearth" data-seal style="--heat:${heat}" aria-label="${d.n} members around the fire, ${plural(d.m, 'moment')} sealed">
+    <section class="hearth" data-seal style="--heat:${heat}" aria-label="${d.n} members around the fire, ${d.added} in, ${plural(d.m, 'moment')} sealed">
       <div class="fire" aria-hidden="true"><i></i><i></i></div>
       ${embers}
-      <div class="mid"><strong>2d 14h</strong><span>until we gather</span><span>Sunday · 8 PM</span></div>
+      <div class="mid"><strong>${pp('2d 14h', 'Now')}</strong><span>${pp('until we gather', "we're gathered")}</span><span>${pp('Sunday · 8 PM', 'watch together')}</span></div>
       ${seats}
     </section>
-    <p class="byfire"><b>${plural(d.m, 'moment')}</b> by the fire · sealed, even from you</p>
+    <p class="byfire">${pp(`<b>${plural(d.m, 'moment')}</b> by the fire · sealed, even from you`, `<b>${plural(d.m, 'moment')}</b> in the light · watch together`)}</p>
     <section class="glass">
       <small>This week's prompt</small>
       <h2>What made you pause and smile?</h2>
@@ -487,8 +510,9 @@ const bodies = {
       <span class="seal">${ic('rewind')}</span>
       <div class="addr"><small>To</small><p class="hand">Weekend People</p><small>From</small><p class="hand sm">the ${word(d.n)} of us</p></div>
       <div class="post" aria-hidden="true"><span>Opens</span><b>SUN</b><span>8 PM</span></div>
+      <div class="inner-card is-now" aria-hidden="true"><em>${plural(d.m, 'moment')}</em><b>${ic('play')} Watch together</b></div>
     </article>
-    <div class="opens"><div><small>Opens for everyone in</small><strong>2 days, 14 hours</strong></div><div class="r"><small>Inside</small><strong>${plural(d.m, 'moment')}</strong></div></div>
+    <div class="opens"><div><small>${pp('Opens for everyone in', 'Opened for everyone')}</small><strong>${pp('2 days, 14 hours', 'Just now')}</strong></div><div class="r"><small>Inside</small><strong>${plural(d.m, 'moment')}</strong></div></div>
     <section class="letter"><p class="hand">Dear us,</p><h2>What made you pause and smile?</h2></section>
     <section class="signed"><small>Sealed by · not even you can peek</small><div class="stamps">${d.shown
       .map(
@@ -498,15 +522,11 @@ const bodies = {
       .join('')}</div><p>${waitLine(d)}</p></section>`,
 
   c9: (d) => {
-    // 每个片段一只萤火虫，颜色 = 贡献者的专属色
-    const flies = [];
-    d.members.forEach((x) => {
-      for (let k = 0; k < x.c; k++) flies.push(x.col);
-    });
-    const fl = flies
+    // 每个片段一只萤火虫；你的萤火虫是你的颜色，其他人的都是暖黄，不暴露谁拍了几条
+    const fl = moments(d)
       .map(
-        (col, i) =>
-          `<i class="fly" style="--mc:${col};left:${8 + ((i * 37 + 11) % 80)}%;top:${10 + ((i * 53 + 7) % 78)}%;animation-delay:${-((i * 0.9) % 6).toFixed(1)}s;animation-duration:${5 + (i % 4)}s"></i>`,
+        (mo, i) =>
+          `<i class="fly${mo.mine ? ' mine' : ''}" style="--mc:${tintOf(mo, d, i)};--k:${i};--ex:${((i % 5) - 2) * 22}px;left:${8 + ((i * 37 + 11) % 80)}%;top:${10 + ((i * 53 + 7) % 78)}%;animation-delay:${-((i * 0.9) % 6).toFixed(1)}s;animation-duration:${5 + (i % 4)}s"></i>`,
       )
       .join('');
     return `
@@ -515,9 +535,9 @@ const bodies = {
       <div class="jarglow" aria-hidden="true"></div>
       <div class="jar" aria-hidden="true"><span class="lid"></span><span class="neck"></span><div class="body" data-seal>${fl}</div><span class="label"><em>open</em> Sun · 8 PM</span></div>
     </section>
-    <p class="caught"><b>${d.m}</b> ${d.m === 1 ? 'moment' : 'moments'} caught this week</p>
-    <p class="sealed">${ic('lock')} Sealed · not even you can peek</p>
-    <div class="count"><span>We let them out together in</span><strong>2 days, 14 hours</strong></div>
+    <p class="caught">${pp(`<b>${d.m}</b> ${d.m === 1 ? 'moment' : 'moments'} caught this week`, `<b>${d.m}</b> ${d.m === 1 ? 'moment' : 'moments'}, set free`)}</p>
+    <p class="sealed">${pp(`${ic('lock')} Sealed · not even you can peek`, 'Opened for everyone at once')}</p>
+    <div class="count"><span>${pp('We let them out together in', 'We let them out together')}</span><strong>${pp('2 days, 14 hours', 'just now')}</strong></div>
     <section class="glass">
       <small>This week's prompt</small>
       <h2>What made you pause and smile?</h2>
@@ -542,39 +562,43 @@ const bodies = {
       <span class="projector" aria-hidden="true"></span>
       <span class="beam" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
       <div class="screen-card" data-seal>
-        <small>Coming Sunday · 8 PM</small>
+        <small>${pp('Coming Sunday · 8 PM', 'Now showing')}</small>
         <h1>Weekend People</h1>
-        <p>in 2 days, 14 hours · for all ${word(d.n)} of us at once</p>
+        <p>${pp(`in 2 days, 14 hours · for all ${word(d.n)} of us at once`, `for all ${word(d.n)} of us, right now`)}</p>
+        <div class="leader is-now" aria-hidden="true"><span>3</span><span>2</span><span>1</span></div>
       </div>
     </section>
     <section class="credits">
       <small>Starring</small>
       <p class="names">${stars || '—'}</p>
       <p class="still">${still}</p>
-      <p class="feat">featuring ${plural(d.m, 'sealed moment')} · not even you can peek</p>
+      <p class="feat">${pp(`featuring ${plural(d.m, 'sealed moment')} · not even you can peek`, `featuring ${plural(d.m, 'moment')} · now showing`)}</p>
     </section>
     <section class="theme"><small>This week's theme</small><h2>What made you pause and smile?</h2></section>
     <div class="reel"><small>Your scenes</small>${bars('rf', d.me.c)}<span>${d.me.c} of 5 · ${secs(d.me.c)}/30s</span></div>`;
   },
 
-  c11: (d) => `
+  c11: (d) => {
+    // 全组一条片轨（不标注作者，只有你的几格是你的颜色）+ 成员参与标记
+    const ms = moments(d);
+    return `
     <header class="top">${me()}<span class="tag">W36</span></header>
     <h1 class="title">Weekend People</h1>
-    <p class="pill-count"><span class="dot"></span>Premieres in <b>2d 14h</b> · Sun 8 PM, to all ${word(d.n)} at once</p>
-    <section class="board" data-seal aria-label="Our reel: ${plural(d.m, 'clip')} from ${d.added} of ${d.n} members, sealed">
-      <div class="board-h"><div><small>Our reel so far</small><strong>${plural(d.m, 'clip')}</strong></div><span class="lock">${ic('lock')} not even you can peek</span></div>
-      <div class="lanes" style="--n:${d.n}">${d.shown
+    <p class="pill-count"><span class="dot"></span>${pp(`Premieres in <b>2d 14h</b> · Sun 8 PM, to all ${word(d.n)} at once`, `Premiering now · to all ${word(d.n)} at once`)}</p>
+    <section class="board" data-seal style="--me:${d.me.col}" aria-label="Our reel: ${plural(d.m, 'clip')}, ${d.added} of ${d.n} members in, sealed">
+      <div class="board-h"><div><small>Our reel so far</small><strong>${plural(d.m, 'clip')}</strong></div><span class="lock">${ic('lock')} ${pp('not even you can peek', 'open to everyone')}</span></div>
+      <div class="reelbar">${ms.length ? ms.map((mo, k) => `<i class="${mo.mine ? 'mine' : ''}" style="--k:${k}"></i>`).join('') : '<em>No clips yet</em>'}<span class="playhead" aria-hidden="true"></span></div>
+      <div class="chips">${d.shown
         .map(
           (x) =>
-            `<div class="lane${x.me ? ' me' : ''}${x.c ? '' : ' idle'}" style="--mc:${x.col}">${Array.from(
-              { length: 5 },
-              (_, k) => `<i${4 - k < x.c ? ' class="on"' : ''}></i>`,
-            ).join('')}<b>${x.me ? 'You' : init(x)}</b></div>`,
+            `<span class="pchip${x.c ? ' in' : ''}${x.me ? ' me' : ''}" style="--mc:${x.col}" title="${hidden(x) ? 'Not yet' : x.name + (x.c ? ' · in' : ' · not yet')}">${x.c ? ic('check') : ''}${x.me ? 'You' : init(x)}</span>`,
         )
         .join('')}</div>
+      <p class="legend"><i></i>yours<i class="o"></i>everyone else · who made which stays sealed</p>
     </section>
     <section class="prompt"><small>This week's prompt</small><h2>What made you pause and smile?</h2></section>
-    <p class="foot-note">${d.added} of ${d.n} are in · ${waitLine(d)}</p>`,
+    <p class="foot-note">${d.added} of ${d.n} are in · ${waitLine(d)}</p>`;
+  },
 };
 
 /* ---------- 方案清单与评审信息 ---------- */
@@ -589,11 +613,11 @@ const concepts = [
     key: '暖色玻璃罐 · 一个片段一只萤火虫',
     notes: [
       '玻璃质感 + 温馨：罐子在暮色里微微发光',
-      '萤火虫颜色 = 贡献者专属色，数量 = 片段数，人数多少都成立',
+      '一个片段一只萤火虫，数量 = 全组片段数；你的萤火虫是你的颜色，其余统一暖黄',
       '“We let them out together”：一起放出来 = 一起揭晓',
     ],
     fonts: 'Fraunces (SOFT) · Caveat · Geist',
-    review: ['罐中萤火', 3, 3, 2, '中高', '片段很多时粒子性能；颜色靠近时难分辨'],
+    review: ['罐中萤火', 3, 3, 2, '中高', '片段很多时粒子性能'],
   },
   {
     id: 'c10',
@@ -615,17 +639,17 @@ const concepts = [
     id: 'c11',
     group: 'r3',
     no: '11',
-    zh: '彩色分轨',
-    en: 'Colour Lanes',
+    zh: '共同片轨',
+    en: 'Shared Reel',
     nav: 'glass',
-    key: '浅色 · 每人一条彩色音轨',
+    key: '浅色 · 全组一条片轨 · 成员参与标记',
     notes: [
-      '借鉴 Reveal：每个成员一种颜色，叠在一起就是这期影片',
-      '每条轨 5 格 = 每人每周额度，亮起即已贡献',
-      '最接近剪辑软件的直觉，信息最直接',
+      '按新口径从“每人一条轨”改为“全组一条片轨”：只数总数，不标作者',
+      '你的几格是你的颜色；成员只标“已参与 ✓ / 还没有”',
+      '揭晓时播放头从头扫到尾，像开始放映',
     ],
     fonts: 'Geist',
-    review: ['多轨剪辑时间线', 2, 3, 2, '低', '展示每人贡献数，隐私感弱；偏工具'],
+    review: ['剪辑时间线', 2, 3, 2, '低', '偏工具，情感弱于 07 / 09'],
   },
   {
     id: 'c6',
@@ -652,7 +676,7 @@ const concepts = [
     nav: 'glass',
     key: '暖黑 · 火光 · 成员围坐一圈',
     notes: [
-      '成员按人数自动围成一圈；每人外圈是自己颜色的 5 段额度环',
+      '成员按人数自动围成一圈；到了的人亮一圈自己的颜色，只有你的座位显示你的 5 段额度',
       '火光亮度随全组片段数变化',
       '不点名时，没来的人是“留着的空位”',
     ],
@@ -684,8 +708,8 @@ const concepts = [
     key: '暖黑底 · 安全灯橙 · 等宽大数字',
     notes: [
       '主角是倒计时',
-      '5 格胶片 = 你本周的额度，已拍的封存，下一格标 NEXT',
-      '快门外圈 5 段与胶片同步',
+      '倾斜的写实胶片斜向下走片，每格是全组的一个片段，只有你的带你的颜色',
+      '揭晓时每格从暗到亮“显影”，锁消失',
     ],
     fonts: 'Inter Tight · JetBrains Mono',
     review: ['暗房冲洗', 1, 3, 2, '低', '偏酷、偏工具感'],
@@ -698,12 +722,12 @@ const concepts = [
     en: 'Contact Sheet',
     key: '暖纸 · 铁锈红 · 衬线标题',
     notes: [
-      '每人一行、每行 5 格，行数跟着人数走',
-      '行首字母用成员专属色',
+      '全组片段排成小样，行数跟着片段数走，不标注是谁拍的',
+      '只有你的几格带你的颜色小点；揭晓时每格依次显影',
       '“Not even you can peek”',
     ],
     fonts: 'Instrument Serif · Inter · DM Mono',
-    review: ['冲洗小样', 2, 2, 1, '中', '每人一行会暴露个人贡献数；10 人时行很密'],
+    review: ['冲洗小样', 2, 3, 1, '中', '片段多时每格很小'],
   },
   {
     id: 'c3',
@@ -759,8 +783,19 @@ const screen = (c, d) =>
 
 let current = 'all';
 
+// 每台手机的演示数据（播放 / 按快门只改这一台；重置即删除）
+const STORY = {};
+const storyPool = (id) => (STORY[id] ||= POOL.map((p) => ({ ...p })));
+const dataFor = (id) => data(STORY[id] || POOL);
+function renderCard(id) {
+  const c = concepts.find((x) => x.id === id);
+  const wrap = document.querySelector(`.card[data-id="${id}"] .phone-wrap`);
+  if (c && wrap) wrap.innerHTML = screen(c, dataFor(id));
+  return wrap?.querySelector('.screen');
+}
+const clearStories = () => Object.keys(STORY).forEach((k) => delete STORY[k]);
+
 function render() {
-  const d = data();
   let html = '',
     last = '';
   for (const c of concepts) {
@@ -771,7 +806,8 @@ function render() {
     html +=
       `<article class="card" data-id="${c.id}" aria-label="${c.no} ${c.zh}">` +
       `<header class="card-h"><span class="no">${c.no}</span><div><h2>${c.zh}</h2><p>${c.en}</p></div><div class="card-vote" data-vote="${c.id}"></div></header>` +
-      `<div class="phone-wrap">${screen(c, d)}</div>` +
+      `<div class="card-ctl"><button type="button" class="ctl" data-play="${c.id}" title="重置这台手机并从头播放">${ic('play')}播放</button><span class="step" id="step-${c.id}" aria-live="polite"></span></div>` +
+      `<div class="phone-wrap">${screen(c, dataFor(c.id))}</div>` +
       `<div class="notes"><p class="key">${c.key}</p><ul>${c.notes.map((n) => `<li>${n}</li>`).join('')}</ul><p class="fonts">字体 · ${c.fonts}</p></div>` +
       `</article>`;
   }
@@ -910,18 +946,23 @@ function flashTip(btn, text) {
 }
 
 // 一张照片从快门飞向主视觉，途中翻到“已封存”的背面，然后被吸收：放下它，等大家一起打开
-function sealFlight(scr, btn) {
-  if (NAV.shutter !== 'collect') return;
-  const mine = POOL[0];
-  if (mine.c >= 5) return flashTip(btn, 'All 5 used · resets Sun');
+// 一张照片从快门飞向主视觉，途中翻到“已封存”的背面，然后被吸收：放下它，等大家一起打开
+function sealFlight(scr, btn, then) {
+  if (NAV.shutter !== 'collect' || scr.classList.contains('revealed')) return then?.();
   const id = scr.classList[1];
+  const mine = storyPool(id)[0];
+  if (mine.c >= 5) {
+    flashTip(btn, 'All 5 used this week');
+    return then?.();
+  }
   const done = () => {
+    if (!scr.isConnected) return;
     mine.c += 1;
-    render();
-    const ns = document.querySelector(`.card[data-id="${id}"] .screen`);
+    const ns = renderCard(id);
     ns?.querySelector('[data-seal]')?.classList.add('absorb');
     const nb = ns?.querySelector('.shutter');
     if (nb) flashTip(nb, 'Sealed · not even you can peek');
+    then?.();
   };
   const target = scr.querySelector('[data-seal]');
   if (!target || reduceMotion()) return done();
@@ -960,6 +1001,113 @@ function sealFlight(scr, btn) {
   };
 }
 
+// 汇聚：一位朋友加入，他颜色的一点光从屏幕边缘飘进主视觉（不带任何内容）
+function gatherFlight(scr, then) {
+  const id = scr.classList[1];
+  const pool = storyPool(id);
+  const friend = pool.slice(0, size).find((x) => !x.me && x.c === 0);
+  if (!friend) return then?.();
+  const done = () => {
+    if (!scr.isConnected) return;
+    friend.c = 1;
+    const ns = renderCard(id);
+    ns?.querySelector('[data-seal]')?.classList.add('absorb');
+    if (ns) toast(ns, friend, `${friend.name} added a moment`);
+    then?.();
+  };
+  const target = scr.querySelector('[data-seal]');
+  if (!target || reduceMotion()) return done();
+  const sr = scr.getBoundingClientRect(),
+    k = sr.width / 390,
+    tr = target.getBoundingClientRect();
+  const fx = 384,
+    fy = 170,
+    dx = (tr.left + tr.width / 2 - sr.left) / k - fx,
+    dy = (tr.top + tr.height / 2 - sr.top) / k - fy;
+  const dot = document.createElement('i');
+  dot.className = 'orb-dot';
+  dot.style.cssText = `left:${fx}px;top:${fy}px;--mc:${friend.col}`;
+  scr.appendChild(dot);
+  const anim = dot.animate(
+    [
+      { transform: 'translate(0,0) scale(.4)', opacity: 0 },
+      {
+        transform: `translate(${dx * 0.25 - 30}px, ${dy * 0.15 - 30}px) scale(1.3)`,
+        opacity: 1,
+        offset: 0.25,
+      },
+      {
+        transform: `translate(${dx * 0.7}px, ${dy * 0.6 - 40}px) scale(1)`,
+        opacity: 1,
+        offset: 0.7,
+      },
+      { transform: `translate(${dx}px, ${dy}px) scale(.5)`, opacity: 0 },
+    ],
+    { duration: 1500, easing: 'cubic-bezier(.35,.6,.3,1)' },
+  );
+  anim.onfinish = () => {
+    dot.remove();
+    done();
+  };
+}
+
+function toast(scr, who, text) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.setAttribute('role', 'status');
+  t.innerHTML = `<i style="--mc:${who.col}">${who.name[0]}</i>${text}`;
+  scr.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+}
+
+// 揭晓：周日 8 点，所有人同一时刻打开；每个方向有自己的拆封动效
+function reveal(scr) {
+  scr.classList.add('revealed');
+  const btn = scr.querySelector('.shutter');
+  if (btn) {
+    btn.setAttribute('aria-label', 'Watch the premiere together');
+    btn.innerHTML = `${arcRing(0.999)}<span class="core">${ic('play')}</span>`;
+    flashTip(btn, 'Premiere · watch together');
+  }
+}
+
+// 播放：①朋友加入 → ②你按快门封存 → ③时间到，一起揭晓
+const TIMERS = {};
+function setStep(id, text) {
+  const el = $('step-' + id);
+  if (el) el.textContent = text;
+}
+function playStory(id) {
+  resetCard(id);
+  const scrOf = () => document.querySelector(`.card[data-id="${id}"] .screen`);
+  const later = (ms, fn) => (TIMERS[id] ||= []).push(setTimeout(fn, ms));
+  setStep(id, '① 朋友加入');
+  gatherFlight(scrOf(), () =>
+    later(700, () => {
+      setStep(id, '② 你按快门，封存');
+      const scr = scrOf();
+      const btn = scr?.querySelector('.shutter');
+      if (!scr || !btn) return;
+      btn.classList.add('press');
+      sealFlight(scr, btn, () =>
+        later(1300, () => {
+          setStep(id, '③ 周日 8 点，一起揭晓');
+          const s2 = scrOf();
+          if (s2) reveal(s2);
+          later(3200, () => setStep(id, '播放完毕 · 再点“播放”重新开始'));
+        }),
+      );
+    }),
+  );
+}
+function resetCard(id) {
+  (TIMERS[id] || []).forEach(clearTimeout);
+  TIMERS[id] = [];
+  delete STORY[id];
+  renderCard(id);
+  setStep(id, '');
+}
+
 const closeSheets = () =>
   document.querySelectorAll('.screen.open').forEach((s) => s.classList.remove('open'));
 
@@ -981,14 +1129,17 @@ document.addEventListener('click', (e) => {
       .forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
     return render();
   }
+  if (t.dataset.play) return playStory(t.dataset.play);
   if (t.id === 'shuffle') {
     const bag = [0, 0, 1, 1, 2, 2, 3, 4, 5];
     POOL.forEach((p) => (p.c = bag[Math.floor(Math.random() * bag.length)]));
+    clearStories();
     return render();
   }
   if (t.id === 'replay') return playIntro();
   if (t.id === 'restore') {
     POOL.forEach((p, i) => (p.c = DEFAULT_C[i]));
+    clearStories();
     return render();
   }
   const scr = t.closest('.screen');
@@ -1045,6 +1196,7 @@ document.addEventListener(
 $('members').addEventListener('input', (e) => {
   size = Number(e.target.value);
   $('membersv').textContent = size + ' 人';
+  clearStories();
   render();
 });
 

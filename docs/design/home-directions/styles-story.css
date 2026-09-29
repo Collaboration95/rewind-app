@@ -1,0 +1,558 @@
+/* 第六轮：只显示谁参与了；每台手机的播放 / 重置；汇聚、揭晓动效 */
+
+/* ============ 播放 / 重置 ============ */
+.card-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  margin: -6px 0 14px;
+}
+.gallery.single .card-ctl {
+  grid-column: 1 / -1;
+}
+.ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 12.5px;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 0 0 1px var(--page-line);
+}
+.ctl:hover {
+  background: #fff;
+}
+.ctl .ic {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+  stroke: none;
+}
+.ctl[aria-disabled='true'] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.step {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  color: var(--page-muted);
+}
+
+/* ============ 揭晓前 / 揭晓后文案 ============ */
+.screen:not(.revealed) .is-now {
+  display: none !important;
+}
+.screen.revealed .is-pre {
+  display: none !important;
+}
+/* 前后两套文案本身不带样式，完全继承所在位置（避免被各方案里的 “xx span” 规则误伤） */
+.screen span.is-pre,
+.screen span.is-now {
+  display: inline;
+  margin: 0;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  color: inherit;
+  opacity: 1;
+}
+.screen.revealed span.is-now,
+.screen.revealed p.is-now {
+  animation: now-in 0.8s ease both;
+}
+@keyframes now-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* ============ 汇聚：朋友加入的光点、提示 ============ */
+.orb-dot {
+  position: absolute;
+  z-index: 8;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--mc) 50%, #fff);
+  box-shadow:
+    0 0 10px 4px var(--mc),
+    0 0 28px 12px color-mix(in srgb, var(--mc) 40%, transparent);
+  pointer-events: none;
+}
+.toast {
+  position: absolute;
+  z-index: 9;
+  left: 50%;
+  top: 104px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px 7px 7px;
+  border-radius: 22px;
+  white-space: nowrap;
+  font: 500 12.5px/1 var(--f-body);
+  color: var(--ink);
+  background: var(--sheet);
+  box-shadow:
+    0 14px 30px -12px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px var(--line);
+  animation: toast 2.5s ease both;
+}
+.toast i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font: 600 11px/1 var(--f-body);
+  font-style: normal;
+  color: #fff;
+  background: var(--mc);
+}
+@keyframes toast {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+  12%,
+  80% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 0);
+  }
+}
+@keyframes develop {
+  0% {
+    filter: brightness(0.12) sepia(1) saturate(2);
+  }
+  55% {
+    filter: brightness(0.75) sepia(0.4);
+  }
+  100% {
+    filter: none;
+  }
+}
+
+/* ============ 01 暗房杂志 ============ */
+.c1 .cell .fr.sealed:not(.mine) {
+  filter: saturate(0.7) brightness(0.85);
+}
+.c1 .cell .fr.mine {
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 0 0 1.5px var(--me);
+}
+.c1 .now {
+  margin: 0 0 4px;
+  white-space: nowrap;
+  font: 300 58px/1.1 var(--f-mono);
+  letter-spacing: -0.05em;
+  color: var(--accent);
+}
+.revealed.c1 .cell .fr {
+  animation: develop 2.4s ease-out both;
+}
+.revealed.c1 .cell .fr .ic {
+  opacity: 0;
+  transition: opacity 0.6s;
+}
+
+/* ============ 02 相纸索引页：全组小样 ============ */
+.c2 .grid5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+  padding: 7px 0;
+}
+.c2 .grid5 .fr {
+  height: var(--fh);
+  border-radius: 2px;
+}
+.c2 .grid5 .fr.mine::before {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  left: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--me);
+}
+.revealed.c2 .grid5 .fr.sealed {
+  background-image: var(--ph);
+  background-size: cover;
+  background-position: center;
+  animation: develop 2.4s ease-out both;
+}
+.revealed.c2 .grid5 .fr:nth-child(3n + 2) {
+  animation-delay: 0.3s;
+}
+.revealed.c2 .grid5 .fr:nth-child(3n) {
+  animation-delay: 0.6s;
+}
+.revealed.c2 figcaption {
+  background: radial-gradient(closest-side, rgba(20, 16, 12, 0.55), rgba(20, 16, 12, 0));
+  transition: background 1.5s;
+}
+
+/* ============ 03 玻璃胶囊 ============ */
+.c3 .orb {
+  transition:
+    transform 1.8s cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 1.8s;
+}
+.revealed.c3 .orb {
+  transform: scale(1.3);
+  filter: blur(30px) brightness(1.35);
+}
+
+/* ============ 04 首映票根：沿打孔撕下票根 ============ */
+.revealed.c4 .t-stub {
+  animation: tear 1.4s cubic-bezier(0.45, 0, 0.6, 1) 0.2s forwards;
+}
+@keyframes tear {
+  25% {
+    transform: rotate(2.5deg) translateY(3px);
+  }
+  100% {
+    transform: translate(40px, 300px) rotate(26deg);
+    opacity: 0;
+  }
+}
+
+/* ============ 05 极简排版 ============ */
+.revealed.c5 .big b {
+  color: var(--accent);
+}
+
+/* ============ 06 暖光玻璃 ============ */
+.c6 .glow {
+  transition:
+    transform 1.8s cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 1.8s;
+}
+.revealed.c6 .hero b {
+  margin-bottom: 8px;
+  font-size: 88px;
+}
+.revealed.c6 .glow {
+  transform: scale(1.3);
+  filter: blur(34px) brightness(1.12);
+}
+
+/* ============ 07 围炉：到了的人一圈满光 ============ */
+.c7 .ring .full {
+  fill: none;
+  stroke: var(--mc);
+  stroke-width: 2.5;
+}
+.c7 .ring .none {
+  fill: none;
+  stroke: rgba(251, 239, 226, 0.2);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 4;
+}
+.c7 .fire {
+  transition:
+    opacity 1.6s,
+    transform 1.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.revealed.c7 .fire {
+  opacity: 1;
+  transform: scale(1.35);
+}
+
+/* ============ 08 蜡封信：蜡封裂开、信封打开、卡片升起 ============ */
+.c8 .env {
+  perspective: 700px;
+}
+.c8 .flap,
+.c8 .flap-shadow {
+  transform-origin: 50% 0;
+  transition: transform 1.1s cubic-bezier(0.5, 0, 0.3, 1) 0.5s;
+}
+.revealed.c8 .flap,
+.revealed.c8 .flap-shadow {
+  transform: rotateX(180deg);
+}
+.revealed.c8 .seal {
+  animation: crack 0.8s ease-in forwards;
+}
+@keyframes crack {
+  30% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(0.5) rotate(-24deg);
+    opacity: 0;
+  }
+}
+.c8 .inner-card {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: -110px;
+  display: grid;
+  gap: 6px;
+  width: 210px;
+  margin-left: -105px;
+  padding: 16px 14px;
+  text-align: center;
+  border-radius: 6px;
+  background: #fffdf8;
+  box-shadow: 0 -10px 30px -12px rgba(90, 50, 20, 0.45);
+}
+.revealed.c8 .inner-card {
+  animation: card-rise 1.1s cubic-bezier(0.2, 0.8, 0.2, 1) 1.3s both;
+}
+@keyframes card-rise {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-190px);
+  }
+}
+.c8 .inner-card em {
+  font: italic 400 14px/1 var(--f-serif);
+  color: var(--muted);
+}
+.c8 .inner-card b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font: 500 17px/1 var(--f-serif);
+  color: var(--accent);
+}
+.c8 .inner-card .ic {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  stroke: none;
+}
+
+/* ============ 09 萤火虫罐：打开盖子，萤火虫飞走 ============ */
+.c9 .fly.mine {
+  width: 10px;
+  height: 10px;
+}
+.c9 .lid {
+  transition:
+    transform 1s cubic-bezier(0.3, 0.7, 0.3, 1),
+    opacity 1s;
+}
+.revealed.c9 .lid {
+  transform: translate(64px, -70px) rotate(28deg);
+  opacity: 0;
+}
+.revealed.c9 .body {
+  overflow: visible;
+}
+.revealed.c9 .fly {
+  animation: escape 2.8s ease-in forwards;
+  animation-delay: calc(0.6s + var(--k) * 70ms);
+}
+@keyframes escape {
+  0% {
+    transform: none;
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--ex), -320px);
+    opacity: 0;
+  }
+}
+
+/* ============ 10 放映夜：片头 3-2-1 倒数 ============ */
+.c10 .leader {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: radial-gradient(circle, #2a1814 0 36%, #1b100d 37%);
+  animation: leader-out 0.5s 2.2s forwards;
+}
+.c10 .leader::before {
+  content: '';
+  position: absolute;
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px rgba(244, 230, 204, 0.4);
+}
+.c10 .leader::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 48px;
+  margin: -48px 0 0 -1px;
+  background: rgba(244, 230, 204, 0.7);
+  transform-origin: 50% 100%;
+  animation: hand 0.7s linear 3;
+}
+@keyframes hand {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.c10 .leader span {
+  position: absolute;
+  font: 500 56px/1 var(--f-serif);
+  color: #f4e6cc;
+  opacity: 0;
+}
+.c10 .leader span:nth-child(1) {
+  animation: leader-n 0.7s 0s;
+}
+.c10 .leader span:nth-child(2) {
+  animation: leader-n 0.7s 0.7s;
+}
+.c10 .leader span:nth-child(3) {
+  animation: leader-n 0.7s 1.4s;
+}
+@keyframes leader-n {
+  0%,
+  99% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes leader-out {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+.c10 .beam {
+  transition: filter 1.5s 2.2s;
+}
+.revealed.c10 .beam {
+  filter: brightness(1.8);
+}
+
+/* ============ 11 共同片轨 ============ */
+.c11 .reelbar {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-height: 32px;
+}
+.c11 .reelbar i {
+  width: 24px;
+  height: 32px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #f1dcc2, #e3c49f);
+}
+.c11 .reelbar i.mine {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--me) 78%, #fff), var(--me));
+}
+.c11 .reelbar em {
+  font-size: 12.5px;
+  font-style: normal;
+  color: var(--muted);
+}
+.c11 .playhead {
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  left: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--ink);
+  opacity: 0;
+}
+.revealed.c11 .playhead {
+  animation: sweep 2.6s 0.3s ease-in-out forwards;
+}
+@keyframes sweep {
+  from {
+    left: 0;
+    opacity: 1;
+  }
+  to {
+    left: 100%;
+    opacity: 1;
+  }
+}
+.revealed.c11 .reelbar i {
+  animation: lightup 0.5s both;
+  animation-delay: calc(0.3s + var(--k) * 90ms);
+}
+@keyframes lightup {
+  50% {
+    transform: translateY(-4px);
+    filter: brightness(1.15);
+  }
+}
+.c11 .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
+}
+.c11 .pchip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 13px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px rgba(35, 32, 28, 0.16);
+}
+.c11 .pchip:not(.in) {
+  box-shadow: none;
+  outline: 1px dashed rgba(35, 32, 28, 0.3);
+  outline-offset: -1px;
+}
+.c11 .pchip.in {
+  color: #fff;
+  background: var(--mc);
+  box-shadow: none;
+}
+.c11 .pchip .ic {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.6;
+}
+.c11 .legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.c11 .legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--me);
+}
+.c11 .legend i.o {
+  margin-left: 6px;
+  background: #e8cba8;
+}
