@@ -342,33 +342,50 @@ function ActiveAppShell({
     if (typeof document === 'undefined') return;
     const route = document.getElementById(`screen-route-${activeRoute}`);
     if (!route) return;
-    const focusHeading = () => {
-      const heading = route.querySelector<HTMLElement>(
-        `[data-testid="route-heading-${activeRoute}"]`,
-      );
-      if (!heading) return false;
-      heading.tabIndex = -1;
-      heading.focus();
-      return true;
-    };
-    if (focusHeading()) return;
-    let timeout: ReturnType<typeof setTimeout>;
+    const findHeading = () =>
+      route.querySelector<HTMLElement>(`[data-testid="route-heading-${activeRoute}"]`);
+    let focusedHeading = findHeading();
+    if (focusedHeading) {
+      focusedHeading.tabIndex = -1;
+      focusedHeading.focus();
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
     const observer = new MutationObserver(() => {
-      if (focusHeading()) {
-        observer.disconnect();
-        clearTimeout(timeout);
+      const heading = findHeading();
+      if (!heading) return;
+      if (!focusedHeading) {
+        focusedHeading = heading;
+        heading.tabIndex = -1;
+        heading.focus();
+        return;
+      }
+      if (
+        heading !== focusedHeading &&
+        !focusedHeading.isConnected &&
+        document.activeElement === document.body
+      ) {
+        focusedHeading = heading;
+        heading.tabIndex = -1;
+        heading.focus();
+        stopObserving();
       }
     });
-    timeout = setTimeout(() => observer.disconnect(), 5000);
-    observer.observe(route, { childList: true, subtree: true });
-    if (focusHeading()) {
+    const stopObserving = () => {
+      if (stopped) return;
+      stopped = true;
       observer.disconnect();
-      clearTimeout(timeout);
-    }
-    return () => {
-      observer.disconnect();
-      clearTimeout(timeout);
+      document.removeEventListener('focusin', handleFocusIn);
+      if (timeout) clearTimeout(timeout);
     };
+    const handleFocusIn = (event: FocusEvent) => {
+      if (event.target !== focusedHeading) stopObserving();
+    };
+    timeout = setTimeout(stopObserving, 5000);
+    document.addEventListener('focusin', handleFocusIn);
+    observer.observe(route, { childList: true, subtree: true });
+    return stopObserving;
   }, [activeRoute]);
 
   useEffect(() => {
