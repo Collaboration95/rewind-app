@@ -110,6 +110,12 @@ export interface CameraPlatform {
   /** Video capture requests camera first, then microphone; still capture need not use these. */
   getVideoPermissions?(): Promise<PermissionSnapshot>;
   requestVideoPermissions?(): Promise<PermissionSnapshot>;
+  /** Browser preview stream owned by this adapter; never persist it. */
+  getVideoPreviewStream?(): MediaStream | null;
+  /** Release browser camera and microphone tracks when capture is no longer active. */
+  releaseVideoCapture?(): void;
+  /** Explain a browser recording limitation in the unsupported state. */
+  getVideoCaptureUnavailableReason?(): string | null;
   openSettings(): Promise<void>;
   captureStill(): Promise<PlatformStillImage>;
   /** Browser-only fallback when a live camera cannot be used. */

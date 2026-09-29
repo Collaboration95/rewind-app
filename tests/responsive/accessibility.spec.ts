@@ -110,6 +110,7 @@ test('Archive loading and Demo access error states have no serious or critical A
     await expectNoSeriousAxeViolations(page, 'loading');
     releasePremiereRequests.splice(0).forEach((release) => release());
     await expect(page.getByTestId('archive-locked')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('route-heading-archive')).toBeFocused();
   } finally {
     releasePremiereRequests.splice(0).forEach((release) => release());
     await page.unroute('**/api/cycles/*/premiere**');
