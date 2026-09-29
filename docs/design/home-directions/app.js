@@ -567,7 +567,7 @@ const bodies = {
     const fl = moments(d)
       .map(
         (mo, i) =>
-          `<i class="fly${mo.mine ? ' mine' : ''}" style="--mc:${tintOf(mo, d, i)};--k:${i};--ex:${((i % 5) - 2) * 22}px;left:${8 + ((i * 37 + 11) % 80)}%;top:${10 + ((i * 53 + 7) % 78)}%;animation-delay:${-((i * 0.9) % 6).toFixed(1)}s;animation-duration:${5 + (i % 4)}s"></i>`,
+          `<i class="fly${mo.mine ? ' mine' : ''}" style="--mc:${tintOf(mo, d, i)};--k:${i};--r:${((i * 67) % 360) - 180}deg;--ex:${((i % 5) - 2) * 22}px;left:${8 + ((i * 37 + 11) % 80)}%;top:${10 + ((i * 53 + 7) % 78)}%;animation-delay:${-((i * 0.9) % 6).toFixed(1)}s;animation-duration:${5 + (i % 4)}s"></i>`,
       )
       .join('');
     return `
@@ -993,8 +993,31 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const clampTo = (v, a, b) => Math.max(a, Math.min(b, v));
 const flyXY = (f) => {
   const m = new DOMMatrix(getComputedStyle(f).transform);
-  return { x: m.m41, y: m.m42 };
+  return { x: m.m41, y: m.m42, a: (Math.atan2(m.b, m.a) * 180) / Math.PI };
 };
+// 朝向：头对着飞行方向（翅膀长在背上，所以 +90°）；相邻角度取最近的等价值，避免猛甩一圈
+const nearAngle = (prev, a) => {
+  while (a - prev > 180) a -= 360;
+  while (a - prev < -180) a += 360;
+  return a;
+};
+function headings(pts, start, wobble = 0) {
+  const out = [];
+  let prev = start ?? 0;
+  pts.forEach((_, i) => {
+    const a0 = pts[Math.max(0, i - 1)],
+      a1 = pts[Math.min(pts.length - 1, i + 1)];
+    let ang = (Math.atan2(a1.y - a0.y, a1.x - a0.x) * 180) / Math.PI + 90 + rand(-wobble, wobble);
+    ang = nearAngle(prev, ang);
+    if (i === 0 && start !== undefined) ang = start;
+    else if (i === 1 && start !== undefined) ang = (start + ang) / 2; // 起步时先转一半，转向更柔
+    out.push(ang);
+    prev = ang;
+  });
+  return out;
+}
+const flyTf = (x, y, a) =>
+  `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) rotate(${a.toFixed(1)}deg)`;
 function flyPos(root) {
   const m = {};
   root?.querySelectorAll('.card').forEach((card) => {
@@ -1018,14 +1041,16 @@ function startFlies(root, keep = {}) {
       const kind = f.classList.contains('mine') ? 'mine' : 'other';
       // 有旧位置就接着飞；多出来的那只从瓶口进来；首次渲染用初始位置
       const p = left
-        ? left[kind].shift() || { x: JAR_W / 2 - 4, y: 6 }
+        ? left[kind].shift() || { x: JAR_W / 2 - 4, y: 6, a: rand(150, 210) }
         : {
             x: (parseFloat(f.style.left) / 100) * JAR_W,
             y: (parseFloat(f.style.top) / 100) * JAR_H,
+            a: parseFloat(f.style.getPropertyValue('--r')) || rand(-180, 180),
           };
       f.classList.add('js');
       f._p = p;
-      f.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      f._a = p.a;
+      f.style.transform = flyTf(p.x, p.y, p.a);
       setTimeout(() => wander(f), rand(0, 600));
       setTimeout(() => blink(f), rand(0, 2500));
     });
@@ -1046,14 +1071,18 @@ function wander(f) {
     x: clampTo((p.x + q.x) / 2 + rand(-34, 34), 8, JAR_W - 18),
     y: clampTo((p.y + q.y) / 2 + rand(-34, 34), 12, JAR_H - 20),
   };
-  const frames = [];
+  const pts = [];
   for (let i = 0; i <= 8; i++) {
     const t = i / 8,
       u = 1 - t;
-    const x = u * u * p.x + 2 * u * t * c.x + t * t * q.x;
-    const y = u * u * p.y + 2 * u * t * c.y + t * t * q.y;
-    frames.push({ transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)` });
+    pts.push({
+      x: u * u * p.x + 2 * u * t * c.x + t * t * q.x,
+      y: u * u * p.y + 2 * u * t * c.y + t * t * q.y,
+    });
   }
+  // 头跟着飞行方向转，再加几度随机晃动，像在扑腾
+  const angs = headings(pts, f._a, 9);
+  const frames = pts.map((pt, i) => ({ transform: flyTf(pt.x, pt.y, angs[i]) }));
   const dist = Math.hypot(q.x - p.x, q.y - p.y);
   const a = f.animate(frames, {
     duration: 600 + dist * rand(16, 34),
@@ -1063,7 +1092,8 @@ function wander(f) {
   a.onfinish = () => {
     if (!f.isConnected || f.dataset.free) return;
     f._p = q;
-    f.style.transform = `translate(${q.x}px, ${q.y}px)`;
+    f._a = angs[angs.length - 1];
+    f.style.transform = flyTf(q.x, q.y, f._a);
     a.cancel();
     setTimeout(() => wander(f), Math.random() < 0.3 ? rand(400, 1600) : rand(0, 120));
   };
@@ -1083,7 +1113,7 @@ function blink(f) {
 // 揭晓：每只从当前位置绕向瓶口，再依次飞出去
 function freeFlies(scr) {
   scr.querySelectorAll('.c9 .jar .fly').forEach((f, i) => {
-    const p = f.classList.contains('js') ? flyXY(f) : { x: JAR_W / 2, y: JAR_H / 2 };
+    const p = f.classList.contains('js') ? flyXY(f) : { x: JAR_W / 2, y: JAR_H / 2, a: 0 };
     f.dataset.free = '1';
     f.getAnimations().forEach((a) => a.cancel());
     f.classList.add('js');
@@ -1094,13 +1124,14 @@ function freeFlies(scr) {
       y: clampTo((p.y + neck.y) / 2 + rand(-10, 20), 40, JAR_H - 30),
     };
     const out = { x: neck.x + rand(-130, 130), y: rand(-360, -260) };
-    const tr = (o) => `translate(${o.x.toFixed(1)}px, ${o.y.toFixed(1)}px)`;
+    const angs = headings([p, mid, neck, out], p.a, 6);
+    const tr = (o, i) => flyTf(o.x, o.y, angs[i]);
     f.animate(
       [
-        { transform: tr(p), opacity: 1 },
-        { transform: tr(mid), opacity: 1, offset: 0.35 },
-        { transform: tr(neck), opacity: 1, offset: 0.6 },
-        { transform: tr(out), opacity: 0 },
+        { transform: tr(p, 0), opacity: 1 },
+        { transform: tr(mid, 1), opacity: 1, offset: 0.35 },
+        { transform: tr(neck, 2), opacity: 1, offset: 0.6 },
+        { transform: tr(out, 3), opacity: 0 },
       ],
       { duration: rand(2400, 3400), delay: 500 + i * 90, easing: 'ease-in', fill: 'forwards' },
     );
@@ -1480,52 +1511,37 @@ function dotFly(scr, from, to, color, o = {}) {
     dy = to.y - from.y;
   const c0 = { background: color, boxShadow: glow(color) };
   const c1 = toColor ? { background: toColor, boxShadow: glow(toColor) } : c0;
-  const frames = wander
+  // [x, y, 缩放, 透明度, 颜色, 时间点]
+  const P = wander
     ? [
-        { transform: 'translate(0,0) scale(.4)', opacity: 0, ...c0, offset: 0 },
-        {
-          transform: `translate(${dx * 0.3}px, ${dy * 0.15 - 40}px) scale(1.2)`,
-          opacity: 1,
-          ...c0,
-          offset: 0.22,
-        },
-        {
-          transform: `translate(${dx * 0.55 + 46}px, ${dy * 0.4 + 16}px) scale(1)`,
-          opacity: 0.6,
-          ...c0,
-          offset: 0.42,
-        },
-        {
-          transform: `translate(${dx * 0.8 - 34}px, ${dy * 0.62 - 34}px) scale(1.15)`,
-          opacity: 1,
-          ...c0,
-          offset: 0.62,
-        },
-        { transform: `translate(${dx}px, ${dy - 26}px) scale(1)`, opacity: 1, ...c0, offset: 0.8 },
-        {
-          transform: `translate(${dx}px, ${dy + 18}px) scale(.8)`,
-          opacity: 1,
-          ...c1,
-          offset: 0.93,
-        },
-        { transform: `translate(${dx}px, ${dy + 26}px) scale(.6)`, opacity: 0, ...c1, offset: 1 },
+        [0, 0, 0.4, 0, c0, 0],
+        [dx * 0.3, dy * 0.15 - 40, 1.2, 1, c0, 0.22],
+        [dx * 0.55 + 46, dy * 0.4 + 16, 1, 0.6, c0, 0.42],
+        [dx * 0.8 - 34, dy * 0.62 - 34, 1.15, 1, c0, 0.62],
+        [dx, dy - 26, 1, 1, c0, 0.8],
+        [dx, dy + 18, 0.8, 1, c1, 0.93],
+        [dx, dy + 26, 0.6, 0, c1, 1],
       ]
     : [
-        { transform: 'translate(0,0) scale(.4)', opacity: 0, ...c0 },
-        {
-          transform: `translate(${dx * 0.25 - 30}px, ${dy * 0.15 - 30}px) scale(1.3)`,
-          opacity: 1,
-          ...c0,
-          offset: 0.25,
-        },
-        {
-          transform: `translate(${dx * 0.7}px, ${dy * 0.6 - 40}px) scale(1)`,
-          opacity: 1,
-          ...c0,
-          offset: 0.7,
-        },
-        { transform: `translate(${dx}px, ${dy}px) scale(.5)`, opacity: 0, ...c1 },
+        [0, 0, 0.4, 0, c0, 0],
+        [dx * 0.25 - 30, dy * 0.15 - 30, 1.3, 1, c0, 0.25],
+        [dx * 0.7, dy * 0.6 - 40, 1, 1, c0, 0.7],
+        [dx, dy, 0.5, 0, c1, 1],
       ];
+  // 萤火虫头朝飞行方向；普通光点不需要朝向
+  const angs = firefly
+    ? headings(
+        P.map(([x, y]) => ({ x, y })),
+        undefined,
+        6,
+      )
+    : null;
+  const frames = P.map(([x, y, sc, op, col, off], k) => ({
+    transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)${angs ? ` rotate(${angs[k].toFixed(1)}deg)` : ''} scale(${sc})`,
+    opacity: op,
+    ...col,
+    offset: off,
+  }));
   return play(d, frames, { duration: dur, easing: 'cubic-bezier(.35,.6,.3,1)' }).then(() =>
     d.remove(),
   );

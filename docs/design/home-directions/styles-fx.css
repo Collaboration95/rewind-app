@@ -409,3 +409,8 @@
   top: 0 !important;
   animation: none;
 }
+
+/* 静止时（截图、未启动动效）各自朝向不同 */
+.c9 .jar .fly:not(.js) {
+  rotate: var(--r, 0deg);
+}
