@@ -125,9 +125,8 @@ try {
     EXPO_PUBLIC_CAMERA_MODE: 'demo',
     EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
   });
-  // Exercise the app's current default Demo session on first load. The picker
-  // remains part of the journey after sign-out, but is no longer a special
-  // production-entry mode that must be enabled at build time.
+  // Exercise the public welcome-to-Demo route without a special production
+  // entry mode enabled at build time.
   delete env.EXPO_PUBLIC_DEMO_ACCESS;
   await run(process.env.npm_execpath || 'npm', ['run', 'server:build'], env);
   await run(
