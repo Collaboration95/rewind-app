@@ -41,6 +41,20 @@ const MIGRATIONS = [
   { version: 15, key: 'media-integrity-v1', fileName: '015-media-integrity.sql' },
   { version: 16, key: 'contribution-ledger-v1', fileName: '016-contribution-ledger.sql' },
   { version: 17, key: 'consistency-repair-audit-v1', fileName: '017-consistency-repair-audit.sql' },
+  { version: 18, key: 'real-account-auth-v1', fileName: '018-real-account-auth.sql' },
+  { version: 19, key: 'real-groups-v1', fileName: '019-real-groups.sql' },
+  { version: 20, key: 'real-group-invites-v1', fileName: '020-real-group-invites.sql' },
+  {
+    version: 21,
+    key: 'real-group-invite-acceptance-v1',
+    fileName: '021-real-group-invite-acceptance.sql',
+  },
+  {
+    version: 22,
+    key: 'real-media-profile-bridge-v1',
+    fileName: '022-real-media-profile-bridge.sql',
+  },
+  { version: 23, key: 'photo-media-v1', fileName: '023-photo-media.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -147,7 +161,14 @@ export function migrateDatabase(database: RewindDatabase): void {
     const needsRepair = migrationNeedsRepair(database, migration.key);
     if (marked?.applied && applied?.applied && !needsRepair) continue;
 
-    beginMigrationTransaction(database);
+    const rebuildProfileReferences = migration.key === 'real-media-profile-bridge-v1';
+    if (rebuildProfileReferences) database.exec('PRAGMA foreign_keys = OFF;');
+    try {
+      beginMigrationTransaction(database);
+    } catch (error) {
+      if (rebuildProfileReferences) database.exec('PRAGMA foreign_keys = ON;');
+      throw error;
+    }
     try {
       // Re-read after acquiring the writer lock: a concurrent starter may
       // have completed this migration while this connection was waiting.
@@ -176,6 +197,10 @@ export function migrateDatabase(database: RewindDatabase): void {
         ensureContributionLedgerSchema(database);
       } else if (migration.key === 'consistency-repair-audit-v1') {
         rebuildAuditEventsForConsistencyRepair(database);
+      } else if (migration.key === 'real-media-profile-bridge-v1') {
+        applyRealMediaProfileBridge(database);
+      } else if (migration.key === 'photo-media-v1') {
+        ensurePhotoMediaSchema(database);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -188,11 +213,19 @@ export function migrateDatabase(database: RewindDatabase): void {
           .run(migration.version, new Date().toISOString());
       }
       markMigration(database, migration.key);
+      if (rebuildProfileReferences) {
+        const violations = database.prepare('PRAGMA foreign_key_check').all();
+        if (violations.length > 0) {
+          throw new Error('The real media profile migration would break existing references.');
+        }
+      }
       database.exec('COMMIT');
     } catch (error) {
       database.exec('ROLLBACK');
+      if (rebuildProfileReferences) database.exec('PRAGMA foreign_keys = ON;');
       throw error;
     }
+    if (rebuildProfileReferences) database.exec('PRAGMA foreign_keys = ON;');
   }
 }
 
@@ -304,7 +337,72 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'contribution-ledger-v1') return !contributionLedgerSchemaReady(database);
   if (key === 'consistency-repair-audit-v1')
     return !auditEventTypesAllowConsistencyRepair(database);
+  if (key === 'real-media-profile-bridge-v1') return !realMediaProfileBridgeReady(database);
+  if (key === 'photo-media-v1') {
+    return (
+      !tableColumns(database, 'media_jobs').has('media_type') ||
+      !tableColumns(database, 'media_metadata').has('media_type')
+    );
+  }
   return false;
+}
+
+function ensurePhotoMediaSchema(database: RewindDatabase): void {
+  if (!tableColumns(database, 'media_jobs').has('media_type')) {
+    database.exec(
+      `ALTER TABLE media_jobs ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'
+       CHECK (media_type IN ('video', 'photo'))`,
+    );
+  }
+  if (!tableColumns(database, 'media_metadata').has('media_type')) {
+    database.exec(
+      `ALTER TABLE media_metadata ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'
+       CHECK (media_type IN ('video', 'photo'))`,
+    );
+  }
+}
+
+function realMediaProfileBridgeReady(database: RewindDatabase): boolean {
+  const triggers = database
+    .prepare(
+      `SELECT COUNT(*) AS count FROM sqlite_master
+       WHERE type = 'trigger' AND name IN ('real_profile_media_actor_insert', 'real_profile_media_actor_delete', 'real_profile_media_actor_update')`,
+    )
+    .get() as { count?: number } | undefined;
+  return realMediaProfileActorTableReady(database) && triggers?.count === 3;
+}
+
+function realMediaProfileActorTableReady(database: RewindDatabase): boolean {
+  const profile = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'profiles'")
+    .get() as { sql?: string } | undefined;
+  return Boolean(profile?.sql?.includes('is_synthetic IN (0, 1)'));
+}
+
+function applyRealMediaProfileBridge(database: RewindDatabase): void {
+  if (!realMediaProfileActorTableReady(database)) {
+    database.exec(
+      `DROP TRIGGER IF EXISTS real_profile_media_actor_insert;
+       DROP TRIGGER IF EXISTS real_profile_media_actor_delete;
+       DROP TRIGGER IF EXISTS real_profile_media_actor_update;
+       CREATE TABLE profiles_next (
+        id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        avatar_label TEXT NOT NULL,
+        is_synthetic INTEGER NOT NULL DEFAULT 1 CHECK (is_synthetic IN (0, 1))
+      );
+       INSERT INTO profiles_next (id, display_name, avatar_label, is_synthetic)
+         SELECT id, display_name, avatar_label, is_synthetic FROM profiles;
+       DROP TABLE profiles;
+       ALTER TABLE profiles_next RENAME TO profiles;`,
+    );
+  }
+  database.exec(
+    readFileSync(
+      resolve(process.cwd(), 'server/migrations/022-real-media-profile-bridge.sql'),
+      'utf8',
+    ),
+  );
 }
 
 function chatRepliesReactionsSchemaReady(database: RewindDatabase): boolean {
@@ -1638,7 +1736,7 @@ export function fixtureSummary(database: RewindDatabase): Record<string, number>
 export function listProfiles(database: RewindDatabase) {
   return database
     .prepare(
-      'SELECT id, display_name AS displayName, avatar_label AS avatarLabel, is_synthetic AS isSynthetic FROM profiles ORDER BY id',
+      'SELECT id, display_name AS displayName, avatar_label AS avatarLabel, is_synthetic AS isSynthetic FROM profiles WHERE is_synthetic = 1 ORDER BY id',
     )
     .all()
     .map((row) => {
@@ -1749,8 +1847,14 @@ export function getCurrentCycle(
 
 export function isMember(database: RewindDatabase, groupId: string, memberId: string): boolean {
   const row = database
-    .prepare('SELECT 1 AS member FROM memberships WHERE group_id = ? AND member_id = ?')
-    .get(groupId, memberId) as { member?: number } | undefined;
+    .prepare(
+      `SELECT 1 AS member FROM memberships WHERE group_id = ? AND member_id = ?
+       UNION ALL
+       SELECT 1 AS member FROM real_group_memberships
+        WHERE group_id = ? AND profile_id = ? AND accepted_at IS NOT NULL
+       LIMIT 1`,
+    )
+    .get(groupId, memberId, groupId, memberId) as { member?: number } | undefined;
   return row?.member === 1;
 }
 

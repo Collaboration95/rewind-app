@@ -26,6 +26,7 @@ export class StillImageCaptureSession {
   private readonly createId: () => string;
   private active: ActiveStillImage | null = null;
   private accepted = false;
+  private retainedForUpload = false;
   private disposed = false;
   private readonly pendingFiles = new Set<string>();
 
@@ -102,6 +103,7 @@ export class StillImageCaptureSession {
     this.pendingFiles.delete(managed.uri);
     this.active = { previewUri: managed.uri, metadata };
     this.accepted = false;
+    this.retainedForUpload = false;
     return this.getActivePreview()!;
   }
 
@@ -122,10 +124,33 @@ export class StillImageCaptureSession {
     }
   }
 
+  /** Persist recovery metadata while keeping the source bytes available for retry. */
+  async retainForUpload(): Promise<void> {
+    if (!this.active) {
+      throw new CaptureFileLifecycleError('Take a still image before submitting it.');
+    }
+    await this.options.metadataStore.save(this.active.metadata);
+    this.accepted = true;
+    this.retainedForUpload = true;
+  }
+
+  async restorePendingUpload(): Promise<ActiveStillImage | null> {
+    const records = await this.options.metadataStore.list();
+    for (const metadata of [...records].reverse()) {
+      const file = await this.options.fileStore.resolveManagedFile(metadata.id, metadata.format);
+      if (!file) continue;
+      this.active = { previewUri: file.uri, metadata: { ...metadata } };
+      this.accepted = true;
+      this.retainedForUpload = true;
+      return this.getActivePreview();
+    }
+    return null;
+  }
+
   async retake(): Promise<void> {
     // A saved still is durable. Retaking only releases the transient preview
     // file; it must not remove the accepted metadata record.
-    await this.cleanupActive(!this.accepted);
+    await this.cleanupActive(!this.accepted || this.retainedForUpload);
   }
 
   async discard(expected?: ActiveStillImage): Promise<void> {
@@ -157,10 +182,17 @@ export class StillImageCaptureSession {
    */
   async dispose(): Promise<void> {
     this.disposed = true;
-    // Once accepted, metadata is intentionally retained across route changes;
-    // only the transient preview file is released. Unaccepted previews are
-    // discarded completely.
-    await this.cleanupActive(!this.accepted);
+    // Upload-pending photos own persistent bytes until server confirmation.
+    // Ordinary local acceptance still releases the preview file on exit.
+    if (this.retainedForUpload) {
+      // A submitted photo remains in persistent app storage until the server
+      // confirms receipt. A route teardown cannot invalidate an in-flight retry.
+      this.active = null;
+      this.accepted = false;
+      this.retainedForUpload = false;
+    } else {
+      await this.cleanupActive(!this.accepted);
+    }
     const pendingFiles = [...this.pendingFiles];
     this.pendingFiles.clear();
     await Promise.all(
@@ -172,6 +204,7 @@ export class StillImageCaptureSession {
     const active = this.active;
     this.active = null;
     this.accepted = false;
+    this.retainedForUpload = false;
     if (!active) return;
 
     await this.options.fileStore.remove(active.previewUri).catch(() => undefined);

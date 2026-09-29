@@ -77,6 +77,13 @@ When this variable is absent, the app remains on the offline synthetic Demo.
 If the runtime is unavailable, the app keeps an explicit retryable state rather
 than claiming the service is connected.
 
+Native real-account invite links require `EXPO_PUBLIC_INVITE_WEB_ORIGIN` to be
+set at app-build time to the public HTTPS origin that serves the `/invite`
+route. This is the link destination, separate from
+`EXPO_PUBLIC_LOCAL_BASE_URL`, which points to the API. Web builds use their
+current HTTPS origin automatically; a native build without the public origin
+will explain that invite links are unavailable instead of sharing an API URL.
+
 The HTTP boundary has bounded defaults in both local CLI and Compose runtime
 modes: 30 seconds of request-body idle time, 120 seconds per media upload, two
 concurrent media intakes, and one concurrent media processor. Override them

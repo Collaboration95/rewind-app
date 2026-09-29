@@ -78,8 +78,8 @@ describe('native accessibility panels', () => {
     const result = await render(<App runtimeClient={restoreFailureRuntime()} />);
 
     await result.findByText('Runtime unavailable');
-    expect(result.getByTestId('demo-access-error').props.accessible).toBe(false);
-    expect(result.getByRole('button', { name: 'Retry Demo access' })).toBeTruthy();
+    expect(result.getByTestId('entry-session-status').props.accessible).toBe(false);
+    expect(result.getByRole('button', { name: 'Retry session check' })).toBeTruthy();
   });
 
   it('does not group capsule recovery with the Retry action', async () => {
