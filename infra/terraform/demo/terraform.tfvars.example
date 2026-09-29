@@ -21,9 +21,15 @@ cost_safety_expected_snapshot_names = []
 cost_safety_expected_distributions  = {}
 # The lifecycle scripts override this for reviewed hibernation/recovery plans.
 demo_instance_enabled = true
-# Optional public HTTPS surface. Keep disabled unless the distribution is
-# explicitly approved; when enabled, also allowlist rewind-demo-web below.
+# Existing public HTTPS Lightsail distribution. Preserve its current setting.
 public_https_distribution_enabled = false
+# Set only when enabling real-auth CloudFront. Generate a random value of at
+# least 32 characters; configure the same value at the origin and inject this
+# via a protected tfvars/secret workflow. Do not commit the real value.
+public_https_origin_auth_header = ""
+real_auth_https_distribution_enabled = false
+# The separate real-auth CloudFront endpoint needs its own audit entry when
+# enabled: { "rewind-demo-cloudfront" = "rewind-demo" }
 # The audit expects a stopped instance by default. Set this to "running" only
 # when an active Demo is explicitly approved for the current Terraform state.
 cost_safety_expected_instance_state = "stopped"
