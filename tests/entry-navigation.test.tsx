@@ -1,11 +1,17 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
+import { Platform } from 'react-native';
 
 import App from '../App';
 import type { DemoSession, DemoSessionStore } from '../src/domain/session';
 import { LocalRuntimeError, type RuntimeClient } from '../src/runtime/local-runtime-client';
 
 jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
+jest.mock('expo-secure-store', () => ({
+  getItemAsync: async () => null,
+  setItemAsync: async () => {},
+  deleteItemAsync: async () => {},
+}));
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
@@ -99,6 +105,53 @@ describe('first-run and session entry navigation', () => {
 
     expect(await result.findByRole('header', { name: 'Weekend People' })).toBeTruthy();
     await waitFor(async () => expect((await store.load())?.accessKind).toBe('demo'));
+  });
+
+  it('keeps Welcome and Try Demo usable over HTTP while disabling real sign-in', async () => {
+    const originalPlatform = Platform.OS;
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web', writable: true });
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { href: 'http://rewind.example/', origin: 'http://rewind.example' } },
+      writable: true,
+    });
+
+    try {
+      const store = sessionStore();
+      const result = await render(
+        <App
+          sessionStore={store}
+          runtimeClient={{ baseUrl: 'http://rewind.example' } as RuntimeClient}
+        />,
+      );
+
+      expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+      expect(result.queryByText(/sign-in service could not be reached/i)).toBeNull();
+      expect(result.queryByText(/secure HTTPS connection/i)).toBeNull();
+      await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
+      expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
+      expect(result.queryByText(/sign-in service could not be reached/i)).toBeNull();
+
+      await fireEvent.press(result.getByRole('button', { name: 'Back to welcome' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+      expect(
+        result.getByText(/password will not be sent over an insecure connection/i),
+      ).toBeTruthy();
+      expect(result.getAllByRole('alert')).toHaveLength(1);
+      expect(result.getByTestId('real-account-submit').props.accessibilityState?.disabled).toBe(
+        true,
+      );
+      expect(await store.load()).toBeNull();
+    } finally {
+      Object.defineProperty(Platform, 'OS', {
+        configurable: true,
+        value: originalPlatform,
+        writable: true,
+      });
+      if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+      else delete (globalThis as { window?: unknown }).window;
+    }
   });
 
   it('restores a valid saved Demo session into the app shell', async () => {
