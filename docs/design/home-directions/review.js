@@ -8,7 +8,6 @@
        按方向拆开显示在每台手机下面；同一个人以最新一条为准。 */
 const REPO = 'Collaboration95/rewind-app';
 const RV_KEY = 'rewind-review-v1';
-const LIKE_MAX = 3;
 const DOCKS = ['a', 'd', 'e', 'g'];
 
 // 评论内容来自 GitHub，显示前一律转义
@@ -36,9 +35,9 @@ function target(id) {
 
 /* ---------- 我的草稿 ---------- */
 const blank = () => ({ like: [], fav: null, dock: null, notes: {} });
-// 只保留合法内容：👍 最多 3 个方向、❤️ 1 个方向、底栏 1 个，每条最多 500 字；键的顺序固定，便于比对
+// 只保留合法内容：👍 不限个数、❤️ 1 个方向、底栏 1 个，每条最多 500 字；键的顺序固定，便于比对
 function tidy(r) {
-  const like = [...new Set(Array.isArray(r?.like) ? r.like : [])].filter(isDir).slice(0, LIKE_MAX);
+  const like = [...new Set(Array.isArray(r?.like) ? r.like : [])].filter(isDir);
   const notes = {};
   for (const id of TARGETS()) {
     const list = (Array.isArray(r?.notes?.[id]) ? r.notes[id] : [])
@@ -436,7 +435,7 @@ function sendHTML() {
   const st = status(),
     p = progress();
   return (
-    `<div class="rv-send-t"><b>${t('rv.cta')}</b><span>${t('rv.prog', p)} · 👍 ${mine.like.length}/${LIKE_MAX} · ❤️ ${mine.fav ? 1 : 0}/1 · ${t('rv.dock')} ${mine.dock ? mine.dock.toUpperCase() : '—'}</span>` +
+    `<div class="rv-send-t"><b>${t('rv.cta')}</b><span>${t('rv.prog', p)} · 👍 ${mine.like.length} · ❤️ ${mine.fav ? 1 : 0}/1 · ${t('rv.dock')} ${mine.dock ? mine.dock.toUpperCase() : '—'}</span>` +
     `<span class="rv-st ${st}">${t('rv.st.' + st)}</span></div>` +
     `<button type="button" class="rv-send${st === 'sent' ? ' is-sent' : ''}" data-rv-send${st === 'empty' || st === 'sent' ? ' disabled' : ''}>${t(st === 'sent' ? 'rv.sent' : st === 'copied' ? 'rv.again' : 'rv.send')}</button>`
   );
@@ -535,15 +534,10 @@ function goTo(id) {
   box.querySelector('.rv-in')?.focus({ preventScroll: true });
 }
 
-function toggleLike(id, btn) {
+function toggleLike(id) {
   if (isDock(id)) mine.dock = mine.dock === id.slice(4) ? null : id.slice(4);
   else if (mine.like.includes(id)) mine.like = mine.like.filter((x) => x !== id);
-  else if (mine.like.length >= LIKE_MAX) {
-    btn.classList.remove('rv-no');
-    void btn.offsetWidth;
-    btn.classList.add('rv-no');
-    return rvToast(t('rv.max', { n: LIKE_MAX }));
-  } else mine.like.push(id);
+  else mine.like.push(id);
   changed();
 }
 
@@ -564,7 +558,7 @@ document.addEventListener('click', (e) => {
   );
   if (!b) return;
   const d = b.dataset;
-  if (d.rvLike) return toggleLike(d.rvLike, b);
+  if (d.rvLike) return toggleLike(d.rvLike);
   if (d.rvFav) {
     mine.fav = mine.fav === d.rvFav ? null : d.rvFav;
     return changed();

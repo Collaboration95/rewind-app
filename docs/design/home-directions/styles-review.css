@@ -65,20 +65,6 @@
 .rv-b[aria-pressed='true'] b {
   background: rgba(255, 255, 255, 0.16);
 }
-@keyframes rv-no {
-  20%,
-  60% {
-    transform: translateX(-4px);
-  }
-  40%,
-  80% {
-    transform: translateX(4px);
-  }
-}
-.rv-no {
-  animation: rv-no 0.35s;
-}
-
 .rv-col {
   display: grid;
   gap: 6px;
@@ -522,7 +508,6 @@ main {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .rv-no,
   .rv-flash {
     animation: none;
   }

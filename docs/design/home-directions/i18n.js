@@ -137,8 +137,8 @@ const I18N = {
 
   'review.title': ['Review table', '评审对照表'],
   'review.hint': [
-    'Metaphor, cost and risk are the author’s draft (AI-assisted), not review feedback. The review is everyone’s own votes and comments in the issue.',
-    '“核心隐喻 / 实现成本 / 主要风险”为作者草拟（AI 辅助），不是评审意见；评审以 Issue 里每个人自己的投票和评论为准。',
+    'Metaphor, cost and risk are the author’s draft, not review feedback. The review is everyone’s own votes and comments in the issue.',
+    '“核心隐喻 / 实现成本 / 主要风险”为作者草拟，不是评审意见；评审以 Issue 里每个人自己的投票和评论为准。',
   ],
   'th.dir': ['Direction', '方案'],
   'th.meta': ['Metaphor', '核心隐喻'],
@@ -227,12 +227,12 @@ Object.assign(I18N, {
   'vote.sample': ['Preview with sample data', '用示例数据预览'],
   'th.vote': ['Votes and notes', '投票与优缺点'],
   'ask.body': [
-    'Write them right under each phone: 👍 up to three directions, ❤️ your favourite, and pros and cons. Everything stays in your browser. When you have reviewed them all, press <b>Copy, then comment in the issue</b> at the bottom: it copies one comment and opens the issue; paste it and click Comment. We will combine everyone’s notes and pick one direction together.',
-    '直接写在每台手机下面：最多给 3 个方向 👍，给最喜欢的 1 个 ❤️，再写优点和缺点。内容先存在你的浏览器里；全部评价完后，点页面底部的<b>一键复制，跳转到 Issue 发布评论</b>，它会复制整理好的一条评论并打开 Issue，粘贴后点 Comment 就行。我们会汇总大家的意见，一起挑出一个方向。',
+    'Write them right under each phone: 👍 every direction you like, ❤️ your favourite, and pros and cons. Everything stays in your browser. When you have reviewed them all, press <b>Copy, then comment in the issue</b> at the bottom: it copies one comment and opens the issue; paste it and click Comment. We will combine everyone’s notes and pick one direction together.',
+    '直接写在每台手机下面：给你喜欢的方向点 👍（不限个数），给最喜欢的 1 个 ❤️，再写优点和缺点。内容先存在你的浏览器里；全部评价完后，点页面底部的<b>一键复制，跳转到 Issue 发布评论</b>，它会复制整理好的一条评论并打开 Issue，粘贴后点 Comment 就行。我们会汇总大家的意见，一起挑出一个方向。',
   ],
   'review.hint': [
-    'Metaphor, cost and risk are the author’s draft (AI-assisted), not review feedback. The review is everyone’s own votes and notes, sent to the review issue.',
-    '“核心隐喻 / 实现成本 / 主要风险”为作者草拟（AI 辅助），不是评审意见；评审以每个人自己发到评审 Issue 的投票和优缺点为准。',
+    'Metaphor, cost and risk are the author’s draft, not review feedback. The review is everyone’s own votes and notes, sent to the review issue.',
+    '“核心隐喻 / 实现成本 / 主要风险”为作者草拟，不是评审意见；评审以每个人自己发到评审 Issue 的投票和优缺点为准。',
   ],
   'rv.label': ['Your review', '我的评审'],
   'rv.how': [
@@ -271,10 +271,9 @@ Object.assign(I18N, {
   ],
   'rv.is.sample': ['Showing sample data.', '正在显示示例数据。'],
   'rv.refresh': ['Refresh', '刷新'],
-  'rv.likeT': ['Worth taking forward (up to 3)', '值得继续（最多 3 个）'],
+  'rv.likeT': ['Worth taking forward', '值得继续'],
   'rv.likeDockT': ['My dock (pick one)', '我选这个底栏（只能选一个）'],
   'rv.favT': ['My top pick (pick one)', '最喜欢（只能选一个）'],
-  'rv.max': ['Up to {n} 👍. Remove one first.', '最多 {n} 个 👍，先取消一个。'],
   'rv.v.like': ['Shortlist', '值得继续'],
   'dock.h': ['Dock · pick one', '底栏 · 选一个'],
   'dock.hint': [
