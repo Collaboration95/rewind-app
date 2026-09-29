@@ -4,7 +4,7 @@ import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 're
 
 import { COLORS } from '../theme';
 import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
-import type { RevealEducationState } from '../domain/reveal-education';
+import { getRevealEducationCopy, type RevealEducationState } from '../domain/reveal-education';
 import {
   CaptureFileLifecycleError,
   type CameraPlatform,
@@ -501,6 +501,16 @@ export function CameraCaptureScreen({
               <Text accessibilityLiveRegion="polite" style={styles.viewfinderHint}>
                 {state.status === 'capturing' ? 'Capturing…' : 'Frame your moment'}
               </Text>
+              {revealState !== 'locked' ? (
+                <View style={styles.viewfinderReveal} testID={`capture-reveal-${revealState}`}>
+                  <Text style={styles.viewfinderHint}>
+                    {getRevealEducationCopy('capture', revealState).title}
+                  </Text>
+                  <Pressable accessibilityRole="button" onPress={handleRevealAction}>
+                    <Text style={styles.viewfinderBackText}>Open Archive</Text>
+                  </Pressable>
+                </View>
+              ) : null}
               {onRecordClip ? (
                 <Pressable accessibilityRole="button" onPress={onRecordClip}>
                   <Text style={styles.viewfinderBackText}>Video</Text>
@@ -893,6 +903,13 @@ const styles = StyleSheet.create({
   backText: { color: COLORS.accent, fontSize: 16, fontWeight: '700' },
   viewfinderTitle: { color: '#fff', fontSize: 20, fontWeight: '700' },
   viewfinderHint: { color: '#fff', fontSize: 14, textShadowColor: '#000', textShadowRadius: 5 },
+  viewfinderReveal: {
+    alignItems: 'center',
+    backgroundColor: '#0009',
+    borderRadius: 8,
+    gap: 4,
+    padding: 8,
+  },
   viewfinderControls: { alignItems: 'center', gap: 12 },
   shutterCaption: { color: '#fff', fontSize: 13, textShadowColor: '#000', textShadowRadius: 5 },
   heading: { gap: 7 },
