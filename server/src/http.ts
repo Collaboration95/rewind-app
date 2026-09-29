@@ -102,8 +102,14 @@ import {
   revokeRealSession,
   validateRealSession,
 } from './auth';
-import { createRealGroup, getCurrentRealGroup } from './groups/real';
-import { createRealGroupInvite } from './groups/invites';
+import {
+  createRealGroup,
+  getCurrentRealGroup,
+  getRealGroup,
+  listRealGroups,
+  selectRealGroup,
+} from './groups/real';
+import { acceptRealGroupInvite, createRealGroupInvite } from './groups/invites';
 
 export interface HealthPayload {
   ok: boolean;
@@ -2869,6 +2875,94 @@ async function handleRealGroupRequest(
     authJson(request, response, config, 200, {
       group: getCurrentRealGroup(database, session.account.id),
     });
+    return;
+  }
+
+  if (url.pathname === '/real/groups' && request.method === 'GET') {
+    authJson(request, response, config, 200, {
+      groups: listRealGroups(database, session.account.id),
+    });
+    return;
+  }
+
+  if (url.pathname === '/real/groups/current' && request.method === 'POST') {
+    const body = await requestBody(request, config);
+    if (!body || typeof body.groupId !== 'string') {
+      authJson(request, response, config, 400, {
+        error: 'invalid_group',
+        message: 'Choose a group you belong to.',
+      });
+      return;
+    }
+    if (!selectRealGroup(database, session.account.id, body.groupId)) {
+      authJson(request, response, config, 404, {
+        error: 'forbidden',
+        message: 'You do not have access to this group.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, {
+      group: getCurrentRealGroup(database, session.account.id),
+    });
+    return;
+  }
+
+  if (url.pathname === '/real/invites/accept' && request.method === 'POST') {
+    const body = await requestBody(request, config);
+    if (!body) {
+      authJson(request, response, config, 400, {
+        status: 'malformed',
+        error: 'invalid_invite',
+        message: 'Enter a valid eight-character invitation code.',
+      });
+      return;
+    }
+    let result: ReturnType<typeof acceptRealGroupInvite>;
+    try {
+      result = acceptRealGroupInvite(database, session.account, body.code, body.groupId, now);
+    } catch {
+      authJson(request, response, config, 409, {
+        status: 'denied',
+        error: 'invite_accept_failed',
+        message: 'The invitation could not be accepted. No partial membership was saved.',
+      });
+      return;
+    }
+    if (!result.ok) {
+      const status = result.status === 'denied' ? 404 : result.status === 'full' ? 409 : 400;
+      authJson(request, response, config, status, {
+        status: result.status,
+        error: `invite_${result.status}`,
+        message:
+          result.status === 'expired'
+            ? 'This invitation has expired.'
+            : result.status === 'replayed'
+              ? 'This invitation has already been used.'
+              : result.status === 'full'
+                ? 'This group has reached its member limit.'
+                : result.status === 'denied'
+                  ? 'You do not have access to this group.'
+                  : 'Enter a valid eight-character invitation code.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, result);
+    return;
+  }
+
+  const realGroupMatch = url.pathname.match(/^\/real\/groups\/([^/]+)$/);
+  if (realGroupMatch && request.method === 'GET') {
+    const groupId = decodePathSegment(realGroupMatch[1], response, config);
+    if (groupId === null) return;
+    const group = getRealGroup(database, session.account.id, groupId);
+    if (!group) {
+      authJson(request, response, config, 404, {
+        error: 'forbidden',
+        message: 'You do not have access to this group.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, { group });
     return;
   }
 

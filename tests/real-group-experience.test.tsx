@@ -27,6 +27,8 @@ describe('real account group journey', () => {
     let saved: typeof persistedGroup | null = null;
     const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
       if (path === '/real/groups/current') return jsonResponse({ group: saved });
+      if (path === '/real/groups' && init?.method !== 'POST')
+        return jsonResponse({ groups: saved ? [saved] : [] });
       if (path === '/real/groups' && init?.method === 'POST') {
         expect(JSON.parse(String(init.body))).toEqual({
           name: 'Saturday table',

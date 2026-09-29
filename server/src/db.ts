@@ -44,6 +44,11 @@ const MIGRATIONS = [
   { version: 18, key: 'real-account-auth-v1', fileName: '018-real-account-auth.sql' },
   { version: 19, key: 'real-groups-v1', fileName: '019-real-groups.sql' },
   { version: 20, key: 'real-group-invites-v1', fileName: '020-real-group-invites.sql' },
+  {
+    version: 21,
+    key: 'real-group-invite-acceptance-v1',
+    fileName: '021-real-group-invite-acceptance.sql',
+  },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),

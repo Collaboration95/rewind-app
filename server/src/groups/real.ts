@@ -93,7 +93,10 @@ export function createRealGroup(
       )
       .run(groupId, account.id, actualProfileId, startedAt);
     database
-      .prepare('INSERT INTO real_account_group_selections (account_id, group_id) VALUES (?, ?)')
+      .prepare(
+        `INSERT INTO real_account_group_selections (account_id, group_id) VALUES (?, ?)
+         ON CONFLICT(account_id) DO UPDATE SET group_id = excluded.group_id`,
+      )
       .run(account.id, groupId);
     database.exec('COMMIT');
   } catch (error) {
@@ -104,7 +107,7 @@ export function createRealGroup(
   return getCurrentRealGroup(database, account.id);
 }
 
-export function getCurrentRealGroup(database: RewindDatabase, accountId: string) {
+export function getRealGroup(database: RewindDatabase, accountId: string, groupId: string) {
   const row = database
     .prepare(
       `SELECT g.id AS groupId, g.name, g.current_cycle_id AS cycleId,
@@ -115,15 +118,17 @@ export function getCurrentRealGroup(database: RewindDatabase, accountId: string)
               c.count_used AS countUsed, c.seconds_used AS secondsUsed,
               (SELECT COUNT(*) FROM contributions contribution
                 WHERE contribution.cycle_id = c.id) AS contributionCount
-       FROM real_account_group_selections s
-       JOIN real_group_memberships member
-         ON member.group_id = s.group_id AND member.account_id = s.account_id
-       JOIN real_group_metadata metadata ON metadata.group_id = s.group_id
-       JOIN groups g ON g.id = s.group_id
+       FROM real_group_memberships member
+       JOIN real_group_metadata metadata ON metadata.group_id = member.group_id
+       JOIN groups g ON g.id = member.group_id
        JOIN cycles c ON c.id = g.current_cycle_id AND c.group_id = g.id
-       WHERE s.account_id = ?`,
+       WHERE member.account_id = ? AND g.id = ?`,
     )
-    .get(accountId) as Record<string, unknown> | undefined;
+    .get(accountId, groupId) as Record<string, unknown> | undefined;
+  return mapRealGroup(row);
+}
+
+function mapRealGroup(row: Record<string, unknown> | undefined) {
   if (!row) return null;
   return {
     group: {
@@ -145,4 +150,34 @@ export function getCurrentRealGroup(database: RewindDatabase, accountId: string)
       contributionCount: Number(row.contributionCount),
     },
   };
+}
+
+export function getCurrentRealGroup(database: RewindDatabase, accountId: string) {
+  const selection = database
+    .prepare('SELECT group_id AS groupId FROM real_account_group_selections WHERE account_id = ?')
+    .get(accountId) as { groupId?: string } | undefined;
+  return selection?.groupId ? getRealGroup(database, accountId, selection.groupId) : null;
+}
+
+export function listRealGroups(database: RewindDatabase, accountId: string) {
+  const memberships = database
+    .prepare(
+      `SELECT group_id AS groupId FROM real_group_memberships
+       WHERE account_id = ? ORDER BY accepted_at, group_id`,
+    )
+    .all(accountId) as { groupId: string }[];
+  return memberships
+    .map(({ groupId }) => getRealGroup(database, accountId, groupId))
+    .filter((group): group is NonNullable<typeof group> => group !== null);
+}
+
+export function selectRealGroup(database: RewindDatabase, accountId: string, groupId: string) {
+  if (!getRealGroup(database, accountId, groupId)) return false;
+  database
+    .prepare(
+      `INSERT INTO real_account_group_selections (account_id, group_id) VALUES (?, ?)
+       ON CONFLICT(account_id) DO UPDATE SET group_id = excluded.group_id`,
+    )
+    .run(accountId, groupId);
+  return true;
 }

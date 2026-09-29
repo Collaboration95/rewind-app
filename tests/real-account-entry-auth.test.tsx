@@ -61,6 +61,7 @@ function webAccountFetch(logout: () => Response | Promise<Response>) {
     const url = String(input);
     if (url.endsWith('/auth/session')) return activeSessionResponse();
     if (url.endsWith('/real/groups/current')) return jsonResponse(200, { group: null });
+    if (url.endsWith('/real/groups')) return jsonResponse(200, { groups: [] });
     if (url.endsWith('/auth/logout')) return logout();
     throw new Error(`Unexpected real-account request: ${url}`);
   }) as typeof fetch;
@@ -71,6 +72,7 @@ function nativeAccountFetch(logout: () => Response | Promise<Response>) {
     const url = String(input);
     if (url.endsWith('/auth/session')) return activeSessionResponse();
     if (url.endsWith('/real/groups/current')) return jsonResponse(200, { group: null });
+    if (url.endsWith('/real/groups')) return jsonResponse(200, { groups: [] });
     if (url.endsWith('/auth/logout')) return logout();
     throw new Error(`Unexpected real-account request: ${url}`);
   }) as typeof fetch;
@@ -156,7 +158,8 @@ describe('real account entry flow', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
       .mockResolvedValueOnce(jsonResponse(200, { account: apiAccount, expiresAt }))
-      .mockResolvedValueOnce(jsonResponse(200, { group: null })) as typeof fetch;
+      .mockResolvedValueOnce(jsonResponse(200, { group: null }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [] })) as typeof fetch;
 
     const result = await render(<App runtimeClient={runtimeClient} />);
     expect(await result.findByTestId('invite-sign-in-intent')).toHaveTextContent(
@@ -169,7 +172,7 @@ describe('real account entry flow', () => {
 
     expect(await result.findByTestId('real-invite-intent')).toHaveTextContent(new RegExp(groupId));
     expect(result.getByTestId('real-invite-intent')).toHaveTextContent(/Invitation retained/);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
     result.unmount();
   });
 
@@ -193,6 +196,7 @@ describe('real account entry flow', () => {
       .fn()
       .mockResolvedValueOnce(activeSessionResponse())
       .mockResolvedValueOnce(jsonResponse(200, { group: realGroup }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [realGroup] }))
       .mockResolvedValueOnce(
         jsonResponse(201, {
           invite: {
@@ -224,7 +228,7 @@ describe('real account entry flow', () => {
     await waitFor(() =>
       expect(share).toHaveBeenCalledWith(expect.objectContaining({ url: inviteLink })),
     );
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
     result.unmount();
   });
 
@@ -255,6 +259,7 @@ describe('real account entry flow', () => {
         jsonResponse(200, { account: apiAccount, token: nativeToken, expiresAt }),
       )
       .mockResolvedValueOnce(jsonResponse(200, { group: realGroup }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [realGroup] }))
       .mockResolvedValueOnce(
         jsonResponse(201, {
           invite: {
@@ -283,7 +288,7 @@ describe('real account entry flow', () => {
     expect(new URL(inviteLink).origin).toBe('https://share.rewind.example');
     expect(inviteLink).not.toContain('https://rewind.example');
     expect(inviteLink).not.toMatch(/session|token|password|authorization/i);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
     result.unmount();
   });
 
@@ -294,6 +299,7 @@ describe('real account entry flow', () => {
         jsonResponse(200, { account: apiAccount, token: nativeToken, expiresAt }),
       )
       .mockResolvedValueOnce(jsonResponse(200, { group: null }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [] }))
       .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
     const result = await render(<App runtimeClient={runtimeClient} />);
 
@@ -301,7 +307,7 @@ describe('real account entry flow', () => {
     await fireEvent.changeText(result.getByLabelText('Username'), 'pilot.user');
     await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
     await fireEvent.press(result.getByTestId('real-account-submit'));
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(3));
 
     expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
     expect(secureStoreMock.token).toBe(nativeToken);
@@ -321,7 +327,7 @@ describe('real account entry flow', () => {
     expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
     const [groupUrl] = (globalThis.fetch as jest.Mock).mock.calls[1] as [string, RequestInit];
     expect(groupUrl).toBe('https://rewind.example/real/groups/current');
-    const [logoutUrl, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[2] as [
+    const [logoutUrl, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[3] as [
       string,
       RequestInit,
     ];
@@ -412,7 +418,7 @@ describe('real account entry flow', () => {
         /server did not confirm revocation.*credential may remain and you may still be signed in/i,
       );
       expect(secureStoreMock.token).toBe(nativeToken);
-      const [, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[1] as [string, RequestInit];
+      const [, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[3] as [string, RequestInit];
       expect(new Headers(logoutInit.headers).get('Authorization')).toBe(`Bearer ${nativeToken}`);
     },
   );
