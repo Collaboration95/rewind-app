@@ -109,7 +109,11 @@ import {
   listRealGroups,
   selectRealGroup,
 } from './groups/real';
-import { acceptRealGroupInvite, createRealGroupInvite, revokeRealGroupInvite } from './groups/invites';
+import {
+  acceptRealGroupInvite,
+  createRealGroupInvite,
+  revokeRealGroupInvite,
+} from './groups/invites';
 import { listRealGroupMemberSummaries } from './groups/profiles';
 
 export interface HealthPayload {

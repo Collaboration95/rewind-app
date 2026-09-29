@@ -444,7 +444,9 @@ export function RealAccountGroupExperience({
       setInviteFeedback('Invitation code revoked. Create a new code to invite someone.');
       await loadGroupMembers(group.group.id, groupContextVersion.current);
     } catch (error) {
-      setInviteFeedback(error instanceof Error ? error.message : 'The invitation could not be revoked.');
+      setInviteFeedback(
+        error instanceof Error ? error.message : 'The invitation could not be revoked.',
+      );
     } finally {
       setInvitePending(false);
     }

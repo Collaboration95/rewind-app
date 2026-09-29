@@ -191,9 +191,10 @@ export function revokeRealGroupInvite(
   accountId: string,
   inviteId: string,
 ): boolean {
-  return database
-    .prepare(
-      `UPDATE real_group_invites
+  return (
+    database
+      .prepare(
+        `UPDATE real_group_invites
        SET status = 'expired'
        WHERE id = ? AND group_id = ? AND owner_account_id = ? AND status = 'active'
          AND EXISTS (
@@ -204,8 +205,9 @@ export function revokeRealGroupInvite(
              AND metadata.owner_account_id = ?
              AND membership.account_id = ? AND membership.role = 'owner'
          )`,
-    )
-    .run(inviteId, groupId, accountId, accountId, accountId).changes === 1;
+      )
+      .run(inviteId, groupId, accountId, accountId, accountId).changes === 1
+  );
 }
 
 export function acceptRealGroupInvite(

@@ -160,7 +160,8 @@ test('only the owner can revoke an active short code; revoked codes cannot be ac
     assert.equal(accepted.status, 400);
     assert.equal((await accepted.json()).status, 'expired');
     assert.equal(
-      database.prepare('SELECT 1 FROM real_group_memberships WHERE group_id = ? AND account_id = ?')
+      database
+        .prepare('SELECT 1 FROM real_group_memberships WHERE group_id = ? AND account_id = ?')
         .get(group.id, recipient.account.id),
       undefined,
     );
