@@ -110,6 +110,7 @@ import {
   selectRealGroup,
 } from './groups/real';
 import { acceptRealGroupInvite, createRealGroupInvite } from './groups/invites';
+import { listRealGroupMemberSummaries } from './groups/profiles';
 
 export interface HealthPayload {
   ok: boolean;
@@ -3015,6 +3016,22 @@ async function handleRealGroupRequest(
     authJson(request, response, config, 200, {
       group: getCurrentRealGroup(database, session.account.id),
     });
+    return;
+  }
+
+  const realGroupMembersMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/members$/);
+  if (realGroupMembersMatch && request.method === 'GET') {
+    const groupId = decodePathSegment(realGroupMembersMatch[1], response, config);
+    if (groupId === null) return;
+    const summary = listRealGroupMemberSummaries(database, session.account.id, groupId, now);
+    if (!summary) {
+      authJson(request, response, config, 404, {
+        error: 'forbidden',
+        message: 'You do not have access to this group.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, summary);
     return;
   }
 

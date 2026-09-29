@@ -32,6 +32,14 @@ describe('real account group journey', () => {
       if (path === '/real/groups/current') return jsonResponse({ group: saved });
       if (path === '/real/groups' && init?.method !== 'POST')
         return jsonResponse({ groups: saved ? [saved] : [] });
+      if (path.endsWith('/members'))
+        return jsonResponse({
+          group: { id: saved?.group.id, name: saved?.group.name },
+          members: saved
+            ? [{ displayName: 'Real Owner', role: 'owner', joinedAt: '2026-09-28T00:00:00.000Z' }]
+            : [],
+          pendingInviteCount: 0,
+        });
       if (path === '/real/groups' && init?.method === 'POST') {
         expect(JSON.parse(String(init.body))).toEqual({
           name: 'Saturday table',
@@ -61,7 +69,17 @@ describe('real account group journey', () => {
     expect(first.getByTestId('real-group-capacity').props.children).toBe(2);
     await fireEvent.press(first.getByTestId('real-group-create-submit'));
     await first.findByTestId('real-group-home');
+    await first.findByTestId('real-group-member-0');
     expect(first.getByTestId('real-group-empty-contributions')).toBeTruthy();
+    expect(first.getByTestId('real-group-active-context').props.children).toEqual([
+      'ACTIVE GROUP · ',
+      'Saturday table',
+    ]);
+    expect(first.getByTestId('real-group-member-0').props.children).toEqual([
+      'Real Owner',
+      ' · ',
+      'Owner',
+    ]);
     expect(first.queryByText('LOCKED')).toBeNull();
     await fireEvent.press(first.getByTestId('real-group-capture-action'));
     await first.findByTestId('video-capture-screen');
@@ -73,5 +91,6 @@ describe('real account group journey', () => {
     await restored.findByTestId('real-group-home');
     expect(restored.getByTestId('real-group-name-heading').props.children).toBe('Saturday table');
     expect(authenticatedRequest).toHaveBeenCalledWith('/real/groups/current');
+    restored.unmount();
   });
 });
