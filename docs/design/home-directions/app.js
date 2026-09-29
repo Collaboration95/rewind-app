@@ -261,6 +261,18 @@ function shutter(d) {
   );
 }
 
+// D / E / F 把聊天（E 还有档案）挪到右上角
+function topNav() {
+  const v = NAV.variant;
+  if (!'def'.includes(v)) return '';
+  const chat = `<button type="button" class="tn" aria-label="Chat${NAV.unread ? ', 3 unread' : ''}">${ic('chat')}${NAV.unread ? '<i class="badge">3</i>' : ''}</button>`;
+  const archive =
+    v === 'e'
+      ? `<button type="button" class="tn" aria-label="Archive${NAV.shutter === 'premiere' ? ', new film' : ''}">${ic('archive')}${NAV.shutter === 'premiere' ? '<i class="badge dot"></i>' : ''}</button>`
+      : '';
+  return `<div class="topnav">${archive}${chat}</div>`;
+}
+
 function dock(d) {
   const tabs = [
     ['home', 'Home', '', ''],
@@ -272,6 +284,34 @@ function dock(d) {
       NAV.shutter === 'premiere' ? ', new film' : '',
     ],
   ];
+  const tab = ([k, l, badge, extra], on) =>
+    `<button type="button" class="tab${on ? ' on' : ''}" aria-label="${l}${extra}"${on ? ' aria-current="page"' : ''}><span class="ico">${ic(k)}${badge}</span><span class="tlbl">${l}</span></button>`;
+  const v = NAV.variant;
+  // D 中置快门：首页 · 快门 · 档案；聊天在右上角
+  if (v === 'd')
+    return `<nav class="dock dock-d" aria-label="Main navigation"><div class="tabs">${tab(tabs[0], true)}${shutter(d)}${tab(tabs[2], false)}</div></nav>`;
+  // E 只有快门：档案和聊天在右上角
+  if (v === 'e') return `<nav class="dock dock-e" aria-label="Capture">${shutter(d)}</nav>`;
+  // F 时间轴：往期影片在左，当前一期在右；点往期即看旧影片
+  if (v === 'f') {
+    const films = ['W33', 'W34', 'W35']
+      .map(
+        (w, i) =>
+          `<span class="film" style="--i:${i}"><i style="background-image:url(${photoFor(40 + i * 3, WARM[i])})"></i><b>${w}</b></span>`,
+      )
+      .join('');
+    return (
+      `<nav class="dock dock-f" aria-label="Cycles"><div class="timeline"><button type="button" class="past" aria-label="Archive: films W33 to W35">${films}</button>` +
+      `<span class="now-mark"><b>Now · W36</b><small>2d 14h</small></span></div>${shutter(d)}</nav>`
+    );
+  }
+  // G 实时胶囊：显示这一期的状态，点开才出现三个页签
+  if (v === 'g')
+    return (
+      `<nav class="dock dock-g" aria-label="Main navigation"><div class="tabs"><button type="button" class="live" aria-expanded="false" aria-label="Home · 2 days 14 hours · ${5 - d.me.c} left · show tabs">` +
+      `${ic('home')}${NAV.unread ? '<i class="badge dot"></i>' : ''}<span><b>Home</b> · 2d 14h · ${5 - d.me.c} left</span>${ic('chev', 'up')}</button>` +
+      `${tabs.map((x, i) => tab(x, i === 0)).join('')}</div>${shutter(d)}</nav>`
+    );
   return (
     `<nav class="dock" aria-label="Main navigation"><div class="tabs${tabs.some((t) => t[2]) ? ' has-badge' : ''}">` +
     tabs
@@ -602,6 +642,7 @@ const bodies = {
 };
 
 /* ---------- 方案清单与评审信息 ---------- */
+// 方案清单：说明与评审信息都是 [英文, 中文]
 const concepts = [
   {
     id: 'c9',
@@ -609,15 +650,25 @@ const concepts = [
     no: '09',
     zh: '萤火虫罐',
     en: 'Firefly Jar',
-    nav: 'glass',
-    key: '暖色玻璃罐 · 一个片段一只萤火虫',
+    key: ['Warm glass jar · one firefly per moment', '暖色玻璃罐 · 一个片段一只萤火虫'],
     notes: [
-      '玻璃质感 + 温馨：罐子在暮色里微微发光',
-      '一个片段一只萤火虫，数量 = 全组片段数；你的萤火虫是你的颜色，其余统一暖黄',
-      '“We let them out together”：一起放出来 = 一起揭晓',
+      [
+        'Glass and warmth: the jar glows softly at dusk',
+        'One firefly per moment, as many as the group total; yours glow in your colour, the rest are warm gold',
+        '“We let them out together”: letting them out is the shared reveal',
+      ],
+      [
+        '玻璃质感 + 温馨：罐子在暮色里微微发光',
+        '一个片段一只萤火虫，数量 = 全组片段数；你的萤火虫是你的颜色，其余统一暖黄',
+        '“We let them out together”：一起放出来 = 一起揭晓',
+      ],
     ],
     fonts: 'Fraunces (SOFT) · Caveat · Geist',
-    review: ['罐中萤火', 3, 3, 2, '中高', '片段很多时粒子性能'],
+    review: [
+      ['Fireflies in a jar', '罐中萤火'],
+      ['Medium–high', '中高'],
+      ['Many fireflies may cost performance', '片段很多时粒子性能'],
+    ],
   },
   {
     id: 'c10',
@@ -625,15 +676,28 @@ const concepts = [
     no: '10',
     zh: '放映夜',
     en: 'Movie Night',
-    nav: 'glass',
-    key: '放映机光束 · 幕布预告 · 片头字幕',
+    key: ['Projector beam · screen trailer · opening credits', '放映机光束 · 幕布预告 · 片头字幕'],
     notes: [
-      '暗房杂志 × 首映票根的混合，借鉴 Capsl 的“电影式揭晓”',
-      '“Starring …” 名单按成员专属色排出，随人数换行',
-      '未参与的人写成 “and one more still filming”，不点名',
+      [
+        'A mix of Darkroom and Premiere Ticket, with the cinematic reveal of Capsl',
+        '“Starring …” lists who is in, in their colours, wrapping as the group grows',
+        'Members not in yet become “and one more still filming”, unnamed',
+      ],
+      [
+        '暗房杂志 × 首映票根的混合，借鉴 Capsl 的“电影式揭晓”',
+        '“Starring …” 名单按成员专属色排出，随人数换行',
+        '未参与的人写成 “and one more still filming”，不点名',
+      ],
     ],
     fonts: 'Fraunces · DM Mono · Geist',
-    review: ['家庭放映 + 片头字幕', 2, 2, 3, '中', '与 04 首映票根概念重叠，需二选一或合并'],
+    review: [
+      ['Home screening and opening credits', '家庭放映 + 片头字幕'],
+      ['Medium', '中'],
+      [
+        'Overlaps with 04 Premiere Ticket; pick one or merge',
+        '与 04 首映票根概念重叠，需二选一或合并',
+      ],
+    ],
   },
   {
     id: 'c11',
@@ -641,15 +705,25 @@ const concepts = [
     no: '11',
     zh: '共同片轨',
     en: 'Shared Reel',
-    nav: 'glass',
-    key: '浅色 · 全组一条片轨 · 成员参与标记',
+    key: ['Light · one reel for the group · who-is-in chips', '浅色 · 全组一条片轨 · 成员参与标记'],
     notes: [
-      '按新口径从“每人一条轨”改为“全组一条片轨”：只数总数，不标作者',
-      '你的几格是你的颜色；成员只标“已参与 ✓ / 还没有”',
-      '揭晓时播放头从头扫到尾，像开始放映',
+      [
+        'Changed for the new data scope from one lane per person to one reel for the group: a total, no names attached',
+        'Your clips are in your colour; members are only marked in ✓ or not yet',
+        'At the reveal a playhead sweeps the reel, like a screening starting',
+      ],
+      [
+        '按新口径从“每人一条轨”改为“全组一条片轨”：只数总数，不标作者',
+        '你的几格是你的颜色；成员只标“已参与 ✓ / 还没有”',
+        '揭晓时播放头从头扫到尾，像开始放映',
+      ],
     ],
     fonts: 'Geist',
-    review: ['剪辑时间线', 2, 3, 2, '低', '偏工具，情感弱于 07 / 09'],
+    review: [
+      ['Editing timeline', '剪辑时间线'],
+      ['Low', '低'],
+      ['Feels like a tool; less warm than 07 or 09', '偏工具，情感弱于 07 / 09'],
+    ],
   },
   {
     id: 'c6',
@@ -657,15 +731,31 @@ const concepts = [
     no: '06',
     zh: '暖光玻璃',
     en: 'Warm Glass',
-    nav: 'glass',
-    key: '03 的温馨版 · 奶油底 · 蜜桃暖光 · 软衬线',
+    key: [
+      'The warm take on 03 · cream · peach light · soft serif',
+      '03 的温馨版 · 奶油底 · 蜜桃暖光 · 软衬线',
+    ],
     notes: [
-      '保留玻璃质感与底栏，冷紫换成蜜桃 / 蜂蜜色',
-      '浅色，像午后阳光照进房间',
-      '文案 “kept warm for the five of us”',
+      [
+        'Keeps the glass texture and dock; cool purple becomes peach and honey',
+        'Light theme, like afternoon sun in a room',
+        'Copy: “kept warm for the five of us”',
+      ],
+      [
+        '保留玻璃质感与底栏，冷紫换成蜜桃 / 蜂蜜色',
+        '浅色，像午后阳光照进房间',
+        '文案 “kept warm for the five of us”',
+      ],
     ],
     fonts: 'Fraunces (SOFT) · Geist',
-    review: ['午后暖光', 3, 3, 1, '中', '浅色玻璃的文字对比度需逐一验证'],
+    review: [
+      ['Afternoon light', '午后暖光'],
+      ['Medium', '中'],
+      [
+        'Light glass needs a contrast check for every text colour',
+        '浅色玻璃的文字对比度需逐一验证',
+      ],
+    ],
   },
   {
     id: 'c7',
@@ -673,15 +763,28 @@ const concepts = [
     no: '07',
     zh: '围炉',
     en: 'Hearth',
-    nav: 'glass',
-    key: '暖黑 · 火光 · 成员围坐一圈',
+    key: ['Warm black · firelight · members in a circle', '暖黑 · 火光 · 成员围坐一圈'],
     notes: [
-      '成员按人数自动围成一圈；到了的人亮一圈自己的颜色，只有你的座位显示你的 5 段额度',
-      '火光亮度随全组片段数变化',
-      '不点名时，没来的人是“留着的空位”',
+      [
+        'Members sit in a circle sized to the group; those who are in glow in their colour, and only your seat shows your 5-segment allowance',
+        'The fire grows brighter with the group total',
+        'When not named, members not in yet are a saved seat',
+      ],
+      [
+        '成员按人数自动围成一圈；到了的人亮一圈自己的颜色，只有你的座位显示你的 5 段额度',
+        '火光亮度随全组片段数变化',
+        '不点名时，没来的人是“留着的空位”',
+      ],
     ],
     fonts: 'Fraunces (SOFT) · Geist',
-    review: ['围坐火堆', 3, 3, 2, '中高', '小屏 / 150% 大字体下环形会拥挤'],
+    review: [
+      ['Around the fire', '围坐火堆'],
+      ['Medium–high', '中高'],
+      [
+        'The circle gets crowded on small screens or at 150% text',
+        '小屏 / 150% 大字体下环形会拥挤',
+      ],
+    ],
   },
   {
     id: 'c8',
@@ -689,15 +792,28 @@ const concepts = [
     no: '08',
     zh: '蜡封信',
     en: 'Sealed Letter',
-    nav: 'glass',
-    key: '暖纸 · 蜡封 · 邮戳 · 钢笔字',
+    key: ['Warm paper · wax seal · postmark · fountain pen', '暖纸 · 蜡封 · 邮戳 · 钢笔字'],
     notes: [
-      '这一期是一封写给我们自己的信，周日一起拆',
-      '成员是邮票（专属色），没来的人是空邮票框',
-      '题目写成 “Dear us,” 开头',
+      [
+        'Each cycle is a letter to ourselves, opened together on Sunday',
+        'Members are stamps in their colour; a blank stamp is someone not in yet',
+        'The prompt opens with “Dear us,”',
+      ],
+      [
+        '这一期是一封写给我们自己的信，周日一起拆',
+        '成员是邮票（专属色），没来的人是空邮票框',
+        '题目写成 “Dear us,” 开头',
+      ],
     ],
     fonts: 'Fraunces · Caveat · Inter',
-    review: ['写给自己的信', 3, 2, 2, '中', '手写体可读性；中文界面需另找手写字体'],
+    review: [
+      ['A letter to ourselves', '写给自己的信'],
+      ['Medium', '中'],
+      [
+        'Handwriting readability; a Chinese UI needs its own handwriting face',
+        '手写体可读性；中文界面需另找手写字体',
+      ],
+    ],
   },
   {
     id: 'c1',
@@ -705,14 +821,28 @@ const concepts = [
     no: '01',
     zh: '暗房杂志',
     en: 'Darkroom Editorial',
-    key: '暖黑底 · 安全灯橙 · 等宽大数字',
+    key: [
+      'Warm black · safelight orange · large monospace numerals',
+      '暖黑底 · 安全灯橙 · 等宽大数字',
+    ],
     notes: [
-      '主角是倒计时',
-      '倾斜的写实胶片斜向下走片，每格是全组的一个片段，只有你的带你的颜色',
-      '揭晓时每格从暗到亮“显影”，锁消失',
+      [
+        'The countdown is the hero',
+        'A tilted, realistic film runs diagonally; each frame is one of the group’s moments, and only yours carry your colour',
+        'At the reveal every frame develops from dark and the locks disappear',
+      ],
+      [
+        '主角是倒计时',
+        '倾斜的写实胶片斜向下走片，每格是全组的一个片段，只有你的带你的颜色',
+        '揭晓时每格从暗到亮“显影”，锁消失',
+      ],
     ],
     fonts: 'Inter Tight · JetBrains Mono',
-    review: ['暗房冲洗', 1, 3, 2, '低', '偏酷、偏工具感'],
+    review: [
+      ['Darkroom developing', '暗房冲洗'],
+      ['Low', '低'],
+      ['Feels cool and tool-like', '偏酷、偏工具感'],
+    ],
   },
   {
     id: 'c2',
@@ -720,14 +850,25 @@ const concepts = [
     no: '02',
     zh: '相纸索引页',
     en: 'Contact Sheet',
-    key: '暖纸 · 铁锈红 · 衬线标题',
+    key: ['Warm paper · rust red · serif titles', '暖纸 · 铁锈红 · 衬线标题'],
     notes: [
-      '全组片段排成小样，行数跟着片段数走，不标注是谁拍的',
-      '只有你的几格带你的颜色小点；揭晓时每格依次显影',
-      '“Not even you can peek”',
+      [
+        'Every moment in the group laid out as a contact sheet; rows grow with the total, no names attached',
+        'Only your frames carry a dot in your colour; at the reveal they develop one by one',
+        '“Not even you can peek”',
+      ],
+      [
+        '全组片段排成小样，行数跟着片段数走，不标注是谁拍的',
+        '只有你的几格带你的颜色小点；揭晓时每格依次显影',
+        '“Not even you can peek”',
+      ],
     ],
     fonts: 'Instrument Serif · Inter · DM Mono',
-    review: ['冲洗小样', 2, 3, 1, '中', '片段多时每格很小'],
+    review: [
+      ['Contact sheet', '冲洗小样'],
+      ['Medium', '中'],
+      ['Frames get small when the group adds many moments', '片段多时每格很小'],
+    ],
   },
   {
     id: 'c3',
@@ -735,15 +876,25 @@ const concepts = [
     no: '03',
     zh: '玻璃胶囊',
     en: 'Glass Capsule',
-    nav: 'glass',
-    key: '深色 · 流动光球 · 毛玻璃',
+    key: ['Dark · drifting light · frosted glass', '深色 · 流动光球 · 毛玻璃'],
     notes: [
-      '主角是流动的“显影光球”，中间是全组片段数',
-      '其余信息收进一张玻璃卡片',
-      '导航只显示图标，选中项展开文字',
+      [
+        'The hero is a drifting “developing” light with the group total inside',
+        'Everything else sits in one glass card',
+        'The source of the glass dock that every direction now uses',
+      ],
+      [
+        '主角是流动的“显影光球”，中间是全组片段数',
+        '其余信息收进一张玻璃卡片',
+        '所有方向共用的玻璃底栏就来自这里',
+      ],
     ],
     fonts: 'Geist',
-    review: ['显影光球', 1, 3, 1, '中', '偏冷；Android 上大面积模糊有性能风险'],
+    review: [
+      ['Developing light', '显影光球'],
+      ['Medium', '中'],
+      ['Cool palette; large blurs may be heavy on Android', '偏冷；Android 上大面积模糊有性能风险'],
+    ],
   },
   {
     id: 'c4',
@@ -751,14 +902,25 @@ const concepts = [
     no: '04',
     zh: '首映票根',
     en: 'Premiere Ticket',
-    key: '影院暗红 · 票根米色 · 金色',
+    key: ['Cinema red · cream ticket · gold', '影院暗红 · 票根米色 · 金色'],
     notes: [
-      '日期、开场、倒计时都在票上',
-      'Admit N / 座位 = 人数，座位用成员专属色',
-      '把 Premiere / Archive 概念提前埋进首页',
+      [
+        'Date, doors and countdown sit on a realistic ticket that drifts down on entry',
+        'Admit N and one seat per member; empty seats are members not in yet',
+        'At the reveal the stub tears off along the perforation',
+      ],
+      [
+        '日期、开场、倒计时都在一张写实票上，入场时从上方飘落',
+        'Admit N / 座位 = 人数，空座是还没参与的人',
+        '揭晓时票根沿打孔撕下',
+      ],
     ],
     fonts: 'Bodoni Moda · DM Mono · Inter',
-    review: ['首映电影票', 2, 2, 3, '中', '票面信息密；依赖 Bodoni 字体气质'],
+    review: [
+      ['Premiere ticket', '首映电影票'],
+      ['Medium', '中'],
+      ['Dense ticket; relies on the character of Bodoni', '票面信息密；依赖 Bodoni 字体气质'],
+    ],
   },
   {
     id: 'c5',
@@ -766,20 +928,32 @@ const concepts = [
     no: '05',
     zh: '极简排版',
     en: 'Quiet Swiss',
-    key: '纯排版 · 黑白 + 一个橙色',
+    key: ['Type only · black and white plus one orange', '纯排版 · 黑白 + 一个橙色'],
     notes: [
-      '没有任何图像，只靠字号对比',
-      '额度用细线表格，信息密度最高',
-      'Expo 落地成本最低，适合作对照组',
+      [
+        'No imagery, only contrast in type size',
+        'The allowance is a thin-rule table, the densest information',
+        'The cheapest to build in Expo; a good baseline',
+      ],
+      [
+        '没有任何图像，只靠字号对比',
+        '额度用细线表格，信息密度最高',
+        'Expo 落地成本最低，适合作对照组',
+      ],
     ],
     fonts: 'Inter Tight',
-    review: ['纯排版', 1, 3, 1, '低', '情感弱，温馨感最低'],
+    review: [
+      ['Type only', '纯排版'],
+      ['Low', '低'],
+      ['Least emotional and least warm', '情感弱，温馨感最低'],
+    ],
   },
 ];
-const GROUPS = { r3: '第三轮 · 借鉴竞品的新方向', r2: '第二轮 · 温馨方向', r1: '第一轮' };
+const nameOf = (c) => (LANG === 'zh' ? c.zh : c.en);
+const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 
 const screen = (c, d) =>
-  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}<div class="scroll">${bodies[c.id](d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}${topNav()}<div class="scroll">${bodies[c.id](d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
 
 let current = 'all';
 
@@ -800,15 +974,19 @@ function render() {
     last = '';
   for (const c of concepts) {
     if (c.group !== last) {
-      html += `<h2 class="gal-h">${GROUPS[c.group]}</h2>`;
+      html += `<h2 class="gal-h">${t('group.' + c.group)}</h2>`;
       last = c.group;
     }
     html +=
-      `<article class="card" data-id="${c.id}" aria-label="${c.no} ${c.zh}">` +
-      `<header class="card-h"><span class="no">${c.no}</span><div><h2>${c.zh}</h2><p>${c.en}</p></div></header>` +
-      `<div class="card-ctl"><button type="button" class="ctl" data-play="${c.id}" title="重置这台手机并从头播放">${ic('play')}播放</button><span class="step" id="step-${c.id}" aria-live="polite"></span></div>` +
+      `<article class="card" data-id="${c.id}" aria-label="${c.no} ${nameOf(c)}">` +
+      `<header class="card-h"><span class="no">${c.no}</span><div><h2>${nameOf(c)}</h2><p>${altName(c)}</p></div></header>` +
+      `<div class="card-ctl"><button type="button" class="ctl" data-play="${c.id}" title="${t('play.title')}">${ic('play')}${t('play')}</button><span class="step" id="step-${c.id}" aria-live="polite"></span></div>` +
       `<div class="phone-wrap">${screen(c, dataFor(c.id))}</div>` +
-      `<div class="notes"><div class="vote-bar" data-votebar="${c.id}"></div><p class="key">${c.key}</p><ul>${c.notes.map((n) => `<li>${n}</li>`).join('')}</ul><p class="fonts">字体 · ${c.fonts}</p></div>` +
+      `<div class="notes"><div class="vote-bar" data-votebar="${c.id}"></div><p class="key">${L(c.key)}</p><ul>${L(
+        c.notes,
+      )
+        .map((n) => `<li>${n}</li>`)
+        .join('')}</ul><p class="fonts">${t('fonts')} · ${c.fonts}</p></div>` +
       `</article>`;
   }
   $('gallery').innerHTML = html;
@@ -820,7 +998,7 @@ function renderReview() {
   $('review-body').innerHTML = concepts
     .map(
       (c) =>
-        `<tr><th scope="row"><span>${c.no}</span>${c.zh}</th><td>${c.review[0]}</td><td>${c.review[4]}</td><td>${c.review[5]}</td><td data-vote="${c.id}"></td></tr>`,
+        `<tr><th scope="row"><span>${c.no}</span>${nameOf(c)}</th><td>${L(c.review[0])}</td><td>${L(c.review[1])}</td><td>${L(c.review[2])}</td><td data-vote="${c.id}"></td></tr>`,
     )
     .join('');
 }
@@ -843,7 +1021,7 @@ const tagsFor = () => [
     id: c.id,
     re: new RegExp(`(^|[^0-9])${c.no}\\s*[·.:：]|${c.en}|#${c.id}\\b`, 'i'),
   })),
-  ...['a', 'b', 'c'].map((v) => ({
+  ...[...'abcdefg'].map((v) => ({
     id: 'nav-' + v,
     re: new RegExp(`dock\\s*${v}\\b|底栏\\s*${v.toUpperCase()}(?![a-z])`, 'i'),
   })),
@@ -878,14 +1056,22 @@ function voteBar(id) {
   const v = votes[id];
   if (!v)
     return voteMode === 'none'
-      ? '<p class="vb-off">评审 Issue 发布后，这里显示票数和最新评论，并可一键去 GitHub 投票、评论。</p>'
-      : '<p class="vb-off">这个方向在 Issue 里还没有对应的评论。</p>';
+      ? `<p class="vb-off">${t('vb.off')}</p>`
+      : `<p class="vb-off">${t('vb.empty')}</p>`;
   const list = v.latest
-    .map((c) => link(c, `<b>${esc(c.who)}</b><span>${esc(c.text)}</span>`, 'vb-item'))
+    .map((c) =>
+      link(
+        c,
+        c.sample
+          ? `<b>${t('vb.sampleWho')}</b><span>${t('vb.sampleText')}</span>`
+          : `<b>${esc(c.who)}</b><span>${esc(c.text)}</span>`,
+        'vb-item',
+      ),
+    )
     .join('');
   return (
     `<div class="vb-row">${link(v, `👍 <b>${v.up}</b>`, 'vb')}${link(v, `❤️ <b>${v.heart}</b>`, 'vb')}${link(v, `💬 <b>${v.count}</b>`, 'vb')}` +
-    `${voteMode === 'live' ? link(v, '去投票 / 评论 ↗', 'vb go') : '<span class="vb sample">示例数据</span>'}</div>` +
+    `${voteMode === 'live' ? link(v, t('vb.go'), 'vb go') : `<span class="vb sample">${t('vb.sample')}</span>`}</div>` +
     (list ? `<div class="vb-list">${list}</div>` : '')
   );
 }
@@ -910,18 +1096,12 @@ function sampleVotes(on) {
         up: (i * 7 + 3) % 6,
         heart: i % 4 === 0 ? 1 : 0,
         count,
-        latest: count
-          ? [
-              {
-                who: '示例',
-                text: '组员引用回复这个方向、或以编号开头的评论，最新的会显示在这里。',
-              },
-            ]
-          : [],
+        latest: count ? [{ sample: true }] : [],
       };
     });
-    ['a', 'b', 'c'].forEach(
-      (v, i) => (votes['nav-' + v] = { up: [2, 1, 0][i], heart: 0, count: 0, latest: [] }),
+    [...'abcdefg'].forEach(
+      (v, i) =>
+        (votes['nav-' + v] = { up: [2, 1, 0, 1, 2, 3, 0][i], heart: 0, count: 0, latest: [] }),
     );
   }
   paintVotes();
@@ -931,12 +1111,14 @@ async function loadVotes() {
   const n = window.REVIEW_ISSUE;
   const st = $('vote-status');
   if (!n) {
-    st.textContent = '评审 Issue 尚未发布，投票栏暂时为空。';
+    st.textContent = t('vote.none');
     return;
   }
   voteMode = 'live';
   document.body.classList.add('has-issue', 'live-issue');
-  st.innerHTML = `投票与评论在 <a href="https://github.com/${REPO}/issues/${Number(n)}" target="_blank" rel="noreferrer">#${Number(n)}</a>，打开页面时读取。`;
+  st.innerHTML = t('vote.live', {
+    n: `<a href="https://github.com/${REPO}/issues/${Number(n)}" target="_blank" rel="noreferrer">#${Number(n)}</a>`,
+  });
   try {
     let all = [];
     for (let page = 1; page < 5; page++) {
@@ -951,7 +1133,7 @@ async function loadVotes() {
     }
     const tags = tagsFor();
     for (const c of all) {
-      const m = /<!--\s*rewind-concept:(c\d+|nav-[abc])\s*-->/.exec(c.body || '');
+      const m = /<!--\s*rewind-concept:(c\d+|nav-[a-g])\s*-->/.exec(c.body || '');
       if (m)
         votes[m[1]] = {
           up: c.reactions?.['+1'] ?? 0,
@@ -978,21 +1160,22 @@ async function loadVotes() {
     }
     paintVotes();
   } catch {
-    st.innerHTML += ' 票数暂时读取失败（GitHub 公共接口每小时限 60 次），请直接打开 Issue 查看。';
+    st.innerHTML += t('vote.fail');
   }
 }
 
 function renderPick() {
-  let html = `<button type="button" data-pick="all"><span>··</span>全部对比</button>`,
+  let html = `<button type="button" data-pick="all"><span>··</span>${t('pick.all')}</button>`,
     last = '';
   for (const c of concepts) {
     if (c.group !== last) {
-      html += `<p class="pick-h">${GROUPS[c.group]}</p>`;
+      html += `<p class="pick-h">${t('group.' + c.group)}</p>`;
       last = c.group;
     }
-    html += `<button type="button" data-pick="${c.id}"><span>${c.no}</span>${c.zh}</button>`;
+    html += `<button type="button" data-pick="${c.id}"><span>${c.no}</span>${nameOf(c)}</button>`;
   }
   $('pick').innerHTML = html;
+  applyPick();
 }
 
 // 窄屏时按可用宽度自动缩小手机，避免横向滚动
@@ -1187,20 +1370,20 @@ function playStory(id) {
   resetCard(id);
   const scrOf = () => document.querySelector(`.card[data-id="${id}"] .screen`);
   const later = (ms, fn) => (TIMERS[id] ||= []).push(setTimeout(fn, ms));
-  setStep(id, '① 朋友加入');
+  setStep(id, t('step.1'));
   gatherFlight(scrOf(), () =>
     later(700, () => {
-      setStep(id, '② 你按快门，封存');
+      setStep(id, t('step.2'));
       const scr = scrOf();
       const btn = scr?.querySelector('.shutter');
       if (!scr || !btn) return;
       btn.classList.add('press');
       sealFlight(scr, btn, () =>
         later(1300, () => {
-          setStep(id, '③ 周日 8 点，一起揭晓');
+          setStep(id, t('step.3'));
           const s2 = scrOf();
           if (s2) reveal(s2);
-          later(3200, () => setStep(id, '播放完毕 · 再点“播放”重新开始'));
+          later(3200, () => setStep(id, t('step.done')));
         }),
       );
     }),
@@ -1221,6 +1404,7 @@ document.addEventListener('click', (e) => {
   const t = e.target.closest('button, [data-close]');
   if (!t) return;
   if (t.dataset.pick) return pick(t.dataset.pick);
+  if (t.dataset.lang) return setLang(t.dataset.lang);
   if (t.dataset.nav) {
     NAV.variant = t.dataset.nav;
     document
@@ -1257,6 +1441,11 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (t.hasAttribute('data-close')) return scr.classList.remove('open');
+  if (t.classList.contains('live')) {
+    t.closest('.dock')?.classList.add('open');
+    t.setAttribute('aria-expanded', 'true');
+    return;
+  }
   if (t.classList.contains('tab')) {
     // 缩小态下，点小胶囊先展开
     if (scr.classList.contains('mini')) return scr.classList.remove('mini');
@@ -1265,6 +1454,8 @@ document.addEventListener('click', (e) => {
       if (b === t) b.setAttribute('aria-current', 'page');
       else b.removeAttribute('aria-current');
     });
+    const dg = t.closest('.dock-g');
+    if (dg) setTimeout(() => dg.classList.remove('open'), 450);
     return;
   }
   if (t.classList.contains('shutter')) {
@@ -1302,11 +1493,30 @@ document.addEventListener(
 $('vote-sample').addEventListener('change', (e) => sampleVotes(e.target.checked));
 $('members').addEventListener('input', (e) => {
   size = Number(e.target.value);
-  $('membersv').textContent = size + ' 人';
+  $('membersv').textContent = t('members.unit', { n: size });
   clearStories();
   render();
 });
 
+function setLang(l) {
+  LANG = l === 'zh' ? 'zh' : 'en';
+  try {
+    localStorage.setItem('rewind-lang', LANG);
+  } catch {
+    /* 存不了也没关系 */
+  }
+  applyI18n();
+  $('membersv').textContent = t('members.unit', { n: size });
+  renderPick();
+  renderReview();
+  render();
+  if (voteMode === 'sample') sampleVotes(true);
+  else if (voteMode === 'none') $('vote-status').textContent = t('vote.none');
+  else loadVotes();
+}
+
+applyI18n();
+$('membersv').textContent = t('members.unit', { n: size });
 renderPick();
 renderReview();
 render();

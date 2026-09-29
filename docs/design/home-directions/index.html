@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Rewind Home 方向</title>
+    <title>Rewind Home directions</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -16,187 +16,276 @@
     <link rel="stylesheet" href="styles-nav.css" />
     <link rel="stylesheet" href="styles-motion.css" />
     <link rel="stylesheet" href="styles-story.css" />
+    <link rel="stylesheet" href="styles-nav2.css" />
     <script defer src="review-config.js"></script>
+    <script defer src="i18n.js"></script>
     <script defer src="app.js"></script>
   </head>
   <body>
     <div class="app">
-      <aside class="side" aria-label="设计控制">
+      <aside class="side" data-i18n-aria="side.aria" aria-label="Design controls">
         <div class="brand">
           <span class="logo" aria-hidden="true">r.</span>
-          <div><strong>REWIND</strong><span>Home 方向探索</span></div>
+          <div><strong>REWIND</strong><span data-i18n="brand.sub">Home direction study</span></div>
+        </div>
+
+        <div class="seg lang" role="group" data-i18n-aria="lang.aria" aria-label="Language">
+          <button type="button" data-lang="en" aria-pressed="true" lang="en">EN</button
+          ><button type="button" data-lang="zh" aria-pressed="false" lang="zh-CN">中文</button>
         </div>
 
         <div class="grp">
-          <p class="lbl">方案</p>
-          <div class="pick" id="pick" role="group" aria-label="选择方案"></div>
+          <p class="lbl" data-i18n="pick.label">Directions</p>
+          <div
+            class="pick"
+            id="pick"
+            role="group"
+            data-i18n-aria="pick.aria"
+            aria-label="Choose a direction"
+          ></div>
         </div>
 
         <div class="grp">
-          <p class="lbl">投票</p>
-          <p class="hint" id="vote-status">正在读取投票 Issue…</p>
-          <p class="hint">
-            在 GitHub 上投票：每人最多给 3 个方向 👍，给最喜欢的 1 个
-            ❤️。评论请引用回复对应方向的评论，或以编号开头（如 “07:”），这里会自动归到那个方向下。
+          <p class="lbl" data-i18n="vote.label">Vote</p>
+          <p class="hint" id="vote-status">Loading the review issue…</p>
+          <p class="hint" data-i18n="vote.rules">
+            Vote on GitHub: 👍 up to three directions and ❤️ one favourite. To comment, quote-reply
+            a direction’s comment or start with its number (for example “07:”); the page files it
+            under that direction.
           </p>
           <label class="check vote-sample" for="vote-sample"
-            ><input type="checkbox" id="vote-sample" /> 预览投票区样式（示例数据）</label
+            ><input type="checkbox" id="vote-sample" />
+            <span data-i18n="vote.sample">Preview the vote bar (sample data)</span></label
           >
         </div>
 
         <div class="grp">
-          <label class="lbl" for="members">小组人数 <output id="membersv">5 人</output></label>
+          <label class="lbl" for="members"
+            ><span data-i18n="members.label">Group size</span>
+            <output id="membersv">5 people</output></label
+          >
           <input type="range" id="members" min="2" max="10" value="5" />
           <div class="btns">
-            <button type="button" class="ghost" id="shuffle">随机贡献</button>
-            <button type="button" class="ghost" id="restore">恢复示例</button>
+            <button type="button" class="ghost" id="shuffle" data-i18n="shuffle">Shuffle</button>
+            <button type="button" class="ghost" id="restore" data-i18n="restore">
+              Reset sample
+            </button>
           </div>
-          <p class="hint">
-            数据口径（提案 A）：只显示谁参与了（是 /
-            否），不显示别人各贡献了几条；你自己的条数来自你的台账，全组总数来自周期汇总。演示默认 5
-            人。
+          <p class="hint" data-i18n="members.hint">
+            Data scope (proposal A): shows who is in (yes or no), never how many moments someone
+            else added. Your own count comes from your ledger and the group total from the cycle
+            summary. The demo uses 5 people.
           </p>
         </div>
 
         <div class="grp">
-          <p class="lbl">还没贡献的成员</p>
-          <div class="seg" role="group" aria-label="还没贡献的成员如何显示">
-            <button type="button" data-anon="1" aria-pressed="true">不点名</button
-            ><button type="button" data-anon="0" aria-pressed="false">显示名字</button>
+          <p class="lbl" data-i18n="anon.label">Members not in yet</p>
+          <div
+            class="seg"
+            role="group"
+            data-i18n-aria="anon.aria"
+            aria-label="How members who are not in yet are shown"
+          >
+            <button type="button" data-anon="1" aria-pressed="true" data-i18n="anon.hide">
+              Not named</button
+            ><button type="button" data-anon="0" aria-pressed="false" data-i18n="anon.show">
+              Named
+            </button>
           </div>
-          <p class="hint">默认不点名（借鉴 Reveal），显示为空位 / 空邮票；可切换对比。</p>
+          <p class="hint" data-i18n="anon.hint">
+            Not named by default (from Reveal): an empty seat or stamp. Switch to compare.
+          </p>
         </div>
 
         <div class="grp">
-          <label class="lbl" for="state">状态 · 模拟</label>
-          <select id="state">
-            <option>正常收集中</option>
-            <option disabled>加载中 · 稍后</option>
-            <option disabled>尚无周期 · 稍后</option>
-            <option disabled>加载失败 · 稍后</option>
-            <option disabled>影片处理中 · 稍后</option>
-            <option disabled>影片已发布 · 稍后</option>
-            <option disabled>额度用尽 · 稍后</option>
+          <p class="lbl" data-i18n="nav.label">Dock variant</p>
+          <div class="navpick" role="group" data-i18n-aria="nav.aria" aria-label="Dock variant">
+            <button type="button" data-nav="a" aria-pressed="true">
+              <b>A</b><span data-i18n="nav.a">Active label</span></button
+            ><button type="button" data-nav="b" aria-pressed="false">
+              <b>B</b><span data-i18n="nav.b">Labels always</span></button
+            ><button type="button" data-nav="c" aria-pressed="false">
+              <b>C</b><span data-i18n="nav.c">Shrinks on scroll</span></button
+            ><button type="button" data-nav="d" aria-pressed="false">
+              <b>D</b><span data-i18n="nav.d">Centre shutter</span></button
+            ><button type="button" data-nav="e" aria-pressed="false">
+              <b>E</b><span data-i18n="nav.e">Shutter only</span></button
+            ><button type="button" data-nav="f" aria-pressed="false">
+              <b>F</b><span data-i18n="nav.f">Timeline</span></button
+            ><button type="button" data-nav="g" aria-pressed="false">
+              <b>G</b><span data-i18n="nav.g">Live pill</span>
+            </button>
+          </div>
+          <p class="hint" data-i18n="nav.struct">
+            A–C: three tabs and a separate shutter. D–G: other structures.
+          </p>
+          <label class="lbl lbl-gap" for="shutter-state" data-i18n="shutter.label"
+            >Shutter state</label
+          >
+          <select id="shutter-state">
+            <option value="collect" data-i18n="shutter.collect">Collecting</option>
+            <option value="quota" data-i18n="shutter.quota">Allowance used up</option>
+            <option value="upload" data-i18n="shutter.upload">Sealing</option>
+            <option value="sealed" data-i18n="shutter.sealed">Just sealed</option>
+            <option value="premiere" data-i18n="shutter.premiere">Premiere (24 hours)</option>
           </select>
-          <p class="hint">其他状态稍后接入，先确认视觉方向。</p>
+          <label class="check" for="unread"
+            ><input type="checkbox" id="unread" checked />
+            <span data-i18n="unread">Chat has 3 unread</span></label
+          >
+          <p class="hint" data-i18n="nav.hint">
+            Every direction uses the same glass dock, tinted by its theme; Settings lives in the
+            avatar. This switches only the dock; Home states come later.
+          </p>
+          <div class="nav-votes" data-i18n-aria="nav.votes" aria-label="Dock variant votes">
+            <span>A</span><span data-vote="nav-a"></span> <span>B</span
+            ><span data-vote="nav-b"></span> <span>C</span><span data-vote="nav-c"></span>
+            <span>D</span><span data-vote="nav-d"></span> <span>E</span
+            ><span data-vote="nav-e"></span> <span>F</span><span data-vote="nav-f"></span>
+            <span>G</span><span data-vote="nav-g"></span>
+          </div>
         </div>
 
         <div class="grp">
-          <label class="lbl" for="zoom">缩放 <output id="zoomv">72%</output></label>
+          <p class="lbl" data-i18n="motion.label">Motion</p>
+          <button type="button" class="ghost" id="replay" data-i18n="motion.replay">
+            Replay entrance
+          </button>
+          <p class="hint" data-i18n="motion.hint">
+            Entrance: the Darkroom film slides in and keeps running, and the Premiere ticket drifts
+            down. Play, beside each phone, runs ① a friend joins → ② you seal a moment → ③ everyone
+            opens it at 8 PM on Sunday. Play always resets that phone first.
+          </p>
+        </div>
+
+        <div class="grp">
+          <label class="lbl" for="state" data-i18n="state.label">State · simulated</label>
+          <select id="state">
+            <option data-i18n="state.collect">Collecting</option>
+            <option disabled data-i18n="state.loading">Loading · later</option>
+            <option disabled data-i18n="state.empty">No cycle · later</option>
+            <option disabled data-i18n="state.error">Failed to load · later</option>
+            <option disabled data-i18n="state.processing">Film processing · later</option>
+            <option disabled data-i18n="state.released">Film released · later</option>
+            <option disabled data-i18n="state.quota">Allowance used · later</option>
+          </select>
+          <p class="hint" data-i18n="state.hint">
+            Other states come later, once a visual direction is chosen.
+          </p>
+        </div>
+
+        <div class="grp">
+          <label class="lbl" for="zoom"
+            ><span data-i18n="zoom.label">Zoom</span> <output id="zoomv">72%</output></label
+          >
           <input type="range" id="zoom" min="50" max="100" value="72" />
         </div>
 
         <div class="grp">
-          <p class="lbl">动效</p>
-          <button type="button" class="ghost" id="replay">重播入场动效</button>
-          <p class="hint">
-            入场：暗房胶片斜向滑入并持续走片，首映票根从上方飘落。每台手机旁的“播放”会依次演示：①朋友加入
-            → ②你按快门封存 → ③周日 8 点一起揭晓；每次点“播放”都会先把这台手机重置，再从头开始。
-          </p>
-        </div>
-
-        <div class="grp">
-          <p class="lbl">底栏变体</p>
-          <div class="seg" role="group" aria-label="底栏变体">
-            <button type="button" data-nav="a" aria-pressed="true">选中展开</button
-            ><button type="button" data-nav="b" aria-pressed="false">始终有字</button
-            ><button type="button" data-nav="c" aria-pressed="false">滚动缩小</button>
-          </div>
-          <label class="lbl lbl-gap" for="shutter-state">快门状态</label>
-          <select id="shutter-state">
-            <option value="collect">收集中</option>
-            <option value="quota">额度用完</option>
-            <option value="upload">封存中</option>
-            <option value="sealed">刚封存</option>
-            <option value="premiere">首映期（24 小时）</option>
-          </select>
-          <label class="check" for="unread"
-            ><input type="checkbox" id="unread" checked /> 聊天有 3 条未读</label
-          >
-          <p class="hint">
-            11 个方向统一用玻璃底栏，只随主题换色：首页 / 聊天 / 档案三栏 + 独立快门，快门外圈 =
-            本周额度，设置并入左上角头像。这里只切换底栏，首页内容的状态稍后做。
-          </p>
-          <div class="nav-votes" aria-label="底栏变体投票">
-            <span>A</span><span data-vote="nav-a"></span> <span>B</span
-            ><span data-vote="nav-b"></span> <span>C</span><span data-vote="nav-c"></span>
-          </div>
-        </div>
-
-        <div class="grp">
-          <p class="lbl">可以试试</p>
+          <p class="lbl" data-i18n="try.label">Try</p>
           <ul class="rules">
-            <li>点头像：打开个人与设置</li>
-            <li>点底栏：切换选中态</li>
-            <li>按快门：按压反馈（额度用完时不可按）</li>
-            <li>“滚动缩小”：点左下小胶囊展开，往下滚再缩小</li>
+            <li data-i18n="try.1">Tap the avatar: profile and settings</li>
+            <li data-i18n="try.2">Tap the dock: switch the active tab</li>
+            <li data-i18n="try.3">
+              Press the shutter: seal a moment (not when the allowance is used up)
+            </li>
+            <li data-i18n="try.4">
+              C shrinks while you scroll; tap the small pill to expand. G: tap the live pill to show
+              the tabs.
+            </li>
           </ul>
         </div>
 
-        <p class="foot">设计模拟 · 画面均为抽象纹理，不含任何未揭晓媒体</p>
+        <p class="foot" data-i18n="foot">
+          Design simulation · abstract textures and generated photos only, no unrevealed media
+        </p>
       </aside>
 
       <main>
         <header class="main-h">
-          <p class="k">HOME · 第三轮 · 评审稿</p>
-          <h1>11 个方向，一起评审</h1>
-          <p>
-            同一信息架构（题目 → 行动 → 状态）与同一导航（3 栏 +
-            快门，设置并入头像）。本轮根据竞品调研统一调整了全部方案，并新增 09–11。
+          <p class="k" data-i18n="main.k">HOME · ROUND 3 · FOR REVIEW</p>
+          <h1 data-i18n="main.h1">Eleven directions to review together</h1>
+          <p data-i18n="main.p">
+            Every direction shares one information order (prompt → action → status) and one
+            navigation (a glass dock with a shutter; Settings in the avatar). This round applies the
+            product scan to all of them and adds 09–11.
           </p>
-          <ul class="learn" aria-label="本轮依据竞品的统一调整">
+          <ul
+            class="learn"
+            data-i18n-aria="learn.aria"
+            aria-label="Changes applied from the product scan"
+          >
             <li>
-              <b>不点名</b><span>还没贡献的人显示为空位，文案“Waiting on one more”</span
+              <b data-i18n="learn.1b">Nobody is named</b
+              ><span data-i18n="learn.1s"
+                >Members not in yet are an empty seat, with “Waiting on one more”</span
               ><em>Reveal</em>
             </li>
             <li>
-              <b>成员专属色</b><span>头像、额度环、座位、邮票、音轨都用每人自己的颜色</span
+              <b data-i18n="learn.2b">A colour per member</b
+              ><span data-i18n="learn.2s"
+                >Avatars, rings, seats and stamps use each member’s own colour</span
               ><em>Reveal</em>
             </li>
             <li>
-              <b>连你也看不到</b><span>封存提示统一为 “not even you can peek”</span
+              <b data-i18n="learn.3b">Not even you</b
+              ><span data-i18n="learn.3s">Sealed copy always says “not even you can peek”</span
               ><em>Capsule · Reveal</em>
             </li>
             <li>
-              <b>一起揭晓</b><span>倒计时强调“所有人同时打开”，把揭晓当首映</span
+              <b data-i18n="learn.4b">Everyone at once</b
+              ><span data-i18n="learn.4s"
+                >The countdown stresses that everyone opens it together, like a premiere</span
               ><em>Capsl · Reveal</em>
             </li>
             <li>
-              <b>数量 + 人数 + 倒计时</b><span>揭晓前只给这三类信息，不给任何内容</span
+              <b data-i18n="learn.5b">Count, who is in, countdown</b
+              ><span data-i18n="learn.5s"
+                >Before the reveal, show only these; never any content</span
               ><em>Capsl · Capsule</em>
             </li>
           </ul>
         </header>
         <div class="gallery" id="gallery"></div>
         <section class="review" aria-labelledby="review-title">
-          <h2 id="review-title">评审对照表</h2>
-          <p class="hint">
-            “核心隐喻 / 实现成本 / 主要风险”为作者草拟（AI 辅助），不是评审意见；评审以 Issue
-            里每个人自己的投票和评论为准。
+          <h2 id="review-title" data-i18n="review.title">Review table</h2>
+          <p class="hint" data-i18n="review.hint">
+            Metaphor, cost and risk are the author’s draft (AI-assisted), not review feedback. The
+            review is everyone’s own votes and comments in the issue.
           </p>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th scope="col">方案</th>
-                  <th scope="col">核心隐喻</th>
-                  <th scope="col">Expo 实现成本（估计）</th>
-                  <th scope="col">主要风险</th>
-                  <th scope="col">Issue 投票</th>
+                  <th scope="col" data-i18n="th.dir">Direction</th>
+                  <th scope="col" data-i18n="th.meta">Metaphor</th>
+                  <th scope="col" data-i18n="th.cost">Expo build cost (estimate)</th>
+                  <th scope="col" data-i18n="th.risk">Main risk</th>
+                  <th scope="col" data-i18n="th.vote">Issue votes</th>
                 </tr>
               </thead>
               <tbody id="review-body"></tbody>
             </table>
           </div>
           <div class="asks">
-            <h3>建议评审时回答</h3>
+            <h3 data-i18n="asks.h">Questions for the review</h3>
             <ol>
-              <li>哪 2–3 个方向最像“和亲密朋友的私密时间胶囊”？</li>
-              <li>还没贡献的人：不点名还是显示名字？</li>
-              <li>
-                只显示“谁参与了”、不显示别人各贡献了几条，这个程度合适吗？（需要新增一个小接口）
+              <li data-i18n="asks.1">
+                Which two or three directions feel most like a private time capsule with close
+                friends?
               </li>
-              <li>揭晓要不要做成“同一时刻一起看”的首映？（影响 04、07、10）</li>
+              <li data-i18n="asks.2">Members not in yet: not named, or named?</li>
+              <li data-i18n="asks.3">
+                Showing who is in, but never how many moments each person added: is that the right
+                amount? (It needs a small new API.)
+              </li>
+              <li data-i18n="asks.4">
+                Should the reveal be a shared “watch at the same time” premiere? (Affects 04, 07 and
+                10.)
+              </li>
+              <li data-i18n="asks.5">
+                Which dock: three tabs and a shutter (A–C), or one of the other structures (D–G)?
+              </li>
             </ol>
           </div>
         </section>

@@ -26,7 +26,8 @@ The page reads the review issue through the public GitHub API when it loads (60 
 - Drag **group size** (2–10) and use **shuffle contributions**. No direction assumes a fixed number of moments.
 - Switch **waiting members** between _not named_ (default) and _named_.
 - Tap the avatar for the merged profile and settings sheet, tap the dock tabs, and press the shutter.
-- Compare the **dock variants**: A icons with the active label, B labels always, C shrinks while scrolling (tap the small pill to expand).
+- Compare the **dock variants**. A–C keep three tabs and a separate shutter: A icons with the active label, B labels always, C shrinks while scrolling. D–G change the structure: D centre shutter (Home · shutter · Archive, Chat at the top right), E shutter only (Archive and Chat at the top right, like Locket or BeReal), F timeline (past films W33–W35 on the left, this cycle on the right), G live pill (shows “2d 14h · 3 left”; tap it for the tabs).
+- Switch the page between **EN** (default) and **中文** at the top of the sidebar; open it with `?lang=zh` for Chinese. The phones stay in English.
 - Switch the **shutter state**: collecting, allowance used up, sealing, just sealed, and premiere (the shutter becomes _watch together_, with the time left on its ring).
 - Toggle **chat unread** to see the badges; the Archive tab shows a dot during the premiere.
 - **Play** (next to each phone) resets that phone and plays the whole cycle: ① a friend joins, and a light in their colour drifts into the main visual; ② you press the shutter, and a photo flies in and flips to its sealed back; ③ at 8 PM everyone opens it at once. Each direction has its own reveal: the film develops, the ticket stub tears off, the wax seal cracks, the jar lid comes off, a 3-2-1 leader counts down, a playhead sweeps the reel.
@@ -45,6 +46,8 @@ The page reads the review issue through the public GitHub API when it loads (60 
 | ---------------------------------------------- | --------------------------------------------------- |
 | `index.html`                                   | Review page shell and review table                  |
 | `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                   |
+| `i18n.js`                                      | English and Chinese text for the review page        |
+| `styles-nav2.css`                              | Language switch and dock variants D–G               |
 | `styles-nav.css`                               | Shared dock, variants, shutter states, badges       |
 | `styles-story.css`                             | Play sequence, reveal motion, who-is-in visuals     |
 | `styles-motion.css`                            | Realistic film and ticket, entrance and seal motion |
