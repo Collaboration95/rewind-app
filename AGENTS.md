@@ -44,7 +44,7 @@ task, thread, or chat.
   A merge to `main` is not proof of deployment or user acceptance.
 - Reference issues in `dev` PRs without closing them. Move an issue to Done only
   when its acceptance criteria are verified, relevant checks pass, the change
-  has been reviewed, and the accepted change is on `main`. Otherwise keep its
+  has been reviewed, and the accepted change is on `dev`. Otherwise keep its
   actual state visible in the Project board.
 - For an urgent fix, target `main` with its normal review and checks, then
   bring the accepted fix back to `dev` through a PR. Do not force-push either
