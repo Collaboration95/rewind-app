@@ -264,7 +264,7 @@ Object.assign(I18N, {
     '评审 Issue 还没开。现在就可以写，Issue 开了之后就能发送。',
   ],
   'rv.is.loading': ['Reading issue {n}…', '正在读取 Issue {n}…'],
-  'rv.is.live': ['Issue {n} · {p} people have sent a review.', 'Issue {n} · 已有 {p} 人发送评审。'],
+  'rv.is.live': ['Issue {n} · reviews sent: {p}.', 'Issue {n} · 已有 {p} 人发送评审。'],
   'rv.is.fail': [
     'Couldn’t read issue {n} (GitHub allows 60 reads an hour). Your draft is safe.',
     '暂时读不到 Issue {n}（GitHub 每小时限 60 次），你的草稿不受影响。',
