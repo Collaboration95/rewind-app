@@ -11,11 +11,18 @@ import { apiTarget, createProductionWebServer } from '../scripts/production-web-
 const nginx = await readFile(new URL('../deploy/nginx.conf', import.meta.url), 'utf8');
 const compose = await readFile(new URL('../deploy/compose.yaml', import.meta.url), 'utf8');
 const dockerfile = await readFile(new URL('../deploy/web.Dockerfile', import.meta.url), 'utf8');
+const envExample = await readFile(new URL('../deploy/rewind.env.example', import.meta.url), 'utf8');
 
 test('production web proxy keeps API and SPA routing boundaries explicit', () => {
   assert.match(nginx, /location \^~ \/api\//);
   assert.match(nginx, /location = \/api/);
   assert.match(nginx, /proxy_pass http:\/\/rewind_runtime\//);
+  assert.equal(
+    (nginx.match(/proxy_set_header X-Rewind-Origin-Auth \$http_x_rewind_origin_auth;/g) ?? [])
+      .length,
+    2,
+  );
+  assert.doesNotMatch(nginx, /return 308 https:/);
   assert.match(nginx, /proxy_intercept_errors on/);
   assert.match(nginx, /proxy_hide_header Cache-Control/);
   assert.match(nginx, /add_header Cache-Control "no-store" always/);
@@ -33,6 +40,10 @@ test('Compose starts the web proxy only after the healthy runtime', () => {
     /\$\{REWIND_WEB_BIND_ADDRESS:-127\.0\.0\.1\}:\$\{REWIND_WEB_PORT:-8080\}:8080/,
   );
   assert.match(compose, /127\.0\.0\.1:\$\{REWIND_RUNTIME_PORT:-8787\}:8787/);
+  assert.match(compose, /REWIND_ALLOW_ORIGIN:/);
+  assert.match(compose, /REWIND_ORIGIN_AUTH_SECRET: '\$\{REWIND_ORIGIN_AUTH_SECRET:-\}'/);
+  assert.doesNotMatch(compose, /web:[\s\S]*?REWIND_ORIGIN_AUTH_SECRET/);
+  assert.doesNotMatch(compose, /REWIND_ALLOW_INSECURE_LOCAL_AUTH/);
   assert.match(compose, /rewind-demo-web/);
   assert.match(compose, /http:\/\/127\.0\.0\.1:8080\//);
   assert.doesNotMatch(compose, /cap_add:/);
@@ -46,6 +57,9 @@ test('the web image bakes the same-origin API prefix into the Expo artifact', ()
   assert.match(dockerfile, /EXPOSE 8080/);
   assert.match(dockerfile, /pid \/tmp\/nginx\.pid/);
   assert.match(nginx, /listen 8080;/);
+  assert.match(envExample, /Configure this secret only on the runtime host and CloudFront/);
+  assert.doesNotMatch(envExample, /^REWIND_ORIGIN_AUTH_SECRET=/m);
+  assert.doesNotMatch(envExample, /^REWIND_ALLOW_INSECURE_LOCAL_AUTH=/m);
 });
 
 test('runtime-unavailable API responses stay JSON and never fall back to the shell', async () => {
