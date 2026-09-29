@@ -268,7 +268,21 @@ function tally(id) {
     .forEach((f) => s.other.push({ who: f.who, url: f.url, t: f.t }));
   return s;
 }
+// 输入框里写了、还没按回车的文字
+const typed = () => Object.entries(typing).filter(([, v]) => v && v.replace(/\s+/g, '').length);
+// 发送前把这些文字也加进去，免得漏掉
+function flushTyping() {
+  const list = typed();
+  for (const [key, v] of list) {
+    const id = key.slice(0, -1),
+      k = key.slice(-1);
+    (mine.notes[id] ||= []).push({ k, t: v.replace(/\s+/g, ' ').trim().slice(0, 500) });
+    typing[key] = '';
+  }
+  if (list.length) changed();
+}
 function status() {
+  if (typed().length) return 'unsent';
   if (!filled(mine)) return 'empty';
   const h = hashOf(mine);
   if (meta.me && pub.by[meta.me]?.h === h) return 'sent';
@@ -345,6 +359,7 @@ function askDock() {
 }
 
 async function send(skipDock) {
+  flushTyping();
   if (!filled(mine)) return;
   if (!mine.docks.length && !skipDock) return askDock();
   lastMd = toMarkdown();
@@ -431,8 +446,9 @@ function blockHTML(id) {
   const col = (k, cls, key, items) =>
     `<div class="rv-col ${cls}"><p class="rv-h">${t(key)} <b>${items.length}</b></p>` +
     (items.length ? `<ul>${items.map(item).join('')}</ul>` : '') +
-    `<input type="text" class="rv-in" data-rv-add="${id}" data-k="${k}" maxlength="500" enterkeyhint="done"` +
-    ` placeholder="${t(k === '+' ? 'rv.ph.pro' : 'rv.ph.con')}" aria-label="${t(k === '+' ? 'rv.ph.pro' : 'rv.ph.con')}" value="${esc(typing[id + k] || '')}"></div>`;
+    `<div class="rv-add-row"><input type="text" class="rv-in" data-rv-add="${id}" data-k="${k}" maxlength="500" enterkeyhint="done"` +
+    ` placeholder="${t(k === '+' ? 'rv.ph.pro' : 'rv.ph.con')}" aria-label="${t(k === '+' ? 'rv.ph.pro' : 'rv.ph.con')}" value="${esc(typing[id + k] || '')}">` +
+    `<button type="button" class="rv-addbtn" data-rv-addbtn="${id}|${k}">${t('rv.add')}</button></div></div>`;
   return (
     `<div class="rv-row"><button type="button" class="rv-b" data-rv-like="${id}" aria-pressed="${likeOn}" title="${t(dock ? 'rv.likeDockT' : 'rv.likeT')}">👍 <span>${t(dock ? 'rv.v.dock' : 'rv.v.like')}</span><b>${s.like}</b></button>` +
     (dock
@@ -504,6 +520,18 @@ function paintReview() {
   const dk = $('rv-docks');
   if (dk)
     dk.innerHTML = DOCKS.map((v) => chipHTML('nav-' + v, `<b>${v.toUpperCase()}</b>`)).join('');
+  paintBar();
+  paintStatus();
+  if (keep) {
+    const el = document.querySelector(`[data-rv-add="${keep.id}"][data-k="${keep.k}"]`);
+    if (el) {
+      el.focus({ preventScroll: true });
+      el.setSelectionRange(keep.pos, keep.pos);
+    }
+  }
+}
+// 发送栏和侧栏：打字时也要更新（没按回车的文字也算“未发送”）
+function paintBar() {
   const p = progress();
   $('rv-bar').innerHTML =
     `<i class="rv-prog" style="width:${Math.round((p.done / p.total) * 100)}%"></i>` +
@@ -515,14 +543,6 @@ function paintReview() {
       (filled(mine)
         ? `<button type="button" class="rv-link" data-rv-clear>${t('rv.clear')}</button>`
         : '');
-  paintStatus();
-  if (keep) {
-    const el = document.querySelector(`[data-rv-add="${keep.id}"][data-k="${keep.k}"]`);
-    if (el) {
-      el.focus({ preventScroll: true });
-      el.setSelectionRange(keep.pos, keep.pos);
-    }
-  }
 }
 
 // 发送栏、发送说明和提示条：页面加载时建一次；底栏评价区的文字随语言重建
@@ -582,7 +602,7 @@ function addNote(input) {
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
-    '[data-rv-like],[data-rv-fav],[data-rv-go],[data-rv-try],[data-rv-del],[data-rv-edit],[data-rv-send],[data-rv-copy],[data-rv-go-issue],[data-rv-skip-dock],[data-rv-pick-dock],[data-rv-posted],[data-rv-dlg-close],[data-rv-clear],[data-rv-refresh]',
+    '[data-rv-like],[data-rv-fav],[data-rv-go],[data-rv-try],[data-rv-del],[data-rv-edit],[data-rv-send],[data-rv-copy],[data-rv-go-issue],[data-rv-addbtn],[data-rv-skip-dock],[data-rv-pick-dock],[data-rv-posted],[data-rv-dlg-close],[data-rv-clear],[data-rv-refresh]',
   );
   if (!b) return;
   const d = b.dataset;
@@ -592,6 +612,12 @@ document.addEventListener('click', (e) => {
     return changed();
   }
   if (d.rvGo) return goTo(d.rvGo);
+  if (d.rvAddbtn) {
+    const [id, k] = d.rvAddbtn.split('|');
+    const input = document.querySelector(`[data-rv-add="${id}"][data-k="${k}"]`);
+    if (input) addNote(input);
+    return document.querySelector(`[data-rv-add="${id}"][data-k="${k}"]`)?.focus();
+  }
   if (d.rvTry) {
     // 用侧栏的底栏切换，所有手机一起换上这个底栏
     document.querySelector(`.navpick [data-nav="${d.rvTry}"]`)?.click();
@@ -632,7 +658,9 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('input', (e) => {
   const d = e.target.dataset;
-  if (d?.rvAdd) typing[d.rvAdd + d.k] = e.target.value;
+  if (!d?.rvAdd) return;
+  typing[d.rvAdd + d.k] = e.target.value;
+  paintBar();
 });
 document.addEventListener('keydown', (e) => {
   // 回车添加；输入法选字时的回车不算

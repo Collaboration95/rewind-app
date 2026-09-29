@@ -313,6 +313,7 @@ Object.assign(I18N, {
   'rv.other': ['Other comments', '其他评论'],
   'rv.none': ['None yet', '还没有'],
   'rv.you': ['You', '你'],
+  'rv.add': ['Add', '添加'],
   'rv.edit': ['Edit', '改'],
   'rv.del': ['Delete', '删'],
   'rv.ph.pro': ['+ Add a pro, press Enter', '+ 写一条优点，回车添加'],
