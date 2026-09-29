@@ -35,7 +35,8 @@
         }
       ],
       "expo-video",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-secure-store"
     ],
     "ios": {
       "bundleIdentifier": "com.anonymous.rewind-app"

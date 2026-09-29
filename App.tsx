@@ -71,6 +71,7 @@ import { ChatScreen } from './src/chat/ChatScreen';
 import { ChatUnreadProvider, useChatUnread } from './src/chat/unread';
 import { ArchiveScreen } from './src/archive/ArchiveScreen';
 import { ReminderSettings } from './src/reminders/ReminderSettings';
+import { RealAccountProvider, useRealAccount } from './src/auth/RealAccountProvider';
 
 const lockedMoments = [1, 2, 3];
 
@@ -124,21 +125,23 @@ export default function App({
   );
   return (
     <SafeAreaProvider>
-      <DemoSessionProvider
-        runtimeClient={configuredRuntime?.client ?? null}
-        {...(sessionStore ? { store: sessionStore } : {})}
-      >
-        <DemoProfileProvider>
-          <SessionGate
-            clock={clock}
-            cycleRepository={cycleRepository}
-            groupRepository={groupRepository}
-            inviteLink={inviteLink}
-            runtimeClient={configuredRuntime?.client ?? null}
-            cameraPlatform={cameraPlatform}
-          />
-        </DemoProfileProvider>
-      </DemoSessionProvider>
+      <RealAccountProvider baseUrl={configuredRuntime?.baseUrl ?? null}>
+        <DemoSessionProvider
+          runtimeClient={configuredRuntime?.client ?? null}
+          {...(sessionStore ? { store: sessionStore } : {})}
+        >
+          <DemoProfileProvider>
+            <SessionGate
+              clock={clock}
+              cycleRepository={cycleRepository}
+              groupRepository={groupRepository}
+              inviteLink={inviteLink}
+              runtimeClient={configuredRuntime?.client ?? null}
+              cameraPlatform={cameraPlatform}
+            />
+          </DemoProfileProvider>
+        </DemoSessionProvider>
+      </RealAccountProvider>
     </SafeAreaProvider>
   );
 }
@@ -193,11 +196,15 @@ function SessionGate({
   cameraPlatform?: CameraPlatform;
 }) {
   const { status, session } = useDemoSession();
+  const realAccount = useRealAccount();
   const sessionRepositories = useMemo(
     () => (runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null),
     [runtimeClient, session],
   );
-  if (status === 'loading') return <SessionLoadingScreen />;
+  if (realAccount.state === 'loading' || status === 'loading') return <SessionLoadingScreen />;
+  if (realAccount.state === 'active' && realAccount.session)
+    return <RealAccountHome displayName={realAccount.session.account.displayName} />;
+  if (realAccount.state === 'error') return <DemoAccessEntry />;
   if (status === 'entry' || status === 'error' || !session) return <DemoAccessEntry />;
   return (
     <ContributionStatusProvider
@@ -243,6 +250,7 @@ function SessionLoadingScreen() {
             style={styles.brandMark}
           />
           <Text style={styles.loadingWordmark}>REWIND</Text>
+          <Text style={styles.loadingTagline}>PRIVATE MOMENTS, SHARED TOGETHER</Text>
         </View>
       </View>
     </SafeAreaFrame>
@@ -477,18 +485,58 @@ function AppHeader() {
 
 function DemoAccessEntry() {
   const { profiles, chooseMember, error, entryReason, pending, retryRestore } = useDemoSession();
-  const [mode, setMode] = useState<'welcome' | 'demo' | 'sign-in'>('welcome');
+  const auth = useRealAccount();
+  const [mode, setMode] = useState<'welcome' | 'demo' | 'sign-in' | 'create-account'>('welcome');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [authPending, setAuthPending] = useState(false);
+  const authMessage =
+    auth.notice === 'expired'
+      ? 'Your session expired or an administrator reset your password. Sign in again to continue.'
+      : auth.notice === 'revoked'
+        ? 'Your account session was reset by an administrator. Sign in again to continue.'
+        : auth.notice === 'sign-in-failed'
+          ? 'Sign-in failed. Check your username and password, or try again later.'
+          : auth.notice === 'offline'
+            ? 'Sign-in needs a secure HTTPS connection. Check your connection and try again.'
+            : auth.notice === 'revocation-unconfirmed'
+              ? Platform.OS === 'web'
+                ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
+                : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'
+              : auth.notice === 'local-credential-removal-failed'
+                ? 'The server says this session has ended, but this device could not confirm deletion of its saved sign-in. The credential may remain in SecureStore; retry local cleanup before treating this device as signed out.'
+                : auth.notice === 'sign-out-incomplete'
+                  ? 'Sign-out is incomplete: this device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in. Retry sign out.'
+                  : auth.notice === 'sign-out-recovery-pending'
+                    ? 'Sign-out recovery is pending. This device will not restore a saved sign-in automatically until recovery finishes. Server revocation may still be unconfirmed.'
+                    : auth.notice === 'sign-out-marker-unavailable'
+                      ? auth.state === 'active'
+                        ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                        : 'This device could not verify sign-out recovery state, so the saved sign-in was not restored. Retry sign out to recover safely.'
+                      : auth.notice === 'sign-out-marker-cleanup-failed'
+                        ? 'The server confirmed sign-out and this device deleted its saved sign-in, but it could not clear the recovery marker. Account restore stays blocked on this device until cleanup is retried.'
+                        : null;
+
+  const submitSignIn = async () => {
+    setAuthPending(true);
+    await auth.signIn(username.trim(), password);
+    setAuthPending(false);
+    setPassword('');
+  };
 
   return (
     <SafeAreaFrame>
       <ScrollView contentContainerStyle={styles.entryContent}>
-        <View style={styles.brandLockup}>
-          <Image
-            accessibilityLabel="Rewind mark"
-            source={require('./public/icons/rewind-icon-192.png')}
-            style={styles.headerMark}
-          />
-          <Text style={styles.wordmark}>REWIND</Text>
+        <View style={styles.entryBrand}>
+          <View style={styles.brandLockup}>
+            <Image
+              accessibilityLabel="Rewind mark"
+              source={require('./public/icons/rewind-icon-192.png')}
+              style={styles.headerMark}
+            />
+            <Text style={styles.wordmark}>REWIND</Text>
+          </View>
+          <Text style={styles.entryTagline}>PRIVATE MOMENTS, SHARED TOGETHER</Text>
         </View>
         {mode === 'welcome' ? (
           <View style={styles.entryIntro}>
@@ -500,6 +548,13 @@ function DemoAccessEntry() {
               Make a private time capsule with your group. Sign in with a Rewind account, or explore
               with sample Demo data.
             </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('create-account')}
+              style={styles.entryActionButton}
+            >
+              <Text style={styles.entryActionButtonText}>Create account</Text>
+            </Pressable>
             <Pressable
               accessibilityRole="button"
               onPress={() => setMode('sign-in')}
@@ -518,16 +573,99 @@ function DemoAccessEntry() {
               Demo uses synthetic sample members and never signs you in to a real account.
             </Text>
           </View>
+        ) : mode === 'create-account' ? (
+          <View style={styles.entryIntro}>
+            <Text style={styles.label}>PILOT ACCOUNT</Text>
+            <Text accessibilityRole="header" style={styles.title}>
+              Create account
+            </Text>
+            <Text style={styles.bodyText}>
+              Rewind pilot accounts are created by an administrator. Contact your Rewind pilot
+              administrator to request an account or get your sign-in details. This screen does not
+              create an account.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('welcome')}
+              style={styles.entryActionButton}
+            >
+              <Text style={styles.entryActionButtonText}>Back</Text>
+            </Pressable>
+          </View>
         ) : mode === 'sign-in' ? (
           <View style={styles.entryIntro}>
             <Text style={styles.label}>REAL ACCOUNT</Text>
             <Text accessibilityRole="header" style={styles.title}>
               Sign in
             </Text>
-            <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
-              Real account sign-in is not available in this build yet. No account has been signed
-              in. You can return when sign-in is ready or explore the sample Demo.
+            <Text style={styles.bodyText}>
+              Use the username and password provided by your Rewind administrator.
             </Text>
+            <Text accessibilityRole="text" style={styles.authFieldLabel}>
+              Username
+            </Text>
+            <TextInput
+              accessibilityLabel="Username"
+              autoCapitalize="none"
+              autoComplete="username"
+              autoCorrect={false}
+              editable={!authPending}
+              onChangeText={setUsername}
+              returnKeyType="next"
+              style={styles.authInput}
+              testID="real-account-username"
+              textContentType="username"
+              value={username}
+            />
+            <Text accessibilityRole="text" style={styles.authFieldLabel}>
+              Password
+            </Text>
+            <TextInput
+              accessibilityLabel="Password"
+              autoCapitalize="none"
+              autoComplete="current-password"
+              editable={!authPending}
+              onChangeText={setPassword}
+              onSubmitEditing={() => void submitSignIn()}
+              returnKeyType="go"
+              secureTextEntry
+              style={styles.authInput}
+              testID="real-account-password"
+              textContentType="password"
+              value={password}
+            />
+            {!auth.secureTransportAvailable ? (
+              <Text accessibilityRole="alert" style={styles.errorText}>
+                Sign-in is unavailable until this app is connected to its same-origin HTTPS service.
+                Your password will not be sent over an insecure connection.
+              </Text>
+            ) : null}
+            {authMessage &&
+            auth.notice !== 'sign-out-recovery-pending' &&
+            auth.notice !== 'sign-out-marker-unavailable' &&
+            auth.notice !== 'sign-out-marker-cleanup-failed' &&
+            auth.notice !== 'local-credential-removal-failed' ? (
+              <Text accessibilityRole="alert" style={styles.errorText}>
+                {authMessage}
+              </Text>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              disabled={
+                authPending || !username.trim() || !password || !auth.secureTransportAvailable
+              }
+              onPress={() => void submitSignIn()}
+              style={[
+                styles.primaryEntryButton,
+                (authPending || !username.trim() || !password || !auth.secureTransportAvailable) &&
+                  styles.disabledChoice,
+              ]}
+              testID="real-account-submit"
+            >
+              <Text style={styles.primaryEntryButtonText}>
+                {authPending ? 'Signing in…' : 'Sign in'}
+              </Text>
+            </Pressable>
             <Pressable
               accessibilityRole="button"
               onPress={() => setMode('welcome')}
@@ -577,6 +715,92 @@ function DemoAccessEntry() {
             </Pressable>
           </View>
         ) : null}
+        {(auth.notice === 'offline' ||
+          auth.notice === 'expired' ||
+          auth.notice === 'revoked' ||
+          auth.notice === 'revocation-unconfirmed' ||
+          auth.notice === 'local-credential-removal-failed' ||
+          auth.notice === 'sign-out-incomplete' ||
+          auth.notice === 'sign-out-recovery-pending' ||
+          auth.notice === 'sign-out-marker-cleanup-failed' ||
+          auth.notice === 'sign-out-marker-unavailable') &&
+        (mode !== 'sign-in' ||
+          auth.notice === 'sign-out-recovery-pending' ||
+          auth.notice === 'sign-out-marker-cleanup-failed' ||
+          auth.notice === 'sign-out-marker-unavailable' ||
+          auth.notice === 'local-credential-removal-failed') &&
+        !(auth.notice === 'offline' && error) ? (
+          <View
+            style={styles.errorPanel}
+            testID={
+              auth.notice === 'offline'
+                ? 'real-account-offline-status'
+                : 'real-account-session-status'
+            }
+          >
+            <Text accessibilityRole="alert" style={styles.errorText}>
+              {authMessage}
+            </Text>
+            {auth.notice === 'offline' ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={auth.retryRestore}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>Retry session check</Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'local-credential-removal-failed' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.retryLocalCredentialRemoval}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Retrying…' : 'Retry local cleanup'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'sign-out-marker-cleanup-failed' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.retryLocalCredentialRemoval}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Retrying…' : 'Retry local cleanup'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'sign-out-incomplete' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.signOut}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Signing out…' : 'Retry sign out'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'sign-out-recovery-pending' ||
+            auth.notice === 'sign-out-marker-unavailable' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.signOut}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Signing out…' : 'Retry sign out'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         {mode === 'demo' ? (
           <View style={styles.entryChoices}>
             {profiles.map((profile) => (
@@ -596,12 +820,71 @@ function DemoAccessEntry() {
             ))}
           </View>
         ) : null}
-        {pending ? (
+        {pending || authPending ? (
           <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
-            Starting the sample Demo…
+            {authPending ? 'Signing in…' : 'Starting the sample Demo…'}
           </Text>
         ) : null}
       </ScrollView>
+    </SafeAreaFrame>
+  );
+}
+
+function RealAccountHome({ displayName }: { displayName: string }) {
+  const auth = useRealAccount();
+  return (
+    <SafeAreaFrame>
+      <View style={[styles.entryContent, styles.realAccountHome]}>
+        <View style={styles.brandLockup}>
+          <Image
+            accessibilityLabel="Rewind mark"
+            source={require('./public/icons/rewind-icon-192.png')}
+            style={styles.headerMark}
+          />
+          <Text style={styles.wordmark}>REWIND</Text>
+        </View>
+        <View style={styles.entryIntro}>
+          <Text style={styles.label}>REAL ACCOUNT</Text>
+          <Text accessibilityRole="header" style={styles.title}>
+            You’re signed in
+          </Text>
+          <Text style={styles.bodyText}>
+            Signed in as {displayName}. Your account is separate from the synthetic Demo.
+          </Text>
+          <Text style={styles.entryChoiceBody}>
+            Group and capsule access will appear here when your pilot group is ready.
+          </Text>
+          {auth.notice === 'revocation-unconfirmed' ||
+          auth.notice === 'sign-out-incomplete' ||
+          auth.notice === 'sign-out-marker-unavailable' ? (
+            <Text accessibilityRole="alert" style={styles.errorText} testID="logout-unconfirmed">
+              {auth.notice === 'sign-out-incomplete'
+                ? 'Sign-out is incomplete. This device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in; retry sign out.'
+                : auth.notice === 'sign-out-marker-unavailable'
+                  ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                  : Platform.OS === 'web'
+                    ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
+                    : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'}
+            </Text>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            disabled={auth.pending}
+            onPress={auth.signOut}
+            style={styles.primaryEntryButton}
+          >
+            <Text style={styles.primaryEntryButtonText}>
+              {auth.pending
+                ? 'Signing out…'
+                : auth.notice === 'revocation-unconfirmed' ||
+                    auth.notice === 'sign-out-incomplete' ||
+                    auth.notice === 'sign-out-marker-unavailable'
+                  ? 'Retry sign out'
+                  : 'Sign out'}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
     </SafeAreaFrame>
   );
 }
@@ -1544,6 +1827,7 @@ const styles = StyleSheet.create({
   brandMark: { height: 64, width: 64 },
   loadingBrand: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center' },
   loadingWordmark: { color: COLORS.ink, fontSize: 17, fontWeight: '800', letterSpacing: 3 },
+  loadingTagline: { color: COLORS.muted, fontSize: 12, letterSpacing: 1.2, textAlign: 'center' },
   wordmark: {
     color: COLORS.ink,
     fontSize: 14,
@@ -1707,8 +1991,28 @@ const styles = StyleSheet.create({
   activeShell: { flex: 1, minHeight: 0 },
   routeContent: { flex: 1, minHeight: 0 },
   settingsScreen: { flex: 1 },
-  entryContent: { flexGrow: 1, gap: 24, padding: 24, paddingBottom: 36 },
+  entryContent: {
+    flexGrow: 1,
+    gap: 24,
+    justifyContent: 'space-between',
+    padding: 24,
+    paddingBottom: 36,
+  },
+  entryBrand: { alignItems: 'center', alignSelf: 'flex-start', gap: 8 },
+  entryTagline: { color: COLORS.muted, fontSize: 12, letterSpacing: 1.2 },
   entryIntro: { gap: 12 },
+  authFieldLabel: { color: COLORS.ink, fontSize: 14, fontWeight: '700', marginTop: 4 },
+  authInput: {
+    backgroundColor: COLORS.paper,
+    borderColor: COLORS.edge,
+    borderRadius: 10,
+    borderWidth: 1,
+    color: COLORS.ink,
+    fontSize: 16,
+    minHeight: 50,
+    paddingHorizontal: 14,
+  },
+  realAccountHome: { justifyContent: 'flex-start' },
   entryChoices: { gap: 12 },
   primaryEntryButton: {
     alignItems: 'center',

@@ -14,6 +14,25 @@ test('fresh web install presents welcome before any Demo member is active', asyn
   await expect(page.getByRole('heading', { name: 'Weekend People' })).toBeVisible();
 });
 
+test('web entry explains administrator provisioning and blocks sign-in without HTTPS configuration', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Create account' }).click();
+  await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
+  await expect(page.getByText(/accounts are created by an administrator/i)).toBeVisible();
+  await expect(page.getByText(/does not create an account/i)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Back' }).click();
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByLabel('Username')).toBeVisible();
+  await expect(page.getByLabel('Password')).toBeVisible();
+  await expect(
+    page.getByText(/password will not be sent over an insecure connection/i),
+  ).toBeVisible();
+  await expect(page.getByTestId('real-account-submit')).toBeDisabled();
+});
+
 test('deep application routes return the exported web shell', async ({ page }) => {
   const response = await page.goto('/groups/demo-group/capsule');
 
