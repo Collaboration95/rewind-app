@@ -27,7 +27,8 @@ const validInput = {
 function registerMetadata(database, input = validInput) {
   recordClipMediaMetadata(database, {
     sourceUri: input.sourceUri,
-    mimeType: 'video/mp4',
+    mediaType: input.mediaType,
+    mimeType: input.mimeType ?? 'video/mp4',
     byteLength: input.byteLength,
     durationSeconds: input.durationSeconds,
     width: input.width,
@@ -72,6 +73,9 @@ test('clip upload validates media before creating a job and retries idempotently
     if (!created.ok) return;
     assert.equal(created.upload.existing, false);
     assert.equal(created.upload.job.status, 'pending');
+    database
+      .prepare("UPDATE media_jobs SET status = 'failed' WHERE id = ?")
+      .run(created.upload.job.id);
     const retried = createClipUpload(database, 'demo-group', 'demo-1', {
       ...validInput,
       durationSeconds: 10,
@@ -87,6 +91,106 @@ test('clip upload validates media before creating a job and retries idempotently
         )
         .get('demo-cycle').secondsUsed,
       8,
+    );
+  });
+});
+
+test('video and photo reservations share server quota and ignore forged photo duration', async () => {
+  await withDatabase(async ({ database }) => {
+    const now = new Date('2026-09-10T12:00:00.000Z');
+    const upload = (input) => {
+      registerMetadata(database, input);
+      return createClipUpload(database, 'demo-group', 'demo-1', input, now);
+    };
+    for (let index = 0; index < 4; index += 1) {
+      const result = upload({
+        ...validInput,
+        sourceUri: `file:///tmp/quota-video-${index}.mp4`,
+        idempotencyKey: `quota-video-${index}`,
+        durationSeconds: 6,
+      });
+      assert.equal(result.ok, true);
+    }
+    const photo = {
+      ...validInput,
+      mediaType: 'photo',
+      sourceUri: 'file:///tmp/quota-photo.jpg',
+      idempotencyKey: 'quota-photo-one',
+      mimeType: 'image/jpeg',
+      durationSeconds: 3,
+      width: 1200,
+      height: 1600,
+    };
+    const photoResult = upload(photo);
+    assert.equal(photoResult.ok, true);
+    assert.equal(photoResult.upload.contribution.durationSeconds, 3);
+    assert.deepEqual(
+      createClipUpload(
+        database,
+        'demo-group',
+        'demo-1',
+        {
+          ...validInput,
+          sourceUri: 'file:///tmp/quota-sixth.mp4',
+          idempotencyKey: 'quota-sixth-item',
+          durationSeconds: 1,
+        },
+        now,
+      ),
+      { ok: false, reason: 'quota_exceeded' },
+    );
+    const allowance = database
+      .prepare(
+        "SELECT count_used AS countUsed, seconds_used AS secondsUsed FROM contribution_quota_windows WHERE member_id = ? AND window_start_at = '2026-09-08T00:00:00.000Z'",
+      )
+      .get('demo-1');
+    assert.deepEqual({ ...allowance }, { countUsed: 5, secondsUsed: 27 });
+  });
+});
+
+test('photo duration claims cannot bypass the shared 30-second server limit', async () => {
+  await withDatabase(async ({ database }) => {
+    const now = new Date('2026-09-10T12:00:00.000Z');
+    for (let index = 0; index < 4; index += 1) {
+      const input = {
+        ...validInput,
+        sourceUri: `file:///tmp/quota-seconds-video-${index}.mp4`,
+        idempotencyKey: `quota-seconds-video-${index}`,
+        durationSeconds: 7,
+      };
+      registerMetadata(database, input);
+      assert.equal(createClipUpload(database, 'demo-group', 'demo-2', input, now).ok, true);
+    }
+    const photo = {
+      ...validInput,
+      mediaType: 'photo',
+      sourceUri: 'file:///tmp/quota-overflow-photo.jpg',
+      idempotencyKey: 'quota-overflow-photo',
+      mimeType: 'image/jpeg',
+      durationSeconds: 3,
+      width: 1200,
+      height: 1600,
+    };
+    registerMetadata(database, photo);
+    assert.deepEqual(
+      createClipUpload(
+        database,
+        'demo-group',
+        'demo-2',
+        { ...photo, mediaType: 'video', mimeType: 'video/mp4', durationSeconds: 1 },
+        now,
+      ),
+      { ok: false, reason: 'quota_exceeded' },
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT count_used AS countUsed, seconds_used AS secondsUsed FROM contribution_quota_windows WHERE member_id = ? AND window_start_at = '2026-09-08T00:00:00.000Z'",
+          )
+          .get('demo-2'),
+      },
+      { countUsed: 4, secondsUsed: 28 },
     );
   });
 });

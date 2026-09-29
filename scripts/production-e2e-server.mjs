@@ -123,9 +123,11 @@ process.once('SIGTERM', () => void shutdown(0));
 try {
   const env = localOnlyEnv({
     EXPO_PUBLIC_CAMERA_MODE: 'demo',
-    EXPO_PUBLIC_DEMO_ACCESS: 'entry',
     EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
   });
+  // Exercise the public welcome-to-Demo route without a special production
+  // entry mode enabled at build time.
+  delete env.EXPO_PUBLIC_DEMO_ACCESS;
   await run(process.env.npm_execpath || 'npm', ['run', 'server:build'], env);
   await run(
     process.execPath,

@@ -40,9 +40,10 @@ and likely implementation boundary. Do not change files.
 5. Add or update focused tests and run the relevant documented checks. For UI
    changes, verify accessibility behaviour that the issue or platform supports.
    Report only commands that actually ran.
-6. Open a focused PR against `dev` linked with `Refs #123`. The `dev` merge is
-   integration, not issue completion. Use `Resolves #123` in a later `main`
-   promotion PR only when the issue's acceptance criteria have been verified.
+6. Open a focused PR against `dev` linked with `Refs #123`. After its acceptance
+   criteria are verified, relevant checks pass, the change is reviewed, and the
+   accepted change is on `dev`, close the Issue explicitly and move it to Done.
+   Do not use a closing keyword in the integration PR.
 
 If the issue reference is ambiguous, the working tree overlaps unsafely, or the
 scope cannot be resolved from the issue and user decisions, stop and explain

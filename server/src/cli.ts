@@ -22,6 +22,9 @@ import {
 } from './jobs/queue';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createInterface } from 'node:readline/promises';
+import { stdin, stdout } from 'node:process';
+import { createRealAccount, resetRealAccountPassword } from './auth';
 import {
   applyConsistencyRepair,
   CONSISTENCY_DEFAULT_LIMIT,
@@ -55,6 +58,95 @@ export interface PreflightReport {
   sqlite: { ok: boolean; message: string; rows?: Record<string, number> };
   lan: { ok: boolean; message: string; address: string | null };
   ffmpeg: Awaited<ReturnType<typeof runFfmpegProbe>>;
+}
+
+async function promptSecret(label: string): Promise<string> {
+  if (!stdin.isTTY || typeof stdin.setRawMode !== 'function') {
+    throw new ConfigError(
+      'Account password entry requires an interactive terminal.',
+      'Run `npm run server:accounts -- create` or `npm run server:accounts -- reset` from a terminal.',
+    );
+  }
+  stdout.write(`${label}: `);
+  stdin.setRawMode(true);
+  stdin.resume();
+  return new Promise((resolvePromise, reject) => {
+    let value = '';
+    const finish = (error?: Error) => {
+      stdin.off('data', onData);
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdout.write('\n');
+      if (error) reject(error);
+      else resolvePromise(value);
+    };
+    const onData = (chunk: Buffer) => {
+      for (const character of chunk.toString('utf8')) {
+        if (character === '\u0003') return finish(new Error('Account operation cancelled.'));
+        if (character === '\r' || character === '\n') return finish();
+        if (character === '\u0008' || character === '\u007f') {
+          if (value.length) {
+            value = value.slice(0, -1);
+            stdout.write('\b \b');
+          }
+          continue;
+        }
+        if (character >= ' ' && character !== '\u007f') {
+          value += character;
+          stdout.write('*');
+        }
+      }
+    };
+    stdin.on('data', onData);
+  });
+}
+
+async function runAccountCommand(config: RuntimeConfig, argv: string[]): Promise<void> {
+  const action = argv[1];
+  if (action !== 'create' && action !== 'reset') {
+    throw new ConfigError(
+      'Use the accounts create or accounts reset operation.',
+      'Passwords and usernames are entered interactively and must not be passed as command arguments.',
+    );
+  }
+  const prompts = createInterface({ input: stdin, output: stdout });
+  let database: ReturnType<typeof openDatabase> | null = null;
+  try {
+    const username = await prompts.question('Username: ');
+    const displayName = action === 'create' ? await prompts.question('Display name: ') : undefined;
+    prompts.close();
+    const password = await promptSecret('Password (minimum 12 characters)');
+    const confirmation = await promptSecret('Confirm password');
+    if (password !== confirmation)
+      throw new ConfigError(
+        'The passwords did not match.',
+        'Repeat the operation and enter the same password twice.',
+      );
+    database = openDatabase(config);
+    const result =
+      action === 'create'
+        ? await createRealAccount(database, username, displayName ?? '', password)
+        : await resetRealAccountPassword(database, username, password);
+    if (!result.ok) {
+      if (result.reason === 'duplicate')
+        throw new ConfigError(
+          'That username is already provisioned.',
+          'Choose a different username or use accounts reset.',
+        );
+      if (result.reason === 'missing')
+        throw new ConfigError('That account does not exist.', 'Check the username and retry.');
+      throw new ConfigError(
+        'The account input is invalid.',
+        'Use a 3–32 character username, a display name up to 80 characters, and a password of 12–1024 characters.',
+      );
+    }
+    console.log(
+      `Account ${result.account.username} ${action === 'create' ? 'created' : 'reset'}; password hash uses scrypt N=32768, r=8, p=1.`,
+    );
+  } finally {
+    prompts.close();
+    database?.close();
+  }
 }
 
 async function serviceProbe(config: RuntimeConfig): Promise<PreflightReport['service']> {
@@ -539,6 +631,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       database.close();
       return;
     }
+    if (command === 'accounts') {
+      await runAccountCommand(config, argv);
+      return;
+    }
     if (command === 'diagnostics') {
       const database = await openRuntimeDatabase(config);
       try {
@@ -626,7 +722,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (command !== 'start') {
       throw new ConfigError(
         `Unknown local runtime command ${JSON.stringify(command)}.`,
-        'Use start, worker, preflight, migrate, reset, diagnostics, jobs, retention, or consistency.',
+        'Use start, worker, preflight, migrate, reset, accounts, diagnostics, jobs, retention, or consistency.',
       );
     }
     await start(config);

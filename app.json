@@ -6,6 +6,11 @@
     "scheme": "rewind",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./public/icons/rewind-icon-512.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#252326"
+    },
     "web": {
       "output": "single",
       "favicon": "./public/icons/rewind-icon-512.png",
@@ -30,7 +35,8 @@
         }
       ],
       "expo-video",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-secure-store"
     ],
     "ios": {
       "bundleIdentifier": "com.anonymous.rewind-app"

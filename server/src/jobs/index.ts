@@ -22,6 +22,7 @@ import {
 import {
   compileFilmWithFfmpeg,
   processClipWithFfmpeg,
+  processPhotoWithFfmpeg,
   probeClipWithFfmpeg,
   resolveStagedMediaPath,
   type CaptureMode,
@@ -1030,6 +1031,7 @@ interface ClipJobRow {
   mode: string | null;
   processingStartedAt: string | null;
   attemptCount: number;
+  mediaType: 'video' | 'photo';
 }
 
 type ClipJobClaimResult =
@@ -1048,7 +1050,7 @@ function readClipJob(database: RewindDatabase, jobId: string, groupId?: string):
               trim_start_seconds AS trimStartSeconds,
               trim_end_seconds AS trimEndSeconds, mode,
               processing_started_at AS processingStartedAt,
-              attempt_count AS attemptCount
+              attempt_count AS attemptCount, media_type AS mediaType
        FROM media_jobs
        WHERE id = ? AND kind = 'clip' ${groupId ? 'AND group_id = ?' : ''}`,
     )
@@ -1509,13 +1511,21 @@ async function processClipJobInternal(
       jobId: row.id,
       actorMemberId: options.actorMemberId,
       run: async () => {
-        await processClipWithFfmpeg(options.ffmpegBin, {
-          inputPath: sourcePath,
-          outputPath,
-          trimStartSeconds: Number(row.trimStartSeconds),
-          trimEndSeconds: Number(row.trimEndSeconds),
-          mode: row.mode as CaptureMode,
-        });
+        if (row.mediaType === 'photo') {
+          await processPhotoWithFfmpeg(options.ffmpegBin, {
+            inputPath: sourcePath,
+            outputPath,
+            mode: row.mode as CaptureMode,
+          });
+        } else {
+          await processClipWithFfmpeg(options.ffmpegBin, {
+            inputPath: sourcePath,
+            outputPath,
+            trimStartSeconds: Number(row.trimStartSeconds),
+            trimEndSeconds: Number(row.trimEndSeconds),
+            mode: row.mode as CaptureMode,
+          });
+        }
         if (!markOutputPrepared(database, row, outputPath)) {
           throw new FfmpegProcessingError(
             'source_unavailable',
