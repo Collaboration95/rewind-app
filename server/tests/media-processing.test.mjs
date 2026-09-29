@@ -1348,10 +1348,7 @@ test('session-authorized HTTP processing completes a staged capture workflow', a
       assert.equal(clipResponse.status, 200);
       assert.deepEqual((await clipResponse.json()).clip, {
         id: replacementUpload.job.id,
-        groupId: 'demo-group',
-        kind: 'clip',
         status: 'ready',
-        createdAt: replacementUpload.job.createdAt,
       });
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -1365,7 +1362,10 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
       .prepare('SELECT version FROM schema_migrations ORDER BY version')
       .all()
       .map((row) => Number(row.version));
-    assert.deepEqual(versions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]);
+    assert.deepEqual(
+      versions,
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
+    );
 
     // Databases created by the first #45 implementation recorded media as
     // version 6. Existing columns are enough to promote that record safely.
@@ -1412,7 +1412,7 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
         .prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all()
         .map((row) => Number(row.version)),
-      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23],
     );
     assert.equal(
       database

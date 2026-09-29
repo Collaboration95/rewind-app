@@ -1,5 +1,11 @@
 # AWS, IaC, and SCP execution plan
 
+> **Historical sprint labels (27 September 2026):** The hosted Demo period below
+> is now Sprint 2 (27 September–10 October), and the following production
+> transition is Sprint 3 (11–24 October). Earlier Sprint 1/Sprint 2 labels are
+> preserved as historical wording; current commitments come from Sprint Planning
+> and the GitHub milestones.
+
 **Status:** Proposed for Sprint Planning
 **Prepared:** 17 September 2026 (Asia/Singapore)
 **Scope:** Sprint 1 hosted Demo and the following production-transition sprint

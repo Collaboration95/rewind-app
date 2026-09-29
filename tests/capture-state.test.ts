@@ -9,13 +9,7 @@ describe('camera capability and permission matrix', () => {
       { ...supported, camera: 'undecided' as const },
       'temporarily-unavailable',
     ],
-    [
-      'microphone capability undecided',
-      { ...supported, microphone: 'undecided' as const },
-      'temporarily-unavailable',
-    ],
     ['camera unsupported', { ...supported, camera: 'unsupported' as const }, 'unsupported'],
-    ['microphone unsupported', { ...supported, microphone: 'unsupported' as const }, 'unsupported'],
   ])('%s is distinct', (_label, capabilities, expected) => {
     expect(cameraAccessStatus(capabilities, { camera: 'granted', microphone: 'granted' })).toBe(
       expected,
@@ -38,18 +32,16 @@ describe('camera capability and permission matrix', () => {
       { camera: 'blocked' as const, microphone: 'granted' as const },
       'permission-blocked',
     ],
-    [
-      'microphone denied',
-      { camera: 'granted' as const, microphone: 'denied' as const },
-      'permission-denied',
-    ],
   ])('%s is distinct', (_label, permissions, expected) => {
     expect(cameraAccessStatus(supported, permissions)).toBe(expected);
   });
 
-  it('enables capture only when both capabilities and permissions are granted', () => {
+  it('enables still capture with camera permission without requiring microphone access', () => {
     const state = {
-      ...accessState(supported, { camera: 'granted', microphone: 'granted' }),
+      ...accessState(
+        { camera: 'supported', microphone: 'unsupported' },
+        { camera: 'granted', microphone: 'denied' },
+      ),
       activePreview: null,
     };
     expect(state.status).toBe('ready');

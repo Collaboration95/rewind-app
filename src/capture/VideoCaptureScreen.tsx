@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
+import {
+  createRealAccountVideoRuntimeClient,
+  type AuthenticatedRequest,
+} from './real-account-video-runtime';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 import { COLORS } from '../theme';
 import type {
@@ -36,7 +40,7 @@ import {
   readManagedRecordedClipBase64,
   removeManagedRecordedClip,
 } from './platform';
-import type { CameraPlatform } from './contracts';
+import type { CameraPlatform, PermissionSnapshot } from './contracts';
 
 type AccessStatus =
   | 'checking'
@@ -51,6 +55,7 @@ type AccessStatus =
 export interface VideoCaptureScreenProps {
   platform?: CameraPlatform;
   runtimeClient?: RuntimeClient | null;
+  realAccount?: { groupId: string; authenticatedRequest: AuthenticatedRequest };
   onBack?: () => void;
   onContributionDeleted?: () => void;
 }
@@ -68,6 +73,15 @@ function isVideoPlatform(
 interface ContributionFailure {
   message: string;
   retryable: boolean;
+  reason?: 'quota_exceeded';
+}
+
+function quotaFailure(code: string | undefined): boolean {
+  return (
+    code === 'quota_exceeded' ||
+    code === 'upload_quota_exceeded' ||
+    code === 'contribution_quota_exceeded'
+  );
 }
 
 /**
@@ -78,9 +92,14 @@ interface ContributionFailure {
 function classifyContributionFailure(error: unknown): ContributionFailure {
   const message = error instanceof Error ? error.message : 'The clip could not be uploaded.';
   if (error instanceof ClipUploadError) {
-    return { message, retryable: error.retryable };
+    return {
+      message,
+      retryable: error.retryable && !quotaFailure(error.code),
+      ...(quotaFailure(error.code) ? { reason: 'quota_exceeded' as const } : {}),
+    };
   }
   if (error instanceof LocalRuntimeError) {
+    if (quotaFailure(error.code)) return { message, retryable: false, reason: 'quota_exceeded' };
     if (error.status !== undefined && error.status >= 400 && error.status < 500) {
       return { message, retryable: false };
     }
@@ -116,6 +135,7 @@ export function VideoCaptureScreen({
   onContributionDeleted,
   platform: platformProp,
   runtimeClient = null,
+  realAccount,
 }: VideoCaptureScreenProps = {}) {
   const cameraRef = useRef<CameraView>(null);
   const getCameraRef = useCallback(() => cameraRef.current, []);
@@ -133,10 +153,21 @@ export function VideoCaptureScreen({
     [platform],
   );
   const demoSession = useOptionalDemoSession();
+  const realGroupId = realAccount?.groupId;
+  const authenticatedRequest = realAccount?.authenticatedRequest;
+  const activeRuntimeClient = useMemo(
+    () =>
+      runtimeClient ??
+      (authenticatedRequest ? createRealAccountVideoRuntimeClient(authenticatedRequest) : null),
+    [authenticatedRequest, runtimeClient],
+  );
+  const uploadSessionId = demoSession?.session?.id ?? (realGroupId ? 'real-account-session' : null);
+  const uploadGroupId = demoSession?.session?.groupId ?? realGroupId ?? null;
   const reviewStore = useMemo(() => new InMemoryPendingClipMetadataStore(), []);
   const [access, setAccess] = useState<AccessStatus>('checking');
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
+  const [browserPreviewStream, setBrowserPreviewStream] = useState<MediaStream | null>(null);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [clip, setClip] = useState<RecordedClip | null>(null);
@@ -168,15 +199,20 @@ export function VideoCaptureScreen({
     statusContext?.clearStatus();
   }, [statusContext]);
   const uploadSession = useMemo(() => {
-    if (!runtimeClient?.uploadClip || !runtimeClient.cancelClipUpload || !demoSession?.session) {
+    if (
+      !activeRuntimeClient?.uploadClip ||
+      !activeRuntimeClient.cancelClipUpload ||
+      !uploadSessionId ||
+      !uploadGroupId
+    ) {
       return null;
     }
-    const { groupId, id: sessionId } = demoSession.session;
     return new ClipUploadSession({
-      cancelClipUpload: (jobId) => runtimeClient.cancelClipUpload!(sessionId, groupId, jobId),
-      uploadClip: (input) => runtimeClient.uploadClip!(sessionId, groupId, input),
+      cancelClipUpload: (jobId) =>
+        activeRuntimeClient.cancelClipUpload!(uploadSessionId, uploadGroupId, jobId),
+      uploadClip: (input) => activeRuntimeClient.uploadClip!(uploadSessionId, uploadGroupId, input),
     });
-  }, [demoSession, runtimeClient]);
+  }, [activeRuntimeClient, uploadGroupId, uploadSessionId]);
 
   // Keep the latest sessions available to the one lifecycle cleanup effect
   // below. The upload session can be created after the first render while the
@@ -355,46 +391,64 @@ export function VideoCaptureScreen({
     };
   }, [cancelActiveWork]);
 
-  const refresh = useCallback(async () => {
-    if (!isCaptureActive()) return;
-    setAccess('checking');
-    setError(null);
-    if (platform.kind === 'demo' || platform.supportsVideoRecording === false || !recorder) {
-      setAccess('unsupported');
-      return;
-    }
-    try {
-      const [capabilities, permissions] = await Promise.all([
-        platform.getCapabilities(),
-        platform.getPermissions(),
-      ]);
+  const refresh = useCallback(
+    async (videoPermissionSnapshot?: PermissionSnapshot) => {
       if (!isCaptureActive()) return;
-      if (capabilities.camera === 'undecided' || capabilities.microphone === 'undecided') {
-        setAccess('temporarily-unavailable');
-      } else if (capabilities.camera !== 'supported' || capabilities.microphone !== 'supported') {
+      setAccess('checking');
+      setError(null);
+      if (platform.kind === 'demo' || platform.supportsVideoRecording === false || !recorder) {
         setAccess('unsupported');
-      } else if (permissions.camera === 'blocked' || permissions.microphone === 'blocked') {
-        setAccess('permission-blocked');
-      } else if (
-        permissions.camera === 'undetermined' ||
-        permissions.microphone === 'undetermined'
-      ) {
-        setAccess('permission-undecided');
-      } else if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
-        setAccess('permission-denied');
-      } else {
-        setAccess('ready');
+        return;
       }
-    } catch {
-      if (!isCaptureActive()) return;
-      setAccess('temporarily-unavailable');
-      setError('We could not check recording access yet. Try again.');
-    }
-  }, [isCaptureActive, platform, recorder]);
+      try {
+        const permissionCheck =
+          videoPermissionSnapshot ??
+          (Platform.OS === 'web'
+            ? platform.getVideoPermissions?.()
+            : (platform.getVideoPermissions?.() ?? platform.getPermissions()));
+        if (!permissionCheck) {
+          throw new Error('The video permission status is unavailable on this platform.');
+        }
+        const [capabilities, permissions] = await Promise.all([
+          platform.getCapabilities(),
+          permissionCheck,
+        ]);
+        if (!isCaptureActive()) return;
+        if (capabilities.camera === 'undecided' || capabilities.microphone === 'undecided') {
+          setAccess('temporarily-unavailable');
+        } else if (capabilities.camera !== 'supported' || capabilities.microphone !== 'supported') {
+          setAccess('unsupported');
+        } else if (permissions.camera === 'blocked' || permissions.microphone === 'blocked') {
+          setAccess('permission-blocked');
+        } else if (
+          permissions.camera === 'undetermined' ||
+          permissions.microphone === 'undetermined'
+        ) {
+          setAccess('permission-undecided');
+        } else if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
+          setAccess('permission-denied');
+        } else {
+          setAccess('ready');
+        }
+      } catch {
+        if (!isCaptureActive()) return;
+        setAccess('temporarily-unavailable');
+        setError('We could not check recording access yet. Try again.');
+      }
+    },
+    [isCaptureActive, platform, recorder],
+  );
 
   useEffect(() => {
-    void Promise.resolve().then(refresh);
+    void Promise.resolve().then(() => refresh());
   }, [refresh]);
+
+  useEffect(
+    () => () => {
+      platform.releaseVideoCapture?.();
+    },
+    [platform],
+  );
 
   // Native Settings does not tell the route when the user changes a
   // permission, so re-check on foreground. Backgrounding is an interruption:
@@ -409,6 +463,8 @@ export function VideoCaptureScreen({
         return;
       }
       if (nextState === 'background' || nextState === 'inactive') {
+        platform.releaseVideoCapture?.();
+        setBrowserPreviewStream(null);
         const decision = decideInterruption('background');
         if (decision.cancelRecording && recorderRef.current?.getState().status === 'recording') {
           recorderRef.current.cancel();
@@ -435,16 +491,51 @@ export function VideoCaptureScreen({
       }
     });
     return () => subscription.remove();
-  }, [invalidateContributionWork, reconcileInterruptedUpload, refresh, setContributionStatus]);
+  }, [
+    invalidateContributionWork,
+    platform,
+    reconcileInterruptedUpload,
+    refresh,
+    setContributionStatus,
+  ]);
 
   const requestAccess = useCallback(async () => {
     if (!isCaptureActive()) return;
     setError(null);
     try {
-      await platform.requestPermissions();
-      if (isCaptureActive()) await refresh();
-    } catch {
+      const permissionRequest =
+        Platform.OS === 'web'
+          ? platform.requestVideoPermissions?.()
+          : (platform.requestVideoPermissions?.() ?? platform.requestPermissions());
+      if (!permissionRequest) {
+        throw new Error('Video permission requests are unavailable on this platform.');
+      }
+      const permissions = await permissionRequest;
+      setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
+      if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
+        setAccess('permission-denied');
+        return;
+      }
+      if (isCaptureActive() && Platform.OS === 'web') {
+        if (!platform.getVideoPermissions) {
+          throw new Error('Browser video permissions could not be refreshed. Try again.');
+        }
+        const refreshedPermissions = await platform.getVideoPermissions();
+        if (isCaptureActive()) await refresh(refreshedPermissions);
+      } else if (isCaptureActive()) {
+        await refresh();
+      }
+    } catch (permissionError) {
       if (!isCaptureActive()) return;
+      setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
+      if (
+        permissionError instanceof Error &&
+        ['NotFoundError', 'OverconstrainedError'].includes(permissionError.name)
+      ) {
+        setAccess('unsupported');
+        setError('This device does not have an available camera and microphone for recording.');
+        return;
+      }
       setAccess('temporarily-unavailable');
       setError('Camera access could not be checked right now. Try again or open Settings.');
     }
@@ -484,10 +575,12 @@ export function VideoCaptureScreen({
     setElapsedSeconds(0);
     try {
       const recorded = await recorder.start();
+      setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
       if (!(await replaceClip(recorded))) return;
       setRecording(false);
       setRecordingStartedAt(null);
     } catch (recordingError) {
+      setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
       if (!isCaptureActive() || recorder.getState().status === 'cancelled') return;
       setRecording(false);
       setRecordingStartedAt(null);
@@ -515,6 +608,7 @@ export function VideoCaptureScreen({
 
   const cancelRecording = () => {
     recorder?.cancel();
+    setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
     setRecording(false);
     setRecordingStartedAt(null);
     setElapsedSeconds(0);
@@ -578,7 +672,7 @@ export function VideoCaptureScreen({
     (
       uploaded: PendingClipUpload,
       state: ContributionStatus['state'],
-      options: Pick<ContributionStatus, 'message' | 'retryable'> = {
+      options: Pick<ContributionStatus, 'message' | 'retryable' | 'reason'> = {
         retryable: state === 'failed',
       },
     ): ContributionStatus => ({
@@ -601,13 +695,13 @@ export function VideoCaptureScreen({
       if (!isContributionWorkActive(operation)) return null;
       latestUploadRef.current = uploaded;
       setContributionStatus(describeUpload(uploaded, 'queued'));
-      if (!runtimeClient?.processClipJob || !demoSession?.session) return uploaded.job;
+      if (!activeRuntimeClient?.processClipJob || !uploadSessionId || !uploadGroupId)
+        return uploaded.job;
 
       setContributionStatus(describeUpload(uploaded, 'processing'));
-      const session = demoSession.session;
-      const processed = await runtimeClient.processClipJob(
-        session.id,
-        session.groupId,
+      const processed = await activeRuntimeClient.processClipJob(
+        uploadSessionId,
+        uploadGroupId,
         uploaded.job.id,
       );
       if (!isContributionWorkActive(operation)) return null;
@@ -632,9 +726,18 @@ export function VideoCaptureScreen({
       } else {
         setContributionStatus(describeUpload(uploaded, 'queued'));
       }
+      await statusContext?.refreshStatus();
       return processed;
     },
-    [demoSession, describeUpload, isContributionWorkActive, runtimeClient, setContributionStatus],
+    [
+      activeRuntimeClient,
+      describeUpload,
+      isContributionWorkActive,
+      setContributionStatus,
+      statusContext,
+      uploadGroupId,
+      uploadSessionId,
+    ],
   );
 
   const upload = async () => {
@@ -700,14 +803,14 @@ export function VideoCaptureScreen({
       if (!isContributionWorkActive(operation)) {
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
-      if (runtimeClient?.stageClipSource && demoSession?.session) {
+      if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
         const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
-        const staged = await runtimeClient.stageClipSource(
-          demoSession.session.id,
-          demoSession.session.groupId,
+        const staged = await activeRuntimeClient.stageClipSource(
+          uploadSessionId,
+          uploadGroupId,
           input.idempotencyKey,
           sourceData,
         );
@@ -751,7 +854,11 @@ export function VideoCaptureScreen({
       const retryable = uploadSession.canRetry() && (failure.retryable || cancelled);
       const reported = cancelled
         ? { message: INTERRUPTED_UPLOAD_MESSAGE, retryable }
-        : { message: failure.message, retryable };
+        : {
+            message: failure.message,
+            retryable,
+            ...(failure.reason ? { reason: failure.reason } : {}),
+          };
       if (cancelled) setUploadProgress({ status: 'cancelled', percent: 0 });
       const uploaded = latestUploadRef.current;
       setContributionStatus(
@@ -798,14 +905,14 @@ export function VideoCaptureScreen({
       if (!isContributionWorkActive(operation)) {
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
-      if (runtimeClient?.stageClipSource && demoSession?.session) {
+      if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
         const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
-        const staged = await runtimeClient.stageClipSource(
-          demoSession.session.id,
-          demoSession.session.groupId,
+        const staged = await activeRuntimeClient.stageClipSource(
+          uploadSessionId,
+          uploadGroupId,
           input.idempotencyKey,
           sourceData,
         );
@@ -854,7 +961,11 @@ export function VideoCaptureScreen({
         ? { message: EXHAUSTED_UPLOAD_MESSAGE, retryable: false }
         : cancelled
           ? { message: INTERRUPTED_UPLOAD_MESSAGE, retryable: true }
-          : { message: failure.message, retryable: failure.retryable };
+          : {
+              message: failure.message,
+              retryable: failure.retryable,
+              ...(failure.reason ? { reason: failure.reason } : {}),
+            };
       if (cancelled) setUploadProgress({ status: 'cancelled', percent: 0 });
       if (uploaded) setContributionStatus(describeUpload(uploaded, 'failed', reported));
       else
@@ -964,7 +1075,9 @@ export function VideoCaptureScreen({
 
   const canDeleteContribution = Boolean(
     contributionStatus?.contributionId &&
-    runtimeClient?.deleteContribution &&
+    activeRuntimeClient?.deleteContribution &&
+    uploadSessionId &&
+    uploadGroupId &&
     contributionStatus.state !== 'processing' &&
     contributionStatus.deletionAvailability !== 'used' &&
     contributionStatus.deletionAvailability !== 'unavailable',
@@ -975,14 +1088,15 @@ export function VideoCaptureScreen({
       !isCaptureActive() ||
       !canDeleteContribution ||
       !contributionStatus?.contributionId ||
-      !runtimeClient?.deleteContribution ||
-      !demoSession?.session
+      !activeRuntimeClient?.deleteContribution ||
+      !uploadSessionId ||
+      !uploadGroupId
     )
       return;
     try {
-      await runtimeClient.deleteContribution(
-        demoSession.session.id,
-        demoSession.session.groupId,
+      await activeRuntimeClient.deleteContribution(
+        uploadSessionId,
+        uploadGroupId,
         contributionStatus.contributionId,
       );
       replacementTargetRef.current = contributionStatus.contributionId;
@@ -994,6 +1108,7 @@ export function VideoCaptureScreen({
       setUploadProgress({ status: 'idle', percent: 0 });
       latestUploadRef.current = null;
       clearContributionStatus();
+      await statusContext?.refreshStatus();
       onContributionDeleted?.();
       setError('Contribution deleted. Your weekly allowance is restored for a replacement.');
     } catch (deleteError) {
@@ -1019,22 +1134,24 @@ export function VideoCaptureScreen({
     }
   }, [
     canDeleteContribution,
+    activeRuntimeClient,
     clearContributionStatus,
     contributionStatus,
-    demoSession,
     isCaptureActive,
     onContributionDeleted,
     recorder,
     releaseOwnedClip,
-    runtimeClient,
     setContributionStatus,
+    statusContext,
+    uploadGroupId,
+    uploadSessionId,
   ]);
   return (
     <View style={styles.screen} testID="video-capture-screen">
       <View style={styles.header}>
         {onBack ? (
           <Pressable accessibilityRole="button" onPress={leaveCapture} style={styles.backButton}>
-            <Text style={styles.backText}>Back to stills</Text>
+            <Text style={styles.backText}>Back</Text>
           </Pressable>
         ) : null}
         <Text style={styles.eyebrow}>CLIP CAPTURE</Text>
@@ -1073,15 +1190,18 @@ export function VideoCaptureScreen({
           }
           testID="video-unsupported"
           title="Recording is not supported here"
-          body={
+          body={[
+            platform.getVideoCaptureUnavailableReason?.(),
             platform.kind === 'demo' &&
             runtimeClient?.createSyntheticDemoClip &&
             demoSession?.session
               ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
               : platform.supportsFileFallback && platform.pickVideoFile
                 ? 'Live recording is not supported here. Choose a portrait MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
-                : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.'
-          }
+                : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.',
+          ]
+            .filter((message): message is string => Boolean(message))
+            .join(' ')}
         />
       ) : null}
       {access === 'temporarily-unavailable' ? (
@@ -1122,7 +1242,11 @@ export function VideoCaptureScreen({
           }
           testID="video-permission-denied"
           title="Camera or microphone access is denied"
-          body="Recording needs both permissions. Try again or choose a labelled video file fallback when it is available."
+          body={
+            Platform.OS === 'web'
+              ? 'Recording needs both permissions. Allow camera and microphone for this site in your browser permissions, then try again.'
+              : 'Recording needs both permissions. Try again or choose a labelled video file fallback when it is available.'
+          }
         />
       ) : null}
       {access === 'permission-blocked' ? (
@@ -1144,13 +1268,19 @@ export function VideoCaptureScreen({
       ) : null}
       {access === 'ready' && !clip && !recording ? (
         <View style={styles.captureArea}>
-          <CameraView
-            facing="back"
-            mode="video"
-            ref={cameraRef}
-            style={styles.preview}
-            testID="video-live-preview"
-          />
+          {Platform.OS === 'web' ? (
+            <View style={styles.preview}>
+              <BrowserVideoPreview stream={browserPreviewStream} />
+            </View>
+          ) : (
+            <CameraView
+              facing="back"
+              mode="video"
+              ref={cameraRef}
+              style={styles.preview}
+              testID="video-live-preview"
+            />
+          )}
           <Pressable
             accessibilityRole="button"
             onPress={() => void startRecording()}
@@ -1275,6 +1405,30 @@ export function VideoCaptureScreen({
       ) : null}
     </View>
   );
+}
+
+function BrowserVideoPreview({ stream }: { stream: MediaStream | null }) {
+  const setPreviewRef = useCallback(
+    (video: HTMLVideoElement | null) => {
+      if (video) video.srcObject = stream;
+    },
+    [stream],
+  );
+  return createElement('video', {
+    'aria-label': 'Live camera preview',
+    autoPlay: true,
+    'data-testid': 'video-live-preview',
+    muted: true,
+    playsInline: true,
+    ref: setPreviewRef,
+    style: {
+      backgroundColor: COLORS.deep,
+      borderRadius: 12,
+      height: '100%',
+      objectFit: 'cover',
+      width: '100%',
+    },
+  });
 }
 
 function Panel({

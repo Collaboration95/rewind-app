@@ -7,6 +7,7 @@ module.exports = {
     '^expo-video$': '<rootDir>/tests/mocks/expo-video.tsx',
   },
   preset: 'jest-expo',
+  setupFilesAfterEnv: ['<rootDir>/tests/jest-setup.ts'],
   testMatch: ['<rootDir>/tests/**/*.test.ts', '<rootDir>/tests/**/*.test.tsx'],
   collectCoverageFrom: ['App.tsx', 'src/**/*.{ts,tsx}', '!src/**/*.d.ts'],
   coverageReporters: ['text-summary', 'json-summary'],

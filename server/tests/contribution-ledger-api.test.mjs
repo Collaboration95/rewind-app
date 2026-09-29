@@ -124,7 +124,7 @@ function insertFixtures(database) {
 test('migration 016 records readiness and repairs a malformed index after receipt', async () => {
   await withRuntime(async ({ database }) => {
     assert.equal(schemaReadiness(database).ready, true);
-    assert.equal(schemaReadiness(database).expectedMigrationVersion, 17);
+    assert.equal(schemaReadiness(database).expectedMigrationVersion, 23);
     assert.equal(
       database.prepare('SELECT version FROM schema_migrations WHERE version = 17').get()?.version,
       17,
@@ -206,6 +206,8 @@ test('GET /contributions is self-only, current-cycle, paginated, filterable and 
       'unknown',
     );
     assert.equal(all.allowance.deletionAvailability, 'available');
+    assert.equal(all.latestContribution.contributionId, 'clip-failed');
+    assert.equal(all.latestContribution.state, 'failed');
     assert.doesNotMatch(
       JSON.stringify(all),
       /private|locked|file:\/\/|output_path|source_uri|source_path|error-with-secret|download|share|thumbnail/i,
@@ -246,6 +248,39 @@ test('GET /contributions is self-only, current-cycle, paginated, filterable and 
     );
     assert.equal(replay.status, 400);
     assert.equal((await replay.json()).error, 'invalid_ledger_request');
+  });
+});
+
+test('GET /contributions exposes the latest active entry beyond its default 50-entry page', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    for (let index = 0; index < 51; index += 1) {
+      insertContribution(
+        database,
+        `history-${index}`,
+        'demo-1',
+        'ready',
+        new Date(Date.UTC(2026, 9, 1, 0, 0, index)).toISOString(),
+        1,
+      );
+    }
+    const sessionId = await createSession(baseUrl);
+    const response = await fetch(
+      `${baseUrl}/contributions?groupId=demo-group&sessionId=${encodeURIComponent(sessionId)}`,
+    );
+    assert.equal(response.status, 200);
+    const ledger = await response.json();
+    assert.equal(ledger.entries.length, 50);
+    assert.equal(
+      ledger.entries.some((entry) => entry.contributionId === 'history-0'),
+      true,
+    );
+    assert.equal(
+      ledger.entries.some((entry) => entry.contributionId === 'history-50'),
+      false,
+    );
+    assert.equal(ledger.pagination.hasMore, true);
+    assert.equal(ledger.latestContribution.contributionId, 'history-50');
+    assert.equal(ledger.latestContribution.state, 'sealed');
   });
 });
 

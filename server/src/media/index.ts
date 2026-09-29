@@ -18,6 +18,7 @@ export const SUPPORTED_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
 export type CaptureMode = (typeof SUPPORTED_CAPTURE_MODES)[number];
 
 export interface ClipUploadInput {
+  mediaType?: 'video' | 'photo';
   idempotencyKey: string;
   sourceUri: string;
   mimeType: string;
@@ -93,6 +94,7 @@ interface UploadRow {
 }
 
 interface StoredClipMetadata {
+  mediaType: 'video' | 'photo';
   sourceUri: string;
   mimeType: string;
   byteLength: number;
@@ -136,7 +138,8 @@ export interface CancelClipUploadOptions {
 
 export interface ServerClipMetadata {
   sourceUri: string;
-  mimeType: 'video/mp4';
+  mediaType?: 'video' | 'photo';
+  mimeType: 'video/mp4' | 'image/jpeg' | 'image/png';
   byteLength: number;
   durationSeconds: number;
   width: number;
@@ -746,9 +749,11 @@ export function recordClipMediaMetadata(
   metadata: ServerClipMetadata,
   verifiedAt = new Date(),
 ): void {
+  const mediaType = metadata.mediaType ?? 'video';
   if (
     !metadata.sourceUri ||
-    metadata.mimeType !== 'video/mp4' ||
+    (mediaType === 'video' && metadata.mimeType !== 'video/mp4') ||
+    (mediaType === 'photo' && !['image/jpeg', 'image/png'].includes(metadata.mimeType)) ||
     !Number.isInteger(metadata.byteLength) ||
     metadata.byteLength <= 0 ||
     metadata.byteLength > MAX_CLIP_BYTES ||
@@ -759,7 +764,7 @@ export function recordClipMediaMetadata(
     metadata.width <= 0 ||
     !Number.isInteger(metadata.height) ||
     metadata.height <= 0 ||
-    metadata.width >= metadata.height ||
+    (mediaType === 'video' && metadata.width >= metadata.height) ||
     metadata.hasAudio !== true
   ) {
     throw new RangeError('Server media metadata does not describe an acceptable clip.');
@@ -767,8 +772,8 @@ export function recordClipMediaMetadata(
   database
     .prepare(
       `INSERT INTO media_metadata
-        (source_uri, mime_type, byte_length, duration_seconds, width, height, has_audio, verified_at)
-       VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+        (source_uri, mime_type, byte_length, duration_seconds, width, height, has_audio, verified_at, media_type)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
        ON CONFLICT(source_uri) DO UPDATE SET
          mime_type = excluded.mime_type,
          byte_length = excluded.byte_length,
@@ -776,7 +781,8 @@ export function recordClipMediaMetadata(
          width = excluded.width,
          height = excluded.height,
          has_audio = excluded.has_audio,
-         verified_at = excluded.verified_at`,
+         verified_at = excluded.verified_at,
+         media_type = excluded.media_type`,
     )
     .run(
       metadata.sourceUri,
@@ -786,6 +792,7 @@ export function recordClipMediaMetadata(
       metadata.width,
       metadata.height,
       metadata.verifiedAt ?? verifiedAt.toISOString(),
+      mediaType,
     );
 }
 
@@ -795,7 +802,8 @@ function storedClipMetadata(
 ): StoredClipMetadata | null {
   const row = database
     .prepare(
-      `SELECT source_uri AS sourceUri, mime_type AS mimeType, byte_length AS byteLength,
+      `SELECT source_uri AS sourceUri, mime_type AS mimeType, media_type AS mediaType,
+              byte_length AS byteLength,
               duration_seconds AS durationSeconds, width, height, has_audio AS hasAudio
        FROM media_metadata WHERE source_uri = ?`,
     )
@@ -854,6 +862,7 @@ export function validateClipUpload(
   input: ClipUploadInput,
   verifiedSourceDurationSeconds?: number,
 ): ClipUploadResult | null {
+  const isPhoto = input.mediaType === 'photo';
   if (!/^[A-Za-z0-9_-]{8,100}$/.test(input.idempotencyKey)) {
     return { ok: false, reason: 'invalid_key' };
   }
@@ -865,7 +874,9 @@ export function validateClipUpload(
   }
   if (
     !input.sourceUri ||
-    input.mimeType !== 'video/mp4' ||
+    (isPhoto
+      ? !['image/jpeg', 'image/png'].includes(input.mimeType)
+      : input.mimeType !== 'video/mp4') ||
     !Number.isInteger(input.byteLength) ||
     input.byteLength <= 0 ||
     input.byteLength > MAX_CLIP_BYTES ||
@@ -876,7 +887,8 @@ export function validateClipUpload(
     input.width <= 0 ||
     !Number.isInteger(input.height) ||
     input.height <= 0 ||
-    input.width >= input.height ||
+    (!isPhoto && input.width >= input.height) ||
+    (isPhoto && (input.durationSeconds !== 3 || input.width > 12000 || input.height > 12000)) ||
     input.hasAudio !== true
   ) {
     return { ok: false, reason: 'invalid_media' };
@@ -1000,6 +1012,7 @@ export function createClipUpload(
   let effectiveInput = verified
     ? {
         ...input,
+        mediaType: verified.mediaType,
         mimeType: verified.mimeType,
         byteLength: verified.byteLength,
         durationSeconds: verified.durationSeconds,
@@ -1072,6 +1085,7 @@ export function createClipUpload(
       stagedRecord = lockedStaged;
       effectiveInput = {
         ...input,
+        mediaType: lockedMetadata.mediaType,
         mimeType: lockedMetadata.mimeType,
         byteLength: lockedMetadata.byteLength,
         durationSeconds: lockedMetadata.durationSeconds,
@@ -1155,8 +1169,8 @@ export function createClipUpload(
         `INSERT INTO media_jobs
           (id, group_id, contribution_id, kind, status, output_path, created_at, idempotency_key,
            source_uri, source_generation, source_path, trim_start_seconds, trim_end_seconds,
-           mode, error_code, updated_at)
-         VALUES (?, ?, ?, 'clip', 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+           mode, error_code, updated_at, media_type)
+         VALUES (?, ?, ?, 'clip', 'pending', NULL, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
       )
       .run(
         jobId,
@@ -1171,6 +1185,7 @@ export function createClipUpload(
         processing.trimEndSeconds,
         processing.mode,
         createdAt,
+        effectiveInput.mediaType ?? 'video',
       );
     database
       .prepare('UPDATE contributions SET media_job_id = ? WHERE id = ?')

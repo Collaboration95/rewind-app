@@ -60,6 +60,8 @@ const terminalTransportCodes = new Set([
   'missing_source',
   'not_found',
   'quota_exceeded',
+  'upload_quota_exceeded',
+  'contribution_quota_exceeded',
   'source_unavailable',
   'validation',
 ]);
