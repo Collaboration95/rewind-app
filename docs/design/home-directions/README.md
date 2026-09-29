@@ -30,7 +30,7 @@ The page reads the review issue through the public GitHub API when it loads (60 
 - Switch the page between **EN** (default) and **中文** at the top of the sidebar; open it with `?lang=zh` for Chinese. The phones stay in English.
 - Switch the **shutter state**: collecting, allowance used up, sealing, just sealed, and premiere (the shutter becomes _watch together_, with the time left on its ring).
 - Toggle **chat unread** to see the badges; the Archive tab shows a dot during the premiere.
-- **Play** (next to each phone) resets that phone and plays the whole cycle: ① a friend joins, and a light in their colour drifts into the main visual; ② you press the shutter, and a photo flies in and flips to its sealed back; ③ at 8 PM everyone opens it at once. Each direction has its own reveal: the film develops, the ticket stub tears off, the wax seal cracks, the jar lid comes off, a 3-2-1 leader counts down, a playhead sweeps the reel.
+- **Play** (next to each phone) resets that phone and plays the whole cycle: ① a friend joins, ② you press the shutter, ③ at 8 PM everyone opens it at once. The first two are deliberately different. A friend joining comes from outside the screen and uses the direction's own metaphor, never a photo, because you cannot see what they captured: a safelight sweeps the film, an enlarger flashes, their seat is stamped, their stamp slaps down, a firefly in their colour circles into the jar and turns gold, their name types into the credits. Your own moment starts at the shutter and turns into that metaphor: the photo flips to its own negative, melts into light, becomes an ember added to the fire, slips into the envelope, shrinks into a firefly in your colour, or is loaded into the projector. Each direction also has its own reveal.
 - **Motion:** pressing the shutter on its own also seals a moment. Use _replay entrance_ to see the Darkroom film slide in and the Premiere ticket drift down. The photos are generated on the page (out-of-focus lights, grain, a light leak); they contain no people and no member media.
 - **Data scope (proposal A):** Home shows who is in (yes or no) but never how many moments each other person added. Your own count comes from your contribution ledger and the group total from the cycle summary, as on `dev` today; who is in needs a new, small API.
 
@@ -42,18 +42,19 @@ The page reads the review issue through the public GitHub API when it loads (60 
 
 ## Files
 
-| File                                           | Purpose                                             |
-| ---------------------------------------------- | --------------------------------------------------- |
-| `index.html`                                   | Review page shell and review table                  |
-| `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                   |
-| `i18n.js`                                      | English and Chinese text for the review page        |
-| `styles-nav2.css`                              | Language switch and dock variants D–G               |
-| `styles-nav.css`                               | Shared dock, variants, shutter states, badges       |
-| `styles-story.css`                             | Play sequence, reveal motion, who-is-in visuals     |
-| `styles-motion.css`                            | Realistic film and ticket, entrance and seal motion |
-| `app.js`                                       | Synthetic data, direction markup, vote reading      |
-| `review-config.js`                             | Review issue number                                 |
-| `shots/`                                       | Screenshots for the issue: phones, dock, shutter    |
+| File                                           | Purpose                                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------ |
+| `index.html`                                   | Review page shell and review table                                 |
+| `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                                  |
+| `i18n.js`                                      | English and Chinese text for the review page                       |
+| `styles-fx.css`                                | Themed motion for a friend joining and for sealing your own moment |
+| `styles-nav2.css`                              | Language switch and dock variants D–G                              |
+| `styles-nav.css`                               | Shared dock, variants, shutter states, badges                      |
+| `styles-story.css`                             | Play sequence, reveal motion, who-is-in visuals                    |
+| `styles-motion.css`                            | Realistic film and ticket, entrance and seal motion                |
+| `app.js`                                       | Synthetic data, direction markup, vote reading                     |
+| `review-config.js`                             | Review issue number                                                |
+| `shots/`                                       | Screenshots for the issue: phones, dock, shutter                   |
 
 ## References
 

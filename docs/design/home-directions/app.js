@@ -348,7 +348,7 @@ const crew = (d) =>
   d.shown
     .map(
       (x) =>
-        `<span class="av${x.c ? '' : ' wait'}" style="--mc:${x.col}" title="${hidden(x) ? 'Not yet' : x.name}">${init(x)}</span>`,
+        `<span class="av${x.c ? '' : ' wait'}" data-who="${x.name}" style="--mc:${x.col}" title="${hidden(x) ? 'Not yet' : x.name}">${init(x)}</span>`,
     )
     .join('');
 const bars = (cls, used, total = 5) =>
@@ -455,7 +455,7 @@ const bodies = {
         <div class="seats"><small>Seats · ${d.added} / ${d.n}</small><div>${d.shown
           .map(
             (x) =>
-              `<span class="seat${x.c ? '' : ' empty'}" style="--mc:${x.col}" title="${hidden(x) ? 'Saved seat' : x.name}">${init(x)}</span>`,
+              `<span class="seat${x.c ? '' : ' empty'}" data-who="${x.name}" style="--mc:${x.col}" title="${hidden(x) ? 'Saved seat' : x.name}">${init(x)}</span>`,
           )
           .join('')}</div></div>
       </div>
@@ -516,7 +516,7 @@ const bodies = {
           : x.me
             ? `You · ${x.c}/5`
             : `${x.name} · ${x.c ? 'in' : 'not yet'}`;
-        return `<div class="seat${x.c ? '' : ' cold'}${x.me ? ' me' : ''}" style="--mc:${x.col};--ring-on:${x.col};left:${(CX + R * Math.cos(a)).toFixed(1)}px;top:${(CY + R * Math.sin(a)).toFixed(1)}px" title="${tip}">${rg}<span class="avatar">${init(x)}</span><small>${label(x)}</small></div>`;
+        return `<div class="seat${x.c ? '' : ' cold'}${x.me ? ' me' : ''}" data-who="${x.name}" style="--mc:${x.col};--ring-on:${x.col};left:${(CX + R * Math.cos(a)).toFixed(1)}px;top:${(CY + R * Math.sin(a)).toFixed(1)}px" title="${tip}">${rg}<span class="avatar">${init(x)}</span><small>${label(x)}</small></div>`;
       })
       .join('');
     const embers = [-18, 10, -4, 22, -26, 4, 16]
@@ -557,7 +557,7 @@ const bodies = {
     <section class="signed"><small>Sealed by · not even you can peek</small><div class="stamps">${d.shown
       .map(
         (x) =>
-          `<span class="stamp${x.c ? '' : ' blank'}" style="--st:${x.col}" title="${hidden(x) ? 'Stamp still to come' : x.name}"><i>${init(x)}</i></span>`,
+          `<span class="stamp${x.c ? '' : ' blank'}" data-who="${x.name}" style="--st:${x.col}" title="${hidden(x) ? 'Stamp still to come' : x.name}"><i>${init(x)}</i></span>`,
       )
       .join('')}</div><p>${waitLine(d)}</p></section>`,
 
@@ -589,7 +589,9 @@ const bodies = {
   c10: (d) => {
     const stars = d.shown
       .filter((x) => x.c > 0)
-      .map((x) => `<span style="color:${x.col}">${x.me ? 'You' : x.name}</span>`)
+      .map(
+        (x) => `<span data-who="${x.name}" style="color:${x.col}">${x.me ? 'You' : x.name}</span>`,
+      )
       .join('<i>·</i>');
     const still = d.waiting.length
       ? anon
@@ -631,7 +633,7 @@ const bodies = {
       <div class="chips">${d.shown
         .map(
           (x) =>
-            `<span class="pchip${x.c ? ' in' : ''}${x.me ? ' me' : ''}" style="--mc:${x.col}" title="${hidden(x) ? 'Not yet' : x.name + (x.c ? ' · in' : ' · not yet')}">${x.c ? ic('check') : ''}${x.me ? 'You' : init(x)}</span>`,
+            `<span class="pchip${x.c ? ' in' : ''}${x.me ? ' me' : ''}" data-who="${x.name}" style="--mc:${x.col}" title="${hidden(x) ? 'Not yet' : x.name + (x.c ? ' · in' : ' · not yet')}">${x.c ? ic('check') : ''}${x.me ? 'You' : init(x)}</span>`,
         )
         .join('')}</div>
       <p class="legend"><i></i>yours<i class="o"></i>everyone else · who made which stays sealed</p>
@@ -1234,9 +1236,341 @@ function flashTip(btn, text) {
   setTimeout(() => tip.remove(), 1900);
 }
 
-// 一张照片从快门飞向主视觉，途中翻到“已封存”的背面，然后被吸收：放下它，等大家一起打开
-// 一张照片从快门飞向主视觉，途中翻到“已封存”的背面，然后被吸收：放下它，等大家一起打开
-function sealFlight(scr, btn, then) {
+/* ---------- 动效：朋友加入 与 你按快门 ----------
+   两者刻意区分：
+   · 朋友加入——你看不到他拍了什么，只知道他来了：从屏幕外进来，用这个方向自己的隐喻，不出现照片。
+   · 你按快门——你知道自己拍了什么：从快门出发，你的照片变成这个方向的隐喻物件。 */
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const play = (el, frames, opts) =>
+  new Promise((res) => {
+    const a = el.animate(frames, opts);
+    a.onfinish = () => res();
+    a.oncancel = () => res();
+  });
+// 元素中心在手机画面里的坐标（画面按缩放比例换算回 390 宽）
+function pt(scr, el) {
+  const sr = scr.getBoundingClientRect(),
+    k = sr.width / 390,
+    r = (el || scr).getBoundingClientRect();
+  return { x: (r.left + r.width / 2 - sr.left) / k, y: (r.top + r.height / 2 - sr.top) / k };
+}
+// 给元素挂一个一次性的效果类
+function fx(el, cls, ms = 1000) {
+  if (!el) return;
+  el.classList.remove(cls);
+  void el.getBoundingClientRect();
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), ms);
+}
+const sweep = (el, cls, ms) => (fx(el, cls, ms), wait(ms));
+const glow = (c) => `0 0 10px 4px ${c}, 0 0 26px 10px ${c}55`;
+
+// 你的照片（正面是照片，背面按方向不同：锁 / 负片）
+function card(scr, at, mine, back = 'lock') {
+  const photo = photoFor(mine.c * 5 + 3, mine.col);
+  const el = document.createElement('div');
+  el.className = 'flyer';
+  el.style.left = at.x + 'px';
+  el.style.top = at.y + 'px';
+  el.innerHTML =
+    `<i class="face front" style="background-image:url(${photo})"></i>` +
+    (back === 'negative'
+      ? `<i class="face back negative" style="background-image:url(${photo})"></i>`
+      : `<i class="face back">${ic('lock')}</i>`);
+  scr.appendChild(el);
+  return el;
+}
+// 照片沿弧线飞到目标：flip 翻面；dissolve 化成光；endScale 落点大小
+function cardFly(scr, from, to, mine, o = {}) {
+  const { flip = true, dissolve = false, endScale = 0.3, lift = 70, dur = 1300, back } = o;
+  const el = card(scr, from, mine, back);
+  const dx = to.x - from.x,
+    dy = to.y - from.y,
+    y = flip ? 180 : 0;
+  const at = (p, l, extra) =>
+    `perspective(600px) translate(calc(-50% + ${dx * p}px), calc(-50% + ${dy * p - l}px)) ${extra}`;
+  return play(
+    el,
+    [
+      { transform: at(0, 0, 'scale(.4) rotateY(0deg)'), opacity: 0, filter: 'none' },
+      {
+        transform: at(0.2, lift, 'scale(1.15) rotateY(0deg) rotate(-6deg)'),
+        opacity: 1,
+        filter: 'none',
+        offset: 0.3,
+      },
+      {
+        transform: at(0.6, lift * 0.55, `scale(1) rotateY(${y}deg) rotate(4deg)`),
+        opacity: 1,
+        filter: dissolve ? 'blur(2px) brightness(1.4)' : 'none',
+        offset: 0.68,
+      },
+      {
+        transform: at(1, 0, `scale(${endScale}) rotateY(${y}deg)`),
+        opacity: 0,
+        filter: dissolve ? 'blur(12px) brightness(2.4)' : 'none',
+      },
+    ],
+    { duration: dur, easing: 'cubic-bezier(.3,.7,.3,1)' },
+  ).then(() => el.remove());
+}
+// 一点光沿路径飞：wander 先绕一圈再进；toColor 进去之后变色
+function dotFly(scr, from, to, color, o = {}) {
+  const { size = 12, dur = 1500, wander = false, toColor } = o;
+  const d = document.createElement('i');
+  d.className = 'orb-dot';
+  d.style.cssText = `left:${from.x}px;top:${from.y}px;width:${size}px;height:${size}px;margin:${-size / 2}px 0 0 ${-size / 2}px;--mc:${color}`;
+  scr.appendChild(d);
+  const dx = to.x - from.x,
+    dy = to.y - from.y;
+  const c0 = { background: color, boxShadow: glow(color) };
+  const c1 = toColor ? { background: toColor, boxShadow: glow(toColor) } : c0;
+  const frames = wander
+    ? [
+        { transform: 'translate(0,0) scale(.4)', opacity: 0, ...c0, offset: 0 },
+        {
+          transform: `translate(${dx * 0.3}px, ${dy * 0.15 - 40}px) scale(1.2)`,
+          opacity: 1,
+          ...c0,
+          offset: 0.22,
+        },
+        {
+          transform: `translate(${dx * 0.55 + 46}px, ${dy * 0.4 + 16}px) scale(1)`,
+          opacity: 0.6,
+          ...c0,
+          offset: 0.42,
+        },
+        {
+          transform: `translate(${dx * 0.8 - 34}px, ${dy * 0.62 - 34}px) scale(1.15)`,
+          opacity: 1,
+          ...c0,
+          offset: 0.62,
+        },
+        { transform: `translate(${dx}px, ${dy - 26}px) scale(1)`, opacity: 1, ...c0, offset: 0.8 },
+        {
+          transform: `translate(${dx}px, ${dy + 18}px) scale(.8)`,
+          opacity: 1,
+          ...c1,
+          offset: 0.93,
+        },
+        { transform: `translate(${dx}px, ${dy + 26}px) scale(.6)`, opacity: 0, ...c1, offset: 1 },
+      ]
+    : [
+        { transform: 'translate(0,0) scale(.4)', opacity: 0, ...c0 },
+        {
+          transform: `translate(${dx * 0.25 - 30}px, ${dy * 0.15 - 30}px) scale(1.3)`,
+          opacity: 1,
+          ...c0,
+          offset: 0.25,
+        },
+        {
+          transform: `translate(${dx * 0.7}px, ${dy * 0.6 - 40}px) scale(1)`,
+          opacity: 1,
+          ...c0,
+          offset: 0.7,
+        },
+        { transform: `translate(${dx}px, ${dy}px) scale(.5)`, opacity: 0, ...c1 },
+      ];
+  return play(d, frames, { duration: dur, easing: 'cubic-bezier(.35,.6,.3,1)' }).then(() =>
+    d.remove(),
+  );
+}
+// 照片先在快门上方缩成一点光，再以光的样子飞向目标（萤火虫、木炭）
+async function cardToDot(scr, from, to, mine, color, o = {}) {
+  const el = card(scr, from, mine);
+  const mx = -40,
+    my = -120;
+  await play(
+    el,
+    [
+      { transform: 'translate(-50%,-50%) scale(.4)', opacity: 0, filter: 'none' },
+      {
+        transform: `translate(calc(-50% + ${mx}px), calc(-50% + ${my}px)) scale(1.1)`,
+        opacity: 1,
+        filter: 'none',
+        offset: 0.45,
+      },
+      {
+        transform: `translate(calc(-50% + ${mx}px), calc(-50% + ${my}px)) scale(.1)`,
+        opacity: 0.9,
+        filter: 'blur(3px) brightness(2.6)',
+      },
+    ],
+    { duration: 950, easing: 'cubic-bezier(.3,.7,.3,1)' },
+  );
+  el.remove();
+  await dotFly(scr, { x: from.x + mx, y: from.y + my }, to, color, { size: 10, dur: 1150, ...o });
+}
+// 火星向上飘
+function sparks(scr, at, n = 10) {
+  for (let i = 0; i < n; i++) {
+    const e = document.createElement('i');
+    e.className = 'spark';
+    e.style.cssText = `left:${at.x}px;top:${at.y}px`;
+    scr.appendChild(e);
+    const a = (i / n) * Math.PI * 2;
+    play(
+      e,
+      [
+        { transform: 'translate(0,0) scale(1)', opacity: 1 },
+        {
+          transform: `translate(${Math.cos(a) * 34}px, ${-70 - (i % 4) * 22}px) scale(.3)`,
+          opacity: 0,
+        },
+      ],
+      { duration: 900 + (i % 3) * 250, easing: 'cubic-bezier(.2,.7,.3,1)' },
+    ).then(() => e.remove());
+  }
+}
+const q = (root, sel) => root?.querySelector(sel);
+const lastOf = (root, sel) => {
+  const all = root?.querySelectorAll(sel);
+  return all?.length ? all[all.length - 1] : null;
+};
+const EDGE_R = { x: 384, y: 170 };
+const EDGE_L = { x: 6, y: 130 };
+
+// 每个方向的一对动画：join 发生在数据变化前；joined 在重绘后点亮新出现的元素。seal / sealed 同理。
+const FX = {
+  c1: {
+    // 暗房：安全灯的红光扫过胶片——有人曝了一格；你的照片翻过来变成它自己的负片
+    join: (scr) => sweep(q(scr, '.strip'), 'fx-safelight', 1200),
+    joined: (ns, f) => fx(q(ns, `.mini-crew [data-who="${f.name}"]`), 'fx-pop', 700),
+    seal: (scr, btn, me) =>
+      cardFly(scr, pt(scr, btn), pt(scr, q(scr, '.strip')), me, {
+        back: 'negative',
+        endScale: 0.5,
+      }),
+    sealed: (ns) => fx(q(ns, '.strip'), 'absorb', 900),
+  },
+  c2: {
+    // 相纸：放大机曝光一闪；你的那格被油性笔圈出来
+    join: (scr) => sweep(q(scr, '.neg'), 'fx-expose', 1100),
+    joined: (ns) => fx(q(ns, 'figcaption strong .is-pre'), 'fx-roll', 700),
+    seal: (scr, btn, me) => cardFly(scr, pt(scr, btn), pt(scr, q(scr, '.neg')), me),
+    sealed: (ns) => fx(lastOf(ns, '.grid5 .fr.mine'), 'fx-grease', 1400),
+  },
+  c3: {
+    // 玻璃胶囊：他颜色的一点光融进光球；你的照片化成光溶进去
+    join: (scr, f) => dotFly(scr, EDGE_R, pt(scr, q(scr, '.hero b')), f.col),
+    joined: (ns) => fx(q(ns, '.hero b .is-pre'), 'fx-roll', 700),
+    seal: (scr, btn, me) =>
+      cardFly(scr, pt(scr, btn), pt(scr, q(scr, '.hero b')), me, { flip: false, dissolve: true }),
+    sealed: (ns) => fx(q(ns, '.hero b .is-pre'), 'fx-roll', 700),
+  },
+  c4: {
+    // 首映票根：他的座位被“盖章”入座；你的照片飞进票面，Reels 数字翻动
+    join: () => wait(250),
+    joined: (ns, f) => fx(q(ns, `.seat[data-who="${f.name}"]`), 'fx-stamp', 900),
+    seal: (scr, btn, me) =>
+      cardFly(scr, pt(scr, btn), pt(scr, q(scr, '.t-main dl div:nth-child(3) dd')), me),
+    sealed: (ns) => {
+      fx(q(ns, '.t-main dl div:nth-child(3) dd'), 'fx-roll', 700);
+      fx(lastOf(ns, '.rf i.on'), 'fx-pop', 700);
+    },
+  },
+  c5: {
+    // 极简排版：不用图，只让对应的那一行横线伸长、数字翻动
+    join: () => wait(250),
+    joined: (ns) => fx(q(ns, '.table .tr:nth-of-type(1)'), 'fx-bar', 1000),
+    seal: () => wait(200),
+    sealed: (ns) => {
+      fx(q(ns, '.table .tr:nth-of-type(2)'), 'fx-bar', 1000);
+      fx(q(ns, '.table .tr:nth-of-type(3)'), 'fx-bar', 1000);
+    },
+  },
+  c6: {
+    // 暖光玻璃：一粒暖光飘进阳光里；你的照片化成阳光
+    join: (scr, f) =>
+      dotFly(scr, EDGE_R, pt(scr, q(scr, '.hero b')), f.col, { toColor: '#ffc98a' }),
+    joined: (ns) => fx(q(ns, '.hero b .is-pre'), 'fx-roll', 700),
+    seal: (scr, btn, me) =>
+      cardFly(scr, pt(scr, btn), pt(scr, q(scr, '.hero b')), me, { flip: false, dissolve: true }),
+    sealed: (ns) => fx(q(ns, '.hero b .is-pre'), 'fx-roll', 700),
+  },
+  c7: {
+    // 围炉：一点光落到他的空座，光环画一圈，再有火星飘进火里；
+    // 你的照片化成一块发光的木炭添进火里——添一份温度，而不是烧掉照片
+    join: (scr, f) =>
+      dotFly(scr, EDGE_R, pt(scr, q(scr, `.seat[data-who="${f.name}"]`)), f.col, { dur: 1300 }),
+    joined: async (ns, f) => {
+      const seat = q(ns, `.seat[data-who="${f.name}"]`);
+      fx(seat, 'fx-arrive', 1100);
+      await wait(500);
+      if (!ns.isConnected) return;
+      await dotFly(ns, pt(ns, seat), pt(ns, q(ns, '.mid')), f.col, { size: 7, dur: 800 });
+      fx(q(ns, '.fire'), 'fx-flare', 1000);
+    },
+    seal: async (scr, btn, me) => {
+      await cardToDot(scr, pt(scr, btn), pt(scr, q(scr, '.mid')), me, '#ffb060');
+      fx(q(scr, '.fire'), 'fx-flare', 1000);
+      sparks(scr, pt(scr, q(scr, '.mid')));
+      await wait(350);
+    },
+    sealed: (ns) => fx(q(ns, '.seat.me .ring'), 'fx-pop', 700),
+  },
+  c8: {
+    // 蜡封信：他的邮票“啪”地贴上；你的照片滑进信封，蜡封再压一下
+    join: () => wait(250),
+    joined: (ns, f) => fx(q(ns, `.stamp[data-who="${f.name}"]`), 'fx-slap', 900),
+    seal: (scr, btn, me) =>
+      cardFly(scr, pt(scr, btn), pt(scr, q(scr, '.seal')), me, {
+        flip: false,
+        endScale: 0.2,
+        dur: 1200,
+      }),
+    sealed: (ns) => fx(q(ns, '.seal'), 'fx-press', 900),
+  },
+  c9: {
+    // 萤火虫罐：一只他颜色的萤火虫从暮色里绕一圈，从瓶口飞进去，进罐后变成暖金色（谁的就不知道了）；
+    // 你的照片在快门上方缩成一只你颜色的萤火虫，再飞进罐里
+    join: (scr, f) =>
+      dotFly(scr, EDGE_L, pt(scr, q(scr, '.jar .neck')), f.col, {
+        size: 9,
+        dur: 2100,
+        wander: true,
+        toColor: '#F2C07A',
+      }),
+    joined: (ns) => fx(q(ns, '.caught b'), 'fx-roll', 700),
+    seal: (scr, btn, me) =>
+      cardToDot(scr, pt(scr, btn), pt(scr, q(scr, '.jar .neck')), me, me.col, {
+        wander: true,
+        size: 13,
+      }),
+    sealed: (ns) => fx(q(ns, '.jar .body'), 'absorb', 900),
+  },
+  c10: {
+    // 放映夜：放映机闪一下，他的名字像打字一样出现在 Starring 里；你的照片被装进放映机，光束一亮
+    join: (scr) => sweep(q(scr, '.beam'), 'fx-flicker', 900),
+    joined: (ns, f) => fx(q(ns, `.names [data-who="${f.name}"]`), 'fx-type', 1300),
+    seal: async (scr, btn, me) => {
+      await cardFly(scr, pt(scr, btn), pt(scr, q(scr, '.projector')), me, {
+        flip: false,
+        endScale: 0.08,
+        lift: 130,
+      });
+      await sweep(q(scr, '.beam'), 'fx-flicker', 700);
+    },
+    sealed: (ns) => fx(lastOf(ns, '.rf i.on'), 'fx-pop', 700),
+  },
+  c11: {
+    // 共同片轨：一格新片段从右边滑进来，他的标签打上 ✓；你的照片缩成你颜色的一格嵌进去
+    join: () => wait(250),
+    joined: (ns, f) => {
+      fx(lastOf(ns, '.reelbar i'), 'fx-slidein', 800);
+      fx(q(ns, `.pchip[data-who="${f.name}"]`), 'fx-pop', 700);
+    },
+    seal: (scr, btn, me) =>
+      cardFly(scr, pt(scr, btn), pt(scr, lastOf(scr, '.reelbar i') || q(scr, '.reelbar')), me, {
+        flip: false,
+        endScale: 0.45,
+      }),
+    sealed: (ns) => fx(lastOf(ns, '.reelbar i.mine'), 'fx-pop', 700),
+  },
+};
+
+// 你按快门：封存一个片段
+async function sealFlight(scr, btn, then) {
   if (NAV.shutter !== 'collect' || scr.classList.contains('revealed')) return then?.();
   const id = scr.classList[1];
   const mine = storyPool(id)[0];
@@ -1244,100 +1578,36 @@ function sealFlight(scr, btn, then) {
     flashTip(btn, 'All 5 used this week');
     return then?.();
   }
-  const done = () => {
-    if (!scr.isConnected) return;
-    mine.c += 1;
-    const ns = renderCard(id);
-    ns?.querySelector('[data-seal]')?.classList.add('absorb');
-    const nb = ns?.querySelector('.shutter');
+  const S = FX[id] || {};
+  if (!reduceMotion() && S.seal) await S.seal(scr, btn, mine);
+  if (!scr.isConnected) return;
+  mine.c += 1;
+  const ns = renderCard(id);
+  if (ns) {
+    S.sealed?.(ns);
+    const nb = ns.querySelector('.shutter');
     if (nb) flashTip(nb, 'Sealed · not even you can peek');
-    then?.();
-  };
-  const target = scr.querySelector('[data-seal]');
-  if (!target || reduceMotion()) return done();
-  const sr = scr.getBoundingClientRect(),
-    k = sr.width / 390,
-    br = btn.getBoundingClientRect(),
-    tr = target.getBoundingClientRect();
-  const fx = (br.left + br.width / 2 - sr.left) / k,
-    fy = (br.top + br.height / 2 - sr.top) / k,
-    dx = (tr.left + tr.width / 2 - sr.left) / k - fx,
-    dy = (tr.top + tr.height / 2 - sr.top) / k - fy;
-  const fl = document.createElement('div');
-  fl.className = 'flyer';
-  fl.style.left = fx + 'px';
-  fl.style.top = fy + 'px';
-  fl.innerHTML = `<i class="face front" style="background-image:url(${photoFor(mine.c * 5 + 3, mine.col)})"></i><i class="face back">${ic('lock')}</i>`;
-  scr.appendChild(fl);
-  const at = (p, lift, extra) =>
-    `perspective(600px) translate(calc(-50% + ${dx * p}px), calc(-50% + ${dy * p - lift}px)) ${extra}`;
-  const anim = fl.animate(
-    [
-      { transform: at(0, 0, 'scale(.4) rotateY(0deg)'), opacity: 0 },
-      {
-        transform: at(0.2, 70, 'scale(1.15) rotateY(0deg) rotate(-6deg)'),
-        opacity: 1,
-        offset: 0.3,
-      },
-      { transform: at(0.6, 40, 'scale(1) rotateY(180deg) rotate(4deg)'), opacity: 1, offset: 0.68 },
-      { transform: at(1, 0, 'scale(.3) rotateY(180deg)'), opacity: 0 },
-    ],
-    { duration: 1300, easing: 'cubic-bezier(.3,.7,.3,1)' },
-  );
-  anim.onfinish = () => {
-    fl.remove();
-    done();
-  };
+  }
+  then?.();
 }
 
-// 汇聚：一位朋友加入，他颜色的一点光从屏幕边缘飘进主视觉（不带任何内容）
-function gatherFlight(scr, then) {
+// 朋友加入：一位还没参与的朋友添了一个片段
+async function gatherFlight(scr, then) {
   const id = scr.classList[1];
-  const pool = storyPool(id);
-  const friend = pool.slice(0, size).find((x) => !x.me && x.c === 0);
+  const friend = storyPool(id)
+    .slice(0, size)
+    .find((x) => !x.me && x.c === 0);
   if (!friend) return then?.();
-  const done = () => {
-    if (!scr.isConnected) return;
-    friend.c = 1;
-    const ns = renderCard(id);
-    ns?.querySelector('[data-seal]')?.classList.add('absorb');
-    if (ns) toast(ns, friend, `${friend.name} added a moment`);
-    then?.();
-  };
-  const target = scr.querySelector('[data-seal]');
-  if (!target || reduceMotion()) return done();
-  const sr = scr.getBoundingClientRect(),
-    k = sr.width / 390,
-    tr = target.getBoundingClientRect();
-  const fx = 384,
-    fy = 170,
-    dx = (tr.left + tr.width / 2 - sr.left) / k - fx,
-    dy = (tr.top + tr.height / 2 - sr.top) / k - fy;
-  const dot = document.createElement('i');
-  dot.className = 'orb-dot';
-  dot.style.cssText = `left:${fx}px;top:${fy}px;--mc:${friend.col}`;
-  scr.appendChild(dot);
-  const anim = dot.animate(
-    [
-      { transform: 'translate(0,0) scale(.4)', opacity: 0 },
-      {
-        transform: `translate(${dx * 0.25 - 30}px, ${dy * 0.15 - 30}px) scale(1.3)`,
-        opacity: 1,
-        offset: 0.25,
-      },
-      {
-        transform: `translate(${dx * 0.7}px, ${dy * 0.6 - 40}px) scale(1)`,
-        opacity: 1,
-        offset: 0.7,
-      },
-      { transform: `translate(${dx}px, ${dy}px) scale(.5)`, opacity: 0 },
-    ],
-    { duration: 1500, easing: 'cubic-bezier(.35,.6,.3,1)' },
-  );
-  anim.onfinish = () => {
-    dot.remove();
-    done();
-  };
+  const S = FX[id] || {};
+  if (!reduceMotion() && S.join) await S.join(scr, friend);
+  if (!scr.isConnected) return;
+  friend.c = 1;
+  const ns = renderCard(id);
+  if (ns) {
+    toast(ns, friend, `${friend.name} added a moment`);
+    if (!reduceMotion()) await S.joined?.(ns, friend);
+  }
+  then?.();
 }
 
 function toast(scr, who, text) {
