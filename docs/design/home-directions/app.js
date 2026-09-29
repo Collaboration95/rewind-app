@@ -546,11 +546,12 @@ const bodies = {
     <header class="top">${me()}<span class="tag">W36</span></header>
     <p class="eyebrow">A letter to ourselves</p>
     <article class="env" data-seal aria-label="Sealed letter with ${plural(d.m, 'moment')} inside, opens Sunday 8 PM">
+      <div class="letter-paper" aria-hidden="true"><p class="hand">Dear us,</p><p class="lp-body">${plural(d.m, 'moment')}, all here.<br>Opened together, right now.</p><span class="lp-cta">${ic('play')} Watch together</span></div>
+      <div class="pocket" aria-hidden="true"></div>
       <div class="flap-shadow"></div><div class="flap"></div>
       <span class="seal">${ic('rewind')}</span>
       <div class="addr"><small>To</small><p class="hand">Weekend People</p><small>From</small><p class="hand sm">the ${word(d.n)} of us</p></div>
       <div class="post" aria-hidden="true"><span>Opens</span><b>SUN</b><span>8 PM</span></div>
-      <div class="inner-card is-now" aria-hidden="true"><em>${plural(d.m, 'moment')}</em><b>${ic('play')} Watch together</b></div>
     </article>
     <div class="opens"><div><small>${pp('Opens for everyone in', 'Opened for everyone')}</small><strong>${pp('2 days, 14 hours', 'Just now')}</strong></div><div class="r"><small>Inside</small><strong>${plural(d.m, 'moment')}</strong></div></div>
     <section class="letter"><p class="hand">Dear us,</p><h2>What made you pause and smile?</h2></section>
@@ -963,10 +964,35 @@ let current = 'all';
 const STORY = {};
 const storyPool = (id) => (STORY[id] ||= POOL.map((p) => ({ ...p })));
 const dataFor = (id) => data(STORY[id] || POOL);
+// 暗房的胶片一直在走：重绘前记下位置（px），重绘后让新胶片从同一位置接着走，不跳回起点
+function filmPos(root) {
+  const m = {};
+  root?.querySelectorAll('.card').forEach((card) => {
+    const tr = card.querySelector('.track');
+    if (tr) m[card.dataset.id] = new DOMMatrix(getComputedStyle(tr).transform).m41;
+  });
+  return m;
+}
+function keepFilm(root, pos) {
+  root?.querySelectorAll('.card').forEach((card) => {
+    const tr = card.querySelector('.track');
+    const x0 = pos[card.dataset.id];
+    if (!tr || x0 === undefined) return;
+    const half = tr.scrollWidth / 2,
+      dur = parseFloat(tr.style.getPropertyValue('--dur')) || 30;
+    const t = (((((x0 + half) / half) * dur) % dur) + dur) % dur;
+    tr.style.animationDelay = `-${t.toFixed(3)}s`;
+  });
+}
 function renderCard(id) {
   const c = concepts.find((x) => x.id === id);
-  const wrap = document.querySelector(`.card[data-id="${id}"] .phone-wrap`);
-  if (c && wrap) wrap.innerHTML = screen(c, dataFor(id));
+  const card = document.querySelector(`.card[data-id="${id}"]`);
+  const wrap = card?.querySelector('.phone-wrap');
+  if (c && wrap) {
+    const pos = filmPos(card.parentElement);
+    wrap.innerHTML = screen(c, dataFor(id));
+    keepFilm(card.parentElement, { [id]: pos[id] });
+  }
   return wrap?.querySelector('.screen');
 }
 const clearStories = () => Object.keys(STORY).forEach((k) => delete STORY[k]);
@@ -991,7 +1017,9 @@ function render() {
         .join('')}</ul><p class="fonts">${t('fonts')} · ${c.fonts}</p></div>` +
       `</article>`;
   }
+  const pos = filmPos($('gallery'));
   $('gallery').innerHTML = html;
+  keepFilm($('gallery'), pos);
   applyPick();
   paintVotes();
 }
@@ -1316,9 +1344,9 @@ function cardFly(scr, from, to, mine, o = {}) {
 }
 // 一点光沿路径飞：wander 先绕一圈再进；toColor 进去之后变色
 function dotFly(scr, from, to, color, o = {}) {
-  const { size = 12, dur = 1500, wander = false, toColor } = o;
+  const { size = 12, dur = 1500, wander = false, toColor, firefly = false } = o;
   const d = document.createElement('i');
-  d.className = 'orb-dot';
+  d.className = firefly ? 'orb-dot firefly' : 'orb-dot';
   d.style.cssText = `left:${from.x}px;top:${from.y}px;width:${size}px;height:${size}px;margin:${-size / 2}px 0 0 ${-size / 2}px;--mc:${color}`;
   scr.appendChild(d);
   const dx = to.x - from.x,
@@ -1530,12 +1558,14 @@ const FX = {
         dur: 2100,
         wander: true,
         toColor: '#F2C07A',
+        firefly: true,
       }),
     joined: (ns) => fx(q(ns, '.caught b'), 'fx-roll', 700),
     seal: (scr, btn, me) =>
       cardToDot(scr, pt(scr, btn), pt(scr, q(scr, '.jar .neck')), me, me.col, {
         wander: true,
         size: 13,
+        firefly: true,
       }),
     sealed: (ns) => fx(q(ns, '.jar .body'), 'absorb', 900),
   },
