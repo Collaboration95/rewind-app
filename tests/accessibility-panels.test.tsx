@@ -78,8 +78,8 @@ describe('native accessibility panels', () => {
     const result = await render(<App runtimeClient={restoreFailureRuntime()} />);
 
     await result.findByText('Runtime unavailable');
-    expect(result.getByTestId('demo-access-error').props.accessible).toBe(false);
-    expect(result.getByRole('button', { name: 'Retry Demo access' })).toBeTruthy();
+    expect(result.getByTestId('entry-session-status').props.accessible).toBe(false);
+    expect(result.getByRole('button', { name: 'Retry session check' })).toBeTruthy();
   });
 
   it('does not group capsule recovery with the Retry action', async () => {
@@ -98,8 +98,9 @@ describe('native accessibility panels', () => {
 
   it('keeps invite actions as separate native accessibility elements', async () => {
     const result = await render(<App runtimeClient={inviteRuntime()} />);
-    await result.findByText('Current member: Amber');
+    await result.findByRole('header', { name: 'Weekend People' });
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    await result.findByText('Current member: Amber');
 
     const panel = result.getByTestId('settings-invites');
     expect(panel.props.accessible).toBe(false);

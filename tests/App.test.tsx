@@ -156,15 +156,17 @@ describe('Rewind Home start screen', () => {
     expect(mockStatusBar).toHaveBeenCalledWith({ style: 'light' });
   });
 
-  it('shows the sample group, local-demo capsule summary, and profile picker', async () => {
+  it('shows the sample group and capsule summary without account switching on Home', async () => {
     const result = await render(<App />);
 
     expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
     expect(result.getByLabelText('Local demo data')).toBeTruthy();
-    expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
+    expect(result.queryByRole('header', { name: 'Local demo' })).toBeNull();
     expect(result.getByLabelText('Current capsule. 2 days remaining.')).toBeTruthy();
     expect(result.getByLabelText('Current prompt: What made you pause and smile?')).toBeTruthy();
     expect(result.getByLabelText(/0 of 5 contributions used/)).toBeTruthy();
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
+    expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
     await result.findByText('Current member: Amber');
   });
 
@@ -531,7 +533,9 @@ describe('Rewind Home start screen', () => {
     const result = await render(<App cycleRepository={{ getCurrentCycle }} />);
 
     await result.findByTestId('capsule-ready');
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByRole('button', { name: 'Choose Clover, sample member' }));
+    await fireEvent.press(result.getByRole('tab', { name: 'Home' }));
     await waitFor(() => expect(getCurrentCycle).toHaveBeenLastCalledWith('demo-group', 'demo-3'));
   });
 
@@ -574,6 +578,8 @@ describe('Local demo profile flow', () => {
   it('offers five accessible choices, remembers selection on relaunch, and resets cleanly', async () => {
     const result = await render(<App />);
     expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
+    expect(result.queryByRole('header', { name: 'Local demo' })).toBeNull();
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
     await result.findByText('Current member: Amber');
     expect(result.getAllByRole('button', { name: /Choose .*sample member/ })).toHaveLength(5);
@@ -585,16 +591,19 @@ describe('Local demo profile flow', () => {
     await waitFor(async () => expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-3'));
     await result.unmount();
     const relaunched = await render(<App />);
+    await fireEvent.press(relaunched.getByRole('tab', { name: 'Settings' }));
     await relaunched.findByText('Current member: Clover');
     await relaunched.unmount();
     await AsyncStorage.clear();
     const reset = await render(<App />);
+    await fireEvent.press(reset.getByRole('tab', { name: 'Settings' }));
     await reset.findByText('Current member: Amber');
   });
 
   it('falls back to the default for an unknown stored actor', async () => {
     await AsyncStorage.setItem(SELECTION_KEY, 'outsider');
     const result = await render(<App />);
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await result.findByText('Current member: Amber');
   });
 

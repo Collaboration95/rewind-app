@@ -19,9 +19,10 @@ export type CaptureMode = 'soft-focus' | 'high-contrast';
 export const CAPTURE_MODES: readonly CaptureMode[] = ['soft-focus', 'high-contrast'];
 
 export interface ClipUploadInput {
+  mediaType?: 'video' | 'photo';
   idempotencyKey: string;
   sourceUri: string;
-  mimeType: 'video/mp4';
+  mimeType: 'video/mp4' | 'image/jpeg' | 'image/png';
   byteLength: number;
   durationSeconds: number;
   width: number;

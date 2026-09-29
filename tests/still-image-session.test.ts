@@ -123,6 +123,49 @@ describe('still image session lifecycle', () => {
     expect(await metadata.list()).toHaveLength(1);
   });
 
+  it('retains upload-pending image bytes across route disposal until confirmation', async () => {
+    const files = new InMemoryCaptureFileStore();
+    const metadata = new InMemoryImageMetadataStore();
+    const session = new StillImageCaptureSession({
+      createId: () => 'capture-pending-upload',
+      fileStore: files,
+      metadataStore: metadata,
+      platform: platform(),
+    });
+    const preview = await session.capture();
+    await session.retainForUpload();
+
+    await session.dispose();
+
+    expect(files.has(preview.previewUri)).toBe(true);
+    expect(await metadata.list()).toHaveLength(1);
+    await session.discard(preview);
+    expect(files.has(preview.previewUri)).toBe(false);
+    expect(await metadata.list()).toHaveLength(0);
+  });
+
+  it('restores an upload-pending photo by its durable capture id', async () => {
+    const files = new InMemoryCaptureFileStore();
+    const metadata = new InMemoryImageMetadataStore();
+    const first = new StillImageCaptureSession({
+      createId: () => 'capture-restored-upload',
+      fileStore: files,
+      metadataStore: metadata,
+      platform: platform(),
+    });
+    const preview = await first.capture();
+    await first.retainForUpload();
+    await first.dispose();
+    const resumed = new StillImageCaptureSession({
+      fileStore: files,
+      metadataStore: metadata,
+      platform: platform(),
+    });
+
+    await expect(resumed.restorePendingUpload()).resolves.toEqual(preview);
+    await resumed.discard();
+  });
+
   it('removes a managed file when verification fails', async () => {
     const files = new InMemoryCaptureFileStore();
     const remove = jest.spyOn(files, 'remove');

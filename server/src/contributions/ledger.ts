@@ -72,6 +72,7 @@ export interface ContributionLedgerPage {
   cycleId: string;
   memberId: string;
   allowance: LedgerAllowance;
+  latestContribution?: LedgerEntry | null;
   entries: LedgerEntry[];
   pagination: { limit: number; hasMore: boolean; nextCursor: string | null };
 }
@@ -508,6 +509,23 @@ export function listContributionLedger(
        LIMIT ?`,
     )
     .all(...parameters, limit + 1) as LedgerRow[];
+  const latestRow = database
+    .prepare(
+      `SELECT c.id AS contributionId, j.id AS jobId, j.status AS jobStatus,
+              c.duration_seconds AS durationSeconds, c.created_at AS createdAt,
+              COALESCE(j.updated_at, j.processing_started_at, c.created_at) AS updatedAt,
+              j.attempt_count AS attempts, j.progress AS progress, j.error_code AS errorCode,
+              c.deleted_at AS deletedAt, c.${REPLACED_BY_COLUMN} AS replacedBy
+       FROM contributions c
+       JOIN cycles cy ON cy.id = c.cycle_id
+       LEFT JOIN media_jobs j ON j.contribution_id = c.id AND j.kind = 'clip'
+       WHERE c.cycle_id = ? AND c.member_id = ? AND cy.group_id = ?
+         AND c.deleted_at IS NULL AND c.${REPLACED_BY_COLUMN} IS NULL
+         AND (j.status IN ('pending', 'processing', 'ready', 'failed') OR j.status IS NULL)
+       ORDER BY c.created_at DESC, c.id DESC
+       LIMIT 1`,
+    )
+    .get(cycleId, memberId, groupId) as LedgerRow | undefined;
   const hasMore = rows.length > limit;
   const pageRows = hasMore ? rows.slice(0, limit) : rows;
   const last = pageRows.at(-1);
@@ -515,6 +533,7 @@ export function listContributionLedger(
     cycleId,
     memberId,
     allowance: readAllowance(database, cycle, memberId, correctable, now),
+    latestContribution: latestRow ? mapEntry(latestRow) : null,
     entries: pageRows.map(mapEntry),
     pagination: {
       limit,
