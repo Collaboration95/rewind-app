@@ -56,6 +56,23 @@ function activeSessionResponse() {
   });
 }
 
+function emptyContributionLedger(cycleId: string) {
+  return jsonResponse(200, {
+    cycleId,
+    memberId: apiAccount.id,
+    allowance: {
+      maxCount: 5,
+      maxSeconds: 30,
+      countUsed: 0,
+      secondsUsed: 0,
+      deletionsUsed: 0,
+      deletionAvailability: 'available',
+    },
+    entries: [],
+    pagination: { limit: 50, hasMore: false, nextCursor: null },
+  });
+}
+
 function webAccountFetch(logout: () => Response | Promise<Response>) {
   return jest.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -206,6 +223,7 @@ describe('real account entry flow', () => {
           pendingInviteCount: 0,
         }),
       )
+      .mockResolvedValueOnce(emptyContributionLedger('cycle-1'))
       .mockResolvedValueOnce(
         jsonResponse(201, {
           invite: {
@@ -237,7 +255,7 @@ describe('real account entry flow', () => {
     await waitFor(() =>
       expect(share).toHaveBeenCalledWith(expect.objectContaining({ url: inviteLink })),
     );
-    expect(globalThis.fetch).toHaveBeenCalledTimes(5);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(6);
     result.unmount();
   });
 
@@ -278,6 +296,7 @@ describe('real account entry flow', () => {
           pendingInviteCount: 0,
         }),
       )
+      .mockResolvedValueOnce(emptyContributionLedger('cycle-native-1'))
       .mockResolvedValueOnce(
         jsonResponse(201, {
           invite: {
@@ -306,7 +325,7 @@ describe('real account entry flow', () => {
     expect(new URL(inviteLink).origin).toBe('https://share.rewind.example');
     expect(inviteLink).not.toContain('https://rewind.example');
     expect(inviteLink).not.toMatch(/session|token|password|authorization/i);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(5);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(6);
     result.unmount();
   });
 

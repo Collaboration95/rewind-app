@@ -1,4 +1,4 @@
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import { useRealAccount } from '../src/auth/RealAccountProvider';
 import {
@@ -29,6 +29,60 @@ const persistedGroup = {
 };
 
 describe('real account group journey', () => {
+  it('refreshes both Home allowance displays from the ledger when returning from capture', async () => {
+    const activeGroup = { ...persistedGroup, memberId: 'real-member-1' };
+    let ledgerRead = 0;
+    const authenticatedRequest = jest.fn(async (path: string) => {
+      if (path === '/real/groups/current') return jsonResponse({ group: activeGroup });
+      if (path === '/real/groups') return jsonResponse({ groups: [activeGroup] });
+      if (path.endsWith('/members'))
+        return jsonResponse({
+          group: { id: activeGroup.group.id, name: activeGroup.group.name },
+          members: [],
+          pendingInviteCount: 0,
+        });
+      if (path.startsWith('/contributions?')) {
+        ledgerRead += 1;
+        const countUsed = ledgerRead === 1 ? 1 : 3;
+        return jsonResponse({
+          cycleId: activeGroup.cycle.id,
+          memberId: 'real-member-1',
+          allowance: {
+            maxCount: 5,
+            maxSeconds: 30,
+            countUsed,
+            secondsUsed: countUsed * 3,
+            deletionsUsed: 0,
+            deletionAvailability: 'available',
+          },
+          entries: [],
+          latestContribution: null,
+          pagination: { limit: 50, hasMore: false, nextCursor: null },
+        });
+      }
+      throw new Error(`Unexpected authenticated request: ${path}`);
+    });
+    (useRealAccount as jest.Mock).mockReturnValue({ authenticatedRequest, signOut: jest.fn() });
+
+    const result = await render(<RealAccountGroupExperience displayName="Real Owner" />);
+    await result.findByTestId('real-group-home');
+    await waitFor(() =>
+      expect(result.getByTestId('real-group-allowance').props.children).toContain('1 of 5'),
+    );
+    expect(result.getByText(/1 of 5 contributions and 3 seconds of 30 seconds used/)).toBeTruthy();
+
+    await fireEvent.press(result.getByTestId('real-group-capture-action'));
+    await result.findByTestId('camera-screen');
+    await fireEvent.press(result.getByText('Back to group'));
+
+    await waitFor(() => expect(ledgerRead).toBeGreaterThanOrEqual(3));
+    await waitFor(() =>
+      expect(result.getByTestId('real-group-allowance').props.children).toContain('3 of 5'),
+    );
+    expect(result.getByText(/3 of 5 contributions and 9 seconds of 30 seconds used/)).toBeTruthy();
+    expect(result.getByTestId('real-group-allowance').props.children).toContain('9 of 30 seconds');
+  });
+
   it('keeps an already-processing photo queued or processing and reserves retryable failure for terminal jobs', () => {
     const details = {
       contributionId: 'contribution-photo-1',

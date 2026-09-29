@@ -41,6 +41,37 @@ const input: ClipUploadInput = {
 };
 
 describe('real account video runtime', () => {
+  it('loads the authenticated ledger and deletes a contribution in the selected group', async () => {
+    const ledger = {
+      cycleId: 'real-cycle-1',
+      memberId: 'real-profile-1',
+      allowance: {
+        maxCount: 5,
+        maxSeconds: 30,
+        countUsed: 1,
+        secondsUsed: 3,
+        deletionsUsed: 0,
+        deletionAvailability: 'available',
+      },
+      entries: [],
+      pagination: { limit: 50, hasMore: false, nextCursor: null },
+    };
+    const authenticatedRequest = jest
+      .fn()
+      .mockResolvedValueOnce(response(ledger))
+      .mockResolvedValueOnce(response({ deleted: true }));
+    const client = createRealAccountVideoRuntimeClient(authenticatedRequest);
+
+    await expect(client.getContributionLedger('real/group-1')).resolves.toEqual(ledger);
+    await expect(
+      client.deleteContribution('ignored-session', 'real/group-1', 'contribution-1'),
+    ).resolves.toBeUndefined();
+    expect(authenticatedRequest.mock.calls).toEqual([
+      ['/contributions?groupId=real%2Fgroup-1', undefined],
+      ['/contributions/contribution-1?groupId=real%2Fgroup-1', { method: 'DELETE' }],
+    ]);
+  });
+
   it('stages, submits, processes, and cancels using the authenticated selected-group request', async () => {
     const authenticatedRequest = jest
       .fn()

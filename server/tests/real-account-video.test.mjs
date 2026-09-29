@@ -210,6 +210,23 @@ test('real account can upload and process a clip only in its selected group', as
     assert.equal(JSON.stringify(entries).includes(sourcePath), false);
     assert.equal(JSON.stringify(entries).includes(staged.uri), false);
 
+    const deletionPath = `/contributions/${encodeURIComponent(uploaded.contribution.id)}`;
+    const crossGroupDelete = await fetch(scoped(deletionPath, otherGroup.group.id), {
+      method: 'DELETE',
+      headers: { Authorization: other.authorization },
+    });
+    assert.equal(crossGroupDelete.status, 404);
+    const deleted = await fetch(scoped(deletionPath), {
+      method: 'DELETE',
+      headers: { Authorization: owner.authorization },
+    });
+    assert.equal(deleted.status, 200);
+    assert.deepEqual((await deleted.json()).restored, { count: 1, seconds: 2 });
+    const deletedLedger = await fetch(scoped('/contributions'), {
+      headers: { Authorization: owner.authorization },
+    });
+    assert.equal((await deletedLedger.json()).entries[0]?.state, 'deleted');
+
     const contributionCount = database
       .prepare('SELECT COUNT(*) AS count FROM contributions')
       .get().count;

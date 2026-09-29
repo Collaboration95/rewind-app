@@ -18,6 +18,8 @@ import { COLORS } from '../theme';
 import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
 import { CameraCaptureScreen } from '../capture/CameraCaptureScreen';
 import { RealAccountChatScreen } from '../chat/RealAccountChatScreen';
+import { ContributionLedgerSection } from '../contributions/ContributionLedgerSection';
+import type { ContributionLedgerAllowance, ContributionLedgerPage } from '../domain/contributions';
 import {
   ContributionStatusProvider,
   type ContributionStatus,
@@ -112,6 +114,17 @@ export function RealAccountGroupExperience({
   );
   const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
   const [group, setGroup] = useState<RealGroup | null>(null);
+  const [homeAllowance, setHomeAllowance] = useState<ContributionLedgerAllowance | null>(null);
+  const loadContributionLedger = useCallback(
+    () =>
+      group
+        ? mediaClient.getContributionLedger(group.group.id)
+        : Promise.reject(new Error('No active group.')),
+    [group, mediaClient],
+  );
+  const handleHomeLedgerPage = useCallback((page: ContributionLedgerPage | null) => {
+    setHomeAllowance(page?.allowance ?? null);
+  }, []);
   const [memberGroups, setMemberGroups] = useState<RealGroup[]>([]);
   const [groupMembers, setGroupMembers] = useState<RealGroupMembers | null>(null);
   const [groupMembersError, setGroupMembersError] = useState<string | null>(null);
@@ -235,11 +248,12 @@ export function RealAccountGroupExperience({
             groupId: group.group.id,
             memberId: auth.session?.account.id ?? '',
           }}
+          loadStatus={loadContributionLedger}
         >
           {captureMode === 'photo' ? (
             <CameraCaptureScreen
               onRecordClip={() => setCaptureMode('video')}
-              onSubmitPhoto={async (metadata, base64, onProgress) => {
+              onSubmitPhoto={async (metadata, base64, onProgress, replacesContributionId) => {
                 if (!mediaClient.uploadClip || !mediaClient.processClipJob) {
                   throw new Error('Photo contribution upload is unavailable. Retry shortly.');
                 }
@@ -267,6 +281,7 @@ export function RealAccountGroupExperience({
                     mode: 'soft-focus',
                     trimStartSeconds: 0,
                     trimEndSeconds: 3,
+                    ...(replacesContributionId ? { replacesContributionId } : {}),
                   },
                 );
                 const sharedStatus = {
@@ -285,8 +300,20 @@ export function RealAccountGroupExperience({
                 );
                 const finalStatus = photoContributionStatusForJob(job.status, sharedStatus);
                 onProgress(finalStatus);
+                if (finalStatus.state === 'failed') {
+                  throw new Error(
+                    finalStatus.message ?? 'The photo could not be processed. Retry this photo.',
+                  );
+                }
                 return finalStatus;
               }}
+              onDeletePhotoContribution={(contributionId) =>
+                mediaClient.deleteContribution(
+                  'real-account-session',
+                  group.group.id,
+                  contributionId,
+                )
+              }
             />
           ) : (
             <VideoCaptureScreen
@@ -804,11 +831,19 @@ export function RealAccountGroupExperience({
             {group.cycle.prompt}
           </Text>
           <Text style={styles.label}>MY ALLOWANCE</Text>
-          <Text style={styles.body}>
-            {group.cycle.contributionUsage.countUsed} of {group.cycle.quota.maxCount} contributions
-            · {group.cycle.contributionUsage.secondsUsed} of {group.cycle.quota.maxSeconds} seconds
-            used
+          <Text style={styles.body} testID="real-group-allowance">
+            {homeAllowance
+              ? `${homeAllowance.countUsed} of ${homeAllowance.maxCount} contributions · ${homeAllowance.secondsUsed} of ${homeAllowance.maxSeconds} seconds used`
+              : 'Loading allowance…'}
           </Text>
+          <ContributionLedgerSection
+            cycleId={group.cycle.id}
+            groupId={group.group.id}
+            loadPage={loadContributionLedger}
+            onPageLoaded={handleHomeLedgerPage}
+            memberId={group.memberId ?? auth.session?.account.id ?? ''}
+            sessionId="real-account-session"
+          />
           {group.cycle.contributionCount === 0 ? (
             <View style={styles.empty} testID="real-group-empty-contributions">
               <Text style={styles.panelTitle}>No contributions yet</Text>
@@ -826,11 +861,19 @@ export function RealAccountGroupExperience({
             title="Capture a moment"
             onPress={() => {
               setMessage(null);
+              setHomeAllowance(null);
               setScreen('capture');
             }}
             testID="real-group-capture-action"
           />
-          <Action title="Chat" onPress={() => setScreen('chat')} testID="real-group-chat-action" />
+          <Action
+            title="Chat"
+            onPress={() => {
+              setHomeAllowance(null);
+              setScreen('chat');
+            }}
+            testID="real-group-chat-action"
+          />
           <Action
             title={
               auth.pending

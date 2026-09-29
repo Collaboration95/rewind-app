@@ -41,6 +41,8 @@ export interface ContributionLedgerPage {
   cycleId: string;
   memberId: string;
   allowance: ContributionLedgerAllowance;
+  /** Latest contribution across the full current-cycle ledger, independent of pagination. */
+  latestContribution?: ContributionLedgerEntry | null;
   entries: ContributionLedgerEntry[];
   pagination: { limit: number; hasMore: boolean; nextCursor: string | null };
 }
@@ -146,6 +148,14 @@ export function parseContributionLedgerPage(value: unknown): ContributionLedgerP
   const entries = page.entries.map(parseEntry);
   if (entries.some((entry) => entry === null)) return null;
   if (new Set(entries.map((entry) => entry?.contributionId)).size !== entries.length) return null;
+  const latestContribution =
+    page.latestContribution === undefined ? undefined : parseEntry(page.latestContribution);
+  if (
+    page.latestContribution !== undefined &&
+    page.latestContribution !== null &&
+    !latestContribution
+  )
+    return null;
   return {
     cycleId: page.cycleId,
     memberId: page.memberId,
@@ -157,6 +167,9 @@ export function parseContributionLedgerPage(value: unknown): ContributionLedgerP
       deletionsUsed: allowance.deletionsUsed,
       deletionAvailability: allowance.deletionAvailability,
     },
+    ...(page.latestContribution === undefined
+      ? {}
+      : { latestContribution: latestContribution ?? null }),
     entries: entries as ContributionLedgerEntry[],
     pagination: {
       limit: pagination.limit as number,
