@@ -10,8 +10,14 @@ async function openVideoFallback(page: Page) {
   await page.goto('/');
   const navigation = page.getByTestId('main-navigation');
   const entry = page.getByTestId('demo-entry-demo-1');
-  await expect(navigation.or(entry)).toBeVisible();
-  if (await entry.isVisible()) await entry.click();
+  const welcome = page.getByRole('heading', { name: 'Welcome to Rewind' });
+  await expect(navigation.or(entry).or(welcome)).toBeVisible();
+  if (await entry.isVisible()) {
+    await entry.click();
+  } else {
+    await page.getByRole('button', { name: 'Try Demo' }).click();
+    await entry.click();
+  }
   await expect(navigation).toBeVisible();
   await page.getByTestId('nav-camera').click();
   await expect(page.getByTestId('camera-screen')).toBeVisible();
