@@ -382,11 +382,11 @@ async function send(skipDock) {
   flushTyping();
   if (!filled(mine)) return;
   if (!mine.docks.length && !skipDock) return askDock();
+  // 复制还没完成时再点一次不重复处理；完成后弹窗会挡住页面
   sending = true;
-  setTimeout(() => (sending = false), 1500);
   lastMd = toMarkdown();
   // 先复制（需要页面仍在前台），再打开 Issue
-  const copied = await copyText(lastMd);
+  const copied = await copyText(lastMd).finally(() => (sending = false));
   let opened = false;
   if (issueNo()) {
     const w = window.open(issueUrl() + '#new_comment_field', '_blank');
