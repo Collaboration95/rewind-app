@@ -78,13 +78,19 @@ health_ready() {
 }
 
 running_images_match() {
-  local sha="$1" service container actual expected
+  local sha="$1" service image container actual loaded revision
   for service in runtime web; do
+    image="rewind-demo"
+    [[ "$service" == web ]] && image="rewind-demo-web"
     container="$(REWIND_RELEASE_SHA="$sha" docker compose --env-file "$HOST_ROOT/rewind.env" -f "$HOST_ROOT/deploy/compose.yaml" ps -q "$service")"
     [[ -n "$container" ]] || return 1
     actual="$(docker inspect --format '{{.Image}}' "$container")" || return 1
-    expected="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["images"][sys.argv[2]])' "$RELEASES/$sha/manifest.json" "$service")"
-    [[ "$actual" == "$expected" ]] || return 1
+    # Docker may normalize an image config while loading it across engines.
+    # The bundle is verified before load; compare the running container with
+    # that exact loaded tag and its source revision on this host.
+    loaded="$(docker image inspect --format '{{.Id}}' "$image:$sha")" || return 1
+    revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image:$sha")" || return 1
+    [[ "$actual" == "$loaded" && "$revision" == "$sha" ]] || return 1
   done
 }
 

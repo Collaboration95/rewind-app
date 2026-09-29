@@ -182,10 +182,19 @@ if [[ "${1:-}" == compose ]]; then
 elif [[ "${1:-}" == inspect ]]; then
   service="${!#}"
   service="${service#fixture-}"
-  python3 - "$REWIND_HOST_ROOT/releases/$(cat "$REWIND_HOST_ROOT/.active-image")/manifest.json" "$service" <<'PY'
-import json, sys
-print(json.load(open(sys.argv[1]))["images"][sys.argv[2]])
-PY
+  [[ "${FIXTURE_WRONG_RUNNING_IMAGE:-0}" != 1 ]] || { printf 'wrong-image\n'; exit 0; }
+  printf 'normalized-%s-%s\n' "$service" "$(cat "$REWIND_HOST_ROOT/.active-image")"
+elif [[ "${1:-}" == image && "${2:-}" == inspect ]]; then
+  tag="${!#}"
+  sha="${tag##*:}"
+  service=runtime
+  [[ "$tag" != rewind-demo-web:* ]] || service=web
+  if [[ " $* " == *'{{.Id}}'* ]]; then
+    printf 'normalized-%s-%s\n' "$service" "$sha"
+  else
+    [[ "${FIXTURE_WRONG_REVISION:-0}" != 1 ]] || { printf 'wrong-revision\n'; exit 0; }
+    printf '%s\n' "$sha"
+  fi
 elif [[ "${1:-}" == load && " $* " == *"${FIXTURE_LOAD_FAIL_SHA:-never}"* ]]; then
   exit 1
 fi
@@ -198,6 +207,12 @@ touch "$host/rewind.env"
 bash "$repo/deploy/release-host.sh" prepare "$root/release.tar"
 [[ ! -e "$host/current-release" && "$(cat "$host/pending-release")" == "$sha" ]]
 REWIND_RELEASE_SHA="$sha" docker compose up -d
+if FIXTURE_WRONG_RUNNING_IMAGE=1 bash "$repo/deploy/release-host.sh" promote >"$root/error" 2>&1; then
+  echo 'wrong running image was promoted' >&2; exit 1
+fi
+if FIXTURE_WRONG_REVISION=1 bash "$repo/deploy/release-host.sh" promote >"$root/error" 2>&1; then
+  echo 'wrong loaded image revision was promoted' >&2; exit 1
+fi
 bash "$repo/deploy/release-host.sh" promote
 [[ "$(cat "$host/current-release")" == "$sha" ]]
 if FIXTURE_LOAD_FAIL_SHA="$second_sha" bash "$repo/deploy/release-host.sh" install "$root/second.tar" >"$root/error" 2>&1; then
