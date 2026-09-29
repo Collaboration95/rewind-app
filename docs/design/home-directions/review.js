@@ -74,6 +74,7 @@ function hashOf(r) {
 }
 
 let mine = blank();
+const typing = {}; // 输入框里还没添加的文字：重绘时放回去，也存进本地缓存
 // copied：最近一次复制的内容指纹；me：在 Issue 里认出的自己的 GitHub 账号
 let meta = { copied: '', me: '' };
 function loadMine() {
@@ -82,6 +83,11 @@ function loadMine() {
     if (d) {
       mine = tidy(d);
       meta = { copied: String(d.copied || ''), me: String(d.me || '') };
+      // 输入框里还没添加的文字也一起恢复
+      const ids = TARGETS();
+      for (const [key, v] of Object.entries(d.typing || {}))
+        if (typeof v === 'string' && ids.includes(key.slice(0, -1)) && /[+-]$/.test(key))
+          typing[key] = v.slice(0, 500);
     }
   } catch {
     /* 读不到（例如隐私模式）就从空白开始 */
@@ -89,7 +95,8 @@ function loadMine() {
 }
 function saveMine() {
   try {
-    localStorage.setItem(RV_KEY, JSON.stringify({ ...mine, ...meta }));
+    const draft = Object.fromEntries(Object.entries(typing).filter(([, v]) => v));
+    localStorage.setItem(RV_KEY, JSON.stringify({ ...mine, ...meta, typing: draft }));
   } catch {
     /* 存不了时只在当前页面有效 */
   }
@@ -430,8 +437,6 @@ const whoHTML = (it) =>
       ? `<a href="${esc(it.url)}" target="_blank" rel="noreferrer">@${esc(it.who)}</a>`
       : `<em>${esc(it.who)}</em>`;
 
-const typing = {}; // 输入框里还没添加的文字（只在内存里），重绘时放回去
-
 // 一个方向（或一种底栏）下面的整块：👍 ❤️，优点、缺点各一列，每列下面一个输入框
 function blockHTML(id) {
   const s = tally(id),
@@ -652,6 +657,7 @@ document.addEventListener('click', (e) => {
     if (!confirm(t('rv.clearQ'))) return;
     mine = blank();
     meta.copied = '';
+    Object.keys(typing).forEach((k) => delete typing[k]);
     return changed();
   }
   if ('rvRefresh' in d) return loadIssue(true);
@@ -660,6 +666,7 @@ document.addEventListener('input', (e) => {
   const d = e.target.dataset;
   if (!d?.rvAdd) return;
   typing[d.rvAdd + d.k] = e.target.value;
+  saveMine();
   paintBar();
 });
 document.addEventListener('keydown', (e) => {
