@@ -52,7 +52,15 @@ async function expectJson<T>(
   return (await response.json()) as T;
 }
 
-async function waitForDemoSession(page: Page, action: () => Promise<void>): Promise<string> {
+interface DemoSessionReceipt {
+  id: string;
+  actor: { memberId: string };
+}
+
+async function waitForDemoSession(
+  page: Page,
+  action: () => Promise<unknown>,
+): Promise<DemoSessionReceipt> {
   const responsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
@@ -74,7 +82,8 @@ async function waitForDemoSession(page: Page, action: () => Promise<void>): Prom
   }
   const body = await response.json();
   expect(body.session?.id).toEqual(expect.any(String));
-  return body.session.id;
+  expect(body.session?.actor?.memberId).toEqual(expect.any(String));
+  return { id: body.session.id, actor: body.session.actor };
 }
 
 async function runtimeJson(page: Page, path: string) {
@@ -129,14 +138,18 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   await page.addInitScript(() => {
     window.fetch = window.fetch.bind(window);
   });
-  await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  const initialSessionPromise = waitForDemoSession(page, () => page.goto('/'));
+  const entryHeading = page.getByRole('heading', { name: 'Choose who you are showing' });
+  await expect(entryHeading.or(page.getByTestId('capsule-ready'))).toBeVisible();
   await expect
     .poll(async () => page.evaluate(async () => (await fetch('/api/health')).ok))
     .toBe(true);
-  ownerSessionId = await waitForDemoSession(page, async () => {
+  if (await entryHeading.isVisible()) {
     await page.getByTestId('demo-entry-demo-1').click();
-  });
+  }
+  const initialSession = await initialSessionPromise;
+  expect(initialSession.actor.memberId).toBe('demo-1');
+  ownerSessionId = initialSession.id;
   await expect(page.getByTestId('capsule-ready')).toBeVisible();
   await expect(page.getByTestId('settings-group')).toHaveCount(0);
 
@@ -154,9 +167,11 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   await page.getByTestId('sign-out').click();
   await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
   let guestSessionId = '';
-  guestSessionId = await waitForDemoSession(page, async () => {
-    await page.getByTestId('demo-entry-demo-2').click();
-  });
+  guestSessionId = (
+    await waitForDemoSession(page, async () => {
+      await page.getByTestId('demo-entry-demo-2').click();
+    })
+  ).id;
   await expect(page.getByTestId('capsule-ready')).toBeVisible();
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('invite-code-input').fill(code);
@@ -212,9 +227,11 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('sign-out').click();
   await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
-  ownerSessionId = await waitForDemoSession(page, async () => {
-    await page.getByTestId('demo-entry-demo-1').click();
-  });
+  ownerSessionId = (
+    await waitForDemoSession(page, async () => {
+      await page.getByTestId('demo-entry-demo-1').click();
+    })
+  ).id;
   await page.getByTestId('nav-settings').click();
   await expect(page.getByTestId('settings-local-reveal')).toBeVisible();
   const revealQuery = `sessionId=${encodeURIComponent(ownerSessionId)}&groupId=${encodeURIComponent(groupId)}`;

@@ -531,14 +531,16 @@ as features, and local data is not represented as secure multi-user privacy.
 
 ## 16. High-level direction after Sprint 0
 
-This is a forecast, not a detailed commitment:
+This is a historical forecast, not a detailed commitment. The Sprint 2 product
+goal was revised on 27 September; use the current milestone and Sprint Planning
+for scope. The dates below follow the canonical GitHub milestones:
 
 | Period                     | Indicative outcome                                                                         | Share of total 400 h |
 | -------------------------- | ------------------------------------------------------------------------------------------ | -------------------: |
 | S0: 1–12 Sep               | Planning, architecture, delivery rails, seeded skeleton, and local runtime foundation      |         17.5% / 70 h |
 | S1: 13–26 Sep              | Identity/groups, real device permission/capture, contribution lock, and local product flow |       26.25% / 105 h |
-| S2: 29 Sep–12 Oct          | Reminder/chat plus simulated reveal/archive; strengthen security/CI evidence               |        27.5% / 110 h |
-| S3: 13–26 Oct              | Integration, highest-value approved cloud slice, device pilot, hardening and submission    |        21.25% / 85 h |
+| S2: 27 Sep–10 Oct          | Reminder/chat plus simulated reveal/archive; strengthen security/CI evidence               |        27.5% / 110 h |
+| S3: 11–24 Oct              | Integration, highest-value approved cloud slice, device pilot, hardening and submission    |        21.25% / 85 h |
 | Presentation: 27 Oct–2 Nov | Rehearsal, slide refinement, demo backup and presentation feedback preparation             |          7.5% / 30 h |
 | **Total**                  |                                                                                            |     **100% / 400 h** |
 

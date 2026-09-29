@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { ContributionLedger, type ContributionLedgerView } from './ContributionLedger';
+import type { ContributionLedgerPage } from '../domain/contributions';
+
+type LedgerPageLoader = (options?: { cursor?: string }) => Promise<ContributionLedgerPage>;
 
 function denied(error: unknown): boolean {
   return error instanceof LocalRuntimeError && (error.status === 401 || error.status === 403);
@@ -17,12 +20,16 @@ interface ScopedView {
  * capture or correction starts a fresh read. */
 export function ContributionLedgerSection({
   client,
+  loadPage,
+  onPageLoaded,
   sessionId,
   groupId,
   memberId,
   cycleId,
 }: {
-  client: RuntimeClient;
+  client?: RuntimeClient;
+  loadPage?: LedgerPageLoader;
+  onPageLoaded?: (page: ContributionLedgerPage | null) => void;
   sessionId: string;
   groupId: string;
   memberId: string;
@@ -35,6 +42,16 @@ export function ContributionLedgerSection({
     scoped.scopeKey === scopeKey ? scoped.view : { status: 'loading' };
   const generation = useRef(0);
   const pendingCursor = useRef<string | null>(null);
+  const readPage = useCallback(
+    (options?: { cursor?: string }) => {
+      if (loadPage) return loadPage(options);
+      if (!client?.getContributionLedger) throw new Error('Contribution ledger unavailable.');
+      return options
+        ? client.getContributionLedger(sessionId, groupId, options)
+        : client.getContributionLedger(sessionId, groupId);
+    },
+    [client, groupId, loadPage, sessionId],
+  );
 
   useEffect(() => {
     const request = ++generation.current;
@@ -42,23 +59,23 @@ export function ContributionLedgerSection({
     void Promise.resolve()
       .then(() => {
         if (request !== generation.current) return null;
-        if (!client.getContributionLedger) throw new Error('Contribution ledger unavailable.');
-        return client.getContributionLedger(sessionId, groupId);
+        onPageLoaded?.(null);
+        return readPage();
       })
       .then(
         (page) => {
           if (request !== generation.current) return;
           if (!page) return;
+          const valid = page.cycleId === cycleId && page.memberId === memberId;
           setScoped({
             scopeKey,
-            view:
-              page.cycleId === cycleId && page.memberId === memberId
-                ? { status: 'ready', page }
-                : { status: 'error' },
+            view: valid ? { status: 'ready', page } : { status: 'error' },
           });
+          onPageLoaded?.(valid ? page : null);
         },
         (error: unknown) => {
           if (request === generation.current) {
+            onPageLoaded?.(null);
             setScoped({ scopeKey, view: { status: denied(error) ? 'denied' : 'error' } });
           }
         },
@@ -66,18 +83,23 @@ export function ContributionLedgerSection({
     return () => {
       generation.current += 1;
     };
-  }, [client, sessionId, groupId, memberId, cycleId, retryAttempt, scopeKey]);
+  }, [readPage, memberId, cycleId, retryAttempt, scopeKey, onPageLoaded]);
 
   const loadMore = () => {
-    if (view.status !== 'ready' || view.loadingMore || !client.getContributionLedger) return;
+    if (
+      view.status !== 'ready' ||
+      view.loadingMore ||
+      (!loadPage && !client?.getContributionLedger)
+    )
+      return;
     const { page } = view;
     const cursor = page.pagination.nextCursor;
     if (!page.pagination.hasMore || !cursor || pendingCursor.current === cursor) return;
     const request = generation.current;
     pendingCursor.current = cursor;
     setScoped({ scopeKey, view: { status: 'ready', page, loadingMore: true } });
-    void client
-      .getContributionLedger(sessionId, groupId, { cursor })
+    void Promise.resolve()
+      .then(() => readPage({ cursor }))
       .then(
         (next) => {
           if (request !== generation.current) return;

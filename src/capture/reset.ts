@@ -107,13 +107,20 @@ export async function resetCaptureData(): Promise<void> {
     AsyncStorage.removeItem(IMAGE_METADATA_KEY),
     AsyncStorage.removeItem(PENDING_CLIP_METADATA_KEY),
     AsyncStorage.removeItem(CONTRIBUTION_STATUS_STORAGE_KEY),
+    WebCaptureFileStore.clearPersistent(),
   ];
   const cacheDirectory = FileSystem.cacheDirectory;
+  const documentDirectory = FileSystem.documentDirectory;
   if (cacheDirectory) {
     operations.push(
       ...CAPTURE_CACHE_FOLDERS.map((folder) =>
         FileSystem.deleteAsync(`${cacheDirectory}${folder}/`, { idempotent: true }),
       ),
+    );
+  }
+  if (documentDirectory) {
+    operations.push(
+      FileSystem.deleteAsync(`${documentDirectory}rewind-stills/`, { idempotent: true }),
     );
   }
   const results = await Promise.allSettled(operations);

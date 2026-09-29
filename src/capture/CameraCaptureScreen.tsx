@@ -35,6 +35,13 @@ export interface CameraCaptureScreenProps {
   onAccepted?: (
     metadata: Awaited<ReturnType<StillImageCaptureSession['accept']>>['metadata'],
   ) => void;
+  onSubmitPhoto?: (
+    metadata: Awaited<ReturnType<StillImageCaptureSession['accept']>>['metadata'],
+    base64: string,
+    onProgress: (status: import('./contribution-status').ContributionStatus) => void,
+    replacesContributionId?: string,
+  ) => Promise<import('./contribution-status').ContributionStatus>;
+  onDeletePhotoContribution?: (contributionId: string) => Promise<void>;
   onOpenArchive?: () => void;
   onRecordClip?: () => void;
   revealState?: RevealEducationState;
@@ -50,6 +57,8 @@ export function CameraCaptureScreen({
   metadataStore,
   now,
   onAccepted,
+  onSubmitPhoto,
+  onDeletePhotoContribution,
   onOpenArchive,
   onRecordClip,
   platform: platformProp,
@@ -96,17 +105,30 @@ export function CameraCaptureScreen({
   const [state, setState] = useState<CaptureState>(initialCaptureState);
   const [cameraReady, setCameraReady] = useState(!platform.supportsLivePreview);
   const [settingsError, setSettingsError] = useState<string | null>(null);
-  const contributionStatus = useOptionalContributionStatus()?.status ?? null;
+  const [photoSubmitPending, setPhotoSubmitPending] = useState(false);
+  const [photoSubmitError, setPhotoSubmitError] = useState<string | null>(null);
+  const contributionStatusContext = useOptionalContributionStatus();
+  const contributionStatus = contributionStatusContext?.status ?? null;
   // Captures are asynchronous and the platform may resolve one after the route
   // was backgrounded. The sequence makes a stale completion a no-op so it
   // cannot publish a preview that nothing on this mount can act on.
   const captureSequence = useRef(0);
+  const replacementTarget = useRef<string | undefined>(undefined);
 
   useEffect(() => {
+    void session.restorePendingUpload().then((pending) => {
+      if (!pending) return;
+      setState((current) => ({
+        ...current,
+        status: 'preview',
+        activePreview: { metadata: pending.metadata, uri: pending.previewUri },
+        errorMessage: null,
+      }));
+    });
     if (!decideInterruption('restart').sweepOrphanedFiles) return;
     // Reclaim app-owned media left by a previous process on a cold start.
     void runCaptureRestartRecovery();
-  }, []);
+  }, [session]);
 
   const refreshAccess = useCallback(async () => {
     setSettingsError(null);
@@ -350,6 +372,87 @@ export function CameraCaptureScreen({
     }
   }, [onAccepted, session]);
 
+  const submitPhoto = useCallback(async () => {
+    const active = session.getActivePreview();
+    if (!active || !onSubmitPhoto) return;
+    if (
+      active.metadata.byteLength > 10 * 1024 * 1024 ||
+      active.metadata.width <= 0 ||
+      active.metadata.height <= 0
+    ) {
+      setPhotoSubmitError('Choose a valid JPEG or PNG photo no larger than 10 MiB.');
+      return;
+    }
+    setPhotoSubmitPending(true);
+    setPhotoSubmitError(null);
+    let latestStatus: import('./contribution-status').ContributionStatus = {
+      state: 'queued',
+      durationSeconds: 3,
+      createdAt: active.metadata.capturedAt,
+      retryable: true,
+    };
+    try {
+      await session.retainForUpload();
+      const base64 = await resolvedFileStore.readAsBase64(active.previewUri);
+      contributionStatusContext?.setStatus(latestStatus);
+      const submittedStatus = await onSubmitPhoto(
+        active.metadata,
+        base64,
+        (status) => {
+          latestStatus = status;
+          contributionStatusContext?.setStatus(status);
+        },
+        replacementTarget.current,
+      );
+      replacementTarget.current = undefined;
+      contributionStatusContext?.setStatus(submittedStatus);
+      await contributionStatusContext?.refreshStatus();
+      await session.discard(active);
+      setState((current) => ({
+        ...current,
+        status: 'ready',
+        activePreview: null,
+        errorMessage: null,
+      }));
+    } catch (error) {
+      contributionStatusContext?.setStatus({
+        ...latestStatus,
+        state: 'failed',
+        createdAt: latestStatus.createdAt || new Date().toISOString(),
+        message:
+          error instanceof Error ? error.message : 'The photo upload failed. Retry this photo.',
+        retryable: true,
+      });
+      setPhotoSubmitError(
+        error instanceof Error ? error.message : 'The photo upload failed. Retry this photo.',
+      );
+    } finally {
+      setPhotoSubmitPending(false);
+    }
+  }, [contributionStatusContext, onSubmitPhoto, resolvedFileStore, session]);
+
+  const deletePhotoForReplacement = useCallback(async () => {
+    if (
+      !contributionStatus?.contributionId ||
+      !onDeletePhotoContribution ||
+      contributionStatus.state === 'processing' ||
+      contributionStatus.deletionAvailability === 'used' ||
+      contributionStatus.deletionAvailability === 'unavailable'
+    )
+      return;
+    try {
+      await onDeletePhotoContribution(contributionStatus.contributionId);
+      replacementTarget.current = contributionStatus.contributionId;
+      contributionStatusContext?.clearStatus();
+      await contributionStatusContext?.refreshStatus();
+      setPhotoSubmitError(null);
+    } catch (error) {
+      setPhotoSubmitError(
+        error instanceof Error ? error.message : 'The contribution could not be deleted.',
+      );
+    }
+  }, [contributionStatus, contributionStatusContext, onDeletePhotoContribution]);
+
   return (
     <View style={styles.screen} testID="camera-screen">
       <View style={styles.heading}>
@@ -358,7 +461,9 @@ export function CameraCaptureScreen({
           Add a still moment
         </Text>
         <Text style={styles.intro}>
-          Camera and microphone access stay on this device. Nothing is uploaded from this screen.
+          {onSubmitPhoto
+            ? 'Review your photo, then submit it to this private group. The original stays on this device until upload is confirmed.'
+            : 'Camera access stays on this device. Nothing is uploaded from this screen.'}
         </Text>
       </View>
       {state.status === 'ready' || state.status === 'preview' || state.status === 'saved' ? (
@@ -387,7 +492,14 @@ export function CameraCaptureScreen({
         </Pressable>
       ) : null}
 
-      <ContributionStatusPanel status={contributionStatus} testID="camera-contribution-status" />
+      <ContributionStatusPanel
+        deleteLabel="Delete and replace"
+        onDelete={onDeletePhotoContribution ? deletePhotoForReplacement : undefined}
+        onRetry={contributionStatus?.state === 'failed' ? () => void submitPhoto() : undefined}
+        retryLabel="Retry photo upload"
+        status={contributionStatus}
+        testID="camera-contribution-status"
+      />
 
       {platform.kind === 'demo' ? (
         <View
@@ -406,7 +518,7 @@ export function CameraCaptureScreen({
         <StatusPanel
           testID="camera-checking"
           title="Checking camera access…"
-          body="We are checking device capability and both required permissions."
+          body="We are checking camera capability and permission."
         />
       ) : state.status === 'temporarily-unavailable' ? (
         <StatusPanel
@@ -437,8 +549,8 @@ export function CameraCaptureScreen({
         />
       ) : state.status === 'permission-undecided' ? (
         <StatusPanel
-          actionLabel="Allow camera and microphone"
-          body="Rewind needs both permissions before the capture control becomes available."
+          actionLabel="Allow camera access"
+          body="Rewind needs camera permission before the capture control becomes available."
           onAction={requestAccess}
           testID="camera-permission-undecided"
           title="Allow access to continue"
@@ -449,7 +561,7 @@ export function CameraCaptureScreen({
           secondaryActionLabel="Open Settings"
           body={
             state.errorMessage ??
-            'Camera or microphone access is off. Try again, or allow both permissions in Settings.'
+            'Camera access is off. Try again, or allow camera access in Settings.'
           }
           onAction={hasFileFallback ? fallbackAction : requestAccess}
           onSecondaryAction={openSettings}
@@ -459,7 +571,7 @@ export function CameraCaptureScreen({
       ) : state.status === 'permission-blocked' ? (
         <StatusPanel
           actionLabel="Open Settings"
-          body="Camera or microphone access is blocked. Open Settings, allow both permissions, then return and check again."
+          body="Camera access is blocked. Open Settings, allow camera access, then return and check again."
           onAction={openSettings}
           testID="camera-permission-blocked"
           title="Permission is blocked"
@@ -480,6 +592,9 @@ export function CameraCaptureScreen({
           demo={platform.kind === 'demo'}
           metadata={state.activePreview.metadata}
           onAccept={accept}
+          onSubmit={onSubmitPhoto ? submitPhoto : undefined}
+          submitError={photoSubmitError}
+          submitting={photoSubmitPending}
           onDiscard={discard}
           onRetake={retake}
           previewUri={state.activePreview.uri}
@@ -488,14 +603,9 @@ export function CameraCaptureScreen({
         />
       ) : (
         <View style={styles.captureArea}>
-          <View
-            accessibilityLabel="Camera and microphone access granted"
-            style={styles.accessGranted}
-          >
+          <View accessibilityLabel="Camera access granted" style={styles.accessGranted}>
             <Text style={styles.accessGrantedTitle}>ACCESS GRANTED</Text>
-            <Text style={styles.accessGrantedText}>
-              Camera and microphone are ready for a still moment.
-            </Text>
+            <Text style={styles.accessGrantedText}>Camera is ready for a still moment.</Text>
           </View>
           {platform.supportsLivePreview ? (
             <CameraView
@@ -578,6 +688,9 @@ function PreviewPanel({
   demo,
   metadata,
   onAccept,
+  onSubmit,
+  submitError,
+  submitting,
   onDiscard,
   onRetake,
   previewUri,
@@ -587,6 +700,9 @@ function PreviewPanel({
   demo: boolean;
   metadata: NonNullable<CaptureState['activePreview']>['metadata'];
   onAccept: () => void | Promise<void>;
+  onSubmit?: () => void | Promise<void>;
+  submitError?: string | null;
+  submitting?: boolean;
   onDiscard: () => void | Promise<void>;
   onRetake: () => void | Promise<void>;
   previewUri: string;
@@ -619,6 +735,11 @@ function PreviewPanel({
       <Text style={styles.previewMeta}>
         {metadata.width} × {metadata.height} · {metadata.format.toUpperCase()}
       </Text>
+      {submitError ? (
+        <Text accessibilityLiveRegion="assertive" style={styles.errorText}>
+          {submitError}
+        </Text>
+      ) : null}
       {saved ? (
         <Text style={styles.savedText}>Saved locally. Metadata only is retained.</Text>
       ) : null}
@@ -633,12 +754,23 @@ function PreviewPanel({
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityState={{ busy: saving, disabled: saving }}
-            disabled={saving}
-            onPress={onAccept}
+            accessibilityState={{
+              busy: saving || Boolean(submitting),
+              disabled: saving || Boolean(submitting),
+            }}
+            disabled={saving || Boolean(submitting)}
+            onPress={onSubmit ?? onAccept}
             style={[styles.actionButton, saving && styles.disabledControl]}
           >
-            <Text style={styles.actionButtonText}>{saving ? 'Saving…' : 'Use this still'}</Text>
+            <Text style={styles.actionButtonText}>
+              {submitting
+                ? 'Uploading…'
+                : onSubmit
+                  ? 'Submit photo'
+                  : saving
+                    ? 'Saving…'
+                    : 'Use this still'}
+            </Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={onDiscard} style={styles.discardButton}>
             <Text style={styles.discardButtonText}>Discard</Text>

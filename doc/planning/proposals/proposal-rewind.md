@@ -5,6 +5,15 @@
 **Last updated:** 2026-08-28  
 **Team assumption:** Five members, approximately 80 implementation hours each
 
+> **Sprint 2 scope update (27 September 2026):** The active
+> [user-journey plan](../sprints/sprint-2-user-journey-plan.md) uses
+> administrator-created local password accounts and server-managed sessions
+> for the pilot, so FR-01's OIDC mechanism is superseded while its private-group
+> access outcome remains required. The plan also adds photo contributions.
+> [Issue #169](https://github.com/Collaboration95/rewind-app/issues/169)
+> records the pilot boundary. The original proposal wording below is retained
+> as the submitted baseline.
+
 > **Effort boundary:** The 400-person-hour estimate covers implementation,
 > integration, automated testing, cloud deployment, DevSecOps automation, and
 > hardening. It excludes planning meetings, Agile ceremonies, reports, and

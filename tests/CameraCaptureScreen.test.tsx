@@ -216,7 +216,7 @@ describe('CameraCaptureScreen', () => {
     });
     const result = await screen(platform);
     await result.findByTestId('camera-permission-undecided');
-    await fireEvent.press(result.getByRole('button', { name: 'Allow camera and microphone' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Allow camera access' }));
     await waitFor(() => expect(requestPermissions).toHaveBeenCalled());
     await result.findByTestId('camera-capture');
     expect(result.getByRole('button', { name: 'Take still image' })).toBeEnabled();
