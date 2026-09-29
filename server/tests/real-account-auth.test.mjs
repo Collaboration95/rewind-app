@@ -372,7 +372,9 @@ test('real login returns an opaque native token, supports current/logout, and br
       headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(current.status, 200);
-    assert.equal((await current.json()).account.username, 'member.one');
+    const restoredSession = await current.json();
+    assert.equal(restoredSession.account.username, 'member.one');
+    assert.equal(restoredSession.account.id, created.account.id);
     const queryToken = await fetch(`${baseUrl}/auth/session?token=${token}`);
     assert.equal(queryToken.status, 401);
 

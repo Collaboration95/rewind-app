@@ -102,6 +102,7 @@ import {
   revokeRealSession,
   validateRealSession,
 } from './auth';
+import { createRealGroup, getCurrentRealGroup } from './groups/real';
 
 export interface HealthPayload {
   ok: boolean;
@@ -987,7 +988,7 @@ export async function handleRequest(
   const requestLimiters = options.requestLimiters ?? createRequestLimiters(config);
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   if (request.method === 'OPTIONS') {
-    if (url.pathname.startsWith('/auth/')) {
+    if (url.pathname.startsWith('/auth/') || url.pathname.startsWith('/real/')) {
       const corsHeaders = authCorsHeaders(request, config);
       response.writeHead(204, {
         ...corsHeaders,
@@ -1007,9 +1008,10 @@ export async function handleRequest(
     return;
   }
   if (!['GET', 'POST', 'DELETE'].includes(request.method ?? '')) {
-    const send = url.pathname.startsWith('/auth/')
-      ? authJson.bind(null, request, response, config)
-      : sendJson.bind(null, response, config);
+    const send =
+      url.pathname.startsWith('/auth/') || url.pathname.startsWith('/real/')
+        ? authJson.bind(null, request, response, config)
+        : sendJson.bind(null, response, config);
     send(405, {
       error: 'method_not_allowed',
       message: 'Only GET, POST, and DELETE are supported.',
@@ -1019,6 +1021,11 @@ export async function handleRequest(
 
   if (url.pathname.startsWith('/auth/')) {
     await handleRealAuthRequest(request, response, config, database, url, now());
+    return;
+  }
+
+  if (url.pathname.startsWith('/real/')) {
+    await handleRealGroupRequest(request, response, config, database, url, now());
     return;
   }
 
@@ -2828,6 +2835,81 @@ function authToken(request: IncomingMessage): string | null {
   if (bearer && cookieValue && bearer !== cookieValue) return null;
   if (bearer) return bearer;
   return cookieValue && /^[A-Za-z0-9_-]{43}$/.test(cookieValue) ? cookieValue : null;
+}
+
+async function handleRealGroupRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  database: RewindDatabase,
+  url: URL,
+  now: Date,
+): Promise<void> {
+  if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
+    authJson(request, response, config, 403, {
+      error: 'auth_transport_unavailable',
+      message: 'Group access is unavailable on this connection.',
+    });
+    return;
+  }
+  const token = authToken(request);
+  const session = token
+    ? validateRealSession(database, token, now)
+    : { status: 'invalid' as const };
+  if (session.status !== 'valid') {
+    authJson(request, response, config, 401, {
+      error: 'session_required',
+      message: 'A valid sign-in is required.',
+    });
+    return;
+  }
+
+  if (url.pathname === '/real/groups/current' && request.method === 'GET') {
+    authJson(request, response, config, 200, {
+      group: getCurrentRealGroup(database, session.account.id),
+    });
+    return;
+  }
+
+  if (url.pathname === '/real/groups' && request.method === 'POST') {
+    const body = await requestBody(request, config);
+    if (!body) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_group',
+        message: 'Enter a valid group name, prompt, and member limit from 2 to 10.',
+      });
+      return;
+    }
+    let created: ReturnType<typeof createRealGroup>;
+    try {
+      created = createRealGroup(
+        database,
+        session.account,
+        { name: body.name, prompt: body.prompt, maxMembers: body.maxMembers },
+        now,
+      );
+    } catch {
+      authJson(request, response, config, 409, {
+        error: 'group_create_failed',
+        message: 'The group could not be created. No partial group was saved.',
+      });
+      return;
+    }
+    if (!created) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_group',
+        message: 'Enter a valid group name, prompt, and member limit from 2 to 10.',
+      });
+      return;
+    }
+    authJson(request, response, config, 201, created);
+    return;
+  }
+
+  authJson(request, response, config, 404, {
+    error: 'not_found',
+    message: 'The requested real-group resource was not found.',
+  });
 }
 
 async function handleRealAuthRequest(
