@@ -288,6 +288,107 @@ function requireAuthorisedGroup(
   return identity;
 }
 
+interface AuthorisedMediaIdentity {
+  groupId: string;
+  memberId: string;
+  accountId?: string;
+  /** Demo-only lifecycle fence. Real sessions are revalidated from the token. */
+  sessionId?: string;
+}
+
+/**
+ * Media may be uploaded by either the isolated Demo session or an authenticated
+ * real account. Real requests carry only the opaque bearer/cookie credential;
+ * their account, selected group, and profile identity are resolved here rather
+ * than accepted from query parameters.
+ */
+function requireAuthorisedMediaGroup(
+  request: IncomingMessage,
+  database: RewindDatabase,
+  url: URL,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  now: Date,
+  groupId: string | null,
+  resource: ProtectedResource,
+): AuthorisedMediaIdentity | null {
+  const hasBearer = typeof request.headers.authorization === 'string';
+  const hasRealCookie =
+    typeof request.headers.cookie === 'string' &&
+    request.headers.cookie
+      .split(';')
+      .some((part) => part.trim().startsWith(`${REAL_SESSION_COOKIE}=`));
+  if (!hasBearer && !hasRealCookie) {
+    return requireAuthorisedGroup(database, url, response, config, now, groupId, resource);
+  }
+
+  // Real media authority never comes from the Demo sessionId query. Reject a
+  // mixed request instead of silently choosing whichever credential succeeds.
+  if (url.searchParams.has('sessionId')) {
+    sendDenied(response, config);
+    return null;
+  }
+  if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
+    authJson(request, response, config, 403, {
+      error: 'auth_transport_unavailable',
+      message: 'Media access is unavailable on this connection.',
+    });
+    return null;
+  }
+  const token = authToken(request);
+  const session = token
+    ? validateRealSession(database, token, now)
+    : { status: 'invalid' as const };
+  if (session.status !== 'valid') {
+    authJson(request, response, config, 401, {
+      error: 'session_required',
+      message: 'A valid sign-in is required.',
+    });
+    return null;
+  }
+  const selected = getCurrentRealGroup(database, session.account.id);
+  const membership = groupId
+    ? (database
+        .prepare(
+          `SELECT profile_id AS profileId FROM real_group_memberships
+           WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
+        )
+        .get(session.account.id, groupId) as { profileId?: string } | undefined)
+    : undefined;
+  if (
+    !groupId ||
+    selected?.group.id !== groupId ||
+    !membership?.profileId ||
+    !isMember(database, groupId, membership.profileId)
+  ) {
+    sendDenied(response, config);
+    return null;
+  }
+  return { accountId: session.account.id, groupId, memberId: membership.profileId };
+}
+
+function mediaIdentityIsCurrent(
+  request: IncomingMessage,
+  database: RewindDatabase,
+  identity: AuthorisedMediaIdentity,
+  now: Date,
+): boolean {
+  if (identity.sessionId) {
+    return isActiveDemoSession(database, identity.sessionId, identity.memberId, now);
+  }
+  if (!identity.accountId) return false;
+  const token = authToken(request);
+  const session = token
+    ? validateRealSession(database, token, now)
+    : { status: 'invalid' as const };
+  return Boolean(
+    session.status === 'valid' &&
+    session.account.id === identity.accountId &&
+    getCurrentRealGroup(database, identity.accountId)?.group.id === identity.groupId &&
+    isMember(database, identity.groupId, identity.memberId),
+  );
+}
+
 function requireAuthorisedOwner(
   database: RewindDatabase,
   url: URL,
@@ -1578,7 +1679,8 @@ export async function handleRequest(
   if (url.pathname === '/contributions/upload/source' && request.method === 'POST') {
     const groupId = url.searchParams.get('groupId');
     const idempotencyKey = url.searchParams.get('idempotencyKey') ?? '';
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -1713,7 +1815,7 @@ export async function handleRequest(
         const probed = await probeClipWithFfmpeg(config.ffmpegBin, claimedSourcePath, stagingDir);
         database.exec('BEGIN');
         try {
-          if (!isActiveDemoSession(database, identity.sessionId, identity.memberId, now())) {
+          if (!mediaIdentityIsCurrent(request, database, identity, now())) {
             database.exec('ROLLBACK');
             cleanupFailedStagedClaim(
               database,
@@ -1906,7 +2008,8 @@ export async function handleRequest(
 
   if (url.pathname === '/contributions/upload' && request.method === 'POST') {
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -1917,6 +2020,9 @@ export async function handleRequest(
     );
     if (!identity) return;
     const body = await requestBody(request, config);
+    if (identity.accountId && !mediaIdentityIsCurrent(request, database, identity, now())) {
+      return sendSessionRequired(response, config);
+    }
     if (
       body?.replacesContributionId !== undefined &&
       body.replacesContributionId !== null &&
@@ -2002,7 +2108,8 @@ export async function handleRequest(
     const jobId = decodePathSegment(uploadCancelMatch[1], response, config);
     if (jobId === null) return;
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2026,7 +2133,8 @@ export async function handleRequest(
     const jobId = decodePathSegment(processJobMatch[1], response, config);
     if (jobId === null) return;
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2082,7 +2190,8 @@ export async function handleRequest(
 
   if (url.pathname === '/contributions' && request.method === 'GET') {
     const requestNow = now();
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2646,7 +2755,8 @@ export async function handleRequest(
     );
     if (resourceId === null) return;
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2705,7 +2815,8 @@ export async function handleRequest(
       const resourceId = decodePathSegment(match[1], response, config);
       if (resourceId === null) return;
       const groupId = url.searchParams.get('groupId');
-      const identity = requireAuthorisedGroup(
+      const identity = requireAuthorisedMediaGroup(
+        request,
         database,
         url,
         response,

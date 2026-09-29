@@ -107,6 +107,9 @@ export interface CameraPlatform {
   getCapabilities(): Promise<CapabilitySnapshot>;
   getPermissions(): Promise<PermissionSnapshot>;
   requestPermissions(): Promise<PermissionSnapshot>;
+  /** Video capture requests camera first, then microphone; still capture need not use these. */
+  getVideoPermissions?(): Promise<PermissionSnapshot>;
+  requestVideoPermissions?(): Promise<PermissionSnapshot>;
   openSettings(): Promise<void>;
   captureStill(): Promise<PlatformStillImage>;
   /** Browser-only fallback when a live camera cannot be used. */

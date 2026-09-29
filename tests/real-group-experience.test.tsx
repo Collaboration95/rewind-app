@@ -3,6 +3,9 @@ import { fireEvent, render } from '@testing-library/react-native';
 import { useRealAccount } from '../src/auth/RealAccountProvider';
 import { RealAccountGroupExperience } from '../src/groups/RealAccountGroupExperience';
 
+jest.mock('@react-native-async-storage/async-storage', () =>
+  jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
+);
 jest.mock('../src/auth/RealAccountProvider', () => ({ useRealAccount: jest.fn() }));
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -61,8 +64,9 @@ describe('real account group journey', () => {
     expect(first.getByTestId('real-group-empty-contributions')).toBeTruthy();
     expect(first.queryByText('LOCKED')).toBeNull();
     await fireEvent.press(first.getByTestId('real-group-capture-action'));
-    expect(first.getByTestId('real-group-capture-unavailable')).toBeTruthy();
-    expect(first.getByText(/no contribution has been created/i)).toBeTruthy();
+    await first.findByTestId('video-capture-screen');
+    expect(first.getByText('Record a contribution')).toBeTruthy();
+    expect(first.queryByTestId('real-group-capture-unavailable')).toBeNull();
 
     first.unmount();
     const restored = await render(<RealAccountGroupExperience displayName="Real Owner" />);

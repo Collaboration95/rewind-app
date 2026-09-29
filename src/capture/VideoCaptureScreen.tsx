@@ -3,6 +3,10 @@ import { CameraView } from 'expo-camera';
 import { AppState, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
+import {
+  createRealAccountVideoRuntimeClient,
+  type AuthenticatedRequest,
+} from './real-account-video-runtime';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 import { COLORS } from '../theme';
 import type {
@@ -51,6 +55,7 @@ type AccessStatus =
 export interface VideoCaptureScreenProps {
   platform?: CameraPlatform;
   runtimeClient?: RuntimeClient | null;
+  realAccount?: { groupId: string; authenticatedRequest: AuthenticatedRequest };
   onBack?: () => void;
   onContributionDeleted?: () => void;
 }
@@ -68,6 +73,15 @@ function isVideoPlatform(
 interface ContributionFailure {
   message: string;
   retryable: boolean;
+  reason?: 'quota_exceeded';
+}
+
+function quotaFailure(code: string | undefined): boolean {
+  return (
+    code === 'quota_exceeded' ||
+    code === 'upload_quota_exceeded' ||
+    code === 'contribution_quota_exceeded'
+  );
 }
 
 /**
@@ -78,9 +92,14 @@ interface ContributionFailure {
 function classifyContributionFailure(error: unknown): ContributionFailure {
   const message = error instanceof Error ? error.message : 'The clip could not be uploaded.';
   if (error instanceof ClipUploadError) {
-    return { message, retryable: error.retryable };
+    return {
+      message,
+      retryable: error.retryable && !quotaFailure(error.code),
+      ...(quotaFailure(error.code) ? { reason: 'quota_exceeded' as const } : {}),
+    };
   }
   if (error instanceof LocalRuntimeError) {
+    if (quotaFailure(error.code)) return { message, retryable: false, reason: 'quota_exceeded' };
     if (error.status !== undefined && error.status >= 400 && error.status < 500) {
       return { message, retryable: false };
     }
@@ -116,6 +135,7 @@ export function VideoCaptureScreen({
   onContributionDeleted,
   platform: platformProp,
   runtimeClient = null,
+  realAccount,
 }: VideoCaptureScreenProps = {}) {
   const cameraRef = useRef<CameraView>(null);
   const getCameraRef = useCallback(() => cameraRef.current, []);
@@ -133,6 +153,16 @@ export function VideoCaptureScreen({
     [platform],
   );
   const demoSession = useOptionalDemoSession();
+  const realGroupId = realAccount?.groupId;
+  const authenticatedRequest = realAccount?.authenticatedRequest;
+  const activeRuntimeClient = useMemo(
+    () =>
+      runtimeClient ??
+      (authenticatedRequest ? createRealAccountVideoRuntimeClient(authenticatedRequest) : null),
+    [authenticatedRequest, runtimeClient],
+  );
+  const uploadSessionId = demoSession?.session?.id ?? (realGroupId ? 'real-account-session' : null);
+  const uploadGroupId = demoSession?.session?.groupId ?? realGroupId ?? null;
   const reviewStore = useMemo(() => new InMemoryPendingClipMetadataStore(), []);
   const [access, setAccess] = useState<AccessStatus>('checking');
   const [error, setError] = useState<string | null>(null);
@@ -168,15 +198,20 @@ export function VideoCaptureScreen({
     statusContext?.clearStatus();
   }, [statusContext]);
   const uploadSession = useMemo(() => {
-    if (!runtimeClient?.uploadClip || !runtimeClient.cancelClipUpload || !demoSession?.session) {
+    if (
+      !activeRuntimeClient?.uploadClip ||
+      !activeRuntimeClient.cancelClipUpload ||
+      !uploadSessionId ||
+      !uploadGroupId
+    ) {
       return null;
     }
-    const { groupId, id: sessionId } = demoSession.session;
     return new ClipUploadSession({
-      cancelClipUpload: (jobId) => runtimeClient.cancelClipUpload!(sessionId, groupId, jobId),
-      uploadClip: (input) => runtimeClient.uploadClip!(sessionId, groupId, input),
+      cancelClipUpload: (jobId) =>
+        activeRuntimeClient.cancelClipUpload!(uploadSessionId, uploadGroupId, jobId),
+      uploadClip: (input) => activeRuntimeClient.uploadClip!(uploadSessionId, uploadGroupId, input),
     });
-  }, [demoSession, runtimeClient]);
+  }, [activeRuntimeClient, uploadGroupId, uploadSessionId]);
 
   // Keep the latest sessions available to the one lifecycle cleanup effect
   // below. The upload session can be created after the first render while the
@@ -366,7 +401,7 @@ export function VideoCaptureScreen({
     try {
       const [capabilities, permissions] = await Promise.all([
         platform.getCapabilities(),
-        platform.getPermissions(),
+        platform.getVideoPermissions?.() ?? platform.getPermissions(),
       ]);
       if (!isCaptureActive()) return;
       if (capabilities.camera === 'undecided' || capabilities.microphone === 'undecided') {
@@ -441,7 +476,7 @@ export function VideoCaptureScreen({
     if (!isCaptureActive()) return;
     setError(null);
     try {
-      await platform.requestPermissions();
+      await (platform.requestVideoPermissions?.() ?? platform.requestPermissions());
       if (isCaptureActive()) await refresh();
     } catch {
       if (!isCaptureActive()) return;
@@ -578,7 +613,7 @@ export function VideoCaptureScreen({
     (
       uploaded: PendingClipUpload,
       state: ContributionStatus['state'],
-      options: Pick<ContributionStatus, 'message' | 'retryable'> = {
+      options: Pick<ContributionStatus, 'message' | 'retryable' | 'reason'> = {
         retryable: state === 'failed',
       },
     ): ContributionStatus => ({
@@ -601,13 +636,13 @@ export function VideoCaptureScreen({
       if (!isContributionWorkActive(operation)) return null;
       latestUploadRef.current = uploaded;
       setContributionStatus(describeUpload(uploaded, 'queued'));
-      if (!runtimeClient?.processClipJob || !demoSession?.session) return uploaded.job;
+      if (!activeRuntimeClient?.processClipJob || !uploadSessionId || !uploadGroupId)
+        return uploaded.job;
 
       setContributionStatus(describeUpload(uploaded, 'processing'));
-      const session = demoSession.session;
-      const processed = await runtimeClient.processClipJob(
-        session.id,
-        session.groupId,
+      const processed = await activeRuntimeClient.processClipJob(
+        uploadSessionId,
+        uploadGroupId,
         uploaded.job.id,
       );
       if (!isContributionWorkActive(operation)) return null;
@@ -634,7 +669,14 @@ export function VideoCaptureScreen({
       }
       return processed;
     },
-    [demoSession, describeUpload, isContributionWorkActive, runtimeClient, setContributionStatus],
+    [
+      activeRuntimeClient,
+      describeUpload,
+      isContributionWorkActive,
+      setContributionStatus,
+      uploadGroupId,
+      uploadSessionId,
+    ],
   );
 
   const upload = async () => {
@@ -700,14 +742,14 @@ export function VideoCaptureScreen({
       if (!isContributionWorkActive(operation)) {
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
-      if (runtimeClient?.stageClipSource && demoSession?.session) {
+      if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
         const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
-        const staged = await runtimeClient.stageClipSource(
-          demoSession.session.id,
-          demoSession.session.groupId,
+        const staged = await activeRuntimeClient.stageClipSource(
+          uploadSessionId,
+          uploadGroupId,
           input.idempotencyKey,
           sourceData,
         );
@@ -751,7 +793,11 @@ export function VideoCaptureScreen({
       const retryable = uploadSession.canRetry() && (failure.retryable || cancelled);
       const reported = cancelled
         ? { message: INTERRUPTED_UPLOAD_MESSAGE, retryable }
-        : { message: failure.message, retryable };
+        : {
+            message: failure.message,
+            retryable,
+            ...(failure.reason ? { reason: failure.reason } : {}),
+          };
       if (cancelled) setUploadProgress({ status: 'cancelled', percent: 0 });
       const uploaded = latestUploadRef.current;
       setContributionStatus(
@@ -798,14 +844,14 @@ export function VideoCaptureScreen({
       if (!isContributionWorkActive(operation)) {
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
-      if (runtimeClient?.stageClipSource && demoSession?.session) {
+      if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
         const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
-        const staged = await runtimeClient.stageClipSource(
-          demoSession.session.id,
-          demoSession.session.groupId,
+        const staged = await activeRuntimeClient.stageClipSource(
+          uploadSessionId,
+          uploadGroupId,
           input.idempotencyKey,
           sourceData,
         );
@@ -854,7 +900,11 @@ export function VideoCaptureScreen({
         ? { message: EXHAUSTED_UPLOAD_MESSAGE, retryable: false }
         : cancelled
           ? { message: INTERRUPTED_UPLOAD_MESSAGE, retryable: true }
-          : { message: failure.message, retryable: failure.retryable };
+          : {
+              message: failure.message,
+              retryable: failure.retryable,
+              ...(failure.reason ? { reason: failure.reason } : {}),
+            };
       if (cancelled) setUploadProgress({ status: 'cancelled', percent: 0 });
       if (uploaded) setContributionStatus(describeUpload(uploaded, 'failed', reported));
       else
@@ -1034,7 +1084,7 @@ export function VideoCaptureScreen({
       <View style={styles.header}>
         {onBack ? (
           <Pressable accessibilityRole="button" onPress={leaveCapture} style={styles.backButton}>
-            <Text style={styles.backText}>Back to stills</Text>
+            <Text style={styles.backText}>Back</Text>
           </Pressable>
         ) : null}
         <Text style={styles.eyebrow}>CLIP CAPTURE</Text>

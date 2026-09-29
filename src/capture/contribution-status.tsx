@@ -28,6 +28,7 @@ export interface ContributionStatus {
   durationSeconds?: number;
   createdAt: string;
   message?: string;
+  reason?: 'quota_exceeded';
   retryable: boolean;
   /** Whether the one bounded delete-and-replace action can still be shown. */
   deletionAvailability?: 'available' | 'used' | 'unavailable';
@@ -103,6 +104,7 @@ function isContributionStatus(value: unknown): value is ContributionStatus {
     (candidate.durationSeconds === undefined ||
       (typeof candidate.durationSeconds === 'number' && candidate.durationSeconds > 0)) &&
     (candidate.message === undefined || typeof candidate.message === 'string') &&
+    (candidate.reason === undefined || candidate.reason === 'quota_exceeded') &&
     (candidate.deletionAvailability === undefined ||
       candidate.deletionAvailability === 'available' ||
       candidate.deletionAvailability === 'used' ||
@@ -207,16 +209,18 @@ const lifecycleCopy: Record<
   },
 };
 
-const failureCopy = (retryable: boolean): { body: string; title: string } =>
-  retryable
-    ? {
-        title: 'Contribution needs a retry',
-        body: 'The contribution could not be prepared. Retry is available without exposing its file.',
-      }
-    : {
-        title: 'Contribution could not be prepared',
-        body: 'This contribution cannot be retried. Retake it to submit a new contribution.',
-      };
+const failureCopy = (status: ContributionStatus): { body: string; title: string } =>
+  status.reason === 'quota_exceeded'
+    ? { title: 'Contribution limit reached', body: 'No allowance remains.' }
+    : status.retryable
+      ? {
+          title: 'Contribution needs a retry',
+          body: 'The contribution could not be prepared. Retry is available without exposing its file.',
+        }
+      : {
+          title: 'Contribution could not be prepared',
+          body: 'This contribution cannot be retried. Retake it to submit a new contribution.',
+        };
 
 export function ContributionStatusPanel({
   onDelete,
@@ -234,8 +238,7 @@ export function ContributionStatusPanel({
   testID?: string;
 }) {
   if (!status) return null;
-  const copy =
-    status.state === 'failed' ? failureCopy(status.retryable) : lifecycleCopy[status.state];
+  const copy = status.state === 'failed' ? failureCopy(status) : lifecycleCopy[status.state];
   const metadata = status.durationSeconds
     ? `${status.durationSeconds.toFixed(1)} seconds · metadata only`
     : 'Metadata only · no media is shown';
