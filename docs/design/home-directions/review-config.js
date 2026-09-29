@@ -1,2 +1,2 @@
-// 评审 Issue 编号：发布 Issue 后填入，站点据此读取每个方案评论上的投票。
+// 评审 Issue 编号：页面据此打开 Issue，并读取大家发来的评审评论。
 window.REVIEW_ISSUE = 294;
