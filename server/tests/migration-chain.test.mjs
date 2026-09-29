@@ -6,7 +6,7 @@ import test from 'node:test';
 const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, openDatabase, schemaReadiness } = await import('../dist/db.js');
 
-test('real invite and media migrations 020–023 apply once and participate in schema readiness', async () => {
+test('real invite and media migrations 020–024 apply once and participate in schema readiness', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-migration-chain-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
   const database = openDatabase(config);
@@ -16,6 +16,7 @@ test('real invite and media migrations 020–023 apply once and participate in s
       [21, 'real-group-invite-acceptance-v1'],
       [22, 'real-media-profile-bridge-v1'],
       [23, 'photo-media-v1'],
+      [24, 'real-invite-guess-throttles-v1'],
     ];
     const assertChainReceipts = () => {
       for (const [version, key] of expectedReceipts) {
@@ -45,11 +46,18 @@ test('real invite and media migrations 020–023 apply once and participate in s
       for (const column of ['code', 'status', 'accepted_by_account_id', 'accepted_at']) {
         assert.equal(columns.has(column), true, `real_group_invites includes ${column}`);
       }
+      assert.ok(
+        database
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'real_invite_guess_throttles'",
+          )
+          .get(),
+      );
     };
 
     assertChainReceipts();
     assertInviteSchema();
-    assert.equal(schemaReadiness(database).expectedMigrationVersion, 23);
+    assert.equal(schemaReadiness(database).expectedMigrationVersion, 24);
     assert.deepEqual(schemaReadiness(database).missingMigrationKeys, []);
     assert.ok(
       database
@@ -89,6 +97,14 @@ test('real invite and media migrations 020–023 apply once and participate in s
       3,
     );
     assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+
+    database.exec('DROP TABLE real_invite_guess_throttles;');
+    assert.deepEqual(schemaReadiness(database).missingMigrationKeys, [
+      'real-invite-guess-throttles-v1',
+    ]);
+    migrateDatabase(database);
+    assert.equal(schemaReadiness(database).ready, true);
+    assertInviteSchema();
   } finally {
     database.close();
     await rm(dataDir, { recursive: true, force: true });

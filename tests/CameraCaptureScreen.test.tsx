@@ -140,6 +140,48 @@ describe('CameraCaptureScreen', () => {
     expect((await metadata.list())[0]).not.toHaveProperty('uri');
   });
 
+  it('presents a full-screen viewfinder with an accessible circular photo shutter', async () => {
+    const platform: CameraPlatform = {
+      captureStill: jest.fn().mockResolvedValue({
+        format: 'jpg',
+        height: 900,
+        source: 'camera',
+        sourceUri: 'file://test.jpg',
+        width: 1200,
+      }),
+      getCapabilities: jest
+        .fn()
+        .mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
+      getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      kind: 'expo',
+      openSettings: jest.fn().mockResolvedValue(undefined),
+      requestPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
+      supportsLivePreview: true,
+    };
+    const result = await screen(platform);
+
+    await result.findByTestId('camera-live-preview');
+    const screenRoot = result.getByTestId('camera-screen');
+    const viewfinder = result.getByTestId('camera-live-preview');
+    const shutter = result.getByRole('button', { name: 'Take still image' });
+    expect(screenRoot.props.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ padding: 0 })]),
+    );
+    expect(viewfinder.props.accessibilityLabel).toBe('Live camera viewfinder');
+    expect(shutter).toBeDisabled();
+    expect(shutter.props.accessibilityHint).toContain('opens a preview');
+
+    await act(async () => {
+      fireEvent(result.getByTestId('camera-live-preview'), 'cameraReady');
+    });
+    await waitFor(() =>
+      expect(result.getByRole('button', { name: 'Take still image' })).toBeEnabled(),
+    );
+    await fireEvent.press(result.getByRole('button', { name: 'Take still image' }));
+    await result.findByTestId('camera-preview-panel');
+    expect(result.getByRole('button', { name: 'Retake' })).toBeTruthy();
+  });
+
   it('cleans an active preview when retaking or discarding', async () => {
     const files = new InMemoryCaptureFileStore();
     const metadata = new InMemoryImageMetadataStore();
