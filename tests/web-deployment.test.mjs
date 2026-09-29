@@ -22,6 +22,8 @@ test('production web proxy keeps API and SPA routing boundaries explicit', () =>
       .length,
     2,
   );
+  assert.equal((nginx.match(/proxy_set_header X-Forwarded-Proto https;/g) ?? []).length, 2);
+  assert.doesNotMatch(nginx, /proxy_set_header X-Forwarded-Proto \$http_x_forwarded_proto;/);
   assert.doesNotMatch(nginx, /return 308 https:/);
   assert.match(nginx, /proxy_intercept_errors on/);
   assert.match(nginx, /proxy_hide_header Cache-Control/);
