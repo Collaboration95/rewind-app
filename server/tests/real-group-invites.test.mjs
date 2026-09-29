@@ -97,7 +97,7 @@ test('real owner can create an expiring invite through an authenticated real-gro
     });
     assert.equal(response.status, 201);
     const body = await response.json();
-    assert.match(body.invite.code, /^[A-Z0-9]{8}$/);
+    assert.match(body.invite.code, /^[A-Z]{3}-[A-Z]{3}$/);
     assert.equal(body.invite.groupId, group.id);
     assert.equal(body.invite.status, 'active');
     assert.equal(
@@ -117,7 +117,7 @@ test('real owner can create an expiring invite through an authenticated real-gro
       {
         groupId: group.id,
         ownerAccountId: owner.account.id,
-        code: body.invite.code,
+        code: body.invite.code.replace('-', ''),
         createdAt: body.invite.createdAt,
         expiresAt: body.invite.expiresAt,
       },
@@ -141,7 +141,11 @@ test('real invite joins the session account, changes selected group, and rejects
     const response = await fetch(`${baseUrl}/real/invites/accept`, {
       method: 'POST',
       headers: { Authorization: recipient.authorization, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: invite.code, groupId: group.id, accountId: owner.account.id }),
+      body: JSON.stringify({
+        code: ` ${invite.code.toLowerCase()} `,
+        groupId: group.id,
+        accountId: owner.account.id,
+      }),
     });
     assert.equal(response.status, 200);
     const accepted = await response.json();
@@ -214,6 +218,36 @@ test('real invite joins the session account, changes selected group, and rejects
   });
 });
 
+test('real invite acceptance keeps legacy eight-character codes working', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const owner = await provision(baseUrl, database, 'legacy-invite-owner');
+    const recipient = await provision(baseUrl, database, 'legacy-invite-recipient');
+    const { group } = await createGroupAndInvite(baseUrl, owner);
+    const legacyCode = 'A1B2C3D4';
+    database
+      .prepare(
+        `INSERT INTO real_group_invites
+          (id, group_id, owner_account_id, code, created_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'legacy-real-invite',
+        group.id,
+        owner.account.id,
+        legacyCode,
+        '2026-09-28T00:00:00.000Z',
+        '2026-09-29T00:00:00.000Z',
+      );
+    const accepted = await fetch(`${baseUrl}/real/invites/accept`, {
+      method: 'POST',
+      headers: { Authorization: recipient.authorization, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: ' a1b2 c3d4 ' }),
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal((await accepted.json()).group.group.id, group.id);
+  });
+});
+
 test('real invite acceptance reports malformed and expired invitations safely', async () => {
   await withRuntime(async ({ baseUrl, database, setNow }) => {
     const owner = await provision(baseUrl, database, 'invite-status-owner');
@@ -245,8 +279,38 @@ test('real invite acceptance reports malformed and expired invitations safely', 
     assert.equal(
       database
         .prepare('SELECT status FROM real_group_invites WHERE code = ?')
-        .get(expiredInvite.code).status,
+        .get(expiredInvite.code.replace('-', '')).status,
       'expired',
+    );
+  });
+});
+
+test('real invite code guessing is durably rate limited by account and source', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const recipient = await provision(baseUrl, database, 'invite-throttle-recipient');
+    const guess = () =>
+      fetch(`${baseUrl}/real/invites/accept`, {
+        method: 'POST',
+        headers: { Authorization: recipient.authorization, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: 'AAAAAAAA' }),
+      });
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const response = await guess();
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).status, 'malformed');
+    }
+    const limited = await guess();
+    assert.equal(limited.status, 429);
+    assert.equal((await limited.json()).status, 'throttled');
+    assert.deepEqual(
+      database
+        .prepare('SELECT scope, attempts FROM real_invite_guess_throttles ORDER BY scope')
+        .all()
+        .map((row) => ({ ...row })),
+      [
+        { scope: 'account', attempts: 10 },
+        { scope: 'source', attempts: 10 },
+      ],
     );
   });
 });

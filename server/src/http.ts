@@ -3214,13 +3214,20 @@ async function handleRealGroupRequest(
       authJson(request, response, config, 400, {
         status: 'malformed',
         error: 'invalid_invite',
-        message: 'Enter a valid eight-character invitation code.',
+        message: 'Enter a valid invitation code.',
       });
       return;
     }
     let result: ReturnType<typeof acceptRealGroupInvite>;
     try {
-      result = acceptRealGroupInvite(database, session.account, body.code, body.groupId, now);
+      result = acceptRealGroupInvite(
+        database,
+        session.account,
+        body.code,
+        body.groupId,
+        now,
+        authClientSource(request, config),
+      );
     } catch {
       authJson(request, response, config, 409, {
         status: 'denied',
@@ -3230,7 +3237,14 @@ async function handleRealGroupRequest(
       return;
     }
     if (!result.ok) {
-      const status = result.status === 'denied' ? 404 : result.status === 'full' ? 409 : 400;
+      const status =
+        result.status === 'throttled'
+          ? 429
+          : result.status === 'denied'
+            ? 404
+            : result.status === 'full'
+              ? 409
+              : 400;
       authJson(request, response, config, status, {
         status: result.status,
         error: `invite_${result.status}`,
@@ -3243,7 +3257,9 @@ async function handleRealGroupRequest(
                 ? 'This group has reached its member limit.'
                 : result.status === 'denied'
                   ? 'You do not have access to this group.'
-                  : 'Enter a valid eight-character invitation code.',
+                  : result.status === 'throttled'
+                    ? 'Too many invitation attempts. Please try again later.'
+                    : 'Enter a valid invitation code.',
       });
       return;
     }

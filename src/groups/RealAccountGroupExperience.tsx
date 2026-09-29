@@ -60,6 +60,13 @@ interface RealInvite extends InviteLinkPayload {
   createdAt: string;
 }
 
+function displayInviteCode(code: string): string {
+  const normalized = code.replace(/[\s-]/g, '').toUpperCase();
+  return /^[A-Z]{6}$/.test(normalized)
+    ? `${normalized.slice(0, 3)}-${normalized.slice(3)}`
+    : normalized;
+}
+
 interface RealGroup {
   memberId?: string;
   group: { id: string; name: string; role: 'owner' | 'member'; maxMembers: number };
@@ -145,6 +152,7 @@ export function RealAccountGroupExperience({
   const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
   const [invitePending, setInvitePending] = useState(false);
   const [acceptPending, setAcceptPending] = useState(false);
+  const [enteredCode, setEnteredCode] = useState('');
 
   const loadGroupMembers = useCallback(
     async (groupId: string, contextVersion: number) => {
@@ -215,33 +223,42 @@ export function RealAccountGroupExperience({
 
   if (screen === 'capture' && group) {
     return (
-      <ScrollView contentContainerStyle={styles.captureContent} style={styles.captureContainer}>
-        <Text style={styles.label} testID="real-group-capture-context">
-          Group · {group.group.name}
-        </Text>
-        <View style={styles.captureModes}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setScreen('home')}
-            style={styles.modeButton}
-          >
-            <Text style={styles.modeButtonText}>Back to group</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setCaptureMode('photo')}
-            style={styles.modeButton}
-          >
-            <Text style={styles.modeButtonText}>Photo</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setCaptureMode('video')}
-            style={styles.modeButton}
-          >
-            <Text style={styles.modeButtonText}>Video</Text>
-          </Pressable>
-        </View>
+      <ScrollView
+        contentContainerStyle={
+          captureMode === 'photo' ? styles.photoCaptureContent : styles.captureContent
+        }
+        style={styles.captureContainer}
+      >
+        {captureMode === 'video' ? (
+          <Text style={styles.label} testID="real-group-capture-context">
+            Group · {group.group.name}
+          </Text>
+        ) : null}
+        {captureMode === 'video' ? (
+          <View style={styles.captureModes}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setScreen('home')}
+              style={styles.modeButton}
+            >
+              <Text style={styles.modeButtonText}>Back to group</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setCaptureMode('photo')}
+              style={styles.modeButton}
+            >
+              <Text style={styles.modeButtonText}>Photo</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setCaptureMode('video')}
+              style={styles.modeButton}
+            >
+              <Text style={styles.modeButtonText}>Video</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <ContributionStatusProvider
           scope={{
             sessionId: 'real-account-session',
@@ -252,6 +269,7 @@ export function RealAccountGroupExperience({
         >
           {captureMode === 'photo' ? (
             <CameraCaptureScreen
+              onBack={() => setScreen('home')}
               onRecordClip={() => setCaptureMode('video')}
               onSubmitPhoto={async (metadata, base64, onProgress, replacesContributionId) => {
                 if (!mediaClient.uploadClip || !mediaClient.processClipJob) {
@@ -389,12 +407,6 @@ export function RealAccountGroupExperience({
 
   const createInvitation = async () => {
     if (!group || group.group.role !== 'owner') return;
-    if (!inviteWebOrigin) {
-      setInviteFeedback(
-        'Invitation links are unavailable because this app has no configured public HTTPS web origin.',
-      );
-      return;
-    }
     setInvitePending(true);
     setInviteFeedback(null);
     try {
@@ -427,37 +439,51 @@ export function RealAccountGroupExperience({
     : null;
 
   const copyInvitation = async () => {
+    if (!invite) return;
+    try {
+      await Clipboard.setStringAsync(displayInviteCode(invite.code));
+      setInviteFeedback('Invitation code copied.');
+    } catch {
+      setInviteFeedback('Copy is unavailable here. Select the invitation code to copy it.');
+    }
+  };
+
+  const copyInvitationLink = async () => {
     if (!inviteLink) return;
     try {
       await Clipboard.setStringAsync(inviteLink);
       setInviteFeedback('Invitation link copied.');
     } catch {
-      setInviteFeedback('Copy is unavailable here. Select the invitation link to copy it.');
+      setInviteFeedback('Copy is unavailable here. Share the invitation code instead.');
     }
   };
 
   const shareInvitation = async () => {
-    if (!inviteLink) return;
+    if (!invite) return;
     try {
       await Share.share({
-        message: `Join my Rewind group with this invitation link: ${inviteLink}`,
-        url: inviteLink,
+        message: `Join my Rewind group with code ${displayInviteCode(invite.code)}. Open Rewind and choose Enter invitation code.`,
       });
-      setInviteFeedback('Invitation link ready to share.');
+      setInviteFeedback('Invitation code ready to share.');
     } catch {
-      setInviteFeedback('Share is unavailable here. Copy the invitation link to share it.');
+      setInviteFeedback('Share is unavailable here. Copy the invitation code to share it.');
     }
   };
 
-  const acceptInvitation = async () => {
-    if (!inviteIntent || acceptPending) return;
+  const acceptInvitation = async (rawCode: string, requestedGroupId?: string) => {
+    if (acceptPending) return;
+    const code = rawCode.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^(?:[A-Z]{6}|[A-Z0-9]{8})$/.test(code)) {
+      setInviteFeedback('Enter the six-letter invitation code, like ABC-DEF.');
+      return;
+    }
     setAcceptPending(true);
     setInviteFeedback(null);
     try {
       const response = await auth.authenticatedRequest('/real/invites/accept', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: inviteIntent.code, groupId: inviteIntent.groupId }),
+        body: JSON.stringify({ code, ...(requestedGroupId ? { groupId: requestedGroupId } : {}) }),
       });
       const body = (await response.json()) as {
         status?: string;
@@ -477,6 +503,7 @@ export function RealAccountGroupExperience({
           : [...current, body.group!],
       );
       setScreen('home');
+      setEnteredCode('');
       setInviteFeedback('Invitation accepted. You joined the group.');
     } catch (error) {
       setInviteFeedback(
@@ -522,7 +549,7 @@ export function RealAccountGroupExperience({
       {inviteIntent ? (
         <View style={styles.inviteIntent} testID="real-invite-intent">
           <Text style={styles.panelTitle}>Invitation retained</Text>
-          <Text style={styles.body}>Group {inviteIntent.groupId}</Text>
+          <Text style={styles.body}>Your group invitation is ready.</Text>
           <Text style={styles.body}>
             Expires {new Date(inviteIntent.expiresAt).toLocaleString()}
           </Text>
@@ -532,7 +559,7 @@ export function RealAccountGroupExperience({
           <Action
             title={acceptPending ? 'Joining…' : 'Accept invitation'}
             disabled={acceptPending}
-            onPress={() => void acceptInvitation()}
+            onPress={() => void acceptInvitation(inviteIntent.code, inviteIntent.groupId)}
             testID="real-invite-accept"
           />
           {inviteFeedback ? (
@@ -590,12 +617,30 @@ export function RealAccountGroupExperience({
             }}
             testID="real-group-create-choice"
           />
+          <Text style={styles.body}>Have an invitation code? Enter it to join your group.</Text>
+          <TextInput
+            accessibilityLabel="Invitation code"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            onChangeText={setEnteredCode}
+            placeholder="ABC-DEF"
+            placeholderTextColor={COLORS.muted}
+            style={styles.input}
+            testID="real-group-enter-code"
+            value={enteredCode}
+          />
           <Action
-            title={inviteIntent ? 'Invitation shown above' : 'Open an invitation link to join'}
-            disabled
-            onPress={() => undefined}
+            title={acceptPending ? 'Joining…' : 'Join with code'}
+            disabled={acceptPending}
+            onPress={() => void acceptInvitation(enteredCode)}
             testID="real-group-join-choice"
           />
+          {inviteFeedback ? (
+            <Text accessibilityRole="alert" style={styles.error} testID="real-group-join-feedback">
+              {inviteFeedback}
+            </Text>
+          ) : null}
+          {group ? <Action title="Back to group" onPress={() => setScreen('home')} /> : null}
           <Action
             title={
               auth.pending
@@ -770,14 +815,15 @@ export function RealAccountGroupExperience({
                 ))}
             </View>
           ) : null}
+          <Action title="Join another group" onPress={() => setScreen('choices')} />
           {group.group.role === 'owner' ? (
             <View style={styles.invitationPanel} testID="real-group-invitations">
               <Text style={styles.label}>GROUP INVITATION</Text>
               <Text style={styles.body}>
-                Create a private invite link that expires in 24 hours.
+                Create a private invitation code that expires in 24 hours.
               </Text>
               <Action
-                title={invitePending ? 'Creating invitation…' : 'Create invitation link'}
+                title={invitePending ? 'Creating invitation…' : 'Create invitation code'}
                 disabled={invitePending}
                 onPress={() => void createInvitation()}
                 testID="real-group-create-invite"
@@ -787,27 +833,22 @@ export function RealAccountGroupExperience({
                   <Text style={styles.body} testID="real-group-invite-expiry">
                     Expires {new Date(invite.expiresAt).toLocaleString()} · Active
                   </Text>
+                  <Text selectable style={styles.inviteCode} testID="real-group-invite-code">
+                    {displayInviteCode(invite.code)}
+                  </Text>
+                  <Action
+                    title="Copy invitation code"
+                    onPress={() => void copyInvitation()}
+                    testID="real-group-copy-invite"
+                  />
+                  <Action
+                    title="Share invitation code"
+                    onPress={() => void shareInvitation()}
+                    testID="real-group-share-invite"
+                  />
                   {inviteLink ? (
-                    <>
-                      <Text selectable style={styles.body} testID="real-group-invite-link">
-                        {inviteLink}
-                      </Text>
-                      <Action
-                        title="Copy invitation link"
-                        onPress={() => void copyInvitation()}
-                        testID="real-group-copy-invite"
-                      />
-                      <Action
-                        title="Share invitation link"
-                        onPress={() => void shareInvitation()}
-                        testID="real-group-share-invite"
-                      />
-                    </>
-                  ) : (
-                    <Text accessibilityRole="alert" style={styles.error}>
-                      A secure HTTPS link is unavailable. Connect the app to its HTTPS web origin.
-                    </Text>
-                  )}
+                    <Action title="Copy invite link" onPress={() => void copyInvitationLink()} />
+                  ) : null}
                 </>
               ) : null}
               {inviteFeedback ? (
@@ -921,6 +962,7 @@ const styles = StyleSheet.create({
   content: { gap: 18, padding: 22 },
   captureContainer: { flex: 1 },
   captureContent: { flexGrow: 1, gap: 12, padding: 22 },
+  photoCaptureContent: { flexGrow: 1 },
   captureModes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   modeButton: { borderColor: COLORS.edge, borderRadius: 8, borderWidth: 1, padding: 10 },
   modeButtonText: { color: COLORS.ink, fontWeight: '700' },
@@ -937,6 +979,7 @@ const styles = StyleSheet.create({
   },
   title: { color: COLORS.ink, fontSize: 27, fontWeight: '700' },
   panelTitle: { color: COLORS.ink, fontSize: 19, fontWeight: '700' },
+  inviteCode: { color: COLORS.ink, fontSize: 28, fontWeight: '800', letterSpacing: 3 },
   body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   prompt: { color: COLORS.ink, fontSize: 18, fontWeight: '600' },
   input: {

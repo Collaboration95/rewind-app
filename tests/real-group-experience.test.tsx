@@ -29,6 +29,52 @@ const persistedGroup = {
 };
 
 describe('real account group journey', () => {
+  it('joins an invited group with a six-letter code without a group ID', async () => {
+    let joined = false;
+    const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/real/groups/current') return jsonResponse({ group: null });
+      if (path === '/real/groups') return jsonResponse({ groups: [] });
+      if (path === '/real/invites/accept') {
+        expect(JSON.parse(String(init?.body))).toEqual({ code: 'ABCDEF' });
+        joined = true;
+        return jsonResponse({ group: persistedGroup });
+      }
+      if (path.endsWith('/members'))
+        return jsonResponse({
+          group: { id: persistedGroup.group.id, name: persistedGroup.group.name },
+          members: [],
+          pendingInviteCount: 0,
+        });
+      if (path.startsWith('/contributions?'))
+        return jsonResponse({
+          cycleId: persistedGroup.cycle.id,
+          memberId: 'real-member-1',
+          allowance: {
+            maxCount: 5,
+            maxSeconds: 30,
+            countUsed: 0,
+            secondsUsed: 0,
+            deletionsUsed: 0,
+            deletionAvailability: 'available',
+          },
+          entries: [],
+          latestContribution: null,
+          pagination: { limit: 50, hasMore: false, nextCursor: null },
+        });
+      throw new Error(`Unexpected authenticated request: ${path}`);
+    });
+    (useRealAccount as jest.Mock).mockReturnValue({ authenticatedRequest, signOut: jest.fn() });
+
+    const result = await render(<RealAccountGroupExperience displayName="Invited member" />);
+    await result.findByTestId('real-group-enter-code');
+    await fireEvent.changeText(result.getByTestId('real-group-enter-code'), 'abc-def');
+    await fireEvent.press(result.getByTestId('real-group-join-choice'));
+    await result.findByTestId('real-group-home');
+    expect(joined).toBe(true);
+    expect(result.getByTestId('real-group-name-heading').props.children).toBe('Saturday table');
+    result.unmount();
+  });
+
   it('refreshes both Home allowance displays from the ledger when returning from capture', async () => {
     const activeGroup = { ...persistedGroup, memberId: 'real-member-1' };
     let ledgerRead = 0;
@@ -143,7 +189,7 @@ describe('real account group journey', () => {
     const first = await render(<RealAccountGroupExperience displayName="Real Owner" />);
     await first.findByTestId('real-group-create-choice');
     expect(first.getByTestId('real-group-join-choice').props.accessibilityState?.disabled).toBe(
-      true,
+      false,
     );
     await fireEvent.press(first.getByTestId('real-group-create-choice'));
     await fireEvent.changeText(first.getByTestId('real-group-name'), '   ');
@@ -168,7 +214,7 @@ describe('real account group journey', () => {
     expect(first.queryByText('LOCKED')).toBeNull();
     await fireEvent.press(first.getByTestId('real-group-capture-action'));
     expect(first.getByTestId('camera-screen')).toBeTruthy();
-    await fireEvent.press(first.getByText('Video'));
+    await fireEvent.press(first.getByTestId('camera-record-clip'));
     await first.findByTestId('video-capture-screen');
     expect(first.getByText('Record a contribution')).toBeTruthy();
     expect(first.queryByTestId('real-group-capture-unavailable')).toBeNull();

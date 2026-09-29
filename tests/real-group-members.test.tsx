@@ -141,6 +141,8 @@ it('updates group members and active context when switching selected groups', as
   expect(await screen.findByTestId('real-chat-empty')).toBeTruthy();
   await fireEvent.press(screen.getByTestId('real-group-chat-back'));
   await fireEvent.press(screen.getByTestId('real-group-capture-action'));
+  expect(screen.getByTestId('camera-screen')).toBeTruthy();
+  await fireEvent.press(screen.getByTestId('camera-record-clip'));
   expect(screen.getByTestId('real-group-capture-context').props.children).toEqual([
     'Group · ',
     'Garden circle',
