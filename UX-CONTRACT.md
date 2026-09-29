@@ -1,8 +1,9 @@
 # Rewind UX contract
 
 This contract records the shared behavior for the local-first Demo access,
-group creation, and settings flows. Visual intent and runtime tokens remain in
-[`DESIGN.md`](./DESIGN.md).
+group creation, and settings flows. Visual tokens are defined in
+[`src/theme.ts`](./src/theme.ts); this document records product behavior and
+interaction.
 
 ## Product boundary
 
@@ -99,7 +100,7 @@ not used.
 `src/domain/session.ts` and `src/domain/groups.ts` own framework-independent
 types and validation. `src/session/` owns local persistence and lifecycle.
 `src/runtime/local-runtime-client.ts` owns the typed HTTP adapter. The server
-revalidates sessions and owns atomic SQLite group/cycle writes. `DESIGN.md` and
-`src/theme.ts` remain the paired visual token sources. The typed chat transport
-is owned by `src/chat/realtime-client.ts` and exposed to the product through
+revalidates sessions and owns atomic SQLite group/cycle writes. Visual tokens
+are defined in `src/theme.ts`. The typed chat transport is owned by
+`src/chat/realtime-client.ts` and exposed to the product through
 `src/runtime/local-runtime-client.ts`.
