@@ -8,6 +8,15 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 );
 jest.mock('../src/auth/RealAccountProvider', () => ({ useRealAccount: jest.fn() }));
 jest.mock('../src/capture/VideoCaptureScreen', () => ({ VideoCaptureScreen: () => null }));
+jest.mock('../src/chat/native-event-source', () => ({
+  createRuntimeEventSource: () => ({
+    addEventListener: jest.fn(),
+    close: jest.fn(),
+    onerror: null,
+    onopen: null,
+    removeEventListener: jest.fn(),
+  }),
+}));
 
 function jsonResponse(body: unknown, status = 200): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
@@ -22,6 +31,7 @@ function deferred<T>() {
 }
 
 const ownerGroup = {
+  memberId: 'real-profile-owner',
   group: { id: 'real-group-1', name: 'Saturday table', role: 'owner' as const, maxMembers: 4 },
   cycle: {
     id: 'real-cycle-1',
@@ -36,6 +46,7 @@ const ownerGroup = {
 
 const joinedGroup = {
   ...ownerGroup,
+  memberId: 'real-profile-member',
   group: {
     ...ownerGroup.group,
     id: 'real-group-2',
@@ -56,12 +67,24 @@ it('updates group members and active context when switching selected groups', as
     }
     if (path === '/real/groups/current') return jsonResponse({ group: selected });
     if (path === '/real/groups') return jsonResponse({ groups });
+    if (path.startsWith('/realtime/groups/') && path.includes('/messages?limit=100'))
+      return jsonResponse({ events: [], nextCursor: null, watermarkEventId: 0, hasMore: false });
     if (path === `/real/groups/${ownerGroup.group.id}/members`)
       return jsonResponse({
         group: { id: ownerGroup.group.id, name: ownerGroup.group.name },
         members: [
-          { displayName: 'Ada Owner', role: 'owner', joinedAt: '2026-09-28T00:00:00.000Z' },
-          { displayName: 'Bea Member', role: 'member', joinedAt: '2026-09-28T00:01:00.000Z' },
+          {
+            memberId: 'real-profile-owner',
+            displayName: 'Ada Owner',
+            role: 'owner',
+            joinedAt: '2026-09-28T00:00:00.000Z',
+          },
+          {
+            memberId: 'real-profile-member',
+            displayName: 'Bea Member',
+            role: 'member',
+            joinedAt: '2026-09-28T00:01:00.000Z',
+          },
         ],
         pendingInviteCount: 1,
       });
@@ -69,14 +92,30 @@ it('updates group members and active context when switching selected groups', as
       return jsonResponse({
         group: { id: joinedGroup.group.id, name: joinedGroup.group.name },
         members: [
-          { displayName: 'Cy Owner', role: 'owner', joinedAt: '2026-09-28T00:00:00.000Z' },
-          { displayName: 'Dee Member', role: 'member', joinedAt: '2026-09-28T00:02:00.000Z' },
+          {
+            memberId: 'real-profile-cy',
+            displayName: 'Cy Owner',
+            role: 'owner',
+            joinedAt: '2026-09-28T00:00:00.000Z',
+          },
+          {
+            memberId: 'real-profile-member',
+            displayName: 'Dee Member',
+            role: 'member',
+            joinedAt: '2026-09-28T00:02:00.000Z',
+          },
         ],
         pendingInviteCount: 0,
       });
     throw new Error(`Unexpected authenticated request: ${path}`);
   });
-  (useRealAccount as jest.Mock).mockReturnValue({ authenticatedRequest, signOut: jest.fn() });
+  (useRealAccount as jest.Mock).mockReturnValue({
+    baseUrl: 'https://runtime.example',
+    session: { account: { id: 'real-account', displayName: 'Member' } },
+    authenticatedRequest,
+    realtimeAuthorizationHeader: () => 'Bearer token',
+    signOut: jest.fn(),
+  });
 
   const screen = await render(<RealAccountGroupExperience displayName="Member" />);
   await screen.findByTestId('real-group-home');
@@ -97,11 +136,11 @@ it('updates group members and active context when switching selected groups', as
     'No pending invitations',
   );
   await fireEvent.press(screen.getByTestId('real-group-chat-action'));
-  expect(screen.getByTestId('real-group-chat-context').props.children).toEqual([
+  expect(screen.getByTestId('real-chat-context').props.children).toEqual([
     'ACTIVE GROUP · ',
     'Garden circle',
   ]);
-  expect(screen.getByText('Group messaging is not available for real accounts yet.')).toBeTruthy();
+  expect(await screen.findByTestId('real-chat-empty')).toBeTruthy();
   await fireEvent.press(screen.getByTestId('real-group-chat-back'));
   await fireEvent.press(screen.getByTestId('real-group-capture-action'));
   expect(screen.getByTestId('real-group-capture-context').props.children).toEqual([

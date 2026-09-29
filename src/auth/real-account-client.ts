@@ -212,6 +212,11 @@ export class RealAccountClient {
     return response;
   }
 
+  realtimeAuthorizationHeader(token?: string): string | undefined {
+    const credential = token ?? this.activeToken;
+    return Platform.OS !== 'web' && credential ? `Bearer ${credential}` : undefined;
+  }
+
   private assertSecureTransport(): void {
     if (!this.canConnectSecurely()) throw new AuthRequestError(0, 'insecure-transport');
   }

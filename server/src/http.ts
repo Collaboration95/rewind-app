@@ -213,9 +213,12 @@ function sendRealtimeAccessDenied(
   message: string = SAFE_DENIAL.message,
 ): boolean {
   if (!acceptsEventStream(request)) return false;
+  const hasAuthCredential = Boolean(request.headers.authorization || request.headers.cookie);
   response.writeHead(200, {
-    'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
-    'Access-Control-Allow-Origin': config.allowOrigin,
+    ...(hasAuthCredential
+      ? authCorsHeaders(request, config)
+      : { 'Access-Control-Allow-Origin': config.allowOrigin }),
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
     'Cache-Control': 'no-cache, no-store',
     Connection: 'keep-alive',
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -386,6 +389,120 @@ function mediaIdentityIsCurrent(
     session.status === 'valid' &&
     session.account.id === identity.accountId &&
     getCurrentRealGroup(database, identity.accountId)?.group.id === identity.groupId &&
+    isMember(database, identity.groupId, identity.memberId),
+  );
+}
+
+function requireAuthorisedChatGroup(
+  request: IncomingMessage,
+  database: RewindDatabase,
+  url: URL,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  at: Date,
+  groupId: string,
+): AuthorisedMediaIdentity | null {
+  const hasBearer = typeof request.headers.authorization === 'string';
+  const hasRealCookie =
+    typeof request.headers.cookie === 'string' &&
+    request.headers.cookie
+      .split(';')
+      .some((part) => part.trim().startsWith(`${REAL_SESSION_COOKIE}=`));
+  if (!hasBearer && !hasRealCookie) {
+    const demo = extractDemoRequestIdentity(database, url, at);
+    if (!demo.ok) {
+      if (
+        !sendRealtimeAccessDenied(
+          request,
+          response,
+          config,
+          401,
+          'Choose Demo access before joining chat.',
+        )
+      ) {
+        sendSessionRequired(response, config);
+      }
+      return null;
+    }
+    if (
+      demo.identity.groupId !== groupId ||
+      !authorizeSessionMember(database, groupId, demo.identity, 'message').allowed
+    ) {
+      if (!sendRealtimeAccessDenied(request, response, config)) sendDenied(response, config);
+      return null;
+    }
+    return {
+      groupId: demo.identity.groupId,
+      memberId: demo.identity.memberId,
+      sessionId: demo.identity.sessionId,
+    };
+  }
+
+  const deny = (status: number = SAFE_DENIAL.status, message: string = SAFE_DENIAL.message) => {
+    if (!sendRealtimeAccessDenied(request, response, config, status, message)) {
+      sendJson(response, config, status, {
+        error: status === 401 ? 'session_required' : 'forbidden',
+        message,
+      });
+    }
+    return null;
+  };
+  if (url.searchParams.has('sessionId')) return deny();
+  if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
+    return deny(403, 'Chat access is unavailable on this connection.');
+  }
+  const token = authToken(request);
+  const session = token ? validateRealSession(database, token, at) : { status: 'invalid' as const };
+  if (session.status !== 'valid') {
+    return deny(401, 'Sign in again to join this group chat.');
+  }
+  const selected = getCurrentRealGroup(database, session.account.id);
+  const membership = database
+    .prepare(
+      `SELECT profile_id AS profileId FROM real_group_memberships
+       WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
+    )
+    .get(session.account.id, groupId) as { profileId?: string } | undefined;
+  if (
+    selected?.group.id !== groupId ||
+    !membership?.profileId ||
+    !isMember(database, groupId, membership.profileId)
+  ) {
+    return deny();
+  }
+  return { accountId: session.account.id, groupId, memberId: membership.profileId };
+}
+
+function chatIdentityIsCurrent(
+  request: IncomingMessage,
+  database: RewindDatabase,
+  identity: AuthorisedMediaIdentity,
+  at: Date,
+): boolean {
+  if (identity.sessionId) {
+    const current = getDemoSession(database, identity.sessionId);
+    return Boolean(
+      current &&
+      current.actor.memberId === identity.memberId &&
+      current.groupId === identity.groupId &&
+      classifyDemoSession(current.expiresAt, current.invalidatedAt, at) === 'valid' &&
+      isMember(database, identity.groupId, identity.memberId),
+    );
+  }
+  if (!identity.accountId) return false;
+  const token = authToken(request);
+  const session = token ? validateRealSession(database, token, at) : { status: 'invalid' as const };
+  const membership = database
+    .prepare(
+      `SELECT profile_id AS profileId FROM real_group_memberships
+       WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
+    )
+    .get(identity.accountId, identity.groupId) as { profileId?: string } | undefined;
+  return Boolean(
+    session.status === 'valid' &&
+    session.account.id === identity.accountId &&
+    getCurrentRealGroup(database, identity.accountId)?.group.id === identity.groupId &&
+    membership?.profileId === identity.memberId &&
     isMember(database, identity.groupId, identity.memberId),
   );
 }
@@ -1105,12 +1222,16 @@ export async function handleRequest(
   const requestLimiters = options.requestLimiters ?? createRequestLimiters(config);
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
   if (request.method === 'OPTIONS') {
-    if (url.pathname.startsWith('/auth/') || url.pathname.startsWith('/real/')) {
+    if (
+      url.pathname.startsWith('/auth/') ||
+      url.pathname.startsWith('/real/') ||
+      url.pathname.startsWith('/realtime/groups/')
+    ) {
       const corsHeaders = authCorsHeaders(request, config);
       response.writeHead(204, {
         ...corsHeaders,
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
+        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
         'Cache-Control': 'no-store',
       });
       response.end();
@@ -1253,14 +1374,14 @@ export async function handleRequest(
   if (realtimeHistoryMessagesMatch && request.method === 'GET') {
     const groupId = decodePathSegment(realtimeHistoryMessagesMatch[1], response, config);
     if (groupId === null) return;
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedChatGroup(
+      request,
       database,
       url,
       response,
       config,
       now(),
       groupId,
-      'message',
     );
     if (!identity) return;
     const rawLimit = url.searchParams.get('limit');
@@ -1292,28 +1413,16 @@ export async function handleRequest(
   if (realtimeEventsMatch && request.method === 'GET') {
     const groupId = decodePathSegment(realtimeEventsMatch[1], response, config);
     if (groupId === null) return;
-    const identity = extractDemoRequestIdentity(database, url, now());
-    if (!identity.ok) {
-      if (
-        !sendRealtimeAccessDenied(
-          request,
-          response,
-          config,
-          401,
-          'Choose Demo access before joining chat.',
-        )
-      ) {
-        sendSessionRequired(response, config);
-      }
-      return;
-    }
-    if (
-      identity.identity.groupId !== groupId ||
-      !authorizeSessionMember(database, groupId, identity.identity, 'message').allowed
-    ) {
-      if (!sendRealtimeAccessDenied(request, response, config)) sendDenied(response, config);
-      return;
-    }
+    const identity = requireAuthorisedChatGroup(
+      request,
+      database,
+      url,
+      response,
+      config,
+      now(),
+      groupId,
+    );
+    if (!identity) return;
 
     const lastEventHeader = request.headers['last-event-id'];
     const lastEventValue = Array.isArray(lastEventHeader)
@@ -1337,8 +1446,10 @@ export async function handleRequest(
     }
 
     response.writeHead(200, {
-      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
-      'Access-Control-Allow-Origin': config.allowOrigin,
+      ...(identity.accountId && (request.headers.authorization || request.headers.cookie)
+        ? authCorsHeaders(request, config)
+        : { 'Access-Control-Allow-Origin': config.allowOrigin }),
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
       'Cache-Control': 'no-cache, no-store',
       Connection: 'keep-alive',
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -1359,15 +1470,7 @@ export async function handleRequest(
     };
     response.once('close', cleanup);
     const streamIsAuthorised = () => {
-      const currentSession = getDemoSession(database, identity.identity.sessionId);
-      return Boolean(
-        currentSession &&
-        currentSession.actor.memberId === identity.identity.memberId &&
-        currentSession.groupId === groupId &&
-        classifyDemoSession(currentSession.expiresAt, currentSession.invalidatedAt, now()) ===
-          'valid' &&
-        isMember(database, groupId, currentSession.actor.memberId),
-      );
+      return chatIdentityIsCurrent(request, database, identity, now());
     };
     const endUnauthorisedStream = () => {
       if (streamIsAuthorised()) return false;
@@ -1454,17 +1557,21 @@ export async function handleRequest(
   if (realtimeMessagesMatch && request.method === 'POST') {
     const groupId = decodePathSegment(realtimeMessagesMatch[1], response, config);
     if (groupId === null) return;
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedChatGroup(
+      request,
       database,
       url,
       response,
       config,
       now(),
       groupId,
-      'message',
     );
     if (!identity) return;
     const body = await requestBody(request, config);
+    if (!chatIdentityIsCurrent(request, database, identity, now())) {
+      sendDenied(response, config);
+      return;
+    }
     const result = createChatMessage(database, {
       groupId,
       memberId: identity.memberId,
@@ -1516,14 +1623,14 @@ export async function handleRequest(
       ? decodePathSegment(realtimeReactionMatch[3], response, config)
       : undefined;
     if (groupId === null || messageId === null || pathEmoji === null) return;
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedChatGroup(
+      request,
       database,
       url,
       response,
       config,
       now(),
       groupId,
-      'message',
     );
     if (!identity) return;
     if (request.method === 'GET') {
@@ -1533,6 +1640,10 @@ export async function handleRequest(
       return;
     }
     const body = await requestBody(request, config);
+    if (!chatIdentityIsCurrent(request, database, identity, now())) {
+      sendDenied(response, config);
+      return;
+    }
     const emoji =
       pathEmoji ??
       (typeof body?.emoji === 'string' ? body.emoji : url.searchParams.get('emoji')) ??

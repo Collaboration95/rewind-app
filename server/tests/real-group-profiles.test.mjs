@@ -104,8 +104,26 @@ test('member summaries follow the selected group and include only joined profile
     assert.deepEqual(await groupBMembers.json(), {
       group: { id: groupB.group.id, name: 'Garden circle' },
       members: [
-        { displayName: 'profile-owner-cy', role: 'owner', joinedAt: '2026-09-28T00:00:00.000Z' },
-        { displayName: 'profile-member-bea', role: 'member', joinedAt: '2026-09-28T00:00:00.000Z' },
+        {
+          memberId: database
+            .prepare(
+              'SELECT profile_id AS id FROM real_group_memberships WHERE account_id = ? AND group_id = ?',
+            )
+            .get(ownerB.account.id, groupB.group.id).id,
+          displayName: 'profile-owner-cy',
+          role: 'owner',
+          joinedAt: '2026-09-28T00:00:00.000Z',
+        },
+        {
+          memberId: database
+            .prepare(
+              'SELECT profile_id AS id FROM real_group_memberships WHERE account_id = ? AND group_id = ?',
+            )
+            .get(member.account.id, groupB.group.id).id,
+          displayName: 'profile-member-bea',
+          role: 'member',
+          joinedAt: '2026-09-28T00:00:00.000Z',
+        },
       ],
       pendingInviteCount: 0,
     });
@@ -124,8 +142,26 @@ test('member summaries follow the selected group and include only joined profile
     assert.deepEqual(await groupAMembers.json(), {
       group: { id: groupA.group.id, name: 'Saturday table' },
       members: [
-        { displayName: 'profile-owner-ada', role: 'owner', joinedAt: '2026-09-28T00:00:00.000Z' },
-        { displayName: 'profile-member-bea', role: 'member', joinedAt: '2026-09-28T00:00:00.000Z' },
+        {
+          memberId: database
+            .prepare(
+              'SELECT profile_id AS id FROM real_group_memberships WHERE account_id = ? AND group_id = ?',
+            )
+            .get(ownerA.account.id, groupA.group.id).id,
+          displayName: 'profile-owner-ada',
+          role: 'owner',
+          joinedAt: '2026-09-28T00:00:00.000Z',
+        },
+        {
+          memberId: database
+            .prepare(
+              'SELECT profile_id AS id FROM real_group_memberships WHERE account_id = ? AND group_id = ?',
+            )
+            .get(member.account.id, groupA.group.id).id,
+          displayName: 'profile-member-bea',
+          role: 'member',
+          joinedAt: '2026-09-28T00:00:00.000Z',
+        },
       ],
       pendingInviteCount: 1,
     });

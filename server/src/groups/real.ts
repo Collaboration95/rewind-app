@@ -110,7 +110,8 @@ export function createRealGroup(
 export function getRealGroup(database: RewindDatabase, accountId: string, groupId: string) {
   const row = database
     .prepare(
-      `SELECT g.id AS groupId, g.name, g.current_cycle_id AS cycleId,
+      `SELECT g.id AS groupId, g.name, member.profile_id AS memberId,
+              g.current_cycle_id AS cycleId,
               member.role, metadata.max_members AS maxMembers, c.prompt,
               c.starts_at AS startsAt, c.ends_at AS endsAt,
               c.status, c.lock_state AS lockState,
@@ -131,6 +132,7 @@ export function getRealGroup(database: RewindDatabase, accountId: string, groupI
 function mapRealGroup(row: Record<string, unknown> | undefined) {
   if (!row) return null;
   return {
+    memberId: String(row.memberId),
     group: {
       id: String(row.groupId),
       name: String(row.name),

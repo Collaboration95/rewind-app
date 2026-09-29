@@ -1,6 +1,7 @@
 import type { RewindDatabase } from '../db';
 
 export interface RealGroupMemberSummary {
+  memberId: string;
   displayName: string;
   role: 'owner' | 'member';
   joinedAt: string;
@@ -25,7 +26,8 @@ export function listRealGroupMemberSummaries(
 
   const members = database
     .prepare(
-      `SELECT profile.display_name AS displayName, membership.role, membership.accepted_at AS joinedAt
+      `SELECT profile.id AS memberId, profile.display_name AS displayName, membership.role,
+              membership.accepted_at AS joinedAt
        FROM real_group_memberships membership
        JOIN real_profiles profile ON profile.id = membership.profile_id
        WHERE membership.group_id = ?
