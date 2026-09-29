@@ -109,7 +109,11 @@ import {
   listRealGroups,
   selectRealGroup,
 } from './groups/real';
-import { acceptRealGroupInvite, createRealGroupInvite } from './groups/invites';
+import {
+  acceptRealGroupInvite,
+  createRealGroupInvite,
+  revokeRealGroupInvite,
+} from './groups/invites';
 import { listRealGroupMemberSummaries } from './groups/profiles';
 
 export interface HealthPayload {
@@ -3315,6 +3319,22 @@ async function handleRealGroupRequest(
       return;
     }
     authJson(request, response, config, 201, created);
+    return;
+  }
+
+  const revokeInviteMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/invites\/([^/]+)$/);
+  if (revokeInviteMatch && request.method === 'DELETE') {
+    const groupId = decodePathSegment(revokeInviteMatch[1], response, config);
+    const inviteId = decodePathSegment(revokeInviteMatch[2], response, config);
+    if (groupId === null || inviteId === null) return;
+    if (!revokeRealGroupInvite(database, groupId, session.account.id, inviteId)) {
+      authJson(request, response, config, 404, {
+        error: 'invite_not_found',
+        message: 'That active invitation is no longer available.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, { revoked: true });
     return;
   }
 

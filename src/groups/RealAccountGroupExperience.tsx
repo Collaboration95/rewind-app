@@ -430,6 +430,28 @@ export function RealAccountGroupExperience({
     }
   };
 
+  const revokeInvitation = async () => {
+    if (!group || !invite || group.group.role !== 'owner' || invitePending) return;
+    setInvitePending(true);
+    setInviteFeedback(null);
+    try {
+      const response = await auth.authenticatedRequest(
+        `/real/groups/${encodeURIComponent(group.group.id)}/invites/${encodeURIComponent(invite.id)}`,
+        { method: 'DELETE' },
+      );
+      if (!response.ok) throw new Error('The invitation could not be revoked. Try again.');
+      setInvite(null);
+      setInviteFeedback('Invitation code revoked. Create a new code to invite someone.');
+      await loadGroupMembers(group.group.id, groupContextVersion.current);
+    } catch (error) {
+      setInviteFeedback(
+        error instanceof Error ? error.message : 'The invitation could not be revoked.',
+      );
+    } finally {
+      setInvitePending(false);
+    }
+  };
+
   const inviteLink = invite
     ? createInviteLink(invite, {
         platform: 'web',
@@ -496,6 +518,7 @@ export function RealAccountGroupExperience({
       const contextVersion = ++groupContextVersion.current;
       selectedGroupId.current = body.group.group.id;
       setGroup(body.group);
+      setInvite(null);
       await loadGroupMembers(body.group.group.id, contextVersion);
       setMemberGroups((current) =>
         current.some((membership) => membership.group.id === body.group?.group.id)
@@ -530,6 +553,7 @@ export function RealAccountGroupExperience({
       if (contextVersion !== groupContextVersion.current) return;
       selectedGroupId.current = selected.group.id;
       setGroup(selected);
+      setInvite(null);
       await loadGroupMembers(selected.group.id, contextVersion);
     } catch (error) {
       if (contextVersion !== groupContextVersion.current) return;
@@ -849,6 +873,12 @@ export function RealAccountGroupExperience({
                   {inviteLink ? (
                     <Action title="Copy invite link" onPress={() => void copyInvitationLink()} />
                   ) : null}
+                  <Action
+                    title={invitePending ? 'Revoking invitation…' : 'Revoke invitation code'}
+                    disabled={invitePending}
+                    onPress={() => void revokeInvitation()}
+                    testID="real-group-revoke-invite"
+                  />
                 </>
               ) : null}
               {inviteFeedback ? (

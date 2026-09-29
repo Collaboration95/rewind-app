@@ -132,6 +132,42 @@ test('real owner can create an expiring invite through an authenticated real-gro
   });
 });
 
+test('only the owner can revoke an active short code; revoked codes cannot be accepted', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const owner = await provision(baseUrl, database, 'revoke-owner');
+    const recipient = await provision(baseUrl, database, 'revoke-recipient');
+    const { group, invite } = await createGroupAndInvite(baseUrl, owner);
+    const path = `${baseUrl}/real/groups/${group.id}/invites/${invite.id}`;
+
+    const unauthorized = await fetch(path, {
+      method: 'DELETE',
+      headers: { Authorization: recipient.authorization },
+    });
+    assert.equal(unauthorized.status, 404);
+
+    const revoked = await fetch(path, {
+      method: 'DELETE',
+      headers: { Authorization: owner.authorization },
+    });
+    assert.equal(revoked.status, 200);
+    assert.equal((await revoked.json()).revoked, true);
+
+    const accepted = await fetch(`${baseUrl}/real/invites/accept`, {
+      method: 'POST',
+      headers: { Authorization: recipient.authorization, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: invite.code }),
+    });
+    assert.equal(accepted.status, 400);
+    assert.equal((await accepted.json()).status, 'expired');
+    assert.equal(
+      database
+        .prepare('SELECT 1 FROM real_group_memberships WHERE group_id = ? AND account_id = ?')
+        .get(group.id, recipient.account.id),
+      undefined,
+    );
+  });
+});
+
 test('real invite joins the session account, changes selected group, and rejects replay', async () => {
   await withRuntime(async ({ baseUrl, database }) => {
     const owner = await provision(baseUrl, database, 'invite-accept-owner');

@@ -185,6 +185,31 @@ export function createRealGroupInvite(
   }
 }
 
+export function revokeRealGroupInvite(
+  database: RewindDatabase,
+  groupId: string,
+  accountId: string,
+  inviteId: string,
+): boolean {
+  return (
+    database
+      .prepare(
+        `UPDATE real_group_invites
+       SET status = 'expired'
+       WHERE id = ? AND group_id = ? AND owner_account_id = ? AND status = 'active'
+         AND EXISTS (
+           SELECT 1 FROM real_group_metadata metadata
+           JOIN real_group_memberships membership
+             ON membership.group_id = metadata.group_id
+           WHERE metadata.group_id = real_group_invites.group_id
+             AND metadata.owner_account_id = ?
+             AND membership.account_id = ? AND membership.role = 'owner'
+         )`,
+      )
+      .run(inviteId, groupId, accountId, accountId, accountId).changes === 1
+  );
+}
+
 export function acceptRealGroupInvite(
   database: RewindDatabase,
   account: { id: string; displayName: string },
