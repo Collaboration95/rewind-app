@@ -36,9 +36,12 @@
           <p class="lbl">投票</p>
           <p class="hint" id="vote-status">正在读取投票 Issue…</p>
           <p class="hint">
-            每人最多给 3 个方案 👍，给最喜欢的 1 个 ❤️；具体意见请在 Issue 里用 “Quote reply”
-            回复对应方案的评论。
+            在 GitHub 上投票：每人最多给 3 个方向 👍，给最喜欢的 1 个
+            ❤️。评论请引用回复对应方向的评论，或以编号开头（如 “07:”），这里会自动归到那个方向下。
           </p>
+          <label class="check vote-sample" for="vote-sample"
+            ><input type="checkbox" id="vote-sample" /> 预览投票区样式（示例数据）</label
+          >
         </div>
 
         <div class="grp">
@@ -190,7 +193,9 @@
             <ol>
               <li>哪 2–3 个方向最像“和亲密朋友的私密时间胶囊”？</li>
               <li>还没贡献的人：不点名还是显示名字？</li>
-              <li>是否展示每个人贡献了几条（02、07、11 会展示）？</li>
+              <li>
+                只显示“谁参与了”、不显示别人各贡献了几条，这个程度合适吗？（需要新增一个小接口）
+              </li>
               <li>揭晓要不要做成“同一时刻一起看”的首映？（影响 04、07、10）</li>
             </ol>
           </div>

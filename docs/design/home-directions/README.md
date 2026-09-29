@@ -17,9 +17,9 @@ Voting happens in the review issue (number set in `review-config.js`). Each dire
 
 - 👍 up to **three** directions you would take forward.
 - ❤️ **one** favourite.
-- Use **Quote reply** on a direction's comment for specific feedback.
+- Use **Quote reply** on a direction's comment for specific feedback, or start your comment with the direction number (for example `07:` or `Dock A:`).
 
-The page reads the reaction counts from the public GitHub API when it loads (60 unauthenticated requests per hour per network).
+The page reads the review issue through the public GitHub API when it loads (60 unauthenticated requests per hour per network). Each direction shows its 👍 and ❤️ counts, how many comments refer to it, the two latest comments, and a link to vote or comment on GitHub. Comment text is escaped before it is shown. Before the issue exists, tick _preview vote bar_ to see the layout with sample numbers.
 
 ## What to try on the page
 

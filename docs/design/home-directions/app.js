@@ -805,10 +805,10 @@ function render() {
     }
     html +=
       `<article class="card" data-id="${c.id}" aria-label="${c.no} ${c.zh}">` +
-      `<header class="card-h"><span class="no">${c.no}</span><div><h2>${c.zh}</h2><p>${c.en}</p></div><div class="card-vote" data-vote="${c.id}"></div></header>` +
+      `<header class="card-h"><span class="no">${c.no}</span><div><h2>${c.zh}</h2><p>${c.en}</p></div></header>` +
       `<div class="card-ctl"><button type="button" class="ctl" data-play="${c.id}" title="重置这台手机并从头播放">${ic('play')}播放</button><span class="step" id="step-${c.id}" aria-live="polite"></span></div>` +
       `<div class="phone-wrap">${screen(c, dataFor(c.id))}</div>` +
-      `<div class="notes"><p class="key">${c.key}</p><ul>${c.notes.map((n) => `<li>${n}</li>`).join('')}</ul><p class="fonts">字体 · ${c.fonts}</p></div>` +
+      `<div class="notes"><div class="vote-bar" data-votebar="${c.id}"></div><p class="key">${c.key}</p><ul>${c.notes.map((n) => `<li>${n}</li>`).join('')}</ul><p class="fonts">字体 · ${c.fonts}</p></div>` +
       `</article>`;
   }
   $('gallery').innerHTML = html;
@@ -825,42 +825,131 @@ function renderReview() {
     .join('');
 }
 
-/* ---------- Issue 投票：读取公开评论上的表情数 ---------- */
+/* ---------- Issue 投票与评论 ---------- */
+// 读取：打开页面时通过 GitHub 公共接口读取评审 Issue 的评论（不需要登录，每小时 60 次）。
+// 写入：投票和评论都在 GitHub 上完成；静态页面无法替人登录或代为点赞。
 const REPO = 'Collaboration95/rewind-app';
 const votes = {};
+let voteMode = 'none'; // none：Issue 未发布；live：真实数据；sample：样式预览
+// 评论内容来自 GitHub，显示前一律转义
+const esc = (v) =>
+  String(v).replace(
+    /[&<>"']/g,
+    (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch],
+  );
+// 评论归属：引用回复里带着方向标题，或以编号开头（如 “07:”）
+const tagsFor = () => [
+  ...concepts.map((c) => ({
+    id: c.id,
+    re: new RegExp(`(^|[^0-9])${c.no}\\s*[·.:：]|${c.en}|#${c.id}\\b`, 'i'),
+  })),
+  ...['a', 'b', 'c'].map((v) => ({
+    id: 'nav-' + v,
+    re: new RegExp(`dock\\s*${v}\\b|底栏\\s*${v.toUpperCase()}(?![a-z])`, 'i'),
+  })),
+];
+const plain = (md) =>
+  md
+    .split('\n')
+    .filter((l) => !l.trim().startsWith('>'))
+    .join(' ')
+    .replace(/<!--[\s\S]*?-->|<[^>]+>/g, '')
+    .replace(/[#*_`[\]()!]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+function link(v, inner, cls) {
+  return voteMode === 'live'
+    ? `<a class="${cls}" href="${esc(v.url)}" target="_blank" rel="noreferrer">${inner}</a>`
+    : `<span class="${cls}">${inner}</span>`;
+}
+// 评审表与侧栏用的紧凑版
 function voteChip(id) {
   const v = votes[id];
   if (!v) return '<span class="vote-none">—</span>';
-  return `<a class="vote" href="${v.url}" target="_blank" rel="noreferrer" title="在 Issue 里投票和评论"><span>👍 ${v.up}</span><span>❤️ ${v.heart}</span><em>去评论 ↗</em></a>`;
+  return link(
+    v,
+    `<span>👍 ${v.up}</span><span>❤️ ${v.heart}</span><span>💬 ${v.count}</span>`,
+    'vote',
+  );
+}
+// 每个方向下面的投票栏
+function voteBar(id) {
+  const v = votes[id];
+  if (!v)
+    return voteMode === 'none'
+      ? '<p class="vb-off">评审 Issue 发布后，这里显示票数和最新评论，并可一键去 GitHub 投票、评论。</p>'
+      : '<p class="vb-off">这个方向在 Issue 里还没有对应的评论。</p>';
+  const list = v.latest
+    .map((c) => link(c, `<b>${esc(c.who)}</b><span>${esc(c.text)}</span>`, 'vb-item'))
+    .join('');
+  return (
+    `<div class="vb-row">${link(v, `👍 <b>${v.up}</b>`, 'vb')}${link(v, `❤️ <b>${v.heart}</b>`, 'vb')}${link(v, `💬 <b>${v.count}</b>`, 'vb')}` +
+    `${voteMode === 'live' ? link(v, '去投票 / 评论 ↗', 'vb go') : '<span class="vb sample">示例数据</span>'}</div>` +
+    (list ? `<div class="vb-list">${list}</div>` : '')
+  );
 }
 function paintVotes() {
   document
     .querySelectorAll('[data-vote]')
     .forEach((el) => (el.innerHTML = voteChip(el.dataset.vote)));
+  document
+    .querySelectorAll('[data-votebar]')
+    .forEach((el) => (el.innerHTML = voteBar(el.dataset.votebar)));
 }
+
+// 样式预览：只填数字和占位文字，不编造任何组员意见
+function sampleVotes(on) {
+  Object.keys(votes).forEach((k) => delete votes[k]);
+  voteMode = on ? 'sample' : 'none';
+  document.body.classList.toggle('has-issue', on);
+  if (on) {
+    concepts.forEach((c, i) => {
+      const count = (i * 3) % 4;
+      votes[c.id] = {
+        up: (i * 7 + 3) % 6,
+        heart: i % 4 === 0 ? 1 : 0,
+        count,
+        latest: count
+          ? [
+              {
+                who: '示例',
+                text: '组员引用回复这个方向、或以编号开头的评论，最新的会显示在这里。',
+              },
+            ]
+          : [],
+      };
+    });
+    ['a', 'b', 'c'].forEach(
+      (v, i) => (votes['nav-' + v] = { up: [2, 1, 0][i], heart: 0, count: 0, latest: [] }),
+    );
+  }
+  paintVotes();
+}
+
 async function loadVotes() {
   const n = window.REVIEW_ISSUE;
   const st = $('vote-status');
   if (!n) {
-    st.textContent = '投票 Issue 尚未发布。';
+    st.textContent = '评审 Issue 尚未发布，投票栏暂时为空。';
     return;
   }
-  document.body.classList.add('has-issue');
-  st.innerHTML = `投票与评论在 <a href="https://github.com/${REPO}/issues/${n}" target="_blank" rel="noreferrer">#${n}</a>，票数打开页面时读取。`;
+  voteMode = 'live';
+  document.body.classList.add('has-issue', 'live-issue');
+  st.innerHTML = `投票与评论在 <a href="https://github.com/${REPO}/issues/${Number(n)}" target="_blank" rel="noreferrer">#${Number(n)}</a>，打开页面时读取。`;
   try {
     let all = [];
     for (let page = 1; page < 5; page++) {
       const r = await fetch(
-        `https://api.github.com/repos/${REPO}/issues/${n}/comments?per_page=100&page=${page}`,
-        {
-          headers: { Accept: 'application/vnd.github+json' },
-        },
+        `https://api.github.com/repos/${REPO}/issues/${Number(n)}/comments?per_page=100&page=${page}`,
+        { headers: { Accept: 'application/vnd.github+json' } },
       );
       if (!r.ok) throw new Error(String(r.status));
       const list = await r.json();
       all = all.concat(list);
       if (list.length < 100) break;
     }
+    const tags = tagsFor();
     for (const c of all) {
       const m = /<!--\s*rewind-concept:(c\d+|nav-[abc])\s*-->/.exec(c.body || '');
       if (m)
@@ -868,7 +957,24 @@ async function loadVotes() {
           up: c.reactions?.['+1'] ?? 0,
           heart: c.reactions?.heart ?? 0,
           url: c.html_url,
+          count: 0,
+          latest: [],
         };
+    }
+    for (const c of all) {
+      const body = c.body || '';
+      if (/rewind-concept:/.test(body)) continue;
+      for (const t of tags) {
+        const v = votes[t.id];
+        if (!v || !t.re.test(body)) continue;
+        v.count += 1;
+        v.latest.unshift({
+          who: c.user?.login || '',
+          text: plain(body).slice(0, 90),
+          url: c.html_url,
+        });
+        v.latest = v.latest.slice(0, 2);
+      }
     }
     paintVotes();
   } catch {
@@ -1193,6 +1299,7 @@ document.addEventListener(
   },
   true,
 );
+$('vote-sample').addEventListener('change', (e) => sampleVotes(e.target.checked));
 $('members').addEventListener('input', (e) => {
   size = Number(e.target.value);
   $('membersv').textContent = size + ' 人';
