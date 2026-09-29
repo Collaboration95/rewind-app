@@ -9,6 +9,7 @@
 const REPO = 'Collaboration95/rewind-app';
 const RV_KEY = 'rewind-review-v1';
 const DOCKS = ['a', 'd', 'e', 'g'];
+const DOCK_MAX = 2;
 
 // 评论内容来自 GitHub，显示前一律转义
 const esc = (v) =>
@@ -34,8 +35,8 @@ function target(id) {
 }
 
 /* ---------- 我的草稿 ---------- */
-const blank = () => ({ like: [], fav: null, dock: null, notes: {} });
-// 只保留合法内容：👍 不限个数、❤️ 1 个方向、底栏 1 个，每条最多 500 字；键的顺序固定，便于比对
+const blank = () => ({ like: [], fav: null, docks: [], notes: {} });
+// 只保留合法内容：👍 不限个数、❤️ 1 个方向、底栏最多 2 个，每条最多 500 字；键的顺序固定，便于比对
 function tidy(r) {
   const like = [...new Set(Array.isArray(r?.like) ? r.like : [])].filter(isDir);
   const notes = {};
@@ -56,11 +57,15 @@ function tidy(r) {
   return {
     like,
     fav: isDir(r?.fav) ? r.fav : null,
-    dock: DOCKS.includes(r?.dock) ? r.dock : null,
+    // 旧草稿里是单个 dock，一并兼容
+    docks: [...new Set([].concat(r?.docks ?? r?.dock ?? []))]
+      .filter((v) => DOCKS.includes(v))
+      .slice(0, DOCK_MAX),
     notes,
   };
 }
-const filled = (r) => Boolean(r.like.length || r.fav || r.dock || Object.keys(r.notes).length);
+const filled = (r) =>
+  Boolean(r.like.length || r.fav || r.docks.length || Object.keys(r.notes).length);
 function hashOf(r) {
   const s = JSON.stringify(tidy(r));
   let h = 0x811c9dc5;
@@ -99,7 +104,7 @@ const touched = (id) =>
     mine.notes[id] ||
     mine.like.includes(id) ||
     mine.fav === id ||
-    (isDock(id) && mine.dock === id.slice(4)),
+    (isDock(id) && mine.docks.includes(id.slice(4))),
   );
 function progress() {
   const all = TARGETS();
@@ -115,7 +120,12 @@ function parseReview(body) {
   const m = MARK.exec(body);
   if (!m) return null;
   const attr = (k) => (new RegExp(`\\b${k}=([\\w,-]*)`).exec(m[1]) || [])[1] || '';
-  const r = { like: attr('like').split(','), fav: attr('fav'), dock: attr('dock'), notes: {} };
+  const r = {
+    like: attr('like').split(','),
+    fav: attr('fav'),
+    docks: attr('dock').split(','),
+    notes: {},
+  };
   let id = '',
     k = '?',
     x;
@@ -216,7 +226,7 @@ function sample(on) {
     by[t('rv.sampleWho', { n: i + 1 })] = {
       like: [a, b, ids[(i + 7) % ids.length]],
       fav: ids[(i * 3) % ids.length],
-      dock: d,
+      docks: i % 2 ? [d] : [d, DOCKS[(i + 1) % 4]],
       notes: {
         [a]: [{ k: '+', t: t('rv.samplePro') }],
         [b]: [{ k: '-', t: t('rv.sampleCon') }],
@@ -241,7 +251,7 @@ function everyone() {
 function tally(id) {
   const s = { like: 0, fav: 0, pros: [], cons: [], other: [] };
   for (const p of everyone()) {
-    if (isDock(id) ? p.r.dock === id.slice(4) : p.r.like.includes(id)) s.like++;
+    if (isDock(id) ? p.r.docks.includes(id.slice(4)) : p.r.like.includes(id)) s.like++;
     if (p.r.fav === id) s.fav++;
     (p.r.notes[id] || []).forEach((n, i) =>
       s[n.k === '+' ? 'pros' : n.k === '-' ? 'cons' : 'other'].push({
@@ -275,9 +285,9 @@ function toMarkdown() {
   const votes = [];
   if (r.like.length) votes.push('👍 ' + r.like.map(label).join(', '));
   if (r.fav) votes.push('❤️ ' + label(r.fav));
-  if (r.dock) votes.push(`${t('rv.dock')} ${r.dock.toUpperCase()}`);
+  if (r.docks.length) votes.push(`${t('rv.dock')} ${r.docks.join(', ').toUpperCase()}`);
   const lines = [
-    `<!-- rewind-review v1 h=${hashOf(r)} like=${r.like.join(',')} fav=${r.fav || ''} dock=${r.dock || ''} -->`,
+    `<!-- rewind-review v1 h=${hashOf(r)} like=${r.like.join(',')} fav=${r.fav || ''} dock=${r.docks.join(',')} -->`,
     `**${t('rv.md.votes')}** · ${votes.join(' · ') || '—'}`,
   ];
   for (const id of TARGETS()) {
@@ -321,8 +331,22 @@ async function copyText(text) {
 }
 
 let lastMd = '';
-async function send() {
+// 还没选底栏：先提醒，可以去选，也可以不选直接发
+function askDock() {
+  const d = $('rv-dlg');
+  d.innerHTML =
+    `<h3 id="rv-dlg-h">${t('rv.noDock.h')}</h3><p class="rv-dlg-p">${t('rv.noDock.p')}</p>` +
+    `<div class="rv-dlg-b"><button type="button" class="ghost" data-rv-skip-dock>${t('rv.noDock.skip')}</button>` +
+    `<button type="button" class="rv-send" data-rv-pick-dock>${t('rv.noDock.go')}</button></div>`;
+  if (!d.open) {
+    if (d.showModal) d.showModal();
+    else d.setAttribute('open', '');
+  }
+}
+
+async function send(skipDock) {
   if (!filled(mine)) return;
+  if (!mine.docks.length && !skipDock) return askDock();
   lastMd = toMarkdown();
   // 先复制（需要页面仍在前台），再打开 Issue
   const copied = await copyText(lastMd);
@@ -397,7 +421,7 @@ const typing = {}; // 输入框里还没添加的文字（只在内存里），�
 function blockHTML(id) {
   const s = tally(id),
     dock = isDock(id);
-  const likeOn = dock ? mine.dock === id.slice(4) : mine.like.includes(id);
+  const likeOn = dock ? mine.docks.includes(id.slice(4)) : mine.like.includes(id);
   const item = (it) =>
     `<li class="${it.mine ? 'mine' : ''}"><span class="rv-t">${esc(it.t)}</span><span class="rv-who">${whoHTML(it)}` +
     (it.mine
@@ -435,7 +459,7 @@ function sendHTML() {
   const st = status(),
     p = progress();
   return (
-    `<div class="rv-send-t"><b>${t('rv.cta')}</b><span>${t('rv.prog', p)} · 👍 ${mine.like.length} · ❤️ ${mine.fav ? 1 : 0}/1 · ${t('rv.dock')} ${mine.dock ? mine.dock.toUpperCase() : '—'}</span>` +
+    `<div class="rv-send-t"><b>${t('rv.cta')}</b><span>${t('rv.prog', p)} · 👍 ${mine.like.length} · ❤️ ${mine.fav ? 1 : 0}/1 · ${t('rv.dock')} ${mine.docks.join(', ').toUpperCase() || '—'}</span>` +
     `<span class="rv-st ${st}">${t('rv.st.' + st)}</span></div>` +
     `<button type="button" class="rv-send${st === 'sent' ? ' is-sent' : ''}" data-rv-send${st === 'empty' || st === 'sent' ? ' disabled' : ''}>${t(st === 'sent' ? 'rv.sent' : st === 'copied' ? 'rv.again' : 'rv.send')}</button>`
   );
@@ -535,8 +559,12 @@ function goTo(id) {
 }
 
 function toggleLike(id) {
-  if (isDock(id)) mine.dock = mine.dock === id.slice(4) ? null : id.slice(4);
-  else if (mine.like.includes(id)) mine.like = mine.like.filter((x) => x !== id);
+  if (isDock(id)) {
+    const v = id.slice(4);
+    if (mine.docks.includes(v)) mine.docks = mine.docks.filter((x) => x !== v);
+    else if (mine.docks.length >= DOCK_MAX) return rvToast(t('rv.dockMax', { n: DOCK_MAX }));
+    else mine.docks.push(v);
+  } else if (mine.like.includes(id)) mine.like = mine.like.filter((x) => x !== id);
   else mine.like.push(id);
   changed();
 }
@@ -554,7 +582,7 @@ function addNote(input) {
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
-    '[data-rv-like],[data-rv-fav],[data-rv-go],[data-rv-try],[data-rv-del],[data-rv-edit],[data-rv-send],[data-rv-copy],[data-rv-go-issue],[data-rv-posted],[data-rv-dlg-close],[data-rv-clear],[data-rv-refresh]',
+    '[data-rv-like],[data-rv-fav],[data-rv-go],[data-rv-try],[data-rv-del],[data-rv-edit],[data-rv-send],[data-rv-copy],[data-rv-go-issue],[data-rv-skip-dock],[data-rv-pick-dock],[data-rv-posted],[data-rv-dlg-close],[data-rv-clear],[data-rv-refresh]',
   );
   if (!b) return;
   const d = b.dataset;
@@ -585,6 +613,11 @@ document.addEventListener('click', (e) => {
     return;
   }
   if ('rvSend' in d || 'rvGoIssue' in d) return send();
+  if ('rvSkipDock' in d) return send(true);
+  if ('rvPickDock' in d) {
+    $('rv-dlg').close();
+    return goTo('nav-' + DOCKS[0]);
+  }
   if ('rvCopy' in d)
     return copyText(lastMd).then((ok) => rvToast(t(ok ? 'rv.copiedToast' : 'rv.copyFail')));
   if ('rvPosted' in d) return checkPosted(b);

@@ -19,7 +19,7 @@ Write them right on the page, under each phone and each dock. We will combine ev
 
 Everything happens on the page; nobody has to write in the issue by hand.
 
-1. Under each phone: 👍 **Shortlist** (as many as you like), ❤️ **Top pick** (one), and a pros and a cons box; press Enter to add a note. Under _Dock · pick one_, 👍 one dock and write its pros and cons.
+1. Under each phone: 👍 **Shortlist** (as many as you like), ❤️ **Top pick** (one), and a pros and a cons box; press Enter to add a note. Under _Dock · pick up to two_, 👍 one or two docks and write their pros and cons. If you haven't picked a dock, sending first reminds you.
 2. Everything is saved in your own browser (`localStorage`) until you send it. The bar at the bottom shows how many of the 15 you have reviewed.
 3. When you have reviewed them all, press **Copy, then comment in the issue**. The page copies one formatted comment and opens the review issue (number set in `review-config.js`); paste it into the comment box and click Comment.
 4. Changed your mind? Edit on the page and send again. For each person, only their latest comment counts.

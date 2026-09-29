@@ -424,6 +424,10 @@ main {
   margin: 0 0 12px;
   font-size: 18px;
 }
+.rv-dlg-p {
+  margin: 0;
+  font-size: 14px;
+}
 .rv-steps {
   display: grid;
   gap: 8px;
