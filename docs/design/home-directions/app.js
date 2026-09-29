@@ -341,7 +341,7 @@ const meSheet = (d) =>
   ]
     .map(([i, l]) => `<li><button type="button">${ic(i)}<span>${l}</span></button></li>`)
     .join('') +
-  `</ul></div>`;
+  `</ul><p class="sh-note">Draft · this could become a full Settings page</p></div>`;
 
 const holes = (n) => `<div class="holes" aria-hidden="true">${'<i></i>'.repeat(n)}</div>`;
 const crew = (d) =>
@@ -927,7 +927,7 @@ const concepts = [
   },
   {
     id: 'c5',
-    group: 'r1',
+    group: 'base',
     no: '05',
     zh: '极简排版',
     en: 'Quiet Swiss',
@@ -1373,12 +1373,22 @@ const setZoom = (v) => {
   $('zoomv').textContent = v + '%';
   document.documentElement.style.setProperty('--s', Math.min(v / 100, fitScale()));
 };
-addEventListener('resize', () => setZoom($('zoom').value));
+// 默认自动缩放：横屏时每组 4 台手机正好排满一行；手动拖过缩放就不再自动调整
+let zoomTouched = false;
+function autoZoom() {
+  const w = $('gallery').clientWidth;
+  if (zoomTouched || current !== 'all' || !w) return setZoom($('zoom').value);
+  setZoom(Math.floor(Math.max(0.5, Math.min(0.8, (w - 3 * 36) / (4 * 410))) * 100));
+}
+addEventListener('resize', autoZoom);
 
 function applyPick() {
   document
     .querySelectorAll('[data-pick]')
     .forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.pick === current)));
+  const cur = concepts.find((c) => c.id === current);
+  if ($('pick-current'))
+    $('pick-current').textContent = cur ? `${cur.no} ${nameOf(cur)}` : t('pick.all');
   document.body.classList.toggle('single', current !== 'all');
   $('gallery').classList.toggle('single', current !== 'all');
   document
@@ -1388,7 +1398,8 @@ function applyPick() {
 function pick(id) {
   current = id;
   applyPick();
-  setZoom(id === 'all' ? 72 : 100);
+  if (id === 'all') autoZoom();
+  else setZoom(100);
   playIntro();
   try {
     history.replaceState(null, '', id === 'all' ? location.pathname + location.search : '#' + id);
@@ -1911,7 +1922,13 @@ document.addEventListener('click', (e) => {
   }
 });
 document.addEventListener('keydown', (e) => e.key === 'Escape' && closeSheets());
-$('zoom').addEventListener('input', (e) => setZoom(e.target.value));
+$('zoom').addEventListener('input', (e) => {
+  zoomTouched = true;
+  setZoom(e.target.value);
+});
+$('hints').addEventListener('change', (e) =>
+  $('gallery').classList.toggle('hints', e.target.checked),
+);
 $('shutter-state').addEventListener('change', (e) => {
   NAV.shutter = e.target.value;
   render();
@@ -1964,7 +1981,7 @@ $('membersv').textContent = t('members.unit', { n: size });
 renderPick();
 renderReview();
 render();
-setZoom($('zoom').value);
+autoZoom();
 // 支持 index.html#c9 直接打开某个方案。
 // htmlpreview 会把脚本改成内联执行，那时锚点可能还没就位，所以加载完成后再检查一次。
 const openFromHash = () => {

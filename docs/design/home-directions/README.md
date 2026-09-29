@@ -4,6 +4,10 @@ Presentation-only prototypes of the Rewind **Home** screen, prepared for the #18
 Nothing here changes app code, runtime contracts or data. All members, counts and textures are synthetic;
 sealed moments are drawn as abstract textures, never as media.
 
+## Please leave pros and cons
+
+Comment on each direction in the review issue with what works and what does not. We will combine everyone's notes and pick one direction together.
+
 ## Open it
 
 - Hosted from this branch: https://htmlpreview.github.io/?https://github.com/Collaboration95/rewind-app/blob/ui-concept/bibi45c-home-directions/docs/design/home-directions/index.html
@@ -25,8 +29,9 @@ The page reads the review issue through the public GitHub API when it loads (60 
 
 - Drag **group size** (2–10) and use **shuffle contributions**. No direction assumes a fixed number of moments.
 - Switch **waiting members** between _not named_ (default) and _named_.
-- Tap the avatar for the merged profile and settings sheet, tap the dock tabs, and press the shutter.
-- Compare the **dock variants**. A–C keep three tabs and a separate shutter: A icons with the active label, B labels always, C shrinks while scrolling. D–G change the structure: D centre shutter (Home · shutter · Archive, Chat at the top right), E shutter only (Archive and Chat at the top right, like Locket or BeReal), F timeline (past films W33–W35 on the left, this cycle on the right), G live pill (shows “2d 14h · 3 left”; tap it for the tabs).
+- Tap the avatar for the profile and settings panel (a draft; it could become a full Settings page), tap the dock tabs, and press the shutter. The orange rings on the phones mark what you can tap; turn them off under _Things you can tap_.
+- Compare the **docks**: A keeps three tabs and a separate shutter; D centre shutter (Home · shutter · Archive, Chat at the top right); E shutter only (Archive and Chat at the top right, like Locket or BeReal); G live pill (shows “2d 14h · 3 left”; tap it for the tabs).
+- Directions are grouped by round, with 05 Quiet Swiss as a separate baseline; the zoom fits four phones per row on a landscape screen.
 - Switch the page between **EN** (default) and **中文** at the top of the sidebar; open it with `?lang=zh` for Chinese. The phones stay in English.
 - Switch the **shutter state**: collecting, allowance used up, sealing, just sealed, and premiere (the shutter becomes _watch together_, with the time left on its ring).
 - Toggle **chat unread** to see the badges; the Archive tab shows a dot during the premiere.
@@ -47,6 +52,7 @@ The page reads the review issue through the public GitHub API when it loads (60 
 | `index.html`                                   | Review page shell and review table                                 |
 | `styles.css`, `styles-r2.css`, `styles-r3.css` | Directions 01–05, 06–08 and 09–11                                  |
 | `i18n.js`                                      | English and Chinese text for the review page                       |
+| `styles-side.css`                              | Sidebar layout, the pros-and-cons banner and tap hints             |
 | `styles-fx.css`                                | Themed motion for a friend joining and for sealing your own moment |
 | `styles-nav2.css`                              | Language switch and dock variants D–G                              |
 | `styles-nav.css`                               | Shared dock, variants, shutter states, badges                      |

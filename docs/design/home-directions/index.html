@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="styles-story.css" />
     <link rel="stylesheet" href="styles-nav2.css" />
     <link rel="stylesheet" href="styles-fx.css" />
+    <link rel="stylesheet" href="styles-side.css" />
     <script defer src="review-config.js"></script>
     <script defer src="i18n.js"></script>
     <script defer src="app.js"></script>
@@ -35,8 +36,11 @@
           ><button type="button" data-lang="zh" aria-pressed="false" lang="zh-CN">中文</button>
         </div>
 
-        <div class="grp">
-          <p class="lbl" data-i18n="pick.label">Directions</p>
+        <details class="grp fold" id="pick-fold">
+          <summary>
+            <span class="lbl-t" data-i18n="pick.label">Directions</span>
+            <em id="pick-current">Compare all</em>
+          </summary>
           <div
             class="pick"
             id="pick"
@@ -44,6 +48,109 @@
             data-i18n-aria="pick.aria"
             aria-label="Choose a direction"
           ></div>
+        </details>
+
+        <div class="grp">
+          <p class="lbl" data-i18n="try.label">Things you can tap</p>
+          <label class="check" for="hints"
+            ><input type="checkbox" id="hints" checked />
+            <span data-i18n="hints.toggle">Show tap hints on the phones</span></label
+          >
+          <ul class="taps">
+            <li data-i18n="tap.play"><b>Play</b>, next to each phone: watch a whole cycle</li>
+            <li data-i18n="tap.shutter"><b>Shutter</b>: seal a moment</li>
+            <li data-i18n="tap.avatar">
+              <b>Avatar</b>: profile and settings. A draft; it could become a full Settings page.
+            </li>
+            <li data-i18n="tap.dock">
+              <b>Dock</b>: switch tabs. In G, tap the pill to open the tabs.
+            </li>
+          </ul>
+        </div>
+
+        <div class="grp">
+          <p class="lbl" data-i18n="nav.label">Dock</p>
+          <div class="navpick" role="group" data-i18n-aria="nav.aria" aria-label="Dock variant">
+            <button type="button" data-nav="a" aria-pressed="true">
+              <b>A</b><span data-i18n="nav.a">Active label</span></button
+            ><button type="button" data-nav="d" aria-pressed="false">
+              <b>D</b><span data-i18n="nav.d">Centre shutter</span></button
+            ><button type="button" data-nav="e" aria-pressed="false">
+              <b>E</b><span data-i18n="nav.e">Shutter only</span></button
+            ><button type="button" data-nav="g" aria-pressed="false">
+              <b>G</b><span data-i18n="nav.g">Live pill</span>
+            </button>
+          </div>
+          <p class="hint" data-i18n="nav.struct">
+            A keeps three tabs and a separate shutter; D, E and G change the structure. Every
+            direction uses the same glass dock, tinted by its theme.
+          </p>
+          <div class="nav-votes" data-i18n-aria="nav.votes" aria-label="Dock votes">
+            <span>A</span><span data-vote="nav-a"></span> <span>D</span
+            ><span data-vote="nav-d"></span> <span>E</span><span data-vote="nav-e"></span>
+            <span>G</span><span data-vote="nav-g"></span>
+          </div>
+        </div>
+
+        <div class="grp">
+          <p class="lbl" data-i18n="group.label">The group</p>
+          <label class="sub" for="members"
+            ><span data-i18n="members.label">People in the group</span>
+            <output id="membersv">5 people</output></label
+          >
+          <input type="range" id="members" min="2" max="10" value="5" />
+          <div class="btns">
+            <button type="button" class="ghost" id="shuffle" data-i18n="shuffle">Shuffle</button>
+            <button type="button" class="ghost" id="restore" data-i18n="restore">
+              Reset sample
+            </button>
+          </div>
+          <p class="sub" data-i18n="anon.label">Friends who haven’t added a moment yet</p>
+          <div
+            class="seg"
+            role="group"
+            data-i18n-aria="anon.label"
+            aria-label="Friends who haven’t added a moment yet"
+          >
+            <button type="button" data-anon="1" aria-pressed="true" data-i18n="anon.hide">
+              Empty spot</button
+            ><button type="button" data-anon="0" aria-pressed="false" data-i18n="anon.show">
+              Show names
+            </button>
+          </div>
+          <p class="hint" data-i18n="members.hint">
+            Home shows only who is in, never how many moments someone else added. “Empty spot”
+            follows Reveal, so nobody gets called out. The demo has 5 people.
+          </p>
+        </div>
+
+        <div class="grp">
+          <p class="lbl" data-i18n="sim.label">Simulate</p>
+          <label class="sub" for="shutter-state" data-i18n="shutter.label">Shutter</label>
+          <select id="shutter-state">
+            <option value="collect" data-i18n="shutter.collect">Collecting</option>
+            <option value="quota" data-i18n="shutter.quota">Allowance used up</option>
+            <option value="upload" data-i18n="shutter.upload">Sealing</option>
+            <option value="sealed" data-i18n="shutter.sealed">Just sealed</option>
+            <option value="premiere" data-i18n="shutter.premiere">Premiere (24 hours)</option>
+          </select>
+          <label class="check" for="unread"
+            ><input type="checkbox" id="unread" checked />
+            <span data-i18n="unread">Chat has 3 unread</span></label
+          >
+          <label class="sub" for="state" data-i18n="state.label">Home</label>
+          <select id="state">
+            <option data-i18n="state.collect">Collecting</option>
+            <option disabled data-i18n="state.loading">Loading · later</option>
+            <option disabled data-i18n="state.empty">No cycle · later</option>
+            <option disabled data-i18n="state.error">Failed to load · later</option>
+            <option disabled data-i18n="state.processing">Film processing · later</option>
+            <option disabled data-i18n="state.released">Film released · later</option>
+            <option disabled data-i18n="state.quota">Allowance used · later</option>
+          </select>
+          <p class="hint" data-i18n="state.hint">
+            Other Home states come after we pick a direction.
+          </p>
         </div>
 
         <div class="grp">
@@ -61,140 +168,10 @@
         </div>
 
         <div class="grp">
-          <label class="lbl" for="members"
-            ><span data-i18n="members.label">Group size</span>
-            <output id="membersv">5 people</output></label
-          >
-          <input type="range" id="members" min="2" max="10" value="5" />
-          <div class="btns">
-            <button type="button" class="ghost" id="shuffle" data-i18n="shuffle">Shuffle</button>
-            <button type="button" class="ghost" id="restore" data-i18n="restore">
-              Reset sample
-            </button>
-          </div>
-          <p class="hint" data-i18n="members.hint">
-            Data scope (proposal A): shows who is in (yes or no), never how many moments someone
-            else added. Your own count comes from your ledger and the group total from the cycle
-            summary. The demo uses 5 people.
-          </p>
-        </div>
-
-        <div class="grp">
-          <p class="lbl" data-i18n="anon.label">Members not in yet</p>
-          <div
-            class="seg"
-            role="group"
-            data-i18n-aria="anon.aria"
-            aria-label="How members who are not in yet are shown"
-          >
-            <button type="button" data-anon="1" aria-pressed="true" data-i18n="anon.hide">
-              Not named</button
-            ><button type="button" data-anon="0" aria-pressed="false" data-i18n="anon.show">
-              Named
-            </button>
-          </div>
-          <p class="hint" data-i18n="anon.hint">
-            Not named by default (from Reveal): an empty seat or stamp. Switch to compare.
-          </p>
-        </div>
-
-        <div class="grp">
-          <p class="lbl" data-i18n="nav.label">Dock variant</p>
-          <div class="navpick" role="group" data-i18n-aria="nav.aria" aria-label="Dock variant">
-            <button type="button" data-nav="a" aria-pressed="true">
-              <b>A</b><span data-i18n="nav.a">Active label</span></button
-            ><button type="button" data-nav="b" aria-pressed="false">
-              <b>B</b><span data-i18n="nav.b">Labels always</span></button
-            ><button type="button" data-nav="c" aria-pressed="false">
-              <b>C</b><span data-i18n="nav.c">Shrinks on scroll</span></button
-            ><button type="button" data-nav="d" aria-pressed="false">
-              <b>D</b><span data-i18n="nav.d">Centre shutter</span></button
-            ><button type="button" data-nav="e" aria-pressed="false">
-              <b>E</b><span data-i18n="nav.e">Shutter only</span></button
-            ><button type="button" data-nav="f" aria-pressed="false">
-              <b>F</b><span data-i18n="nav.f">Timeline</span></button
-            ><button type="button" data-nav="g" aria-pressed="false">
-              <b>G</b><span data-i18n="nav.g">Live pill</span>
-            </button>
-          </div>
-          <p class="hint" data-i18n="nav.struct">
-            A–C: three tabs and a separate shutter. D–G: other structures.
-          </p>
-          <label class="lbl lbl-gap" for="shutter-state" data-i18n="shutter.label"
-            >Shutter state</label
-          >
-          <select id="shutter-state">
-            <option value="collect" data-i18n="shutter.collect">Collecting</option>
-            <option value="quota" data-i18n="shutter.quota">Allowance used up</option>
-            <option value="upload" data-i18n="shutter.upload">Sealing</option>
-            <option value="sealed" data-i18n="shutter.sealed">Just sealed</option>
-            <option value="premiere" data-i18n="shutter.premiere">Premiere (24 hours)</option>
-          </select>
-          <label class="check" for="unread"
-            ><input type="checkbox" id="unread" checked />
-            <span data-i18n="unread">Chat has 3 unread</span></label
-          >
-          <p class="hint" data-i18n="nav.hint">
-            Every direction uses the same glass dock, tinted by its theme; Settings lives in the
-            avatar. This switches only the dock; Home states come later.
-          </p>
-          <div class="nav-votes" data-i18n-aria="nav.votes" aria-label="Dock variant votes">
-            <span>A</span><span data-vote="nav-a"></span> <span>B</span
-            ><span data-vote="nav-b"></span> <span>C</span><span data-vote="nav-c"></span>
-            <span>D</span><span data-vote="nav-d"></span> <span>E</span
-            ><span data-vote="nav-e"></span> <span>F</span><span data-vote="nav-f"></span>
-            <span>G</span><span data-vote="nav-g"></span>
-          </div>
-        </div>
-
-        <div class="grp">
-          <p class="lbl" data-i18n="motion.label">Motion</p>
-          <button type="button" class="ghost" id="replay" data-i18n="motion.replay">
-            Replay entrance
-          </button>
-          <p class="hint" data-i18n="motion.hint">
-            Entrance: the Darkroom film slides in and keeps running, and the Premiere ticket drifts
-            down. Play, beside each phone, runs ① a friend joins → ② you seal a moment → ③ everyone
-            opens it at 8 PM on Sunday. Play always resets that phone first.
-          </p>
-        </div>
-
-        <div class="grp">
-          <label class="lbl" for="state" data-i18n="state.label">State · simulated</label>
-          <select id="state">
-            <option data-i18n="state.collect">Collecting</option>
-            <option disabled data-i18n="state.loading">Loading · later</option>
-            <option disabled data-i18n="state.empty">No cycle · later</option>
-            <option disabled data-i18n="state.error">Failed to load · later</option>
-            <option disabled data-i18n="state.processing">Film processing · later</option>
-            <option disabled data-i18n="state.released">Film released · later</option>
-            <option disabled data-i18n="state.quota">Allowance used · later</option>
-          </select>
-          <p class="hint" data-i18n="state.hint">
-            Other states come later, once a visual direction is chosen.
-          </p>
-        </div>
-
-        <div class="grp">
           <label class="lbl" for="zoom"
             ><span data-i18n="zoom.label">Zoom</span> <output id="zoomv">72%</output></label
           >
           <input type="range" id="zoom" min="50" max="100" value="72" />
-        </div>
-
-        <div class="grp">
-          <p class="lbl" data-i18n="try.label">Try</p>
-          <ul class="rules">
-            <li data-i18n="try.1">Tap the avatar: profile and settings</li>
-            <li data-i18n="try.2">Tap the dock: switch the active tab</li>
-            <li data-i18n="try.3">
-              Press the shutter: seal a moment (not when the allowance is used up)
-            </li>
-            <li data-i18n="try.4">
-              C shrinks while you scroll; tap the small pill to expand. G: tap the live pill to show
-              the tabs.
-            </li>
-          </ul>
         </div>
 
         <p class="foot" data-i18n="foot">
@@ -204,12 +181,21 @@
 
       <main>
         <header class="main-h">
+          <div class="ask-banner" role="note">
+            <b data-i18n="ask.title">Please leave the pros and cons of each direction</b>
+            <span data-i18n="ask.body"
+              >Comment in the review issue: quote-reply a direction, or start with its number (for
+              example “07:”). We will combine everyone’s notes and pick one direction
+              together.</span
+            >
+          </div>
           <p class="k" data-i18n="main.k">HOME · ROUND 3 · FOR REVIEW</p>
           <h1 data-i18n="main.h1">Eleven directions to review together</h1>
           <p data-i18n="main.p">
-            Every direction shares one information order (prompt → action → status) and one
-            navigation (a glass dock with a shutter; Settings in the avatar). This round applies the
-            product scan to all of them and adds 09–11.
+            Every direction shares one information order (prompt → action → status) and one glass
+            dock with a shutter. Settings sits behind the avatar for now; that is a draft and could
+            become a full Settings page. This round applies the product scan to all of them and adds
+            09–11.
           </p>
           <ul
             class="learn"
@@ -247,7 +233,7 @@
             </li>
           </ul>
         </header>
-        <div class="gallery" id="gallery"></div>
+        <div class="gallery hints" id="gallery"></div>
         <section class="review" aria-labelledby="review-title">
           <h2 id="review-title" data-i18n="review.title">Review table</h2>
           <p class="hint" data-i18n="review.hint">
@@ -275,7 +261,9 @@
                 Which two or three directions feel most like a private time capsule with close
                 friends?
               </li>
-              <li data-i18n="asks.2">Members not in yet: not named, or named?</li>
+              <li data-i18n="asks.2">
+                Friends who haven’t added yet: an empty spot, or their name?
+              </li>
               <li data-i18n="asks.3">
                 Showing who is in, but never how many moments each person added: is that the right
                 amount? (It needs a small new API.)
@@ -284,9 +272,7 @@
                 Should the reveal be a shared “watch at the same time” premiere? (Affects 04, 07 and
                 10.)
               </li>
-              <li data-i18n="asks.5">
-                Which dock: three tabs and a shutter (A–C), or one of the other structures (D–G)?
-              </li>
+              <li data-i18n="asks.5">Which dock: A, D, E or G?</li>
             </ol>
           </div>
         </section>

@@ -1,0 +1,125 @@
+/* 侧栏重排、顶部邀请、手机上的可点提示 */
+
+/* ============ 侧栏 ============ */
+.side .sub {
+  display: flex;
+  justify-content: space-between;
+  margin: 14px 0 6px;
+  font-size: 12px;
+  color: var(--page-muted);
+}
+.side .grp > .sub:first-of-type {
+  margin-top: 0;
+}
+.fold summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+.fold summary::-webkit-details-marker {
+  display: none;
+}
+.fold summary::before {
+  content: '▸';
+  font-size: 10px;
+  color: var(--page-muted);
+  transition: transform 0.2s;
+}
+.fold[open] summary::before {
+  transform: rotate(90deg);
+}
+.fold .lbl-t {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--page-muted);
+}
+.fold summary em {
+  margin-left: auto;
+  font-size: 12.5px;
+  font-style: normal;
+  color: var(--page-ink);
+}
+.taps {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12.5px;
+}
+.taps li {
+  position: relative;
+  padding-left: 18px;
+  color: #46423c;
+}
+.taps li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff7a45;
+  box-shadow: 0 0 0 3px rgba(255, 122, 69, 0.25);
+}
+.taps b {
+  color: var(--page-ink);
+}
+
+/* ============ 顶部邀请 ============ */
+.ask-banner {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 22px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  color: var(--page);
+  background: var(--page-ink);
+}
+.ask-banner b {
+  font-size: 15px;
+}
+.ask-banner span {
+  font-size: 13px;
+  color: rgba(232, 229, 223, 0.8);
+}
+
+/* ============ 头像面板：暂定说明 ============ */
+.sh-note {
+  margin: 8px 4px 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* ============ 手机上的可点提示（呼吸光圈） ============ */
+@keyframes tap-hint {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 122, 69, 0.6);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 12px rgba(255, 122, 69, 0);
+  }
+}
+.hints .ctl[data-play] {
+  animation: tap-hint 2s ease-out infinite;
+}
+.hints .screen .me .avatar,
+.hints .screen .shutter .core,
+.hints .screen .dock-g .live,
+.hints .screen .tabs .tab:nth-child(2) {
+  animation: tap-hint 2s ease-out infinite;
+}
+.hints .screen .shutter .core {
+  animation-delay: 0.6s;
+}
+.hints .screen .tabs .tab:nth-child(2) {
+  animation-delay: 1.2s;
+}

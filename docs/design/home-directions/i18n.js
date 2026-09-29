@@ -201,6 +201,62 @@ const I18N = {
   fonts: ['Type', '字体'],
 };
 
+// 侧栏重排后的文案（覆盖上面的同名项）
+Object.assign(I18N, {
+  'group.base': ['Baseline', '对照组'],
+  'nav.label': ['Dock', '底栏'],
+  'nav.struct': [
+    'A keeps three tabs and a separate shutter; D, E and G change the structure. Every direction uses the same glass dock, tinted by its theme.',
+    'A 是三栏 + 独立快门；D、E、G 是其他结构。所有方向共用同一种玻璃底栏，只随主题换色。',
+  ],
+  'nav.votes': ['Dock votes', '底栏投票'],
+  'group.label': ['The group', '小组'],
+  'members.label': ['People in the group', '小组人数'],
+  'anon.label': ['Friends who haven’t added a moment yet', '还没发片段的朋友'],
+  'anon.hide': ['Empty spot', '显示为空位'],
+  'anon.show': ['Show names', '显示名字'],
+  'members.hint': [
+    'Home shows only who is in, never how many moments someone else added. “Empty spot” follows Reveal, so nobody gets called out. The demo has 5 people.',
+    '首页只显示谁参与了，不显示别人各发了几条。“显示为空位”借鉴 Reveal，不点名、不给人压力。演示默认 5 人。',
+  ],
+  'sim.label': ['Simulate', '模拟状态'],
+  'shutter.label': ['Shutter', '快门'],
+  'state.label': ['Home', '首页'],
+  'state.hint': [
+    'Other Home states come after we pick a direction.',
+    '首页的其他状态等选定方向后再做。',
+  ],
+  'try.label': ['Things you can tap', '可以点的地方'],
+  'hints.toggle': ['Show tap hints on the phones', '在手机上标出可以点的地方'],
+  'tap.play': [
+    '<b>Play</b>, next to each phone: watch a whole cycle',
+    '手机旁的<b>播放</b>：看完整的一期',
+  ],
+  'tap.shutter': ['<b>Shutter</b>: seal a moment', '<b>快门</b>：封存一个片段'],
+  'tap.avatar': [
+    '<b>Avatar</b>: profile and settings. A draft; it could become a full Settings page.',
+    '<b>头像</b>：个人与设置。这是暂定效果，之后可以改成独立的 Settings 页。',
+  ],
+  'tap.dock': [
+    '<b>Dock</b>: switch tabs. In G, tap the pill to open the tabs.',
+    '<b>底栏</b>：切换页签；G 方案点胶囊展开页签。',
+  ],
+  'ask.title': ['Please leave the pros and cons of each direction', '请大家留下每个方向的优缺点'],
+  'ask.body': [
+    'Comment in the review issue: quote-reply a direction, or start with its number (for example “07:”). We will combine everyone’s notes and pick one direction together.',
+    '在评审 Issue 里评论：引用回复对应的方向，或以编号开头（如 “07:”）。我们会汇总大家的意见，一起挑出一个方向。',
+  ],
+  'main.p': [
+    'Every direction shares one information order (prompt → action → status) and one glass dock with a shutter. Settings sits behind the avatar for now; that is a draft and could become a full Settings page. This round applies the product scan to all of them and adds 09–11.',
+    '所有方向共用同一信息架构（题目 → 行动 → 状态）和同一种玻璃底栏 + 快门。设置目前放在头像里，这是暂定效果，之后可以改成独立的 Settings 页。本轮根据竞品调研统一调整了全部方案，并新增 09–11。',
+  ],
+  'asks.2': [
+    'Friends who haven’t added yet: an empty spot, or their name?',
+    '还没发片段的朋友：显示为空位，还是显示名字？',
+  ],
+  'asks.5': ['Which dock: A, D, E or G?', '底栏选 A、D、E、G 中的哪一个？'],
+});
+
 let LANG = 'en';
 try {
   const q = new URLSearchParams(location.search).get('lang');
