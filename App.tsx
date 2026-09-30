@@ -705,6 +705,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   return (
     <SafeAreaFrame>
       <Animated.ScrollView
+        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
         contentContainerStyle={styles.entryContent}
         keyboardShouldPersistTaps="handled"
         style={{ transform: [{ translateY: entryOffset }] }}
