@@ -136,7 +136,7 @@ test('Demo access error state has no serious or critical Axe violations', async 
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await page.getByTestId('demo-entry-demo-1').click();
   await expect(page.getByRole('alert')).toContainText('local runtime is offline');
-  await expect(page.getByRole('button', { name: 'Retry session check' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry Demo start' })).toBeVisible();
   await expectNoSeriousAxeViolations(page, 'error');
 });
 
