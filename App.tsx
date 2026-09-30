@@ -78,7 +78,6 @@ import { RealAccountProvider, useRealAccount } from './src/auth/RealAccountProvi
 import { RealAccountGroupExperience } from './src/groups/RealAccountGroupExperience';
 
 const lockedMoments = [1, 2, 3];
-const COLD_LAUNCH_STARTED_AT = Date.now();
 const COLD_LAUNCH_MINIMUM_MS = 600;
 
 function interactionFeedback({ pressed }: { pressed: boolean }) {
@@ -207,13 +206,9 @@ function SessionGate({
 }) {
   const { status, session } = useDemoSession();
   const realAccount = useRealAccount();
-  const [coldLaunchMinimumElapsed, setColdLaunchMinimumElapsed] = useState(
-    () => Date.now() - COLD_LAUNCH_STARTED_AT >= COLD_LAUNCH_MINIMUM_MS,
-  );
+  const [coldLaunchMinimumElapsed, setColdLaunchMinimumElapsed] = useState(false);
   useEffect(() => {
-    const remaining = COLD_LAUNCH_MINIMUM_MS - (Date.now() - COLD_LAUNCH_STARTED_AT);
-    if (remaining <= 0) return;
-    const timeout = setTimeout(() => setColdLaunchMinimumElapsed(true), remaining);
+    const timeout = setTimeout(() => setColdLaunchMinimumElapsed(true), COLD_LAUNCH_MINIMUM_MS);
     return () => clearTimeout(timeout);
   }, []);
   const sessionRepositories = useMemo(

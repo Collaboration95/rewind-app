@@ -49,6 +49,26 @@ function sessionStore(initial: DemoSession | null = null): DemoSessionStore {
 }
 
 describe('first-run and session entry navigation', () => {
+  it('shows the cold-launch screen for at least 600ms after fast session restoration', async () => {
+    jest.useFakeTimers();
+    try {
+      const result = await render(<App sessionStore={sessionStore()} />);
+
+      expect(result.getByLabelText('Rewind')).toBeTruthy();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(599);
+      });
+      expect(result.getByLabelText('Rewind')).toBeTruthy();
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1);
+      });
+      expect(result.getByTestId('welcome-entry')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('shows only Rewind branding while the saved session is being restored', async () => {
     let finishLoad!: (value: DemoSession | null) => void;
     const store: DemoSessionStore = {

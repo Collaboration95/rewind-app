@@ -215,6 +215,7 @@ describe('Rewind Home start screen', () => {
 
   it('starts on Home and makes every main area reachable', async () => {
     const result = await render(<App />);
+    await result.findByTestId('main-navigation');
 
     expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
 
@@ -237,6 +238,7 @@ describe('Rewind Home start screen', () => {
 
   it('provides named tabs with a visible and accessible selected state', async () => {
     const result = await render(<App />);
+    await result.findByTestId('main-navigation');
 
     expect(result.getByRole('tab', { name: 'Home', selected: true })).toBeTruthy();
     expect(result.getByText('SELECTED')).toBeTruthy();
@@ -249,6 +251,7 @@ describe('Rewind Home start screen', () => {
 
   it('uses an honest permission state for Camera and unavailable states elsewhere', async () => {
     const result = await render(<App />);
+    await result.findByTestId('main-navigation');
 
     await fireEvent.press(result.getByRole('tab', { name: 'Camera' }));
     expect(await result.findByTestId('camera-temporarily-unavailable')).toBeTruthy();
@@ -489,6 +492,7 @@ describe('Rewind Home start screen', () => {
 
   it('keeps sample moments sealed and routes Add a moment to Camera', async () => {
     const result = await render(<App />);
+    await result.findByTestId('main-navigation');
 
     expect(result.getByLabelText('Locked moment 1 of 3')).toBeTruthy();
     expect(result.getByLabelText('Locked moment 2 of 3')).toBeTruthy();
@@ -501,6 +505,7 @@ describe('Rewind Home start screen', () => {
 
   it('shows the repository-backed prompt, countdown, quota, and locked-safe state', async () => {
     const result = await render(<App />);
+    await result.findByTestId('main-navigation');
 
     expect(result.getByTestId('cycle-countdown')).toBeTruthy();
     expect(result.getByText('0 of 5 contributions')).toBeTruthy();
@@ -551,6 +556,7 @@ describe('Rewind Home start screen', () => {
     };
     const result = await render(<App cycleRepository={repository} />);
 
+    await result.findByTestId('main-navigation');
     expect(result.getByTestId('capsule-loading')).toBeTruthy();
     await act(async () => resolveCycle(cycleFixture()));
     await result.findByTestId('capsule-ready');
@@ -577,6 +583,7 @@ describe('Rewind Home start screen', () => {
 describe('Local demo profile flow', () => {
   it('offers five accessible choices, remembers selection on relaunch, and resets cleanly', async () => {
     const result = await render(<App />);
+    await result.findByTestId('main-navigation');
     expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
     expect(result.queryByRole('header', { name: 'Local demo' })).toBeNull();
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
@@ -591,11 +598,13 @@ describe('Local demo profile flow', () => {
     await waitFor(async () => expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-3'));
     await result.unmount();
     const relaunched = await render(<App />);
+    await relaunched.findByTestId('main-navigation');
     await fireEvent.press(relaunched.getByRole('tab', { name: 'Settings' }));
     await relaunched.findByText('Current member: Clover');
     await relaunched.unmount();
     await AsyncStorage.clear();
     const reset = await render(<App />);
+    await reset.findByTestId('main-navigation');
     await fireEvent.press(reset.getByRole('tab', { name: 'Settings' }));
     await reset.findByText('Current member: Amber');
   });
@@ -603,6 +612,7 @@ describe('Local demo profile flow', () => {
   it('falls back to the default for an unknown stored actor', async () => {
     await AsyncStorage.setItem(SELECTION_KEY, 'outsider');
     const result = await render(<App />);
+    await result.findByTestId('main-navigation');
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await result.findByText('Current member: Amber');
   });
