@@ -12,6 +12,15 @@ Write them right on the page, under each phone and each dock. We will combine ev
 
 01 Darkroom Editorial, 02 Contact Sheet, 03 Glass Capsule, 04 Premiere Ticket, 08 Sealed Letter and 11 Shared Reel are archived. The page folds them at the bottom (open them with _Show the 6 archived directions_ or the _Archived_ heading), greys them out, and keeps the votes and notes they already had behind _Show review_, read-only. Review progress counts only the five directions still in review and the four docks. If your ❤️ is on an archived direction, sending asks whether to move it first.
 
+## App icon · mix and match
+
+The second tab at the top of the page (or `index.html#mix`) pairs a Home direction with an app icon and shows them where people will meet them: the launch screen opening into that Home, the home screen (light, teal or dark wallpaper), the sizes from 120 px down to 29 px, a notification, and the two palettes side by side with a note when one is light and the other dark. There is no voting on this tab yet.
+
+- Icons: the scratchpad “Re” family A–I and A′, seven new ones (J `Re:`, K two dots in ink, L `Re:` on dark, M notebook page, N sticky note, O taped shut, P rewind doodle), each direction's own icon, and two references (the current icon and the two-dot icon tried locally). J, K and L grow out of that two-dot icon.
+- _Dot follows the Home accent_ recolours only the accent in the icon (G's dot, I's e, L's dots, 05's square).
+- _Scratchpad skin_ is a sixth Home option: the same Home drawn with wobbly black outlines on white.
+- The pairing is kept in the link, for example `#mix=c6+G+t` (Warm Glass, icon G, dot tinted). _Copy a link to this pairing_ copies it.
+
 ## Open it
 
 - Hosted from this branch: https://htmlpreview.github.io/?https://github.com/Collaboration95/rewind-app/blob/ui-concept/bibi45c-home-directions/docs/design/home-directions/index.html
@@ -68,6 +77,8 @@ The comment format is plain Markdown: a hidden first line holds the votes (`<!--
 | `app.js`                                       | Synthetic data and direction markup                                         |
 | `review.js`                                    | On-page review: local draft, copy to the issue, reading everyone's comments |
 | `styles-review.css`                            | Review blocks under each phone, dock section, send bar                      |
+| `icons.js`                                     | App icon candidates as SVG (family, per-direction icons, references)        |
+| `mix.js`, `styles-mix.css`                     | App icon mix-and-match tab                                                  |
 | `review-config.js`                             | Review issue number                                                         |
 | `shots/`                                       | Screenshots for the issue: phones, dock, shutter                            |
 

@@ -396,6 +396,83 @@ Object.assign(I18N, {
   'rv.favArch.skip': ['Send as it is', '照样发送'],
 });
 
+// App icon 搭配页
+Object.assign(I18N, {
+  'tab.aria': ['Page', '页面'],
+  'tab.review': ['Home directions', 'Home 方向评审'],
+  'tab.mix': ['App icon · mix and match', 'App icon 搭配'],
+  'mix.k': ['APP ICON · MIX AND MATCH', 'APP ICON · 自由搭配'],
+  'mix.h1': ['Pick a Home and an icon', '选一个首页，配一个图标'],
+  'mix.p': [
+    'See them together where people will meet them: the home screen, the launch screen that opens into this Home, a notification and the colours side by side. No voting here yet; copy the link to share a pairing.',
+    '把它们放进用户真正会遇到的地方一起看：手机桌面、打开 App 后从启动页过渡到这个首页、通知横幅，以及配色对照。这里暂时不投票，复制链接就能把搭配分享出去。',
+  ],
+  'mix.dir': ['Home', '首页方向'],
+  'mix.sp': ['Scratchpad skin', '草稿本皮肤'],
+  'mix.archHint': [
+    'Archived directions are hidden; turn on “Show the 6 archived directions” in the sidebar to add them.',
+    '废案已隐藏；在侧栏勾选“显示 6 个废案”后可以一起搭配。',
+  ],
+  'mix.family': ['Scratchpad “Re” family', '草稿本 “Re” 字标'],
+  'mix.pair': ['This direction’s own icon', '这个方向配套的图标'],
+  'mix.pairOf': ['Icon of', '配套图标 ·'],
+  'mix.refs': ['For reference', '参考'],
+  'mix.new': ['new', '新'],
+  'mix.tint': ['Dot follows the Home accent', '圆点跟随首页强调色'],
+  'mix.tintHint': [
+    'Only the accent in the icon changes (the dot, the small e or the square); the rest stays black and white.',
+    '只换图标里的强调色（圆点、小 e 或方块），其余保持黑白。',
+  ],
+  'mix.tintNone': ['This icon has no accent colour to follow.', '这个图标没有可以跟随的强调色。'],
+  'mix.share': ['Copy a link to this pairing', '复制这个搭配的链接'],
+  'mix.copied': ['Link copied', '链接已复制'],
+  'mix.launch': ['Launch → Home', '启动页 → 首页'],
+  'mix.replay': ['Replay the launch', '重播启动'],
+  'mix.homeScreen': ['On the home screen', '手机桌面'],
+  'mix.wall': ['Wallpaper', '壁纸'],
+  'mix.wall.light': ['Light wallpaper', '浅色壁纸'],
+  'mix.wall.teal': ['Teal wallpaper', '青色壁纸'],
+  'mix.wall.dark': ['Dark wallpaper', '深色壁纸'],
+  'mix.sizes': ['Sizes', '各种尺寸'],
+  'mix.size.120': ['App Store', 'App Store'],
+  'mix.size.60': ['home screen', '桌面'],
+  'mix.size.40': ['Spotlight', '搜索'],
+  'mix.size.29': ['Settings, notifications', '设置、通知'],
+  'mix.notif': ['Notification', '通知'],
+  'mix.notifText': ['This week’s film premieres Sunday at 8 PM', '本周影片周日晚 8 点首映'],
+  'mix.now': ['now', '刚刚'],
+  'mix.pal': ['Colours side by side', '配色对照'],
+  'mix.palDir': ['Home', '首页'],
+  'mix.palIcon': ['Icon', '图标'],
+  'mix.bg': ['Background', '底色'],
+  'mix.ink': ['Ink', '墨色'],
+  'mix.acc': ['Accent', '强调色'],
+  'mix.hintFlip': [
+    'One is light and the other dark, so opening the app flips brightness. Try a dark icon (A′ or L) or a light Home.',
+    '图标和首页一深一浅，打开 App 时亮度会反转。可以试试深色图标（A′ 或 L），或换一个浅色首页。',
+  ],
+  'mix.hintSame': [
+    'Icon and Home share the same brightness, so the launch flows smoothly into the Home.',
+    '图标和首页明暗一致，从启动页过渡到首页会比较顺。',
+  ],
+  'mix.famH': ['All scratchpad “Re” icons', '全部草稿本 “Re” 字标'],
+  'mix.famP': [
+    'Handwriting is Shantell Sans, the font tldraw uses for its draw style. J to P are new; J, K and L grow out of the two-dot icon tried locally. Tap one to pair it. Final files would outline the letters to paths.',
+    '手写字体是 Shantell Sans，也就是 tldraw 手绘风格用的字体。J 到 P 是新增的；其中 J、K、L 由本地试过的“两个点”版本发展而来。点一下就能拿去搭配。最终交付时字母会转成路径。',
+  ],
+  'mix.app.camera': ['Camera', '相机'],
+  'mix.app.photos': ['Photos', '照片'],
+  'mix.app.messages': ['Messages', '信息'],
+  'mix.app.maps': ['Maps', '地图'],
+  'mix.app.weather': ['Weather', '天气'],
+  'mix.app.notes': ['Notes', '备忘录'],
+  'mix.app.music': ['Music', '音乐'],
+  'mix.app.clock': ['Clock', '时钟'],
+  'mix.app.mail': ['Mail', '邮件'],
+  'mix.app.calendar': ['Calendar', '日历'],
+  'mix.app.files': ['Files', '文件'],
+});
+
 let LANG = 'en';
 try {
   const q = new URLSearchParams(location.search).get('lang');

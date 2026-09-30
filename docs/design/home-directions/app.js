@@ -984,6 +984,7 @@ function setArch(on) {
     b.setAttribute('aria-expanded', String(on));
     b.innerHTML = archLabel();
   });
+  window.relangMix?.();
 }
 const archLabel = () =>
   `${t('group.arch')} (${ARCHIVED.length}) <span>${t(showArch ? 'arch.hide' : 'arch.show')}</span>`;
@@ -1851,6 +1852,7 @@ function setLang(l) {
   renderReview();
   render();
   window.relangReview?.();
+  window.relangMix?.();
 }
 
 applyI18n();

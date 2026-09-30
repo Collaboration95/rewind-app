@@ -1,0 +1,550 @@
+/* App icon 搭配页：顶部切换、选择区、真实场景（启动页、桌面、尺寸、通知、配色）、字标总览 */
+
+/* ============ 顶部切换：评审 / 搭配 ============ */
+.view-tabs {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 0 22px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.06);
+}
+.view-tabs button {
+  padding: 8px 16px;
+  border-radius: 9px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--page-muted);
+}
+.view-tabs button[aria-pressed='true'] {
+  color: var(--page-ink);
+  background: #fbfaf7;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+body:not(.view-mix) #mix,
+body.view-mix main > .main-h,
+body.view-mix #gallery,
+body.view-mix .dock-rv,
+body.view-mix .review,
+body.view-mix #rv-bar,
+body.view-mix .rv-side {
+  display: none;
+}
+body.view-mix main {
+  padding-bottom: 64px;
+}
+
+/* ============ 图标 ============ */
+.mx-icon {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+  border-radius: 22.5%;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.08),
+    0 4px 12px rgba(0, 0, 0, 0.12);
+}
+.mx-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ============ 布局 ============ */
+.mix .main-h {
+  margin-bottom: 26px;
+}
+.mx-grid {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr);
+  gap: 36px;
+  align-items: start;
+}
+.mx-pick {
+  position: sticky;
+  top: 20px;
+  display: grid;
+  gap: 10px;
+}
+.mx-pick .lbl {
+  margin: 10px 0 0;
+}
+.mx-pick .hint {
+  margin: 0;
+}
+.mx-dirs {
+  display: grid;
+  gap: 2px;
+}
+.mx-dirs button {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: 13px;
+  text-align: left;
+}
+.mx-dirs button span {
+  width: 20px;
+  font:
+    500 11px/1 'DM Mono',
+    monospace;
+  color: var(--page-muted);
+}
+.mx-dirs button:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.mx-dirs button[aria-pressed='true'] {
+  color: var(--page);
+  background: var(--page-ink);
+}
+.mx-dirs button[aria-pressed='true'] span {
+  color: rgba(232, 229, 223, 0.7);
+}
+.mx-dirs button.arch {
+  opacity: 0.55;
+}
+.mx-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.mx-tile {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  padding: 6px 0 4px;
+  border-radius: 12px;
+}
+.mx-tile b {
+  font:
+    500 10.5px/1 'DM Mono',
+    monospace;
+  color: var(--page-muted);
+}
+.mx-tile i {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 1px 5px;
+  border-radius: 6px;
+  font:
+    600 9px/1.4 'Inter',
+    sans-serif;
+  font-style: normal;
+  color: #fff;
+  background: var(--rv-hot, #ff7a45);
+}
+.mx-tile:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+.mx-tile[aria-pressed='true'] {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px var(--page-ink);
+}
+.mx-pick .check {
+  margin-top: 6px;
+}
+.mx-pick .check.off {
+  opacity: 0.5;
+}
+.mx-share {
+  margin-top: 6px;
+}
+
+/* ============ 舞台 ============ */
+.mx-now {
+  margin: 0 0 16px;
+  font-size: 15px;
+}
+.mx-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 36px;
+  align-items: start;
+}
+.mx-block {
+  --s: 0.62;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.mx-block .lbl {
+  margin: 8px 0 0;
+}
+.mx-phone {
+  position: relative;
+  width: calc(410px * var(--s));
+  animation: none;
+}
+.mx-splash {
+  position: absolute;
+  inset: calc(10px * var(--s));
+  z-index: 5;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  border-radius: calc(54px * var(--s));
+  transition:
+    opacity 0.5s ease,
+    transform 0.5s ease;
+}
+.mx-splash span {
+  font:
+    600 17px/1 'Shantell Sans',
+    cursive;
+  letter-spacing: 0.02em;
+}
+.mx-splash .mx-icon {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.mx-splash.gone {
+  opacity: 0;
+  transform: scale(1.04);
+  pointer-events: none;
+}
+.mx-replay {
+  flex: none;
+  justify-self: start;
+  padding: 7px 12px;
+}
+
+/* 手机桌面 */
+.mx-home {
+  width: 330px;
+  padding: 14px 18px 16px;
+  border-radius: 34px;
+  box-shadow: 0 20px 40px -20px rgba(0, 0, 0, 0.45);
+}
+.mx-status {
+  margin-bottom: 18px;
+  font:
+    600 12px/1 'Inter',
+    sans-serif;
+  color: #111;
+}
+.mx-home.dark .mx-status {
+  color: #fff;
+}
+.mx-apps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px 10px;
+}
+.mx-apps figure {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  margin: 0;
+}
+.mx-apps figcaption {
+  font:
+    500 10.5px/1.1 'Inter',
+    sans-serif;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.mx-home.light .mx-apps figcaption {
+  color: #1d1b18;
+  text-shadow: none;
+}
+.mx-home .ph {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  opacity: 0.85;
+}
+.mx-dock {
+  display: flex;
+  justify-content: space-around;
+  margin-top: 34px;
+  padding: 12px;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(8px);
+}
+.mx-walls {
+  display: flex;
+  gap: 8px;
+}
+.mx-walls button {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+.mx-walls button[aria-pressed='true'] {
+  outline: 2px solid var(--page-ink);
+  outline-offset: 2px;
+}
+
+/* 尺寸、通知、配色 */
+.mx-sizerow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  align-items: flex-end;
+}
+.mx-sizerow figure {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.mx-sizerow figcaption {
+  font-size: 11px;
+  color: var(--page-muted);
+}
+.mx-notif {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  width: min(380px, 100%);
+  padding: 12px 14px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 8px 24px -10px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+}
+.mx-notif .mx-icon {
+  border-radius: 9px;
+}
+.mx-notif div {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+.mx-notif em {
+  align-self: start;
+  margin-left: auto;
+  font-size: 11px;
+  font-style: normal;
+  color: var(--page-muted);
+}
+.mx-pal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+}
+.mx-pal > div {
+  display: grid;
+  gap: 6px;
+}
+.mx-pal .lbl {
+  margin: 0;
+}
+.sw {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.sw i {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+.sw code {
+  font:
+    400 11px/1 'DM Mono',
+    monospace;
+  color: var(--page-muted);
+}
+.mx-hint {
+  max-width: 460px;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 0 0 1px var(--page-line);
+}
+
+/* ============ 字标总览 ============ */
+.mx-fam-h {
+  margin: 56px 0 6px;
+}
+.mx-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 18px;
+  margin-top: 16px;
+}
+.mx-card {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: inset 0 0 0 1px var(--page-line);
+}
+.mx-card.on {
+  box-shadow: inset 0 0 0 2px var(--page-ink);
+}
+.mx-card > button {
+  justify-self: center;
+}
+.mx-card figcaption {
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--page-muted);
+}
+.mx-card figcaption b {
+  font-size: 14px;
+  color: var(--page-ink);
+}
+.mx-card figcaption small {
+  margin-left: 4px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+.mx-card figcaption i {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-style: normal;
+  color: #fff;
+  background: var(--rv-hot, #ff7a45);
+}
+.mx-sizes {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin-top: 4px;
+}
+
+/* ============ 草稿本皮肤（第 3 部分的界面，按 390 × 844 画） ============ */
+.sp-screen {
+  padding: 22px 24px 18px;
+  font-family: 'Shantell Sans', cursive;
+  color: #111;
+  background: #fff;
+}
+.sp-screen .wob {
+  border: 2.5px solid #111;
+  border-radius: 255px 14px 225px 14px / 14px 225px 14px 255px;
+}
+.sp-screen .sp-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 40px;
+}
+.sp-screen .av {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  font-weight: 700;
+}
+.sp-screen .chip {
+  padding: 3px 14px;
+  font-size: 14px;
+}
+.sp-screen h4 {
+  margin: 28px 0 4px;
+  font-size: 32px;
+  line-height: 1.1;
+  font-weight: 700;
+}
+.sp-screen .sub {
+  font-size: 15px;
+  color: #555;
+}
+.sp-screen .count {
+  margin: 18px 0 0;
+  font-size: 78px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.sp-screen .count small {
+  margin-left: 4px;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.sp-screen .q {
+  margin: 24px 0 14px;
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+.sp-screen .row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  font-size: 16px;
+  border-bottom: 2px dashed #bbb;
+}
+.sp-screen .row i {
+  font-style: normal;
+  font-weight: 700;
+}
+.sp-screen .sp-dock {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 30px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.sp-screen .pill {
+  flex: 1;
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  height: 64px;
+  font-size: 15px;
+}
+.sp-screen .pill b {
+  padding: 7px 14px;
+  border-radius: 99px;
+  font-weight: 600;
+  color: #fff;
+  background: #111;
+}
+.sp-screen .shut {
+  display: grid;
+  place-items: center;
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  font-size: 24px;
+  color: #fff;
+  background: #111;
+  outline: 2.5px solid #111;
+  outline-offset: 5px;
+}
+
+/* ============ 窄屏 ============ */
+@media (max-width: 1100px) {
+  .mx-row {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 860px) {
+  .mx-grid {
+    grid-template-columns: 1fr;
+  }
+  .mx-pick {
+    position: static;
+  }
+  .mx-home {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mx-splash {
+    transition: none;
+  }
+}

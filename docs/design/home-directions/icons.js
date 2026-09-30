@@ -1,0 +1,318 @@
+'use strict';
+
+// App icon 候选（由图标探索页整理而来；J–P 为新增）。svg 为 512×512，滤镜 #rough 等定义在 index.html。
+// 带 --acc 的元素是强调色，搭配页可让它跟随方向的强调色。
+const ICON_FAMILY = [
+  {
+    id: 'A',
+    bg: '#fff',
+    name: ['Scratchpad', '草稿本'],
+    note: [
+      'Capital R, small e, both in the tldraw draw font. Nothing else.',
+      '大写 R、小写 e，都用 tldraw 的手写字体，别的什么都不加。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="86" y="384" font-size="330">R</text><text x="272" y="384" font-size="230">e</text></g></svg>',
+    new: false,
+    acc: false,
+  },
+  {
+    id: 'B',
+    bg: '#fff',
+    name: ['Roman R, playful e', '罗马斜体 R + 俏皮 e'],
+    note: [
+      'A serif italic R next to a bouncy, tilted hand-drawn e.',
+      '衬线斜体 R，配一个歪着、跳动的手写 e。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><text x="70" y="388" font-size="360" font-family="Fraunces,serif" font-style="italic" font-weight="500" fill="#111">R</text><g transform="rotate(-9 340 330)" font-family="\'Shantell Sans\',cursive" font-weight="800" fill="#111" filter="url(#rough)" style="font-variation-settings:\'BNCE\' 60,\'INFM\' 100"><text x="262" y="392" font-size="270">e</text></g></svg>',
+    new: false,
+    acc: false,
+  },
+  {
+    id: 'C',
+    bg: '#fff',
+    name: ['Marker scribble', '马克笔'],
+    note: [
+      'Thick felt-pen letters with a quick underline. The loudest.',
+      '粗马克笔字母加一道随手的下划线，最张扬。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough2)" fill="#111" font-family="\'Caveat Brush\',cursive"><text x="70" y="386" font-size="380">R</text><text x="262" y="386" font-size="300">e</text></g><path d="M78 432c90-18 190-22 350-6" fill="none" stroke="#111" stroke-width="12" stroke-linecap="round" filter="url(#rough)"/></svg>',
+    new: false,
+    acc: false,
+  },
+  {
+    id: 'D',
+    bg: '#fff',
+    name: ['Circled', '圈起来'],
+    note: [
+      'Re circled in pen, like a date marked on a calendar.',
+      '像在日历上圈出日期一样，把 Re 圈起来。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="108" y="358" font-size="270">R</text><text x="272" y="358" font-size="190">e</text></g><path d="M96 296C86 180 200 92 326 104 442 118 486 240 430 336 380 420 220 448 138 388 82 346 88 262 142 214" fill="none" stroke="#111" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)"/></svg>',
+    new: false,
+    acc: false,
+  },
+  {
+    id: 'E',
+    bg: '#efece6',
+    name: ['Polaroid', '拍立得'],
+    note: ['A wobbly instant-photo frame with Re inside.', '歪歪的拍立得相框，里面写着 Re。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#efece6"/><g filter="url(#rough)"><path d="M108 84 410 78 420 390 100 398z" fill="#fff" stroke="#111" stroke-width="10" stroke-linejoin="round"/><path d="M138 116 384 112 388 336 134 340z" fill="#fff" stroke="#111" stroke-width="6" stroke-dasharray="1 0"/><g fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="160" y="308" font-size="190">R</text><text x="268" y="308" font-size="130">e</text></g><path d="M150 448c40-12 120-12 214-4" fill="none" stroke="#111" stroke-width="8" stroke-linecap="round"/></g></svg>',
+    new: false,
+    acc: false,
+  },
+  {
+    id: 'F',
+    bg: '#fff',
+    name: ['Rewind arrow', '倒带箭头'],
+    note: ['Re with a hand-drawn arrow running back underneath.', 'Re 下面画一道往回走的箭头。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="86" y="350" font-size="320">R</text><text x="272" y="350" font-size="230">e</text></g><g fill="none" stroke="#111" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)"><path d="M430 424C330 440 220 440 96 424"/><path d="M138 388 92 424l46 36"/></g></svg>',
+    new: false,
+    acc: false,
+  },
+  {
+    id: 'G',
+    bg: '#fff',
+    name: ['Ink + one record dot', '墨字 + 一个录制点'],
+    note: [
+      'A with one orange dot as the full stop, like a REC light.',
+      '在 A 的基础上加一个橙色句点，像录制灯。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="86" y="384" font-size="330">R</text><text x="272" y="384" font-size="230">e</text></g><circle cx="428" cy="378" r="30" style="fill:var(--acc,#ff4d12)" filter="url(#rough)"/></svg>',
+    new: false,
+    acc: true,
+  },
+  {
+    id: 'H',
+    bg: '#fff',
+    name: ['Postmark', '邮戳'],
+    note: [
+      'A hand-stamped circle with wavy cancellation lines.',
+      '手盖的圆形邮戳，旁边是波浪注销线。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)"><circle cx="212" cy="256" r="150" fill="none" stroke="#111" stroke-width="12"/><circle cx="212" cy="256" r="124" fill="none" stroke="#111" stroke-width="5" stroke-dasharray="3 12" stroke-linecap="round"/></g><g filter="url(#rough)" fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="122" y="306" font-size="190">R</text><text x="222" y="306" font-size="130">e</text></g><g fill="none" stroke="#111" stroke-width="8" stroke-linecap="round" filter="url(#rough)"><path d="M382 206c18-14 30 14 48 0s30 14 48 0"/><path d="M382 246c18-14 30 14 48 0s30 14 48 0"/><path d="M382 286c18-14 30 14 48 0s30 14 48 0"/></g></svg>',
+    new: false,
+    acc: false,
+  },
+  {
+    id: 'I',
+    bg: '#fff',
+    name: ['R holds e', 'R 抱着 e'],
+    note: [
+      'A tiny orange e inside the R. Check it at 29 px.',
+      '小小的橙色 e 藏在 R 里。小尺寸要实测。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><text x="120" y="404" font-size="380" font-family="Fraunces,serif" font-style="italic" font-weight="600" fill="#111">R</text><g filter="url(#rough)" style="fill:var(--acc,#ff4d12)" font-family="\'Shantell Sans\',cursive" font-weight="800"><text x="270" y="228" font-size="96">e</text></g></svg>',
+    new: false,
+    acc: true,
+  },
+  {
+    id: 'A′',
+    bg: '#111',
+    name: ['Dark variant', '深色版'],
+    note: [
+      'A on black, for dark mode and the splash screen.',
+      'A 的黑底版，用于深色模式和启动页。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#111"/><g filter="url(#rough)" fill="#fff" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="86" y="384" font-size="330">R</text><text x="272" y="384" font-size="230">e</text></g></svg>',
+    new: false,
+    acc: false,
+  },
+  {
+    id: 'J',
+    bg: '#fff',
+    name: ['Re:', 'Re:（回复）'],
+    note: [
+      'Two dots turn Re into “Re:”, a reply to a memory. The dots come from the local build.',
+      '两个点让 Re 变成“Re:”，像在回复一段回忆。两个点来自本地版。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="62" y="372" font-size="300">R</text><text x="240" y="372" font-size="210">e</text></g><g filter="url(#rough)" fill="#111"><circle cx="412" cy="262" r="24"/><circle cx="412" cy="350" r="24"/></g></svg>',
+    new: true,
+    acc: false,
+  },
+  {
+    id: 'K',
+    bg: '#fff',
+    name: ['Two dots, in ink', '墨水两个点'],
+    note: [
+      'The local build’s two dots, drawn in ink on paper. No letters.',
+      '把本地版的两个点改成纸上的墨水手绘，不要字母。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough2)" fill="#111"><circle cx="200" cy="270" r="46"/><circle cx="316" cy="270" r="46"/></g></svg>',
+    new: true,
+    acc: false,
+  },
+  {
+    id: 'L',
+    bg: '#1D1B1E',
+    name: ['Re: on dark', '深色 Re:'],
+    note: [
+      'J in the old brand colours: dark plum, cream letters, orange dots.',
+      'J 换成旧品牌配色：深底、奶油色字母、橙色的点。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#1D1B1E"/><g filter="url(#rough)" fill="#F9EBD5" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="62" y="372" font-size="300">R</text><text x="240" y="372" font-size="210">e</text></g><g filter="url(#rough)"><circle cx="412" cy="262" r="24" style="fill:var(--acc,#FFA572)"/><circle cx="412" cy="350" r="24" style="fill:var(--acc,#FFA572)"/></g></svg>',
+    new: true,
+    acc: true,
+  },
+  {
+    id: 'M',
+    bg: '#fff',
+    name: ['Notebook page', '笔记本'],
+    note: ['Re written on ruled paper with a red margin.', '写在带红色页边线的横线本上。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g clip-path="url(#sq)" stroke-width="5"><g stroke="#cfdff0"><path d="M0 136h512"/><path d="M0 194h512"/><path d="M0 252h512"/><path d="M0 310h512"/><path d="M0 368h512"/><path d="M0 426h512"/><path d="M0 484h512"/></g><path d="M112 0v512" stroke="#f0a3a3"/></g><g filter="url(#rough)" fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="132" y="368" font-size="250">R</text><text x="288" y="368" font-size="180">e</text></g></svg>',
+    new: true,
+    acc: false,
+  },
+  {
+    id: 'N',
+    bg: '#efece6',
+    name: ['Sticky note', '便利贴'],
+    note: [
+      'Re on a yellow sticky note held by a strip of tape.',
+      'Re 写在黄色便利贴上，用一条胶带贴住。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#efece6"/><g transform="rotate(-5 256 270)"><rect x="104" y="124" width="304" height="300" rx="6" fill="#ffe680"/><path d="M104 404h304v20H104z" fill="#e8cf5f" opacity=".6"/><g filter="url(#rough)" fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="150" y="352" font-size="220">R</text><text x="284" y="352" font-size="160">e</text></g></g><rect x="196" y="96" width="120" height="44" fill="#fff" opacity=".7" transform="rotate(3 256 118)"/></svg>',
+    new: true,
+    acc: false,
+  },
+  {
+    id: 'O',
+    bg: '#fff',
+    name: ['Taped shut', '胶带封住'],
+    note: [
+      'Masking tape across Re: sealed until everyone opens it.',
+      '一条纸胶带横贴在 Re 上：封存，等大家一起拆开。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="#111" font-family="\'Shantell Sans\',cursive" font-weight="560"><text x="86" y="384" font-size="330">R</text><text x="272" y="384" font-size="230">e</text></g><g transform="rotate(-12 256 276)"><polygon points="30,236 472,236 482,250 470,262 484,276 470,288 482,302 472,314 30,314 40,300 28,288 42,276 28,262 40,250" fill="#e9dcc0" opacity=".92"/><path d="M60 258h380M60 292h380" stroke="#d8c7a4" stroke-width="3" opacity=".7"/></g></svg>',
+    new: true,
+    acc: false,
+  },
+  {
+    id: 'P',
+    bg: '#fff',
+    name: ['Rewind doodle', '手绘倒带'],
+    note: [
+      'Just a hand-drawn ‹‹, no letters. Still reads when tiny.',
+      '只画一个 ‹‹，不写字母，缩到很小也认得出。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g fill="none" stroke="#111" stroke-width="44" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)"><path d="M256 150 136 256l120 106"/><path d="M376 150 256 256l120 106"/></g></svg>',
+    new: true,
+    acc: false,
+  },
+];
+
+const ICON_PAIRS = {
+  c1: {
+    id: 'p:c1',
+    bg: '#141210',
+    note: [
+      'A tilted film strip with one frame developed in safelight orange.',
+      '倾斜的胶片，其中一格在安全灯橙光下显影。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#141210"/><g transform="rotate(-14 256 256)"><rect x="-40" y="150" width="592" height="212" fill="#3a2416"/><g fill="#141210"><rect x="-10" y="164" width="34" height="22" rx="5"/><rect x="70" y="164" width="34" height="22" rx="5"/><rect x="150" y="164" width="34" height="22" rx="5"/><rect x="230" y="164" width="34" height="22" rx="5"/><rect x="310" y="164" width="34" height="22" rx="5"/><rect x="390" y="164" width="34" height="22" rx="5"/><rect x="470" y="164" width="34" height="22" rx="5"/><rect x="-10" y="326" width="34" height="22" rx="5"/><rect x="70" y="326" width="34" height="22" rx="5"/><rect x="150" y="326" width="34" height="22" rx="5"/><rect x="230" y="326" width="34" height="22" rx="5"/><rect x="310" y="326" width="34" height="22" rx="5"/><rect x="390" y="326" width="34" height="22" rx="5"/><rect x="470" y="326" width="34" height="22" rx="5"/></g><rect x="-10" y="198" width="120" height="116" rx="8" fill="#5a4a40"/><rect x="396" y="198" width="120" height="116" rx="8" fill="#5a4a40"/><rect x="196" y="192" width="122" height="128" rx="8" fill="#f08a5d" stroke="#ffd2b8" stroke-width="5"/></g></svg>',
+    acc: false,
+  },
+  c2: {
+    id: 'p:c2',
+    bg: '#f1e8dc',
+    note: [
+      'A 3×3 sheet: one rust frame is yours, the last is an empty seat.',
+      '3×3 相纸索引，铁锈色那格是你的，最后一格是虚线空位。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#f1e8dc"/><g fill="#dcc7a9"><rect x="96" y="96" width="94" height="94" rx="12"/><rect x="209" y="96" width="94" height="94" rx="12"/><rect x="322" y="96" width="94" height="94" rx="12"/><rect x="96" y="209" width="94" height="94" rx="12"/><rect x="322" y="209" width="94" height="94" rx="12"/><rect x="96" y="322" width="94" height="94" rx="12"/><rect x="209" y="322" width="94" height="94" rx="12"/></g><rect x="209" y="209" width="94" height="94" rx="12" fill="#b5482f"/><rect x="322" y="322" width="94" height="94" rx="12" fill="#b5482f" opacity=".0"/><rect x="322" y="322" width="94" height="94" rx="12" fill="none" stroke="#b5482f" stroke-width="6" stroke-dasharray="10 9"/></svg>',
+    acc: false,
+  },
+  c3: {
+    id: 'p:c3',
+    bg: '#2b2550',
+    note: [
+      'A frosted capsule holding one developing light.',
+      '一枚毛玻璃胶囊，里面是一团正在显影的光。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><defs><linearGradient id="gc" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b2550"/><stop offset="1" stop-color="#120f26"/></linearGradient><radialGradient id="go" cx=".4" cy=".35"><stop offset="0" stop-color="#ffe8c9"/><stop offset=".55" stop-color="#ff9d7a"/><stop offset="1" stop-color="#b36bff"/></radialGradient></defs><rect width="512" height="512" rx="112" fill="url(#gc)"/><circle cx="270" cy="270" r="96" fill="#b36bff" opacity=".55" filter="url(#blur18)"/><rect x="92" y="170" width="328" height="172" rx="86" fill="#ffffff" fill-opacity=".10" stroke="#ffffff" stroke-opacity=".45" stroke-width="5"/><circle cx="256" cy="256" r="58" fill="url(#go)"/></svg>',
+    acc: false,
+  },
+  c4: {
+    id: 'p:c4',
+    bg: '#1b0d0d',
+    note: ['Cream ticket with a perforated stub and a gold ‹‹.', '米色票根，带撕线和金色 ‹‹。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#1b0d0d"/><g transform="rotate(-6 256 256)"><path d="M92 150h328a0 0 0 0 1 0 0v56a26 26 0 0 0 0 52v0a26 26 0 0 0 0 52v52H92v-52a26 26 0 0 0 0-52v0a26 26 0 0 0 0-52z" fill="#ecdcc0"/><path d="M352 150v212" stroke="#8a6f4a" stroke-width="5" stroke-dasharray="4 12" stroke-linecap="round"/><path d="m196 236-42 32 42 32M252 236l-42 32 42 32" fill="none" stroke="#c99a3c" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/></g></svg>',
+    acc: false,
+  },
+  c5: {
+    id: 'p:c5',
+    bg: '#f3f2ee',
+    note: ['A black R and one orange square.', '黑色 R 加一个橙色方块。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#f3f2ee"/><text x="200" y="400" text-anchor="middle" font-family="\'Inter Tight\',Inter,sans-serif" font-weight="800" font-size="420" fill="#121212" letter-spacing="-14">R</text><rect x="318" y="326" width="76" height="76" style="fill:var(--acc,#ff4d12)"/></svg>',
+    acc: true,
+  },
+  c6: {
+    id: 'p:c6',
+    bg: '#fff3e2',
+    note: ['Afternoon light through a glass disc.', '午后的光穿过一片玻璃圆盘。'],
+    svg: '<svg viewBox="0 0 512 512"><defs><linearGradient id="gw" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff3e2"/><stop offset="1" stop-color="#ffd9c2"/></linearGradient><radialGradient id="gp" cx=".5" cy=".5"><stop offset="0" stop-color="#ffb783"/><stop offset="1" stop-color="#ffb783" stop-opacity="0"/></radialGradient></defs><rect width="512" height="512" rx="112" fill="url(#gw)"/><circle cx="300" cy="300" r="190" fill="url(#gp)"/><circle cx="256" cy="256" r="118" fill="#ffffff" fill-opacity=".55" stroke="#fff" stroke-width="6"/><circle cx="256" cy="256" r="52" fill="#ff9f6b"/></svg>',
+    acc: false,
+  },
+  c7: {
+    id: 'p:c7',
+    bg: '#1a1210',
+    note: ['One flame, five friends around it.', '一团火，五个朋友围坐。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#1a1210"/><circle cx="256" cy="290" r="150" fill="#ff7a2f" opacity=".28" filter="url(#blur18)"/><path d="M256 150c34 44 66 74 66 122a66 66 0 0 1-132 0c0-30 14-46 30-64 4 22 16 30 24 30-8-34-2-62 12-88z" fill="#ffb347"/><path d="M256 232c16 22 30 36 30 58a30 30 0 0 1-60 0c0-14 8-22 16-32 2 10 8 14 12 14-4-16-2-28 2-40z" fill="#fff0cc"/><g fill="#f4d9b8"><circle cx="256" cy="98" r="16"/><circle cx="386" cy="196" r="16"/><circle cx="338" cy="380" r="16"/><circle cx="174" cy="380" r="16"/><circle cx="126" cy="196" r="16"/></g></svg>',
+    acc: false,
+  },
+  c8: {
+    id: 'p:c8',
+    bg: '#f0e4d0',
+    note: ['A wax seal stamped with ‹‹ on an envelope.', '信封上盖着 ‹‹ 的火漆。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#f0e4d0"/><path d="M80 150h352v230a20 20 0 0 1-20 20H100a20 20 0 0 1-20-20z" fill="#faf3e6"/><path d="M80 150l176 132 176-132" fill="none" stroke="#d9c6a6" stroke-width="8" stroke-linejoin="round"/><circle cx="256" cy="280" r="74" fill="#b93a2b"/><circle cx="256" cy="280" r="56" fill="none" stroke="#e48a78" stroke-width="5"/><path d="m270 250-32 30 32 30M304 250l-32 30 32 30" transform="translate(-16 0)" fill="none" stroke="#f6c9bd" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    acc: false,
+  },
+  c9: {
+    id: 'p:c9',
+    bg: '#1e1210',
+    note: ['A jar with a few glowing dots, one per moment.', '罐子里几点亮光，一个片段一只。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#1e1210"/><circle cx="256" cy="300" r="170" fill="#ff9b3d" opacity=".16" filter="url(#blur18)"/><rect x="150" y="76" width="212" height="46" rx="14" fill="#a97b4f"/><path d="M168 134h176c34 0 58 26 58 60v150c0 36-26 64-62 64H172c-36 0-62-28-62-64V194c0-34 24-60 58-60z" fill="#fff" fill-opacity=".07" stroke="#e8c9a4" stroke-opacity=".7" stroke-width="7"/><g><circle cx="200" cy="230" r="15" fill="#ffd27a"/><circle cx="300" cy="200" r="12" fill="#ffe9b8"/><circle cx="330" cy="290" r="15" fill="#ff9a86"/><circle cx="230" cy="330" r="12" fill="#ffd27a"/><circle cx="292" cy="372" r="10" fill="#ffe9b8"/></g></svg>',
+    acc: false,
+  },
+  c10: {
+    id: 'p:c10',
+    bg: '#150f10',
+    note: ['A projector beam falling on a screen.', '放映机的光束打在幕布上。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#150f10"/><path d="M120 256 396 120v272z" fill="#ffe2b0" opacity=".85"/><path d="M120 256 396 120v272z" fill="url(#none)"/><rect x="392" y="104" width="30" height="304" rx="8" fill="#f2ead8"/><rect x="76" y="226" width="64" height="60" rx="12" fill="#c8402f"/><circle cx="96" cy="222" r="20" fill="#6f2a22"/><circle cx="130" cy="220" r="20" fill="#6f2a22"/></svg>',
+    acc: false,
+  },
+  c11: {
+    id: 'p:c11',
+    bg: '#f5f1ea',
+    note: [
+      'One reel for the group, a colour marker for each member.',
+      '全组一条片轨，每人一个颜色标记。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#f5f1ea"/><g><rect x="60" y="196" width="80" height="120" rx="20" fill="#ecd2b0"/><rect x="152" y="196" width="80" height="120" rx="20" fill="#e2725a"/><rect x="244" y="196" width="80" height="120" rx="20" fill="#ecd2b0"/><rect x="336" y="196" width="80" height="120" rx="20" fill="#ecd2b0"/><rect x="428" y="196" width="40" height="120" rx="20" fill="#ecd2b0" opacity=".6"/></g><g fill="#e2725a" opacity=".9"><circle cx="112" cy="150" r="14" fill="#e8b23f"/><circle cx="192" cy="150" r="14"/><circle cx="284" cy="150" r="14" fill="#7fb08f"/><circle cx="376" cy="150" r="14" fill="#b585b5"/></g><g stroke="#2a2522" stroke-width="12" stroke-linecap="round" fill="none"><path d="M112 370h288"/></g></svg>',
+    acc: false,
+  },
+};
+
+const ICON_REFS = [
+  {
+    id: 'r:now',
+    bg: '#1D1B1E',
+    name: ['Current icon', '现有图标'],
+    note: [
+      'On dev today: a rewind arrow with two cream dots.',
+      'dev 上现在用的：倒带箭头加两个奶油色圆点。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#1D1B1E"/><path d="M155 176a142 142 0 1 1-17 149" fill="none" stroke="#FFA572" stroke-linecap="round" stroke-width="42"/><path d="m137 112 3 106 103-25" fill="none" stroke="#FFA572" stroke-linecap="round" stroke-linejoin="round" stroke-width="42"/><circle cx="298" cy="290" r="29" fill="#F9EBD5"/><circle cx="376" cy="290" r="29" fill="#F9EBD5"/></svg>',
+    acc: false,
+  },
+  {
+    id: 'r:dots',
+    bg: '#1D1B1E',
+    name: ['Two dots · local build', '两个点（本地版）'],
+    note: [
+      'The current icon without the arrow, as tried locally.',
+      '去掉箭头、只留两个点，本地试过的版本。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#1D1B1E"/><circle cx="322" cy="292" r="21" fill="#F9EBD5"/><circle cx="374" cy="292" r="21" fill="#F9EBD5"/></svg>',
+    acc: false,
+  },
+];
