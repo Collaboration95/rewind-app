@@ -139,10 +139,12 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
     window.fetch = window.fetch.bind(window);
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Welcome to Rewind' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
   await expect
     .poll(async () => page.evaluate(async () => (await fetch('/api/health')).ok))
     .toBe(true);
+  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   const initialSession = await waitForDemoSession(page, () =>
@@ -165,7 +167,8 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   const code = inviteCode?.slice('Invite code '.length) ?? '';
 
   await page.getByTestId('sign-out').click();
-  await expect(page.getByRole('heading', { name: 'Welcome to Rewind' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
+  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   let guestSessionId = '';
@@ -188,7 +191,7 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
 
   stage = 'labelled synthetic contribution';
   await page.getByTestId('nav-camera').click();
-  await page.getByTestId('camera-record-clip').click();
+  await page.getByRole('button', { name: 'Video' }).click();
   await expect(page.getByTestId('video-unsupported')).toBeVisible();
   const syntheticResponsePromise = page.waitForResponse(
     (response) =>
@@ -228,7 +231,8 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   stage = 'owner advance and release';
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('sign-out').click();
-  await expect(page.getByRole('heading', { name: 'Welcome to Rewind' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
+  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   ownerSessionId = (

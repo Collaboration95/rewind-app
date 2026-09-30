@@ -1,27 +1,37 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
-test('fresh web install presents welcome before any Demo member is active', async ({ page }) => {
+test('fresh web install keeps Demo behind Sign in before any member is active', async ({
+  page,
+}) => {
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: 'Welcome to Rewind' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Try Demo' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Weekend People' })).toHaveCount(0);
 
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toBeVisible();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   await page.getByRole('button', { name: 'Enter Demo as Amber, sample member' }).click();
   await expect(page.getByRole('heading', { name: 'Weekend People' })).toBeVisible();
 });
 
-test('web entry explains pending sign-up and blocks sign-in without HTTPS configuration', async ({
+test('web entry opens account registration and blocks credentials without HTTPS configuration', async ({
   page,
 }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
-  await expect(page.getByText(/Sign-up is coming soon/i)).toBeVisible();
-  await expect(page.getByText(/Ask your Rewind contact/i)).toBeVisible();
+  await expect(page.getByLabel('Username')).toBeVisible();
+  await expect(page.getByTestId('registration-password')).toBeVisible();
+  await expect(page.getByLabel('Confirm password')).toBeVisible();
+  await expect(
+    page.getByText(/account creation requires the same-origin HTTPS service/i),
+  ).toBeVisible();
+  await expect(page.getByTestId('registration-submit')).toBeDisabled();
 
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Sign in' }).click();

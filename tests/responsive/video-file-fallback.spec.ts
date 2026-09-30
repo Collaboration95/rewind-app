@@ -32,11 +32,12 @@ async function openVideoRoute(page: Page) {
   await page.goto('/');
   const navigation = page.getByTestId('main-navigation');
   const entry = page.getByTestId('demo-entry-demo-1');
-  const welcome = page.getByRole('heading', { name: 'Welcome to Rewind' });
+  const welcome = page.getByTestId('welcome-entry');
   await expect(navigation.or(entry).or(welcome)).toBeVisible();
   if (await entry.isVisible()) {
     await entry.click();
   } else {
+    await page.getByRole('button', { name: 'Sign in' }).click();
     await page.getByRole('button', { name: 'Try Demo' }).click();
     await entry.click();
   }

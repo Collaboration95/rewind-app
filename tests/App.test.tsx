@@ -153,14 +153,14 @@ describe('Rewind Home start screen', () => {
   it('uses a light status bar on the dark application shell', async () => {
     await render(<App />);
 
-    expect(mockStatusBar).toHaveBeenCalledWith({ style: 'light' });
+    expect(mockStatusBar).toHaveBeenCalledWith({ hidden: true, style: 'light' });
   });
 
   it('shows the sample group and capsule summary without account switching on Home', async () => {
     const result = await render(<App />);
 
-    expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
-    expect(result.getByLabelText('Local demo data')).toBeTruthy();
+    await result.findByRole('header', { name: 'Weekend People' });
+    expect(result.queryByLabelText('Local demo data')).toBeNull();
     expect(result.queryByRole('header', { name: 'Local demo' })).toBeNull();
     expect(result.getByLabelText('Current capsule. 2 days remaining.')).toBeTruthy();
     expect(result.getByLabelText('Current prompt: What made you pause and smile?')).toBeTruthy();
@@ -490,9 +490,9 @@ describe('Rewind Home start screen', () => {
   it('keeps sample moments sealed and routes Add a moment to Camera', async () => {
     const result = await render(<App />);
 
-    expect(result.getByLabelText('Locked demo moment 1 of 3')).toBeTruthy();
-    expect(result.getByLabelText('Locked demo moment 2 of 3')).toBeTruthy();
-    expect(result.getByLabelText('Locked demo moment 3 of 3')).toBeTruthy();
+    expect(result.getByLabelText('Locked moment 1 of 3')).toBeTruthy();
+    expect(result.getByLabelText('Locked moment 2 of 3')).toBeTruthy();
+    expect(result.getByLabelText('Locked moment 3 of 3')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Add a moment' })).toBeTruthy();
 
     await fireEvent.press(result.getByRole('button', { name: 'Add a moment' }));

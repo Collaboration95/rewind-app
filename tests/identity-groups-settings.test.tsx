@@ -76,9 +76,10 @@ describe('local Demo access lifecycle', () => {
     expect(result.getByTestId('settings-identity')).toBeTruthy();
     expect(within(result.getByTestId('settings-identity')).getByText('Amber')).toBeTruthy();
     await fireEvent.press(result.getByTestId('sign-out'));
-    await result.findByRole('header', { name: 'Welcome to Rewind' });
+    await result.findByTestId('welcome-entry');
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
 
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
     await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
     await fireEvent.press(result.getByTestId('demo-entry-demo-2'));
     await result.findByRole('header', { name: 'Weekend People' });
@@ -122,7 +123,7 @@ describe('local Demo access lifecycle', () => {
 
       await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
       await fireEvent.press(result.getByTestId('sign-out'));
-      await result.findByRole('header', { name: 'Welcome to Rewind' });
+      await result.findByTestId('welcome-entry');
 
       expect(
         JSON.parse((await AsyncStorage.getItem(CONTRIBUTION_STATUS_STORAGE_KEY)) ?? '{}'),
@@ -151,8 +152,10 @@ describe('local Demo access lifecycle', () => {
     process.env.EXPO_PUBLIC_DEMO_ACCESS = 'entry';
     try {
       const result = await render(<App />);
-      await result.findByRole('header', { name: 'Welcome to Rewind' });
+      await result.findByTestId('welcome-entry');
       expect(result.queryByTestId('demo-entry-demo-1')).toBeNull();
+      expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
+      await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
       await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
       expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
       result.unmount();
@@ -171,7 +174,7 @@ describe('local Demo access lifecycle', () => {
     await result.findByRole('header', { name: 'Weekend People' });
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByTestId('sign-out'));
-    await result.findByRole('header', { name: 'Welcome to Rewind' });
+    await result.findByTestId('welcome-entry');
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
   });
 
@@ -204,7 +207,7 @@ describe('local Demo access lifecycle', () => {
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByTestId('reset-demo-data'));
     await fireEvent.press(result.getByTestId('reset-confirm-action'));
-    await result.findByRole('header', { name: 'Welcome to Rewind' });
+    await result.findByTestId('welcome-entry');
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(LOCAL_GROUPS_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBeNull();
@@ -275,7 +278,7 @@ describe('settings reset', () => {
 
     await fireEvent.press(result.getByTestId('reset-demo-data'));
     await fireEvent.press(result.getByTestId('reset-confirm-action'));
-    await result.findByRole('header', { name: 'Welcome to Rewind' });
+    await result.findByTestId('welcome-entry');
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(LOCAL_GROUPS_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBeNull();
