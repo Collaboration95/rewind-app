@@ -24,6 +24,7 @@ import {
 } from '../domain/session';
 import type { MemberProfile } from '../domain/profiles';
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
+import { isDemoAccessEnabled } from '../runtime/config';
 import { createOfflineDemoSession, demoSessionStore } from './session-store';
 import {
   clearContributionStatusForSession,
@@ -106,7 +107,7 @@ export function DemoSessionProvider({
     try {
       const entryMode =
         typeof process !== 'undefined' && process.env.EXPO_PUBLIC_DEMO_ACCESS === 'entry';
-      if (entryMode) {
+      if (entryMode || !isDemoAccessEnabled()) {
         await clearLocalReminder();
         await store.clear();
         if (mounted.current) {
@@ -207,6 +208,11 @@ export function DemoSessionProvider({
 
   const chooseMember = useCallback(
     async (memberId: string) => {
+      if (!isDemoAccessEnabled()) {
+        setError('Sample Demo access is unavailable in this release. Sign in to continue.');
+        setStatus('entry');
+        return;
+      }
       const member = profiles.find((profile) => profile.id === memberId);
       if (!member || pending) return;
       setPending(true);

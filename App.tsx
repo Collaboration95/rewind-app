@@ -36,7 +36,11 @@ import type {
   GroupRepository,
 } from './src/domain/profiles';
 import { COLORS } from './src/theme';
-import { createConfiguredRuntime, getConfiguredInviteWebOrigin } from './src/runtime/config';
+import {
+  createConfiguredRuntime,
+  getConfiguredInviteWebOrigin,
+  isDemoAccessEnabled,
+} from './src/runtime/config';
 import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
@@ -208,6 +212,8 @@ function SessionGate({
   const realAccount = useRealAccount();
   const [coldLaunchMinimumElapsed, setColdLaunchMinimumElapsed] = useState(false);
   useEffect(() => {
+    // SessionGate stays mounted while the app is backgrounded, so this minimum
+    // applies to process startup and does not delay a warm foreground resume.
     const timeout = setTimeout(() => setColdLaunchMinimumElapsed(true), COLD_LAUNCH_MINIMUM_MS);
     return () => clearTimeout(timeout);
   }, []);
@@ -299,7 +305,7 @@ function SafeAreaFrame({ children }: { children: ReactNode }) {
   const { width } = useWindowDimensions();
   return (
     <>
-      <StatusBar hidden={Platform.OS !== 'web'} style="light" />
+      <StatusBar hidden style="light" />
       <SafeAreaView
         edges={['top', 'right', 'bottom', 'left']}
         style={styles.page}
@@ -578,6 +584,9 @@ function AppHeader() {
 function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const { profiles, chooseMember, error, entryReason, pending, retryRestore } = useDemoSession();
   const auth = useRealAccount();
+  const [entryOffset] = useState(() => new Animated.Value(0));
+  const entryModeMounted = useRef(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const [mode, setMode] = useState<'welcome' | 'demo' | 'sign-in' | 'create-account'>(
     inviteGroupId ? 'sign-in' : 'welcome',
   );
@@ -590,6 +599,41 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     'invalid' | 'duplicate' | 'rate-limited' | 'unavailable' | 'password-mismatch' | null
   >(null);
   const visibleMode = mode;
+  const demoAccessEnabled = isDemoAccessEnabled();
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (mounted) setReduceMotion(enabled);
+      })
+      .catch(() => undefined);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!entryModeMounted.current) {
+      entryModeMounted.current = true;
+      return;
+    }
+    if (reduceMotion) {
+      entryOffset.setValue(0);
+      return;
+    }
+    entryOffset.setValue(6);
+    const animation = Animated.timing(entryOffset, {
+      toValue: 0,
+      duration: 160,
+      useNativeDriver: Platform.OS !== 'web',
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [entryOffset, reduceMotion, visibleMode]);
+
   const authMessage =
     auth.notice === 'expired'
       ? 'Your session expired or an administrator reset your password. Sign in again to continue.'
@@ -660,7 +704,12 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
 
   return (
     <SafeAreaFrame>
-      <ScrollView contentContainerStyle={styles.entryContent} keyboardShouldPersistTaps="handled">
+      <Animated.ScrollView
+        contentContainerStyle={styles.entryContent}
+        keyboardShouldPersistTaps="handled"
+        style={{ transform: [{ translateY: entryOffset }] }}
+        testID="entry-mode-content"
+      >
         <View style={styles.entryBrand}>
           <View style={styles.brandLockup}>
             <Image
@@ -931,7 +980,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             >
               <Text style={styles.entryActionButtonText}>Back to welcome</Text>
             </Pressable>
-            {inviteGroupId ? null : (
+            {inviteGroupId || !demoAccessEnabled ? null : (
               <Pressable
                 accessibilityRole="button"
                 disabled={authPending}
@@ -1120,7 +1169,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             {authPending ? 'Signing in…' : 'Starting the sample Demo…'}
           </Text>
         ) : null}
-      </ScrollView>
+      </Animated.ScrollView>
     </SafeAreaFrame>
   );
 }

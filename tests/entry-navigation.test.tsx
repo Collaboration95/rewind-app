@@ -1,6 +1,6 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
-import { Platform } from 'react-native';
+import { AccessibilityInfo, Animated, Platform } from 'react-native';
 
 import App from '../App';
 import type { DemoSession, DemoSessionStore } from '../src/domain/session';
@@ -19,6 +19,19 @@ jest.mock('react-native-safe-area-context', () => mockSafeAreaContext);
 
 beforeAll(() => {
   process.env.REWIND_TEST_DEMO_FIXTURE = 'false';
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+let entryTransition: jest.SpyInstance;
+beforeEach(() => {
+  entryTransition = jest.spyOn(Animated, 'timing').mockImplementation(() => ({
+    start: jest.fn(),
+    stop: jest.fn(),
+    reset: jest.fn(),
+  }));
 });
 
 function session(overrides: Partial<DemoSession> = {}): DemoSession {
@@ -102,6 +115,49 @@ describe('first-run and session entry navigation', () => {
     expect(result.queryByRole('header', { name: 'Weekend People' })).toBeNull();
     expect(await store.load()).toBeNull();
   });
+
+  it('hides Demo and clears a saved sample session when a release disables Demo access', async () => {
+    const previous = process.env.EXPO_PUBLIC_DEMO_ACCESS;
+    process.env.EXPO_PUBLIC_DEMO_ACCESS = 'disabled';
+    const store = sessionStore(session());
+
+    try {
+      const result = await render(<App sessionStore={store} />);
+      expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+      expect(await store.load()).toBeNull();
+
+      await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+      expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
+    } finally {
+      if (previous === undefined) delete process.env.EXPO_PUBLIC_DEMO_ACCESS;
+      else process.env.EXPO_PUBLIC_DEMO_ACCESS = previous;
+    }
+  });
+
+  it.each([false, true])(
+    'animates entry changes only when reduced motion is disabled (reduce motion: %s)',
+    async (reduceMotion) => {
+      const reducedMotionSetting = jest
+        .spyOn(AccessibilityInfo, 'isReduceMotionEnabled')
+        .mockResolvedValue(reduceMotion);
+      const result = await render(<App sessionStore={sessionStore()} />);
+      expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+      await waitFor(() => expect(reducedMotionSetting).toHaveBeenCalled());
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+      if (reduceMotion) {
+        expect(entryTransition).not.toHaveBeenCalled();
+      } else {
+        expect(entryTransition).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ duration: 160, toValue: 0 }),
+        );
+      }
+    },
+  );
 
   it('opens sign-in, account registration, and Demo only through Sign in without creating a real session', async () => {
     const store = sessionStore();

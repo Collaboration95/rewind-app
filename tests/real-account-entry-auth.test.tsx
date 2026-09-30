@@ -270,6 +270,50 @@ describe('real account entry flow', () => {
     expect(secureStoreMock.token).toBeNull();
   });
 
+  it.each([
+    {
+      label: 'weak or invalid details',
+      status: 400,
+      error: 'invalid_registration',
+      message: /Choose a valid username and a stronger password/,
+    },
+    {
+      label: 'rate limiting',
+      status: 429,
+      error: 'rate_limited',
+      message: /Too many account attempts/,
+    },
+    {
+      label: 'service failure',
+      status: 503,
+      error: 'service_unavailable',
+      message: /Account creation is unavailable right now/,
+    },
+  ])('shows recoverable registration feedback for $label', async ({ status, error, message }) => {
+    useWebPlatform();
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(jsonResponse(status, { error })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Create account' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'new.member');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct horse battery staple');
+    await fireEvent.changeText(
+      result.getByLabelText('Confirm password'),
+      'correct horse battery staple',
+    );
+    await fireEvent.press(result.getByTestId('registration-submit'));
+
+    expect(await result.findByTestId('registration-error')).toHaveTextContent(message);
+    expect(result.getByLabelText('Username').props.value).toBe('new.member');
+    expect(result.getByLabelText('Password').props.value).toBe('correct horse battery staple');
+    expect(result.getByLabelText('Confirm password').props.value).toBe(
+      'correct horse battery staple',
+    );
+  });
+
   it('shows generic wrong-password feedback and keeps Demo identity untouched', async () => {
     globalThis.fetch = jest
       .fn()
