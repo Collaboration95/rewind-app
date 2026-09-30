@@ -77,6 +77,11 @@ describe('native accessibility panels', () => {
   it('does not group the Demo access recovery action with its error message', async () => {
     const result = await render(<App runtimeClient={restoreFailureRuntime()} />);
 
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.press(await result.findByRole('button', { name: 'Try Demo' }));
+    await fireEvent.press(
+      await result.findByRole('button', { name: 'Enter Demo as Amber, sample member' }),
+    );
     await result.findByText('Runtime unavailable');
     expect(result.getByTestId('entry-session-status').props.accessible).toBe(false);
     expect(result.getByRole('button', { name: 'Retry session check' })).toBeTruthy();

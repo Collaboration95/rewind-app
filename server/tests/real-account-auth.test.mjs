@@ -11,7 +11,7 @@ const { openDatabase, fixtureSummary } = await import('../dist/db.js');
 const { createRuntimeServer, authClientSource, authTransportIsSecure } =
   await import('../dist/http.js');
 const { createDemoSession } = await import('../dist/session/index.js');
-const { createRealAccount, resetRealAccountPassword, validateRealSession } =
+const { createRealAccount, resetRealAccountPassword, revokeRealSession, validateRealSession } =
   await import('../dist/auth/index.js');
 
 async function withRuntime(run) {
@@ -43,6 +43,14 @@ async function postLogin(baseUrl, username, password, clientType = 'native', ext
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify({ username, password, clientType }),
+  });
+}
+
+async function postRegistration(baseUrl, username, password) {
+  return fetch(`${baseUrl}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
   });
 }
 
@@ -547,6 +555,29 @@ test('session idle and absolute expiry are enforced, and reset revokes tokens', 
   });
 });
 
+test('session restore distinguishes a missing browser session from a revoked credential', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const missing = await fetch(`${baseUrl}/auth/session`);
+    assert.equal(missing.status, 401);
+    assert.equal((await missing.json()).error, 'session_required');
+
+    const account = await createRealAccount(
+      database,
+      'session.restore',
+      'Session Restore',
+      'long correct password',
+    );
+    const login = await postLogin(baseUrl, account.account.username, 'long correct password');
+    const { token } = await login.json();
+    revokeRealSession(database, token, new Date('2026-09-28T00:00:00.000Z'));
+    const revoked = await fetch(`${baseUrl}/auth/session`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(revoked.status, 401);
+    assert.equal((await revoked.json()).error, 'session_expired');
+  });
+});
+
 test('a reset committed after password verification blocks session insertion on a separate connection', async () => {
   await withRuntime(async ({ database, dataDir }) => {
     const account = await createRealAccount(
@@ -628,5 +659,115 @@ test('malformed and duplicate account input has no partial writes', async () => 
     assert.equal(created.ok, true);
     assert.deepEqual(duplicate, { ok: false, reason: 'duplicate' });
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 1);
+  });
+});
+
+test('public registration creates a sign-in-ready account without Demo or group membership', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const profilesBefore = database.prepare('SELECT COUNT(*) AS count FROM profiles').get().count;
+    const demoSessionsBefore = database
+      .prepare('SELECT COUNT(*) AS count FROM sessions')
+      .get().count;
+    const registration = await postRegistration(
+      baseUrl,
+      '  new.member  ',
+      'a secure registration password',
+    );
+    assert.equal(registration.status, 201);
+    const registrationBody = await registration.json();
+    assert.deepEqual(Object.keys(registrationBody), ['account']);
+    assert.deepEqual(Object.keys(registrationBody.account), [
+      'id',
+      'username',
+      'displayName',
+      'createdAt',
+      'updatedAt',
+    ]);
+    assert.equal(registrationBody.account.username, 'new.member');
+    assert.equal(registrationBody.account.displayName, 'new.member');
+    assert.equal(JSON.stringify(registrationBody).includes('secure registration password'), false);
+
+    const signIn = await postLogin(baseUrl, 'NEW.MEMBER', 'a secure registration password');
+    assert.equal(signIn.status, 200);
+    const signInBody = await signIn.json();
+    assert.equal(signInBody.account.id, registrationBody.account.id);
+    assert.match(signInBody.token, /^[A-Za-z0-9_-]{43}$/);
+
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 1);
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM real_group_memberships').get().count,
+      0,
+    );
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM real_group_metadata').get().count,
+      0,
+    );
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM profiles').get().count,
+      profilesBefore,
+    );
+    assert.equal(
+      database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count,
+      demoSessionsBefore,
+    );
+  });
+});
+
+test('registration gives the same safe failure for invalid, weak, and duplicate inputs', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const malformed = await fetch(`${baseUrl}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{',
+    });
+    const invalid = await postRegistration(baseUrl, 'x', 'a secure password');
+    const weak = await postRegistration(baseUrl, 'weak.pass', 'short');
+    const created = await postRegistration(
+      baseUrl,
+      'duplicate.user',
+      'a secure registration password',
+    );
+    const duplicate = await postRegistration(
+      baseUrl,
+      'DUPLICATE.USER',
+      'a different secure password',
+    );
+
+    assert.equal(created.status, 201);
+    assert.equal(malformed.status, 400);
+    assert.equal(invalid.status, 400);
+    assert.equal(weak.status, 400);
+    assert.equal(duplicate.status, 409);
+    const failures = await Promise.all([malformed.json(), invalid.json(), weak.json()]);
+    assert.deepEqual(failures[0], failures[1]);
+    assert.deepEqual(failures[1], failures[2]);
+    assert.equal(failures[0].error, 'invalid_registration');
+    assert.deepEqual(await duplicate.json(), {
+      error: 'username_unavailable',
+      message: 'This username is unavailable. Choose another username or sign in.',
+    });
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 1);
+  });
+});
+
+test('registration throttles repeated attempts before account creation', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await postRegistration(baseUrl, 'x', 'a secure password');
+      assert.equal(response.status, 400);
+    }
+
+    const throttled = await postRegistration(
+      baseUrl,
+      'throttled.user',
+      'a secure registration password',
+    );
+    assert.equal(throttled.status, 429);
+    assert.equal(Number(throttled.headers.get('retry-after')) > 0, true);
+    assert.deepEqual(await throttled.json(), {
+      error: 'registration_rate_limited',
+      message: 'Registration is temporarily unavailable. Please try again later.',
+    });
+    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 0);
   });
 });

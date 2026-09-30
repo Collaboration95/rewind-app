@@ -44,7 +44,7 @@ export function CapsuleSummary({
         <Text style={styles.label}>CURRENT CAPSULE</Text>
         <Text style={styles.statusTitle}>Capsule unavailable</Text>
         <Text accessibilityLiveRegion="assertive" style={styles.bodyText}>
-          This demo member does not have access to a group capsule.
+          This group capsule is unavailable. Check your group access in Settings.
         </Text>
       </View>
     );

@@ -16,6 +16,8 @@ export interface RealAccountSession {
 }
 
 export type AuthState = 'loading' | 'entry' | 'active' | 'error';
+export type RegistrationOutcome =
+  'created' | 'invalid' | 'duplicate' | 'rate-limited' | 'unavailable';
 export type AuthNotice =
   | 'expired'
   | 'revoked'
@@ -96,6 +98,22 @@ export class RealAccountClient {
     return isSecureAuthUrl(this.baseUrl);
   }
 
+  async register(username: string, password: string): Promise<RealAccount> {
+    this.assertSecureTransport();
+    const response = await this.fetcher(
+      authUrl(this.baseUrl, '/auth/register'),
+      requestOptions({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      }),
+    );
+    if (!response.ok) throw new AuthRequestError(response.status, 'registration');
+    const body = await readJson(response);
+    if (!isRealAccount(body.account)) throw new AuthRequestError(502, 'response');
+    return body.account;
+  }
+
   async login(
     username: string,
     password: string,
@@ -146,7 +164,11 @@ export class RealAccountClient {
       authUrl(this.baseUrl, '/auth/session'),
       requestOptions({ method: 'GET' }, token ?? undefined),
     );
-    if (response.status === 401) throw new AuthRequestError(401, 'expired');
+    if (response.status === 401) {
+      const body = await readJson(response);
+      if (Platform.OS === 'web' && body.error === 'session_required') return null;
+      throw new AuthRequestError(401, 'expired');
+    }
     if (!response.ok) throw new AuthRequestError(response.status, 'restore');
     const body = await readJson(response);
     if (
@@ -244,6 +266,7 @@ export class AuthRequestError extends Error {
       | 'expired'
       | 'insecure-transport'
       | 'secure-storage'
+      | 'registration'
       | 'logout',
   ) {
     super(

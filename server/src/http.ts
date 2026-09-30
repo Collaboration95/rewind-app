@@ -98,6 +98,7 @@ import { verifyArchiveListingIntegrity } from './archive/integrity-cache';
 import { mediaServingBudget, releaseBudgetWhenSnapshotCloses } from './media/serving-budget';
 import {
   authenticateRealAccount,
+  createRealAccount,
   REAL_SESSION_COOKIE,
   revokeRealSession,
   validateRealSession,
@@ -826,6 +827,7 @@ interface RequestLimiters {
   intake: ConcurrencyLimiter;
   processing: ConcurrencyLimiter;
   archive: ConcurrencyLimiter;
+  registration: RegistrationRateLimiter;
 }
 
 class ConcurrencyLimiter {
@@ -850,7 +852,45 @@ function createRequestLimiters(config: RuntimeConfig): RequestLimiters {
     intake: new ConcurrencyLimiter(config.maxConcurrentIntakes),
     processing: new ConcurrencyLimiter(config.maxConcurrentProcessing),
     archive: new ConcurrencyLimiter(2),
+    registration: new RegistrationRateLimiter(),
   };
+}
+
+const REGISTRATION_WINDOW_MS = 15 * 60 * 1000;
+const REGISTRATION_ATTEMPT_LIMIT = 5;
+const MAX_REGISTRATION_RATE_LIMIT_SOURCES = 10_000;
+
+class RegistrationRateLimiter {
+  private readonly sources = new Map<string, { count: number; windowStartedAt: number }>();
+
+  tryAcquire(
+    source: string,
+    nowMs: number,
+  ): { allowed: true } | { allowed: false; retryAfter: number } {
+    for (const [key, bucket] of this.sources) {
+      if (nowMs - bucket.windowStartedAt >= REGISTRATION_WINDOW_MS) this.sources.delete(key);
+    }
+
+    const bucket = this.sources.get(source);
+    if (!bucket) {
+      if (this.sources.size >= MAX_REGISTRATION_RATE_LIMIT_SOURCES) {
+        return { allowed: false, retryAfter: Math.ceil(REGISTRATION_WINDOW_MS / 1000) };
+      }
+      this.sources.set(source, { count: 1, windowStartedAt: nowMs });
+      return { allowed: true };
+    }
+    if (bucket.count >= REGISTRATION_ATTEMPT_LIMIT) {
+      return {
+        allowed: false,
+        retryAfter: Math.max(
+          1,
+          Math.ceil((bucket.windowStartedAt + REGISTRATION_WINDOW_MS - nowMs) / 1000),
+        ),
+      };
+    }
+    bucket.count += 1;
+    return { allowed: true };
+  }
 }
 
 function acquireRequestCapacity(
@@ -1025,12 +1065,16 @@ async function consumeRequestBody(
 async function requestBody(
   request: IncomingMessage,
   config: RuntimeConfig,
+  maxBytes = MAX_JSON_BODY_BYTES,
 ): Promise<Record<string, unknown> | null> {
   const chunks: Buffer[] = [];
   const size = await consumeRequestBody(request, {
-    maxBytes: MAX_JSON_BODY_BYTES,
+    maxBytes,
     idleTimeoutMs: config.httpIdleTimeoutMs,
-    tooLargeMessage: 'The JSON request body must be 64 KiB or smaller.',
+    tooLargeMessage:
+      maxBytes === MAX_JSON_BODY_BYTES
+        ? 'The JSON request body must be 64 KiB or smaller.'
+        : `The JSON request body must be ${maxBytes} bytes or smaller.`,
     onChunk: (chunk) => {
       chunks.push(chunk);
     },
@@ -1262,7 +1306,15 @@ export async function handleRequest(
   }
 
   if (url.pathname.startsWith('/auth/')) {
-    await handleRealAuthRequest(request, response, config, database, url, now());
+    await handleRealAuthRequest(
+      request,
+      response,
+      config,
+      database,
+      requestLimiters.registration,
+      url,
+      now(),
+    );
     return;
   }
 
@@ -3393,6 +3445,7 @@ async function handleRealAuthRequest(
   response: ServerResponse,
   config: RuntimeConfig,
   database: RewindDatabase,
+  registrationRateLimiter: RegistrationRateLimiter,
   url: URL,
   now: Date,
 ): Promise<void> {
@@ -3401,6 +3454,63 @@ async function handleRealAuthRequest(
       error: 'auth_transport_unavailable',
       message: 'Sign-in is unavailable on this connection.',
     });
+    return;
+  }
+
+  if (url.pathname === '/auth/register' && request.method === 'POST') {
+    const rateLimit = registrationRateLimiter.tryAcquire(
+      authClientSource(request, config),
+      now.getTime(),
+    );
+    if (!rateLimit.allowed) {
+      authJson(
+        request,
+        response,
+        config,
+        429,
+        {
+          error: 'registration_rate_limited',
+          message: 'Registration is temporarily unavailable. Please try again later.',
+        },
+        { 'Retry-After': String(rateLimit.retryAfter) },
+      );
+      return;
+    }
+
+    const body = await requestBody(request, config, 8 * 1024);
+    const username = typeof body?.username === 'string' ? body.username : '';
+    const password = typeof body?.password === 'string' ? body.password : '';
+    if (!body || !username || username.length > 128 || !password || password.length > 1024) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_registration',
+        message: 'Account registration failed. Check your details or try later.',
+      });
+      return;
+    }
+
+    try {
+      const result = await createRealAccount(database, username, username.trim(), password, now);
+      if (!result.ok && result.reason === 'duplicate') {
+        authJson(request, response, config, 409, {
+          error: 'username_unavailable',
+          message: 'This username is unavailable. Choose another username or sign in.',
+        });
+        return;
+      }
+      if (!result.ok) {
+        authJson(request, response, config, 400, {
+          error: 'invalid_registration',
+          message: 'Account registration failed. Check your details or try later.',
+        });
+        return;
+      }
+      authJson(request, response, config, 201, { account: result.account });
+    } catch {
+      authJson(request, response, config, 503, {
+        error: 'registration_unavailable',
+        message: 'Registration is temporarily unavailable. Please try again later.',
+      });
+    }
     return;
   }
 
@@ -3455,13 +3565,14 @@ async function handleRealAuthRequest(
 
   if (url.pathname === '/auth/session' && request.method === 'GET') {
     const token = authToken(request);
-    const session = token
-      ? validateRealSession(database, token, now)
-      : { status: 'invalid' as const };
+    const session = validateRealSession(database, token ?? '', now);
     if (session.status !== 'valid') {
+      const missingCredential = token === null;
       authJson(request, response, config, 401, {
-        error: 'session_required',
-        message: 'A valid sign-in is required.',
+        error: missingCredential ? 'session_required' : 'session_expired',
+        message: missingCredential
+          ? 'A valid sign-in is required.'
+          : 'This sign-in has expired or was revoked.',
       });
       return;
     }
