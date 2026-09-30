@@ -497,7 +497,7 @@ describe('Rewind Home start screen', () => {
     expect(result.getByLabelText('Locked moment 1 of 3')).toBeTruthy();
     expect(result.getByLabelText('Locked moment 2 of 3')).toBeTruthy();
     expect(result.getByLabelText('Locked moment 3 of 3')).toBeTruthy();
-    expect(result.getByRole('button', { name: 'Add a moment' })).toBeTruthy();
+    await result.findByRole('button', { name: 'Add a moment' });
 
     await fireEvent.press(result.getByRole('button', { name: 'Add a moment' }));
     expect(await result.findByRole('header', { name: 'Add a still moment' })).toBeTruthy();
