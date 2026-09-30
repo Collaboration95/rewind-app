@@ -2316,7 +2316,7 @@ const styles = StyleSheet.create({
   entryContent: {
     flexGrow: 1,
     gap: 24,
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     padding: 24,
     paddingBottom: 36,
   },

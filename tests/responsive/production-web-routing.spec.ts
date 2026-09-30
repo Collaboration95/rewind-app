@@ -36,6 +36,18 @@ test('mobile welcome keeps the brand and entry actions together and vertically b
   expect(Math.abs(contentCenter - 844 / 2)).toBeLessThan(88);
 });
 
+test('mobile signup starts close to the brand without a large empty band', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Create account' }).click();
+
+  const brand = await page.getByTestId('entry-brand').boundingBox();
+  const formIntro = await page.getByText('JOIN REWIND').boundingBox();
+  expect(brand).not.toBeNull();
+  expect(formIntro).not.toBeNull();
+  expect(formIntro!.y - (brand!.y + brand!.height)).toBeLessThan(64);
+});
+
 test('web entry opens account registration and blocks credentials without HTTPS configuration', async ({
   page,
 }) => {
