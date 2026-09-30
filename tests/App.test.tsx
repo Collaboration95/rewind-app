@@ -156,7 +156,7 @@ describe('Rewind Home start screen', () => {
     expect(mockStatusBar).toHaveBeenCalledWith({ hidden: true, style: 'light' });
   });
 
-  it('shows the sample group and capsule summary without account switching on Home', async () => {
+  it('shows the group and capsule summary without account switching on Home', async () => {
     const result = await render(<App />);
 
     await result.findByRole('header', { name: 'Weekend People' });
@@ -218,6 +218,11 @@ describe('Rewind Home start screen', () => {
     await result.findByRole('header', { name: 'Weekend People' });
 
     expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
+    expect(
+      within(result.getByTestId('capsule-ready')).queryByText(
+        /sample group|local demo|local runtime|sqlite|ffmpeg/i,
+      ),
+    ).toBeNull();
 
     for (const area of [
       { key: 'camera', label: 'Camera' },
