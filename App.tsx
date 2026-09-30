@@ -1962,6 +1962,7 @@ function HomeScreen({
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       style={styles.homeScroll}
+      tabIndex={Platform.OS === 'web' ? 0 : undefined}
       testID="home-scroll"
     >
       <AppHeader />
