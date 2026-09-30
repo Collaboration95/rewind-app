@@ -323,9 +323,12 @@ describe('real account entry flow', () => {
 
     await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
     await fireEvent.press(result.getByTestId('sign-in-create-account'));
+    await fireEvent(result.getByTestId('registration-username'), 'submitEditing');
+    await fireEvent(result.getByTestId('registration-password'), 'submitEditing');
     const confirmation = result.getByTestId('registration-password-confirmation');
 
     await fireEvent(confirmation, 'submitEditing');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
     await fireEvent.changeText(result.getByLabelText('Username'), 'simulator.test');
     await fireEvent.changeText(result.getByLabelText('Password'), 'synthetic-password-one');
     await fireEvent.changeText(confirmation, 'synthetic-password-one');

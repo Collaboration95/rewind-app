@@ -593,6 +593,8 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
+  const registrationPasswordRef = useRef<ElementRef<typeof TextInput>>(null);
+  const registrationConfirmationRef = useRef<ElementRef<typeof TextInput>>(null);
   const [authPending, setAuthPending] = useState(false);
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [registrationError, setRegistrationError] = useState<
@@ -784,8 +786,10 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               autoCapitalize="none"
               autoComplete="username"
               autoCorrect={false}
+              blurOnSubmit={false}
               editable={!authPending && !registrationComplete}
               onChangeText={setUsername}
+              onSubmitEditing={() => registrationPasswordRef.current?.focus()}
               returnKeyType="next"
               style={styles.authInput}
               testID="registration-username"
@@ -799,8 +803,11 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               accessibilityLabel="Password"
               autoCapitalize="none"
               autoComplete="new-password"
+              blurOnSubmit={false}
               editable={!authPending && !registrationComplete}
               onChangeText={setPassword}
+              onSubmitEditing={() => registrationConfirmationRef.current?.focus()}
+              ref={registrationPasswordRef}
               returnKeyType="next"
               secureTextEntry
               style={styles.authInput}
@@ -818,6 +825,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               editable={!authPending && !registrationComplete}
               onChangeText={setPasswordConfirmation}
               onSubmitEditing={() => void submitRegistration()}
+              ref={registrationConfirmationRef}
               returnKeyType="go"
               secureTextEntry
               style={styles.authInput}
