@@ -25,6 +25,8 @@ assert.match(index, /viewport-fit=cover/);
 assert.match(index, /name="theme-color" content="#252326"/);
 assert.match(index, /apple-mobile-web-app-capable/);
 assert.match(index, /apple-mobile-web-app-status-bar-style" content="black-translucent"/);
+assert.match(index, /min-height: 100dvh/);
+assert.match(index, /margin: 0/);
 assert.equal(manifest.name, 'Rewind');
 assert.equal(manifest.short_name, 'Rewind');
 assert.equal(manifest.start_url, '/');
@@ -65,5 +67,7 @@ assert.ok(
 assert.match(offline, /Captured media is not synchronized offline/);
 assert.match(offline, /viewport-fit=cover/);
 assert.match(offline, /theme-color" content="#252326"/);
+assert.match(offline, /min-height: 100dvh/);
+assert.match(offline, /margin: 0/);
 
 console.log(`PWA export valid: ${distDir}`);

@@ -36,6 +36,8 @@ test('the web shell registers a bounded offline fallback without offline sync', 
   assert.match(index, /name="apple-mobile-web-app-status-bar-style" content="black-translucent"/);
   assert.match(index, /name="theme-color" content="#252326"/);
   assert.match(index, /background: #252326/);
+  assert.match(index, /min-height: 100dvh/);
+  assert.match(index, /margin: 0/);
   assert.match(serviceWorker, /const CACHE_NAME = 'rewind-shell-v2'/);
   assert.match(
     serviceWorker,
@@ -52,4 +54,6 @@ test('the web shell registers a bounded offline fallback without offline sync', 
   assert.ok(shellAssetGuardIndex > navigationGuardIndex);
   assert.match(offline, /Server-backed actions are unavailable offline/);
   assert.match(offline, /Captured media is not synchronized offline/);
+  assert.match(offline, /min-height: 100dvh/);
+  assert.match(offline, /margin: 0/);
 });
