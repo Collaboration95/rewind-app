@@ -3565,18 +3565,14 @@ async function handleRealAuthRequest(
 
   if (url.pathname === '/auth/session' && request.method === 'GET') {
     const token = authToken(request);
-    if (!token) {
-      authJson(request, response, config, 401, {
-        error: 'session_required',
-        message: 'A valid sign-in is required.',
-      });
-      return;
-    }
-    const session = validateRealSession(database, token, now);
+    const session = validateRealSession(database, token ?? '', now);
     if (session.status !== 'valid') {
+      const missingCredential = token === null;
       authJson(request, response, config, 401, {
-        error: 'session_expired',
-        message: 'This sign-in has expired or was revoked.',
+        error: missingCredential ? 'session_required' : 'session_expired',
+        message: missingCredential
+          ? 'A valid sign-in is required.'
+          : 'This sign-in has expired or was revoked.',
       });
       return;
     }
