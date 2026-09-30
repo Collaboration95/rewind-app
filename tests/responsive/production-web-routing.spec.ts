@@ -19,6 +19,23 @@ test('fresh web install keeps Demo behind Sign in before any member is active', 
   await expect(page.getByRole('heading', { name: 'Weekend People' })).toBeVisible();
 });
 
+test('mobile welcome keeps the brand and entry actions together and vertically balanced', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  const brand = await page.getByTestId('entry-brand').boundingBox();
+  const actions = await page.getByTestId('welcome-entry').boundingBox();
+  expect(brand).not.toBeNull();
+  expect(actions).not.toBeNull();
+
+  const gap = actions!.y - (brand!.y + brand!.height);
+  const contentCenter = (brand!.y + actions!.y + actions!.height) / 2;
+  expect(gap).toBeLessThan(96);
+  expect(Math.abs(contentCenter - 844 / 2)).toBeLessThan(88);
+});
+
 test('web entry opens account registration and blocks credentials without HTTPS configuration', async ({
   page,
 }) => {

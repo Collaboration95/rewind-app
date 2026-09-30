@@ -728,12 +728,15 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     <SafeAreaFrame>
       <Animated.ScrollView
         automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
-        contentContainerStyle={styles.entryContent}
+        contentContainerStyle={[
+          styles.entryContent,
+          visibleMode === 'welcome' && styles.welcomeEntryContent,
+        ]}
         keyboardShouldPersistTaps="handled"
         style={{ transform: [{ translateY: entryOffset }] }}
         testID="entry-mode-content"
       >
-        <View style={styles.entryBrand}>
+        <View style={styles.entryBrand} testID="entry-brand">
           <View style={styles.brandLockup}>
             <Image
               accessibilityLabel="Rewind mark"
@@ -2317,9 +2320,10 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingBottom: 36,
   },
+  welcomeEntryContent: { justifyContent: 'center' },
   entryBrand: { alignItems: 'center', alignSelf: 'stretch', gap: 8 },
   entryTagline: { color: COLORS.muted, fontSize: 12, letterSpacing: 1.2, textAlign: 'center' },
-  welcomeActions: { flexGrow: 1, gap: 12, justifyContent: 'flex-end' },
+  welcomeActions: { gap: 12 },
   entryIntro: { gap: 12 },
   authFieldLabel: { color: COLORS.ink, fontSize: 14, fontWeight: '700', marginTop: 4 },
   authInput: {
