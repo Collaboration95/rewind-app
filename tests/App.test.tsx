@@ -583,8 +583,7 @@ describe('Rewind Home start screen', () => {
 describe('Local demo profile flow', () => {
   it('offers five accessible choices, remembers selection on relaunch, and resets cleanly', async () => {
     const result = await render(<App />);
-    await result.findByTestId('main-navigation');
-    expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
+    await result.findByRole('header', { name: 'Weekend People' });
     expect(result.queryByRole('header', { name: 'Local demo' })).toBeNull();
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     expect(result.getByRole('header', { name: 'Local demo' })).toBeTruthy();
