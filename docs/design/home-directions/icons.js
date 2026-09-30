@@ -1,10 +1,13 @@
 'use strict';
 
-// App icon 候选（由图标探索页整理而来；J–P 为新增）。svg 为 512×512，滤镜 #rough 等定义在 index.html。
+// App icon 候选（由图标探索页整理而来；J–U 为新增）。svg 为 512×512，滤镜 #rough 等定义在 index.html。
+// id 是内部代号（网址里用，保持不变）；no 是页面上显示的编号；cat：word 字母类 / mark 图形类。
 // 带 --acc 的元素是强调色，搭配页可让它跟随方向的强调色。
 const ICON_FAMILY = [
   {
     id: 'A',
+    no: 1,
+    cat: 'word',
     bg: '#fff',
     name: ['Scratchpad', '草稿本'],
     note: [
@@ -17,6 +20,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'B',
+    no: 2,
+    cat: 'word',
     bg: '#fff',
     name: ['Roman R, playful e', '罗马斜体 R + 俏皮 e'],
     note: [
@@ -29,6 +34,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'C',
+    no: 3,
+    cat: 'word',
     bg: '#fff',
     name: ['Marker scribble', '马克笔'],
     note: [
@@ -41,6 +48,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'D',
+    no: 4,
+    cat: 'word',
     bg: '#fff',
     name: ['Circled', '圈起来'],
     note: [
@@ -53,6 +62,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'E',
+    no: 5,
+    cat: 'word',
     bg: '#efece6',
     name: ['Polaroid', '拍立得'],
     note: ['A wobbly instant-photo frame with Re inside.', '歪歪的拍立得相框，里面写着 Re。'],
@@ -62,6 +73,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'F',
+    no: 6,
+    cat: 'word',
     bg: '#fff',
     name: ['Rewind arrow', '倒带箭头'],
     note: ['Re with a hand-drawn arrow running back underneath.', 'Re 下面画一道往回走的箭头。'],
@@ -71,6 +84,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'G',
+    no: 7,
+    cat: 'word',
     bg: '#fff',
     name: ['Ink + one record dot', '墨字 + 一个录制点'],
     note: [
@@ -83,6 +98,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'H',
+    no: 8,
+    cat: 'word',
     bg: '#fff',
     name: ['Postmark', '邮戳'],
     note: [
@@ -95,6 +112,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'I',
+    no: 9,
+    cat: 'word',
     bg: '#fff',
     name: ['R holds e', 'R 抱着 e'],
     note: [
@@ -107,6 +126,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'A′',
+    no: 10,
+    cat: 'word',
     bg: '#111',
     name: ['Dark variant', '深色版'],
     note: [
@@ -119,6 +140,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'J',
+    no: 11,
+    cat: 'word',
     bg: '#fff',
     name: ['Re:', 'Re:（回复）'],
     note: [
@@ -130,19 +153,9 @@ const ICON_FAMILY = [
     acc: false,
   },
   {
-    id: 'K',
-    bg: '#fff',
-    name: ['Two dots, in ink', '墨水两个点'],
-    note: [
-      'The local build’s two dots, drawn in ink on paper. No letters.',
-      '把本地版的两个点改成纸上的墨水手绘，不要字母。',
-    ],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough2)" fill="#111"><circle cx="200" cy="270" r="46"/><circle cx="316" cy="270" r="46"/></g></svg>',
-    new: true,
-    acc: false,
-  },
-  {
     id: 'L',
+    no: 12,
+    cat: 'word',
     bg: '#1D1B1E',
     name: ['Re: on dark', '深色 Re:'],
     note: [
@@ -155,6 +168,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'M',
+    no: 13,
+    cat: 'word',
     bg: '#fff',
     name: ['Notebook page', '笔记本'],
     note: ['Re written on ruled paper with a red margin.', '写在带红色页边线的横线本上。'],
@@ -164,6 +179,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'N',
+    no: 14,
+    cat: 'word',
     bg: '#efece6',
     name: ['Sticky note', '便利贴'],
     note: [
@@ -176,6 +193,8 @@ const ICON_FAMILY = [
   },
   {
     id: 'O',
+    no: 15,
+    cat: 'word',
     bg: '#fff',
     name: ['Taped shut', '胶带封住'],
     note: [
@@ -187,7 +206,23 @@ const ICON_FAMILY = [
     acc: false,
   },
   {
+    id: 'K',
+    no: 16,
+    cat: 'mark',
+    bg: '#fff',
+    name: ['Two dots, in ink', '墨水两个点'],
+    note: [
+      'The local build’s two dots, drawn in ink on paper. No letters.',
+      '把本地版的两个点改成纸上的墨水手绘，不要字母。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough2)" fill="#111"><circle cx="200" cy="270" r="46"/><circle cx="316" cy="270" r="46"/></g></svg>',
+    new: true,
+    acc: false,
+  },
+  {
     id: 'P',
+    no: 17,
+    cat: 'mark',
     bg: '#fff',
     name: ['Rewind doodle', '手绘倒带'],
     note: [
@@ -197,6 +232,73 @@ const ICON_FAMILY = [
     svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g fill="none" stroke="#111" stroke-width="44" stroke-linecap="round" stroke-linejoin="round" filter="url(#rough)"><path d="M256 150 136 256l120 106"/><path d="M376 150 256 256l120 106"/></g></svg>',
     new: true,
     acc: false,
+  },
+  {
+    id: 'Q',
+    no: 18,
+    cat: 'mark',
+    bg: '#fff',
+    name: ['Film canister', '胶卷筒'],
+    note: [
+      'A hand-drawn film canister: shoot now, develop later.',
+      '手绘胶卷筒：现在拍，以后再冲洗。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="none" stroke="#111" stroke-width="14" stroke-linejoin="round" stroke-linecap="round"><rect x="118" y="164" width="190" height="236" rx="26"/><rect x="140" y="120" width="146" height="46" rx="10"/><path d="M118 232h190M118 334h190" stroke-width="8"/><path d="M308 262h104v94H308"/></g><g fill="#111" filter="url(#rough)"><rect x="328" y="272" width="16" height="16" rx="3"/><rect x="370" y="272" width="16" height="16" rx="3"/><rect x="328" y="330" width="16" height="16" rx="3"/><rect x="370" y="330" width="16" height="16" rx="3"/></g></svg>',
+    new: true,
+    acc: false,
+  },
+  {
+    id: 'R',
+    no: 19,
+    cat: 'mark',
+    bg: '#fff',
+    name: ['Circle of friends', '朋友围一圈'],
+    note: [
+      'Six friends in a ring: the one in colour is you, the dashed one isn’t in yet.',
+      '六个朋友围成一圈：彩色的是你，虚线的是还没加入的。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)"><circle cx="256" cy="116" r="32" fill="#111"/><circle cx="377" cy="186" r="32" fill="#111"/><circle cx="377" cy="326" r="32" style="fill:var(--acc,#ff4d12)"/><circle cx="256" cy="396" r="32" fill="#111"/><circle cx="135" cy="326" r="30" fill="none" stroke="#111" stroke-width="8" stroke-dasharray="10 10"/><circle cx="135" cy="186" r="32" fill="#111"/></g></svg>',
+    new: true,
+    acc: true,
+  },
+  {
+    id: 'S',
+    no: 20,
+    cat: 'mark',
+    bg: '#fff',
+    name: ['Sealed envelope', '封好的信'],
+    note: ['An envelope drawn in pen, closed with a ‹‹ seal.', '钢笔画的信封，用 ‹‹ 火漆封口。'],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="none" stroke="#111" stroke-width="14" stroke-linejoin="round"><rect x="92" y="148" width="328" height="224" rx="14"/><path d="M92 156l164 124 164-124"/></g><circle cx="256" cy="282" r="54" style="fill:var(--acc,#ff4d12)" filter="url(#rough)"/><g fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"><path d="M254 258l-22 24 22 24"/><path d="M284 258l-22 24 22 24"/></g></svg>',
+    new: true,
+    acc: true,
+  },
+  {
+    id: 'T',
+    no: 21,
+    cat: 'mark',
+    bg: '#fff',
+    name: ['Photo taped shut', '胶带封住的照片'],
+    note: [
+      'A photo frame crossed with two strips of tape: nobody peeks until Sunday.',
+      '一张照片被两条胶带交叉封住：周日之前谁也看不到。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><rect x="126" y="126" width="260" height="260" rx="10" fill="none" stroke="#111" stroke-width="14" filter="url(#rough)"/><g transform="rotate(35 256 256) translate(256 256) scale(.78) translate(-256 -256)"><polygon points="30,236 472,236 482,250 470,262 484,276 470,288 482,302 472,314 30,314 40,300 28,288 42,276 28,262 40,250" fill="#e9dcc0" opacity=".92" transform="translate(0 -20)"/></g><g transform="rotate(-35 256 256) translate(256 256) scale(.78) translate(-256 -256)"><polygon points="30,236 472,236 482,250 470,262 484,276 470,288 482,302 472,314 30,314 40,300 28,288 42,276 28,262 40,250" fill="#e2d2b2" opacity=".92" transform="translate(0 -20)"/></g></svg>',
+    new: true,
+    acc: false,
+  },
+  {
+    id: 'U',
+    no: 22,
+    cat: 'mark',
+    bg: '#fff',
+    name: ['Hourglass', '沙漏'],
+    note: [
+      'Sand running down to the reveal. Lapse uses a clock; this stays closer to “waiting together”.',
+      '沙子往下流，等揭晓。Lapse 用的是时钟，沙漏更贴近“一起等”。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="none" stroke="#111" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"><path d="M168 116h176M168 396h176"/><path d="M186 124c0 84 62 104 62 132s-62 48-62 132M326 124c0 84-62 104-62 132s62 48 62 132"/></g><path d="M204 384c8-44 40-62 52-66 12 4 44 22 52 66z" style="fill:var(--acc,#ff4d12)" filter="url(#rough)"/><path d="M224 170h64c-8 26-22 38-32 44-10-6-24-18-32-44z" fill="#111" filter="url(#rough)"/></svg>',
+    new: true,
+    acc: true,
   },
 ];
 

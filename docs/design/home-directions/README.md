@@ -14,12 +14,13 @@ Write them right on the page, under each phone and each dock. We will combine ev
 
 ## App icon · mix and match
 
-The second tab at the top of the page (or `index.html#mix`) pairs a Home direction with an app icon and shows them where people will meet them: the launch screen opening into that Home, the home screen (light, teal or dark wallpaper), the sizes from 120 px down to 29 px, a notification, and the two palettes side by side with a note when one is light and the other dark. There is no voting on this tab yet.
+The second tab at the top of the page (or `index.html#mix`) pairs a Home direction with an app icon and shows them where people will meet them: the launch screen opening into that Home, a home screen among common apps (white or black wallpaper), the sizes from 120 px down to 29 px, a notification, and the two palettes side by side with a note when one is light and the other dark. There is no voting on this tab yet.
 
-- Icons: the scratchpad “Re” family A–I and A′, seven new ones (J `Re:`, K two dots in ink, L `Re:` on dark, M notebook page, N sticky note, O taped shut, P rewind doodle), each direction's own icon, and two references (the current icon and the two-dot icon tried locally). J, K and L grow out of that two-dot icon.
-- _Dot follows the Home accent_ recolours only the accent in the icon (G's dot, I's e, L's dots, 05's square).
+- Icons are numbered. Letters (1–15) spell Re in the scratchpad hand; symbols (16–22) draw one idea without letters: two dots, a rewind doodle, a film canister, a circle of friends, a sealed envelope, a photo taped shut and an hourglass. 11, 12 and 16 grow out of the two-dot icon tried locally. Each direction's own icon and the current icon are there for reference.
+- _Dot follows the Home accent_ recolours only the accent in the icon.
 - _Scratchpad skin_ is a sixth Home option: the same Home drawn with wobbly black outlines on white.
-- The pairing is kept in the link, for example `#mix=c6+G+t` (Warm Glass, icon G, dot tinted). _Copy a link to this pairing_ copies it.
+- The launch animation is a placeholder fade; ideas for later are noted under the phone.
+- The pairing is kept in the link, for example `#mix=c6+G+t` (Warm Glass, icon 7, dot tinted). The link uses each icon's internal letter so older links keep working.
 
 ## Open it
 

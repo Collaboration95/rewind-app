@@ -317,6 +317,8 @@ main {
   height: 844px;
   border-radius: 54px;
   overflow: hidden;
+  /* 正在动画的倾斜胶片是单独合成的图层，仅靠圆角 + overflow 有时裁不住，会从屏幕左边漏出来 */
+  clip-path: inset(0 round 54px);
   background: var(--bg);
   color: var(--ink);
   font-family: var(--f-body);

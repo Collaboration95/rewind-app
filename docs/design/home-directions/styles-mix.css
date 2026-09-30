@@ -145,6 +145,11 @@ body.view-mix main {
   background: #fff;
   box-shadow: inset 0 0 0 2px var(--page-ink);
 }
+.mx-sub {
+  margin: 4px 0 -2px;
+  font-size: 11.5px;
+  color: var(--page-muted);
+}
 .mx-pick .check {
   margin-top: 6px;
 }
@@ -182,25 +187,28 @@ body.view-mix main {
 }
 .mx-splash {
   position: absolute;
-  inset: calc(10px * var(--s));
-  z-index: 5;
+  inset: 0;
+  z-index: 60;
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 14px;
-  border-radius: calc(54px * var(--s));
+  gap: 22px;
+  border-radius: inherit;
   transition:
     opacity 0.5s ease,
     transform 0.5s ease;
 }
 .mx-splash span {
   font:
-    600 17px/1 'Shantell Sans',
+    600 28px/1 'Shantell Sans',
     cursive;
   letter-spacing: 0.02em;
 }
 .mx-splash .mx-icon {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.screen.splashing > :not(.mx-splash) {
+  visibility: hidden;
 }
 .mx-splash.gone {
   opacity: 0;
@@ -211,6 +219,16 @@ body.view-mix main {
   flex: none;
   justify-self: start;
   padding: 7px 12px;
+}
+.mx-anim {
+  width: calc(410px * var(--s));
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--page-muted);
+  border: 1px dashed rgba(29, 27, 24, 0.22);
 }
 
 /* 手机桌面 */
@@ -251,12 +269,6 @@ body.view-mix main {
 .mx-home.light .mx-apps figcaption {
   color: #1d1b18;
   text-shadow: none;
-}
-.mx-home .ph {
-  width: 52px;
-  height: 52px;
-  border-radius: 12px;
-  opacity: 0.85;
 }
 .mx-dock {
   display: flex;
@@ -368,6 +380,10 @@ body.view-mix main {
 /* ============ 字标总览 ============ */
 .mx-fam-h {
   margin: 56px 0 6px;
+}
+.mx-cat-h {
+  margin: 28px 0 0;
+  font-size: 15px;
 }
 .mx-gallery {
   display: grid;
