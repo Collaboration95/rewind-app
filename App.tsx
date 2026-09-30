@@ -438,7 +438,10 @@ function ActiveAppShell({
       if (timeout) clearTimeout(timeout);
     };
     const handleFocusIn = (event: FocusEvent) => {
-      if (event.target !== focusedHeading) stopObserving();
+      // A loading route can temporarily return focus to body when its heading
+      // is replaced. Keep observing that transition, but respect focus moving
+      // to another interactive element.
+      if (event.target !== focusedHeading && event.target !== document.body) stopObserving();
     };
     timeout = setTimeout(stopObserving, 5000);
     document.addEventListener('focusin', handleFocusIn);
