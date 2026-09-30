@@ -953,7 +953,7 @@ const concepts = [
   },
 ];
 // 第一轮评审后列为废案的方向：放在页面最下面，默认收起，评审只读
-const ARCHIVED = ['c1', 'c2', 'c3', 'c4', 'c8', 'c11'];
+const ARCHIVED = ['c1', 'c2', 'c3', 'c4', 'c5', 'c8', 'c11'];
 const isArchived = (id) => ARCHIVED.includes(id);
 // 页面顺序：保留方向（按编号）→ 对照组 → 废案（按编号）
 for (const c of concepts)

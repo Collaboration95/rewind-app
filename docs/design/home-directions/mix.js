@@ -66,7 +66,10 @@ const APP_ICONS = {
 const appIcon = (k, size) =>
   `<span class="mx-icon" style="width:${size}px;height:${size}px"><svg viewBox="0 0 60 60">${APP_ICONS[k]}</svg></span>`;
 
-let mix = { dir: 'c6', icon: 'G', tint: false, wall: 'light' };
+// 图标底色：只给白底的字标族换，选项少一点
+const ICON_BGS = { white: '#ffffff', cream: '#f3ebdd', black: '#161514', home: '' };
+
+let mix = { dir: 'c6', icon: 'G', tint: false, wall: 'light', bg: 'white' };
 
 const iconOf = (id) =>
   ICON_FAMILY.find((i) => i.id === id) ||
@@ -79,9 +82,19 @@ const iconName = (ic) =>
     : `${t('mix.pairOf')} ${nameOf(concepts.find((c) => 'p:' + c.id === ic.id))}`;
 // 页面上显示的编号：字标族用数字，方向配套图标和参考不编号
 const iconNo = (ic) => (ic.no ? String(ic.no) : '');
+const canBg = (ic) => ic.bg === '#fff';
+const bgHex = () => (mix.bg === 'home' ? PAL[mix.dir][0] : ICON_BGS[mix.bg]);
+const iconBg = (ic) => (canBg(ic) ? bgHex() : ic.bg);
+// 换底色：第一个白色填充就是底板；底色深时把黑色墨水换成浅色
+function iconSVG(ic) {
+  if (!canBg(ic) || mix.bg === 'white') return ic.svg;
+  const bg = bgHex();
+  const s = ic.svg.replace('fill="#fff"', `fill="${bg}"`);
+  return lum(bg) < 0.3 ? s.replace(/(fill|stroke)="#111"/g, '$1="#f4efe7"') : s;
+}
 // 同一个图标在页面上会出现很多次：svg 本身不带尺寸，由外层决定
 const iconHTML = (id, size, cls = '') =>
-  `<span class="mx-icon ${cls}" style="width:${size}px;height:${size}px">${iconOf(id).svg}</span>`;
+  `<span class="mx-icon ${cls}" style="width:${size}px;height:${size}px">${iconSVG(iconOf(id))}</span>`;
 
 const dirName = (id) => (id === 'sp' ? t('mix.sp') : nameOf(concepts.find((c) => c.id === id)));
 const dirNo = (id) => (id === 'sp' ? '—' : concepts.find((c) => c.id === id).no);
@@ -97,18 +110,26 @@ function lum(hex) {
 }
 
 /* ---------- 网址 ---------- */
+// #mix=方向+图标[+t 圆点跟随强调色][+bg-cream 图标底色]
 function mixHash() {
-  return `#mix=${mix.dir}+${encodeURIComponent(mix.icon)}${mix.tint ? '+t' : ''}`;
+  return (
+    `#mix=${mix.dir}+${encodeURIComponent(mix.icon)}` +
+    (mix.tint ? '+t' : '') +
+    (mix.bg === 'white' ? '' : '+bg-' + mix.bg)
+  );
 }
 function readHash() {
-  const m = /^#mix(?:=([^+]*)\+([^+]*)(\+t)?)?$/.exec(location.hash);
+  const m = /^#mix(?:=(.*))?$/.exec(location.hash);
   if (!m) return false;
-  if (m[1] && (PAL[m[1]] || m[1] === 'sp')) mix.dir = m[1];
-  if (m[2]) {
-    const id = decodeURIComponent(m[2]);
+  const [dir, icon, ...rest] = (m[1] || '').split('+');
+  if (dir && PAL[dir]) mix.dir = dir;
+  if (icon) {
+    const id = decodeURIComponent(icon);
     if (iconOf(id).id === id) mix.icon = id;
   }
-  mix.tint = Boolean(m[3]);
+  mix.tint = rest.includes('t');
+  const bg = (rest.find((x) => x.startsWith('bg-')) || '').slice(3);
+  mix.bg = bg in ICON_BGS ? bg : 'white';
   return true;
 }
 
@@ -144,10 +165,19 @@ function pickerHTML() {
       .join('')}</div>`;
   return (
     `<p class="lbl">${t('mix.dir')}</p><div class="mx-dirs">${dirs.map((c) => dirBtn(c.id)).join('')}${dirBtn('sp')}</div>` +
-    (showArch ? '' : `<p class="hint">${t('mix.archHint')}</p>`) +
+    (showArch ? '' : `<p class="hint">${t('mix.archHint', { n: ARCHIVED.length })}</p>`) +
     `<p class="lbl">${t('mix.family')}</p>${cat('word')}${cat('mark')}` +
     (pair ? `<p class="lbl">${t('mix.pair')}</p><div class="mx-tiles">${tile(pair)}</div>` : '') +
     `<p class="lbl">${t('mix.refs')}</p><div class="mx-tiles">${ICON_REFS.map(tile).join('')}</div>` +
+    `<p class="lbl">${t('mix.bgLabel')}</p><div class="mx-bgs${canBg(iconOf(mix.icon)) ? '' : ' off'}" role="group" aria-label="${t('mix.bgLabel')}">` +
+    Object.keys(ICON_BGS)
+      .map(
+        (k) =>
+          `<button type="button" data-mx-bg="${k}" aria-pressed="${mix.bg === k}"${canBg(iconOf(mix.icon)) ? '' : ' disabled'}><i style="background:${k === 'home' ? PAL[mix.dir][0] : ICON_BGS[k]}"></i>${t('mix.bg.' + k)}</button>`,
+      )
+      .join('') +
+    `</div>` +
+    (canBg(iconOf(mix.icon)) ? '' : `<p class="hint">${t('mix.bgNone')}</p>`) +
     `<label class="check${acc ? '' : ' off'}" for="mx-tint"><input type="checkbox" id="mx-tint"${mix.tint ? ' checked' : ''}${acc ? '' : ' disabled'} /> <span>${t('mix.tint')}</span></label>` +
     `<p class="hint">${t(acc ? 'mix.tintHint' : 'mix.tintNone')}</p>` +
     `<button type="button" class="rv-send mx-share" data-mx-share>${t('mix.share')}</button>`
@@ -218,14 +248,19 @@ function paletteHTML() {
   const [bg, ink, acc] = PAL[mix.dir];
   const sw = (hex, label) =>
     `<span class="sw"><i style="background:${hex}"></i>${label}<code>${hex}</code></span>`;
-  const gap = Math.abs(lum(ic.bg) - lum(bg));
+  const gap = Math.abs(lum(iconBg(ic)) - lum(bg));
   return (
     `<div class="mx-pal"><div><p class="lbl">${t('mix.palDir')}</p>${sw(bg, t('mix.bg'))}${sw(ink, t('mix.ink'))}${sw(acc, t('mix.acc'))}</div>` +
-    `<div><p class="lbl">${t('mix.palIcon')}</p>${sw(ic.bg, t('mix.bg'))}${ic.acc ? sw(mix.tint ? acc : '#ff4d12', t('mix.acc')) : ''}</div></div>` +
+    `<div><p class="lbl">${t('mix.palIcon')}</p>${sw(iconBg(ic), t('mix.bg'))}${ic.acc ? sw(mix.tint ? acc : '#ff4d12', t('mix.acc')) : ''}</div></div>` +
     `<p class="mx-hint">${t(gap > 0.45 ? 'mix.hintFlip' : 'mix.hintSame')}</p>`
   );
 }
 
+// 分组标题带上编号区间，比如“字母类 · 1–15”
+function catTitle(k) {
+  const list = ICON_FAMILY.filter((i) => i.cat === k);
+  return `${t('mix.cat.' + k)} · ${list[0].no}–${list.at(-1).no}`;
+}
 function galleryHTML() {
   const card = (ic) =>
     `<figure class="mx-card${mix.icon === ic.id ? ' on' : ''}"><button type="button" data-mx-icon="${ic.id}">${iconHTML(ic.id, 150)}</button>` +
@@ -235,11 +270,11 @@ function galleryHTML() {
     `<h3 class="mx-cat-h">${title}</h3><div class="mx-gallery">${list.map(card).join('')}</div>`;
   return (
     group(
-      t('mix.cat.word') + ' · 1–15',
+      catTitle('word'),
       ICON_FAMILY.filter((i) => i.cat === 'word'),
     ) +
     group(
-      t('mix.cat.mark') + ' · 16–22',
+      catTitle('mark'),
       ICON_FAMILY.filter((i) => i.cat === 'mark'),
     ) +
     group(t('mix.refs'), ICON_REFS)
@@ -292,7 +327,7 @@ function renderMix() {
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
-    '[data-view],[data-mx-dir],[data-mx-icon],[data-mx-wall],[data-mx-replay],[data-mx-share]',
+    '[data-view],[data-mx-dir],[data-mx-icon],[data-mx-wall],[data-mx-bg],[data-mx-replay],[data-mx-share]',
   );
   if (!b) return;
   const d = b.dataset;
@@ -307,6 +342,10 @@ document.addEventListener('click', (e) => {
     if (b.closest('.mx-gallery'))
       $('mix').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth' });
     return;
+  }
+  if (d.mxBg) {
+    mix.bg = d.mxBg;
+    return renderMix();
   }
   if (d.mxWall) {
     mix.wall = d.mxWall;

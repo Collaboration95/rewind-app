@@ -10,17 +10,18 @@ Write them right on the page, under each phone and each dock. We will combine ev
 
 ## Archived after the first review
 
-01 Darkroom Editorial, 02 Contact Sheet, 03 Glass Capsule, 04 Premiere Ticket, 08 Sealed Letter and 11 Shared Reel are archived. The page folds them at the bottom (open them with _Show the 6 archived directions_ or the _Archived_ heading), greys them out, and keeps the votes and notes they already had behind _Show review_, read-only. Review progress counts only the five directions still in review and the four docks. If your ❤️ is on an archived direction, sending asks whether to move it first.
+01 Darkroom Editorial, 02 Contact Sheet, 03 Glass Capsule, 04 Premiere Ticket, 05 Quiet Swiss, 08 Sealed Letter and 11 Shared Reel are archived. The page folds them at the bottom (open them with _Show the 7 archived directions_ or the _Archived_ heading), greys them out, and keeps the votes and notes they already had behind _Show review_, read-only. Review progress counts only the four directions still in review and the four docks. If your ❤️ is on an archived direction, sending asks whether to move it first.
 
 ## App icon · mix and match
 
 The second tab at the top of the page (or `index.html#mix`) pairs a Home direction with an app icon and shows them where people will meet them: the launch screen opening into that Home, a home screen among common apps (white or black wallpaper), the sizes from 120 px down to 29 px, a notification, and the two palettes side by side with a note when one is light and the other dark. There is no voting on this tab yet.
 
-- Icons are numbered. Letters (1–15) spell Re in the scratchpad hand; symbols (16–22) draw one idea without letters: two dots, a rewind doodle, a film canister, a circle of friends, a sealed envelope, a photo taped shut and an hourglass. 11, 12 and 16 grow out of the two-dot icon tried locally. Each direction's own icon and the current icon are there for reference.
+- Icons are numbered. Letters (1–15) spell Re in the scratchpad hand; symbols (16–20) draw one idea without letters: two dots, a rewind doodle, a circle of friends, a sealed envelope and an hourglass. 11, 12 and 16 grow out of the two-dot icon tried locally. Each direction's own icon and the current icon are there for reference.
+- _Icon background_ (white, cream, black or the Home's own colour) applies to the white scratchpad icons; black switches the ink to light.
 - _Dot follows the Home accent_ recolours only the accent in the icon.
 - _Scratchpad skin_ is a sixth Home option: the same Home drawn with wobbly black outlines on white.
 - The launch animation is a placeholder fade; ideas for later are noted under the phone.
-- The pairing is kept in the link, for example `#mix=c6+G+t` (Warm Glass, icon 7, dot tinted). The link uses each icon's internal letter so older links keep working.
+- The pairing is kept in the link, for example `#mix=c6+G+t` (Warm Glass, icon 7, dot tinted). `+bg-cream` (or `black`, `home`) keeps the background. The link uses each icon's internal letter so older links keep working.
 
 ## Open it
 
@@ -48,7 +49,7 @@ The comment format is plain Markdown: a hidden first line holds the votes (`<!--
 - Switch **waiting members** between _not named_ (default) and _named_.
 - Tap the avatar for the profile and settings panel (a draft; it could become a full Settings page), tap the dock tabs, and press the shutter. The orange rings on the phones mark what you can tap; turn them off under _Things you can tap_.
 - Compare the **docks**: A keeps three tabs and a separate shutter; D centre shutter (Home · shutter · Archive, Chat at the top right); E shutter only (Archive and Chat at the top right, like Locket or BeReal); G live pill (shows “2d 14h · 3 left”; tap it for the tabs).
-- The four directions still in review sit in one row, with 05 Quiet Swiss as a separate baseline; the zoom fits four phones per row on a landscape screen.
+- The four directions still in review sit in one row; the zoom fits four phones per row on a landscape screen.
 - Switch the page between **EN** (default) and **中文** at the top of the sidebar; open it with `?lang=zh` for Chinese. The phones stay in English; in Chinese each direction also shows its English name.
 - Switch the **shutter state**: collecting, allowance used up, sealing, just sealed, and premiere (the shutter becomes _watch together_, with the time left on its ring).
 - Toggle **chat unread** to see the badges; the Archive tab shows a dot during the premiere.

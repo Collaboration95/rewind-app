@@ -234,22 +234,8 @@ const ICON_FAMILY = [
     acc: false,
   },
   {
-    id: 'Q',
-    no: 18,
-    cat: 'mark',
-    bg: '#fff',
-    name: ['Film canister', '胶卷筒'],
-    note: [
-      'A hand-drawn film canister: shoot now, develop later.',
-      '手绘胶卷筒：现在拍，以后再冲洗。',
-    ],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><g filter="url(#rough)" fill="none" stroke="#111" stroke-width="14" stroke-linejoin="round" stroke-linecap="round"><rect x="118" y="164" width="190" height="236" rx="26"/><rect x="140" y="120" width="146" height="46" rx="10"/><path d="M118 232h190M118 334h190" stroke-width="8"/><path d="M308 262h104v94H308"/></g><g fill="#111" filter="url(#rough)"><rect x="328" y="272" width="16" height="16" rx="3"/><rect x="370" y="272" width="16" height="16" rx="3"/><rect x="328" y="330" width="16" height="16" rx="3"/><rect x="370" y="330" width="16" height="16" rx="3"/></g></svg>',
-    new: true,
-    acc: false,
-  },
-  {
     id: 'R',
-    no: 19,
+    no: 18,
     cat: 'mark',
     bg: '#fff',
     name: ['Circle of friends', '朋友围一圈'],
@@ -263,7 +249,7 @@ const ICON_FAMILY = [
   },
   {
     id: 'S',
-    no: 20,
+    no: 19,
     cat: 'mark',
     bg: '#fff',
     name: ['Sealed envelope', '封好的信'],
@@ -273,22 +259,8 @@ const ICON_FAMILY = [
     acc: true,
   },
   {
-    id: 'T',
-    no: 21,
-    cat: 'mark',
-    bg: '#fff',
-    name: ['Photo taped shut', '胶带封住的照片'],
-    note: [
-      'A photo frame crossed with two strips of tape: nobody peeks until Sunday.',
-      '一张照片被两条胶带交叉封住：周日之前谁也看不到。',
-    ],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#fff"/><rect x="126" y="126" width="260" height="260" rx="10" fill="none" stroke="#111" stroke-width="14" filter="url(#rough)"/><g transform="rotate(35 256 256) translate(256 256) scale(.78) translate(-256 -256)"><polygon points="30,236 472,236 482,250 470,262 484,276 470,288 482,302 472,314 30,314 40,300 28,288 42,276 28,262 40,250" fill="#e9dcc0" opacity=".92" transform="translate(0 -20)"/></g><g transform="rotate(-35 256 256) translate(256 256) scale(.78) translate(-256 -256)"><polygon points="30,236 472,236 482,250 470,262 484,276 470,288 482,302 472,314 30,314 40,300 28,288 42,276 28,262 40,250" fill="#e2d2b2" opacity=".92" transform="translate(0 -20)"/></g></svg>',
-    new: true,
-    acc: false,
-  },
-  {
     id: 'U',
-    no: 22,
+    no: 20,
     cat: 'mark',
     bg: '#fff',
     name: ['Hourglass', '沙漏'],
@@ -357,8 +329,11 @@ const ICON_PAIRS = {
   c7: {
     id: 'p:c7',
     bg: '#1a1210',
-    note: ['One flame, five friends around it.', '一团火，五个朋友围坐。'],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#1a1210"/><circle cx="256" cy="290" r="150" fill="#ff7a2f" opacity=".28" filter="url(#blur18)"/><path d="M256 150c34 44 66 74 66 122a66 66 0 0 1-132 0c0-30 14-46 30-64 4 22 16 30 24 30-8-34-2-62 12-88z" fill="#ffb347"/><path d="M256 232c16 22 30 36 30 58a30 30 0 0 1-60 0c0-14 8-22 16-32 2 10 8 14 12 14-4-16-2-28 2-40z" fill="#fff0cc"/><g fill="#f4d9b8"><circle cx="256" cy="98" r="16"/><circle cx="386" cy="196" r="16"/><circle cx="338" cy="380" r="16"/><circle cx="174" cy="380" r="16"/><circle cx="126" cy="196" r="16"/></g></svg>',
+    note: [
+      'A fire with a ring of seats around it, glowing on warm black.',
+      '暖黑底上一团火，四周围着一圈座位。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><defs><radialGradient id="hearth-glow" cx=".5" cy=".55" r=".5"><stop offset="0" stop-color="#ff8a3d" stop-opacity=".55"/><stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/></radialGradient><linearGradient id="hearth-flame" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff6a1f"/><stop offset="1" stop-color="#ffc56b"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="#1a1210"/><circle cx="256" cy="276" r="210" fill="url(#hearth-glow)"/><circle cx="256" cy="268" r="150" fill="none" stroke="#f4d9b8" stroke-opacity=".55" stroke-width="12" stroke-linecap="round" stroke-dasharray="130 58.5" transform="rotate(-72 256 268)"/><path d="M256 150c30 42 70 76 70 132a70 70 0 0 1-140 0c0-34 18-54 36-74 4 24 16 34 26 34-10-36-2-66 8-92z" fill="url(#hearth-flame)"/><path d="M256 250c16 20 32 36 32 60a32 32 0 0 1-64 0c0-16 10-26 18-36 2 10 8 16 14 16-4-16 0-28 0-40z" fill="#fff4dc"/></svg>',
     acc: false,
   },
   c8: {
@@ -378,8 +353,11 @@ const ICON_PAIRS = {
   c10: {
     id: 'p:c10',
     bg: '#150f10',
-    note: ['A projector beam falling on a screen.', '放映机的光束打在幕布上。'],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#150f10"/><path d="M120 256 396 120v272z" fill="#ffe2b0" opacity=".85"/><path d="M120 256 396 120v272z" fill="url(#none)"/><rect x="392" y="104" width="30" height="304" rx="8" fill="#f2ead8"/><rect x="76" y="226" width="64" height="60" rx="12" fill="#c8402f"/><circle cx="96" cy="222" r="20" fill="#6f2a22"/><circle cx="130" cy="220" r="20" fill="#6f2a22"/></svg>',
+    note: [
+      'A projector beam lighting a screen that shows ‹‹.',
+      '放映机的光打在幕布上，幕布上是 ‹‹。',
+    ],
+    svg: '<svg viewBox="0 0 512 512"><defs><linearGradient id="movie-beam" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ffe2b0" stop-opacity=".9"/><stop offset="1" stop-color="#ffe2b0" stop-opacity=".08"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="#150f10"/><path d="M240 420h32l128-160H112z" fill="url(#movie-beam)"/><rect x="104" y="104" width="304" height="176" rx="16" fill="#f2ead8"/><g fill="none" stroke="#c8402f" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"><path d="M254 158l-34 34 34 34"/><path d="M300 158l-34 34 34 34"/></g><circle cx="256" cy="424" r="18" fill="#ffe2b0"/><circle cx="256" cy="424" r="34" fill="#ffe2b0" opacity=".18"/></svg>',
     acc: false,
   },
   c11: {

@@ -150,6 +150,34 @@ body.view-mix main {
   font-size: 11.5px;
   color: var(--page-muted);
 }
+.mx-bgs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.mx-bgs button {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 6px 2px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  color: var(--page-muted);
+}
+.mx-bgs button i {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+.mx-bgs button[aria-pressed='true'] {
+  color: var(--page-ink);
+  background: #fff;
+  box-shadow: inset 0 0 0 2px var(--page-ink);
+}
+.mx-bgs.off {
+  opacity: 0.45;
+}
 .mx-pick .check {
   margin-top: 6px;
 }

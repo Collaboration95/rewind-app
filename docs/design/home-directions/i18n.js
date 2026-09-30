@@ -366,10 +366,10 @@ Object.assign(I18N, {
 // 第一轮评审后：6 个方向列为废案
 Object.assign(I18N, {
   'main.k': ['HOME · SHORTLIST · FOR REVIEW', 'HOME · 保留方向 · 评审稿'],
-  'main.h1': ['Five directions still in review', '5 个方向继续评审'],
+  'main.h1': ['Four directions still in review', '4 个方向继续评审'],
   'main.p': [
-    'Every direction shares one information order (prompt → action → status) and one glass dock with a shutter. Settings sits behind the avatar for now; that is a draft and could become a full Settings page. After the first review, six directions were archived (01–04, 08 and 11); they are folded at the bottom of the page.',
-    '所有方向共用同一信息架构（题目 → 行动 → 状态）和同一种玻璃底栏 + 快门。设置目前放在头像里，这是暂定效果，之后可以改成独立的 Settings 页。第一轮评审后，有 6 个方向列为废案（01–04、08、11），收在页面最下面。',
+    'Every direction shares one information order (prompt → action → status) and one glass dock with a shutter. Settings sits behind the avatar for now; that is a draft and could become a full Settings page. After the first review, seven directions were archived (01–05, 08 and 11); they are folded at the bottom of the page.',
+    '所有方向共用同一信息架构（题目 → 行动 → 状态）和同一种玻璃底栏 + 快门。设置目前放在头像里，这是暂定效果，之后可以改成独立的 Settings 页。第一轮评审后，有 7 个方向列为废案（01–05、08、11），收在页面最下面。',
   ],
   'asks.4': [
     'Should the reveal be a shared “watch at the same time” premiere? (Affects 07 and 10.)',
@@ -380,7 +380,7 @@ Object.assign(I18N, {
   'arch.show': ['Show', '展开'],
   'arch.hide': ['Hide', '收起'],
   'arch.tag': ['Archived', '废案'],
-  'arch.toggle': ['Show the 6 archived directions', '显示 6 个废案'],
+  'arch.toggle': ['Show the 7 archived directions', '显示 7 个废案'],
   'rv.archNote': [
     'Archived after the first review. Votes and notes already given are shown here, read-only.',
     '第一轮评审后列为废案。已有的投票和优缺点只读显示，不能再添加。',
@@ -410,8 +410,8 @@ Object.assign(I18N, {
   'mix.dir': ['Home', '首页方向'],
   'mix.sp': ['Scratchpad skin', '草稿本皮肤'],
   'mix.archHint': [
-    'Archived directions are hidden; turn on “Show the 6 archived directions” in the sidebar to add them.',
-    '废案已隐藏；在侧栏勾选“显示 6 个废案”后可以一起搭配。',
+    'Archived directions are hidden; turn on “Show the {n} archived directions” in the sidebar to add them.',
+    '废案已隐藏；在侧栏勾选“显示 {n} 个废案”后可以一起搭配。',
   ],
   'mix.family': ['Scratchpad “Re” family', '草稿本 “Re” 字标'],
   'mix.pair': ['This direction’s own icon', '这个方向配套的图标'],
@@ -456,10 +456,19 @@ Object.assign(I18N, {
   ],
   'mix.famH': ['All scratchpad icons', '全部草稿本图标'],
   'mix.cat.word': ['Letters', '字母类'],
+  'mix.bgLabel': ['Icon background', '图标底色'],
+  'mix.bg.white': ['White', '白'],
+  'mix.bg.cream': ['Cream', '奶油'],
+  'mix.bg.black': ['Black', '黑'],
+  'mix.bg.home': ['Home colour', '跟随首页'],
+  'mix.bgNone': [
+    'This icon has its own background; the background options apply to the white scratchpad icons.',
+    '这个图标自带底色；底色只对白底的草稿本图标生效。',
+  ],
   'mix.cat.mark': ['Symbols', '图形类'],
   'mix.famP': [
-    'Handwriting is Shantell Sans, the font tldraw uses for its draw style. Letters (1–15) spell Re; symbols (16–22) draw one idea without letters. The ones marked new come from this round, and 11, 12 and 16 grow out of the two-dot icon tried locally. Tap one to pair it. Final files would outline the letters to paths.',
-    '手写字体是 Shantell Sans，也就是 tldraw 手绘风格用的字体。字母类（1–15）写的是 Re；图形类（16–22）不写字母，只画一个意思。标“新”的是这一轮加的，其中 11、12、16 由本地试过的“两个点”图标发展而来。点一下就能拿去搭配。最终交付时字母会转成路径。',
+    'Handwriting is Shantell Sans, the font tldraw uses for its draw style. Letters (1–15) spell Re; symbols (16–20) draw one idea without letters. The ones marked new come from this round, and 11, 12 and 16 grow out of the two-dot icon tried locally. Tap one to pair it. Final files would outline the letters to paths.',
+    '手写字体是 Shantell Sans，也就是 tldraw 手绘风格用的字体。字母类（1–15）写的是 Re；图形类（16–20）不写字母，只画一个意思。标“新”的是这一轮加的，其中 11、12、16 由本地试过的“两个点”图标发展而来。点一下就能拿去搭配。最终交付时字母会转成路径。',
   ],
   'mix.animNote': [
     'Placeholder: a plain fade for now. To explore later: the icon zooming open into the Home (as iOS does), a quick rewind of the week’s frames, or an opening that fits each direction, such as fireflies leaving the icon or the projector light switching on.',
