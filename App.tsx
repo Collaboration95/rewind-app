@@ -12,6 +12,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -281,6 +282,7 @@ function SessionLoadingScreen() {
 }
 
 function SafeAreaFrame({ children }: { children: ReactNode }) {
+  const { width } = useWindowDimensions();
   return (
     <>
       <StatusBar style="light" />
@@ -289,7 +291,7 @@ function SafeAreaFrame({ children }: { children: ReactNode }) {
         style={styles.page}
         testID="application-safe-area"
       >
-        <View style={styles.screen}>{children}</View>
+        <View style={[styles.screen, width >= 900 && styles.wideScreen]}>{children}</View>
       </SafeAreaView>
     </>
   );
@@ -541,7 +543,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
         : auth.notice === 'sign-in-failed'
           ? 'Sign-in failed. Check your username and password, or try again later.'
           : auth.notice === 'offline'
-            ? 'Sign-in needs a secure HTTPS connection. Check your connection and try again.'
+            ? 'The sign-in service could not be reached. Check your connection and try again.'
             : auth.notice === 'revocation-unconfirmed'
               ? Platform.OS === 'web'
                 ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
@@ -613,19 +615,18 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               <Text style={styles.entryActionButtonText}>Try Demo</Text>
             </Pressable>
             <Text style={styles.entryChoiceBody}>
-              Demo uses synthetic sample members and never signs you in to a real account.
+              Demo lets you explore Rewind with sample people and moments.
             </Text>
           </View>
         ) : visibleMode === 'create-account' ? (
           <View style={styles.entryIntro}>
-            <Text style={styles.label}>PILOT ACCOUNT</Text>
+            <Text style={styles.label}>JOIN REWIND</Text>
             <Text accessibilityRole="header" style={styles.title}>
               Create account
             </Text>
             <Text style={styles.bodyText}>
-              Rewind pilot accounts are created by an administrator. Contact your Rewind pilot
-              administrator to request an account or get your sign-in details. This screen does not
-              create an account.
+              Sign-up is coming soon. Ask your Rewind contact to set up your account and share your
+              sign-in details.
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -637,13 +638,11 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
           </View>
         ) : visibleMode === 'sign-in' ? (
           <View style={styles.entryIntro}>
-            <Text style={styles.label}>REAL ACCOUNT</Text>
+            <Text style={styles.label}>WELCOME BACK</Text>
             <Text accessibilityRole="header" style={styles.title}>
               Sign in
             </Text>
-            <Text style={styles.bodyText}>
-              Use the username and password provided by your Rewind administrator.
-            </Text>
+            <Text style={styles.bodyText}>Enter your Rewind username and password.</Text>
             {inviteGroupId ? (
               <Text style={styles.bodyText} testID="invite-sign-in-intent">
                 Invitation for group {inviteGroupId} saved. Sign in to continue.
@@ -692,7 +691,8 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             auth.notice !== 'sign-out-recovery-pending' &&
             auth.notice !== 'sign-out-marker-unavailable' &&
             auth.notice !== 'sign-out-marker-cleanup-failed' &&
-            auth.notice !== 'local-credential-removal-failed' ? (
+            auth.notice !== 'local-credential-removal-failed' &&
+            !(auth.notice === 'offline' && !auth.secureTransportAvailable) ? (
               <Text accessibilityRole="alert" style={styles.errorText}>
                 {authMessage}
               </Text>
@@ -733,13 +733,12 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
           </View>
         ) : (
           <View style={styles.entryIntro}>
-            <Text style={styles.label}>SYNTHETIC SAMPLE DATA</Text>
+            <Text style={styles.label}>EXPLORE REWIND</Text>
             <Text accessibilityRole="header" style={styles.title}>
               Choose a Demo member
             </Text>
             <Text style={styles.bodyText}>
-              This starts a local sample session only. Demo members do not represent real accounts
-              or grant real-member access.
+              Explore with sample people and moments. Your Demo stays separate from your groups.
             </Text>
             <Pressable
               accessibilityRole="button"
@@ -779,6 +778,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
           auth.notice === 'sign-out-marker-cleanup-failed' ||
           auth.notice === 'sign-out-marker-unavailable' ||
           auth.notice === 'local-credential-removal-failed') &&
+        !(auth.notice === 'offline' && !auth.secureTransportAvailable) &&
         !(auth.notice === 'offline' && error) ? (
           <View
             style={styles.errorPanel}
@@ -1793,12 +1793,10 @@ const styles = StyleSheet.create({
   },
   screen: {
     backgroundColor: COLORS.background,
-    borderColor: COLORS.line,
-    borderWidth: 1,
     flex: 1,
-    maxWidth: 390,
     width: '100%',
   },
+  wideScreen: { maxWidth: 960 },
   content: {
     flexGrow: 1,
     gap: 18,

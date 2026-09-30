@@ -55,6 +55,11 @@ const MIGRATIONS = [
     fileName: '022-real-media-profile-bridge.sql',
   },
   { version: 23, key: 'photo-media-v1', fileName: '023-photo-media.sql' },
+  {
+    version: 24,
+    key: 'real-invite-guess-throttles-v1',
+    fileName: '024-real-invite-guess-throttles.sql',
+  },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -201,6 +206,8 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyRealMediaProfileBridge(database);
       } else if (migration.key === 'photo-media-v1') {
         ensurePhotoMediaSchema(database);
+      } else if (migration.key === 'real-invite-guess-throttles-v1') {
+        database.exec(migration.sql);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
       }
@@ -343,6 +350,9 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
       !tableColumns(database, 'media_jobs').has('media_type') ||
       !tableColumns(database, 'media_metadata').has('media_type')
     );
+  }
+  if (key === 'real-invite-guess-throttles-v1') {
+    return !hasTable(database, 'real_invite_guess_throttles');
   }
   return false;
 }

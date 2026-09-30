@@ -187,7 +187,10 @@ describe('real account entry flow', () => {
     await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
     await fireEvent.press(result.getByTestId('real-account-submit'));
 
-    expect(await result.findByTestId('real-invite-intent')).toHaveTextContent(new RegExp(groupId));
+    expect(await result.findByTestId('real-invite-intent')).toHaveTextContent(
+      /Your group invitation is ready/,
+    );
+    expect(result.getByTestId('real-invite-intent')).not.toHaveTextContent(groupId);
     expect(result.getByTestId('real-invite-intent')).toHaveTextContent(/Invitation retained/);
     expect(globalThis.fetch).toHaveBeenCalledTimes(4);
     result.unmount();
@@ -228,7 +231,7 @@ describe('real account entry flow', () => {
         jsonResponse(201, {
           invite: {
             id: 'real-invite-1',
-            code: 'AB12CD34',
+            code: 'ABCDEF',
             groupId,
             status: 'active',
             createdAt: new Date().toISOString(),
@@ -242,19 +245,23 @@ describe('real account entry flow', () => {
     const result = await render(<App runtimeClient={runtimeClient} />);
     await result.findByRole('header', { name: 'Saturday table' });
     await fireEvent.press(result.getByTestId('real-group-create-invite'));
-    const inviteLink = `https://rewind.example/invite?groupId=${groupId}&code=AB12CD34&expiresAt=${encodeURIComponent(expiresAt)}`;
+    const inviteLink = `https://rewind.example/invite?groupId=${groupId}&code=ABCDEF&expiresAt=${encodeURIComponent(expiresAt)}`;
     await waitFor(() =>
-      expect(result.getByTestId('real-group-invite-link').props.children).toBe(inviteLink),
+      expect(result.getByTestId('real-group-invite-code').props.children).toBe('ABC-DEF'),
     );
     expect(result.getByTestId('real-group-invite-expiry')).toHaveTextContent(/Active/);
     expect(inviteLink).not.toMatch(/session|token|password|authorization/i);
 
     await fireEvent.press(result.getByTestId('real-group-copy-invite'));
-    await waitFor(() => expect(copy).toHaveBeenCalledWith(inviteLink));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith('ABC-DEF'));
     await fireEvent.press(result.getByTestId('real-group-share-invite'));
     await waitFor(() =>
-      expect(share).toHaveBeenCalledWith(expect.objectContaining({ url: inviteLink })),
+      expect(share).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining('ABC-DEF') }),
+      ),
     );
+    await fireEvent.press(result.getByRole('button', { name: 'Copy invite link' }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(inviteLink));
     expect(globalThis.fetch).toHaveBeenCalledTimes(6);
     result.unmount();
   });
@@ -301,7 +308,7 @@ describe('real account entry flow', () => {
         jsonResponse(201, {
           invite: {
             id: 'real-invite-native-1',
-            code: 'EF56GH78',
+            code: 'EFGHIJ',
             groupId,
             status: 'active',
             createdAt: new Date().toISOString(),
@@ -318,9 +325,9 @@ describe('real account entry flow', () => {
     await result.findByRole('header', { name: 'Sunday walk' });
     await fireEvent.press(result.getByTestId('real-group-create-invite'));
 
-    const inviteLink = `https://share.rewind.example/invite?groupId=${groupId}&code=EF56GH78&expiresAt=${encodeURIComponent(inviteExpiry)}`;
+    const inviteLink = `https://share.rewind.example/invite?groupId=${groupId}&code=EFGHIJ&expiresAt=${encodeURIComponent(inviteExpiry)}`;
     await waitFor(() =>
-      expect(result.getByTestId('real-group-invite-link').props.children).toBe(inviteLink),
+      expect(result.getByTestId('real-group-invite-code').props.children).toBe('EFG-HIJ'),
     );
     expect(new URL(inviteLink).origin).toBe('https://share.rewind.example');
     expect(inviteLink).not.toContain('https://rewind.example');

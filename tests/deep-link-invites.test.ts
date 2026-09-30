@@ -52,6 +52,24 @@ describe('invite deep-link contract', () => {
     });
   });
 
+  it('accepts a new short code in a link while preserving legacy links', () => {
+    const link = createInviteLink(
+      { ...ACTIVE_INVITE, code: 'ABC-DEF' },
+      {
+        platform: 'web',
+        webOrigin: 'https://rewind.example',
+        groupId: 'real-group-1',
+        now: NOW,
+      },
+    );
+    expect(link).toContain('code=ABCDEF');
+    expect(parseInviteLink(link!, NOW)).toMatchObject({
+      kind: 'valid',
+      code: 'ABCDEF',
+      groupId: 'real-group-1',
+    });
+  });
+
   it('requires HTTPS whenever a link identifies a real group', () => {
     expect(
       createInviteLink(ACTIVE_INVITE, {

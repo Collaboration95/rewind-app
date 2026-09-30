@@ -92,8 +92,26 @@ variable "demo_instance_enabled" {
 
 variable "public_https_distribution_enabled" {
   type        = bool
-  description = "Whether to create the approved low-cost public HTTPS Lightsail distribution for the Demo web/API origin."
+  description = "Whether to create the existing public HTTPS Lightsail distribution for the Demo web/API origin."
   default     = false
+}
+
+variable "real_auth_https_distribution_enabled" {
+  type        = bool
+  description = "Whether to add a separate CloudFront HTTPS distribution with real-origin authentication."
+  default     = false
+}
+
+variable "public_https_origin_auth_header" {
+  type        = string
+  description = "Secret shared with the Demo origin and sent as X-Rewind-Origin-Auth by CloudFront. Set from a secret manager or protected tfvars."
+  sensitive   = true
+  default     = ""
+
+  validation {
+    condition     = !var.real_auth_https_distribution_enabled || length(var.public_https_origin_auth_header) >= 32
+    error_message = "Set public_https_origin_auth_header to a random secret of at least 32 characters when the real-auth CloudFront distribution is enabled."
+  }
 }
 
 variable "cost_safety_expected_instance_state" {

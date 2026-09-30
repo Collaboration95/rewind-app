@@ -109,7 +109,11 @@ import {
   listRealGroups,
   selectRealGroup,
 } from './groups/real';
-import { acceptRealGroupInvite, createRealGroupInvite } from './groups/invites';
+import {
+  acceptRealGroupInvite,
+  createRealGroupInvite,
+  revokeRealGroupInvite,
+} from './groups/invites';
 import { listRealGroupMemberSummaries } from './groups/profiles';
 
 export interface HealthPayload {
@@ -3214,13 +3218,20 @@ async function handleRealGroupRequest(
       authJson(request, response, config, 400, {
         status: 'malformed',
         error: 'invalid_invite',
-        message: 'Enter a valid eight-character invitation code.',
+        message: 'Enter a valid invitation code.',
       });
       return;
     }
     let result: ReturnType<typeof acceptRealGroupInvite>;
     try {
-      result = acceptRealGroupInvite(database, session.account, body.code, body.groupId, now);
+      result = acceptRealGroupInvite(
+        database,
+        session.account,
+        body.code,
+        body.groupId,
+        now,
+        authClientSource(request, config),
+      );
     } catch {
       authJson(request, response, config, 409, {
         status: 'denied',
@@ -3230,7 +3241,14 @@ async function handleRealGroupRequest(
       return;
     }
     if (!result.ok) {
-      const status = result.status === 'denied' ? 404 : result.status === 'full' ? 409 : 400;
+      const status =
+        result.status === 'throttled'
+          ? 429
+          : result.status === 'denied'
+            ? 404
+            : result.status === 'full'
+              ? 409
+              : 400;
       authJson(request, response, config, status, {
         status: result.status,
         error: `invite_${result.status}`,
@@ -3243,7 +3261,9 @@ async function handleRealGroupRequest(
                 ? 'This group has reached its member limit.'
                 : result.status === 'denied'
                   ? 'You do not have access to this group.'
-                  : 'Enter a valid eight-character invitation code.',
+                  : result.status === 'throttled'
+                    ? 'Too many invitation attempts. Please try again later.'
+                    : 'Enter a valid invitation code.',
       });
       return;
     }
@@ -3299,6 +3319,22 @@ async function handleRealGroupRequest(
       return;
     }
     authJson(request, response, config, 201, created);
+    return;
+  }
+
+  const revokeInviteMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/invites\/([^/]+)$/);
+  if (revokeInviteMatch && request.method === 'DELETE') {
+    const groupId = decodePathSegment(revokeInviteMatch[1], response, config);
+    const inviteId = decodePathSegment(revokeInviteMatch[2], response, config);
+    if (groupId === null || inviteId === null) return;
+    if (!revokeRealGroupInvite(database, groupId, session.account.id, inviteId)) {
+      authJson(request, response, config, 404, {
+        error: 'invite_not_found',
+        message: 'That active invitation is no longer available.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, { revoked: true });
     return;
   }
 

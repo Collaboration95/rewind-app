@@ -202,7 +202,7 @@ describe('real-account chat', () => {
     );
     expect(await result.findByText('A saved group message')).toBeTruthy();
     expect(result.getByTestId('real-chat-context').props.children).toEqual([
-      'ACTIVE GROUP · ',
+      'Group · ',
       'Saturday table',
     ]);
     await fireEvent.press(result.getByTestId('real-chat-reply-root-message'));
