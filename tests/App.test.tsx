@@ -215,7 +215,7 @@ describe('Rewind Home start screen', () => {
 
   it('starts on Home and makes every main area reachable', async () => {
     const result = await render(<App />);
-    await result.findByTestId('main-navigation');
+    await result.findByRole('header', { name: 'Weekend People' });
 
     expect(result.getByRole('header', { name: 'Weekend People' })).toBeTruthy();
 
@@ -505,7 +505,7 @@ describe('Rewind Home start screen', () => {
 
   it('shows the repository-backed prompt, countdown, quota, and locked-safe state', async () => {
     const result = await render(<App />);
-    await result.findByTestId('main-navigation');
+    await result.findByTestId('cycle-countdown');
 
     expect(result.getByTestId('cycle-countdown')).toBeTruthy();
     expect(result.getByText('0 of 5 contributions')).toBeTruthy();
