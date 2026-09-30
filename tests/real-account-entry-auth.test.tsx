@@ -314,6 +314,81 @@ describe('real account entry flow', () => {
     );
   });
 
+  it('does not let the native keyboard Go action bypass registration guards', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios', writable: true });
+    globalThis.fetch = jest.fn() as typeof fetch;
+    const result = await render(
+      <App runtimeClient={{ baseUrl: 'http://rewind.example' } as never} />,
+    );
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.press(result.getByTestId('sign-in-create-account'));
+    const confirmation = result.getByTestId('registration-password-confirmation');
+
+    await fireEvent(confirmation, 'submitEditing');
+    await fireEvent.changeText(result.getByLabelText('Username'), 'simulator.test');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'synthetic-password-one');
+    await fireEvent.changeText(confirmation, 'synthetic-password-one');
+    await fireEvent(confirmation, 'submitEditing');
+
+    expect(result.getByText(/requires the same-origin HTTPS service/i)).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Create account', disabled: true })).toBeTruthy();
+    expect(result.queryByTestId('registration-error')).toBeNull();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps registration input after service failure and permits one retry', async () => {
+    useWebPlatform();
+    const newAccount = { ...apiAccount, username: 'new.member', displayName: 'new.member' };
+    let finishFirstRegistration!: (response: Response) => void;
+    const pendingRegistration = new Promise<Response>((resolve) => {
+      finishFirstRegistration = resolve;
+    });
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockImplementationOnce(() => pendingRegistration)
+      .mockResolvedValueOnce(jsonResponse(201, { account: newAccount })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Create account' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'new.member');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'synthetic-test-password');
+    await fireEvent.changeText(
+      result.getByLabelText('Confirm password'),
+      'synthetic-test-password',
+    );
+    await fireEvent.press(result.getByTestId('registration-submit'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+
+    await fireEvent(result.getByTestId('registration-password-confirmation'), 'submitEditing');
+    expect(
+      (globalThis.fetch as jest.Mock).mock.calls.filter(([url]) =>
+        String(url).endsWith('/auth/register'),
+      ),
+    ).toHaveLength(1);
+
+    await act(async () => {
+      finishFirstRegistration(jsonResponse(503, { error: 'service_unavailable' }));
+      await pendingRegistration;
+    });
+    expect(await result.findByTestId('registration-error')).toHaveTextContent(
+      'Account creation is unavailable right now. Please try again shortly.',
+    );
+    expect(result.getByLabelText('Username').props.value).toBe('new.member');
+    expect(result.getByLabelText('Password').props.value).toBe('synthetic-test-password');
+
+    await fireEvent.press(result.getByTestId('registration-submit'));
+    expect(await result.findByTestId('registration-success')).toHaveTextContent(
+      'Your account is ready. Sign in to continue.',
+    );
+    expect(
+      (globalThis.fetch as jest.Mock).mock.calls.filter(([url]) =>
+        String(url).endsWith('/auth/register'),
+      ),
+    ).toHaveLength(2);
+  });
+
   it('shows generic wrong-password feedback and keeps Demo identity untouched', async () => {
     globalThis.fetch = jest
       .fn()

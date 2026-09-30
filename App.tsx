@@ -598,8 +598,10 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const [registrationError, setRegistrationError] = useState<
     'invalid' | 'duplicate' | 'rate-limited' | 'unavailable' | 'password-mismatch' | null
   >(null);
+  const [selectedDemoMemberId, setSelectedDemoMemberId] = useState<string | null>(null);
   const visibleMode = mode;
   const demoAccessEnabled = isDemoAccessEnabled();
+  const canRetryDemoStart = visibleMode === 'demo' && selectedDemoMemberId !== null;
 
   useEffect(() => {
     let mounted = true;
@@ -669,6 +671,16 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   };
 
   const submitRegistration = async () => {
+    if (
+      authPending ||
+      registrationComplete ||
+      !username.trim() ||
+      !password ||
+      !passwordConfirmation ||
+      !auth.secureTransportAvailable
+    ) {
+      return;
+    }
     setRegistrationError(null);
     if (password !== passwordConfirmation) {
       setRegistrationError('password-mismatch');
@@ -684,6 +696,11 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
       return;
     }
     setRegistrationError(outcome);
+  };
+
+  const startDemo = (memberId: string) => {
+    setSelectedDemoMemberId(memberId);
+    void chooseMember(memberId);
   };
 
   const registrationMessage = registrationComplete
@@ -985,7 +1002,10 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               <Pressable
                 accessibilityRole="button"
                 disabled={authPending}
-                onPress={() => setMode('demo')}
+                onPress={() => {
+                  setSelectedDemoMemberId(null);
+                  setMode('demo');
+                }}
                 style={({ pressed }) => [
                   styles.primaryEntryButton,
                   authPending && styles.disabledChoice,
@@ -1024,7 +1044,10 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             </Text>
             <Pressable
               accessibilityRole="button"
-              onPress={() => setMode('sign-in')}
+              onPress={() => {
+                setSelectedDemoMemberId(null);
+                setMode('sign-in');
+              }}
               style={({ pressed }) => [
                 styles.entryActionButton,
                 ...interactionFeedback({ pressed }),
@@ -1046,10 +1069,20 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             </Text>
             <Pressable
               accessibilityRole="button"
-              onPress={retryRestore}
+              disabled={pending || authPending}
+              onPress={() => {
+                if (canRetryDemoStart && selectedDemoMemberId) {
+                  void chooseMember(selectedDemoMemberId);
+                } else {
+                  retryRestore();
+                }
+              }}
               style={({ pressed }) => [styles.retryButton, ...interactionFeedback({ pressed })]}
+              testID={canRetryDemoStart ? 'retry-demo-start' : 'retry-session-check'}
             >
-              <Text style={styles.retryButtonText}>Retry session check</Text>
+              <Text style={styles.retryButtonText}>
+                {canRetryDemoStart ? 'Retry Demo start' : 'Retry session check'}
+              </Text>
             </Pressable>
           </View>
         ) : null}
@@ -1151,7 +1184,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
                 accessibilityRole="button"
                 disabled={pending}
                 key={profile.id}
-                onPress={() => void chooseMember(profile.id)}
+                onPress={() => startDemo(profile.id)}
                 style={({ pressed }) => [
                   styles.entryChoice,
                   pending && styles.disabledChoice,
