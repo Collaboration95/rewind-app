@@ -127,7 +127,6 @@ function ReadyCapsuleSummary({
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-home">
           {groupName}
         </Text>
-        <Text style={styles.mutedText}>Shared capsule · Sample group</Text>
       </View>
 
       {countdown ? (
