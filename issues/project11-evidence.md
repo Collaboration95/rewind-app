@@ -61,6 +61,12 @@ Captured from the current branch against a disposable, seeded local runtime. Chr
 
 The owner reports white bands at both ends when opening the dev URL as a Safari Add-to-Home-Screen app on an iPhone 14 Plus, and says the result looks worse than expected. The supplied capture visibly shows the white top status-bar band. I reopened the live CloudFront URL and confirmed it still serves the older Welcome/Demo layout; the PR branch is not deployed there. The branch sets `viewport-fit=cover`, uses the black-translucent iOS status bar, matches the theme colors, and now gives `html`, `body`, and `#root` zero-margin full-dynamic-viewport sizing. The service-worker cache version advances so an installed copy fetches the corrected shell after deployment. The screenshot is evidence of the older live deployment, not physical verification of this branch. The user's follow-up and the remaining PWA acceptance gate are recorded in [issue #306](https://github.com/Collaboration95/rewind-app/issues/306#issuecomment-5907179117).
 
+### Hosted CloudFront URL in iPhone simulator Safari
+
+![The current CloudFront build opened in iPhone 15 simulator Safari](images/project11-cloudfront-iphone15-safari-2026-09-30.png)
+
+Opening the supplied URL on the iPhone 15 simulator redirects to the hosted CloudFront origin and displays the older Welcome/Demo shell with the stale expiry banner. Safari's own toolbar is visible in this capture. This is not the installed Home Screen app and does not verify the reported top/bottom bars; it confirms that the live distribution has not received PR #320.
+
 ### Current branch on iPhone simulator
 
 ![Current branch Welcome on iPhone 15 simulator with edge-to-edge dark surface and no OS status bar](images/project11-iphone15-expo-go-welcome-simulator-2026-09-30.png)
