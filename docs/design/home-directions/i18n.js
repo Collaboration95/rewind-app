@@ -363,6 +363,39 @@ Object.assign(I18N, {
   'rv.sampleCon': ['(sample) A con appears here', '（示例）这里显示一条缺点'],
 });
 
+// 第一轮评审后：6 个方向列为废案
+Object.assign(I18N, {
+  'main.k': ['HOME · SHORTLIST · FOR REVIEW', 'HOME · 保留方向 · 评审稿'],
+  'main.h1': ['Five directions still in review', '5 个方向继续评审'],
+  'main.p': [
+    'Every direction shares one information order (prompt → action → status) and one glass dock with a shutter. Settings sits behind the avatar for now; that is a draft and could become a full Settings page. After the first review, six directions were archived (01–04, 08 and 11); they are folded at the bottom of the page.',
+    '所有方向共用同一信息架构（题目 → 行动 → 状态）和同一种玻璃底栏 + 快门。设置目前放在头像里，这是暂定效果，之后可以改成独立的 Settings 页。第一轮评审后，有 6 个方向列为废案（01–04、08、11），收在页面最下面。',
+  ],
+  'asks.4': [
+    'Should the reveal be a shared “watch at the same time” premiere? (Affects 07 and 10.)',
+    '揭晓要不要做成“同一时刻一起看”的首映？（影响 07、10）',
+  ],
+  'group.keep': ['Still in review', '保留方向'],
+  'group.arch': ['Archived', '废案'],
+  'arch.show': ['Show', '展开'],
+  'arch.hide': ['Hide', '收起'],
+  'arch.tag': ['Archived', '废案'],
+  'arch.toggle': ['Show the 6 archived directions', '显示 6 个废案'],
+  'rv.archNote': [
+    'Archived after the first review. Votes and notes already given are shown here, read-only.',
+    '第一轮评审后列为废案。已有的投票和优缺点只读显示，不能再添加。',
+  ],
+  'rv.archShow': ['Show review', '查看已有评审'],
+  'rv.archHide': ['Hide review', '收起评审'],
+  'rv.favArch.h': ['Your ❤️ is on an archived direction', '你的 ❤️ 投给了一个废案'],
+  'rv.favArch.p': [
+    '{name} was archived after the first review. Move your top pick to a direction still in review?',
+    '{name} 在第一轮评审后列为废案。要把 ❤️ 改投给一个保留方向吗？',
+  ],
+  'rv.favArch.go': ['Move my ❤️', '去改投'],
+  'rv.favArch.skip': ['Send as it is', '照样发送'],
+});
+
 let LANG = 'en';
 try {
   const q = new URLSearchParams(location.search).get('lang');

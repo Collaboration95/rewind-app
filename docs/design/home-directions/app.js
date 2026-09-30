@@ -952,6 +952,42 @@ const concepts = [
     ],
   },
 ];
+// 第一轮评审后列为废案的方向：放在页面最下面，默认收起，评审只读
+const ARCHIVED = ['c1', 'c2', 'c3', 'c4', 'c8', 'c11'];
+const isArchived = (id) => ARCHIVED.includes(id);
+// 页面顺序：保留方向（按编号）→ 对照组 → 废案（按编号）
+for (const c of concepts)
+  c.group = isArchived(c.id) ? 'arch' : c.group === 'base' ? 'base' : 'keep';
+concepts.sort(
+  (a, b) =>
+    ['keep', 'base', 'arch'].indexOf(a.group) - ['keep', 'base', 'arch'].indexOf(b.group) ||
+    a.no.localeCompare(b.no),
+);
+
+// 是否展开废案：只是个人浏览习惯，存在本机
+let showArch = false;
+try {
+  showArch = localStorage.getItem('rewind-show-arch') === '1';
+} catch {
+  /* 读不到就默认收起 */
+}
+function setArch(on) {
+  showArch = on;
+  try {
+    localStorage.setItem('rewind-show-arch', on ? '1' : '0');
+  } catch {
+    /* 存不了也没关系 */
+  }
+  document.body.classList.toggle('show-arch', on);
+  if ($('show-arch')) $('show-arch').checked = on;
+  document.querySelectorAll('[data-arch]').forEach((b) => {
+    b.setAttribute('aria-expanded', String(on));
+    b.innerHTML = archLabel();
+  });
+}
+const archLabel = () =>
+  `${t('group.arch')} (${ARCHIVED.length}) <span>${t(showArch ? 'arch.hide' : 'arch.show')}</span>`;
+
 const nameOf = (c) => (LANG === 'zh' ? c.zh : c.en);
 const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 
@@ -1158,12 +1194,16 @@ function render() {
     last = '';
   for (const c of concepts) {
     if (c.group !== last) {
-      html += `<h2 class="gal-h">${t('group.' + c.group)}</h2>`;
+      html +=
+        c.group === 'arch'
+          ? `<h2 class="gal-h gal-arch"><button type="button" data-arch aria-expanded="${showArch}">${archLabel()}</button></h2>`
+          : `<h2 class="gal-h">${t('group.' + c.group)}</h2>`;
       last = c.group;
     }
+    const arch = c.group === 'arch';
     html +=
-      `<article class="card" data-id="${c.id}" aria-label="${c.no} ${nameOf(c)}">` +
-      `<header class="card-h"><span class="no">${c.no}</span><div><h2>${nameOf(c)}</h2>${LANG === 'zh' ? `<p>${altName(c)}</p>` : ''}</div></header>` +
+      `<article class="card${arch ? ' archived' : ''}" data-id="${c.id}" aria-label="${c.no} ${nameOf(c)}">` +
+      `<header class="card-h"><span class="no">${c.no}</span><div><h2>${nameOf(c)}${arch ? `<em class="arch-tag">${t('arch.tag')}</em>` : ''}</h2>${LANG === 'zh' ? `<p>${altName(c)}</p>` : ''}</div></header>` +
       `<div class="card-ctl"><button type="button" class="ctl" data-play="${c.id}" title="${t('play.title')}">${ic('play')}${t('play')}</button><span class="step" id="step-${c.id}" aria-live="polite"></span></div>` +
       `<div class="phone-wrap">${screen(c, dataFor(c.id))}</div>` +
       `<div class="notes"><div class="rv" data-rv="${c.id}"></div><p class="key">${L(c.key)}</p><ul>${L(
@@ -1186,7 +1226,7 @@ function renderReview() {
   $('review-body').innerHTML = concepts
     .map(
       (c) =>
-        `<tr><th scope="row"><span>${c.no}</span>${nameOf(c)}</th><td>${L(c.review[0])}</td><td>${L(c.review[1])}</td><td>${L(c.review[2])}</td><td data-rvchip="${c.id}"></td></tr>`,
+        `<tr${c.group === 'arch' ? ' class="archived"' : ''}><th scope="row"><span>${c.no}</span>${nameOf(c)}</th><td>${L(c.review[0])}</td><td>${L(c.review[1])}</td><td>${L(c.review[2])}</td><td data-rvchip="${c.id}"></td></tr>`,
     )
     .join('');
 }
@@ -1199,7 +1239,7 @@ function renderPick() {
       html += `<p class="pick-h">${t('group.' + c.group)}</p>`;
       last = c.group;
     }
-    html += `<button type="button" data-pick="${c.id}"><span>${c.no}</span>${nameOf(c)}</button>`;
+    html += `<button type="button" data-pick="${c.id}"${c.group === 'arch' ? ' class="arch"' : ''}><span>${c.no}</span>${nameOf(c)}</button>`;
   }
   $('pick').innerHTML = html;
   applyPick();
@@ -1699,6 +1739,7 @@ document.addEventListener('click', (e) => {
   if (!t) return;
   if (t.dataset.pick) return pick(t.dataset.pick);
   if (t.dataset.lang) return setLang(t.dataset.lang);
+  if ('arch' in t.dataset) return setArch(!showArch);
   if (t.dataset.nav) {
     NAV.variant = t.dataset.nav;
     document
@@ -1813,6 +1854,8 @@ function setLang(l) {
 }
 
 applyI18n();
+$('show-arch')?.addEventListener('change', (e) => setArch(e.target.checked));
+setArch(showArch);
 $('membersv').textContent = t('members.unit', { n: size });
 renderPick();
 renderReview();

@@ -8,6 +8,10 @@ sealed moments are drawn as abstract textures, never as media.
 
 Write them right on the page, under each phone and each dock. We will combine everyone's notes and pick one direction together.
 
+## Archived after the first review
+
+01 Darkroom Editorial, 02 Contact Sheet, 03 Glass Capsule, 04 Premiere Ticket, 08 Sealed Letter and 11 Shared Reel are archived. The page folds them at the bottom (open them with _Show the 6 archived directions_ or the _Archived_ heading), greys them out, and keeps the votes and notes they already had behind _Show review_, read-only. Review progress counts only the five directions still in review and the four docks. If your ❤️ is on an archived direction, sending asks whether to move it first.
+
 ## Open it
 
 - Hosted from this branch: https://htmlpreview.github.io/?https://github.com/Collaboration95/rewind-app/blob/ui-concept/bibi45c-home-directions/docs/design/home-directions/index.html
@@ -34,7 +38,7 @@ The comment format is plain Markdown: a hidden first line holds the votes (`<!--
 - Switch **waiting members** between _not named_ (default) and _named_.
 - Tap the avatar for the profile and settings panel (a draft; it could become a full Settings page), tap the dock tabs, and press the shutter. The orange rings on the phones mark what you can tap; turn them off under _Things you can tap_.
 - Compare the **docks**: A keeps three tabs and a separate shutter; D centre shutter (Home · shutter · Archive, Chat at the top right); E shutter only (Archive and Chat at the top right, like Locket or BeReal); G live pill (shows “2d 14h · 3 left”; tap it for the tabs).
-- Directions are grouped by round, with 05 Quiet Swiss as a separate baseline; the zoom fits four phones per row on a landscape screen.
+- The four directions still in review sit in one row, with 05 Quiet Swiss as a separate baseline; the zoom fits four phones per row on a landscape screen.
 - Switch the page between **EN** (default) and **中文** at the top of the sidebar; open it with `?lang=zh` for Chinese. The phones stay in English; in Chinese each direction also shows its English name.
 - Switch the **shutter state**: collecting, allowance used up, sealing, just sealed, and premiere (the shutter becomes _watch together_, with the time left on its ring).
 - Toggle **chat unread** to see the badges; the Archive tab shows a dot during the premiere.

@@ -116,7 +116,7 @@ const touched = (id) =>
     (isDock(id) && mine.docks.includes(id.slice(4))),
   );
 function progress() {
-  const all = TARGETS();
+  const all = TARGETS().filter((id) => !isArchived(id));
   return { done: all.filter(touched).length, total: all.length };
 }
 
@@ -364,12 +364,13 @@ async function copyText(text) {
 
 let lastMd = '';
 // 还没选底栏：先提醒，可以去选，也可以不选直接发
-function askDock() {
+// 发送前的提醒：还没选底栏；❤️ 投给了废案。可以去改，也可以照样发送
+function remind(kind, vars) {
   const d = $('rv-dlg');
   d.innerHTML =
-    `<h3 id="rv-dlg-h">${t('rv.noDock.h')}</h3><p class="rv-dlg-p">${t('rv.noDock.p')}</p>` +
-    `<div class="rv-dlg-b"><button type="button" class="ghost" data-rv-skip-dock>${t('rv.noDock.skip')}</button>` +
-    `<button type="button" class="rv-send" data-rv-pick-dock>${t('rv.noDock.go')}</button></div>`;
+    `<h3 id="rv-dlg-h">${t(`rv.${kind}.h`)}</h3><p class="rv-dlg-p">${t(`rv.${kind}.p`, vars)}</p>` +
+    `<div class="rv-dlg-b"><button type="button" class="ghost" data-rv-skip="${kind}">${t(`rv.${kind}.skip`)}</button>` +
+    `<button type="button" class="rv-send" data-rv-fix="${kind}">${t(`rv.${kind}.go`)}</button></div>`;
   if (!d.open) {
     if (d.showModal) d.showModal();
     else d.setAttribute('open', '');
@@ -377,11 +378,15 @@ function askDock() {
 }
 
 let sending = false;
-async function send(skipDock) {
+let skipped = {}; // 这一轮发送里已经选择“照样发送”的提醒
+async function send(skip = {}) {
   if (sending) return;
+  skipped = skip;
   flushTyping();
   if (!filled(mine)) return;
-  if (!mine.docks.length && !skipDock) return askDock();
+  if (!mine.docks.length && !skip.noDock) return remind('noDock');
+  if (isArchived(mine.fav) && !skip.favArch)
+    return remind('favArch', { name: `${target(mine.fav).no} ${target(mine.fav).name}` });
   // 复制还没完成时再点一次不重复处理；完成后弹窗会挡住页面
   sending = true;
   lastMd = toMarkdown();
@@ -454,6 +459,7 @@ const whoHTML = (it) =>
 
 // 一个方向（或一种底栏）下面的整块：👍 ❤️，优点、缺点各一列，每列下面一个输入框
 function blockHTML(id) {
+  if (isArchived(id)) return archivedHTML(id);
   const s = tally(id),
     dock = isDock(id);
   const likeOn = dock ? mine.docks.includes(id.slice(4)) : mine.like.includes(id);
@@ -482,6 +488,33 @@ function blockHTML(id) {
       : '')
   );
 }
+// 废案：已有的投票和优缺点只读显示，不能再加
+const archOpen = new Set(); // 展开了“已有评审”的废案（只在内存里）
+function archivedHTML(id) {
+  const s = tally(id);
+  const open = archOpen.has(id);
+  const item = (it) =>
+    `<li class="${it.mine ? 'mine' : ''}"><span class="rv-t">${esc(it.t)}</span><span class="rv-who">${whoHTML(it)}</span></li>`;
+  const col = (cls, key, items) =>
+    items.length
+      ? `<div class="rv-col ${cls}"><p class="rv-h">${t(key)} <b>${items.length}</b></p><ul>${items.map(item).join('')}</ul></div>`
+      : '';
+  // 默认收起，只露出一个按钮；点开才显示 👍 ❤️ 和优缺点
+  const btn =
+    `<button type="button" class="rv-arch-btn" data-rv-arch="${id}" aria-expanded="${open}">` +
+    `${t(open ? 'rv.archHide' : 'rv.archShow')} <span>👍${s.like} ❤️${s.fav} +${s.pros.length} −${s.cons.length}</span></button>`;
+  if (!open) return btn;
+  return (
+    btn +
+    `<p class="rv-arch">${t('rv.archNote')}</p>` +
+    `<div class="rv-row"><span class="rv-b ro">👍 <span>${t('rv.v.like')}</span><b>${s.like}</b></span>` +
+    `<span class="rv-b ro">❤️ <span>${t('rv.v.fav')}</span><b>${s.fav}</b></span></div>` +
+    col('pro', 'rv.pros', s.pros) +
+    col('con', 'rv.cons', s.cons) +
+    col('other', 'rv.other', s.other)
+  );
+}
+
 // 评审表和侧栏底栏用的紧凑版：点一下跳到那个方向下面去写
 function chipHTML(id, label = '') {
   const s = tally(id);
@@ -589,6 +622,7 @@ function buildShell() {
 // 从评审表或侧栏跳到某个方向下面，光标放进“优点”输入框
 function goTo(id) {
   if (isDir(id) && current !== 'all' && current !== id) pick(id);
+  if (isArchived(id) && !showArch) setArch(true);
   const box = document.querySelector(`.card[data-id="${id}"], .dock-card[data-id="${id}"]`);
   if (!box?.offsetParent) return;
   box.scrollIntoView({ block: 'center', behavior: reduceMotion() ? 'auto' : 'smooth' });
@@ -622,7 +656,7 @@ function addNote(input) {
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
-    '[data-rv-like],[data-rv-fav],[data-rv-go],[data-rv-try],[data-rv-del],[data-rv-edit],[data-rv-send],[data-rv-copy],[data-rv-copy-go],[data-rv-addbtn],[data-rv-skip-dock],[data-rv-pick-dock],[data-rv-posted],[data-rv-dlg-close],[data-rv-clear],[data-rv-refresh]',
+    '[data-rv-like],[data-rv-fav],[data-rv-go],[data-rv-try],[data-rv-del],[data-rv-edit],[data-rv-send],[data-rv-copy],[data-rv-copy-go],[data-rv-addbtn],[data-rv-skip],[data-rv-fix],[data-rv-arch],[data-rv-posted],[data-rv-dlg-close],[data-rv-clear],[data-rv-refresh]',
   );
   if (!b) return;
   const d = b.dataset;
@@ -661,10 +695,18 @@ document.addEventListener('click', (e) => {
   if ('rvSend' in d) return send();
   // 链接照常打开 Issue，这里只负责再复制一次
   if ('rvCopyGo' in d) return copyText(lastMd);
-  if ('rvSkipDock' in d) return send(true);
-  if ('rvPickDock' in d) {
+  if (d.rvArch) {
+    if (archOpen.has(d.rvArch)) archOpen.delete(d.rvArch);
+    else archOpen.add(d.rvArch);
+    return paintReview();
+  }
+  if (d.rvSkip) return send({ ...skipped, [d.rvSkip]: true });
+  if (d.rvFix) {
     $('rv-dlg').close();
-    return goTo('nav-' + DOCKS[0]);
+    // 去选底栏，或去第一个保留方向改投 ❤️
+    return goTo(
+      d.rvFix === 'noDock' ? 'nav-' + DOCKS[0] : concepts.find((c) => !isArchived(c.id)).id,
+    );
   }
   if ('rvCopy' in d)
     return copyText(lastMd).then((ok) => rvToast(t(ok ? 'rv.copiedToast' : 'rv.copyFail')));
