@@ -17,6 +17,7 @@ test('Expo web config and manifest describe an installable standalone shell', ()
   assert.equal(appJson.expo.web.scope, '/');
   assert.equal(appJson.expo.web.themeColor, manifest.theme_color);
   assert.equal(appJson.expo.web.backgroundColor, manifest.background_color);
+  assert.equal(manifest.theme_color, manifest.background_color);
   assert.equal(manifest.icons.length, 2);
   assert.deepEqual(
     manifest.icons.map(({ sizes, type }) => ({ sizes, type })),
@@ -30,6 +31,12 @@ test('Expo web config and manifest describe an installable standalone shell', ()
 test('the web shell registers a bounded offline fallback without offline sync', () => {
   assert.match(index, /rel="manifest" href="\/manifest\.json"/);
   assert.match(index, /serviceWorker\.register\('\/sw\.js'/);
+  assert.match(index, /viewport-fit=cover/);
+  assert.match(index, /name="apple-mobile-web-app-capable" content="yes"/);
+  assert.match(index, /name="apple-mobile-web-app-status-bar-style" content="black-translucent"/);
+  assert.match(index, /name="theme-color" content="#252326"/);
+  assert.match(index, /background: #252326/);
+  assert.match(serviceWorker, /const CACHE_NAME = 'rewind-shell-v2'/);
   assert.match(
     serviceWorker,
     /url\.pathname === '\/api' \|\| url\.pathname\.startsWith\('\/api\/'\)/,

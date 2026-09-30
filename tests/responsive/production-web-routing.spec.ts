@@ -84,7 +84,7 @@ test('the exported shell exposes install metadata and an honest offline API fall
     display: 'standalone',
     name: 'Rewind',
     start_url: '/',
-    theme_color: '#1D1B1E',
+    theme_color: '#252326',
   });
 
   const serviceWorkerResponse = await request.get('/sw.js');

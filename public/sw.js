@@ -1,6 +1,6 @@
 /* global clients */
 
-const CACHE_NAME = 'rewind-shell-v1';
+const CACHE_NAME = 'rewind-shell-v2';
 const CORE_SHELL_FILES = [
   '/',
   '/index.html',

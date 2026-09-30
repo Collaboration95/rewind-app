@@ -4,20 +4,20 @@ This branch groups the Project 11 entry, account, layout, and feedback work into
 
 ## Issue mapping
 
-| Issue | Change and proof                                                                                                                                                                                                                                                      |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #243  | Branded cold-launch screen stays visible for at least 600 ms after its first render; a regression test covers fast session restoration. Welcome is shortened. See the cold-launch and Welcome captures below.                                                         |
-| #304  | The Sign in `Try Demo` path starts the seeded sample session. The screenshot flow reached the Home screen through the isolated local runtime. No live Demo data was changed.                                                                                          |
-| #305  | Real-account requests require the same-origin HTTPS boundary. The runtime distinguishes an absent browser session from a revoked session. The local smoke run exercised the UI over loopback HTTPS; auth integration tests cover the server contract.                 |
-| #306  | Native status bar is hidden; web viewport uses `viewport-fit=cover`; app screens use the safe-area frame. Browser and layout checks passed.                                                                                                                           |
-| #307  | Added public self-registration using the existing salted password storage, bounded request body, and per-source rate limit. Registration creates no session, Demo identity, or group membership.                                                                      |
-| #308  | Added username/password/confirmation UI, inline outcomes, pending/disabled states, HTTPS guard, direct sign-in after account creation, and invite-intent retention. Fresh browser entry no longer shows a false expired-session warning.                              |
-| #309  | Added pressed-control response and a short route transition that respects reduced-motion settings. Loading feedback is covered by the cold-launch screen.                                                                                                             |
-| #296  | Home copy no longer exposes Demo or runtime diagnostics. Demo and local-runtime disclosure remain in Settings; see the Settings captures.                                                                                                                             |
-| #267  | Research-only brief: [performance profiling research](../doc/planning/performance-profiling-research.md). It discloses Luna agent authorship and independent critique; it does not claim a performance campaign.                                                      |
-| #145  | `npm run test:production-e2e` passed twice against disposable local data (two tests per run, including reset-to-reveal). This is local synthetic evidence only; required hosted journeys and rollback/acceptance observations were not run. See the limitation below. |
-| #232  | `make run` started the current branch's isolated backend and Metro server, but the locked Mac prevented reliable simulator UI control. No physical-iPhone result is claimed.                                                                                          |
-| #314  | Investigation did not reproduce the reported native Video crash or produce an iOS exception. No speculative code change was made; the issue remains open for device logs.                                                                                             |
+| Issue | Change and proof                                                                                                                                                                                                                                                            |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #243  | Branded cold-launch screen stays visible for at least 600 ms after its first render; a regression test covers fast session restoration. Welcome is shortened. See the cold-launch and Welcome captures below.                                                               |
+| #304  | The Sign in `Try Demo` path starts the seeded sample session. The screenshot flow reached the Home screen through the isolated local runtime. No live Demo data was changed.                                                                                                |
+| #305  | Real-account requests require the same-origin HTTPS boundary. The runtime distinguishes an absent browser session from a revoked session. The local smoke run exercised the UI over loopback HTTPS; auth integration tests cover the server contract.                       |
+| #306  | Native status bar is hidden; installed web/PWA viewport uses `viewport-fit=cover`, dark edge-to-edge shell colors, safe-area framing, and a service-worker cache bump to refresh existing installs. Added an iPhone 14 Plus Add-to-Home-Screen report and screenshot below. |
+| #307  | Added public self-registration using the existing salted password storage, bounded request body, and per-source rate limit. Registration creates no session, Demo identity, or group membership.                                                                            |
+| #308  | Added username/password/confirmation UI, inline outcomes, pending/disabled states, HTTPS guard, direct sign-in after account creation, and invite-intent retention. Fresh browser entry no longer shows a false expired-session warning.                                    |
+| #309  | Added pressed-control response and a short route transition that respects reduced-motion settings. Loading feedback is covered by the cold-launch screen.                                                                                                                   |
+| #296  | Home copy no longer exposes Demo or runtime diagnostics. Demo and local-runtime disclosure remain in Settings; see the Settings captures.                                                                                                                                   |
+| #267  | Research-only brief: [performance profiling research](../doc/planning/performance-profiling-research.md). It discloses Luna agent authorship and independent critique; it does not claim a performance campaign.                                                            |
+| #145  | `npm run test:production-e2e` passed twice against disposable local data (two tests per run, including reset-to-reveal). This is local synthetic evidence only; required hosted journeys and rollback/acceptance observations were not run. See the limitation below.       |
+| #232  | `make run` started the current branch's isolated backend and Metro server, but the locked Mac prevented reliable simulator UI control. No physical-iPhone result is claimed.                                                                                                |
+| #314  | Investigation did not reproduce the reported native Video crash or produce an iOS exception. No speculative code change was made; the issue remains open for device logs.                                                                                                   |
 
 The five additional issues are grouped under the **Miscellaneous Epic** (#319) in Project 11. They remain open where the issue's device or live-host acceptance gate has not been met.
 
@@ -50,6 +50,12 @@ Captured from the current branch against a disposable, seeded local runtime. Chr
 ![Settings screen with Demo identity disclosure](images/project11-settings-iphone15-viewport.png)
 
 ![Local runtime diagnostics placed in Settings](images/project11-settings-runtime-iphone15-viewport.png)
+
+### iPhone 14 Plus Add-to-Home-Screen report
+
+![Owner-provided iPhone 14 Plus screenshot showing a white status-bar strip in the live dev PWA](images/project11-iphone14-plus-a2hs-white-bars-2026-09-30.jpg)
+
+The owner reports white bands at both ends when opening the dev URL as a Safari Add-to-Home-Screen app on an iPhone 14 Plus. The supplied capture visibly shows the white top status-bar band. I reproduced the same live dev entry screen in the browser; it still has the older Welcome/Demo layout. The `dev` HTML shell does not include `viewport-fit=cover`, while this branch does. The service-worker cache version now advances so an already-installed copy fetches the corrected shell on deployment. The screenshot is evidence of the pre-fix live deployment; it is not a physical-device verification of this branch.
 
 ## Verification
 

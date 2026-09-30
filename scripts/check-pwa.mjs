@@ -21,15 +21,17 @@ const offline = (await readArtifact('offline.html')).toString('utf8');
 
 assert.match(index, /<link rel="manifest" href="\/manifest\.json"/);
 assert.match(index, /navigator\.serviceWorker\.register\('\/sw\.js'/);
-assert.match(index, /name="theme-color" content="#1D1B1E"/);
+assert.match(index, /viewport-fit=cover/);
+assert.match(index, /name="theme-color" content="#252326"/);
 assert.match(index, /apple-mobile-web-app-capable/);
+assert.match(index, /apple-mobile-web-app-status-bar-style" content="black-translucent"/);
 assert.equal(manifest.name, 'Rewind');
 assert.equal(manifest.short_name, 'Rewind');
 assert.equal(manifest.start_url, '/');
 assert.equal(manifest.scope, '/');
 assert.equal(manifest.display, 'standalone');
-assert.equal(manifest.theme_color, '#1D1B1E');
-assert.equal(manifest.background_color, '#252326');
+assert.equal(manifest.theme_color, '#252326');
+assert.equal(manifest.background_color, manifest.theme_color);
 assert.equal(manifest.icons.length, 2);
 
 for (const icon of manifest.icons) {
@@ -61,5 +63,7 @@ assert.ok(
   'same-origin navigation must be handled before shell-asset filtering',
 );
 assert.match(offline, /Captured media is not synchronized offline/);
+assert.match(offline, /viewport-fit=cover/);
+assert.match(offline, /theme-color" content="#252326"/);
 
 console.log(`PWA export valid: ${distDir}`);
