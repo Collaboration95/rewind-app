@@ -78,11 +78,22 @@ test('the deploy role trusts one environment, one branch, and one host', () => {
   assert.match(deployTf, /actions = \["sts:AssumeRoleWithWebIdentity"\]/);
   assert.match(deployTf, /deploy_environment\s*=\s*"dev"/);
   assert.match(deployTf, /deploy_branch\s*=\s*"dev"/);
-  assert.match(deployTf, /:environment:\$\{local\.deploy_environment\}"\]/);
+  assert.ok(
+    deployTf.includes('"repo:${var.github_repository}:environment:${local.deploy_environment}"'),
+    'trusts the classic OIDC subject form',
+  );
+  assert.ok(
+    deployTf.includes(
+      '"repo:${var.github_repository_immutable}:environment:${local.deploy_environment}"',
+    ),
+    'trusts the immutable owner@id/repo@id OIDC subject form',
+  );
+  assert.match(deployTf, /values\s*=\s*local\.deploy_subjects/);
   assert.match(deployTf, /"refs\/heads\/\$\{local\.deploy_branch\}"/);
   assert.match(deployTf, /token\.actions\.githubusercontent\.com:aud/);
   assert.match(deployTf, /values\s*=\s*\["sts\.amazonaws\.com"\]/);
   assert.match(demoVariables, /variable "github_repository"/);
+  assert.match(demoVariables, /variable "github_repository_immutable"/);
 });
 
 test('the deploy role carries the live instance ARN and cannot mutate the host', () => {
@@ -117,4 +128,13 @@ test('the release builder takes an explicit branch gate', () => {
   assert.match(release, /release commit must equal origin\/\{branch\}/);
   assert.match(release, /no successful \{branch\}-branch Quality checks run for this commit/);
   assert.doesNotMatch(release, /web-canonical-origin/);
+});
+
+test('the assumed session backs the same-step caller-identity check', () => {
+  // $GITHUB_ENV only reaches later steps, so the verification inside the
+  // assume step must carry the credentials it just obtained.
+  assert.match(
+    workflow,
+    /AWS_SESSION_TOKEN="\$\(jq -r \.SessionToken <<<"\$credentials"\)"[\s\S]{0,160}aws sts get-caller-identity --output json/,
+  );
 });
