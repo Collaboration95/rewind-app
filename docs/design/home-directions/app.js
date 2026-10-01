@@ -279,6 +279,7 @@ function renderCard(id, from) {
 }
 // 同一台手机换页签，或带着新参数重画这一页；这台手机的状态不变
 function goTab(scr, tab = scr.dataset.tab, o = {}) {
+  if (typeof stopTimers === 'function') stopTimers(scr);
   const wrap = scr.closest('.phone-wrap');
   const id = scr.classList[1];
   const c = concepts.find((x) => x.id === id);

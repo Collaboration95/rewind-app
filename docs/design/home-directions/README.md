@@ -22,7 +22,7 @@ The prototype follows the newest plan, `doc/planning/sprints/sprint-2-user-journ
 - Accounts are made by the Rewind admin: **username and password**, no sign-up. The welcome page has _Sign in_ and a separate _Try Demo_; Demo controls live in Settings, apart from the real account.
 - Home shows the countdown, the prompt, **your own** allowance and this week's moments; it does not show the group total or who is in.
 - **Chat** is one chat per group: text, replies and a ✨ reaction, up to 2,000 characters. No attachments, read receipts, typing indicators, edits or deletes; the proposal leaves those out.
-- **Archive** shows the current cycle's step, then every released film: play it, save it, or save your own moments from that cycle. A cycle that never got a film keeps only its prompt and dates.
+- **Archive** shows the current cycle's step, then every released film, streamed right in its card; nothing to download there. Saving the film or your own moments stays at the end of the film. A cycle that never got a film keeps only its prompt and dates.
 - Home, Chat and Archive all belong to the group you are in.
 
 The retro modes are not designed yet: the prototype keeps the looks `dev` has today (Original, Soft focus, High contrast), picked after recording as in the Sprint 2 plan.
@@ -33,7 +33,8 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 - Home: days until the film, the week of the cycle, and the prompt card with your allowance and this week's moments; tapping the allowance opens _Your moments_.
 - Dock: Home / Chat / Archive are always shown, plus a separate shutter on every tab. The shutter's ring shows your 5 moments for the week. Opening Chat clears its unread count; opening Archive clears the new-film dot.
 - Chat: messages from the bottom up, others on the left with their colour, yours in peach on the right. Tap a message to add ✨ or reply. Coming in with unread messages draws a _3 new messages_ line. Reconnecting and offline show as a small pill under the header; a message that didn't send says _Not sent · Retry_.
-- Archive: the current cycle on top (collecting, developing, taking longer, or the premiere with Play and Save film), then _Earlier films_ with Play, Save film and Save your moments, and _Show older films_.
+- Archive: the current cycle on top (collecting, developing, taking longer, or the premiere with Play), then _Earlier films_. Tapping one plays it in the card with progress, time, pause and full screen; one film plays at a time. _Show older films_ loads more.
+- After sealing, the camera waits on _Sealed_ with _Tell the group_ and _Done_. _Tell the group_ opens Chat with an editable draft, so you can say what you just caught; only the words go to Chat, the moment stays sealed.
 - The dock, the shutter and the cards use the newer iOS glass look. Text meets WCAG AA contrast on the warm light.
 
 ## Tabs
@@ -45,12 +46,12 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
   - Welcome and sign in: username and password (in the prototype the password is `rewind`), with wrong password, offline and expired session; _Try Demo_ pulls up synthetic members.
   - Settings: the account, the group (owner: group name, prompt, invite; members see the prompt only; a full group can't invite), switch group, join with a code, create a group, the Sunday reminder with time and snooze, sign out, and Demo controls in a Demo session.
   - Your moments: metadata only; delete one and retake it, once a week.
-  - Record a video: camera and mic access, the viewfinder with moments and seconds left, recording, trim and look, upload with cancel, sealed.
+  - Record a video: camera and mic access, the viewfinder with moments and seconds left, recording, trim and look, upload with cancel, sealed with _Tell the group_.
   - Take a photo: the photo mode and a quick look before sealing; it counts 3 seconds.
   - Switch group: the menu under the group name, and what someone removed from a group sees.
   - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast, a main button that opens Chat, and Replay, Save film and Save your own moments.
   - Chat: new messages, tap a message, reply, no messages yet, reconnecting, offline, not sent, couldn't load, and after the premiere.
-  - Archive: collecting, the premiere, developing, the first cycle, a failed save and couldn't load.
+  - Archive: collecting, the premiere, developing, a film playing in its card, the first cycle and couldn't load.
 - **Dock icons**: try six icon sets in the dock. `#dock=ios` links to a set.
 
 ## Home states

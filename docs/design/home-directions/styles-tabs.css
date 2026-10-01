@@ -620,23 +620,8 @@
   font-size: 13px;
   color: var(--muted);
 }
-.a-acts {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
-.a-acts .set-btn {
+.a-prem .set-btn {
   height: 48px;
-}
-.a-link {
-  display: block;
-  min-height: 40px;
-  margin: 6px auto 0;
-  font-size: 13.5px;
-  font-weight: 600;
-  color: var(--ink);
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 /* 以前的影片 */
 .a-list {
@@ -728,11 +713,6 @@
   width: 15px;
   height: 15px;
 }
-.a-err {
-  margin: 10px 6px 0;
-  font-size: 12.5px;
-  color: #8f2615;
-}
 .set-btn.a-older {
   margin-top: 14px;
 }
@@ -754,6 +734,120 @@
 }
 .c-state.a-state {
   margin-top: 60px;
+}
+
+/* 正在放的那张：撑开成卡片里的播放器（在线播放，不下载） */
+.c6 .glass.a-film.on {
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 10px 14px;
+}
+.a-film.on .a-info {
+  padding: 0 6px;
+}
+.a-pv {
+  position: relative;
+  height: 300px;
+  overflow: hidden;
+  border-radius: 18px;
+  color: #fff;
+  background: #120b08;
+}
+.a-pv .fm-f.on {
+  opacity: 1;
+  animation: fm-ken 1.6s ease-out both;
+}
+.a-pv.paused .fm-f.on,
+.a-pv.paused .a-pvbar i.now b {
+  animation-play-state: paused;
+}
+.a-pvbar {
+  position: absolute;
+  z-index: 1;
+  top: 12px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  gap: 3px;
+}
+.a-pvbar i {
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.3);
+}
+.a-pvbar b {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: #fff;
+}
+.a-pvbar i.done b {
+  width: 100%;
+}
+.a-pvbar i.now b {
+  animation: fm-fill 1.4s linear forwards;
+}
+.a-pvctl {
+  position: absolute;
+  z-index: 1;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.a-pvt {
+  flex: 1;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+.a-pvb {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(20, 12, 8, 0.45);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.a-pvb .ic {
+  width: 20px;
+  height: 20px;
+}
+/* 放完：中间一个重播 */
+.a-pvre {
+  display: none;
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 20px 0 16px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffd2a6, #ff9f6b);
+}
+.a-pvre .ic {
+  width: 18px;
+  height: 18px;
+}
+.a-pv.ended .a-pvre {
+  display: inline-flex;
+}
+.a-pv.ended .a-pvctl [data-arc-pause] {
+  visibility: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {

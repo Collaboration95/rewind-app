@@ -10,6 +10,8 @@
    · 聊天、档案、首页都只属于当前小组；点组名切换小组，整台手机换成那个小组。
    画面里没有真实媒体：影片封面是抽象的暖色光斑。 */
 
+Object.assign(I, { expand: '<path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15"/>' });
+
 const esc = (s) =>
   String(s).replace(
     /[&<>"]/g,
@@ -255,7 +257,7 @@ const FILMS = [
     prompt: 1,
     m: 17,
     len: '2 min 31 s',
-    mine: 5,
+    secs: 151,
     col: ['#7a3a2a', '#ffcf8a', '#6D90C4'],
   },
   {
@@ -264,7 +266,7 @@ const FILMS = [
     prompt: 2,
     m: 12,
     len: '1 min 48 s',
-    mine: 3,
+    secs: 108,
     col: ['#5a3b4a', '#ff9f6b', '#7FB08F'],
   },
 ];
@@ -277,8 +279,29 @@ function filmInfo(n) {
   return f ? `Cycle ${f.n} · ${f.dates}` : 'Premiere · 18 h left';
 }
 
-function filmRow(f) {
+const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+// 卡片里放的格子：和影片一样，每段一格作者色的光
+const previewFrames = (d) =>
+  d.members.filter((x) => x.c > 0).flatMap((x) => Array.from({ length: x.c }, () => x));
+
+function filmRow(f, d, o) {
   const prompt = PROMPTS[f.prompt];
+  const info = `<div class="a-info"><small>Cycle ${f.n} · ${f.dates}</small><b>${prompt}</b><span>${f.m} moments · ${f.len}</span>`;
+  // 正在放：卡片撑开成一个播放器，可以暂停、全屏
+  if (f.m && o.play === f.n) {
+    const fr = previewFrames(d);
+    const at = o.at ?? 0;
+    return (
+      `<li class="glass a-film on"><div class="a-pv${o.still ? ' paused' : ''}" role="region" aria-label="Cycle ${f.n} film" data-secs="${f.secs}">` +
+      fr.map((x, i) => frame(x, i).replace('fm-f', `fm-f${i === at ? ' on' : ''}`)).join('') +
+      `<span class="a-pvbar" aria-hidden="true">${fr.map((_, i) => `<i${i < at ? ' class="done"' : i === at ? ' class="now"' : ''}><b></b></i>`).join('')}</span>` +
+      `<div class="a-pvctl"><button type="button" class="a-pvb" data-arc-pause aria-label="${o.still ? 'Play' : 'Pause'}">${ic(o.still ? 'play' : 'pause')}</button>` +
+      `<span class="a-pvt">${mmss((at / fr.length) * f.secs)} / ${mmss(f.secs)}</span>` +
+      `<button type="button" class="a-pvb" data-arc-full="${f.n}" aria-label="Full screen">${ic('expand')}</button></div>` +
+      `<button type="button" class="a-pvre" data-arc-play="${f.n}">${ic('replay')}Replay</button></div>` +
+      `${info}</div></li>`
+    );
+  }
   if (!f.m)
     return (
       `<li class="glass a-film none"><span class="a-thumb off" aria-hidden="true">${ic('lock')}</span>` +
@@ -286,12 +309,8 @@ function filmRow(f) {
     );
   return (
     `<li class="glass a-film"><button type="button" class="a-thumb" data-arc-play="${f.n}" aria-label="Play the cycle ${f.n} film" style="--a:${f.col[0]};--b:${f.col[1]};--c:${f.col[2]}">${ic('play')}</button>` +
-    `<div class="a-info"><small>Cycle ${f.n} · ${f.dates}</small><b>${prompt}</b><span>${f.m} moments · ${f.len}</span>` +
-    `<div class="a-row"><button type="button" class="a-pill" data-arc-save="film" data-busy="Saving…">${ic('save')}Film</button>` +
-    (f.mine
-      ? `<button type="button" class="a-pill" data-arc-save="mine" data-busy="Saving…" aria-label="Save your ${f.mine} moments">${ic('save')}Your ${f.mine}</button>`
-      : '') +
-    `</div></div></li>`
+    info +
+    `<div class="a-row"><button type="button" class="a-pill" data-arc-play="${f.n}">${ic('play')}Watch</button></div></div></li>`
   );
 }
 
@@ -302,7 +321,7 @@ function nowCard(d) {
   if (h === 'released') {
     const who = d.members.filter((x) => x.c > 0);
     return (
-      `<section class="glass a-prem"><button type="button" class="a-poster" data-arc-play="${NOW.n}" aria-label="Play the film">` +
+      `<section class="glass a-prem"><button type="button" class="a-poster" data-arc-full="${NOW.n}" aria-label="Play the film">` +
       // 封面：每人一格抽象的光，按片段作者的颜色
       who
         .map(
@@ -313,18 +332,14 @@ function nowCard(d) {
       `<span class="a-play">${ic('play')}</span></button>` +
       `<small>Premiere · 18 h left</small><h2>${promptText()}</h2>` +
       `<p class="a-meta">Cycle ${NOW.n} · ${NOW.dates} · ${plural(d.m, 'moment')} · 2 min 14 s</p>` +
-      `<div class="a-acts"><button type="button" class="set-btn primary" data-arc-play="${NOW.n}">${ic('play')}Play</button>` +
-      `<button type="button" class="set-btn" data-arc-save="film" data-busy="Saving…">${ic('save')}Save film</button></div>` +
-      (d.me.c
-        ? `<button type="button" class="a-link" data-arc-save="mine" data-busy="Saving…">Save your ${plural(d.me.c, 'moment')}</button>`
-        : '') +
+      `<button type="button" class="set-btn primary" data-arc-full="${NOW.n}">${ic('play')}Play</button>` +
       `</section>`
     );
   }
   const row = (icon, title, note, bar) =>
     `<section class="glass a-now" role="status"><span class="a-ico">${ic(icon)}</span><div><b>${title}</b><span>${note}</span>${bar ? `<span class="st-bar" aria-hidden="true"><i></i></span>` : ''}</div></section>`;
   if (h === 'developing')
-    return row('clock', `Cycle ${NOW.n} is developing`, 'Play and save once it’s out.', true);
+    return row('clock', `Cycle ${NOW.n} is developing`, 'You can watch it once it’s out.', true);
   if (h === 'delayed')
     return row(
       'clock',
@@ -356,17 +371,53 @@ function archiveBody(d, o) {
       `<button type="button" class="set-btn" data-st-retry>Try again</button></section></div>`
     );
   const list = films.length
-    ? `<p class="set-k">Earlier films</p><ul class="a-list">${films.map(filmRow).join('')}</ul>` +
-      (o.saveFail
-        ? `<p class="a-err" role="alert">Couldn’t save the film. Try again when you’re online.</p>`
-        : '') +
+    ? `<p class="set-k">Earlier films</p><ul class="a-list">${films.map((f) => filmRow(f, d, o)).join('')}</ul>` +
       (ARC.older
         ? ''
         : `<button type="button" class="set-btn a-older" data-arc-older data-busy="Loading…">Show older films</button>`)
     : NAV.home === 'released'
       ? ''
-      : `<section class="a-first"><h2>Your first film</h2><p>It opens when this cycle ends. Every film stays here, and you can save it or your own moments.</p></section>`;
+      : `<section class="a-first"><h2>Your first film</h2><p>It opens when this cycle ends. Every film stays here to watch again.</p></section>`;
   return `<div class="scroll">${glow}${head}${nowCard(d)}${list}</div>`;
+}
+
+// 卡片里的播放：一格一格往下走，放完停在最后，给一个重播
+function startPreview(scr) {
+  const pv = scr.querySelector('.a-pv');
+  if (!pv) return;
+  stopTimers(scr);
+  const frames = [...pv.querySelectorAll('.fm-f')];
+  const bars = [...pv.querySelectorAll('.a-pvbar i')];
+  const secs = Number(pv.dataset.secs);
+  const time = pv.querySelector('.a-pvt');
+  const btn = pv.querySelector('[data-arc-pause]');
+  btn.innerHTML = ic('pause');
+  btn.setAttribute('aria-label', 'Pause');
+  pv.classList.remove('ended', 'paused');
+  let i = Math.max(
+    0,
+    frames.findIndex((f) => f.classList.contains('on')),
+  );
+  const show = () => {
+    frames.forEach((f, k) => f.classList.toggle('on', k === i));
+    bars.forEach((x, k) => {
+      x.classList.toggle('done', k < i);
+      x.classList.toggle('now', k === i);
+    });
+    time.textContent = `${mmss((i / frames.length) * secs)} / ${mmss(secs)}`;
+  };
+  show();
+  every(scr, reduceMotion() ? 600 : 1400, () => {
+    if (pv.classList.contains('paused')) return;
+    i += 1;
+    if (i >= frames.length) {
+      stopTimers(scr);
+      bars.forEach((x) => x.classList.replace('now', 'done'));
+      time.textContent = `${mmss(secs)} / ${mmss(secs)}`;
+      return pv.classList.add('ended');
+    }
+    show();
+  });
 }
 
 // app.js 的 screen() 调这里
@@ -428,15 +479,28 @@ document.addEventListener('click', (e) => {
       chatRedraw(scr);
     });
   // 档案
-  if (d.arcPlay) {
-    const n = Number(d.arcPlay);
+  // 以前的影片：在卡片里放；同一时间只放一部
+  if (d.arcPlay) return startPreview(goTab(scr, 'archive', { play: Number(d.arcPlay) }));
+  if (d.arcFull) {
+    const n = Number(d.arcFull);
     return openSub(scr, 'film', n === NOW.n ? {} : { film: n });
   }
-  if (d.arcSave) return busy(b, 700, () => rvToast(t('scr.toast.arc.' + d.arcSave)));
+  if ('arcPause' in d) {
+    const pv = b.closest('.a-pv');
+    // 画面页里停着的那台：点一下从这一格接着放
+    if (!TIMERS_SUB.has(scr)) {
+      pv.classList.remove('paused');
+      return startPreview(scr);
+    }
+    const p = pv.classList.toggle('paused');
+    b.innerHTML = ic(p ? 'play' : 'pause');
+    b.setAttribute('aria-label', p ? 'Play' : 'Pause');
+    return;
+  }
   if ('arcOlder' in d)
     return busy(b, 600, () => {
       ARC.older = true;
-      goTab(scr, 'archive', optsOf(scr));
+      goTab(scr, 'archive', { ...optsOf(scr), play: null });
     });
 });
 

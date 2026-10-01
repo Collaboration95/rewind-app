@@ -373,7 +373,10 @@ function cameraHTML(d, mode, step, o = {}) {
     `<button type="button" class="cam-retake" data-cam-cancel>Cancel</button></section>` +
     // 封存好了
     `<section class="cam-done" role="status"><span class="cam-ok">${ic('check')}</span><h2>Sealed</h2>` +
-    `<p>${Math.max(0, left5(d) - 1)} left · finishing in the background</p></section>`
+    `<p>${Math.max(0, left5(d) - 1)} left · finishing in the background</p>` +
+    `<div class="cam-tell"><button type="button" class="set-btn primary" data-cam-tell>${ic('chat')}Tell the group</button>` +
+    `<button type="button" class="cam-fin" data-cam-done>Done</button></div>` +
+    `<p class="cam-hint">Only your words go to Chat. The ${video ? 'video' : 'photo'} stays sealed.</p></section>`
   );
 }
 
@@ -475,6 +478,7 @@ function closeSub(scr, sealed) {
     const sh = ns.querySelector('.shutter');
     if (sh) flashTip(sh, 'Sealed');
   }
+  return ns;
 }
 
 /* ---------- 计时器（录制、上传、放映），换画面时一起停掉 ---------- */
@@ -559,9 +563,6 @@ function upload(scr) {
       : Math.round(Number(scr.querySelector('.trim')?.dataset.len) || 5);
     if (me.c < 5) addClip(me, photo ? 'photo' : 'video', len);
     goStep(scr, 'sealed');
-    // 从首页来的：停一下再回首页，额度那一行跟着变
-    if (scr.closest('.phone-wrap').dataset.from === 'home')
-      later(scr, 1200, () => closeSub(scr, true));
   });
 }
 
@@ -654,7 +655,7 @@ function signedIn(scr, idx, demo, name) {
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
-    '[data-sub-back],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-cam-cancel],[data-cam-mine],[data-look],' +
+    '[data-sub-back],[data-cam-tell],[data-cam-done],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-cam-cancel],[data-cam-mine],[data-look],' +
       '[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-snooze],[data-set-join],[data-set-create],[data-set-rename],[data-set-prompt],[data-set-group],[data-set-me],[data-set-reset],' +
       '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
       '[data-fm-pause],[data-fm-replay],[data-fm-save],[data-fm-chat]',
@@ -675,6 +676,20 @@ document.addEventListener('click', (e) => {
     return redraw(scr, 'camera', { mode: scr.dataset.mode });
   }
   if ('camSeal' in d) return upload(scr);
+  if ('camDone' in d) return closeSub(scr, true);
+  // 去聊天：带一句草稿，可以改成“刚拍了午饭”之类
+  if ('camTell' in d) {
+    const kind = scr.dataset.mode === 'photo' ? 'photo' : 'video';
+    const wrap = scr.closest('.phone-wrap');
+    wrap.dataset.tab = 'chat';
+    wrap.dataset.from = 'home';
+    if (SET.gi === 0) SEEN.chat = true;
+    const cs = goTab(closeSub(scr), 'chat', { draft: `Just sealed a ${kind} 🤫 ` });
+    const box = cs.querySelector('[data-chat-input]');
+    box.focus({ preventScroll: true });
+    box.setSelectionRange(box.value.length, box.value.length);
+    return;
+  }
   if ('camCancel' in d) {
     stopTimers(scr);
     goStep(scr, 'review');
@@ -958,8 +973,8 @@ const FLOWS = [
       ['collect', {}],
       ['released', { home: 'released' }],
       ['developing', { home: 'developing' }],
+      ['watch', { play: 3, still: true, at: 4 }],
       ['first', { first: true }],
-      ['fail', { saveFail: true }],
       ['error', { home: 'error' }],
     ],
   ],

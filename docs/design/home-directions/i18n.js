@@ -231,8 +231,8 @@ const I18N = {
   'scr.set.invite': ['Invite a friend', '邀请朋友'],
   'scr.video': ['Record a video', '录视频'],
   'scr.video.p': [
-    'Up to 15 seconds, within 5 moments and 30 seconds a week. Trim it and pick a look, then seal; the upload can be cancelled.',
-    '单段最长 15 秒，一周 5 段、共 30 秒。剪一下、选个效果再封存，上传时可以取消。',
+    'Up to 15 seconds, within 5 moments and 30 seconds a week. Trim it and pick a look, then seal; the upload can be cancelled. Once sealed, you can tell the group in Chat: only your words go there, the moment stays sealed.',
+    '单段最长 15 秒，一周 5 段、共 30 秒。剪一下、选个效果再封存，上传时可以取消。封存后可以去聊天跟大家说一声：发过去的只有你写的字，片段照样封着。',
   ],
   'scr.video.view': ['Viewfinder', '取景'],
   'scr.video.rec': ['Recording', '录制中'],
@@ -365,17 +365,15 @@ const I18N = {
   'scr.chat.film': ['After the premiere', '首映之后'],
   'scr.arc': ['Archive', '档案'],
   'scr.arc.p': [
-    'The current cycle on top, then every earlier film: play it, save it, or save your own moments from that cycle. A cycle with no moments keeps only its prompt and dates.',
-    '最上面是这一期，下面是以前每一期的影片：能播放、保存影片，也能保存自己在那一期的片段。没有任何片段的一期只留题目和日期。',
+    'The current cycle on top, then every earlier film. Tap one and it plays right in the card, streamed, nothing to download; full screen is one tap away. A cycle with no moments keeps only its prompt and dates.',
+    '最上面是这一期，下面是以前每一期的影片。点一下就在卡片里直接在线播放，不用下载；也可以一键全屏。没有任何片段的一期只留题目和日期。',
   ],
   'scr.arc.collect': ['Collecting', '收集中'],
   'scr.arc.released': ['Premiere', '首映中'],
   'scr.arc.developing': ['Developing', '制作中'],
   'scr.arc.first': ['First cycle', '第一期'],
-  'scr.arc.fail': ['Save failed', '保存失败'],
   'scr.arc.error': ['Couldn’t load', '读取失败'],
-  'scr.toast.arc.film': ['Film saved to this device.', '影片已保存到这台设备。'],
-  'scr.toast.arc.mine': ['Your moments saved to this device.', '你的片段已保存到这台设备。'],
+  'scr.arc.watch': ['Playing in the card', '在卡片里播放'],
 };
 
 let LANG = 'en';
