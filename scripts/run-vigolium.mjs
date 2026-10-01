@@ -5,12 +5,12 @@ import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
+import { generateSummary } from './vigolium-summary.mjs';
 
 const { parseConfig } = await import('../server/dist/config.js');
 const { openDatabase } = await import('../server/dist/db.js');
 const { createRuntimeServer } = await import('../server/dist/http.js');
 const { createRealAccount } = await import('../server/dist/auth/index.js');
-import { generateSummary } from './vigolium-summary.mjs';
 
 const outputDir = resolve('vigolium-result/automatic');
 const dataDir = await mkdtemp(join(tmpdir(), 'rewind-vigolium-'));
