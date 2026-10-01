@@ -1,19 +1,15 @@
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
-import { once } from 'node:events';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { validateProposal, renderProposal } from './vigolium-agentic-proposal.mjs';
 
 const outputDir = resolve('vigolium-result/agentic-coverage');
-const dryRun = process.argv.includes('--dry-run');
+const review = process.argv.includes('--review');
 assert.ok(
-  process.argv.slice(2).every((arg) => arg === '--dry-run'),
-  'Only --dry-run is supported',
+  process.argv.slice(2).every((arg) => arg === '--review'),
+  'Only --review is supported',
 );
-const cli = resolve('node_modules/@vigolium/vigolium/bin/vigolium.js');
-const oauthPath = join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'auth.json');
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const tracked = execFileSync('git', ['ls-tree', '-r', '--name-only', sourceCommit, 'server/src'], {
   encoding: 'utf8',
@@ -64,74 +60,33 @@ ${JSON.stringify(coverage)}
 SOURCE:
 ${numberedSource}`;
 await mkdir(outputDir, { recursive: true });
-for (const filename of ['proposal.json', 'summary.html', 'prompt.txt'])
-  await rm(join(outputDir, filename), { force: true });
 const metadata = {
   sourceCommit,
   sourceFiles: Object.keys(sources),
   sourceCharacters: numberedSource.length,
-  mode: 'read-only agentic coverage discovery',
-  status: dryRun ? 'prepared' : 'running',
-  provider: 'openai-codex-oauth',
+  mode: 'local-only agentic coverage preparation',
+  status: 'prepared',
+  providerCalled: false,
 };
-await writeFile(join(outputDir, 'scope.json'), JSON.stringify(metadata, null, 2) + '\n');
-if (dryRun) {
+if (!review) {
+  for (const filename of ['proposal.json', 'summary.html', 'local-model-response.txt'])
+    await rm(join(outputDir, filename), { force: true });
   await writeFile(join(outputDir, 'prompt.txt'), prompt);
+  await writeFile(join(outputDir, 'scope.json'), JSON.stringify(metadata, null, 2) + '\n');
   console.log(
-    `Prepared source discovery prompt (${numberedSource.length} source characters). No provider call made.`,
+    `Prepared local source-discovery prompt (${numberedSource.length} source characters). No provider call made.`,
   );
 } else {
-  await access(oauthPath).catch(() => {
-    throw new Error(
-      'Local Codex sign-in missing. Run codex login; do not place auth.json in the repository or GitHub artifacts.',
-    );
-  });
-  const tempDir = await mkdtemp(join(tmpdir(), 'rewind-vigolium-explore-'));
+  const prepared = JSON.parse(await readFile(join(outputDir, 'scope.json'), 'utf8'));
+  assert.equal(
+    prepared.sourceCommit,
+    sourceCommit,
+    'Source commit changed; prepare a fresh prompt before reviewing results',
+  );
+  for (const filename of ['proposal.json', 'summary.html'])
+    await rm(join(outputDir, filename), { force: true });
   try {
-    const child = spawn(
-      process.execPath,
-      [
-        cli,
-        'agent',
-        'query',
-        '--provider',
-        'openai-codex-oauth',
-        '--oauth-cred',
-        oauthPath,
-        '--db',
-        join(tempDir, 'query.sqlite'),
-        '--stdin',
-        '--max-duration',
-        '5m',
-        '--output',
-        join(tempDir, 'proposal.txt'),
-      ],
-      {
-        cwd: tempDir,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      },
-    );
-    // Raw transcripts stay private and are never uploaded or printed. Only validated output is retained.
-    child.stdout.resume();
-    child.stderr.resume();
-    child.stdin.end(prompt);
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, 330_000);
-    try {
-      const [code] = await once(child, 'exit');
-      assert.ok(!timedOut, 'Agent exceeded the outer time limit');
-      assert.equal(
-        code,
-        0,
-        'Agent query did not complete; no fallback provider or safety override is used',
-      );
-    } finally {
-      clearTimeout(timer);
-    }
-    const raw = await readFile(join(tempDir, 'proposal.txt'), 'utf8');
+    const raw = await readFile(join(outputDir, 'local-model-response.txt'), 'utf8');
     const proposal = validateProposal(raw, sources, coverage);
     metadata.status = 'proposal-ready-for-review';
     metadata.completedAt = new Date().toISOString();
@@ -147,11 +102,9 @@ if (dryRun) {
   } catch (error) {
     metadata.status = 'incomplete';
     metadata.completedAt = new Date().toISOString();
-    // Errors may contain model text. Persist only a bounded local diagnostic, never the raw reply.
     metadata.error = String(error.message).slice(0, 300);
     throw error;
   } finally {
     await writeFile(join(outputDir, 'scope.json'), JSON.stringify(metadata, null, 2) + '\n');
-    await rm(tempDir, { recursive: true, force: true });
   }
 }

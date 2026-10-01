@@ -9,6 +9,7 @@
   },
   "scripts": {
     "security:explore": "node scripts/run-vigolium-explore.mjs",
+    "security:explore:review": "node scripts/run-vigolium-explore.mjs --review",
     "security:doctor": "vigolium doctor",
     "security:auto": "npm run server:build && node scripts/run-vigolium.mjs",
     "security:active": "npm run server:build && node scripts/run-vigolium-active.mjs",
