@@ -268,11 +268,11 @@ start/end marker definitions, known deviations, sanitization status
 
 ## 12. Work split
 
-| Person              | Owns                                                                                                                           | Delivers                                                                        | Status                                                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| **Jiayu** (Windows) | `Web` (sitespeed.io, Chrome DevTools, Playwright trace); `Node` (`--cpu-prof`, autocannon); tracing and instrumentation design | Web and Node rows in §3; 3–4 real tool screenshots; §13 and the timing proposal | ☐                                                                                                      |
-| **Long** (Mac)      | `iOS` (build modes, React Native DevTools, Instruments, Maestro); journeys, metrics, and method                                | iOS rows in §3; §4; 2–3 screenshots; §5–8                                       | ☑️ partial — dev/prod and DevTools capture done (§16); Release build, Instruments, Maestro not yet run |
-| **Both**            | Cross-review (Jiayu reviews the method, Long the tool table); resolve §10                                                      | Final report linked on #267                                                     | ☐                                                                                                      |
+| Person              | Owns                                                                                                                           | Delivers                                                                        | Status                                                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Jiayu** (Windows) | `Web` (sitespeed.io, Chrome DevTools, Playwright trace); `Node` (`--cpu-prof`, autocannon); tracing and instrumentation design | Web and Node rows in §3; 3–4 real tool screenshots; §13 and the timing proposal | ☐                                                                                                                                     |
+| **Long** (Mac)      | `iOS` (build modes, React Native DevTools, Instruments, Maestro); journeys, metrics, and method                                | iOS rows in §3; §4; 2–3 screenshots; §5–8                                       | ☑️ done except the Release build (blocked, §18) — dev/prod, DevTools, Instruments, and a real Maestro J2 flow all captured (§16, §18) |
+| **Both**            | Cross-review (Jiayu reviews the method, Long the tool table); resolve §10                                                      | Final report linked on #267                                                     | ☐                                                                                                                                     |
 
 ### Jiayu's steps
 
@@ -455,7 +455,44 @@ The iOS Simulator automation available in this environment intermittently served
 2. **§2 point 6 and this section** — #243, #313, #320 are all merged/closed, not open-and-changing; §2's "changing quickly" framing should be dated or softened so a later reader does not assume these are still open.
 3. **§3/§4 should say explicitly** that React Native DevTools timings (debug-build only, per the empirical result in §16) must never substitute for a formal before/after number taken from a production-like build (§4's Release/APK rows). The report implies this via the build-mode table but never states the rule directly.
 4. **§2's "current `dev` state" is missing the real-account/HTTPS constraint** described in §16 — local Expo Go sessions can only reach the Demo path, not real sign-in, which bounds what J1–J3 can actually cover until a same-origin HTTPS local setup is used.
-5. **Maestro's fit for this app is still unverified** (§3 lists it as "Adopt" based on vendor docs that it "supports Expo Go"). Not disproven, just not yet tried here — worth a line in §9 (Limits) or §10 (Open decisions) until someone runs it once.
+5. **Maestro's fit for this app is now verified, with one real correction (§18).** `tapOn: "<visible text>"` fails against this app's member-picker buttons because their `accessibilityLabel`/`accessibilityText` is a longer composite string (e.g. "Enter Demo as Amber, sample member"), not the literal visible word; Maestro's default text selector requires a full-string regex match. Use `tapOn: { id: "<testID>" }` against the app's existing testIDs instead (e.g. `demo-entry-demo-1`) wherever a button's accessible label differs from its visible text. §3's "Adopt" verdict for Maestro stands, but this selector caveat should be added so the next person does not lose time on it.
+6. **Release build on Xcode 26.3 currently fails to compile** (§18) — this is new information for whoever picks up the "iOS production-like build" follow-up issue (§11.3): it is blocked on an `expo-modules-jsi` / Xcode 26 Swift-C++ interop incompatibility, not a Rewind code issue.
+
+## 18. Instruments and Maestro (live, continuing §16)
+
+### Xcode Instruments — captured
+
+`xcrun xctrace record --template "CPU Profiler" --device <iPhone 15 Pro UDID> --attach <Expo Go PID>` produced a real `.trace` document (`CPU Profiler` template, 15 s window) while interacting with the running Expo Go process. Opened in Instruments.app:
+
+![Instruments CPU Profiler attached to Expo Go, showing two CPU spikes matching two UI interactions and a Swift/UIKit/AttributeGraph call tree](../../issues/images/perf-267-instruments-cpu-profiler-expogo.jpg)
+
+This confirms §3's note that Instruments results on Expo Go include the host app's own overhead (the call tree is dominated by `dyld`, `SwiftUICore`, `UIKitCore`, and `AttributeGraph` frames belonging to Expo Go itself, not Rewind's JS). `xctrace` worked without ever opening the Instruments GUI, which is the more scriptable path for repeat captures; the GUI is only needed to inspect the result afterward.
+
+### Release build on Xcode 26.3 — blocked, not completed
+
+Attempted in a throwaway `git worktree` per §4's instruction (`npx expo run:ios --configuration Release --device "iPhone 15 Pro"`). CocoaPods installed successfully once `LANG`/`LC_ALL` were set to a UTF-8 locale (the Ruby toolchain on this Mac defaults to the POSIX `C` locale, which crashes `pod install` with `Encoding::CompatibilityError` — unrelated to this app, but worth knowing if anyone else hits it). The native compile then failed with 2 errors, both in a dependency, not app code:
+
+```
+node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI-Cxx/include/RuntimeScheduler.h:53:26:
+error: 'RuntimeScheduler' cannot be annotated with either SWIFT_RETURNS_RETAINED or
+SWIFT_RETURNS_UNRETAINED because it is not returning a SWIFT_SHARED_REFERENCE type
+```
+
+This is a Swift/C++ interop rule that Xcode 26.3's (very new) Swift compiler enforces more strictly than when `expo-modules-jsi` was written for this Expo SDK (57). It is an environment/dependency-version incompatibility, not something to patch in this repo casually (it would need either an Expo SDK upgrade, a `patch-package` patch to the dependency, or an older Xcode — all product decisions outside this research issue's scope). Flagged as a real blocker for issue #11.3 ("iOS production-like build") rather than worked around here.
+
+### Maestro — a working J2 flow, with one real selector correction
+
+A flow (`doc/planning/evidence/perf-267-j2-maestro-flow.yaml`) drives the real J2 journey end to end against Expo Go on the simulator: open the project, Sign in (confirm the HTTPS block), Try Demo, pick a member by `testID`, land on Home, tap the Archive tab. All four screenshots below are genuine Maestro output, not manually captured:
+
+![Maestro: Welcome screen](../../issues/images/perf-267-maestro-01-welcome.png)
+
+![Maestro: Sign-in screen showing the same-origin HTTPS block](../../issues/images/perf-267-maestro-02-sign-in-https-blocked.png)
+
+![Maestro: Home after Try Demo + member selection](../../issues/images/perf-267-maestro-03-home.png)
+
+![Maestro: Archive after the J2 tab switch](../../issues/images/perf-267-maestro-04-archive.png)
+
+The one real friction point (corrected in §17 item 5): `tapOn: "Amber"` does not find the member-picker buttons, because their accessibility label is a full sentence ("Enter Demo as Amber, sample member"), not the visible word. Confirmed by inspecting Maestro's captured accessibility hierarchy JSON for the failing step — the label was present, just not literally "Amber". Switching to `tapOn: { id: "demo-entry-demo-1" }` (the app's existing testID, already used by `tests/responsive/accessibility.spec.ts`) fixed it immediately. This is a genuinely useful, repo-specific note for anyone else writing a Maestro flow against this app's entry screens.
 
 ## References
 

@@ -1,0 +1,26 @@
+appId: host.exp.Exponent
+---
+- launchApp:
+    clearState: false
+- openLink: "exp://127.0.0.1:8081"
+- extendedWaitUntil:
+    visible: "Sign in"
+    timeout: 30000
+- takeScreenshot: 01-welcome
+- tapOn: "Sign in"
+- extendedWaitUntil:
+    visible: "Try Demo"
+    timeout: 10000
+- takeScreenshot: 02-sign-in-https-blocked
+- tapOn: "Try Demo"
+- tapOn:
+    id: "demo-entry-demo-1"
+- extendedWaitUntil:
+    visible: "Camera"
+    timeout: 10000
+- takeScreenshot: 03-home
+- tapOn: "Archive"
+- extendedWaitUntil:
+    visible: "Settings"
+    timeout: 10000
+- takeScreenshot: 04-archive
