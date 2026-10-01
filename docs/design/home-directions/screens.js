@@ -419,7 +419,7 @@ function settingsHTML(d, step, o = {}) {
       `<label class="glass set-field"><span>Group name</span><input data-set-name maxlength="80" placeholder="e.g. Saturday table" autocomplete="off" /></label>` +
       `<p class="set-k">Prompt</p>${promptPicker(0)}` +
       `<p class="set-err" role="alert"></p>` +
-      `<button type="button" class="set-btn primary" data-set-create data-busy="Creating group…">Create group</button>`,
+      `<button type="button" class="set-btn primary" data-set-create${o.back === 'close' ? ' data-close' : ''} data-busy="Creating group…">Create group</button>`,
     rename: () =>
       setHead('Group name') +
       `<label class="glass set-field"><span>Group name</span><input data-set-name maxlength="80" value="${esc(groupName())}" autocomplete="off" /></label>` +
@@ -459,7 +459,9 @@ function settingsHTML(d, step, o = {}) {
 
 /* ---------- 你的片段：只有元数据；每周可以删一段重拍 ----------
    step：list | confirm | done */
-const MINE = { deleted: false, pick: null, bad: false };
+// deleted：这周已经删过的小组（每个小组每周一次）
+const MINE = { deleted: {}, pick: null, bad: false };
+const usedDelete = () => !!MINE.deleted[grp()?.id];
 function mineHTML(d, step, id) {
   const clips = homeClips(id, d);
   const secs = clips.reduce((s, c) => s + c[1], 0);
@@ -473,7 +475,7 @@ function mineHTML(d, step, id) {
         ? `<li class="mine-bad"><div class="set-row">${ic(kind === 'photo' ? 'camera' : 'video')}<span>${kindOf(kind)}<small>${len} s · ${day} · didn’t finish uploading</small></span></div>` +
           `<div class="mine-fix"><button type="button" class="set-btn" data-mine-retry data-busy="Retrying…">${ic('replay')}Retry</button>` +
           `<button type="button" class="set-btn" data-mine-pick="${i}" data-mine-bad>${ic('trash')}Delete</button></div></li>`
-        : `<li><button type="button" class="set-row" data-mine-pick="${i}"${MINE.deleted ? ' disabled' : ''}>${ic(kind === 'photo' ? 'camera' : 'video')}<span>${kindOf(kind)}<small>${len} s · ${day} · sealed</small></span>${MINE.deleted ? '' : ic('trash', 'go del')}</button></li>`,
+        : `<li><button type="button" class="set-row" data-mine-pick="${i}"${usedDelete() ? ' disabled' : ''}>${ic(kind === 'photo' ? 'camera' : 'video')}<span>${kindOf(kind)}<small>${len} s · ${day} · sealed</small></span>${usedDelete() ? '' : ic('trash', 'go del')}</button></li>`,
     )
     .join('');
   const pick = clips[MINE.pick ?? 0] || ['video', 0];
@@ -485,7 +487,7 @@ function mineHTML(d, step, id) {
     (clips.length
       ? `<ul class="glass set-list">${rows}</ul>`
       : `<p class="set-lead">Nothing sealed yet this week.</p>`) +
-    `<p class="set-foot">${MINE.deleted ? `You used this week’s delete. It comes back in ${reset}.` : 'Once a week, you can delete one and retake it.'}</p>` +
+    `<p class="set-foot">${usedDelete() ? `You used this week’s delete. It comes back in ${reset}.` : 'Once a week, you can delete one and retake it.'}</p>` +
     (step === 'done'
       ? `<button type="button" class="set-btn primary" data-mine-retake>${ic('camera')}Retake now</button>`
       : '') +
@@ -967,8 +969,9 @@ document.addEventListener('click', (e) => {
         clips: [],
       });
       SET.gi = SET.list.length - 1;
-      redraw(scr, 'settings', { step: 'main' });
       rvToast(t('scr.toast.created').replace('{name}', name));
+      if ('close' in d) return closeSub(scr);
+      redraw(scr, 'settings', { step: 'main' });
     });
   }
   if ('setRename' in d) {
@@ -1098,7 +1101,7 @@ document.addEventListener('click', (e) => {
         if (['quota', 'secs', 'failed'].includes(wrap.dataset.home)) wrap.dataset.home = 'collect';
       }
       // 没传完的那段不算这周的删除次数
-      if (!MINE.bad) MINE.deleted = true;
+      if (!MINE.bad) MINE.deleted[grp()?.id] = true;
       redraw(scr, 'mine', { step: 'done' });
       rvToast(t('scr.toast.deleted'));
     });

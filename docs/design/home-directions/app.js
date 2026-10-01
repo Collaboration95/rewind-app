@@ -150,15 +150,19 @@ const SEEN = { chat: false, archive: false };
 const unreadNow = () => NAV.unread && !SEEN.chat && (typeof isSample === 'undefined' || isSample());
 
 function shutter(d) {
-  const left = 5 - d.me.c;
   const reset = plural(cyc().reset, 'day');
   // 没有这一期、读取失败、不在小组时没有快门（见 states.js）
   if (NAV.home !== 'collect' && window.shutterOff?.()) return '';
-  // 5 段和 30 秒哪个先用完都算用完
-  const secsOut = NAV.home === 'secs';
+  // 按首页上显示的那一份算：5 段和 30 秒哪个先用完都算用完
+  const list = typeof homeClips === 'function' ? homeClips(concepts[0].id, d) : clipsOf(d.me);
+  const n = list.length;
+  const secs = list.reduce((s, c) => s + c[1], 0);
+  const left = 5 - n;
+  const full = NAV.shutter === 'quota' || n >= 5 || secs >= 30;
+  const secsOut = n < 5 && (NAV.home === 'secs' || secs >= 30);
   // 第 4 项是点一下才短暂出现的提示，不常驻（常驻会挡住正文）
   const s = {
-    collect: [ring(d.me.c), 'camera', `Add a moment · ${left} of 5 left`, ''],
+    collect: [ring(n), 'camera', `Add a moment · ${left} of 5 left`, ''],
     quota: [
       ring(5),
       'camera',
@@ -167,9 +171,9 @@ function shutter(d) {
         : `This week's 5 moments are used · resets in ${reset}`,
       secsOut ? `30 s used · resets in ${reset}` : `All 5 used · resets in ${reset}`,
     ],
-  }[NAV.shutter];
+  }[full ? 'quota' : 'collect'];
   return (
-    `<button type="button" class="shutter" aria-label="${s[2]}"${NAV.shutter === 'quota' ? ' aria-disabled="true"' : ''}${s[3] ? ` data-tip="${s[3]}"` : ''}>` +
+    `<button type="button" class="shutter" aria-label="${s[2]}"${full ? ' aria-disabled="true"' : ''}${s[3] ? ` data-tip="${s[3]}"` : ''}>` +
     `${s[0]}<span class="core">${ic(s[1])}</span></button>`
   );
 }

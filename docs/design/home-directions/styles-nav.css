@@ -84,10 +84,12 @@
     transform: rotate(360deg);
   }
 }
-.sh-quota .shutter {
+.sh-quota .shutter,
+.shutter[aria-disabled='true'] {
   cursor: not-allowed;
 }
-.sh-quota .shutter .core {
+.sh-quota .shutter .core,
+.shutter[aria-disabled='true'] .core {
   filter: grayscale(0.9);
   opacity: 0.45;
   box-shadow: none;
