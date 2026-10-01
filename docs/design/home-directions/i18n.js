@@ -581,8 +581,8 @@ Object.assign(I18N, {
   'sts.shut.developing': ['Pill says developing; no shutter.', '胶囊显示 developing，没有快门。'],
   'sts.shut.delayed': ['Pill says developing; no shutter.', '胶囊显示 developing，没有快门。'],
   'sts.shut.released': [
-    'The shutter becomes “watch together”; the pill shows the time left; Archive gets a dot.',
-    '快门变成“一起看”，胶囊显示剩余时间，档案页签出现小红点。',
+    'No shutter: Watch together is on the page. The pill shows the time left; Archive gets a dot.',
+    '没有快门，“一起看”在正文里；胶囊显示剩余时间，档案页签出现小红点。',
   ],
 });
 

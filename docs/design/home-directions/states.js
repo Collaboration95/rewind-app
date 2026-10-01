@@ -15,9 +15,9 @@ const HOME_STATES = [
   'delayed',
   'released',
 ];
-// 这些状态下不显示快门（加载中、没有这一期、读取失败、不在小组、影片在做）：
-// 一时用不了的按钮不灰着摆在那里，直接拿掉
-const SHUTTER_OFF = ['loading', 'empty', 'error', 'denied', 'developing', 'delayed'];
+// 这些状态下不显示快门（加载中、没有这一期、读取失败、不在小组、影片在做、已上映）：
+// 一时用不了的按钮不灰着摆在那里，直接拿掉；已上映时“一起看”在正文里，不再放第二个入口
+const SHUTTER_OFF = ['loading', 'empty', 'error', 'denied', 'developing', 'delayed', 'released'];
 NAV.home = 'collect';
 
 // 各方向的插图：一张图，靠状态类名切换动画和显隐
