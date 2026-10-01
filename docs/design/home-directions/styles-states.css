@@ -663,6 +663,11 @@ body.view-states main {
 .sv-ev button:hover {
   background: #fff;
 }
+.sv-ev button[aria-pressed='true'] {
+  color: var(--page);
+  background: var(--page-ink);
+  box-shadow: none;
+}
 .sv-arch {
   margin: 0;
   font-size: 12.5px;

@@ -217,6 +217,15 @@ function renderStatesView() {
     `<div class="sv-bar"><div class="sv-by" role="group" aria-label="${t('sts.h1')}">${by('state')}${by('dir')}</div>` +
     `<div class="sv-chips" role="group">${chips.join('')}</div>` +
     `<label class="check sv-arch" for="sv-arch"><input type="checkbox" id="sv-arch"${sv.arch ? ' checked' : ''} /> <span>${t('sts.arch', { n: ARCHIVED.length })}</span></label></div>` +
+    // 已上映（和收集中的揭晓）：光球的几种质感，点了立刻换，不重画手机
+    (sv.by === 'dir' || ['collect', 'released'].includes(sv.state)
+      ? `<div class="sv-ev sv-orb" role="group"><span>${t('orb')}</span>` +
+        ORB_STYLES.map(
+          (k) =>
+            `<button type="button" data-orb-style="${k}" aria-pressed="${orbStyle === k}">${t('orb.' + k)}</button>`,
+        ).join('') +
+        `</div>`
+      : '') +
     // 收集中：可以单独触发几个事件，看动画
     (sv.by === 'state' && sv.state === 'collect'
       ? `<div class="sv-ev" role="group"><span>${t('sts.ev')}</span>` +
@@ -247,6 +256,30 @@ document.addEventListener('click', (e) => {
   if (d.svState) sv.state = d.svState;
   if (d.svDir) sv.dir = d.svDir;
   renderStatesView();
+});
+
+// 光球质感：记在 body[data-orb] 上，所有页面的暖光玻璃都跟着换
+const ORB_STYLES = ['soft', 'frost', 'clear', 'solid'];
+let orbStyle = 'soft';
+try {
+  orbStyle = ORB_STYLES.find((k) => k === localStorage.getItem('rewind-orb')) || orbStyle;
+} catch {
+  /* 读不到就用默认 */
+}
+document.body.dataset.orb = orbStyle;
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-orb-style]');
+  if (!b) return;
+  orbStyle = b.dataset.orbStyle;
+  document.body.dataset.orb = orbStyle;
+  document
+    .querySelectorAll('[data-orb-style]')
+    .forEach((x) => x.setAttribute('aria-pressed', x === b));
+  try {
+    localStorage.setItem('rewind-orb', orbStyle);
+  } catch {
+    /* 存不下也没关系 */
+  }
 });
 
 // 事件按钮：作用在状态页里每一台“收集中”的手机上

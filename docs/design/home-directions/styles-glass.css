@@ -202,6 +202,72 @@
 .revealed.c6 .orb-play:active {
   transform: scale(0.95);
 }
+/* ---------- 光球的几种质感（状态页里切换，记在 body[data-orb]） ----------
+   默认（clear）是上面的透明玻璃珠 */
+/* 暖色实心：最早那版 */
+body[data-orb='solid'] .c6 .orb-play {
+  color: #3a2216;
+  background: radial-gradient(
+    circle at 38% 30%,
+    rgba(255, 255, 255, 0.96) 0,
+    rgba(255, 238, 218, 0.78) 26%,
+    rgba(255, 186, 132, 0.6) 58%,
+    rgba(240, 128, 78, 0.55) 100%
+  );
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  backdrop-filter: blur(12px) saturate(160%);
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.95),
+    inset 0 -12px 26px rgba(232, 110, 60, 0.32),
+    0 0 70px 14px rgba(255, 170, 110, 0.45),
+    0 22px 40px -18px rgba(150, 70, 20, 0.5);
+}
+body[data-orb='solid'] .c6 .orb-play::before,
+body[data-orb='solid'] .c6 .orb-play::after {
+  display: none;
+}
+/* 柔边：没有硬边，边缘慢慢化进背后的暖光 */
+body[data-orb='soft'] .c6 .orb-play,
+body[data-orb='frost'] .c6 .orb-play {
+  width: 156px;
+  height: 156px;
+  margin: -78px 0 0 -78px;
+  background: radial-gradient(
+    circle closest-side,
+    rgba(255, 255, 255, 0.03) 0 50%,
+    rgba(255, 255, 255, 0.3) 78%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  -webkit-backdrop-filter: blur(3px) saturate(115%);
+  backdrop-filter: blur(3px) saturate(115%);
+  -webkit-mask: radial-gradient(circle closest-side, #000 62%, transparent 100%);
+  mask: radial-gradient(circle closest-side, #000 62%, transparent 100%);
+  box-shadow: none;
+}
+body[data-orb='soft'] .c6 .orb-play::after,
+body[data-orb='frost'] .c6 .orb-play::after {
+  display: none;
+}
+body[data-orb='soft'] .c6 .orb-play::before,
+body[data-orb='frost'] .c6 .orb-play::before {
+  left: 24%;
+  top: 17%;
+  width: 38%;
+  height: 22%;
+  filter: blur(2px);
+}
+/* 磨砂柔边：柔边 + 像毛玻璃一样有点乳白 */
+body[data-orb='frost'] .c6 .orb-play {
+  background: radial-gradient(
+    circle closest-side,
+    rgba(255, 250, 244, 0.42) 0 45%,
+    rgba(255, 255, 255, 0.5) 74%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  -webkit-backdrop-filter: blur(14px) saturate(130%) brightness(1.04);
+  backdrop-filter: blur(14px) saturate(130%) brightness(1.04);
+}
+
 @keyframes orb-breathe {
   50% {
     transform: scale(1.035);
