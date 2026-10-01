@@ -20,6 +20,17 @@ variable "operator_username" {
   default     = "macos-m1"
 }
 
+variable "github_repository" {
+  type        = string
+  description = "GitHub repository whose dev workflow may assume the Demo host deployment role."
+  default     = "Collaboration95/rewind-app"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repository))
+    error_message = "github_repository must be an owner/repository name."
+  }
+}
+
 variable "backup_bucket_name" {
   type        = string
   description = "Existing S3 bucket for encrypted demo backups and short-lived release bundles."

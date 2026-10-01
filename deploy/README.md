@@ -366,6 +366,11 @@ python3 deploy/release.py verify "/private/path/rewind-$GREEN_MAIN_SHA.tar"
 sha256sum "/private/path/rewind-$GREEN_MAIN_SHA.tar"
 ```
 
+`--branch` selects the origin branch whose `Quality checks` push run gates the
+bundle. It defaults to `main`, so the release build is unchanged; the online
+integration deploy uses it as described in
+[Online deployment of the integration branch](#online-deployment-of-the-integration-branch).
+
 Before applying wake, confirm the reviewed PR and green check belong to that
 SHA, verify the full S3 backup, and review any migration against the previous
 image. A new schema version can block rollback to an older image. `wake-demo.sh`
@@ -487,3 +492,49 @@ The Docker-free contract and redaction tests are:
 ```sh
 node --test tests/deploy/host-lifecycle-smoke.test.mjs
 ```
+
+## Online deployment of the integration branch
+
+Merging to `dev` deploys to the existing hosted Lightsail host from
+`.github/workflows/deploy-dev.yml`. This is the online replacement for the
+operator-machine flow above: instead of building a bundle locally and then
+running `./deploy/release-host.sh install`, the workflow does both from CI.
+
+It reuses the same verified release path, so the guarantees are unchanged:
+
+1. The commit must have passed dev's own `Quality checks` push run.
+2. `deploy/release.py build --branch dev` produces the same source-bound,
+   checksummed bundle.
+3. `deploy/release-host.sh install` activates it only after the runtime and
+   web health checks pass, and restores the previous release when they fail.
+
+Differences from the operator flow:
+
+- The workflow never powers the host on or off. It requires the instance to be
+  `running` and fails with an explicit message otherwise, so hibernation stays
+  a deliberate operator decision rather than a side effect of a merge.
+- It never writes `/srv/rewind/rewind.env`. The host's private configuration is
+  untouched, so the recorded `release-config-version` and
+  `release-config-digest` must still match. Change the
+  `REWIND_DEMO_CONFIG_VERSION` repository variable only alongside a reviewed
+  private-configuration change.
+- It reaches the host with Lightsail's temporary SSH key, opening port 22 only
+  to the runner's address and closing it again in an `always()` step.
+
+Required repository variable: `AWS_DEMO_DEPLOY_ROLE_ARN`, taken from the
+`deploy_role_arn` output of `infra/terraform/demo`. Optional:
+`REWIND_DEMO_AWS_REGION`, `REWIND_DEMO_INSTANCE`,
+`REWIND_DEMO_CONFIG_VERSION`. No AWS keys are stored in GitHub; the job assumes
+the role with an OIDC token in the `dev` GitHub environment.
+
+The same bundle can still be produced by hand for an out-of-band deploy:
+
+```sh
+python3 deploy/release.py build --green-sha "$(git rev-parse dev)" \
+  --config-version demo-v1 --branch dev --output /private/path/rewind-dev.tar
+```
+
+Then copy it, `deploy/release.py`, and `deploy/release-host.sh` to the host
+and run `bash release-host.sh install /tmp/rewind-dev.tar`. Rollback is
+unchanged: `./deploy/release-host.sh rollback` on the host restores the
+previous image pair when the database schema permits it.
