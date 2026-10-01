@@ -79,8 +79,11 @@ make that possible, and neither creates compute:
   (`output github_oidc_provider_arn`). Set `github_oidc_provider_arn` instead
   when the account already has a provider for the same URL.
 - The Demo root creates `rewind-demo-deploy`, which trusts only the OIDC
-  `sub` claim `repo:<owner>/<repo>:environment:dev` together with
-  `ref refs/heads/dev`. It is declared next to the instance so its policy
+  `sub` claim for this repository's dev environment together with
+  `ref refs/heads/dev`. GitHub issues an immutable subject
+  (`repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:dev`), so the policy pins
+  that exact subject and the classic `repo:OWNER/REPO:environment:dev` form,
+  with no wildcard. It is declared next to the instance so its policy
   always carries the current `aws_lightsail_instance.rewind[0].arn`; a
   hard-coded ARN would silently stop matching after the documented
   hibernation/wake cycle replaces the host. It may read the instance address
