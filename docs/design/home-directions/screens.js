@@ -37,6 +37,13 @@ Object.assign(I, {
   video: '<rect x="3.5" y="6.5" width="12" height="11" rx="2"/><path d="m15.5 10.5 5-3v9l-5-3"/>',
 });
 
+// 用户输入放进页面前转义
+const esc = (s) =>
+  String(s).replace(
+    /[&<>"]/g,
+    (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch],
+  );
+
 // 取景框里的暖色光斑（虚焦的灯），位置固定，慢慢漂
 const BOKEH = [
   [22, 30, 120, '#ffcf8a'],
@@ -82,6 +89,15 @@ const PROMPTS = [
   'What would you like to remember about this moment?',
 ];
 const TIMES = ['6 PM', '7 PM', '8 PM', '9 PM'];
+// 自定义时间：'19:30' ↔ '7:30 PM'
+const to12 = (v) => {
+  const [h, m] = v.split(':').map(Number);
+  return `${h % 12 || 12}${m ? ':' + String(m).padStart(2, '0') : ''} ${h < 12 ? 'AM' : 'PM'}`;
+};
+const to24 = (v) => {
+  const [, h, m = '0', ap] = v.match(/(\d+)(?::(\d+))? (AM|PM)/);
+  return `${String((Number(h) % 12) + (ap === 'PM' ? 12 : 0)).padStart(2, '0')}:${m.padStart(2, '0')}`;
+};
 const groupName = () => SET.groups[SET.gi];
 const isOwner = () => SET.me === 0;
 const promptText = () => (SET.prompt === 'custom' ? SET.custom : PROMPTS[SET.prompt]);
@@ -90,6 +106,7 @@ const promptText = () => (SET.prompt === 'custom' ? SET.custom : PROMPTS[SET.pro
    step：welcome | form | wrong | offline | expired | demo
    正式账号是管理员建好的用户名和密码（原型里密码是 rewind）；Try Demo 是分开的一条路，选一个标明 synthetic 的演示成员 */
 function signinHTML(step) {
+  if (/^up/.test(step)) return signupHTML(step);
   const form = ['form', 'wrong', 'offline'].includes(step);
   const errText = {
     wrong: 'Wrong username or password.',
@@ -100,14 +117,16 @@ function signinHTML(step) {
     (step === 'expired'
       ? `<p class="si-alert" role="status">You were signed out. Please sign in again.</p>`
       : '') +
-    `<button type="button" class="set-btn primary si-go" data-si-go="form">Sign in</button>`;
+    `<button type="button" class="set-btn primary si-go" data-si-go="form">Sign in</button>` +
+    `<button type="button" class="set-btn si-up" data-si-go="up">Create an account</button>`;
   const login =
     `<header class="sub-h"><button type="button" class="sub-back" data-si-go="welcome" aria-label="Back">${ic('back')}</button><h1>Sign in</h1><span></span></header>` +
-    `<label class="glass set-field"><span>Username</span><input data-si-user autocomplete="username" autocapitalize="none" spellcheck="false" value="${form && step !== 'form' ? 'alex' : ''}" /></label>` +
+    `<label class="glass set-field"><span>Email, phone or username</span><input data-si-user autocomplete="username" autocapitalize="none" spellcheck="false" value="${form && step !== 'form' ? 'alex' : ''}" /></label>` +
     `<label class="glass set-field si-pass"><span>Password</span><input data-si-pass type="password" autocomplete="current-password" value="${form && step !== 'form' ? 'notright' : ''}" /></label>` +
     `<p class="set-err" role="alert">${errText || ''}</p>` +
     `<button type="button" class="set-btn primary" data-si-submit data-busy="Signing in…">Sign in</button>` +
-    `<p class="si-note">Forgot your password? Ask the Rewind admin to reset it.</p>`;
+    `<p class="si-note">Forgot your password? <button type="button" class="up-link" data-si-forgot>Reset it</button></p>` +
+    `<p class="si-note">New here? <button type="button" class="up-link" data-si-go="up">Create an account</button></p>`;
   return (
     `<div class="scroll si-scroll${form ? ' form' : ''}"><div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>` +
     (form ? login : welcome) +
@@ -125,6 +144,89 @@ function signinHTML(step) {
           )
           .join('')}</ul></section>`)
   );
+}
+
+/* ---------- 注册：邮箱或手机号 → 验证码 → 名字和密码 → 加入或新建小组 ----------
+   step：up | upbad | upcode | upcodebad | upname | updone
+   原型里验证码是 123456；alex@ 开头的邮箱当作已经注册过 */
+const UP = { via: 'email', to: 'mia@example.com', cc: '+65', name: 'Mia' };
+const upHead = (title, back) =>
+  `<header class="sub-h"><button type="button" class="sub-back" data-si-go="${back}" aria-label="Back">${ic('back')}</button><h1>${title}</h1><span></span></header>`;
+function signupHTML(step) {
+  const email = UP.via === 'email';
+  const shown = email ? UP.to : `${UP.cc} ${UP.to}`;
+  const pages = {
+    up: () =>
+      upHead('Create account', 'welcome') +
+      `<div class="up-via" role="tablist" aria-label="Sign up with">` +
+      [
+        ['email', 'Email'],
+        ['phone', 'Phone'],
+      ]
+        .map(
+          ([k, l]) =>
+            `<button type="button" role="tab" data-up-via="${k}" aria-selected="${UP.via === k}">${l}</button>`,
+        )
+        .join('') +
+      `</div>` +
+      (email
+        ? `<label class="glass set-field"><span>Email</span><input data-up-to type="email" inputmode="email" autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="you@example.com" value="${step === 'upbad' ? 'alex@example.com' : ''}" /></label>`
+        : `<div class="glass set-field up-phone"><span>Phone number</span><div><select data-up-cc aria-label="Country code">${[
+            '+65',
+            '+86',
+            '+60',
+            '+1',
+            '+44',
+          ]
+            .map((c) => `<option${c === UP.cc ? ' selected' : ''}>${c}</option>`)
+            .join('')}</select>` +
+          `<input data-up-to type="tel" inputmode="tel" autocomplete="tel-national" placeholder="8123 4567" aria-label="Phone number" /></div></div>`) +
+      `<p class="set-err" role="alert">${step === 'upbad' ? 'An account already uses this email. <button type="button" class="up-link" data-si-go="form">Sign in instead</button>' : ''}</p>` +
+      `<button type="button" class="set-btn primary" data-up-send data-busy="Sending…">Send code</button>` +
+      `<p class="si-note">We’ll send a 6-digit code to check it’s you.</p>` +
+      `<p class="si-note">Already have an account? <button type="button" class="up-link" data-si-go="form">Sign in</button></p>`,
+    upcode: () =>
+      upHead('Enter the code', 'up') +
+      `<p class="set-lead">We sent a 6-digit code to <b>${esc(shown)}</b>.</p>` +
+      `<label class="glass set-field up-code"><span>Code</span><input data-up-code inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" value="${step === 'upcodebad' ? '482913' : ''}" /></label>` +
+      `<p class="set-err" role="alert">${step === 'upcodebad' ? 'That code doesn’t match. Check it, or send a new one.' : ''}</p>` +
+      `<button type="button" class="set-btn primary" data-up-verify data-busy="Checking…">Continue</button>` +
+      `<button type="button" class="up-resend" data-up-resend disabled>Send a new code in 0:30</button>` +
+      `<p class="si-note">In the prototype the code is 123456.</p>`,
+    upname: () =>
+      upHead('About you', 'up') +
+      `<p class="set-lead">Your group sees your name.</p>` +
+      `<label class="glass set-field"><span>Name</span><input data-up-name autocomplete="name" maxlength="40" placeholder="Your name" /></label>` +
+      `<label class="glass set-field si-pass"><span>Password</span><input data-up-pass type="password" autocomplete="new-password" placeholder="At least 8 characters" /></label>` +
+      `<p class="set-err" role="alert"></p>` +
+      `<button type="button" class="set-btn primary" data-up-create data-busy="Creating account…">Create account</button>`,
+    // 新账号还没有小组：用邀请码加入，或者自己新建
+    updone: () =>
+      `<section class="glass set-card set-ok up-done"><span class="set-okic">${ic('check')}</span><h2>Welcome, ${esc(UP.name)}</h2>` +
+      `<p class="set-note">Join your friends with their invite code, or start a group of your own.</p></section>` +
+      `<button type="button" class="set-btn primary" data-up-next="join">${ic('key')}I have an invite</button>` +
+      `<button type="button" class="set-btn up-alt" data-up-next="create">${ic('plus')}Create a group</button>`,
+  };
+  const page = { upbad: 'up', upcodebad: 'upcode' }[step] || step;
+  return (
+    `<div class="scroll si-scroll form up-${page}"><div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>` +
+    pages[page]() +
+    `</div>`
+  );
+}
+// 重发验证码的倒计时
+function resendTimer(scr) {
+  const b = scr.querySelector('[data-up-resend]');
+  if (!b) return;
+  let n = 30;
+  b.disabled = true;
+  every(scr, reduceMotion() ? 100 : 1000, () => {
+    n -= 1;
+    if (n > 0) return (b.textContent = `Send a new code in 0:${String(n).padStart(2, '0')}`);
+    stopTimers(scr);
+    b.disabled = false;
+    b.textContent = 'Send a new code';
+  });
 }
 
 /* ---------- 设置 ----------
@@ -216,6 +318,7 @@ function settingsHTML(d, step, o = {}) {
       `</ul>`,
     time: () => {
       const n = `tm-${++setUid}`;
+      const own = !TIMES.includes(SET.time);
       return (
         setHead('Reminder time') +
         `<p class="set-lead">Every Sunday, in your group’s time zone.</p>` +
@@ -224,6 +327,8 @@ function settingsHTML(d, step, o = {}) {
           (x) =>
             `<label class="set-opt"><input type="radio" name="${n}" value="${x}" data-set-time${x === SET.time ? ' checked' : ''} /><span>${x}</span></label>`,
         ).join('') +
+        `<label class="set-opt"><input type="radio" name="${n}" value="own" data-set-time-own${own ? ' checked' : ''} /><span>Custom time${own ? `<small>${SET.time}</small>` : ''}</span></label>` +
+        `<label class="set-tm"${own ? '' : ' hidden'}><span>Time</span><input type="time" step="300" data-set-time-at value="${to24(own ? SET.time : '7:30 PM')}" /></label>` +
         `</div>`
       );
     },
@@ -423,7 +528,16 @@ function subScreen(kind, id, o = {}) {
   const mode = o.mode || 'video';
   const body = {
     signin: () => signinHTML(step),
-    settings: () => settingsHTML(d, step, o),
+    settings: () => {
+      if (!o.own) return settingsHTML(d, step, o);
+      const keep = SET.time;
+      SET.time = '7:30 PM';
+      try {
+        return settingsHTML(d, step, o);
+      } finally {
+        SET.time = keep;
+      }
+    },
     mine: () => mineHTML(d, step),
     camera: () => cameraHTML(d, mode, step, o),
     film: () => filmHTML(d, o),
@@ -657,7 +771,7 @@ document.addEventListener('click', (e) => {
   const b = e.target.closest(
     '[data-sub-back],[data-cam-tell],[data-cam-done],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-cam-cancel],[data-cam-mine],[data-look],' +
       '[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-snooze],[data-set-join],[data-set-create],[data-set-rename],[data-set-prompt],[data-set-group],[data-set-me],[data-set-reset],' +
-      '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
+      '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-si-forgot],[data-up-via],[data-up-send],[data-up-resend],[data-up-verify],[data-up-create],[data-up-next],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
       '[data-fm-pause],[data-fm-replay],[data-fm-save],[data-fm-chat]',
   );
   if (!b || b.disabled) return;
@@ -770,6 +884,58 @@ document.addEventListener('click', (e) => {
   }
   // 欢迎和登录
   if (d.siGo) return redraw(scr, 'signin', { step: d.siGo });
+  if ('siForgot' in d) return rvToast(t('scr.toast.forgot'));
+  // 注册
+  if (d.upVia) {
+    UP.via = d.upVia;
+    return redraw(scr, 'signin', { step: 'up' }).querySelector('[data-up-to]').focus();
+  }
+  if ('upSend' in d) {
+    const v = scr.querySelector('[data-up-to]').value.trim();
+    const email = UP.via === 'email';
+    if (!v) return err(scr, email ? 'Enter your email.' : 'Enter your phone number.');
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v))
+      return err(scr, 'That doesn’t look like an email address.');
+    if (!email && v.replace(/\D/g, '').length < 7) return err(scr, 'Enter the full phone number.');
+    return busy(b, 700, () => {
+      if (email && /^alex@/i.test(v))
+        return (scr.querySelector('.set-err').innerHTML =
+          'An account already uses this email. <button type="button" class="up-link" data-si-go="form">Sign in instead</button>');
+      UP.to = v;
+      if (!email) UP.cc = scr.querySelector('[data-up-cc]').value;
+      const ns = redraw(scr, 'signin', { step: 'upcode' });
+      ns.querySelector('[data-up-code]').focus();
+      resendTimer(ns);
+    });
+  }
+  if ('upResend' in d) {
+    rvToast(t('scr.toast.resent'));
+    return resendTimer(scr);
+  }
+  if ('upVerify' in d) {
+    const code = scr.querySelector('[data-up-code]').value;
+    if (code.length < 6) return err(scr, 'Enter all 6 digits.');
+    return busy(b, 600, () => {
+      if (code !== '123456')
+        return err(scr, 'That code doesn’t match. Check it, or send a new one.');
+      redraw(scr, 'signin', { step: 'upname' }).querySelector('[data-up-name]').focus();
+    });
+  }
+  if ('upCreate' in d) {
+    const name = scr.querySelector('[data-up-name]').value.trim();
+    const pass = scr.querySelector('[data-up-pass]').value;
+    if (!name) return err(scr, 'Enter your name.');
+    if (pass.length < 8) return err(scr, 'Use at least 8 characters for the password.');
+    return busy(b, 800, () => {
+      UP.name = name;
+      redraw(scr, 'signin', { step: 'updone' });
+    });
+  }
+  if (d.upNext) {
+    Object.assign(SET, { me: 0, demo: false });
+    rvToast(t('scr.toast.signedIn').replace('{name}', UP.name));
+    return redraw(scr, 'settings', { step: d.upNext, back: 'close' });
+  }
   if ('siSheet' in d) {
     const open = scr.querySelector('.si-sheet').classList.toggle('open');
     b.setAttribute('aria-expanded', String(open));
@@ -857,7 +1023,20 @@ document.addEventListener('change', (e) => {
     redraw(el.closest('.screen'), 'settings', { step: 'main' });
     return rvToast(t(el.checked ? 'scr.toast.remOn' : 'scr.toast.remOff'));
   }
+  if (el.matches('[data-set-time-own]')) {
+    const tm = el.closest('.set-prompts').querySelector('.set-tm');
+    tm.hidden = false;
+    SET.time = to12(tm.querySelector('input').value);
+    tm.querySelector('input').focus();
+    return rvToast(t('scr.toast.time').replace('{time}', SET.time));
+  }
+  if (el.matches('[data-set-time-at]')) {
+    if (!el.value) return;
+    SET.time = to12(el.value);
+    return rvToast(t('scr.toast.time').replace('{time}', SET.time));
+  }
   if (el.matches('[data-set-time]')) {
+    el.closest('.set-prompts').querySelector('.set-tm').hidden = true;
     SET.time = el.value;
     return rvToast(t('scr.toast.time').replace('{time}', SET.time));
   }
@@ -874,6 +1053,8 @@ document.addEventListener('input', (e) => {
   const errEl = scroll?.querySelector('.set-err');
   // 重新输入时先清掉上一次的错误
   if (e.target.matches('input, textarea') && errEl) errEl.textContent = '';
+  if (e.target.matches('[data-up-code]'))
+    e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
   if (!e.target.matches('[data-set-code]')) return;
   const v = normCode(e.target.value).slice(0, 8);
   e.target.value = v.length > 4 ? v.slice(0, 4) + ' ' + v.slice(4) : v;
@@ -891,6 +1072,12 @@ const FLOWS = [
       ['offline', { step: 'offline' }],
       ['expired', { step: 'expired' }],
       ['demo', { step: 'demo' }],
+      ['up', { step: 'up' }],
+      ['upbad', { step: 'upbad' }],
+      ['upcode', { step: 'upcode' }],
+      ['upcodebad', { step: 'upcodebad' }],
+      ['upname', { step: 'upname' }],
+      ['updone', { step: 'updone' }],
     ],
   ],
   [
@@ -900,6 +1087,7 @@ const FLOWS = [
       ['main', {}],
       ['groups', { step: 'groups' }],
       ['time', { step: 'time' }],
+      ['timeown', { step: 'time', own: true }],
       ['invite', { step: 'invite' }],
       ['join', { step: 'join' }],
       ['create', { step: 'create' }],

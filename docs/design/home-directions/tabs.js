@@ -12,12 +12,6 @@
 
 Object.assign(I, { expand: '<path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15"/>' });
 
-const esc = (s) =>
-  String(s).replace(
-    /[&<>"]/g,
-    (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch],
-  );
-
 /* ---------- 组名菜单 ---------- */
 // home：这台手机的状态；不在这个小组时，这一行不能选，写明已经不在
 function groupMenu(home = NAV.home) {

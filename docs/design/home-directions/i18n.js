@@ -282,10 +282,10 @@ const I18N = {
   ],
   'sts.shut.failed': ['As usual; Retry is on the card.', '照常；重试在卡片里。'],
   'sts.shut.waiting': ['Tabs only.', '只有页签。'],
-  'scr.signin': ['Welcome and sign in', '欢迎和登录'],
+  'scr.signin': ['Welcome, sign in and sign up', '欢迎、登录和注册'],
   'scr.signin.p': [
-    'Accounts are made by the Rewind admin: username and password, no sign-up. Try Demo is a separate route with synthetic members. In the prototype the password is rewind.',
-    '账号由 Rewind 管理员预先建好：用户名和密码，不能自己注册。Try Demo 是单独的一条路，用标明 synthetic 的演示成员。原型里密码是 rewind。',
+    'Sign in with an email, phone number or username and a password, or create an account with an email or phone number and a 6-digit code. Try Demo is a separate route with synthetic members. In the prototype the password is rewind and the code is 123456.',
+    '用邮箱、手机号或用户名加密码登录；也可以用邮箱或手机号注册，收一个 6 位验证码。Try Demo 是单独的一条路，用标明 synthetic 的演示成员。原型里密码是 rewind，验证码是 123456。',
   ],
   'scr.set.prompt': ['Prompt (owner)', '题目（组长）'],
   'scr.mine': ['Your moments', '你的片段'],
@@ -374,6 +374,18 @@ const I18N = {
   'scr.arc.first': ['First cycle', '第一期'],
   'scr.arc.error': ['Couldn’t load', '读取失败'],
   'scr.arc.watch': ['Playing in the card', '在卡片里播放'],
+  'scr.signin.up': ['Sign up', '注册'],
+  'scr.signin.upbad': ['Email already used', '邮箱已注册'],
+  'scr.signin.upcode': ['Enter the code', '输入验证码'],
+  'scr.signin.upcodebad': ['Wrong code', '验证码错误'],
+  'scr.signin.upname': ['Name and password', '名字和密码'],
+  'scr.signin.updone': ['Join or create a group', '加入或新建小组'],
+  'scr.set.timeown': ['Custom time', '自定义时间'],
+  'scr.toast.forgot': [
+    'In the app, this sends a reset code to your email or phone.',
+    '在 App 里，这会往你的邮箱或手机发一个重设密码的验证码。',
+  ],
+  'scr.toast.resent': ['A new code is on its way.', '新的验证码已发送。'],
 };
 
 let LANG = 'en';
