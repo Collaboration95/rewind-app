@@ -63,7 +63,9 @@
   opacity: 1;
 }
 .screen.revealed span.is-now,
-.screen.revealed p.is-now {
+.screen.revealed p.is-now,
+.screen.revealed button.is-now,
+.screen.revealed .dock {
   animation: now-in 0.8s ease both;
 }
 @keyframes now-in {
@@ -242,10 +244,6 @@
   transition:
     transform 1.8s cubic-bezier(0.2, 0.8, 0.2, 1),
     filter 1.8s;
-}
-.revealed.c6 .hero b {
-  margin-bottom: 8px;
-  font-size: 88px;
 }
 .revealed.c6 .glow {
   transform: scale(1.3);

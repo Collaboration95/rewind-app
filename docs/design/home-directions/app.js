@@ -519,15 +519,16 @@ const bodies = {
     <div class="glow-low" aria-hidden="true"></div>
     <header class="top">${me(false)}<button type="button" class="grp">Group name ${ic('chev')}</button><span class="tag">W36</span></header>
     <section class="hero" data-seal aria-label="${plural(d.m, 'moment')}, sealed until Sunday">
-      <b>${pp(d.m, 'Open')}</b>
+      <b>${d.m}</b>
       <span>little ${d.m === 1 ? 'moment' : 'moments'}</span>
     </section>
-    <div class="count"><strong>${pp('2 days, 14 hours', 'Right now')}</strong><span>${pp('Sun 8 PM', 'watch together')}</span></div>
+    <div class="count"><strong>${pp('2 days, 14 hours', 'Your film is here')}</strong><span>${pp('Sun 8 PM', '2 min 14 s')}</span>
+      <button type="button" class="st-btn primary is-now">${ic('play')}Watch together</button></div>
     <section class="glass">
       <small>This week's prompt</small>
       <h2>What made you pause and smile?</h2>
-      <div class="rowx"><div class="stack">${crew(d)}</div><span>${d.added} of ${d.n} are in</span></div>
-      <div class="rowx">${bars('pills', d.me.c)}<span>You · ${d.me.c}/5 · ${secs(d.me.c)}/30s</span></div>
+      <div class="rowx"><div class="stack">${crew(d)}</div><span>${pp(`${d.added} of ${d.n} are in`, `${d.added} of ${d.n} took part`)}</span></div>
+      <div class="rowx is-pre">${bars('pills', d.me.c)}<span>You · ${d.me.c}/5 · ${secs(d.me.c)}/30s</span></div>
     </section>`,
 
   c7: (d) => {
@@ -1023,8 +1024,10 @@ const archLabel = () =>
 const nameOf = (c) => (LANG === 'zh' ? c.zh : c.en);
 const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 
+// 暖光玻璃的“已上映”就是“播放”里揭晓之后的画面，两处保持一致
+const revealedHome = (c) => NAV.home === 'released' && c.id === 'c6';
 const screen = (c, d) =>
-  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter} st-${NAV.home}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}${topNav()}<div class="scroll">${NAV.home === 'collect' ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter} st-${NAV.home}${revealedHome(c) ? ' revealed' : ''}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}${topNav()}<div class="scroll">${NAV.home === 'collect' || revealedHome(c) ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
 
 let current = 'all';
 
@@ -1206,14 +1209,16 @@ function freeFlies(scr) {
   });
 }
 
-function renderCard(id) {
+function renderCard(id, from) {
   const c = concepts.find((x) => x.id === id);
-  const card = document.querySelector(`.card[data-id="${id}"]`);
+  // from：动画所在的那台手机；状态页里的手机按“收集中”重画
+  const card = from?.closest('.card') || document.querySelector(`.card[data-id="${id}"]`);
   const wrap = card?.querySelector('.phone-wrap');
   if (c && wrap) {
     const pos = filmPos(card.parentElement);
     const fpos = flyPos(card.parentElement);
-    wrap.innerHTML = screen(c, dataFor(id));
+    const draw = () => screen(c, dataFor(id));
+    wrap.innerHTML = card.closest('#states-view') ? withHome('collect', draw) : draw();
     keepFilm(card.parentElement, { [id]: pos[id] });
     startFlies(card, { [id]: fpos[id] });
   }
@@ -1578,8 +1583,8 @@ const FX = {
     // 暖光玻璃：一粒暖光飘进阳光里；你按快门后不再有照片飞向中间，只有数字滚动
     join: (scr, f) =>
       dotFly(scr, EDGE_R, pt(scr, q(scr, '.hero b')), f.col, { toColor: '#ffc98a' }),
-    joined: (ns) => fx(q(ns, '.hero b .is-pre'), 'fx-roll', 700),
-    sealed: (ns) => fx(q(ns, '.hero b .is-pre'), 'fx-roll', 700),
+    joined: (ns) => fx(q(ns, '.hero b'), 'fx-roll', 700),
+    sealed: (ns) => fx(q(ns, '.hero b'), 'fx-roll', 700),
   },
   c7: {
     // 围炉：一点光落到他的空座，光环画一圈，再有火星飘进火里；
@@ -1677,7 +1682,7 @@ async function sealFlight(scr, btn, then) {
   if (!reduceMotion() && S.seal) await S.seal(scr, btn, mine);
   if (!scr.isConnected) return;
   mine.c += 1;
-  const ns = renderCard(id);
+  const ns = renderCard(id, scr);
   if (ns) {
     S.sealed?.(ns);
     const nb = ns.querySelector('.shutter');
@@ -1697,7 +1702,7 @@ async function gatherFlight(scr, then) {
   if (!reduceMotion() && S.join) await S.join(scr, friend);
   if (!scr.isConnected) return;
   friend.c = 1;
-  const ns = renderCard(id);
+  const ns = renderCard(id, scr);
   if (ns) {
     toast(ns, friend, `${friend.name} added a moment`);
     if (!reduceMotion()) await S.joined?.(ns, friend);
@@ -1718,12 +1723,9 @@ function toast(scr, who, text) {
 function reveal(scr) {
   scr.classList.add('revealed');
   if (scr.classList.contains('c9') && !reduceMotion()) freeFlies(scr);
-  const btn = scr.querySelector('.shutter');
-  if (btn) {
-    btn.setAttribute('aria-label', 'Watch the premiere together');
-    btn.innerHTML = `${arcRing(0.999)}<span class="core">${ic('play')}</span>`;
-    flashTip(btn, 'Premiere · watch together');
-  }
+  // 底栏换成“已上映”：胶囊显示剩余时间，快门变成播放键，档案出现小红点
+  const dk = scr.querySelector('.dock');
+  if (dk) dk.outerHTML = withHome('released', () => dock(dataFor(scr.classList[1])));
 }
 
 // 播放：①朋友加入 → ②你按快门封存 → ③时间到，一起揭晓

@@ -217,6 +217,14 @@ function renderStatesView() {
     `<div class="sv-bar"><div class="sv-by" role="group" aria-label="${t('sts.h1')}">${by('state')}${by('dir')}</div>` +
     `<div class="sv-chips" role="group">${chips.join('')}</div>` +
     `<label class="check sv-arch" for="sv-arch"><input type="checkbox" id="sv-arch"${sv.arch ? ' checked' : ''} /> <span>${t('sts.arch', { n: ARCHIVED.length })}</span></label></div>` +
+    // 收集中：可以单独触发几个事件，看动画
+    (sv.by === 'state' && sv.state === 'collect'
+      ? `<div class="sv-ev" role="group"><span>${t('sts.ev')}</span>` +
+        ['join', 'seal', 'reveal', 'reset']
+          .map((k) => `<button type="button" data-sv-ev="${k}">${t('sts.ev.' + k)}</button>`)
+          .join('') +
+        `</div>`
+      : '') +
     (sv.by === 'state'
       ? `<dl class="sv-notes"><div><dt>${t('sts.when')}</dt><dd>${t('sts.when.' + sv.state)}</dd></div>` +
         `<div><dt>${t('sts.shut')}</dt><dd>${t('sts.shut.' + sv.state)}</dd></div></dl>`
@@ -239,6 +247,30 @@ document.addEventListener('click', (e) => {
   if (d.svState) sv.state = d.svState;
   if (d.svDir) sv.dir = d.svDir;
   renderStatesView();
+});
+
+// 事件按钮：作用在状态页里每一台“收集中”的手机上
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-sv-ev]');
+  if (!b) return;
+  const ev = b.dataset.svEv;
+  const scrs = [...document.querySelectorAll('#states-view .screen.st-collect')];
+  if (ev === 'reset') {
+    scrs.forEach((s) => delete STORY[s.classList[1]]);
+    return renderStatesView();
+  }
+  scrs.forEach((scr) => {
+    if (ev === 'join') gatherFlight(scr);
+    if (ev === 'reveal' && !scr.classList.contains('revealed')) reveal(scr);
+    if (ev === 'seal') {
+      const btn = scr.querySelector('.shutter');
+      if (!btn) return;
+      btn.classList.remove('press');
+      void btn.offsetWidth;
+      btn.classList.add('press');
+      sealFlight(scr, btn);
+    }
+  });
 });
 
 document.addEventListener('change', (e) => {

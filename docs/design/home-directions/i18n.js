@@ -518,6 +518,11 @@ Object.assign(I18N, {
   'sts.when': ['When it shows', '什么时候出现'],
   'sts.shut': ['Dock', '底栏'],
   'sts.arch': ['Include the {n} archived directions', '包含 {n} 个废案'],
+  'sts.ev': ['Try:', '试一下：'],
+  'sts.ev.join': ['A friend joins', '朋友加入'],
+  'sts.ev.seal': ['You tap the shutter', '你按快门'],
+  'sts.ev.reveal': ['Sunday 8 PM', '周日 8 点揭晓'],
+  'sts.ev.reset': ['Reset', '重置'],
   'sts.retryToast': ['In the app, this reloads the capsule.', '在 App 里，这会重新读取这一期。'],
   'sts.when.collect': [
     'A capsule is open and you still have moments left this week.',
