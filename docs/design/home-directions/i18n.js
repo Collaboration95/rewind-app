@@ -386,6 +386,9 @@ const I18N = {
     '在 App 里，这会往你的邮箱或手机发一个重设密码的验证码。',
   ],
   'scr.toast.resent': ['A new code is on its way.', '新的验证码已发送。'],
+  'scr.n': ['{n} screens', '{n} 个画面'],
+  'scr.all.open': ['Expand all', '全部展开'],
+  'scr.all.close': ['Collapse all', '全部收起'],
 };
 
 let LANG = 'en';

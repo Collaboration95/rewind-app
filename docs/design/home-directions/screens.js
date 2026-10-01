@@ -1168,25 +1168,85 @@ const FLOWS = [
   ],
 ];
 
+// 展开过的流程（只是这位看的人自己的偏好，存不了也没关系）
+const OPEN_KEY = 'rewind-screens-open';
+function openFlows() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(OPEN_KEY) || '[]'));
+  } catch {
+    return new Set();
+  }
+}
+function saveOpenFlows() {
+  const open = [...document.querySelectorAll('#screens-view .scr-flow[open]')].map(
+    (x) => x.dataset.flow,
+  );
+  try {
+    localStorage.setItem(OPEN_KEY, JSON.stringify(open));
+  } catch {
+    /* 存不了就算了 */
+  }
+}
+// 一个流程里的手机：展开时才画
+function fillFlow(sec) {
+  if (sec.dataset.drawn) return;
+  const [k, kind, steps] = FLOWS.find((f) => f[0] === sec.dataset.flow);
+  const id = concepts[0].id;
+  sec.querySelector('.sv-grid').innerHTML = steps
+    .map(
+      ([s, o]) =>
+        `<figure class="sv-ph" data-sub="${kind}" data-opts='${JSON.stringify(o)}'><div class="card sv-card" data-id="${id}"><div class="phone-wrap">${subScreen(kind, id, o)}</div></div>` +
+        `<figcaption><b>${t(`scr.${k}.${s}`)}</b></figcaption></figure>`,
+    )
+    .join('');
+  sec.dataset.drawn = '1';
+  holdFilms(sec);
+}
+
 function renderScreensView() {
   const root = $('screens-view');
   if (!root) return;
-  const id = concepts[0].id;
+  const open = openFlows();
   root.innerHTML =
     `<header class="main-h"><p class="k">${t('scr.k')}</p><h1>${t('scr.h1')}</h1><p>${t('scr.p')}</p></header>` +
+    `<div class="sv-ev scr-all" role="group"><button type="button" data-flows="open">${t('scr.all.open')}</button><button type="button" data-flows="close">${t('scr.all.close')}</button></div>` +
     FLOWS.map(
-      ([k, kind, steps]) =>
-        `<section class="scr-flow"><h2 class="gal-h">${t('scr.' + k)}</h2><p class="hint">${t('scr.' + k + '.p')}</p><div class="sv-grid">` +
-        steps
-          .map(
-            ([s, o]) =>
-              `<figure class="sv-ph" data-sub="${kind}" data-opts='${JSON.stringify(o)}'><div class="card sv-card" data-id="${id}"><div class="phone-wrap">${subScreen(kind, id, o)}</div></div>` +
-              `<figcaption><b>${t(`scr.${k}.${s}`)}</b></figcaption></figure>`,
-          )
-          .join('') +
-        `</div></section>`,
+      ([k, , steps]) =>
+        `<details class="scr-flow" data-flow="${k}"${open.has(k) ? ' open' : ''}><summary><b>${t('scr.' + k)}</b><span>${t('scr.n', { n: steps.length })}</span>${ic('chev')}</summary>` +
+        `<p class="hint">${t('scr.' + k + '.p')}</p><div class="sv-grid"></div></details>`,
     ).join('');
-  // 放映中的几台停在某一格，点播放键接着放
+  root.querySelectorAll('.scr-flow[open]').forEach(fillFlow);
+  try {
+    if (document.body.classList.contains('view-screens'))
+      history.replaceState(null, '', '#screens');
+  } catch {
+    /* 受限的框架里改不了地址栏也没关系 */
+  }
+}
+// 展开 / 收起（toggle 不冒泡，在捕获阶段听）
+document.addEventListener(
+  'toggle',
+  (e) => {
+    const sec = e.target;
+    if (!sec.matches?.('#screens-view .scr-flow')) return;
+    if (sec.open) fillFlow(sec);
+    saveOpenFlows();
+  },
+  true,
+);
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-flows]');
+  if (!b) return;
+  const open = b.dataset.flows === 'open';
+  document.querySelectorAll('#screens-view .scr-flow').forEach((x) => {
+    x.open = open;
+    if (open) fillFlow(x);
+  });
+  saveOpenFlows();
+});
+
+// 放映中的几台停在某一格，点播放键接着放
+function holdFilms(root) {
   root.querySelectorAll('[data-sub="film"]').forEach((fig) => {
     const o = JSON.parse(fig.dataset.opts);
     if (o.step !== 'play') return;
@@ -1201,12 +1261,6 @@ function renderScreensView() {
     p.setAttribute('aria-label', 'Play');
     s._i = at;
   });
-  try {
-    if (document.body.classList.contains('view-screens'))
-      history.replaceState(null, '', '#screens');
-  } catch {
-    /* 受限的框架里改不了地址栏也没关系 */
-  }
 }
 
 const openScreensFromHash = () => {

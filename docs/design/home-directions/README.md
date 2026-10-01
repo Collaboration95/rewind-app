@@ -40,9 +40,8 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 ## Tabs
 
 - **Home**: the phone you can tap. The dock switches between Home, Chat and Archive; the group name switches group; the avatar opens Settings, the shutter opens the camera, your allowance opens _Your moments_ and, during the premiere, _Watch_ opens the film. **Play** resets it: ① you add a moment, ② the 4 weeks end and the film premieres.
-- **App icon**: pair Warm Glass (or the scratchpad skin) with an icon and see it on the home screen, the launch screen, in sizes, in a notification and as colours. The default icon is the two dots from the local build. `#mix=c6+r%3Adots` links to a pairing.
 - **States**: every Home state side by side, with when it shows and what the dock does. The buttons add a moment and end the cycle on the Collecting phone. `#states` opens it.
-- **Screens**: the flows around the Home, each step side by side and every phone live. `#screens` opens it.
+- **Screens**: the flows around the Home, each step side by side and every phone live. Each flow folds away; they start folded and the page remembers which ones you opened. `#screens` opens it.
   - Welcome, sign in and sign up: sign in with a password (in the prototype it is `rewind`), with wrong password, offline and expired session; sign up with an email or phone number, a 6-digit code (`123456` in the prototype), a name and password, then join with an invite or create a group; _Try Demo_ pulls up synthetic members.
   - Settings: the account, the group (owner: group name, prompt, invite; members see the prompt only; a full group can't invite), switch group, join with a code, create a group, the Sunday reminder with a preset or custom time and snooze, sign out, and Demo controls in a Demo session.
   - Your moments: metadata only; delete one and retake it, once a week.
@@ -52,6 +51,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
   - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast, a main button that opens Chat, and Replay, Save film and Save your own moments.
   - Chat: new messages, tap a message, reply, no messages yet, reconnecting, offline, not sent, couldn't load, and after the premiere.
   - Archive: collecting, the premiere, developing, a film playing in its card, the first cycle and couldn't load.
+- **App icon**: pair Warm Glass (or the scratchpad skin) with an icon and see it on the home screen, the launch screen, in sizes, in a notification and as colours. The default icon is the two dots from the local build. `#mix=c6+r%3Adots` links to a pairing.
 - **Dock icons**: try six icon sets in the dock. `#dock=ios` links to a set.
 
 ## Home states

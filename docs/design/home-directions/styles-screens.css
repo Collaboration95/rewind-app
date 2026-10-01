@@ -1554,12 +1554,52 @@ body.view-screens main {
 .screens-view .main-h {
   margin-bottom: 10px;
 }
-.scr-flow {
-  margin-top: 30px;
+/* 每个流程可以收起：一行标题、几个画面、箭头 */
+.scr-all {
+  margin: 4px 0 6px;
 }
-.scr-flow .gal-h {
-  margin-bottom: 4px;
+.scr-flow {
+  margin-top: 0;
+  border-top: 1px solid var(--page-line);
+}
+.scr-flow summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 16px 2px;
+  cursor: pointer;
+  list-style: none;
+}
+.scr-flow summary::-webkit-details-marker {
+  display: none;
+}
+.scr-flow summary b {
+  font-size: 16px;
+  font-weight: 600;
+}
+.scr-flow summary span {
+  font-size: 13px;
+  color: var(--page-muted);
+}
+.scr-flow summary .ic {
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  color: var(--page-muted);
+  transform: rotate(-90deg);
+  transition: transform 0.2s;
+}
+.scr-flow[open] summary .ic {
+  transform: none;
+}
+.scr-flow summary:hover b {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.scr-flow[open] {
+  padding-bottom: 28px;
 }
 .scr-flow > .hint {
-  margin: 0 0 16px;
+  margin: -4px 2px 16px;
 }
