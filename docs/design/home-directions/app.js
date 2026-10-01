@@ -250,7 +250,7 @@ function shutter(d) {
         ring(Math.min(5, d.me.c + 1)),
         'check',
         `Moment sealed · ${Math.max(0, left - 1)} of 5 left`,
-        'Sealed · not even you can peek',
+        'Sealed',
       ],
       premiere: [
         arcRing(0.75),
@@ -336,7 +336,7 @@ const me = (withName = true) =>
 const meSheet = (d) =>
   `<div class="scrim" data-close></div><div class="sheet" role="dialog" aria-label="Profile and settings">` +
   `<div class="sh-head"><span class="avatar">A</span><div><strong>Alex</strong><small>Local demo · synthetic member</small></div></div>` +
-  `<div class="sh-group"><small>Current group</small><strong>Weekend People</strong><span>${plural(d.n, 'member')} · Owner</span></div><ul>` +
+  `<div class="sh-group"><small>Current group</small><strong>Group name</strong><span>${plural(d.n, 'member')} · Owner</span></div><ul>` +
   [
     ['swap', 'Switch demo member'],
     ['link', 'Invite to group'],
@@ -488,14 +488,12 @@ const bodies = {
 
   c6: (d) => `
     <div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>
-    <header class="top">${me(false)}<button type="button" class="grp">Weekend People ${ic('chev')}</button><span class="tag">W36</span></header>
+    <header class="top">${me(false)}<button type="button" class="grp">Group name ${ic('chev')}</button><span class="tag">W36</span></header>
     <section class="hero" data-seal aria-label="${plural(d.m, 'moment')}, sealed until Sunday">
-      <p class="kept">${pp(`kept warm for the ${word(d.n)} of us`, `opened for the ${word(d.n)} of us`)}</p>
       <b>${pp(d.m, 'Open')}</b>
       <span>little ${d.m === 1 ? 'moment' : 'moments'}</span>
-      <p class="chip">${pp(`${ic('lock')} Sealed · not even you can peek`, 'Opened for everyone at once')}</p>
     </section>
-    <div class="count"><strong>${pp('2 days, 14 hours', 'Right now')}</strong><span>${pp('opens for all of us at once · Sun 8 PM', 'everyone got it at 8 PM · watch together')}</span></div>
+    <div class="count"><strong>${pp('2 days, 14 hours', 'Right now')}</strong><span>${pp('Sun 8 PM', 'watch together')}</span></div>
     <section class="glass">
       <small>This week's prompt</small>
       <h2>What made you pause and smile?</h2>
@@ -957,7 +955,7 @@ const concepts = [
   },
 ];
 // 第一轮评审后列为废案的方向：放在页面最下面，默认收起，评审只读
-const ARCHIVED = ['c1', 'c2', 'c3', 'c4', 'c5', 'c8', 'c11'];
+const ARCHIVED = ['c1', 'c2', 'c3', 'c4', 'c5', 'c7', 'c8', 'c9', 'c10', 'c11'];
 const isArchived = (id) => ARCHIVED.includes(id);
 // 页面顺序：保留方向（按编号）→ 对照组 → 废案（按编号）
 for (const c of concepts)

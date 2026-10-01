@@ -229,10 +229,9 @@ function homeScreenHTML() {
 function scratchPhoneHTML() {
   return (
     `<div class="device"><div class="screen sp-screen"><div class="sp-top"><div class="av wob">A</div><div class="chip wob">W36</div></div>` +
-    `<h4>Weekend People</h4><div class="sub">Opens for all five of us at once · Sun 8 PM</div>` +
+    `<h4>Group name</h4><div class="sub">Sun 8 PM</div>` +
     `<div class="count">02<small>days</small> 14<small>hrs</small></div><div class="q">What made you pause and smile?</div>` +
     `<div class="row"><span>Friends in</span><i>4 / 5</i></div><div class="row"><span>Your moments</span><i>2 / 5</i></div><div class="row"><span>Seconds used</span><i>08 / 30</i></div>` +
-    `<div class="sub" style="margin-top:12px">Sealed · not even you can peek</div>` +
     `<div class="sp-dock"><div class="pill wob"><b>Home</b><span>Chat</span><span>Archive</span></div><div class="shut">●</div></div></div></div>`
   );
 }

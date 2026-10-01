@@ -68,50 +68,31 @@ function motif(id) {
 }
 
 function stateCopy(d) {
-  const n = d.n;
   return {
-    loading: { title: '', body: 'Loading your capsule…' },
+    loading: { title: '', body: 'Loading…' },
     empty: {
-      kicker: 'Weekend People',
       title: 'No capsule this week',
-      body: `Nobody has started a new capsule yet. When the owner starts one, it opens here for all ${n} of you.`,
+      body: 'When the owner starts one, it opens here.',
       action: 'Start a capsule',
-      note: 'Only the group owner can start one.',
     },
     error: {
-      kicker: 'Weekend People',
-      title: 'Couldn’t load the capsule',
-      body: 'Your moments are safe. Check your connection and try again.',
+      title: 'Couldn’t load',
+      body: 'Check your connection and try again.',
       action: 'Try again',
       retry: true,
     },
     denied: {
-      kicker: 'Weekend People',
       title: 'You’re not in this group',
-      body: 'You can’t open this capsule because you’re no longer a member. Ask a friend to invite you again.',
+      body: 'Ask a friend to invite you again.',
       action: 'Choose another group',
     },
-    developing: {
-      kicker: 'Week 36 · sealed',
-      title: 'Your film is developing',
-      body: `Everyone’s moments are being put together. It opens Sunday at 8 PM, for all ${n} of you at once.`,
-      progress: true,
-      note: 'Capture is closed until the next capsule.',
-    },
-    delayed: {
-      kicker: 'Week 36 · sealed',
-      title: 'Taking a little longer',
-      body: 'The film is still developing. Nobody sees it early: it opens for everyone at the same moment.',
-      progress: true,
-      note: `We’ll tell all ${n} of you when it’s ready.`,
-    },
+    developing: { title: 'Your film is developing', body: 'Opens Sunday 8 PM.', progress: true },
+    delayed: { title: 'Taking a little longer', body: 'Still developing.', progress: true },
     released: {
-      kicker: 'Week 36 · now showing',
       title: 'Your film is here',
-      body: `${plural(d.m, 'moment')} from ${d.added} ${d.added === 1 ? 'friend' : 'friends'} · 2 min 14 s`,
+      body: `${plural(d.m, 'moment')} · 2 min 14 s`,
       action: 'Watch together',
       primary: true,
-      note: 'Open for 24 hours, then it moves to Archive.',
     },
   }[NAV.home];
 }
@@ -127,9 +108,7 @@ function stateBody(c, d) {
   const head = at < 0 ? '' : full.slice(0, end);
   if (NAV.home === 'quota')
     return (
-      head +
-      `<p class="st-banner" role="status">All 5 moments added this week · your allowance resets Sunday 8 PM</p>` +
-      full.slice(end)
+      head + `<p class="st-banner" role="status">All 5 used · resets Sunday</p>` + full.slice(end)
     );
   const s = stateCopy(d);
   if (NAV.home === 'loading')

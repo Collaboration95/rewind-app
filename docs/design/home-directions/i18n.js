@@ -572,6 +572,18 @@ Object.assign(I18N, {
   ],
 });
 
+// 定稿：Warm Glass
+Object.assign(I18N, {
+  'main.k': ['HOME · FINAL DIRECTION', 'HOME · 定稿方向'],
+  'main.h1': ['Warm Glass', '暖光玻璃'],
+  'main.p': [
+    'Chosen after the reviews. The other ten directions are archived at the bottom.',
+    '评审后选定。其余 10 个方向收在页面最下面。',
+  ],
+  'group.keep': ['Chosen', '选定方向'],
+  'arch.toggle': ['Show the 10 archived directions', '显示 10 个废案'],
+});
+
 let LANG = 'en';
 try {
   const q = new URLSearchParams(location.search).get('lang');
