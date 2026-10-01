@@ -13,20 +13,21 @@ The page only shows the design and how it behaves. Feedback goes in the team cha
 
 ## Follows the product docs on `dev`
 
-The prototype follows `doc/planning/proposals/proposal-rewind.md`, `doc/planning/ideation/rewind-product-discovery-handoff.md` and `UX-CONTRACT.md`:
+The prototype follows the newest plan, `doc/planning/sprints/sprint-2-user-journey-plan.md` (27 September 2026), and otherwise `doc/planning/proposals/proposal-rewind.md`, `doc/planning/ideation/rewind-product-discovery-handoff.md` and `UX-CONTRACT.md`:
 
 - A cycle lasts **4 weeks**, counted from the group's start. The allowance resets every 7 days: **5 moments, 30 seconds in all, 15 seconds each**. Once a week you can delete one moment and retake it.
-- The app records **vertical video only**, and a moment can be trimmed before it is sealed. After sealing, nobody sees it before the film, not even you; you only see when and how long.
+- The camera takes **video or a photo**. A video is up to 15 seconds and can be trimmed, with a look picked before sealing; **a photo counts as one moment and 3 seconds** of the film. After sealing, nobody sees it before the film, not even you; you only see when and how long.
 - When the 4 weeks end, the film **premieres for 24 hours** and everyone watches it when they like. The next cycle starts straight away. Short films may use older moments, labelled _From the archive_. The film then stays in Archive.
-- The group has **one owner**, who renames the group, picks the prompt and sends invites that expire. A group has up to 10 people. A reminder comes on Sunday at 7 PM and can be snoozed or turned off.
-- Home shows only **your own** allowance, as `dev` does today; it does not show the group total or who is in.
+- The group has **one owner**, who renames the group, picks the prompt and sends invites that expire. A group has up to 10 people. Anyone can switch group. The Sunday reminder time can be changed, snoozed or turned off.
+- Accounts are made by the Rewind admin: **username and password**, no sign-up. The welcome page has _Sign in_ and a separate _Try Demo_; Demo controls live in Settings, apart from the real account.
+- Home shows the countdown, the prompt, **your own** allowance and this week's moments; it does not show the group total or who is in.
 
-Still open for the team: the retro modes (the docs suggest disposable flash, compact digital, 8mm and VHS; `dev` has Soft focus and High contrast), and whether the mode is picked before recording. The prototype keeps the `dev` looks after recording for now.
+The retro modes are not designed yet: the prototype keeps the looks `dev` has today (Original, Soft focus, High contrast), picked after recording as in the Sprint 2 plan.
 
 ## Warm Glass
 
 - Header: the group name in the middle and the avatar on the right; the avatar opens Settings.
-- Home: days until the film, the week of the cycle, and the prompt card with your allowance; tapping the allowance opens _Your moments_.
+- Home: days until the film, the week of the cycle, and the prompt card with your allowance and this week's moments; tapping the allowance opens _Your moments_.
 - Dock: Home / Chat / Archive are always shown, plus a separate shutter. The shutter's ring shows your 5 moments for the week.
 - The dock, the shutter and the cards use the newer iOS glass look. Text meets WCAG AA contrast on the warm light.
 
@@ -36,10 +37,11 @@ Still open for the team: the retro modes (the docs suggest disposable flash, com
 - **App icon**: pair Warm Glass (or the scratchpad skin) with an icon and see it on the home screen, the launch screen, in sizes, in a notification and as colours. `#mix=c6+G` links to a pairing.
 - **States**: every Home state side by side, with when it shows and what the dock does. The buttons add a moment and end the cycle on the Collecting phone. `#states` opens it.
 - **Screens**: the flows around the Home, each step side by side and every phone live. `#screens` opens it.
-  - Sign in: one _Sign in_ button for the Rewind account (OIDC); pull the sheet up to pick a test user.
-  - Settings: the account, the group (owner: group name, prompt, invite; members see the prompt only; a full group can't invite), join with a code, create a group, the Sunday reminder with snooze, sign out.
+  - Welcome and sign in: username and password (in the prototype the password is `rewind`), with wrong password, offline and expired session; _Try Demo_ pulls up synthetic members.
+  - Settings: the account, the group (owner: group name, prompt, invite; members see the prompt only; a full group can't invite), switch group, join with a code, create a group, the Sunday reminder with time and snooze, sign out, and Demo controls in a Demo session.
   - Your moments: metadata only; delete one and retake it, once a week.
-  - Record a moment: camera and mic access, the viewfinder with moments and seconds left, recording, trim, upload with cancel, sealed.
+  - Record a video: camera and mic access, the viewfinder with moments and seconds left, recording, trim and look, upload with cancel, sealed.
+  - Take a photo: the photo mode and a quick look before sealing; it counts 3 seconds.
   - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast with Replay, Save film and Save your own moments.
 - **Dock icons**: try six icon sets in the dock. `#dock=ios` links to a set.
 

@@ -205,3 +205,37 @@
   color: var(--muted);
   transform: rotate(-90deg);
 }
+
+/* 你这周的片段记录：一排小标签，只有类型、哪天、几秒 */
+.c6 .hist {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 12px;
+}
+.hist .hc {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 9px 4px 7px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9);
+}
+.hist .hc .ic {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+}
+.hist .hc.bad {
+  color: #8f2615;
+  box-shadow: inset 0 0 0 1px rgba(194, 69, 47, 0.5);
+}
+.c6 .hist.none {
+  margin: 0;
+  padding: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}

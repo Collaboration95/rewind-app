@@ -57,7 +57,24 @@ const DEFAULT_C = POOL.map((p) => p.c);
 
 let size = 5;
 const plural = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
-const secs = (c) => String([0, 4, 8, 13, 19, 26][c]).padStart(2, '0');
+// 你这周的每一段：[类型, 秒数, 哪天]。照片在影片里占 3 秒，也算进 30 秒（Sprint 2 计划）
+const CLIPS0 = [
+  ['video', 4, 'Mon'],
+  ['video', 4, 'Tue'],
+  ['photo', 3, 'Thu'],
+  ['video', 6, 'Fri'],
+  ['video', 7, 'Sat'],
+];
+const clipsOf = (x) => x.clips || CLIPS0.slice(0, x.c);
+const usedSecs = (x) => clipsOf(x).reduce((s, c) => s + c[1], 0);
+function addClip(x, kind, len) {
+  x.clips = [...clipsOf(x), [kind, len, 'Today']];
+  x.c = x.clips.length;
+}
+function dropClip(x, i) {
+  x.clips = clipsOf(x).filter((_, k) => k !== i);
+  x.c = x.clips.length;
+}
 
 // 首页只显示你自己的额度（dev 的首页也是这样）；成员的 c 只用来模拟你的条数和片尾名单
 function data(pool = POOL) {
@@ -160,18 +177,30 @@ const me = () =>
 const bars = (cls, used, total = 5) =>
   `<div class="${cls}" aria-hidden="true">${Array.from({ length: total }, (_, i) => `<i${i < used ? ' class="on"' : ''}></i>`).join('')}</div>`;
 
+// 你这周的片段记录：只有类型、哪天、几秒（封存后看不到画面）
+const hist = (x) => {
+  const list = clipsOf(x);
+  if (!list.length) return `<p class="hist none">Nothing sealed yet this week</p>`;
+  return `<div class="hist" aria-label="Your moments this week">${list
+    .map(
+      ([kind, len, day], i) =>
+        `<span class="hc${NAV.home === 'failed' && i === list.length - 1 ? ' bad' : ''}">${ic(kind === 'photo' ? 'camera' : 'play')}${day} · ${len} s</span>`,
+    )
+    .join('')}</div>`;
+};
+
 /* ---------- 首页正文 ---------- */
 const bodies = {
-  // o.card：首映、制作中、处理失败时放在页头下面的一张状态卡；o.secs：30 秒用完时的秒数
+  // o.card：首映、制作中、处理失败时放在页头下面的一张状态卡
   c6: (d, o = {}) => {
     const k = cyc();
-    const used = o.secs ?? Number(secs(Math.min(5, d.me.c)));
+    const used = usedSecs(d.me);
     const prompt =
       typeof promptText === 'function' ? promptText() : 'What made you pause and smile?';
     return `
     <div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>
     <div class="glow-low" aria-hidden="true"></div>
-    <header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp">${typeof SET === 'undefined' ? 'Group name' : SET.group} ${ic('chev')}</button>${me()}</header>
+    <header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp">${typeof groupName === 'function' ? groupName() : 'Group name'} ${ic('chev')}</button>${me()}</header>
     ${o.card || ''}
     <section class="hero${o.card ? ' slim' : ''}" aria-label="${plural(k.days, 'day')} until the film">
       <b>${k.days}</b>
@@ -182,6 +211,7 @@ const bodies = {
       <small>This cycle's prompt</small>
       <h2>${prompt}</h2>
       <button type="button" class="rowx mine-row" data-open-mine aria-label="Your moments: ${d.me.c} of 5, ${used} of 30 seconds">${bars('pills', d.me.c)}<span>You · ${d.me.c} of 5 · ${used} of 30 s</span>${ic('chev', 'go')}</button>
+      ${hist(d.me)}
     </section>`;
   },
 };
@@ -345,7 +375,7 @@ async function sealFlight(scr, btn, then) {
     return then?.();
   }
   const S = FX[id] || {};
-  mine.c += 1;
+  addClip(mine, 'video', 5);
   const ns = renderCard(id, scr);
   if (ns) {
     S.sealed?.(ns);
@@ -410,13 +440,19 @@ document.addEventListener('click', (e) => {
   }
   if (t.id === 'shuffle') {
     const bag = [0, 0, 1, 1, 2, 2, 3, 4, 5];
-    POOL.forEach((p) => (p.c = bag[Math.floor(Math.random() * bag.length)]));
+    POOL.forEach((p) => {
+      p.c = bag[Math.floor(Math.random() * bag.length)];
+      delete p.clips;
+    });
     clearStories();
     return render();
   }
   if (t.id === 'replay') return playIntro();
   if (t.id === 'restore') {
-    POOL.forEach((p, i) => (p.c = DEFAULT_C[i]));
+    POOL.forEach((p, i) => {
+      p.c = DEFAULT_C[i];
+      delete p.clips;
+    });
     clearStories();
     return render();
   }

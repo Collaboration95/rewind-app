@@ -86,14 +86,23 @@ function stateCard() {
 
 function stateBody(c, d) {
   const pool = STORY[c.id] || POOL;
-  // 换成“你这周用了 n 段”的数据
-  const mine = (n) => data(pool.map((x, i) => (i === 0 ? { ...x, c: n } : x)));
-  if (NAV.home === 'quota') return bodies[c.id](mine(5));
-  if (NAV.home === 'secs') return bodies[c.id](mine(3), { secs: 30 });
+  // 换成“你这周的片段是 list”的数据
+  const mine = (list) =>
+    data(pool.map((x, i) => (i === 0 ? { ...x, c: list.length, clips: list } : x)));
+  if (NAV.home === 'quota') return bodies[c.id](mine(CLIPS0));
+  // 3 段就用完了 30 秒
+  if (NAV.home === 'secs')
+    return bodies[c.id](
+      mine([
+        ['video', 15, 'Mon'],
+        ['video', 12, 'Wed'],
+        ['photo', 3, 'Thu'],
+      ]),
+    );
   if (NAV.home === 'failed') return bodies[c.id](d, { card: stateCard() });
   // 新一期：从 0 段开始；在这台手机上新封存的照样算进去
   if (NEW_CYCLE.includes(NAV.home))
-    return bodies[c.id](mine(Math.max(0, pool[0].c - POOL[0].c)), { card: stateCard() });
+    return bodies[c.id](mine(clipsOf(pool[0]).slice(POOL[0].c)), { card: stateCard() });
   // 没有这一期 / 读取失败 / 不在小组：换掉正文，保留页头
   const full = bodies[c.id](d);
   const at = full.indexOf('<header class="top"');
