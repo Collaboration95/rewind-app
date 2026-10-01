@@ -10,7 +10,7 @@ Write them right on the page, under each phone and each dock. We will combine ev
 
 ## Final direction: 06 Warm Glass
 
-Warm Glass was chosen after the reviews; the other ten directions are archived, folded at the bottom of the page with their votes and notes read-only. Following the team's feedback, the Warm Glass Home drops the extra lines (_kept warm for the five of us_, _sealed · not even you can peek_, _opens for all of us at once_) and shows a placeholder _Group name_.
+Warm Glass was chosen after the reviews; the other ten directions are archived, folded at the bottom of the page with their votes and notes read-only. Following the team's feedback, the Warm Glass Home drops the extra lines (_kept warm for the five of us_, _sealed · not even you can peek_, _opens for all of us at once_) and shows a placeholder _Group name_. The dock is **G, the live pill**; the dock, the shutter and the prompt card use the newer iOS glass look (clearer glass, a bright rim and a highlight, the pill as a small lens inside the bar).
 
 ## Open it
 

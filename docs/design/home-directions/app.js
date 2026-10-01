@@ -229,7 +229,8 @@ const statusBar = () =>
   `</span></div>`;
 
 /* ---------- 底栏：统一玻璃底栏 + 变体 + 快门状态 + 角标 ---------- */
-const NAV = { variant: 'a', shutter: 'collect', unread: true, home: 'collect' };
+// 底栏定为 G 实时胶囊
+const NAV = { variant: 'g', shutter: 'collect', unread: true, home: 'collect' };
 
 function shutter(d) {
   const left = 5 - d.me.c;
@@ -488,6 +489,7 @@ const bodies = {
 
   c6: (d) => `
     <div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>
+    <div class="glow-low" aria-hidden="true"></div>
     <header class="top">${me(false)}<button type="button" class="grp">Group name ${ic('chev')}</button><span class="tag">W36</span></header>
     <section class="hero" data-seal aria-label="${plural(d.m, 'moment')}, sealed until Sunday">
       <b>${pp(d.m, 'Open')}</b>

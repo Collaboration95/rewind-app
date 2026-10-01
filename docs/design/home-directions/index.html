@@ -22,6 +22,7 @@
     <link rel="stylesheet" href="styles-review.css" />
     <link rel="stylesheet" href="styles-mix.css" />
     <link rel="stylesheet" href="styles-states.css" />
+    <link rel="stylesheet" href="styles-glass.css" />
     <script defer src="review-config.js"></script>
     <script defer src="i18n.js"></script>
     <script defer src="app.js"></script>
@@ -112,13 +113,13 @@
         <div class="grp">
           <p class="lbl" data-i18n="nav.label">Dock</p>
           <div class="navpick" role="group" data-i18n-aria="nav.aria" aria-label="Dock variant">
-            <button type="button" data-nav="a" aria-pressed="true">
+            <button type="button" data-nav="a" aria-pressed="false">
               <b>A</b><span data-i18n="nav.a">Active label</span></button
             ><button type="button" data-nav="d" aria-pressed="false">
               <b>D</b><span data-i18n="nav.d">Centre shutter</span></button
             ><button type="button" data-nav="e" aria-pressed="false">
               <b>E</b><span data-i18n="nav.e">Shutter only</span></button
-            ><button type="button" data-nav="g" aria-pressed="false">
+            ><button type="button" data-nav="g" aria-pressed="true">
               <b>G</b><span data-i18n="nav.g">Live pill</span>
             </button>
           </div>
@@ -212,7 +213,7 @@
       </aside>
 
       <main>
-        <span class="ver" title="Review page version">v2.0</span>
+        <span class="ver" title="Review page version">v2.1</span>
         <nav class="view-tabs" data-i18n-aria="tab.aria" aria-label="Page">
           <button type="button" data-view="review" aria-pressed="true" data-i18n="tab.review">
             Home directions</button
