@@ -584,6 +584,17 @@ Object.assign(I18N, {
   'arch.toggle': ['Show the 10 archived directions', '显示 10 个废案'],
 });
 
+// 底栏图标页
+Object.assign(I18N, {
+  'tab.dock': ['Dock icons', '底栏图标'],
+  'dv.k': ['DOCK · ICONS', '底栏 · 图标'],
+  'dv.h1': ['Try icons in the dock', '试试底栏图标'],
+  'dv.p': ['Pick a set below; the phones update.', '选下面的一套，手机里的底栏会跟着换。'],
+  'dv.closed': ['Collapsed', '收起'],
+  'dv.open': ['Expanded', '展开'],
+  'dv.zoom': ['Close-up', '特写'],
+});
+
 let LANG = 'en';
 try {
   const q = new URLSearchParams(location.search).get('lang');

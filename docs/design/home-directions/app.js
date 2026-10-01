@@ -20,8 +20,12 @@ const I = {
   check: '<path d="m5.5 12.5 4.2 4.2L18.5 8"/>',
   play: '<path d="M8.5 5.8v12.4a.6.6 0 0 0 .9.5l10-6.2a.6.6 0 0 0 0-1l-10-6.2a.6.6 0 0 0-.9.5Z"/>',
 };
-const ic = (n, cls = '') =>
-  `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
+// 底栏图标方案（底栏图标页临时换用）；null 时用上面的原版
+let ICON_SET = null;
+const ic = (n, cls = '') => {
+  const o = ICON_SET?.icons?.[n];
+  return `<svg class="ic ${cls}${o ? ' set-' + ICON_SET.style : ''}" viewBox="0 0 24 24" aria-hidden="true">${o || I[n]}</svg>`;
+};
 
 /* ---------- 共享数据：所有数字都从这里算，不写死 ---------- */
 // 成员专属色（借鉴 Reveal：每人一种颜色，贯穿头像、额度环、影片字幕）

@@ -1,0 +1,164 @@
+/* 底栏图标页 + 各套图标的画法 */
+
+/* ============ 图标方案 ============ */
+.ic .f {
+  fill: currentColor;
+  stroke: none;
+}
+.ic .d {
+  fill: var(--accent);
+  stroke: none;
+  opacity: 0.9;
+}
+/* iOS：未选中线性，选中（和胶囊、快门）实心 */
+.ic.set-ios .s {
+  display: none;
+  fill: currentColor;
+  stroke: none;
+}
+.tab.on .ic.set-ios .o,
+.live .ic.set-ios .o,
+.shutter .ic.set-ios .o,
+.dv-bar .on .ic.set-ios .o,
+.dv-shut .ic.set-ios .o {
+  display: none;
+}
+.tab.on .ic.set-ios .s,
+.live .ic.set-ios .s,
+.shutter .ic.set-ios .s,
+.dv-bar .on .ic.set-ios .s,
+.dv-shut .ic.set-ios .s {
+  display: inline;
+}
+.ic.set-hand {
+  stroke-width: 2;
+  filter: url(#rough-s);
+}
+.ic.set-min {
+  stroke-width: 2;
+}
+
+/* ============ 页面 ============ */
+body:not(.view-dockicons) #dock-view,
+body.view-dockicons main > .main-h,
+body.view-dockicons #gallery,
+body.view-dockicons .dock-rv,
+body.view-dockicons .review,
+body.view-dockicons #rv-bar,
+body.view-dockicons .rv-side,
+body.view-dockicons #mix,
+body.view-dockicons #states-view {
+  display: none;
+}
+body.view-dockicons main {
+  padding-bottom: 64px;
+}
+.dock-view .main-h {
+  margin-bottom: 22px;
+}
+.dv-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 26px;
+  align-items: flex-start;
+  /* 跟随侧栏的缩放 */
+  --s: var(--z, 0.6);
+}
+.dv-ph {
+  margin: 0;
+}
+.dv-card {
+  width: calc(410px * var(--s));
+  animation: none;
+}
+.dv-ph figcaption {
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+/* 特写：原尺寸的手机，只露出底部 */
+.dv-zoom {
+  --s: 1;
+}
+.dv-zoom {
+  max-width: 100%;
+}
+.dv-crop {
+  width: 410px;
+  max-width: 100%;
+  height: 230px;
+  overflow: hidden;
+  border-radius: 0 0 64px 64px;
+}
+.dv-crop .dv-card {
+  margin-top: -634px;
+}
+.dv-sets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 30px;
+}
+.dv-set {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 18px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 0 0 1px var(--page-line);
+}
+.dv-set[aria-pressed='true'] {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px var(--page-ink);
+}
+.dv-set b {
+  font-size: 14px;
+}
+.dv-set > span:last-child {
+  font-size: 12.5px;
+  color: var(--page-muted);
+}
+.dv-sample {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  padding: 12px;
+  border-radius: 16px;
+  color: var(--ink);
+  background: linear-gradient(160deg, #fbe3cc, #f6ede3);
+}
+.dv-bar {
+  flex: 1;
+  display: flex;
+  justify-content: space-around;
+  padding: 8px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.45);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.95),
+    0 6px 14px -8px rgba(150, 80, 30, 0.4);
+}
+.dv-bar i {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 34px;
+  border-radius: 999px;
+}
+.dv-bar i.on {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.75);
+}
+.dv-shut {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #ffb27c, var(--accent));
+  box-shadow: 0 6px 14px -6px var(--accent);
+}
