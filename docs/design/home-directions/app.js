@@ -523,7 +523,7 @@ const bodies = {
       <span>little ${d.m === 1 ? 'moment' : 'moments'}</span>
     </section>
     <div class="count"><strong>${pp('2 days, 14 hours', 'Your film is here')}</strong><span>${pp('Sun 8 PM', '2 min 14 s')}</span>
-      <button type="button" class="st-btn primary is-now">${ic('play')}Watch together</button></div>
+      <button type="button" class="st-btn wt is-now"><span class="wt-i">${ic('play')}</span>Watch together</button></div>
     <section class="glass">
       <small>This week's prompt</small>
       <h2>What made you pause and smile?</h2>
