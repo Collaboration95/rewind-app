@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "contexts": [
+    {
+      "file": "report",
+      "identity": "Public / signed out",
+      "requests": [
+        { "method": "GET", "path": "/health", "expectedStatus": 200 },
+        { "method": "GET", "path": "/profiles", "expectedStatus": 200 },
+        { "method": "GET", "path": "/auth/session", "expectedStatus": 401 },
+        { "method": "GET", "path": "/real/groups", "expectedStatus": 401 }
+      ]
+    },
+    {
+      "file": "owner",
+      "identity": "Group owner",
+      "requests": [
+        { "method": "GET", "path": "/auth/session", "expectedStatus": 200 },
+        { "method": "GET", "path": "/real/groups", "expectedStatus": 200 },
+        { "method": "GET", "path": "/real/groups/current", "expectedStatus": 200 },
+        { "method": "GET", "path": "/real/groups/{groupId}", "expectedStatus": 200 },
+        { "method": "GET", "path": "/real/groups/{groupId}/members", "expectedStatus": 200 },
+        { "method": "GET", "path": "/realtime/groups/{groupId}/messages", "expectedStatus": 200 }
+      ]
+    },
+    {
+      "file": "member",
+      "identity": "Joined member",
+      "requests": [
+        { "method": "GET", "path": "/auth/session", "expectedStatus": 200 },
+        { "method": "GET", "path": "/real/groups", "expectedStatus": 200 },
+        { "method": "GET", "path": "/real/groups/current", "expectedStatus": 200 },
+        { "method": "GET", "path": "/real/groups/{groupId}", "expectedStatus": 200 },
+        { "method": "GET", "path": "/real/groups/{groupId}/members", "expectedStatus": 200 },
+        { "method": "GET", "path": "/realtime/groups/{groupId}/messages", "expectedStatus": 200 }
+      ]
+    },
+    {
+      "file": "outsider",
+      "identity": "Outside the group",
+      "requests": [
+        { "method": "GET", "path": "/real/groups/{groupId}", "expectedStatus": 404 },
+        { "method": "GET", "path": "/real/groups/{groupId}/members", "expectedStatus": 404 },
+        { "method": "GET", "path": "/realtime/groups/{groupId}/messages", "expectedStatus": 403 }
+      ]
+    }
+  ],
+  "active": {
+    "modules": ["sqli-error-based", "sqli-boolean-blind"],
+    "requests": [
+      { "method": "POST", "path": "/realtime/groups/{groupId}/messages", "fields": ["body"] },
+      { "method": "POST", "path": "/real/groups", "fields": ["name", "prompt", "maxMembers"] }
+    ]
+  }
+}

@@ -17,6 +17,16 @@ const { createRealAccount } = await import(new URL('auth/index.js', runtimeRoot)
 const outputDir = resolve('vigolium-result/automatic');
 const dataDir = await mkdtemp(join(tmpdir(), 'rewind-vigolium-'));
 const cli = resolve('node_modules/@vigolium/vigolium/bin/vigolium.js');
+const coverage = JSON.parse(
+  await readFile(new URL('../security/vigolium-coverage.json', import.meta.url), 'utf8'),
+);
+assert.equal(coverage.schemaVersion, 1);
+assert.ok(
+  coverage.contexts.every((context) =>
+    context.requests.every((request) => request.method === 'GET'),
+  ),
+  'Passive fixtures currently support GET requests only',
+);
 let database;
 let server;
 
@@ -44,7 +54,9 @@ try {
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const targets = ['/health', '/profiles', '/auth/session', '/real/groups'];
+  const targets = coverage.contexts
+    .find((context) => context.file === 'report')
+    .requests.map((request) => request.path);
   const scanFlags = [
     'scan',
     '--passive-only',
@@ -130,40 +142,40 @@ try {
   await request('/real/invites/accept', member, { code: invitation.invite.code });
   const chatPath = `/realtime/groups/${groupId}/messages`;
   await request(chatPath, owner, { body: 'Disposable scan message' }, 201);
-  const ownerTargets = [
-    '/auth/session',
-    '/real/groups',
-    '/real/groups/current',
-    groupPath,
-    `${groupPath}/members`,
-    chatPath,
-  ];
-  for (const path of ownerTargets) await request(path, owner);
-  for (const path of ownerTargets) await request(path, member);
-  await request(groupPath, outsider, null, 404);
-  await request(`${groupPath}/members`, outsider, null, 404);
-  await request('/auth/session', null, null, 401);
-  await request(chatPath, outsider, null, 403);
-  await request(chatPath, null, null, 401);
-  await scan(targets, null, 'report');
-  await scan(ownerTargets, owner, 'owner');
-  await scan(ownerTargets, member, 'member');
-  await scan([groupPath, `${groupPath}/members`, chatPath], outsider, 'outsider');
-  for (const filename of [
-    'report.html',
-    'report.jsonl',
-    'owner.html',
-    'owner.jsonl',
-    'member.html',
-    'member.jsonl',
-    'outsider.html',
-    'outsider.jsonl',
-  ]) {
-    const reportPath = join(outputDir, filename);
-    let report = await readFile(reportPath, 'utf8');
-    for (const credential of credentials) report = report.replaceAll(credential, '[REDACTED]');
-    await writeFile(reportPath, report);
+  const contexts = coverage.contexts.map((context) => ({
+    ...context,
+    requests: context.requests.map((entry) => ({
+      ...entry,
+      path: entry.path.replaceAll('{groupId}', groupId),
+    })),
+  }));
+  const tokens = { report: null, owner, member, outsider };
+  for (const context of contexts) {
+    assert.ok(Object.hasOwn(tokens, context.file), 'Unknown fixture identity in coverage manifest');
+    for (const entry of context.requests)
+      await request(entry.path, tokens[context.file], null, entry.expectedStatus);
+    await scan(
+      context.requests.map((entry) => entry.path),
+      tokens[context.file],
+      context.file,
+    );
   }
+  await request(chatPath, null, null, 401);
+  const ownerTargets = contexts
+    .find((context) => context.file === 'owner')
+    .requests.map((entry) => entry.path);
+  const outsiderTargets = contexts
+    .find((context) => context.file === 'outsider')
+    .requests.map((entry) => entry.path);
+  const memberTargets = contexts
+    .find((context) => context.file === 'member')
+    .requests.map((entry) => entry.path);
+  const expectedStatuses = Object.fromEntries(
+    contexts.map((context) => [
+      context.file,
+      Object.fromEntries(context.requests.map((entry) => [entry.path, entry.expectedStatus])),
+    ]),
+  );
   await writeFile(
     join(outputDir, 'scope.json'),
     JSON.stringify(
@@ -175,15 +187,10 @@ try {
           execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
         targets,
         ownerTargets,
-        memberTargets: ownerTargets,
-        outsiderTargets: [groupPath, `${groupPath}/members`, chatPath],
-        contexts: [
-          { file: 'report', identity: 'Public / signed out' },
-          { file: 'owner', identity: 'Group owner' },
-          { file: 'member', identity: 'Joined member' },
-          { file: 'outsider', identity: 'Outside the group' },
-        ],
-        expectedStatuses: { outsider: { [chatPath]: 403 } },
+        memberTargets,
+        outsiderTargets,
+        contexts: contexts.map(({ file, identity }) => ({ file, identity })),
+        expectedStatuses,
         accessChecks: {
           ownerRoutes: '200',
           outsiderGroupAndMembers: '404',

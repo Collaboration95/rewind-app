@@ -128,6 +128,40 @@ browser/media journeys, source auditing or the hosted app. A zero-finding result
 only describes these checks. CORS and version disclosure remain advisory and
 require a product decision; source suggestions are never applied automatically.
 
+### Agentic coverage exploration trial
+
+Run `npm run security:explore` locally after `codex login`. It uses Vigolium's
+`agent query` with `openai-codex-oauth` and the local Codex credential file;
+credentials are never copied into the repository or CI. The run consumes model
+usage and has a five-minute agent limit plus a 330-second outer process limit.
+
+This is AI-assisted source discovery, not an autonomous vulnerability scan.
+The runner finds routing files in the current **committed** `server/src` tree,
+supplies numbered source and `security/vigolium-coverage.json`, and asks for
+route, fixture and test proposals. Commit feature changes before exploring them.
+No deployed app, login credentials for Rewind, or exploit execution is supplied.
+The earlier incomplete source-audit trial is not resumed or overridden.
+
+Open `vigolium-result/agentic-coverage/summary.html` to review the validated
+proposal, source references and endpoints absent from the native manifest.
+`proposal.json` and `scope.json` retain the structured result and commit metadata.
+Only source references with matching file/line/quote are accepted; that does not
+establish that the model interpreted a route or business rule correctly. Parameter
+names and inferred methods can require correction. Listed requests do not imply
+complete role or vulnerability coverage.
+
+To retain a useful proposal, verify it against source and a disposable app, add
+the reviewed request to `security/vigolium-coverage.json`, implement its fixture
+in the native runner, then run `security:auto` and `security:active`. Manifest
+edits alone cannot create new runtime fixtures. Proposals and generated extensions
+are never executed or applied automatically.
+
+`npm run security:explore -- --dry-run` prepares the source prompt without an AI
+call. CI runs this preparation and proposal-validator tests; live agentic queries
+are local and explicit. Raw provider output and query databases are temporary.
+Failures are recorded as incomplete and do not trigger a provider fallback or
+safety-classifier override. No local OAuth credential belongs in GitHub secrets.
+
 ## Optional local runtime
 
 The companion Node service adds local SQLite persistence, media processing,

@@ -8,6 +8,7 @@
     "npm": ">=10"
   },
   "scripts": {
+    "security:explore": "node scripts/run-vigolium-explore.mjs",
     "security:doctor": "vigolium doctor",
     "security:auto": "npm run server:build && node scripts/run-vigolium.mjs",
     "security:active": "npm run server:build && node scripts/run-vigolium-active.mjs",
