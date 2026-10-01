@@ -76,16 +76,42 @@ function dropClip(x, i) {
   x.c = x.clips.length;
 }
 
+// 当前小组的快照：样例小组用侧栏的样例数据；其他小组、以及刚开始新一期的样例小组，用自己记下的数据。
+// PURE：状态页要画样例小组本来的样子，不受快照影响
+let PURE = false;
+function pureIf(on, fn) {
+  const keep = PURE;
+  PURE = on;
+  try {
+    return fn();
+  } finally {
+    PURE = keep;
+  }
+}
+const snap = () => {
+  const g = typeof grp === 'function' ? grp() : null;
+  return g && g.clips && !(g.sample && PURE) ? g : null;
+};
+// 你在这个小组里的记录：封存、删除都改这里
+const myRec = (id) => snap() || storyPool(id)[0];
+
 // 首页只显示你自己的额度（dev 的首页也是这样）；成员的 c 只用来模拟你的条数和片尾名单
 function data(pool = POOL) {
-  const members = pool.slice(0, size);
+  const g = snap();
+  const members = pool.slice(0, g?.n ?? size);
+  if (g) members[0] = { ...members[0], clips: g.clips, c: g.clips.length };
+  // 新注册的账号：用自己的名字和颜色
+  const who = typeof SET !== 'undefined' && SET.who;
+  if (who) members[0] = { ...members[0], name: who.name, col: who.col };
   return { members, n: members.length, m: members.reduce((s, x) => s + x.c, 0), me: members[0] };
 }
 // 一期 4 周，从小组开始那天算；额度每 7 天重置（dev 文档）。演示固定在第 2 周。
 // 影片制作中、比平时慢、首映时，下一期已经开始了：第 1 周
 const NEW_CYCLE = ['developing', 'delayed', 'released'];
 const cyc = () =>
-  NEW_CYCLE.includes(NAV.home) ? { week: 1, days: 27, reset: 7 } : { week: 2, days: 16, reset: 3 };
+  NEW_CYCLE.includes(NAV.home)
+    ? { week: 1, days: 27, reset: 7 }
+    : snap()?.cyc || { week: 2, days: 16, reset: 3 };
 
 /* ---------- 共用部件 ---------- */
 // 5 段额度环：已用的段点亮。
@@ -121,7 +147,7 @@ const NAV = { shutter: 'collect', unread: true, home: 'collect' };
 // 看过的角标：打开聊天后未读消失，打开档案后“新影片”的点消失
 const SEEN = { chat: false, archive: false };
 // 未读只在第一个小组（样例对话在那里）；看过就没了
-const unreadNow = () => NAV.unread && !SEEN.chat && (typeof SET === 'undefined' || SET.gi === 0);
+const unreadNow = () => NAV.unread && !SEEN.chat && (typeof isSample === 'undefined' || isSample());
 
 function shutter(d) {
   const left = 5 - d.me.c;
@@ -149,8 +175,8 @@ function shutter(d) {
 }
 
 function dock(d, at = 'home') {
-  // 不在这个小组里：聊天、档案、快门都属于这个小组，整个底栏不显示
-  if (NAV.home === 'denied') return '';
+  // 不在这个小组里、还没有小组：聊天、档案、快门都属于小组，整个底栏不显示
+  if (NAV.home === 'denied' || NAV.home === 'nogroup') return '';
   const unread = unreadNow() && at !== 'chat';
   const film = NAV.home === 'released' && !SEEN.archive && at !== 'archive';
   const tabs = [
@@ -164,12 +190,14 @@ function dock(d, at = 'home') {
   return `<nav class="dock dock-g open" aria-label="Main navigation"><div class="tabs">${tabs.map(tab).join('')}</div>${shutter(d)}</nav>`;
 }
 
-const acting = () => (typeof SET === 'undefined' ? POOL[0] : POOL[SET.me]);
+const acting = () => (typeof SET === 'undefined' ? POOL[0] : SET.who || POOL[SET.me]);
 const me = () =>
   `<button type="button" class="me" aria-label="${acting().name} · settings"><span class="avatar">${acting().name[0]}</span></button>`;
 // 页头：组名在正中，点开切换小组（见 tabs.js）；头像在右上，进设置
 const topBar = () =>
-  `<header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp" aria-haspopup="menu" aria-expanded="false" aria-label="${typeof groupName === 'function' ? groupName() : 'Group name'} · switch group">${typeof groupName === 'function' ? groupName() : 'Group name'} ${ic('chev')}</button>${me()}</header>`;
+  NAV.home === 'nogroup'
+    ? `<header class="top"><span class="top-sp" aria-hidden="true"></span><span class="grp brand">Rewind</span>${me()}</header>`
+    : `<header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp" aria-haspopup="menu" aria-expanded="false" aria-label="${typeof groupName === 'function' ? esc(groupName()) : 'Group name'} · switch group">${typeof groupName === 'function' ? esc(groupName()) : 'Group name'} ${ic('chev')}</button>${me()}</header>`;
 
 const bars = (cls, used, total = 5) =>
   `<div class="${cls}" aria-hidden="true">${Array.from({ length: total }, (_, i) => `<i${i < used ? ' class="on"' : ''}></i>`).join('')}</div>`;
@@ -237,6 +265,9 @@ const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 
 // tab：底栏的哪一页（home | chat | archive，后两页见 tabs.js）；o：这一页的演示参数，画面页用
 const screen = (c, d, tab = 'home', o = {}) => {
+  // 还没有任何小组（刚注册）：只有“没有小组”的首页
+  if (typeof grp === 'function' && !grp() && NAV.home !== 'nogroup')
+    return withHome('nogroup', () => screen(c, d, 'home', o));
   const body =
     tab !== 'home' && typeof tabBody === 'function'
       ? tabBody(tab, d, o)
@@ -264,8 +295,12 @@ function renderCard(id, from) {
   const card = from?.closest('.card') || document.querySelector(`.card[data-id="${id}"]`);
   const wrap = card?.querySelector('.phone-wrap');
   if (c && wrap) {
-    const home = wrap.dataset.home || (card.closest('#states-view') ? 'collect' : NAV.home);
-    const draw = () => screen(c, dataFor(id), wrap.dataset.tab || 'home');
+    const sv = !!card.closest('#states-view');
+    // 刚加入或新建了小组：不再回到“还没有小组”
+    if (wrap.dataset.home === 'nogroup' && typeof grp === 'function' && grp())
+      delete wrap.dataset.home;
+    const home = wrap.dataset.home || (sv ? 'collect' : NAV.home);
+    const draw = () => pureIf(sv, () => screen(c, dataFor(id), wrap.dataset.tab || 'home'));
     wrap.innerHTML = home === NAV.home ? draw() : withHome(home, draw);
   }
   return wrap?.querySelector('.screen');
@@ -279,7 +314,7 @@ function goTab(scr, tab = scr.dataset.tab, o = {}) {
   const home = scr.dataset.home;
   wrap.dataset.tab = tab;
   wrap.dataset.home = home;
-  const draw = () => screen(c, dataFor(id), tab, o);
+  const draw = () => pureIf(!!wrap.closest('#states-view'), () => screen(c, dataFor(id), tab, o));
   wrap.innerHTML = home === NAV.home ? draw() : withHome(home, draw);
   return wrap.querySelector('.screen');
 }
@@ -485,6 +520,12 @@ document.addEventListener('click', (e) => {
       p.c = DEFAULT_C[i];
       delete p.clips;
     });
+    // 样例小组如果开始过新一期，也回到样例
+    const s = typeof SET === 'undefined' ? null : SET.list.find((g) => g.sample);
+    if (s) {
+      delete s.cyc;
+      delete s.clips;
+    }
     clearStories();
     render();
     return window.relangMix?.();
@@ -493,7 +534,10 @@ document.addEventListener('click', (e) => {
   if (!scr) return;
   // 头像 → 设置；揭晓后的“一起看” → 周日影片（见 screens.js）
   if (t.classList.contains('me')) return openSub(scr, 'settings');
-  if (t.classList.contains('wt')) return openSub(scr, 'film');
+  if (t.classList.contains('wt')) {
+    SEEN.archive = true;
+    return openSub(scr, 'film');
+  }
   if (t.hasAttribute('data-open-mine')) return openSub(scr, 'mine');
   // 底栏页签：首页、聊天、档案（聊天和档案见 tabs.js）
   if (t.dataset.tabGo) {

@@ -87,6 +87,18 @@
   text-transform: none;
   color: #8f2615;
 }
+/* 组名菜单：别的小组有未读 */
+.gm-n {
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font: normal 600 11.5px/20px var(--f-body);
+  text-align: center;
+  color: #fff;
+  background: #d6343a;
+}
 .gm hr {
   margin: 6px 10px;
   border: 0;

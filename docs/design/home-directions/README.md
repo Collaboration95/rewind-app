@@ -23,7 +23,7 @@ The prototype follows the newest plan, `doc/planning/sprints/sprint-2-user-journ
 - Home shows the countdown, the prompt, **your own** allowance and this week's moments; it does not show the group total or who is in.
 - **Chat** is one chat per group: text, replies and a ✨ reaction, up to 2,000 characters. No attachments, read receipts, typing indicators, edits or deletes; the proposal leaves those out.
 - **Archive** shows the current cycle's step, then every released film, streamed right in its card; nothing to download there. Saving the film or your own moments stays at the end of the film. A cycle that never got a film keeps only its prompt and dates.
-- Home, Chat and Archive all belong to the group you are in.
+- Home, Chat and Archive all belong to the group you are in. Each group has its own cycle, your moments, prompt, chat and archive; a new group starts week 1 the day it is created. A new account with no group lands on a Home that offers joining with a code or creating a group.
 
 The retro modes are not designed yet: the prototype keeps the looks `dev` has today (Original, Soft focus, High contrast), picked after recording as in the Sprint 2 plan.
 
@@ -42,12 +42,12 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 - **Home**: the phone you can tap. The dock switches between Home, Chat and Archive; the group name switches group; the avatar opens Settings, the shutter opens the camera, your allowance opens _Your moments_ and, during the premiere, _Watch_ opens the film. **Play** resets it: ① you add a moment, ② the 4 weeks end and the film premieres.
 - **States**: every Home state side by side, with when it shows and what the dock does. The buttons add a moment and end the cycle on the Collecting phone. `#states` opens it.
 - **Screens**: the flows around the Home, each step side by side and every phone live. Each flow folds away; they start folded and the page remembers which ones you opened. `#screens` opens it.
-  - Welcome, sign in and sign up: sign in with a password (in the prototype it is `rewind`), with wrong password, offline and expired session; sign up with an email or phone number, a 6-digit code (`123456` in the prototype), a name and password, then join with an invite or create a group; _Try Demo_ pulls up synthetic members.
-  - Settings: the account, the group (owner: group name, prompt, invite; members see the prompt only; a full group can't invite), switch group, join with a code, create a group, the Sunday reminder with a preset or custom time and snooze, sign out, and Demo controls in a Demo session.
-  - Your moments: metadata only; delete one and retake it, once a week.
+  - Welcome, sign in and sign up: sign in with a password (in the prototype it is `rewind`), with wrong password, offline and expired session; sign up with an email or phone number, a 6-digit code (`123456` in the prototype), a name and password, then Home with no group yet; _Try Demo_ pulls up synthetic members.
+  - Settings: the account, the group (owner: group name, prompt, invite; members see the prompt only; a full group can't invite), switch group, join with a code (with an unknown, expired or used code, or a full group; `BOOK CLUB` works in the prototype), create a group, the Sunday reminder with a preset or custom time and snooze, sign out, and Demo controls in a Demo session.
+  - Your moments: metadata only and always the same as Home; delete one and retake it, once a week. A moment that didn't finish can be retried or deleted without using the weekly delete.
   - Record a video: camera and mic access, the viewfinder with moments and seconds left, recording, trim and look, upload with cancel, sealed with _Tell the group_.
   - Take a photo: the photo mode and a quick look before sealing; it counts 3 seconds.
-  - Switch group: the menu under the group name, and what someone removed from a group sees.
+  - Switch group: the menu under the group name (another group's unread count shows there), what someone removed from a group sees, and Home with no group yet.
   - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast, a main button that opens Chat, and Replay, Save film and Save your own moments.
   - Chat: new messages, tap a message, reply, no messages yet, reconnecting, offline, not sent, couldn't load, and after the premiere.
   - Archive: collecting, the premiere, developing, a film playing in its card, the first cycle and couldn't load.
@@ -69,6 +69,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 | No capsule · member | Tabs only; waiting for the owner                                      |
 | Failed to load      | Tabs only; Try again is on the page                                   |
 | No access           | No dock: chat and archive belong to the group too; pick another group |
+| No group yet        | No dock; join with a code or create a group                           |
 
 ## Sidebar
 

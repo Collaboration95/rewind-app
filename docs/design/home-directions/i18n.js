@@ -216,8 +216,8 @@ const I18N = {
   ],
   'scr.set': ['Settings', '设置'],
   'scr.set.p': [
-    'From the avatar. The owner renames the group, picks the prompt and invites (not when the group is full); everyone can switch group, set the reminder time and snooze it. Demo controls only appear in a Demo session.',
-    '点头像进入。组长能改组名、选题目、发邀请（满员时不能邀请）；所有人都能切换小组、改提醒时间、推迟提醒。Demo 的控制只在用 Demo 登录时出现。',
+    'From the avatar. The owner renames the group, picks the prompt and invites (not when the group is full); everyone can switch group, set the reminder time and snooze it. Joining shows what goes wrong: an unknown, expired or used code, or a full group. Demo controls only appear in a Demo session.',
+    '点头像进入。组长能改组名、选题目、发邀请（满员时不能邀请）；所有人都能切换小组、改提醒时间、推迟提醒。加入小组时会提示出错的情况：码不存在、过期、已用过、小组满员。Demo 的控制只在用 Demo 登录时出现。',
   ],
   'scr.set.main': ['Settings · owner', '设置 · 组长'],
   'scr.set.invite': ['Invite a friend', '邀请朋友'],
@@ -276,14 +276,14 @@ const I18N = {
   'sts.shut.waiting': ['Tabs only.', '只有页签。'],
   'scr.signin': ['Welcome, sign in and sign up', '欢迎、登录和注册'],
   'scr.signin.p': [
-    'Sign in with an email, phone number or username and a password, or create an account with an email or phone number and a 6-digit code. Try Demo is a separate route with synthetic members. In the prototype the password is rewind and the code is 123456.',
-    '用邮箱、手机号或用户名加密码登录；也可以用邮箱或手机号注册，收一个 6 位验证码。Try Demo 是单独的一条路，用标明 synthetic 的演示成员。原型里密码是 rewind，验证码是 123456。',
+    'Sign in with an email, phone number or username and a password, or create an account with an email or phone number and a 6-digit code; a new account lands on Home with no group yet. Try Demo is a separate route with synthetic members. In the prototype the password is rewind and the code is 123456.',
+    '用邮箱、手机号或用户名加密码登录；也可以用邮箱或手机号注册，收一个 6 位验证码，注册完回到首页，显示还没有小组。Try Demo 是单独的一条路，用标明 synthetic 的演示成员。原型里密码是 rewind，验证码是 123456。',
   ],
   'scr.set.prompt': ['Prompt (owner)', '题目（组长）'],
   'scr.mine': ['Your moments', '你的片段'],
   'scr.mine.p': [
-    'From the allowance in the prompt card. Only when and how long; once a week you can delete one and retake it.',
-    '点题目卡片里的额度进入。只看得到时间和长度；每周可以删一段重拍。',
+    'From the allowance in the prompt card; it always matches Home. Only when and how long; once a week you can delete one and retake it. A moment that didn’t finish can be retried or deleted, and that delete doesn’t count.',
+    '点题目卡片里的额度进入，和首页始终一致。只看得到时间和长度；每周可以删一段重拍。没传完的那段可以重试或删除，这次删除不算在每周一次里。',
   ],
   'scr.mine.list': ['This week', '本周'],
   'scr.mine.confirm': ['Delete and retake', '删除并重拍'],
@@ -336,8 +336,8 @@ const I18N = {
   'tap.grp': ['<b>Group name</b>: switch group', '<b>组名</b>：切换小组'],
   'scr.group': ['Switch group', '切换小组'],
   'scr.group.p': [
-    'Tap the group name at the top of Home, Chat or Archive. All three belong to the group you are in, so switching changes the whole app. Someone removed from a group lands on the second phone.',
-    '在首页、聊天、档案顶上点组名。这三页都只属于当前小组，切换后整个 App 换成那个小组。被移出小组的人会看到第二台。',
+    'Tap the group name at the top of Home, Chat or Archive. Each group has its own cycle, moments, chat and archive, so switching changes the whole app; another group with unread messages shows a count. Someone removed from a group lands on the second phone; a new account with no group yet lands on the third.',
+    '在首页、聊天、档案顶上点组名。每个小组有自己的周期、片段、聊天和档案，切换后整个 App 换成那个小组；别的小组有未读时会显示数字。被移出小组的人会看到第二台；刚注册、还没有小组的人看到第三台。',
   ],
   'scr.group.menu': ['Group menu', '组名菜单'],
   'scr.group.denied': ['Not in this group', '不在这个小组'],
@@ -371,7 +371,6 @@ const I18N = {
   'scr.signin.upcode': ['Enter the code', '输入验证码'],
   'scr.signin.upcodebad': ['Wrong code', '验证码错误'],
   'scr.signin.upname': ['Name and password', '名字和密码'],
-  'scr.signin.updone': ['Join or create a group', '加入或新建小组'],
   'scr.set.timeown': ['Custom time', '自定义时间'],
   'scr.toast.forgot': [
     'In the app, this sends a reset code to your email or phone.',
@@ -381,6 +380,30 @@ const I18N = {
   'scr.n': ['{n} screens', '{n} 个画面'],
   'scr.all.open': ['Expand all', '全部展开'],
   'scr.all.close': ['Collapse all', '全部收起'],
+  'state.nogroup': ['No group yet', '还没有小组'],
+  'sts.when.nogroup': [
+    'Right after signing up, before joining or creating a group.',
+    '刚注册完，还没加入或新建小组时。',
+  ],
+  'sts.shut.nogroup': [
+    'No dock: chat, archive and the shutter all belong to a group.',
+    '没有底栏：聊天、档案、快门都属于小组。',
+  ],
+  'sts.startToast': [
+    'On the Home tab, this starts week 1 of a new capsule.',
+    '在首页标签里，这会开始新一期的第 1 周。',
+  ],
+  'scr.toast.started': [
+    'A new capsule started · the film is 4 weeks from today.',
+    '新的一期开始了，4 周后看片。',
+  ],
+  'scr.toast.retried': [
+    'Uploading again. It finishes in the background.',
+    '重新上传中，会在后台完成。',
+  ],
+  'scr.set.joinbad': ['Invite expired', '邀请码过期'],
+  'scr.mine.failed': ['A moment didn’t finish', '有一段没传完'],
+  'scr.group.nogroup': ['No group yet', '还没有小组'],
 };
 
 let LANG = 'en';

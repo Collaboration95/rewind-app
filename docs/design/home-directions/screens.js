@@ -75,7 +75,9 @@ const PHOTO_SECS = 3;
 const SET = {
   me: 0,
   demo: false,
-  groups: ['Group name', 'Saturday table'],
+  // who：新注册的账号（名字、颜色、邮箱或手机号）；样例账号时为 null
+  who: null,
+  list: [],
   gi: 0,
   prompt: 0,
   custom: '',
@@ -98,9 +100,64 @@ const to24 = (v) => {
   const [, h, m = '0', ap] = v.match(/(\d+)(?::(\d+))? (AM|PM)/);
   return `${String((Number(h) % 12) + (ap === 'PM' ? 12 : 0)).padStart(2, '0')}:${m.padStart(2, '0')}`;
 };
-const groupName = () => SET.groups[SET.gi];
-const isOwner = () => SET.me === 0;
-const promptText = () => (SET.prompt === 'custom' ? SET.custom : PROMPTS[SET.prompt]);
+// 每个小组一条记录。样例小组（sample）用侧栏的样例数据；其他小组是固定的快照：
+// n 几个人、no 第几期、cyc 这一期到哪了、clips 你这周的片段、owner 你是不是组长
+const GROUPS0 = () => [
+  { id: 'g1', name: 'Group name', sample: true },
+  {
+    id: 'g2',
+    name: 'Saturday table',
+    owner: false,
+    n: 4,
+    no: 1,
+    cyc: { week: 3, days: 9, reset: 2 },
+    prompt: 1,
+    clips: [
+      ['photo', 3, 'Sun'],
+      ['video', 6, 'Mon'],
+    ],
+  },
+];
+SET.list = GROUPS0();
+// 原型里的邀请码：BOOKCLUB 能加入；其余几个演示加入失败
+const INVITES = {
+  BOOKCLUB: {
+    id: 'g3',
+    name: 'Book club',
+    owner: false,
+    n: 6,
+    no: 1,
+    cyc: { week: 2, days: 18, reset: 4 },
+    prompt: 2,
+    clips: [],
+  },
+  EXPIRED1: 'expired',
+  USEDCODE: 'used',
+  FULLFULL: 'full',
+};
+const JOIN_ERR = {
+  none: 'That code doesn’t match a group. Check it with your friend.',
+  expired: 'This invite has expired. Ask your friend for a new one.',
+  used: 'This invite was already used. Ask your friend for a new one.',
+  full: 'That group is full (10 of 10). Ask the owner.',
+};
+const grp = () => SET.list[SET.gi];
+const isSample = () => !!grp()?.sample;
+const groupName = () => grp()?.name ?? '';
+// 样例小组里 Alex 是组长；其他小组看记录
+const isOwner = () => {
+  const g = grp();
+  if (!g) return false;
+  return g.sample ? SET.me === 0 && !SET.who : !!g.owner;
+};
+// 题目跟着小组走：样例小组记在 SET 上，其他小组记在自己的记录上
+const promptOf = () => (isSample() || !grp() ? SET : grp());
+const promptText = () => {
+  const r = promptOf();
+  return r.prompt === 'custom' ? r.custom : PROMPTS[r.prompt ?? 0];
+};
+// 换回样例账号（登录、Demo、清空数据）：小组也回到样例
+const sampleAccount = () => Object.assign(SET, { who: null, list: GROUPS0(), gi: 0 });
 
 /* ---------- 欢迎和登录 ----------
    step：welcome | form | wrong | offline | expired | demo
@@ -147,7 +204,7 @@ function signinHTML(step) {
 }
 
 /* ---------- 注册：邮箱或手机号 → 验证码 → 名字和密码 → 加入或新建小组 ----------
-   step：up | upbad | upcode | upcodebad | upname | updone
+   step：up | upbad | upcode | upcodebad | upname；注册完回到“还没有小组”的首页
    原型里验证码是 123456；alex@ 开头的邮箱当作已经注册过 */
 const UP = { via: 'email', to: 'mia@example.com', cc: '+65', name: 'Mia' };
 const upHead = (title, back) =>
@@ -200,12 +257,6 @@ function signupHTML(step) {
       `<label class="glass set-field si-pass"><span>Password</span><input data-up-pass type="password" autocomplete="new-password" placeholder="At least 8 characters" /></label>` +
       `<p class="set-err" role="alert"></p>` +
       `<button type="button" class="set-btn primary" data-up-create data-busy="Creating account…">Create account</button>`,
-    // 新账号还没有小组：用邀请码加入，或者自己新建
-    updone: () =>
-      `<section class="glass set-card set-ok up-done"><span class="set-okic">${ic('check')}</span><h2>Welcome, ${esc(UP.name)}</h2>` +
-      `<p class="set-note">Join your friends with their invite code, or start a group of your own.</p></section>` +
-      `<button type="button" class="set-btn primary" data-up-next="join">${ic('key')}I have an invite</button>` +
-      `<button type="button" class="set-btn up-alt" data-up-next="create">${ic('plus')}Create a group</button>`,
   };
   const page = { upbad: 'up', upcodebad: 'upcode' }[step] || step;
   return (
@@ -249,23 +300,32 @@ const promptPicker = (sel) => {
         `<label class="set-opt"><input type="radio" name="${n}" value="${i}"${sel === i ? ' checked' : ''} /><span>${x}</span></label>`,
     ).join('') +
     `<label class="set-opt"><input type="radio" name="${n}" value="custom" data-set-custom${sel === 'custom' ? ' checked' : ''} /><span>Write a custom prompt</span></label>` +
-    `<textarea class="set-custom" maxlength="160" placeholder="Write a short prompt" aria-label="Custom prompt"${sel === 'custom' ? '' : ' hidden'}>${sel === 'custom' ? SET.custom : ''}</textarea></div>`
+    `<textarea class="set-custom" maxlength="160" placeholder="Write a short prompt" aria-label="Custom prompt"${sel === 'custom' ? '' : ' hidden'}>${sel === 'custom' ? esc(promptOf().custom || '') : ''}</textarea></div>`
   );
 };
 
 function settingsHTML(d, step, o = {}) {
-  const me = POOL[SET.me];
+  const me = acting();
   const full = d.n >= 10;
   const owner = isOwner();
+  // 还没有小组：小组这一块只有加入和新建
+  const noGroup = () =>
+    `<p class="set-k">Group</p><ul class="glass set-list"><li class="set-hint">You’re not in a group yet.</li>` +
+    setRow('key', 'Have an invite?', '', ' data-set-go="join"') +
+    setRow('plus', 'Create a group', '', ' data-set-go="create"') +
+    `</ul>`;
   const main = () =>
     setHead('Settings', 'close') +
-    `<section class="glass set-me">${avatarOf(me)}<div><strong>${me.name}</strong><small>${SET.demo ? 'Demo · synthetic member' : me.name.toLowerCase()}</small></div></section>` +
+    `<section class="glass set-me">${avatarOf(me)}<div><strong>${esc(me.name)}</strong><small>${SET.demo ? 'Demo · synthetic member' : esc(me.handle || me.name.toLowerCase())}</small></div></section>` +
+    (grp() ? groupBlock() : noGroup()) +
+    reminderBlock();
+  const groupBlock = () =>
     `<p class="set-k">Group</p><ul class="glass set-list">` +
-    `<li class="set-grp"><div><strong>${groupName()}</strong><small>${owner ? 'Owner' : 'Member'} · ${d.n} of 10 members</small></div><div class="stack">${d.members
+    `<li class="set-grp"><div><strong>${esc(groupName())}</strong><small>${owner ? 'Owner' : 'Member'} · ${d.n} of 10 members</small></div><div class="stack">${d.members
       .map((x) => `<span class="av" style="--mc:${x.col}">${x.name[0]}</span>`)
       .join('')}</div></li>` +
     (owner
-      ? setRow('pen', 'Group name', groupName(), ' data-set-go="rename"') +
+      ? setRow('pen', 'Group name', esc(groupName()), ' data-set-go="rename"') +
         setRow('quote', 'Prompt', promptText(), ' data-set-go="prompt"') +
         (full
           ? `<li><div class="set-row off">${ic('link')}<span>Invite friends<small>The group is full · 10 of 10</small></span></div></li>`
@@ -273,10 +333,12 @@ function settingsHTML(d, step, o = {}) {
       : `<li><div class="set-row off">${ic('quote')}<span>Prompt<small>${promptText()}</small></span></div></li>` +
         `<li class="set-hint">Only the owner can change the prompt or invite friends.</li>`) +
     `</ul><ul class="glass set-list set-more">` +
-    setRow('users', 'Switch group', `${SET.groups.length} groups`, ' data-set-go="groups"') +
+    setRow('users', 'Switch group', plural(SET.list.length, 'group'), ' data-set-go="groups"') +
     setRow('key', 'Have an invite?', '', ' data-set-go="join"') +
     setRow('plus', 'Create a group', '', ' data-set-go="create"') +
-    `</ul><p class="set-k">Reminder</p><ul class="glass set-list">` +
+    `</ul>`;
+  const reminderBlock = () =>
+    `<p class="set-k">Reminder</p><ul class="glass set-list">` +
     `<li><label class="set-row">${ic('bell')}<span>Weekly reminder<small>${SET.reminder ? (SET.snoozed ? 'Snoozed until next Sunday' : `Sundays at ${SET.time}`) : 'Off'}</small></span>` +
     `<input type="checkbox" role="switch" class="sw" data-set-rem${SET.reminder ? ' checked' : ''} /></label></li>` +
     (SET.reminder
@@ -299,17 +361,17 @@ function settingsHTML(d, step, o = {}) {
         setRow('trash', 'Reset local Demo data', '', ' data-set-go="reset"', ' out') +
         `</ul>`
       : '') +
-    `<p class="set-foot">Rewind · ${SET.demo ? 'Demo on this device' : 'signed in as ' + me.name.toLowerCase()}</p>`;
+    `<p class="set-foot">Rewind · ${SET.demo ? 'Demo on this device' : 'signed in as ' + esc(me.handle || me.name.toLowerCase())}</p>`;
   const pages = {
     main,
     reset: main,
     groups: () =>
       setHead('Switch group') +
       `<ul class="glass set-list">` +
-      SET.groups
+      SET.list
         .map(
-          (g, i) =>
-            `<li><button type="button" class="set-row" data-set-group="${i}" aria-pressed="${i === SET.gi}">${ic('users')}<span>${g}<small>${i === SET.gi ? 'Current group' : 'Tap to switch'}</small></span>${i === SET.gi ? ic('check', 'sel') : ''}</button></li>`,
+          ({ name: g }, i) =>
+            `<li><button type="button" class="set-row" data-set-group="${i}" aria-pressed="${i === SET.gi}">${ic('users')}<span>${esc(g)}<small>${i === SET.gi ? 'Current group' : 'Tap to switch'}</small></span>${i === SET.gi ? ic('check', 'sel') : ''}</button></li>`,
         )
         .join('') +
       `</ul><ul class="glass set-list set-more">` +
@@ -339,18 +401,19 @@ function settingsHTML(d, step, o = {}) {
       `<button type="button" class="set-btn primary" data-set-toast="share">${ic('share')}Share invite link</button>` +
       `<div class="set-two"><button type="button" class="set-btn" data-set-toast="link">${ic('link')}Copy link</button>` +
       `<button type="button" class="set-btn" data-set-toast="code">${ic('copy')}Copy code</button></div>` +
-      `<p class="set-foot">${d.n} of 10 members in ${groupName()}</p>`,
+      `<p class="set-foot">${d.n} of 10 members in ${esc(groupName())}</p>`,
     join: () =>
       setHead('Have an invite?', o.back) +
       `<p class="set-lead">Enter the 8-character code a friend sent you.</p>` +
-      `<label class="glass set-field"><span>Invite code</span><input data-set-code maxlength="9" placeholder="8-character code" autocomplete="off" autocapitalize="characters" spellcheck="false" /></label>` +
-      `<p class="set-err" role="alert"></p>` +
-      `<button type="button" class="set-btn primary" data-set-join data-busy="Joining…">Accept invitation</button>`,
+      `<label class="glass set-field"><span>Invite code</span><input data-set-code maxlength="9" placeholder="8-character code" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${o.joinErr ? 'EXPI RED1' : ''}" /></label>` +
+      `<p class="set-err" role="alert">${o.joinErr ? JOIN_ERR[o.joinErr] : ''}</p>` +
+      `<button type="button" class="set-btn primary" data-set-join data-busy="Joining…">Accept invitation</button>` +
+      `<p class="set-foot">In the prototype, BOOK CLUB joins a group; EXPIRED1, USEDCODE and FULLFULL show what goes wrong.</p>`,
     joined: () =>
       setHead('Have an invite?') +
-      `<section class="glass set-card set-ok"><span class="set-okic">${ic('check')}</span><h2>Joined Saturday table</h2>` +
+      `<section class="glass set-card set-ok"><span class="set-okic">${ic('check')}</span><h2>Joined ${esc(SET.list[SET.joined]?.name || 'Book club')}</h2>` +
       `<p class="set-note">The code is now used.</p></section>` +
-      `<button type="button" class="set-btn primary" data-sub-back>Go to the group</button>`,
+      `<button type="button" class="set-btn primary" data-set-gojoined>Go to the group</button>`,
     create: () =>
       setHead('New group', o.back) +
       `<label class="glass set-field"><span>Group name</span><input data-set-name maxlength="80" placeholder="e.g. Saturday table" autocomplete="off" /></label>` +
@@ -359,12 +422,12 @@ function settingsHTML(d, step, o = {}) {
       `<button type="button" class="set-btn primary" data-set-create data-busy="Creating group…">Create group</button>`,
     rename: () =>
       setHead('Group name') +
-      `<label class="glass set-field"><span>Group name</span><input data-set-name maxlength="80" value="${groupName()}" autocomplete="off" /></label>` +
+      `<label class="glass set-field"><span>Group name</span><input data-set-name maxlength="80" value="${esc(groupName())}" autocomplete="off" /></label>` +
       `<p class="set-err" role="alert"></p>` +
       `<button type="button" class="set-btn primary" data-set-rename data-busy="Saving…">Save</button>`,
     prompt: () =>
       setHead('Prompt') +
-      `<p class="set-lead">Everyone sees it on Home for this cycle.</p>${promptPicker(SET.prompt)}` +
+      `<p class="set-lead">Everyone sees it on Home for this cycle.</p>${promptPicker(promptOf().prompt ?? 0)}` +
       `<p class="set-err" role="alert"></p>` +
       `<button type="button" class="set-btn primary" data-set-prompt data-busy="Saving…">Save</button>`,
     member: () =>
@@ -396,32 +459,40 @@ function settingsHTML(d, step, o = {}) {
 
 /* ---------- 你的片段：只有元数据；每周可以删一段重拍 ----------
    step：list | confirm | done */
-const MINE = { deleted: false, pick: null };
-function mineHTML(d, step) {
-  const clips = clipsOf(d.me);
+const MINE = { deleted: false, pick: null, bad: false };
+function mineHTML(d, step, id) {
+  const clips = homeClips(id, d);
+  const secs = clips.reduce((s, c) => s + c[1], 0);
+  const reset = plural(cyc().reset, 'day');
+  // 处理失败的是最后一段（首页的标签也标在最后一段）
+  const bad = NAV.home === 'failed' ? clips.length - 1 : -1;
+  const kindOf = (k) => (k === 'photo' ? 'Photo' : 'Video');
   const rows = clips
-    .map(
-      ([kind, len, day], i) =>
-        `<li><button type="button" class="set-row" data-mine-pick="${i}"${MINE.deleted ? ' disabled' : ''}>${ic(kind === 'photo' ? 'camera' : 'video')}<span>${kind === 'photo' ? 'Photo' : 'Video'}<small>${len} s · ${day} · sealed</small></span>${MINE.deleted ? '' : ic('trash', 'go del')}</button></li>`,
+    .map(([kind, len, day], i) =>
+      i === bad
+        ? `<li class="mine-bad"><div class="set-row">${ic(kind === 'photo' ? 'camera' : 'video')}<span>${kindOf(kind)}<small>${len} s · ${day} · didn’t finish uploading</small></span></div>` +
+          `<div class="mine-fix"><button type="button" class="set-btn" data-mine-retry data-busy="Retrying…">${ic('replay')}Retry</button>` +
+          `<button type="button" class="set-btn" data-mine-pick="${i}" data-mine-bad>${ic('trash')}Delete</button></div></li>`
+        : `<li><button type="button" class="set-row" data-mine-pick="${i}"${MINE.deleted ? ' disabled' : ''}>${ic(kind === 'photo' ? 'camera' : 'video')}<span>${kindOf(kind)}<small>${len} s · ${day} · sealed</small></span>${MINE.deleted ? '' : ic('trash', 'go del')}</button></li>`,
     )
     .join('');
   const pick = clips[MINE.pick ?? 0] || ['video', 0];
   return (
     `<div class="scroll"><div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>` +
     `<header class="sub-h"><button type="button" class="sub-back" data-sub-back aria-label="Back">${ic('back')}</button><h1>Your moments</h1><span></span></header>` +
-    `<section class="glass set-card mine-sum"><b>${clips.length} of 5</b><p class="set-note">${usedSecs(d.me)} of 30 s · resets in 3 days</p></section>` +
+    `<section class="glass set-card mine-sum"><b>${clips.length} of 5</b><p class="set-note">${secs} of 30 s · resets in ${reset}</p></section>` +
     `<p class="set-lead">Sealed until the film. You can see when, not what.</p>` +
     (clips.length
       ? `<ul class="glass set-list">${rows}</ul>`
       : `<p class="set-lead">Nothing sealed yet this week.</p>`) +
-    `<p class="set-foot">${MINE.deleted ? 'You used this week’s delete. It comes back in 3 days.' : 'Once a week, you can delete one and retake it.'}</p>` +
+    `<p class="set-foot">${MINE.deleted ? `You used this week’s delete. It comes back in ${reset}.` : 'Once a week, you can delete one and retake it.'}</p>` +
     (step === 'done'
       ? `<button type="button" class="set-btn primary" data-mine-retake>${ic('camera')}Retake now</button>`
       : '') +
     `</div>` +
     (step === 'confirm'
       ? `<div class="set-dim" data-mine-keep></div><section class="glass set-dlg" role="dialog" aria-label="Delete moment confirmation">` +
-        `<h2>Delete this ${pick[0] === 'photo' ? 'photo' : 'video'}?</h2><p>It’s gone for good, and its ${pick[1]} s go back to your week. You can do this once a week.</p>` +
+        `<h2>Delete this ${pick[0] === 'photo' ? 'photo' : 'video'}?</h2><p>${MINE.bad ? `It didn’t finish, so this doesn’t use your weekly delete. Its ${pick[1]} s go back to your week.` : `It’s gone for good, and its ${pick[1]} s go back to your week. You can do this once a week.`}</p>` +
         `<button type="button" class="set-btn" data-mine-keep>Keep it</button>` +
         `<button type="button" class="set-btn danger" data-mine-del data-busy="Deleting…">Delete</button></section>`
       : '')
@@ -485,6 +556,13 @@ function cameraHTML(d, mode, step, o = {}) {
   );
 }
 
+// 影片长度：每段平均 8 秒，加一段 3 秒的补位
+const filmSecs = (n) => n * 8 + 3;
+const filmLen = (n) => {
+  const s = filmSecs(n);
+  return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
+};
+
 /* ---------- 首映影片：直接放，24 小时内各自看 ----------
    data-step：play | end */
 function filmHTML(d, o = {}) {
@@ -503,7 +581,7 @@ function filmHTML(d, o = {}) {
     `<div class="fm-ctl"><button type="button" class="glass-btn" data-fm-chat>${ic('chat')}Talk about it</button>` +
     `<button type="button" class="cam-ic" data-fm-pause aria-label="Pause">${ic('pause')}</button></div>` +
     // 片尾
-    `<section class="fm-end"><h2>Your film</h2><p>${plural(moments.length - 1, 'moment')} · 2 min 14 s</p>` +
+    `<section class="fm-end"><h2>Your film</h2><p>${plural(moments.length - 1, 'moment')} · ${filmLen(moments.length - 1)}</p>` +
     `<div class="fm-cast">${who.map((x) => `<span><i class="av" style="--mc:${x.col}">${x.name[0]}</i>${x.me ? 'You' : x.name}</span>`).join('')}</div>` +
     // 看完最自然的下一步：去聊天
     `<button type="button" class="set-btn primary fm-chat" data-fm-chat>${ic('chat')}Talk about it in Chat</button>` +
@@ -516,12 +594,14 @@ function filmHTML(d, o = {}) {
 
 /* ---------- 画一台“子画面”手机 ---------- */
 function subScreen(kind, id, o = {}) {
-  const d = dataFor(id);
   // 底栏的三页：按 o.home 的状态画一台完整的手机（画面页用）
   if (['home', 'chat', 'archive'].includes(kind)) {
     const c = concepts.find((x) => x.id === id);
-    return withHome(o.home || 'collect', () => screen(c, d, kind, o));
+    return withHome(o.home || 'collect', () => screen(c, dataFor(id), kind, o));
   }
+  // 其他画面指定了首页状态（画面页用）：在那个状态下画
+  if (o.home) return withHome(o.home, () => subScreen(kind, id, { ...o, home: undefined }));
+  const d = dataFor(id);
   const step =
     o.step ||
     { signin: 'welcome', settings: 'main', mine: 'list', camera: 'view', film: 'play' }[kind];
@@ -538,7 +618,7 @@ function subScreen(kind, id, o = {}) {
         SET.time = keep;
       }
     },
-    mine: () => mineHTML(d, step),
+    mine: () => mineHTML(d, step, id),
     camera: () => cameraHTML(d, mode, step, o),
     film: () => filmHTML(d, o),
   }[kind]();
@@ -549,6 +629,11 @@ function subScreen(kind, id, o = {}) {
   );
 }
 
+// 在这台手机原来的首页状态下画子画面（状态页里那台“额度用完”点进“你的片段”，看到的也是用完）
+const subIn = (wrap, kind, id, o) =>
+  withHome(wrap.dataset.home || NAV.home, () =>
+    pureIf(!!wrap.closest('#states-view'), () => subScreen(kind, id, o)),
+  );
 // 从首页那台手机进入：记下是从首页来的，返回时重画首页
 function openSub(scr, kind, o = {}) {
   const wrap = scr.closest('.phone-wrap');
@@ -560,7 +645,7 @@ function openSub(scr, kind, o = {}) {
     wrap.dataset.tab = scr.dataset.tab;
     wrap.dataset.home = scr.dataset.home;
   }
-  wrap.innerHTML = subScreen(kind, id, o);
+  wrap.innerHTML = subIn(wrap, kind, id, o);
   const ns = wrap.querySelector('.screen');
   ns.classList.add('sub-in');
   if (kind === 'film') startFilm(ns);
@@ -571,7 +656,7 @@ function redraw(scr, kind, o) {
   const wrap = scr.closest('.phone-wrap');
   const from = wrap.dataset.from;
   stopTimers(scr);
-  wrap.innerHTML = subScreen(kind, scr.classList[1], o);
+  wrap.innerHTML = subIn(wrap, kind, scr.classList[1], o);
   if (from) wrap.dataset.from = from;
   return wrap.querySelector('.screen');
 }
@@ -670,12 +755,12 @@ function upload(scr) {
     txt.textContent = `Uploading ${pct}%`;
     if (pct < 100) return;
     stopTimers(scr);
-    const me = storyPool(scr.classList[1])[0];
+    const me = myRec(scr.classList[1]);
     const photo = scr.dataset.mode === 'photo';
     const len = photo
       ? PHOTO_SECS
       : Math.round(Number(scr.querySelector('.trim')?.dataset.len) || 5);
-    if (me.c < 5) addClip(me, photo ? 'photo' : 'video', len);
+    if (clipsOf(me).length < 5) addClip(me, photo ? 'photo' : 'video', len);
     goStep(scr, 'sealed');
   });
 }
@@ -763,15 +848,16 @@ const err = (scr, text) => (scr.querySelector('.set-err').textContent = text);
 // 登录后回到首页（画面页里的手机回到这一步开头）
 function signedIn(scr, idx, demo, name) {
   Object.assign(SET, { me: idx, demo });
+  sampleAccount();
   rvToast(t(demo ? 'scr.toast.as' : 'scr.toast.signedIn').replace('{name}', name));
   closeSub(scr);
 }
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
-    '[data-sub-back],[data-cam-tell],[data-cam-done],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-cam-cancel],[data-cam-mine],[data-look],' +
+    '[data-sub-back],[data-set-gojoined],[data-mine-retry],[data-cam-tell],[data-cam-done],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-cam-cancel],[data-cam-mine],[data-look],' +
       '[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-snooze],[data-set-join],[data-set-create],[data-set-rename],[data-set-prompt],[data-set-group],[data-set-me],[data-set-reset],' +
-      '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-si-forgot],[data-up-via],[data-up-send],[data-up-resend],[data-up-verify],[data-up-create],[data-up-next],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
+      '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-si-forgot],[data-up-via],[data-up-send],[data-up-resend],[data-up-verify],[data-up-create],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
       '[data-fm-pause],[data-fm-replay],[data-fm-save],[data-fm-chat]',
   );
   if (!b || b.disabled) return;
@@ -797,7 +883,7 @@ document.addEventListener('click', (e) => {
     const wrap = scr.closest('.phone-wrap');
     wrap.dataset.tab = 'chat';
     wrap.dataset.from = 'home';
-    if (SET.gi === 0) SEEN.chat = true;
+    if (isSample()) SEEN.chat = true;
     const cs = goTab(closeSub(scr), 'chat', { draft: `Just sealed a ${kind} 🤫 ` });
     const box = cs.querySelector('[data-chat-input]');
     box.focus({ preventScroll: true });
@@ -827,6 +913,11 @@ document.addEventListener('click', (e) => {
     return rvToast(t(SET.snoozed ? 'scr.toast.snoozed' : 'scr.toast.unsnoozed'));
   }
   if ('setOut' in d) return redraw(scr, 'signin', {});
+  if ('setGojoined' in d) {
+    SET.gi = SET.joined ?? SET.gi;
+    rvToast(t('scr.toast.switched').replace('{name}', groupName()));
+    return closeSub(scr);
+  }
   if (d.setGroup) {
     SET.gi = Number(d.setGroup);
     redraw(scr, 'settings', { step: 'main' });
@@ -838,7 +929,8 @@ document.addEventListener('click', (e) => {
   }
   if ('setReset' in d) {
     return busy(b, 700, () => {
-      Object.assign(SET, { me: 0, demo: false, gi: 0, prompt: 0 });
+      Object.assign(SET, { me: 0, demo: false, prompt: 0 });
+      sampleAccount();
       redraw(scr, 'signin', {});
       rvToast(t('scr.toast.reset'));
     });
@@ -848,7 +940,12 @@ document.addEventListener('click', (e) => {
     if (!/^(?:[A-Z0-9]{8}|[A-Z]{6})$/.test(code))
       return err(scr, 'Enter the eight-character invite code using letters and numbers.');
     return busy(b, 700, () => {
-      if (!SET.groups.includes('Saturday table')) SET.groups.push('Saturday table');
+      const inv = INVITES[code];
+      if (!inv) return err(scr, JOIN_ERR.none);
+      if (typeof inv === 'string') return err(scr, JOIN_ERR[inv]);
+      if (SET.list.some((g) => g.id === inv.id)) return err(scr, `You’re already in ${inv.name}.`);
+      SET.list.push(JSON.parse(JSON.stringify(inv)));
+      SET.joined = SET.list.length - 1;
       redraw(scr, 'settings', { step: 'joined' });
     });
   }
@@ -857,8 +954,19 @@ document.addEventListener('click', (e) => {
     if (!name) return err(scr, 'Enter a group name.');
     if (pickedPrompt(scr) === null) return err(scr, 'Write a prompt, or pick one above.');
     return busy(b, 800, () => {
-      SET.groups.push(name);
-      SET.gi = SET.groups.length - 1;
+      // 新建的小组：你是组长，第 1 期第 1 周从今天开始
+      const p = pickedPrompt(scr);
+      SET.list.push({
+        id: 'c' + SET.list.length + Date.now(),
+        name,
+        owner: true,
+        n: 1,
+        no: 1,
+        cyc: { week: 1, days: 28, reset: 7 },
+        ...(typeof p === 'number' ? { prompt: p } : { prompt: 'custom', custom: p.custom }),
+        clips: [],
+      });
+      SET.gi = SET.list.length - 1;
       redraw(scr, 'settings', { step: 'main' });
       rvToast(t('scr.toast.created').replace('{name}', name));
     });
@@ -867,7 +975,7 @@ document.addEventListener('click', (e) => {
     const name = scr.querySelector('[data-set-name]').value.trim();
     if (!name) return err(scr, 'Enter a group name.');
     return busy(b, 600, () => {
-      SET.groups[SET.gi] = name;
+      grp().name = name;
       redraw(scr, 'settings', { step: 'main' });
       rvToast(t('scr.toast.saved'));
     });
@@ -876,8 +984,8 @@ document.addEventListener('click', (e) => {
     const p = pickedPrompt(scr);
     if (p === null) return err(scr, 'Write a prompt, or pick one above.');
     return busy(b, 600, () => {
-      if (typeof p === 'number') SET.prompt = p;
-      else Object.assign(SET, { prompt: 'custom', custom: p.custom });
+      if (typeof p === 'number') promptOf().prompt = p;
+      else Object.assign(promptOf(), { prompt: 'custom', custom: p.custom });
       redraw(scr, 'settings', { step: 'main' });
       rvToast(t('scr.toast.saved'));
     });
@@ -928,13 +1036,17 @@ document.addEventListener('click', (e) => {
     if (pass.length < 8) return err(scr, 'Use at least 8 characters for the password.');
     return busy(b, 800, () => {
       UP.name = name;
-      redraw(scr, 'signin', { step: 'updone' });
+      const handle = UP.via === 'email' ? UP.to : `${UP.cc} ${UP.to}`;
+      Object.assign(SET, {
+        me: 0,
+        demo: false,
+        who: { name, col: '#4FA69C', handle },
+        list: [],
+        gi: 0,
+      });
+      rvToast(t('scr.toast.signedIn').replace('{name}', name));
+      closeSub(scr);
     });
-  }
-  if (d.upNext) {
-    Object.assign(SET, { me: 0, demo: false });
-    rvToast(t('scr.toast.signedIn').replace('{name}', UP.name));
-    return redraw(scr, 'settings', { step: d.upNext, back: 'close' });
   }
   if ('siSheet' in d) {
     const open = scr.querySelector('.si-sheet').classList.toggle('open');
@@ -958,15 +1070,35 @@ document.addEventListener('click', (e) => {
     });
   }
   // 你的片段
+  if ('mineRetry' in d) {
+    return busy(b, 700, () => {
+      scr.closest('.phone-wrap').dataset.home = 'collect';
+      redraw(scr, 'mine', { step: 'list' });
+      rvToast(t('scr.toast.retried'));
+    });
+  }
   if (d.minePick) {
+    MINE.bad = 'mineBad' in d;
     MINE.pick = Number(d.minePick);
     return redraw(scr, 'mine', { step: 'confirm' });
   }
   if ('mineKeep' in d) return redraw(scr, 'mine', { step: 'list' });
   if ('mineDel' in d) {
     return busy(b, 600, () => {
-      dropClip(storyPool(scr.classList[1])[0], MINE.pick ?? 0);
-      MINE.deleted = true;
+      const wrap = scr.closest('.phone-wrap');
+      const id = scr.classList[1];
+      const rec = myRec(id);
+      const i = MINE.pick ?? 0;
+      // 删的是首页当前显示的那一份：额度用完、处理失败的状态删完回到能拍
+      if (NEW_CYCLE.includes(wrap.dataset.home) && !snap()) dropClip(rec, POOL[0].c + i);
+      else {
+        const list = withHome(wrap.dataset.home || NAV.home, () => homeClips(id, dataFor(id)));
+        rec.clips = list.filter((_, k) => k !== i);
+        rec.c = rec.clips.length;
+        if (['quota', 'secs', 'failed'].includes(wrap.dataset.home)) wrap.dataset.home = 'collect';
+      }
+      // 没传完的那段不算这周的删除次数
+      if (!MINE.bad) MINE.deleted = true;
       redraw(scr, 'mine', { step: 'done' });
       rvToast(t('scr.toast.deleted'));
     });
@@ -995,7 +1127,7 @@ document.addEventListener('click', (e) => {
     const wrap = scr.closest('.phone-wrap');
     wrap.dataset.tab = 'chat';
     wrap.dataset.from = 'home';
-    if (SET.gi === 0) SEEN.chat = true;
+    if (isSample()) SEEN.chat = true;
     return closeSub(scr);
   }
 });
@@ -1077,7 +1209,6 @@ const FLOWS = [
       ['upcode', { step: 'upcode' }],
       ['upcodebad', { step: 'upcodebad' }],
       ['upname', { step: 'upname' }],
-      ['updone', { step: 'updone' }],
     ],
   ],
   [
@@ -1090,6 +1221,7 @@ const FLOWS = [
       ['timeown', { step: 'time', own: true }],
       ['invite', { step: 'invite' }],
       ['join', { step: 'join' }],
+      ['joinbad', { step: 'join', joinErr: 'expired' }],
       ['create', { step: 'create' }],
       ['prompt', { step: 'prompt' }],
     ],
@@ -1100,6 +1232,7 @@ const FLOWS = [
     [
       ['menu', { menu: true }],
       ['denied', { home: 'denied', menu: true }],
+      ['nogroup', { home: 'nogroup' }],
     ],
   ],
   [
@@ -1107,6 +1240,7 @@ const FLOWS = [
     'mine',
     [
       ['list', {}],
+      ['failed', { home: 'failed' }],
       ['confirm', { step: 'confirm' }],
     ],
   ],

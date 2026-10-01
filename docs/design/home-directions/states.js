@@ -19,9 +19,10 @@ const HOME_STATES = [
   'waiting',
   'error',
   'denied',
+  'nogroup',
 ];
-// 这些状态下不显示快门（没有这一期、读取失败、不在小组）：用不了的按钮不灰着摆在那里，直接拿掉
-const SHUTTER_OFF = ['empty', 'waiting', 'error', 'denied'];
+// 这些状态下不显示快门（没有这一期、读取失败、不在小组、还没有小组）：用不了的按钮不灰着摆在那里，直接拿掉
+const SHUTTER_OFF = ['empty', 'waiting', 'error', 'denied', 'nogroup'];
 NAV.home = 'collect';
 // 每个状态对应的快门：额度用完就灰掉，其余照常
 const shutterOf = (state) => (state === 'quota' || state === 'secs' ? 'quota' : 'collect');
@@ -30,13 +31,28 @@ const shutterOf = (state) => (state === 'quota' || state === 'secs' ? 'quota' : 
 const motif = () => `<div class="mo mo-glow" aria-hidden="true"><i></i><b></b></div>`;
 
 function stateCopy() {
+  const waiting = { title: 'No capsule yet', body: 'Waiting for the owner to start one.' };
   return {
-    empty: {
-      title: 'No capsule yet',
-      body: 'Start one and your group’s 4 weeks begin.',
-      action: 'Start a capsule',
+    // 只有组长能开始；组员看到的是“等组长”
+    empty:
+      typeof isOwner === 'function' && !isOwner()
+        ? waiting
+        : {
+            title: 'No capsule yet',
+            body: 'Start one and your group’s 4 weeks begin.',
+            action: 'Start a capsule',
+            start: true,
+          },
+    waiting,
+    // 刚注册、还没有小组：用邀请码加入，或者自己新建
+    nogroup: {
+      title: 'You’re not in a group yet',
+      body: 'Join friends with their invite code, or start a group of your own.',
+      action: 'Join with a code',
+      go: 'join',
+      alt: 'Create a group',
+      altGo: 'create',
     },
-    waiting: { title: 'No capsule yet', body: 'Waiting for the owner to start one.' },
     error: {
       title: 'Couldn’t load',
       body: 'Check your connection and try again.',
@@ -85,25 +101,32 @@ function stateCard() {
   );
 }
 
-function stateBody(c, d) {
-  const pool = STORY[c.id] || POOL;
-  // 换成“你这周的片段是 list”的数据
-  const mine = (list) =>
-    data(pool.map((x, i) => (i === 0 ? { ...x, c: list.length, clips: list } : x)));
-  if (NAV.home === 'quota') return bodies[c.id](mine(CLIPS0));
-  // 3 段就用完了 30 秒
-  if (NAV.home === 'secs')
-    return bodies[c.id](
-      mine([
-        ['video', 15, 'Mon'],
-        ['video', 12, 'Wed'],
-        ['photo', 3, 'Thu'],
-      ]),
-    );
-  if (NAV.home === 'failed') return bodies[c.id](d, { card: stateCard() });
+// 3 段就用完了 30 秒
+const SECS_CLIPS = [
+  ['video', 15, 'Mon'],
+  ['video', 12, 'Wed'],
+  ['photo', 3, 'Thu'],
+];
+// 这个状态下“你这周的片段”：首页和“你的片段”页共用，两边才对得上
+function homeClips(id, d) {
+  const pool = STORY[id] || POOL;
+  if (NAV.home === 'quota') return CLIPS0;
+  if (NAV.home === 'secs') return SECS_CLIPS;
   // 新一期：从 0 段开始；在这台手机上新封存的照样算进去
+  if (NEW_CYCLE.includes(NAV.home) && !snap()) return clipsOf(pool[0]).slice(POOL[0].c);
+  return clipsOf(d.me);
+}
+
+function stateBody(c, d) {
+  // 换成“你这周的片段是 list”的数据
+  const mine = (list) => {
+    const me = { ...d.me, c: list.length, clips: list };
+    return { ...d, me, members: [me, ...d.members.slice(1)] };
+  };
+  if (NAV.home === 'quota' || NAV.home === 'secs') return bodies[c.id](mine(homeClips(c.id, d)));
+  if (NAV.home === 'failed') return bodies[c.id](d, { card: stateCard() });
   if (NEW_CYCLE.includes(NAV.home))
-    return bodies[c.id](mine(clipsOf(pool[0]).slice(POOL[0].c)), { card: stateCard() });
+    return bodies[c.id](mine(homeClips(c.id, d)), { card: stateCard() });
   // 没有这一期 / 读取失败 / 不在小组：换掉正文，保留页头
   const full = bodies[c.id](d);
   const at = full.indexOf('<header class="top"');
@@ -115,7 +138,10 @@ function stateBody(c, d) {
     `<section class="st" aria-live="polite">${motif()}` +
     `<h2 class="st-h">${s.title}</h2><p class="st-p">${s.body}</p>` +
     (s.action
-      ? `<button type="button" class="st-btn"${s.retry ? ' data-st-retry' : ''}${s.pick ? ' data-gm-open' : ''}>${s.action}</button>`
+      ? `<button type="button" class="st-btn${s.go ? ' primary' : ''}"${s.retry ? ' data-st-retry' : ''}${s.pick ? ' data-gm-open' : ''}${s.start ? ' data-st-start' : ''}${s.go ? ` data-gm-go="${s.go}"` : ''}>${s.action}</button>`
+      : '') +
+    (s.alt
+      ? `<button type="button" class="st-btn st-alt" data-gm-go="${s.altGo}">${s.alt}</button>`
       : '') +
     `</section>`
   );
@@ -135,6 +161,15 @@ function setHome(v) {
   render();
   window.relangMix?.();
 }
+
+// 开始一期（组长）：这个小组从第 1 周、28 天、0 段开始
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('[data-st-start]')) return;
+  if (e.target.closest('#states-view')) return rvToast(t('sts.startToast'));
+  Object.assign(grp(), { cyc: { week: 1, days: 28, reset: 7 }, clips: [], c: 0 });
+  setHome('collect');
+  rvToast(t('scr.toast.started'));
+});
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('[data-st-retry]')) return;
@@ -158,7 +193,7 @@ function withHome(state, fn) {
 }
 function svPhone(state) {
   const c = concepts[0];
-  const html = withHome(state, () => screen(c, dataFor(c.id)));
+  const html = withHome(state, () => pureIf(true, () => screen(c, dataFor(c.id))));
   return (
     `<figure class="sv-ph" data-state="${state}"><div class="card sv-card" data-id="${c.id}"><div class="phone-wrap">${html}</div></div>` +
     `<figcaption><b>${t('state.' + state)}</b><span>${t('sts.when.' + state)}</span>` +

@@ -1509,12 +1509,6 @@
   font-weight: 600;
   color: var(--ink);
 }
-.up-done {
-  margin: 70px 0 22px;
-}
-.set-btn.up-alt {
-  margin-top: 10px;
-}
 /* 提醒时间：自定义 */
 .set-tm {
   display: flex;
@@ -1540,6 +1534,26 @@
   display: block;
   font-size: 12.5px;
   color: var(--muted);
+}
+
+/* 你的片段：没传完的那段，下面是重试和删除 */
+.mine-bad .set-row small {
+  color: #8f2615;
+}
+.mine-fix {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 14px 12px;
+}
+.mine-fix .set-btn {
+  height: 40px;
+  font-size: 14px;
+}
+/* 还没有小组时，页头中间是 Rewind，不能点 */
+.gnav .grp.brand {
+  font: 400 19px/1 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
 }
 
 /* ============ “画面”页 ============ */

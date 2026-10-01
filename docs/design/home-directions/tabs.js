@@ -19,12 +19,13 @@ function groupMenu(home = NAV.home) {
   return (
     `<div class="gm-dim" data-gm-close></div>` +
     `<section class="glass gm" role="menu" aria-label="Switch group"><p class="gm-k">Your groups</p>` +
-    SET.groups
-      .map((g, i) =>
-        out && i === SET.gi
-          ? `<div class="gm-row off" role="menuitem" aria-disabled="true">${ic('users')}<span>${esc(g)}<small>You’re no longer in this group</small></span></div>`
-          : `<button type="button" class="gm-row" role="menuitemradio" aria-checked="${i === SET.gi}" data-gm-group="${i}">${ic('users')}<span>${esc(g)}</span>${i === SET.gi ? ic('check', 'sel') : ''}</button>`,
-      )
+    SET.list
+      .map(({ name: g, sample }, i) => {
+        if (out && i === SET.gi)
+          return `<div class="gm-row off" role="menuitem" aria-disabled="true">${ic('users')}<span>${esc(g)}<small>You’re no longer in this group</small></span></div>`;
+        const unread = sample && i !== SET.gi && NAV.unread && !SEEN.chat;
+        return `<button type="button" class="gm-row" role="menuitemradio" aria-checked="${i === SET.gi}" data-gm-group="${i}" aria-label="${esc(g)}${unread ? ', 3 unread' : ''}">${ic('users')}<span>${esc(g)}</span>${unread ? '<i class="gm-n" aria-hidden="true">3</i>' : ''}${i === SET.gi ? ic('check', 'sel') : ''}</button>`;
+      })
       .join('') +
     `<hr />` +
     `<button type="button" class="gm-row" role="menuitem" data-gm-go="join">${ic('key')}<span>Have an invite?</span></button>` +
@@ -106,9 +107,9 @@ const FAILED_TEXT = 'I’ll bring the speaker';
 const CHAT_MAX = 2000;
 
 function chatList(o) {
-  const sent = CHAT.sent[SET.gi] || [];
+  const sent = CHAT.sent[grp()?.id] || [];
   if (o.empty) return [];
-  if (SET.gi !== 0) return sent;
+  if (!isSample()) return sent;
   const seed = NAV.home === 'released' ? [...SEED.slice(0, 3), ...SEED_FILM] : SEED;
   const list = [...(CHAT.older ? SEED_OLD : []), ...seed, ...sent];
   // 画面页“没发出去”那台：最后一条是你的、失败了
@@ -166,7 +167,7 @@ function chatBody(d, o) {
   const conn = o.conn || 'ready';
   const list = conn === 'error' ? [] : chatList(o);
   // 带着未读进来：最后 3 条前面一条“新消息”
-  const freshAt = o.fresh && SET.gi === 0 && !o.empty ? list.length - 3 - (o.failed ? 1 : 0) : -1;
+  const freshAt = o.fresh && isSample() && !o.empty ? list.length - 3 - (o.failed ? 1 : 0) : -1;
   let rows = '';
   list.forEach((m, i) => {
     const prev = list[i - 1];
@@ -182,7 +183,7 @@ function chatBody(d, o) {
         ? ''
         : `<section class="c-state"><h2>No messages yet</h2><p>Say hi to ${esc(groupName())}. Moments stay sealed, so no spoilers.</p></section>`;
   const older =
-    SET.gi === 0 && !o.empty && !CHAT.older && list.length && conn !== 'error'
+    isSample() && !o.empty && !CHAT.older && list.length && conn !== 'error'
       ? `<button type="button" class="c-older" data-chat-older data-busy="Loading…">Load older messages</button>`
       : '';
   const banner = {
@@ -216,7 +217,7 @@ function chatRedraw(scr, patch = {}) {
   return goTab(scr, 'chat', { ...optsOf(scr), draft, ...patch });
 }
 function sendMsg(scr, text, reply) {
-  const gi = SET.gi;
+  const gi = grp().id;
   const m = { id: 's' + ++CHAT.n, who: SET.me, day: 'Today', at: '9:41 AM', text, st: 'sending' };
   if (reply) m.re = reply;
   (CHAT.sent[gi] ||= []).push(m);
@@ -275,15 +276,17 @@ function filmInfo(n) {
 
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 // 卡片里放的格子：和影片一样，每段一格作者色的光
-const previewFrames = (d) =>
-  d.members.filter((x) => x.c > 0).flatMap((x) => Array.from({ length: x.c }, () => x));
+const previewFrames = (d, n) => {
+  const cast = d.members.filter((x) => x.c > 0);
+  return Array.from({ length: n }, (_, i) => cast[i % cast.length]);
+};
 
 function filmRow(f, d, o) {
   const prompt = PROMPTS[f.prompt];
   const info = `<div class="a-info"><small>Cycle ${f.n} · ${f.dates}</small><b>${prompt}</b><span>${f.m} moments · ${f.len}</span>`;
   // 正在放：卡片撑开成一个播放器，可以暂停、全屏
   if (f.m && o.play === f.n) {
-    const fr = previewFrames(d);
+    const fr = previewFrames(d, f.m);
     const at = o.at ?? 0;
     return (
       `<li class="glass a-film on"><div class="a-pv${o.still ? ' paused' : ''}" role="region" aria-label="Cycle ${f.n} film" data-secs="${f.secs}">` +
@@ -325,7 +328,7 @@ function nowCard(d) {
         .join('') +
       `<span class="a-play">${ic('play')}</span></button>` +
       `<small>Premiere · 18 h left</small><h2>${promptText()}</h2>` +
-      `<p class="a-meta">Cycle ${NOW.n} · ${NOW.dates} · ${plural(d.m, 'moment')} · 2 min 14 s</p>` +
+      `<p class="a-meta">Cycle ${NOW.n} · ${NOW.dates} · ${plural(d.m, 'moment')} · ${filmLen(d.m)}</p>` +
       `<button type="button" class="set-btn primary" data-arc-full="${NOW.n}">${ic('play')}Play</button>` +
       `</section>`
     );
@@ -333,7 +336,12 @@ function nowCard(d) {
   const row = (icon, title, note, bar) =>
     `<section class="glass a-now" role="status"><span class="a-ico">${ic(icon)}</span><div><b>${title}</b><span>${note}</span>${bar ? `<span class="st-bar" aria-hidden="true"><i></i></span>` : ''}</div></section>`;
   if (h === 'developing')
-    return row('clock', `Cycle ${NOW.n} is developing`, 'You can watch it once it’s out.', true);
+    return row(
+      'clock',
+      `Cycle ${isSample() ? NOW.n : grp().no} is developing`,
+      'You can watch it once it’s out.',
+      true,
+    );
   if (h === 'delayed')
     return row(
       'clock',
@@ -345,14 +353,14 @@ function nowCard(d) {
     return row('lock', 'No capsule running', 'Films from earlier cycles stay here.');
   return row(
     'lock',
-    `Cycle ${NOW.n} · collecting`,
+    `Cycle ${isSample() ? NOW.n : grp().no} · collecting`,
     `Opens in ${plural(k.days, 'day')} · sealed until then`,
   );
 }
 
 function archiveBody(d, o) {
   const glow = `<div class="glow" aria-hidden="true"><i></i><i></i><i></i></div><div class="glow-low" aria-hidden="true"></div>`;
-  const first = SET.gi !== 0 || o.first;
+  const first = !isSample() || o.first;
   const films = first ? [] : [...FILMS, ...(ARC.older ? FILMS_OLD : [])];
   const count = films.filter((f) => f.m).length + (NAV.home === 'released' ? 1 : 0);
   const head =
