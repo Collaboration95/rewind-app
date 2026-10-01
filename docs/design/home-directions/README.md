@@ -13,7 +13,7 @@ The page only shows the design and how it behaves. Feedback goes in the team cha
 
 ## Follows the product docs on `dev`
 
-The prototype follows the newest plan, `doc/planning/sprints/sprint-2-user-journey-plan.md` (27 September 2026), and otherwise `doc/planning/proposals/proposal-rewind.md`, `doc/planning/ideation/rewind-product-discovery-handoff.md` and `UX-CONTRACT.md`:
+The prototype follows the newest plan, `doc/planning/sprints/sprint-2-user-journey-plan.md` (27 September 2026), and otherwise `doc/planning/proposals/proposal-rewind.md`, `doc/planning/ideation/rewind-product-discovery-handoff.md` and `UX-CONTRACT.md`. Chat and Archive follow `src/chat/ChatScreen.tsx` and `src/archive/ArchiveScreen.tsx` on `dev`:
 
 - A cycle lasts **4 weeks**, counted from the group's start. The allowance resets every 7 days: **5 moments, 30 seconds in all, 15 seconds each**. Once a week you can delete one moment and retake it.
 - The camera takes **video or a photo**. A video is up to 15 seconds and can be trimmed, with a look picked before sealing; **a photo counts as one moment and 3 seconds** of the film. After sealing, nobody sees it before the film, not even you; you only see when and how long.
@@ -21,19 +21,24 @@ The prototype follows the newest plan, `doc/planning/sprints/sprint-2-user-journ
 - The group has **one owner**, who renames the group, picks the prompt and sends invites that expire. A group has up to 10 people. Anyone can switch group. The Sunday reminder time can be changed, snoozed or turned off.
 - Accounts are made by the Rewind admin: **username and password**, no sign-up. The welcome page has _Sign in_ and a separate _Try Demo_; Demo controls live in Settings, apart from the real account.
 - Home shows the countdown, the prompt, **your own** allowance and this week's moments; it does not show the group total or who is in.
+- **Chat** is one chat per group: text, replies and a ✨ reaction, up to 2,000 characters. No attachments, read receipts, typing indicators, edits or deletes; the proposal leaves those out.
+- **Archive** shows the current cycle's step, then every released film: play it, save it, or save your own moments from that cycle. A cycle that never got a film keeps only its prompt and dates.
+- Home, Chat and Archive all belong to the group you are in.
 
 The retro modes are not designed yet: the prototype keeps the looks `dev` has today (Original, Soft focus, High contrast), picked after recording as in the Sprint 2 plan.
 
 ## Warm Glass
 
-- Header: the group name in the middle and the avatar on the right; the avatar opens Settings.
+- Header: the group name in the middle and the avatar on the right. The group name opens a menu to switch group, join with a code or create one; the avatar opens Settings. Home, Chat and Archive share this header.
 - Home: days until the film, the week of the cycle, and the prompt card with your allowance and this week's moments; tapping the allowance opens _Your moments_.
-- Dock: Home / Chat / Archive are always shown, plus a separate shutter. The shutter's ring shows your 5 moments for the week.
+- Dock: Home / Chat / Archive are always shown, plus a separate shutter on every tab. The shutter's ring shows your 5 moments for the week. Opening Chat clears its unread count; opening Archive clears the new-film dot.
+- Chat: messages from the bottom up, others on the left with their colour, yours in peach on the right. Tap a message to add ✨ or reply. Coming in with unread messages draws a _3 new messages_ line. Reconnecting and offline show as a small pill under the header; a message that didn't send says _Not sent · Retry_.
+- Archive: the current cycle on top (collecting, developing, taking longer, or the premiere with Play and Save film), then _Earlier films_ with Play, Save film and Save your moments, and _Show older films_.
 - The dock, the shutter and the cards use the newer iOS glass look. Text meets WCAG AA contrast on the warm light.
 
 ## Tabs
 
-- **Home**: the phone you can tap. The avatar opens Settings, the shutter opens the camera, your allowance opens _Your moments_ and, during the premiere, _Watch_ opens the film. **Play** resets it: ① you add a moment, ② the 4 weeks end and the film premieres.
+- **Home**: the phone you can tap. The dock switches between Home, Chat and Archive; the group name switches group; the avatar opens Settings, the shutter opens the camera, your allowance opens _Your moments_ and, during the premiere, _Watch_ opens the film. **Play** resets it: ① you add a moment, ② the 4 weeks end and the film premieres.
 - **App icon**: pair Warm Glass (or the scratchpad skin) with an icon and see it on the home screen, the launch screen, in sizes, in a notification and as colours. The default icon is the two dots from the local build. `#mix=c6+r%3Adots` links to a pairing.
 - **States**: every Home state side by side, with when it shows and what the dock does. The buttons add a moment and end the cycle on the Collecting phone. `#states` opens it.
 - **Screens**: the flows around the Home, each step side by side and every phone live. `#screens` opens it.
@@ -42,7 +47,10 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
   - Your moments: metadata only; delete one and retake it, once a week.
   - Record a video: camera and mic access, the viewfinder with moments and seconds left, recording, trim and look, upload with cancel, sealed.
   - Take a photo: the photo mode and a quick look before sealing; it counts 3 seconds.
-  - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast, a main button to talk about it in Chat, and Replay, Save film and Save your own moments.
+  - Switch group: the menu under the group name, and what someone removed from a group sees.
+  - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast, a main button that opens Chat, and Replay, Save film and Save your own moments.
+  - Chat: new messages, tap a message, reply, no messages yet, reconnecting, offline, not sent, couldn't load, and after the premiere.
+  - Archive: collecting, the premiere, developing, the first cycle, a failed save and couldn't load.
 - **Dock icons**: try six icon sets in the dock. `#dock=ios` links to a set.
 
 ## Home states
@@ -59,7 +67,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 | No capsule · owner  | Tabs only; the owner can start one                                    |
 | No capsule · member | Tabs only; waiting for the owner                                      |
 | Failed to load      | Tabs only; Try again is on the page                                   |
-| No access           | No dock: chat and archive belong to the group too                     |
+| No access           | No dock: chat and archive belong to the group too; pick another group |
 
 ## Sidebar
 
@@ -76,6 +84,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 | `app.js`                                                 | Synthetic data, the Warm Glass Home, dock, shutter and motion         |
 | `states.js`, `styles-states.css`                         | Home states and the States tab                                        |
 | `screens.js`, `styles-screens.css`                       | Sign in, Settings, Your moments, the camera and the film; Screens tab |
+| `tabs.js`, `styles-tabs.css`                             | Chat, Archive and the group menu                                      |
 | `mix.js`, `styles-mix.css`, `icons.js`                   | App icon tab and the icon candidates as SVG                           |
 | `dockicons.js`, `styles-dock.css`                        | Dock icons tab                                                        |
 | `i18n.js`                                                | English and Chinese text for the page                                 |

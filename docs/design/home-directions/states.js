@@ -47,6 +47,7 @@ function stateCopy() {
       title: 'You’re not in this group',
       body: 'Ask a friend to invite you again.',
       action: 'Choose another group',
+      pick: true,
     },
     // 下面几种是首页上方的一张状态卡
     failed: {
@@ -114,7 +115,7 @@ function stateBody(c, d) {
     `<section class="st" aria-live="polite">${motif()}` +
     `<h2 class="st-h">${s.title}</h2><p class="st-p">${s.body}</p>` +
     (s.action
-      ? `<button type="button" class="st-btn"${s.retry ? ' data-st-retry' : ''}>${s.action}</button>`
+      ? `<button type="button" class="st-btn"${s.retry ? ' data-st-retry' : ''}${s.pick ? ' data-gm-open' : ''}>${s.action}</button>`
       : '') +
     `</section>`
   );
@@ -128,6 +129,7 @@ function shutterOff() {
 // 切换首页状态：顺带把快门状态对上
 function setHome(v) {
   NAV.home = HOME_STATES.includes(v) ? v : 'collect';
+  SEEN.archive = false;
   NAV.shutter = shutterOf(NAV.home);
   if ($('state')) $('state').value = NAV.home;
   if ($('shutter-state')) $('shutter-state').value = NAV.shutter;

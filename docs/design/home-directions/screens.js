@@ -151,7 +151,7 @@ const promptPicker = (sel) => {
   );
 };
 
-function settingsHTML(d, step) {
+function settingsHTML(d, step, o = {}) {
   const me = POOL[SET.me];
   const full = d.n >= 10;
   const owner = isOwner();
@@ -236,7 +236,7 @@ function settingsHTML(d, step) {
       `<button type="button" class="set-btn" data-set-toast="code">${ic('copy')}Copy code</button></div>` +
       `<p class="set-foot">${d.n} of 10 members in ${groupName()}</p>`,
     join: () =>
-      setHead('Have an invite?') +
+      setHead('Have an invite?', o.back) +
       `<p class="set-lead">Enter the 8-character code a friend sent you.</p>` +
       `<label class="glass set-field"><span>Invite code</span><input data-set-code maxlength="9" placeholder="8-character code" autocomplete="off" autocapitalize="characters" spellcheck="false" /></label>` +
       `<p class="set-err" role="alert"></p>` +
@@ -247,7 +247,7 @@ function settingsHTML(d, step) {
       `<p class="set-note">The code is now used.</p></section>` +
       `<button type="button" class="set-btn primary" data-sub-back>Go to the group</button>`,
     create: () =>
-      setHead('New group') +
+      setHead('New group', o.back) +
       `<label class="glass set-field"><span>Group name</span><input data-set-name maxlength="80" placeholder="e.g. Saturday table" autocomplete="off" /></label>` +
       `<p class="set-k">Prompt</p>${promptPicker(0)}` +
       `<p class="set-err" role="alert"></p>` +
@@ -379,7 +379,7 @@ function cameraHTML(d, mode, step, o = {}) {
 
 /* ---------- 首映影片：直接放，24 小时内各自看 ----------
    data-step：play | end */
-function filmHTML(d) {
+function filmHTML(d, o = {}) {
   const who = d.members.filter((x) => x.c > 0);
   const moments = who.flatMap((x) => Array.from({ length: x.c }, () => x));
   // 片子偏短时，第 3 格用一段标着 From the archive 的旧片段补位
@@ -389,7 +389,7 @@ function filmHTML(d) {
     // 补位的旧片段在放的时候，角上标出来（标签不放在模糊的画面里）
     `<span class="fm-tag">From the archive</span>` +
     `<div class="fm-top"><button type="button" class="cam-ic" data-sub-back aria-label="Close">${ic('close')}</button>` +
-    `<span class="fm-title">${groupName()}<small>Premiere · 18 h left</small></span><span class="cam-ic cam-ph" aria-hidden="true"></span></div>` +
+    `<span class="fm-title">${groupName()}<small>${o.film && typeof filmInfo === 'function' ? filmInfo(o.film) : 'Premiere · 18 h left'}</small></span><span class="cam-ic cam-ph" aria-hidden="true"></span></div>` +
     // 放映中
     `<div class="fm-bar" aria-hidden="true">${moments.map(() => '<i><b></b></i>').join('')}</div>` +
     `<div class="fm-ctl"><button type="button" class="glass-btn" data-fm-chat>${ic('chat')}Talk about it</button>` +
@@ -409,16 +409,21 @@ function filmHTML(d) {
 /* ---------- 画一台“子画面”手机 ---------- */
 function subScreen(kind, id, o = {}) {
   const d = dataFor(id);
+  // 底栏的三页：按 o.home 的状态画一台完整的手机（画面页用）
+  if (['home', 'chat', 'archive'].includes(kind)) {
+    const c = concepts.find((x) => x.id === id);
+    return withHome(o.home || 'collect', () => screen(c, d, kind, o));
+  }
   const step =
     o.step ||
     { signin: 'welcome', settings: 'main', mine: 'list', camera: 'view', film: 'play' }[kind];
   const mode = o.mode || 'video';
   const body = {
     signin: () => signinHTML(step),
-    settings: () => settingsHTML(d, step),
+    settings: () => settingsHTML(d, step, o),
     mine: () => mineHTML(d, step),
     camera: () => cameraHTML(d, mode, step, o),
-    film: () => filmHTML(d),
+    film: () => filmHTML(d, o),
   }[kind]();
   const dark = kind === 'camera' || kind === 'film';
   return (
@@ -434,6 +439,10 @@ function openSub(scr, kind, o = {}) {
   if (!wrap) return;
   stopTimers(scr);
   wrap.dataset.from = 'home';
+  if (scr.dataset.tab) {
+    wrap.dataset.tab = scr.dataset.tab;
+    wrap.dataset.home = scr.dataset.home;
+  }
   wrap.innerHTML = subScreen(kind, id, o);
   const ns = wrap.querySelector('.screen');
   ns.classList.add('sub-in');
@@ -801,7 +810,13 @@ document.addEventListener('click', (e) => {
     return startFilm(scr);
   }
   if (d.fmSave) return rvToast(t('scr.toast.save.' + d.fmSave));
-  if ('fmChat' in d) return rvToast(t('scr.toast.chat'));
+  if ('fmChat' in d) {
+    const wrap = scr.closest('.phone-wrap');
+    wrap.dataset.tab = 'chat';
+    wrap.dataset.from = 'home';
+    if (SET.gi === 0) SEEN.chat = true;
+    return closeSub(scr);
+  }
 });
 
 // Try Demo 的面板也可以往上拖开、往下拖收起
@@ -877,6 +892,14 @@ const FLOWS = [
     ],
   ],
   [
+    'group',
+    'home',
+    [
+      ['menu', { menu: true }],
+      ['denied', { home: 'denied', menu: true }],
+    ],
+  ],
+  [
     'mine',
     'mine',
     [
@@ -911,6 +934,33 @@ const FLOWS = [
       ['play', { step: 'play' }],
       ['filler', { step: 'play', at: 2 }],
       ['end', { step: 'end' }],
+    ],
+  ],
+  [
+    'chat',
+    'chat',
+    [
+      ['ready', { fresh: true }],
+      ['react', { acts: 'm6' }],
+      ['reply', { reply: 'm6', draft: 'Me! Bring snacks' }],
+      ['empty', { empty: true }],
+      ['reconnecting', { conn: 'reconnecting' }],
+      ['offline', { conn: 'offline', draft: 'See you Saturday' }],
+      ['failed', { failed: true }],
+      ['error', { conn: 'error' }],
+      ['film', { home: 'released' }],
+    ],
+  ],
+  [
+    'arc',
+    'archive',
+    [
+      ['collect', {}],
+      ['released', { home: 'released' }],
+      ['developing', { home: 'developing' }],
+      ['first', { first: true }],
+      ['fail', { saveFail: true }],
+      ['error', { home: 'error' }],
     ],
   ],
 ];

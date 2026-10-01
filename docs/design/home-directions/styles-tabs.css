@@ -1,0 +1,765 @@
+/* ============ 底栏另外两页：聊天、档案；页头的组名菜单（见 tabs.js） ============ */
+
+/* ---------- 组名菜单：从组名下面落下的一块玻璃 ---------- */
+.gnav .grp .ic {
+  transition: transform 0.2s;
+}
+.gnav .grp[aria-expanded='true'] .ic {
+  transform: rotate(180deg);
+}
+.gm-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+}
+.c6 .glass.gm {
+  position: absolute;
+  z-index: 9;
+  top: 108px;
+  left: 50%;
+  width: 264px;
+  margin-left: -132px;
+  padding: 6px;
+  border-radius: 24px;
+  /* 压在大数字上面也要读得清：比别处的玻璃实一些 */
+  background: linear-gradient(170deg, rgba(255, 251, 246, 0.94), rgba(255, 246, 236, 0.84));
+  transform-origin: 50% 0;
+  animation: gm-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes gm-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.95);
+  }
+}
+.gm-k {
+  margin: 10px 12px 6px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.gm-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 18px;
+  font-size: 15px;
+  text-align: left;
+  color: var(--ink);
+}
+.gm-row span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gm-row .ic {
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+}
+.gm-row .ic.sel {
+  color: #b4521f;
+}
+.gm-row[aria-checked='true'] {
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: inset 0 1px 1px #fff;
+}
+.gm-row.off {
+  min-height: 52px;
+  color: var(--muted);
+}
+.gm-row.off span {
+  white-space: normal;
+}
+/* 玻璃卡片里的 small 默认是大写小标签，这里换回普通小字 */
+.c6 .glass .gm-row small {
+  display: block;
+  margin-top: 1px;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #8f2615;
+}
+.gm hr {
+  margin: 6px 10px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- 聊天 ---------- */
+/* 暖光固定在背后，不跟着消息滚 */
+.c-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.c-bg .glow {
+  top: 240px;
+}
+/* 页头固定在上面；消息从底部往上排（column-reverse 让它一打开就停在最新一条） */
+.c-head {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 56px 22px 14px;
+  /* 消息滚到页头下面时糊掉，边缘渐隐 */
+  background: rgba(246, 237, 227, 0.78);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-mask-image: linear-gradient(#000 80%, transparent);
+  mask-image: linear-gradient(#000 80%, transparent);
+}
+.c-head .top {
+  margin-bottom: 0;
+}
+.tab-chat .scroll {
+  display: flex;
+  flex-direction: column-reverse;
+  padding: 0 16px;
+}
+/* 上下留白放在里层：倒序滚动的容器不认自己底部的 padding */
+.c-list {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-height: 100%;
+  padding: 122px 0 196px;
+}
+/* 消息多了也不要被压扁 */
+.c-list > * {
+  flex-shrink: 0;
+}
+/* 有连接提示时上面多留一点；回复时输入框上面多一条 */
+.c-list.conn {
+  padding-top: 156px;
+}
+.c-list.re {
+  padding-bottom: 244px;
+}
+.c-day {
+  align-self: center;
+  margin: 20px 0 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.55);
+}
+/* 带着未读进来：新消息从这里开始 */
+.c-new {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 4px 2px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #96390f;
+}
+.c-new::before,
+.c-new::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(224, 112, 58, 0.45);
+}
+.c-older {
+  align-self: center;
+  height: 34px;
+  margin: 4px 0 4px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow:
+    inset 0 1px 1px #fff,
+    0 4px 10px -6px rgba(150, 80, 30, 0.4);
+}
+
+/* 一条消息：别人的在左边（同一人连着发只在第一条带头像和名字），你的在右边是蜜桃色 */
+.msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 3px;
+}
+.msg.first {
+  margin-top: 12px;
+}
+.msg.own {
+  justify-content: flex-end;
+}
+.screen .av.cav,
+.cav {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: 18px 0 0;
+  font-size: 12px;
+}
+.cav.sp {
+  margin-top: 0;
+  height: 0;
+}
+.mcol {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  max-width: 262px;
+}
+.msg.own .mcol {
+  align-items: flex-end;
+}
+.mmeta {
+  margin: 0 6px 3px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.mmeta b {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.bub {
+  display: block;
+  max-width: 100%;
+  padding: 9px 13px;
+  border-radius: 20px 20px 20px 7px;
+  text-align: left;
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow:
+    inset 0 1px 1px #fff,
+    0 4px 12px -8px rgba(150, 80, 30, 0.4);
+  transition: box-shadow 0.2s;
+}
+.msg.own .bub {
+  border-radius: 20px 20px 7px 20px;
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffdcbc, #ffbf94);
+}
+.msg.open .bub {
+  box-shadow:
+    0 0 0 2px rgba(224, 112, 58, 0.55),
+    0 6px 16px -8px rgba(150, 80, 30, 0.45);
+}
+/* 回复：气泡里先引一小段原消息 */
+.bq {
+  display: block;
+  margin: 0 0 6px;
+  padding: 5px 9px;
+  border-left: 2px solid var(--accent);
+  border-radius: 6px 10px 10px 6px;
+  font-size: 12.5px;
+  line-height: 1.3;
+  color: var(--muted);
+  background: rgba(246, 237, 227, 0.7);
+}
+.msg.own .bq {
+  color: rgba(42, 26, 16, 0.8);
+  background: rgba(255, 255, 255, 0.45);
+}
+.bq b {
+  display: block;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* ✨ 的数量：贴在气泡下沿，点一下加上 / 去掉你的 */
+.rx {
+  position: relative;
+  z-index: 1;
+  margin: -6px 10px 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--ink);
+  background: #fffaf5;
+  box-shadow:
+    inset 0 0 0 1px rgba(51, 35, 26, 0.1),
+    0 2px 6px -2px rgba(150, 80, 30, 0.35);
+}
+.rx.on {
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent),
+    0 2px 6px -2px rgba(150, 80, 30, 0.35);
+}
+/* 点一下消息才出现的两个操作 */
+.macts {
+  display: none;
+  gap: 6px;
+  margin-top: 6px;
+}
+.msg.open .macts {
+  display: flex;
+  animation: gm-in 0.18s ease-out both;
+}
+.macts button {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 0 0 0 1px rgba(51, 35, 26, 0.08),
+    0 4px 10px -6px rgba(150, 80, 30, 0.45);
+}
+.macts [aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.msg.sending .bub {
+  opacity: 0.6;
+}
+.mst {
+  margin: 3px 6px 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.msg.failed .bub {
+  box-shadow: inset 0 0 0 1.5px rgba(143, 38, 21, 0.55);
+}
+.mfail {
+  margin: 4px 4px 0;
+  min-height: 28px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #8f2615;
+}
+/* 重新连接 / 离线：页头下面一颗小胶囊，不挡消息 */
+.c-conn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: 100%;
+  margin: 2px auto 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow:
+    inset 0 1px 1px #fff,
+    0 4px 12px -6px rgba(150, 80, 30, 0.4);
+}
+.c-conn i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(51, 35, 26, 0.4);
+}
+.c-conn .spin {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(51, 35, 26, 0.18);
+  border-top-color: var(--accent);
+  background: none;
+  animation: c-spin 0.9s linear infinite;
+}
+@keyframes c-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* 没有消息 / 读不出来：在中间说一句 */
+.c-state {
+  margin: auto 18px;
+  padding-bottom: 30px;
+  text-align: center;
+}
+.c-state h2 {
+  margin: 0 0 6px;
+  font: 400 24px/1.15 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.c-state p {
+  margin: 0 auto;
+  max-width: 260px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.c-state .set-btn {
+  width: auto;
+  margin: 18px auto 0;
+  padding: 0 26px;
+}
+/* 输入框：浮在底栏上面的一条玻璃 */
+.cmp {
+  position: absolute;
+  z-index: 7;
+  left: 16px;
+  right: 16px;
+  bottom: 116px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.c6 .glass.cmp-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 5px 5px 5px 18px;
+  border-radius: 26px;
+  background: linear-gradient(170deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.5));
+}
+.c6 .glass.cmp-row:focus-within {
+  box-shadow:
+    inset 0 1px 1px #fff,
+    0 0 0 2px rgba(224, 112, 58, 0.6),
+    0 14px 30px -16px rgba(160, 90, 40, 0.4);
+}
+.cmp-row textarea {
+  flex: 1;
+  height: 42px;
+  max-height: 96px;
+  padding: 11px 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  font: 15px/1.35 var(--f-body);
+  color: var(--ink);
+  background: none;
+}
+.cmp-row textarea::placeholder {
+  color: var(--muted);
+}
+.cmp-send {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffd2a6, #ff9f6b);
+  box-shadow: 0 6px 14px -8px rgba(224, 112, 58, 0.9);
+}
+.cmp-send:disabled {
+  color: rgba(51, 35, 26, 0.4);
+  background: rgba(51, 35, 26, 0.07);
+  box-shadow: none;
+}
+.cmp-send .ic {
+  width: 20px;
+  height: 20px;
+}
+.c6 .glass.cmp-re {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 18px;
+  font-size: 12.5px;
+}
+.cmp-re span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.cmp-re b {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.cmp-re button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+.cmp-re .ic {
+  width: 16px;
+  height: 16px;
+}
+.cmp-n {
+  align-self: flex-end;
+  margin-right: 14px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+/* ---------- 档案 ---------- */
+.a-h {
+  margin: 4px 6px 18px;
+}
+.a-h h1 {
+  margin: 0;
+  font: 400 34px/1.05 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+  letter-spacing: -0.01em;
+}
+.a-h p {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+/* 这一期在哪一步：一行玻璃 */
+.c6 .glass.a-now {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px 14px 14px;
+  border-radius: 24px;
+}
+.a-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9);
+}
+.a-ico .ic {
+  width: 20px;
+  height: 20px;
+}
+.a-now > div {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.a-now b {
+  font-size: 15px;
+  font-weight: 600;
+}
+.a-now div > span:not(.st-bar) {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.a-now .st-bar {
+  width: 100%;
+}
+/* 首映中：一张大卡，封面是每人一格的光 */
+.c6 .glass.a-prem {
+  padding: 10px 10px 14px;
+  border-radius: 30px;
+}
+.a-poster {
+  position: relative;
+  display: flex;
+  gap: 3px;
+  width: 100%;
+  height: 156px;
+  overflow: hidden;
+  border-radius: 22px;
+  background: #1c120c;
+}
+.a-fr {
+  flex: 1;
+  background:
+    radial-gradient(70% 45% at var(--x) var(--y), var(--b), transparent 72%),
+    radial-gradient(
+      80% 60% at 50% 100%,
+      color-mix(in srgb, var(--a) 85%, transparent),
+      transparent 75%
+    ),
+    linear-gradient(160deg, #2c1a11, #120b08);
+  filter: saturate(1.15);
+}
+.a-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin: -29px 0 0 -29px;
+  border-radius: 50%;
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffd2a6, #ff9f6b);
+  box-shadow: 0 10px 24px -8px rgba(0, 0, 0, 0.55);
+}
+.a-play .ic {
+  width: 24px;
+  height: 24px;
+  margin-left: 3px;
+  fill: currentColor;
+}
+.c6 .a-prem small {
+  display: block;
+  margin: 14px 8px 0;
+}
+.c6 .glass.a-prem h2 {
+  max-width: none;
+  margin: 6px 8px 4px;
+  font-size: 22px;
+}
+.a-meta {
+  margin: 0 8px 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.a-acts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.a-acts .set-btn {
+  height: 48px;
+}
+.a-link {
+  display: block;
+  min-height: 40px;
+  margin: 6px auto 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* 以前的影片 */
+.a-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.c6 .glass.a-film {
+  display: flex;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 24px;
+}
+.a-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 112px;
+  overflow: hidden;
+  border-radius: 16px;
+  color: #fff;
+  background:
+    radial-gradient(60% 40% at 30% 30%, var(--b), transparent 70%),
+    radial-gradient(70% 50% at 70% 80%, var(--c), transparent 70%), var(--a);
+}
+.a-thumb .ic {
+  width: 26px;
+  height: 26px;
+  margin-left: 3px;
+  fill: rgba(255, 255, 255, 0.95);
+  stroke: none;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
+}
+.a-thumb.off {
+  color: var(--muted);
+  background: rgba(51, 35, 26, 0.06);
+}
+.a-thumb.off .ic {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  fill: none;
+  stroke: currentColor;
+  filter: none;
+}
+.a-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 2px;
+}
+.a-info b {
+  font: 400 17px/1.2 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.a-info > span {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.a-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+.a-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 12px 0 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow:
+    inset 0 1px 1px #fff,
+    inset 0 0 0 1px rgba(255, 255, 255, 0.8),
+    0 4px 10px -6px rgba(150, 80, 30, 0.4);
+}
+.a-pill .ic {
+  width: 15px;
+  height: 15px;
+}
+.a-err {
+  margin: 10px 6px 0;
+  font-size: 12.5px;
+  color: #8f2615;
+}
+.set-btn.a-older {
+  margin-top: 14px;
+}
+.a-first {
+  margin: 26px 12px 0;
+  text-align: center;
+}
+.a-first h2 {
+  margin: 0 0 6px;
+  font: 400 22px/1.15 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.a-first p {
+  margin: 0 auto;
+  max-width: 270px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.c-state.a-state {
+  margin-top: 60px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .c6 .glass.gm,
+  .msg.open .macts,
+  .c-conn .spin {
+    animation: none;
+  }
+}

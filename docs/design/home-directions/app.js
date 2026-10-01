@@ -118,6 +118,10 @@ const statusBar = () =>
 
 /* ---------- 底栏：玻璃底栏 + 快门状态 + 角标 ---------- */
 const NAV = { shutter: 'collect', unread: true, home: 'collect' };
+// 看过的角标：打开聊天后未读消失，打开档案后“新影片”的点消失
+const SEEN = { chat: false, archive: false };
+// 未读只在第一个小组（样例对话在那里）；看过就没了
+const unreadNow = () => NAV.unread && !SEEN.chat && (typeof SET === 'undefined' || SET.gi === 0);
 
 function shutter(d) {
   const left = 5 - d.me.c;
@@ -151,28 +155,28 @@ function shutter(d) {
   );
 }
 
-function dock(d) {
+function dock(d, at = 'home') {
   // 不在这个小组里：聊天、档案、快门都属于这个小组，整个底栏不显示
   if (NAV.home === 'denied') return '';
+  const unread = unreadNow() && at !== 'chat';
+  const film = NAV.home === 'released' && !SEEN.archive && at !== 'archive';
   const tabs = [
     ['home', 'Home', '', ''],
-    ['chat', 'Chat', NAV.unread ? '<i class="badge">3</i>' : '', NAV.unread ? ', 3 unread' : ''],
-    [
-      'archive',
-      'Archive',
-      NAV.home === 'released' ? '<i class="badge dot"></i>' : '',
-      NAV.home === 'released' ? ', new film' : '',
-    ],
+    ['chat', 'Chat', unread ? '<i class="badge">3</i>' : '', unread ? ', 3 unread' : ''],
+    ['archive', 'Archive', film ? '<i class="badge dot"></i>' : '', film ? ', new film' : ''],
   ];
-  const tab = ([k, l, badge, extra], on) =>
-    `<button type="button" class="tab${on ? ' on' : ''}" aria-label="${l}${extra}"${on ? ' aria-current="page"' : ''}><span class="ico">${ic(k)}${badge}</span><span class="tlbl">${l}</span></button>`;
-  // 三个页签一直展开（Home / Chat / Archive），快门单独一颗
-  return `<nav class="dock dock-g open" aria-label="Main navigation"><div class="tabs">${tabs.map((x, i) => tab(x, i === 0)).join('')}</div>${shutter(d)}</nav>`;
+  const tab = ([k, l, badge, extra]) =>
+    `<button type="button" class="tab${k === at ? ' on' : ''}" data-tab-go="${k}" aria-label="${l}${extra}"${k === at ? ' aria-current="page"' : ''}><span class="ico">${ic(k)}${badge}</span><span class="tlbl">${l}</span></button>`;
+  // 三个页签一直展开（Home / Chat / Archive），快门单独一颗，在每一页都在
+  return `<nav class="dock dock-g open" aria-label="Main navigation"><div class="tabs">${tabs.map(tab).join('')}</div>${shutter(d)}</nav>`;
 }
 
 const acting = () => (typeof SET === 'undefined' ? POOL[0] : POOL[SET.me]);
 const me = () =>
   `<button type="button" class="me" aria-label="${acting().name} · settings"><span class="avatar">${acting().name[0]}</span></button>`;
+// 页头：组名在正中，点开切换小组（见 tabs.js）；头像在右上，进设置
+const topBar = () =>
+  `<header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp" aria-haspopup="menu" aria-expanded="false" aria-label="${typeof groupName === 'function' ? groupName() : 'Group name'} · switch group">${typeof groupName === 'function' ? groupName() : 'Group name'} ${ic('chev')}</button>${me()}</header>`;
 
 const bars = (cls, used, total = 5) =>
   `<div class="${cls}" aria-hidden="true">${Array.from({ length: total }, (_, i) => `<i${i < used ? ' class="on"' : ''}></i>`).join('')}</div>`;
@@ -200,7 +204,7 @@ const bodies = {
     return `
     <div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>
     <div class="glow-low" aria-hidden="true"></div>
-    <header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp">${typeof groupName === 'function' ? groupName() : 'Group name'} ${ic('chev')}</button>${me()}</header>
+    ${topBar()}
     ${o.card || ''}
     <section class="hero${o.card ? ' slim' : ''}" aria-label="${plural(k.days, 'day')} until the film">
       <b>${k.days}</b>
@@ -238,8 +242,23 @@ const concepts = [
 const nameOf = (c) => (LANG === 'zh' ? c.zh : c.en);
 const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 
-const screen = (c, d) =>
-  `<div class="device"><div class="screen ${c.id} gnav nav-g sh-${NAV.shutter} st-${NAV.home}">${statusBar()}<div class="scroll">${NAV.home === 'collect' ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+// tab：底栏的哪一页（home | chat | archive，后两页见 tabs.js）；o：这一页的演示参数，画面页用
+const screen = (c, d, tab = 'home', o = {}) => {
+  const body =
+    tab !== 'home' && typeof tabBody === 'function'
+      ? tabBody(tab, d, o)
+      : `<div class="scroll">${NAV.home === 'collect' ? bodies[c.id](d) : stateBody(c, d)}</div>`;
+  const menu = o.menu && typeof groupMenu === 'function' ? groupMenu(NAV.home) : '';
+  return `<div class="device"><div class="screen ${c.id} gnav nav-g sh-${NAV.shutter} st-${NAV.home} tab-${tab}" data-tab="${tab}" data-home="${NAV.home}" data-o="${encodeURIComponent(JSON.stringify(o))}">${statusBar()}${body}${dock(d, tab)}${menu}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+};
+// 读回这台手机的演示参数
+const optsOf = (scr) => {
+  try {
+    return JSON.parse(decodeURIComponent(scr.dataset.o || '%7B%7D'));
+  } catch {
+    return {};
+  }
+};
 
 // 每台手机的演示数据（播放 / 按快门只改这一台；重置即删除）
 const STORY = {};
@@ -252,10 +271,23 @@ function renderCard(id, from) {
   const card = from?.closest('.card') || document.querySelector(`.card[data-id="${id}"]`);
   const wrap = card?.querySelector('.phone-wrap');
   if (c && wrap) {
-    const draw = () => screen(c, dataFor(id));
-    wrap.innerHTML = card.closest('#states-view') ? withHome('collect', draw) : draw();
+    const home = wrap.dataset.home || (card.closest('#states-view') ? 'collect' : NAV.home);
+    const draw = () => screen(c, dataFor(id), wrap.dataset.tab || 'home');
+    wrap.innerHTML = home === NAV.home ? draw() : withHome(home, draw);
   }
   return wrap?.querySelector('.screen');
+}
+// 同一台手机换页签，或带着新参数重画这一页；这台手机的状态不变
+function goTab(scr, tab = scr.dataset.tab, o = {}) {
+  const wrap = scr.closest('.phone-wrap');
+  const id = scr.classList[1];
+  const c = concepts.find((x) => x.id === id);
+  const home = scr.dataset.home;
+  wrap.dataset.tab = tab;
+  wrap.dataset.home = home;
+  const draw = () => screen(c, dataFor(id), tab, o);
+  wrap.innerHTML = home === NAV.home ? draw() : withHome(home, draw);
+  return wrap.querySelector('.screen');
 }
 const clearStories = () => Object.keys(STORY).forEach((k) => delete STORY[k]);
 
@@ -425,6 +457,11 @@ function resetCard(id) {
   (TIMERS[id] || []).forEach(clearTimeout);
   TIMERS[id] = [];
   delete STORY[id];
+  const w = document.querySelector(`.card[data-id="${id}"] .phone-wrap`);
+  if (w) {
+    delete w.dataset.tab;
+    delete w.dataset.home;
+  }
   renderCard(id);
   setStep(id, '');
 }
@@ -462,13 +499,18 @@ document.addEventListener('click', (e) => {
   if (t.classList.contains('me')) return openSub(scr, 'settings');
   if (t.classList.contains('wt')) return openSub(scr, 'film');
   if (t.hasAttribute('data-open-mine')) return openSub(scr, 'mine');
-  if (t.classList.contains('tab')) {
-    t.parentElement.querySelectorAll('.tab').forEach((b) => {
-      b.classList.toggle('on', b === t);
-      if (b === t) b.setAttribute('aria-current', 'page');
-      else b.removeAttribute('aria-current');
-    });
-    return;
+  // 底栏页签：首页、聊天、档案（聊天和档案见 tabs.js）
+  if (t.dataset.tabGo) {
+    const k = t.dataset.tabGo;
+    if (k === scr.dataset.tab) return;
+    const o = {};
+    // 带着未读进聊天：在新消息前面画一条“3 条新消息”
+    if (k === 'chat' && unreadNow()) {
+      o.fresh = true;
+      SEEN.chat = true;
+    }
+    if (k === 'archive' && scr.dataset.home === 'released') SEEN.archive = true;
+    return goTab(scr, k, o);
   }
   if (t.classList.contains('shutter')) {
     // 用不了的快门：轻晃一下表示“不行”，再在快门上方短暂说明原因
@@ -492,6 +534,7 @@ $('shutter-state').addEventListener('change', (e) => {
 });
 $('unread').addEventListener('change', (e) => {
   NAV.unread = e.target.checked;
+  SEEN.chat = false;
   render();
 });
 $('members').addEventListener('input', (e) => {

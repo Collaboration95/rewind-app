@@ -25,6 +25,7 @@
     <link rel="stylesheet" href="styles-glass.css" />
     <link rel="stylesheet" href="styles-dock.css" />
     <link rel="stylesheet" href="styles-screens.css" />
+    <link rel="stylesheet" href="styles-tabs.css" />
     <script defer src="i18n.js"></script>
     <script defer src="app.js"></script>
     <script defer src="icons.js"></script>
@@ -32,6 +33,7 @@
     <script defer src="states.js"></script>
     <script defer src="dockicons.js"></script>
     <script defer src="screens.js"></script>
+    <script defer src="tabs.js"></script>
   </head>
   <body>
     <!-- 图标共用的滤镜：让字母和笔画的边缘有手绘感 -->
@@ -77,7 +79,8 @@
             <li data-i18n="tap.shutter"><b>Shutter</b>: record a video or take a photo</li>
             <li data-i18n="tap.mine"><b>Your allowance</b>, in the prompt card: your moments</li>
             <li data-i18n="tap.avatar"><b>Avatar</b>: settings</li>
-            <li data-i18n="tap.dock"><b>Dock</b>: switch tabs</li>
+            <li data-i18n="tap.dock"><b>Dock</b>: Home, Chat and Archive</li>
+            <li data-i18n="tap.grp"><b>Group name</b>: switch group</li>
           </ul>
         </div>
 
@@ -141,7 +144,7 @@
       </aside>
 
       <main>
-        <span class="ver" title="Page version">v3.3</span>
+        <span class="ver" title="Page version">v3.4</span>
         <nav class="view-tabs" data-i18n-aria="tab.aria" aria-label="Page">
           <button type="button" data-view="home" aria-pressed="true" data-i18n="tab.home">
             Home</button
