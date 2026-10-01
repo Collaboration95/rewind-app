@@ -438,7 +438,10 @@ function ActiveAppShell({
       if (timeout) clearTimeout(timeout);
     };
     const handleFocusIn = (event: FocusEvent) => {
-      if (event.target !== focusedHeading) stopObserving();
+      // A loading route can temporarily return focus to body when its heading
+      // is replaced. Keep observing that transition, but respect focus moving
+      // to another interactive element.
+      if (event.target !== focusedHeading && event.target !== document.body) stopObserving();
     };
     timeout = setTimeout(stopObserving, 5000);
     document.addEventListener('focusin', handleFocusIn);
@@ -593,13 +596,17 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
+  const registrationPasswordRef = useRef<ElementRef<typeof TextInput>>(null);
+  const registrationConfirmationRef = useRef<ElementRef<typeof TextInput>>(null);
   const [authPending, setAuthPending] = useState(false);
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [registrationError, setRegistrationError] = useState<
     'invalid' | 'duplicate' | 'rate-limited' | 'unavailable' | 'password-mismatch' | null
   >(null);
+  const [selectedDemoMemberId, setSelectedDemoMemberId] = useState<string | null>(null);
   const visibleMode = mode;
   const demoAccessEnabled = isDemoAccessEnabled();
+  const canRetryDemoStart = visibleMode === 'demo' && selectedDemoMemberId !== null;
 
   useEffect(() => {
     let mounted = true;
@@ -669,6 +676,16 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   };
 
   const submitRegistration = async () => {
+    if (
+      authPending ||
+      registrationComplete ||
+      !username.trim() ||
+      !password ||
+      !passwordConfirmation ||
+      !auth.secureTransportAvailable
+    ) {
+      return;
+    }
     setRegistrationError(null);
     if (password !== passwordConfirmation) {
       setRegistrationError('password-mismatch');
@@ -684,6 +701,11 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
       return;
     }
     setRegistrationError(outcome);
+  };
+
+  const startDemo = (memberId: string) => {
+    setSelectedDemoMemberId(memberId);
+    void chooseMember(memberId);
   };
 
   const registrationMessage = registrationComplete
@@ -706,12 +728,15 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     <SafeAreaFrame>
       <Animated.ScrollView
         automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
-        contentContainerStyle={styles.entryContent}
+        contentContainerStyle={[
+          styles.entryContent,
+          visibleMode === 'welcome' && styles.welcomeEntryContent,
+        ]}
         keyboardShouldPersistTaps="handled"
         style={{ transform: [{ translateY: entryOffset }] }}
         testID="entry-mode-content"
       >
-        <View style={styles.entryBrand}>
+        <View style={styles.entryBrand} testID="entry-brand">
           <View style={styles.brandLockup}>
             <Image
               accessibilityLabel="Rewind mark"
@@ -767,8 +792,10 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               autoCapitalize="none"
               autoComplete="username"
               autoCorrect={false}
+              blurOnSubmit={false}
               editable={!authPending && !registrationComplete}
               onChangeText={setUsername}
+              onSubmitEditing={() => registrationPasswordRef.current?.focus()}
               returnKeyType="next"
               style={styles.authInput}
               testID="registration-username"
@@ -782,8 +809,11 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               accessibilityLabel="Password"
               autoCapitalize="none"
               autoComplete="new-password"
+              blurOnSubmit={false}
               editable={!authPending && !registrationComplete}
               onChangeText={setPassword}
+              onSubmitEditing={() => registrationConfirmationRef.current?.focus()}
+              ref={registrationPasswordRef}
               returnKeyType="next"
               secureTextEntry
               style={styles.authInput}
@@ -801,6 +831,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               editable={!authPending && !registrationComplete}
               onChangeText={setPasswordConfirmation}
               onSubmitEditing={() => void submitRegistration()}
+              ref={registrationConfirmationRef}
               returnKeyType="go"
               secureTextEntry
               style={styles.authInput}
@@ -985,7 +1016,10 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               <Pressable
                 accessibilityRole="button"
                 disabled={authPending}
-                onPress={() => setMode('demo')}
+                onPress={() => {
+                  setSelectedDemoMemberId(null);
+                  setMode('demo');
+                }}
                 style={({ pressed }) => [
                   styles.primaryEntryButton,
                   authPending && styles.disabledChoice,
@@ -1024,7 +1058,10 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             </Text>
             <Pressable
               accessibilityRole="button"
-              onPress={() => setMode('sign-in')}
+              onPress={() => {
+                setSelectedDemoMemberId(null);
+                setMode('sign-in');
+              }}
               style={({ pressed }) => [
                 styles.entryActionButton,
                 ...interactionFeedback({ pressed }),
@@ -1046,10 +1083,20 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             </Text>
             <Pressable
               accessibilityRole="button"
-              onPress={retryRestore}
+              disabled={pending || authPending}
+              onPress={() => {
+                if (canRetryDemoStart && selectedDemoMemberId) {
+                  void chooseMember(selectedDemoMemberId);
+                } else {
+                  retryRestore();
+                }
+              }}
               style={({ pressed }) => [styles.retryButton, ...interactionFeedback({ pressed })]}
+              testID={canRetryDemoStart ? 'retry-demo-start' : 'retry-session-check'}
             >
-              <Text style={styles.retryButtonText}>Retry session check</Text>
+              <Text style={styles.retryButtonText}>
+                {canRetryDemoStart ? 'Retry Demo start' : 'Retry session check'}
+              </Text>
             </Pressable>
           </View>
         ) : null}
@@ -1151,7 +1198,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
                 accessibilityRole="button"
                 disabled={pending}
                 key={profile.id}
-                onPress={() => void chooseMember(profile.id)}
+                onPress={() => startDemo(profile.id)}
                 style={({ pressed }) => [
                   styles.entryChoice,
                   pending && styles.disabledChoice,
@@ -2269,13 +2316,14 @@ const styles = StyleSheet.create({
   entryContent: {
     flexGrow: 1,
     gap: 24,
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     padding: 24,
     paddingBottom: 36,
   },
+  welcomeEntryContent: { justifyContent: 'center' },
   entryBrand: { alignItems: 'center', alignSelf: 'stretch', gap: 8 },
   entryTagline: { color: COLORS.muted, fontSize: 12, letterSpacing: 1.2, textAlign: 'center' },
-  welcomeActions: { flexGrow: 1, gap: 12, justifyContent: 'flex-end' },
+  welcomeActions: { gap: 12 },
   entryIntro: { gap: 12 },
   authFieldLabel: { color: COLORS.ink, fontSize: 14, fontWeight: '700', marginTop: 4 },
   authInput: {

@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
+import type { DemoSession } from '../src/domain/session';
 import type { Cycle } from '../src/domain/cycles';
 import type { Group } from '../src/domain/profiles';
 import type { LocalInvite } from '../src/domain/invites';
@@ -66,25 +67,50 @@ function inviteRuntime(): RuntimeClient {
   };
 }
 
-function restoreFailureRuntime(): RuntimeClient {
+function demoSession(): DemoSession {
+  const startedAt = new Date(Date.now() - 60_000).toISOString();
   return {
-    ...inviteRuntime(),
-    createDemoSession: jest.fn().mockRejectedValue(new Error('Runtime unavailable')),
+    id: 'demo-session-retry',
+    accessKind: 'demo',
+    actor: { memberId: 'demo-1', displayName: 'Amber', isSynthetic: true },
+    groupId: group.id,
+    startedAt,
+    expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+    invalidatedAt: null,
   };
 }
 
 describe('native accessibility panels', () => {
-  it('does not group the Demo access recovery action with its error message', async () => {
-    const result = await render(<App runtimeClient={restoreFailureRuntime()} />);
+  it('retries a failed Demo start for the same synthetic member', async () => {
+    const previousDemoFixture = process.env.REWIND_TEST_DEMO_FIXTURE;
+    process.env.REWIND_TEST_DEMO_FIXTURE = 'false';
+    const createDemoSession = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('Runtime unavailable'))
+      .mockResolvedValueOnce(demoSession());
+    try {
+      const result = await render(
+        <App runtimeClient={{ ...inviteRuntime(), createDemoSession } as RuntimeClient} />,
+      );
 
-    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
-    await fireEvent.press(await result.findByRole('button', { name: 'Try Demo' }));
-    await fireEvent.press(
-      await result.findByRole('button', { name: 'Enter Demo as Amber, sample member' }),
-    );
-    await result.findByText('Runtime unavailable');
-    expect(result.getByTestId('entry-session-status').props.accessible).toBe(false);
-    expect(result.getByRole('button', { name: 'Retry session check' })).toBeTruthy();
+      await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+      await fireEvent.press(await result.findByRole('button', { name: 'Try Demo' }));
+      await fireEvent.press(
+        await result.findByRole('button', { name: 'Enter Demo as Amber, sample member' }),
+      );
+      await result.findByText('Runtime unavailable');
+      expect(result.getByTestId('entry-session-status').props.accessible).toBe(false);
+      expect(createDemoSession).toHaveBeenCalledTimes(1);
+
+      await fireEvent.press(result.getByRole('button', { name: 'Retry Demo start' }));
+
+      expect(await result.findByRole('header', { name: 'Weekend People' })).toBeTruthy();
+      expect(createDemoSession).toHaveBeenNthCalledWith(1, 'demo-1');
+      expect(createDemoSession).toHaveBeenNthCalledWith(2, 'demo-1');
+    } finally {
+      if (previousDemoFixture === undefined) delete process.env.REWIND_TEST_DEMO_FIXTURE;
+      else process.env.REWIND_TEST_DEMO_FIXTURE = previousDemoFixture;
+    }
   });
 
   it('does not group capsule recovery with the Retry action', async () => {
