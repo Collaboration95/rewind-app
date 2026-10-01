@@ -194,7 +194,8 @@ document.addEventListener('click', (e) => {
 $('state')?.addEventListener('change', (e) => setHome(e.target.value));
 
 /* ---------- 状态页：按状态看（一个状态、各方向并排）/ 按方向看（一个方向、全部状态） ---------- */
-let sv = { by: 'state', state: 'loading', dir: 'c9' };
+// arch：状态页自己的“含废案”开关，默认关，和侧栏的设置无关
+let sv = { by: 'state', state: 'loading', dir: 'c9', arch: false };
 
 // 用指定的状态画一台手机，不影响侧栏里选的状态
 function withHome(state, fn) {
@@ -218,14 +219,15 @@ function readStatesHash() {
   const m = /^#states(?:=(.+))?$/.exec(location.hash);
   if (!m) return false;
   if (HOME_STATES.includes(m[1])) Object.assign(sv, { by: 'state', state: m[1] });
-  else if (concepts.some((c) => c.id === m[1])) Object.assign(sv, { by: 'dir', dir: m[1] });
+  else if (concepts.some((c) => c.id === m[1]))
+    Object.assign(sv, { by: 'dir', dir: m[1], arch: sv.arch || isArchived(m[1]) });
   return true;
 }
 
 function renderStatesView() {
   const root = $('states-view');
   if (!root) return;
-  const dirs = concepts.filter((c) => !isArchived(c.id) || showArch);
+  const dirs = concepts.filter((c) => !isArchived(c.id) || sv.arch);
   if (!dirs.some((c) => c.id === sv.dir)) sv.dir = dirs[0].id;
   const by = (k) =>
     `<button type="button" data-sv-by="${k}" aria-pressed="${sv.by === k}">${t('sts.by.' + k)}</button>`;
@@ -246,7 +248,8 @@ function renderStatesView() {
   root.innerHTML =
     `<header class="main-h"><p class="k">${t('sts.k')}</p><h1>${t('sts.h1')}</h1><p>${t('sts.p')}</p></header>` +
     `<div class="sv-bar"><div class="sv-by" role="group" aria-label="${t('sts.h1')}">${by('state')}${by('dir')}</div>` +
-    `<div class="sv-chips" role="group">${chips.join('')}</div></div>` +
+    `<div class="sv-chips" role="group">${chips.join('')}</div>` +
+    `<label class="check sv-arch" for="sv-arch"><input type="checkbox" id="sv-arch"${sv.arch ? ' checked' : ''} /> <span>${t('sts.arch', { n: ARCHIVED.length })}</span></label></div>` +
     (sv.by === 'state'
       ? `<dl class="sv-notes"><div><dt>${t('sts.when')}</dt><dd>${t('sts.when.' + sv.state)}</dd></div>` +
         `<div><dt>${t('sts.shut')}</dt><dd>${t('sts.shut.' + sv.state)}</dd></div></dl>`
@@ -268,6 +271,12 @@ document.addEventListener('click', (e) => {
   if (d.svBy) sv.by = d.svBy;
   if (d.svState) sv.state = d.svState;
   if (d.svDir) sv.dir = d.svDir;
+  renderStatesView();
+});
+
+document.addEventListener('change', (e) => {
+  if (e.target.id !== 'sv-arch') return;
+  sv.arch = e.target.checked;
   renderStatesView();
 });
 

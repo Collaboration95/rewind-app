@@ -570,6 +570,15 @@ body.view-states main {
 .sv-chips button[aria-pressed='true'] span {
   color: rgba(232, 229, 223, 0.7);
 }
+.sv-arch {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--page-muted);
+}
+/* 状态页有自己的“含废案”开关，侧栏那个只管其他页 */
+body.view-states .arch-check {
+  display: none;
+}
 .sv-notes {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

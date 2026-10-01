@@ -517,6 +517,7 @@ Object.assign(I18N, {
   'sts.by.dir': ['By direction', '按方向看'],
   'sts.when': ['When it shows', '什么时候出现'],
   'sts.shut': ['Shutter', '快门'],
+  'sts.arch': ['Include the {n} archived directions', '包含 {n} 个废案'],
   'sts.retryToast': ['In the app, this reloads the capsule.', '在 App 里，这会重新读取这一期。'],
   'sts.when.collect': [
     'A capsule is open and you still have moments left this week.',
