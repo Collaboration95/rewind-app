@@ -1,0 +1,508 @@
+/* 首页状态：沿用各方向的变量（--bg --ink --muted --line --accent --f-serif --f-body） */
+
+/* ============ 通用 ============ */
+.st {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin: 18px 6px 0;
+  text-align: center;
+}
+.st-k {
+  margin: 4px 0 0;
+  font:
+    600 11px/1 var(--f-body),
+    sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.st-h {
+  margin: 0;
+  max-width: 300px;
+  font:
+    500 31px/1.12 var(--f-serif),
+    serif;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.st-p {
+  margin: 0;
+  max-width: 300px;
+  font:
+    400 15px/1.5 var(--f-body),
+    sans-serif;
+  color: var(--muted);
+}
+.st-note {
+  margin: 2px 0 0;
+  max-width: 280px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.st-btn {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  padding: 13px 24px;
+  border-radius: 999px;
+  font:
+    600 15px/1 var(--f-body),
+    sans-serif;
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+}
+.st-btn.primary {
+  color: #1d1208;
+  background: var(--accent);
+  box-shadow: 0 10px 24px -10px var(--accent);
+}
+.st-btn .ic {
+  width: 16px;
+  height: 16px;
+}
+@keyframes st-slide {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(290%);
+  }
+}
+.st-bar {
+  position: relative;
+  width: 180px;
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--line);
+}
+.st-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  border-radius: 4px;
+  background: var(--accent);
+  animation: st-slide 1.8s ease-in-out infinite;
+}
+.st-delayed .st-bar i {
+  animation-duration: 3.6s;
+  opacity: 0.6;
+}
+.st-banner {
+  margin: 6px 0 14px;
+  padding: 11px 14px;
+  border-radius: 14px;
+  font:
+    500 13px/1.4 var(--f-body),
+    sans-serif;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* 加载中：骨架 + 微光扫过 */
+@keyframes st-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+.st-load {
+  justify-items: stretch;
+  gap: 12px;
+  text-align: left;
+}
+.st-load .mo {
+  justify-self: center;
+}
+.sk {
+  display: block;
+  border-radius: 8px;
+  background:
+    linear-gradient(
+      90deg,
+      transparent 0,
+      color-mix(in srgb, var(--ink) 10%, transparent) 50%,
+      transparent 100%
+    ),
+    var(--line);
+  background-size: 200% 100%;
+  animation: st-shimmer 1.4s linear infinite;
+}
+.sk-k {
+  width: 34%;
+  height: 10px;
+}
+.sk-h {
+  width: 78%;
+  height: 26px;
+}
+.sk-h2 {
+  width: 52%;
+  height: 26px;
+}
+.sk-card {
+  height: 112px;
+  margin-top: 6px;
+  border-radius: 20px;
+}
+.sk-row {
+  height: 14px;
+}
+.st-cap {
+  margin: 4px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+/* 快门不可用 */
+.st-loading .shutter,
+.st-empty .shutter,
+.st-error .shutter,
+.st-denied .shutter,
+.st-developing .shutter,
+.st-delayed .shutter {
+  opacity: 0.42;
+  filter: saturate(0.4);
+}
+
+/* ============ 插图 ============ */
+.mo {
+  display: block;
+  width: 200px;
+  height: 150px;
+  margin: 4px auto 0;
+  overflow: visible;
+}
+
+/* 暖光玻璃：一团暖光 */
+@keyframes mo-pulse {
+  0%,
+  100% {
+    transform: scale(0.72);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scale(0.9);
+    opacity: 0.9;
+  }
+}
+@keyframes mo-breathe {
+  0%,
+  100% {
+    transform: scale(0.94);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+.mo-glow {
+  position: relative;
+}
+.mo-glow i,
+.mo-glow b {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+}
+.mo-glow i {
+  width: 170px;
+  height: 170px;
+  margin: -85px 0 0 -85px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 75%, #fff) 0,
+    color-mix(in srgb, var(--accent) 45%, transparent) 38%,
+    transparent 70%
+  );
+  filter: blur(6px);
+}
+.mo-glow b {
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  background: radial-gradient(circle, #fff 0, color-mix(in srgb, var(--accent) 60%, #fff) 70%);
+  box-shadow: 0 0 30px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.st-loading .mo-glow i {
+  animation: mo-pulse 1.6s ease-in-out infinite;
+}
+.st-loading .mo-glow b {
+  opacity: 0.5;
+}
+.st-developing .mo-glow i {
+  animation: mo-breathe 3.2s ease-in-out infinite;
+}
+.st-delayed .mo-glow i {
+  opacity: 0.6;
+  animation: mo-breathe 6s ease-in-out infinite;
+}
+.st-released .mo-glow i {
+  transform: scale(1.18);
+}
+.st-released .mo-glow b {
+  transform: scale(1.25);
+}
+.st-empty .mo-glow,
+.st-denied .mo-glow,
+.st-error .mo-glow {
+  opacity: 0.35;
+  filter: grayscale(0.6);
+}
+
+/* 围炉：火 + 一圈座位 */
+@keyframes mo-flicker {
+  0%,
+  100% {
+    transform: scale(var(--fs, 1)) skewX(0deg);
+  }
+  33% {
+    transform: scale(calc(var(--fs, 1) * 1.05), calc(var(--fs, 1) * 0.95)) skewX(-3deg);
+  }
+  66% {
+    transform: scale(calc(var(--fs, 1) * 0.96), calc(var(--fs, 1) * 1.05)) skewX(2deg);
+  }
+}
+@keyframes mo-smoke {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  40% {
+    opacity: 0.8;
+  }
+  to {
+    transform: translateY(-14px);
+    opacity: 0;
+  }
+}
+.mo-hearth .mo-seats {
+  stroke: var(--ink);
+  opacity: 0.32;
+}
+.mo-hearth .mo-flame {
+  fill: var(--accent);
+  transform-origin: 100px 116px;
+  animation: mo-flicker 0.9s ease-in-out infinite;
+}
+.mo-hearth .mo-flame .mo-core {
+  fill: #fff3dc;
+}
+.mo-hearth .mo-ash,
+.mo-hearth .mo-smoke {
+  display: none;
+}
+.mo-hearth .mo-ash {
+  fill: var(--muted);
+}
+.mo-hearth .mo-smoke {
+  stroke: var(--muted);
+}
+.st-loading .mo-hearth .mo-flame {
+  --fs: 0.45;
+  opacity: 0.8;
+}
+.st-delayed .mo-hearth .mo-flame {
+  --fs: 0.72;
+  animation-duration: 1.6s;
+}
+.st-released .mo-hearth .mo-flame {
+  --fs: 1.12;
+  filter: drop-shadow(0 0 14px var(--accent));
+}
+.st-released .mo-hearth .mo-seats {
+  opacity: 0.6;
+}
+.st-empty .mo-hearth .mo-flame,
+.st-denied .mo-hearth .mo-flame,
+.st-error .mo-hearth .mo-flame {
+  display: none;
+}
+.st-empty .mo-hearth .mo-ash,
+.st-denied .mo-hearth .mo-ash,
+.st-error .mo-hearth .mo-ash {
+  display: block;
+}
+.st-error .mo-hearth .mo-smoke {
+  display: block;
+  animation: mo-smoke 2.4s ease-out infinite;
+}
+
+/* 萤火虫罐：罐子 + 萤火虫 */
+@keyframes mo-blink {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes mo-rise {
+  from {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  to {
+    transform: translate(var(--dx, 0), -110px);
+    opacity: 0;
+  }
+}
+.mo-jar .mo-lid {
+  fill: var(--muted);
+  transform-origin: 100px 20px;
+  transition: transform 0.6s;
+}
+.mo-jar .mo-glass {
+  fill: color-mix(in srgb, var(--ink) 4%, transparent);
+  stroke: var(--ink);
+  stroke-opacity: 0.45;
+  stroke-width: 3;
+}
+.mo-jar .mo-ff {
+  fill: var(--accent);
+  opacity: 0;
+  filter: drop-shadow(0 0 5px var(--accent));
+}
+.st-loading .mo-jar .f0 {
+  animation: mo-blink 1.2s ease-in-out infinite;
+}
+.st-developing .mo-jar .mo-ff {
+  animation: mo-blink 1.8s ease-in-out infinite;
+}
+.st-delayed .mo-jar .mo-ff {
+  animation: mo-blink 3.6s ease-in-out infinite;
+}
+.st-released .mo-jar .mo-lid {
+  transform: translate(26px, -10px) rotate(24deg);
+}
+.st-released .mo-jar .mo-ff {
+  animation: mo-rise 2.6s ease-in infinite;
+}
+.st-released .mo-jar .mo-ff:nth-of-type(odd) {
+  --dx: -26px;
+}
+.st-released .mo-jar .mo-ff:nth-of-type(even) {
+  --dx: 22px;
+}
+.st-error .mo-jar .mo-glass,
+.st-denied .mo-jar .mo-glass,
+.st-empty .mo-jar .mo-glass {
+  stroke-dasharray: 8 7;
+}
+
+/* 放映夜：幕布、光束、片头倒数、片盘 */
+@keyframes mo-count {
+  0%,
+  33% {
+    opacity: 1;
+  }
+  34%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes mo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes mo-beam {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+  50% {
+    opacity: 0.32;
+  }
+}
+.mo-film .mo-scr {
+  fill: color-mix(in srgb, var(--ink) 8%, transparent);
+  stroke: var(--line);
+  stroke-width: 2;
+}
+.mo-film .mo-beam {
+  fill: var(--accent);
+  opacity: 0;
+}
+.mo-film .mo-leader,
+.mo-film .mo-play {
+  display: none;
+}
+.mo-film .mo-leader {
+  stroke: var(--ink);
+  fill: var(--ink);
+}
+.mo-film .mo-leader circle,
+.mo-film .mo-leader path {
+  stroke-opacity: 0.6;
+}
+.mo-film .mo-leader text {
+  font:
+    600 26px/1 var(--f-mono, monospace),
+    monospace;
+  stroke: none;
+}
+.mo-film .mo-leader .mo-n {
+  opacity: 0;
+  animation: mo-count 2.4s steps(1) infinite;
+}
+.mo-film .mo-leader .mo-n2 {
+  animation-delay: 0.8s;
+}
+.mo-film .mo-leader .mo-n1 {
+  animation-delay: 1.6s;
+}
+.mo-film .mo-reel {
+  stroke: var(--muted);
+  fill: var(--muted);
+  transform-origin: 100px 122px;
+}
+.mo-film .mo-reel circle:first-child {
+  fill: none;
+}
+.st-loading .mo-film .mo-leader {
+  display: block;
+}
+.st-loading .mo-film .mo-beam {
+  animation: mo-beam 1.2s ease-in-out infinite;
+}
+.st-developing .mo-film .mo-reel {
+  animation: mo-spin 2.4s linear infinite;
+}
+.st-developing .mo-film .mo-beam {
+  opacity: 0.12;
+}
+.st-delayed .mo-film .mo-reel {
+  animation: mo-spin 6s linear infinite;
+}
+.st-released .mo-film .mo-scr {
+  fill: #f2ead8;
+}
+.st-released .mo-film .mo-beam {
+  opacity: 0.4;
+}
+.st-released .mo-film .mo-play {
+  display: block;
+  stroke: #c8402f;
+}
+.st-error .mo-film .mo-scr {
+  stroke: var(--muted);
+  stroke-dasharray: 6 6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .st .mo *,
+  .st .mo,
+  .sk,
+  .st-bar i {
+    animation: none !important;
+  }
+}

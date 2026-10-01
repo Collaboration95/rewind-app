@@ -38,7 +38,6 @@ const I18N = {
   'state.loading': ['Loading · later', '加载中 · 稍后'],
   'state.empty': ['No cycle · later', '尚无周期 · 稍后'],
   'state.error': ['Failed to load · later', '加载失败 · 稍后'],
-  'state.processing': ['Film processing · later', '影片处理中 · 稍后'],
   'state.released': ['Film released · later', '影片已发布 · 稍后'],
   'state.quota': ['Allowance used · later', '额度用尽 · 稍后'],
   'state.hint': [
@@ -486,6 +485,23 @@ Object.assign(I18N, {
   'mix.app.photos': ['Photos', '照片'],
   'mix.app.maps': ['Maps', '地图'],
   'mix.app.calendar': ['Calendar', '日历'],
+});
+
+// 首页状态
+Object.assign(I18N, {
+  'state.collect': ['Collecting', '收集中'],
+  'state.loading': ['Loading', '加载中'],
+  'state.empty': ['No capsule yet', '这一期还没开始'],
+  'state.error': ['Failed to load', '加载失败'],
+  'state.denied': ['No access', '没有权限'],
+  'state.quota': ['Allowance used up', '额度用完'],
+  'state.developing': ['Film developing', '影片制作中'],
+  'state.delayed': ['Taking longer', '比平时慢'],
+  'state.released': ['Film released', '影片已上映'],
+  'state.hint': [
+    'The states follow the Home on dev: loading, no capsule, failed to load, no access, the allowance and the reveal. The copy is a draft. Play returns to collecting.',
+    '状态与 dev 上的首页一一对应：加载中、这一期还没开始、加载失败、没有权限、额度、揭晓。文案是草稿。点“播放”会回到收集中。',
+  ],
 });
 
 let LANG = 'en';

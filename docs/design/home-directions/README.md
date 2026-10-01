@@ -12,6 +12,10 @@ Write them right on the page, under each phone and each dock. We will combine ev
 
 01 Darkroom Editorial, 02 Contact Sheet, 03 Glass Capsule, 04 Premiere Ticket, 05 Quiet Swiss, 08 Sealed Letter and 11 Shared Reel are archived. The page folds them at the bottom (open them with _Show the 7 archived directions_ or the _Archived_ heading), greys them out, and keeps the votes and notes they already had behind _Show review_, read-only. Review progress counts only the four directions still in review and the four docks. If your ❤️ is on an archived direction, sending asks whether to move it first.
 
+## Home states
+
+_Simulate → Home_ in the sidebar switches every phone between the states the Home has on `dev`: collecting, loading, no capsule yet, failed to load, no access, allowance used up, film developing, taking longer and film released. Each state keeps the direction's own header and colours and opens with a small drawing in its metaphor (Warm Glass's glow, Hearth's fire and seats, Firefly Jar's fireflies, Movie Night's countdown leader and reel) that changes with the state. The shutter follows: disabled while loading, on errors and while the film develops, _used up_ for the allowance, and _watch together_ once the film is out. _Try again_ shows loading and then recovers; _Play_ returns to collecting. The copy is a draft.
+
 ## App icon · mix and match
 
 The second tab at the top of the page (or `index.html#mix`) pairs a Home direction with an app icon and shows them where people will meet them: the launch screen opening into that Home, a home screen among common apps (white or black wallpaper), the sizes from 120 px down to 29 px, a notification, and the two palettes side by side with a note when one is light and the other dark. There is no voting on this tab yet.

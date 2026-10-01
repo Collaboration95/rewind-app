@@ -21,12 +21,14 @@
     <link rel="stylesheet" href="styles-side.css" />
     <link rel="stylesheet" href="styles-review.css" />
     <link rel="stylesheet" href="styles-mix.css" />
+    <link rel="stylesheet" href="styles-states.css" />
     <script defer src="review-config.js"></script>
     <script defer src="i18n.js"></script>
     <script defer src="app.js"></script>
     <script defer src="review.js"></script>
     <script defer src="icons.js"></script>
     <script defer src="mix.js"></script>
+    <script defer src="states.js"></script>
   </head>
   <body>
     <!-- 图标共用的滤镜：让字母和笔画的边缘有手绘感 -->
@@ -181,16 +183,19 @@
           >
           <label class="sub" for="state" data-i18n="state.label">Home</label>
           <select id="state">
-            <option data-i18n="state.collect">Collecting</option>
-            <option disabled data-i18n="state.loading">Loading · later</option>
-            <option disabled data-i18n="state.empty">No cycle · later</option>
-            <option disabled data-i18n="state.error">Failed to load · later</option>
-            <option disabled data-i18n="state.processing">Film processing · later</option>
-            <option disabled data-i18n="state.released">Film released · later</option>
-            <option disabled data-i18n="state.quota">Allowance used · later</option>
+            <option value="collect" data-i18n="state.collect">Collecting</option>
+            <option value="loading" data-i18n="state.loading">Loading</option>
+            <option value="empty" data-i18n="state.empty">No capsule yet</option>
+            <option value="error" data-i18n="state.error">Failed to load</option>
+            <option value="denied" data-i18n="state.denied">No access</option>
+            <option value="quota" data-i18n="state.quota">Allowance used up</option>
+            <option value="developing" data-i18n="state.developing">Film developing</option>
+            <option value="delayed" data-i18n="state.delayed">Taking longer</option>
+            <option value="released" data-i18n="state.released">Film released</option>
           </select>
           <p class="hint" data-i18n="state.hint">
-            Other Home states come after we pick a direction.
+            The states follow the Home on dev: loading, no capsule, failed to load, no access, the
+            allowance and the reveal. The copy is a draft. Play returns to collecting.
           </p>
         </div>
 
@@ -207,7 +212,7 @@
       </aside>
 
       <main>
-        <span class="ver" title="Review page version">v1.2</span>
+        <span class="ver" title="Review page version">v1.3</span>
         <nav class="view-tabs" data-i18n-aria="tab.aria" aria-label="Page">
           <button type="button" data-view="review" aria-pressed="true" data-i18n="tab.review">
             Home directions</button

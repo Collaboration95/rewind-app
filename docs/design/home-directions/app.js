@@ -229,34 +229,38 @@ const statusBar = () =>
   `</span></div>`;
 
 /* ---------- 底栏：统一玻璃底栏 + 变体 + 快门状态 + 角标 ---------- */
-const NAV = { variant: 'a', shutter: 'collect', unread: true };
+const NAV = { variant: 'a', shutter: 'collect', unread: true, home: 'collect' };
 
 function shutter(d) {
   const left = 5 - d.me.c;
-  const s = {
-    collect: [ring(d.me.c), 'camera', `Add a moment · ${left} of 5 left`, ''],
-    quota: [
-      ring(5),
-      'camera',
-      'Weekly allowance used up · resets Sunday',
-      'All 5 used · resets Sun',
-    ],
-    upload: [arcRing(0.28, true), 'camera', 'Sealing your moment', 'Sealing…'],
-    sealed: [
-      ring(Math.min(5, d.me.c + 1)),
-      'check',
-      `Moment sealed · ${Math.max(0, left - 1)} of 5 left`,
-      'Sealed · not even you can peek',
-    ],
-    premiere: [
-      arcRing(0.75),
-      'play',
-      'Watch the premiere together · 18 hours left',
-      'Premiere · 18h left',
-    ],
-  }[NAV.shutter];
+  // 首页在加载、出错、影片制作中等状态时快门不可用（见 states.js）
+  const off = NAV.home === 'collect' ? null : window.shutterOff?.();
+  const s =
+    off ||
+    {
+      collect: [ring(d.me.c), 'camera', `Add a moment · ${left} of 5 left`, ''],
+      quota: [
+        ring(5),
+        'camera',
+        'Weekly allowance used up · resets Sunday',
+        'All 5 used · resets Sun',
+      ],
+      upload: [arcRing(0.28, true), 'camera', 'Sealing your moment', 'Sealing…'],
+      sealed: [
+        ring(Math.min(5, d.me.c + 1)),
+        'check',
+        `Moment sealed · ${Math.max(0, left - 1)} of 5 left`,
+        'Sealed · not even you can peek',
+      ],
+      premiere: [
+        arcRing(0.75),
+        'play',
+        'Watch the premiere together · 18 hours left',
+        'Premiere · 18h left',
+      ],
+    }[NAV.shutter];
   return (
-    `<button type="button" class="shutter" aria-label="${s[2]}"${NAV.shutter === 'quota' ? ' aria-disabled="true"' : ''}>` +
+    `<button type="button" class="shutter" aria-label="${s[2]}"${NAV.shutter === 'quota' || off ? ' aria-disabled="true"' : ''}>` +
     `${s[0]}<span class="core">${ic(s[1])}</span>${s[3] ? `<span class="tip" aria-hidden="true">${s[3]}</span>` : ''}</button>`
   );
 }
@@ -993,7 +997,7 @@ const nameOf = (c) => (LANG === 'zh' ? c.zh : c.en);
 const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 
 const screen = (c, d) =>
-  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}${topNav()}<div class="scroll">${bodies[c.id](d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter} st-${NAV.home}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}${topNav()}<div class="scroll">${NAV.home === 'collect' ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
 
 let current = 'all';
 
@@ -1755,7 +1759,11 @@ document.addEventListener('click', (e) => {
       .forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
     return render();
   }
-  if (t.dataset.play) return playStory(t.dataset.play);
+  if (t.dataset.play) {
+    // 播放演示的是收集中的一期：先回到正常状态
+    if (NAV.home !== 'collect') window.setHome?.('collect');
+    return playStory(t.dataset.play);
+  }
   if (t.id === 'shuffle') {
     const bag = [0, 0, 1, 1, 2, 2, 3, 4, 5];
     POOL.forEach((p) => (p.c = bag[Math.floor(Math.random() * bag.length)]));
