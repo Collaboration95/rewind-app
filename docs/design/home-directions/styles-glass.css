@@ -1,6 +1,5 @@
-/* 06 暖光玻璃：iOS 新玻璃质感（Liquid Glass）——底栏、快门、题目卡片
+/* 暖光玻璃：iOS 新玻璃质感（Liquid Glass）——底栏、快门、题目卡片
    更通透（轻模糊、高饱和）、边缘一圈亮边（角上最亮）、左上一道高光、胶囊是嵌在底栏里的小镜片 */
-
 /* 屏幕下方一团暖光，让玻璃有东西可透 */
 /* 选择器要比 .c6 .scroll > *:not(.glow)（会把正文都设成 relative）更具体 */
 .c6 .scroll > .glow-low {
@@ -15,7 +14,6 @@
   filter: blur(24px);
   pointer-events: none;
 }
-
 /* ---------- 共用的玻璃 ---------- */
 .c6 .glass,
 .c6.nav-g .dock-g .tabs,
@@ -70,211 +68,55 @@
   mask-composite: exclude;
   pointer-events: none;
 }
-
 /* ---------- 题目卡片 ---------- */
 .c6 .glass {
   z-index: 1;
   border-radius: 30px;
 }
-
-/* ---------- 底栏：G 实时胶囊 ---------- */
+/* ---------- 底栏：三个页签 ---------- */
 .c6.nav-g .dock-g .tabs {
   padding: 6px;
   border-radius: 32px;
 }
 /* 胶囊是嵌在底栏里的一片小镜片 */
-.c6.nav-g .dock-g .live {
-  height: 50px;
-  color: var(--muted);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.28));
-  box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 1),
-    inset 0 -1px 1px rgba(255, 255, 255, 0.5),
-    0 3px 10px -3px rgba(150, 80, 30, 0.28);
-}
 .c6.nav-g .dock-g.open .tab.on {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.28));
   box-shadow:
     inset 0 1px 1px rgba(255, 255, 255, 1),
     0 3px 10px -3px rgba(150, 80, 30, 0.28);
 }
-
 /* ---------- 快门：同样的玻璃圆，中间仍是暖色按钮 ---------- */
 .c6.gnav .shutter {
   border-radius: 50%;
 }
-
-/* ---------- 已上映：一周攒下的暖光收拢成一颗光球，点它一起看 ---------- */
-.c6 .hero > b,
-.c6 .hero > span {
-  transition:
-    opacity 0.6s ease,
-    transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+/* ---------- 揭晓后的“一起看”：和底栏同一种玻璃，左边一颗暖色播放钮 ---------- */
+.c6 .count .wt {
+  gap: 10px;
+  margin-top: 14px;
+  padding: 6px 22px 6px 6px;
+  font: 500 15px/1 var(--f-body);
+  color: var(--ink);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.34));
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  backdrop-filter: blur(20px) saturate(160%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 1),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.5),
+    0 10px 24px -12px rgba(150, 80, 30, 0.38);
 }
-.revealed.c6 .hero > b,
-.revealed.c6 .hero > span {
-  opacity: 0;
-  transform: scale(0.82);
-}
-.c6 .orb-play {
-  position: absolute;
-  left: 50%;
-  top: 50%;
+.c6 .count .wt-i {
   display: grid;
   place-items: center;
-  width: 132px;
-  height: 132px;
-  margin: -66px 0 0 -66px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  color: rgba(58, 34, 22, 0.78);
-  /* 像一颗透明玻璃珠：中间几乎不加东西，只靠边缘的亮边和高光看出是玻璃 */
-  background: radial-gradient(
-    circle at 50% 50%,
-    rgba(255, 255, 255, 0.02) 0 60%,
-    rgba(255, 255, 255, 0.12) 84%,
-    rgba(255, 255, 255, 0.3) 100%
-  );
-  -webkit-backdrop-filter: blur(2px) saturate(115%);
-  backdrop-filter: blur(2px) saturate(115%);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
-    inset 0 0 16px rgba(255, 255, 255, 0.32),
-    inset 0 -14px 22px -12px rgba(255, 140, 80, 0.3),
-    0 16px 30px -22px rgba(150, 70, 20, 0.3);
-  opacity: 0;
-  visibility: hidden;
-  transform: scale(0.5);
-  transition:
-    opacity 1s ease 0.3s,
-    transform 1.2s cubic-bezier(0.2, 0.9, 0.25, 1.15) 0.3s,
-    visibility 0s 0.3s;
+  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #ffb27c, var(--accent));
+  box-shadow: 0 4px 10px -4px var(--accent);
 }
-/* 左上一块高光 */
-.c6 .orb-play::before {
-  content: '';
-  position: absolute;
-  left: 17%;
-  top: 9%;
-  width: 46%;
-  height: 28%;
-  border-radius: 50%;
-  background: radial-gradient(ellipse at 50% 45%, rgba(255, 255, 255, 0.8), transparent 70%);
-  transform: rotate(-22deg);
-  pointer-events: none;
-}
-/* 一圈细边：左上亮、右下带一点暖色折射 */
-.c6 .orb-play::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  padding: 1.2px;
-  border-radius: 50%;
-  background: linear-gradient(
-    150deg,
-    rgba(255, 255, 255, 0.95),
-    rgba(255, 255, 255, 0.12) 40%,
-    rgba(255, 196, 150, 0.35) 75%,
-    rgba(255, 255, 255, 0.7)
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-}
-.c6 .orb-play .ic {
-  position: relative;
-  z-index: 1;
-  width: 34px;
-  height: 34px;
-  margin-left: 5px;
+.c6 .count .wt-i .ic {
+  width: 15px;
+  height: 15px;
+  margin-left: 2px;
   fill: currentColor;
-  stroke: none;
-  opacity: 0.85;
-}
-.revealed.c6 .orb-play {
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-  animation: orb-breathe 3.6s ease-in-out 1.6s infinite;
-}
-.revealed.c6 .orb-play:active {
-  transform: scale(0.95);
-}
-/* ---------- 光球的几种质感（状态页里切换，记在 body[data-orb]） ----------
-   默认（clear）是上面的透明玻璃珠 */
-/* 暖色实心：最早那版 */
-body[data-orb='solid'] .c6 .orb-play {
-  color: #3a2216;
-  background: radial-gradient(
-    circle at 38% 30%,
-    rgba(255, 255, 255, 0.96) 0,
-    rgba(255, 238, 218, 0.78) 26%,
-    rgba(255, 186, 132, 0.6) 58%,
-    rgba(240, 128, 78, 0.55) 100%
-  );
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
-  backdrop-filter: blur(12px) saturate(160%);
-  box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.95),
-    inset 0 -12px 26px rgba(232, 110, 60, 0.32),
-    0 0 70px 14px rgba(255, 170, 110, 0.45),
-    0 22px 40px -18px rgba(150, 70, 20, 0.5);
-}
-body[data-orb='solid'] .c6 .orb-play::before,
-body[data-orb='solid'] .c6 .orb-play::after {
-  display: none;
-}
-/* 柔边：没有硬边，边缘慢慢化进背后的暖光 */
-body[data-orb='soft'] .c6 .orb-play,
-body[data-orb='frost'] .c6 .orb-play {
-  width: 156px;
-  height: 156px;
-  margin: -78px 0 0 -78px;
-  background: radial-gradient(
-    circle closest-side,
-    rgba(255, 255, 255, 0.03) 0 50%,
-    rgba(255, 255, 255, 0.3) 78%,
-    rgba(255, 255, 255, 0) 100%
-  );
-  -webkit-backdrop-filter: blur(3px) saturate(115%);
-  backdrop-filter: blur(3px) saturate(115%);
-  -webkit-mask: radial-gradient(circle closest-side, #000 62%, transparent 100%);
-  mask: radial-gradient(circle closest-side, #000 62%, transparent 100%);
-  box-shadow: none;
-}
-body[data-orb='soft'] .c6 .orb-play::after,
-body[data-orb='frost'] .c6 .orb-play::after {
-  display: none;
-}
-body[data-orb='soft'] .c6 .orb-play::before,
-body[data-orb='frost'] .c6 .orb-play::before {
-  left: 24%;
-  top: 17%;
-  width: 38%;
-  height: 22%;
-  filter: blur(2px);
-}
-/* 磨砂柔边：柔边 + 像毛玻璃一样有点乳白 */
-body[data-orb='frost'] .c6 .orb-play {
-  background: radial-gradient(
-    circle closest-side,
-    rgba(255, 250, 244, 0.42) 0 45%,
-    rgba(255, 255, 255, 0.5) 74%,
-    rgba(255, 255, 255, 0) 100%
-  );
-  -webkit-backdrop-filter: blur(14px) saturate(130%) brightness(1.04);
-  backdrop-filter: blur(14px) saturate(130%) brightness(1.04);
-}
-
-@keyframes orb-breathe {
-  50% {
-    transform: scale(1.035);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .revealed.c6 .orb-play {
-    animation: none;
-  }
 }

@@ -1,5 +1,4 @@
 /* 侧栏重排、顶部邀请、手机上的可点提示 */
-
 /* ============ 侧栏 ============ */
 .side .sub {
   display: flex;
@@ -10,38 +9,6 @@
 }
 .side .grp > .sub:first-of-type {
   margin-top: 0;
-}
-.fold summary {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 10px;
-  cursor: pointer;
-  list-style: none;
-}
-.fold summary::-webkit-details-marker {
-  display: none;
-}
-.fold summary::before {
-  content: '▸';
-  font-size: 10px;
-  color: var(--page-muted);
-  transition: transform 0.2s;
-}
-.fold[open] summary::before {
-  transform: rotate(90deg);
-}
-.fold .lbl-t {
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--page-muted);
-}
-.fold summary em {
-  margin-left: auto;
-  font-size: 12.5px;
-  font-style: normal;
-  color: var(--page-ink);
 }
 .taps {
   display: grid;
@@ -70,25 +37,6 @@
 .taps b {
   color: var(--page-ink);
 }
-
-/* ============ 顶部邀请 ============ */
-.ask-banner {
-  display: grid;
-  gap: 4px;
-  margin: 0 0 22px;
-  padding: 14px 18px;
-  border-radius: 14px;
-  color: var(--page);
-  background: var(--page-ink);
-}
-.ask-banner b {
-  font-size: 15px;
-}
-.ask-banner span {
-  font-size: 13px;
-  color: rgba(232, 229, 223, 0.8);
-}
-
 /* ============ 头像面板：暂定说明 ============ */
 .sh-note {
   margin: 8px 4px 0;
@@ -97,7 +45,6 @@
   font-size: 11.5px;
   color: var(--muted);
 }
-
 /* ============ 手机上的可点提示（呼吸光圈） ============ */
 @keyframes tap-hint {
   0% {
@@ -113,7 +60,6 @@
 }
 .hints .screen .me .avatar,
 .hints .screen .shutter .core,
-.hints .screen .dock-g .live,
 .hints .screen .tabs .tab:nth-child(2) {
   animation: tap-hint 2s ease-out infinite;
 }
@@ -123,7 +69,6 @@
 .hints .screen .tabs .tab:nth-child(2) {
   animation-delay: 1.2s;
 }
-
 /* ============ 右上角版本号 ============ */
 main {
   position: relative;
@@ -141,12 +86,6 @@ main {
   color: var(--page-muted);
   box-shadow: inset 0 0 0 1px var(--page-line);
 }
-/* 给版本号让出位置 */
-@media (min-width: 861px) {
-  .ask-banner {
-    margin-right: 72px;
-  }
-}
 /* 窄屏时侧栏在上面：版本号放在整页右上角（REWIND 标志那一行） */
 @media (max-width: 860px) {
   .app {
@@ -159,4 +98,44 @@ main {
     top: 30px;
     right: 16px;
   }
+}
+/* ============ 页面底部的短提示、主按钮 ============ */
+.rv-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  z-index: 80;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #f4f1eb;
+  background: var(--page-ink);
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+  pointer-events: none;
+}
+.rv-toast.on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.rv-send {
+  flex: none;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d1b18;
+  background: #ff7a45;
+  box-shadow: 0 6px 18px rgba(255, 122, 69, 0.35);
+  transition:
+    transform 0.15s,
+    box-shadow 0.15s;
+}
+.rv-send:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(255, 122, 69, 0.45);
 }

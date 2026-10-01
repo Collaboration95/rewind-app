@@ -1,9 +1,5 @@
-/* 第四轮：11 个方向统一玻璃底栏、底栏变体、快门状态、角标 */
-
+/* 玻璃底栏、快门状态、角标 */
 /* ============ 侧栏控件 ============ */
-.lbl-gap {
-  margin-top: 14px;
-}
 .check {
   display: flex;
   gap: 8px;
@@ -17,37 +13,7 @@
   margin: 0;
   accent-color: var(--page-ink);
 }
-/* ============ 01 / 02 / 04 / 05 的玻璃底栏配色 ============ */
-.c1 {
-  --gn-bg: rgba(33, 30, 27, 0.62);
-  --gn-edge: rgba(243, 237, 228, 0.12);
-  --gn-hi: rgba(255, 255, 255, 0.08);
-  --gn-shadow: rgba(0, 0, 0, 0.6);
-  --gn-on: rgba(243, 237, 228, 0.1);
-}
-.c2 {
-  --gn-bg: rgba(248, 244, 236, 0.72);
-  --gn-edge: rgba(31, 26, 21, 0.12);
-  --gn-hi: rgba(255, 255, 255, 0.9);
-  --gn-shadow: rgba(60, 40, 20, 0.25);
-  --gn-on: rgba(31, 26, 21, 0.07);
-}
-.c4 {
-  --gn-bg: rgba(40, 20, 20, 0.62);
-  --gn-edge: rgba(221, 166, 79, 0.24);
-  --gn-hi: rgba(255, 230, 190, 0.1);
-  --gn-shadow: rgba(0, 0, 0, 0.7);
-  --gn-on: rgba(221, 166, 79, 0.14);
-}
-.c5 {
-  --gn-bg: rgba(255, 255, 255, 0.72);
-  --gn-edge: rgba(17, 17, 16, 0.1);
-  --gn-hi: #fff;
-  --gn-shadow: rgba(0, 0, 0, 0.18);
-  --gn-on: rgba(17, 17, 16, 0.08);
-}
-
-/* ============ 统一：覆盖各方案原有的底栏写法 ============ */
+/* ============ 底栏页签 ============ */
 .screen.gnav .tab {
   font: 500 11px/1 var(--f-body);
   letter-spacing: 0;
@@ -63,11 +29,6 @@
 .screen.gnav .tab.on {
   color: var(--ink);
 }
-.c1.gnav .tab.on .ic,
-.c4.gnav .tab.on,
-.c8.gnav .tab.on {
-  color: var(--accent);
-}
 .tab .ico {
   position: relative;
   display: grid;
@@ -79,43 +40,6 @@
 .shutter {
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-
-/* ============ 变体 B：文字一直显示 ============ */
-.screen.nav-b .tab,
-.screen.nav-b .tab.on {
-  flex: 1;
-  flex-direction: column;
-  gap: 3px;
-  padding: 0;
-}
-.screen.nav-b .tab .tlbl,
-.screen.nav-b .tab.on .tlbl {
-  display: block;
-  font-size: 10.5px;
-}
-
-/* ============ 变体 C：滚动时缩小 ============ */
-.screen.mini .dock {
-  justify-content: space-between;
-}
-.screen.mini .tabs {
-  flex: 0 0 64px;
-  padding: 6px;
-}
-.screen.mini .tab:not(.on) {
-  display: none;
-}
-.screen.mini .tab.on {
-  padding: 0;
-}
-.screen.mini .tab.on .tlbl {
-  display: none;
-}
-.screen.mini .shutter {
-  transform: scale(0.84);
-  transform-origin: 100% 50%;
-}
-
 /* ============ 快门状态 ============ */
 .shutter .tip {
   position: absolute;
@@ -176,7 +100,6 @@
     transform: scale(1.12);
   }
 }
-
 /* ============ 角标 ============ */
 .badge {
   position: absolute;
@@ -201,19 +124,7 @@
   height: 9px;
   padding: 0;
 }
-
-/* 缩小态：其他页签被收起时，在小胶囊上汇总显示一个红点 */
+/* 红点按页签定位 */
 .tabs {
   position: relative;
-}
-.screen.mini .tabs.has-badge::after {
-  content: '';
-  position: absolute;
-  top: 9px;
-  right: 11px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #e5484d;
-  box-shadow: 0 0 0 2px var(--bg);
 }

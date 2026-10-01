@@ -1,6 +1,6 @@
 'use strict';
 
-/* ---------- 底栏图标：几套方案放进 Warm Glass + G 胶囊里试 ----------
+/* ---------- 底栏图标：几套图标放进暖光玻璃的底栏里试 ----------
    只在这个页面画手机时临时换图标（ICON_SET），其他页面不受影响。
    图标都是 24×24：.f 实心（跟随文字色），.d 实心强调色；
    iOS 方案里 .o 是线性、.s 是实心，选中的页签显示实心。 */
@@ -83,17 +83,15 @@ const DOCK_SETS = [
 
 let dv = { set: 'ios' };
 
-// 用某套图标、G 胶囊、收集中状态画东西，画完恢复
+// 用某套图标、收集中状态画东西，画完恢复
 function withSet(id, fn) {
-  const keep = { set: ICON_SET, variant: NAV.variant };
+  const keep = ICON_SET;
   const s = DOCK_SETS.find((x) => x.id === id);
   ICON_SET = s && s.icons ? s : null;
-  NAV.variant = 'g';
   try {
     return withHome('collect', fn);
   } finally {
-    ICON_SET = keep.set;
-    NAV.variant = keep.variant;
+    ICON_SET = keep;
   }
 }
 const dvScreen = () =>
@@ -117,16 +115,12 @@ function renderDockView() {
     );
   root.innerHTML =
     `<header class="main-h"><p class="k">${t('dv.k')}</p><h1>${t('dv.h1')}</h1><p>${t('dv.p')}</p></header>` +
-    `<div class="dv-row">${phone('', t('dv.closed'))}${phone('dv-open', t('dv.open'))}` +
+    `<div class="dv-row">${phone('', t('dv.phone'))}` +
     `<figure class="dv-ph dv-zoom"><div class="dv-crop"><div class="card dv-card" data-id="c6"><div class="phone-wrap">${dvScreen()}</div></div></div><figcaption>${t('dv.zoom')}</figcaption></figure></div>` +
     `<div class="dv-sets">${DOCK_SETS.map(
       (s) =>
         `<button type="button" class="dv-set" data-dv-set="${s.id}" aria-pressed="${dv.set === s.id}">${sample(s)}<b>${L(s.name)}</b><span>${L(s.note)}</span></button>`,
     ).join('')}</div>`;
-  // 第二台和特写显示展开后的底栏
-  root
-    .querySelectorAll('.dv-open .dock-g, .dv-zoom .dock-g')
-    .forEach((d) => d.classList.add('open'));
   try {
     if (document.body.classList.contains('view-dockicons'))
       history.replaceState(null, '', dockHash());

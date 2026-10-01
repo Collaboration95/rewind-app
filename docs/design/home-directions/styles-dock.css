@@ -1,5 +1,4 @@
 /* 底栏图标页 + 各套图标的画法 */
-
 /* ============ 图标方案 ============ */
 .ic .f {
   fill: currentColor;
@@ -17,14 +16,12 @@
   stroke: none;
 }
 .tab.on .ic.set-ios .o,
-.live .ic.set-ios .o,
 .shutter .ic.set-ios .o,
 .dv-bar .on .ic.set-ios .o,
 .dv-shut .ic.set-ios .o {
   display: none;
 }
 .tab.on .ic.set-ios .s,
-.live .ic.set-ios .s,
 .shutter .ic.set-ios .s,
 .dv-bar .on .ic.set-ios .s,
 .dv-shut .ic.set-ios .s {
@@ -37,15 +34,10 @@
 .ic.set-min {
   stroke-width: 2;
 }
-
 /* ============ 页面 ============ */
 body:not(.view-dockicons) #dock-view,
 body.view-dockicons main > .main-h,
 body.view-dockicons #gallery,
-body.view-dockicons .dock-rv,
-body.view-dockicons .review,
-body.view-dockicons #rv-bar,
-body.view-dockicons .rv-side,
 body.view-dockicons #mix,
 body.view-dockicons #states-view {
   display: none;

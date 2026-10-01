@@ -1,5 +1,4 @@
-/* 首页状态：沿用各方向的变量（--bg --ink --muted --line --accent --f-serif --f-body） */
-
+/* 首页状态：沿用暖光玻璃的变量（--bg --ink --muted --line --accent --f-serif --f-body） */
 /* ============ 通用 ============ */
 .st {
   display: grid;
@@ -7,15 +6,6 @@
   gap: 10px;
   margin: 18px 6px 0;
   text-align: center;
-}
-.st-k {
-  margin: 4px 0 0;
-  font:
-    600 11px/1 var(--f-body),
-    sans-serif;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
 }
 .st-h {
   margin: 0;
@@ -32,12 +22,6 @@
   font:
     400 15px/1.5 var(--f-body),
     sans-serif;
-  color: var(--muted);
-}
-.st-note {
-  margin: 2px 0 0;
-  max-width: 280px;
-  font-size: 12.5px;
   color: var(--muted);
 }
 .st-btn {
@@ -91,80 +75,7 @@
   animation-duration: 3.6s;
   opacity: 0.6;
 }
-/* 额度用完：胶囊变暖色说一遍，几秒后收回；点灰快门时快门轻晃、胶囊再说一遍 */
-.dock-g .live .lv-x {
-  position: absolute;
-  z-index: 2;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 14px 0 8px;
-  border-radius: inherit;
-  color: var(--ink);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent) 22%, #fffaf4),
-    color-mix(in srgb, var(--accent) 34%, #fff3e8)
-  );
-  box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 0.9),
-    0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
-  opacity: 0;
-  pointer-events: none;
-}
-.dock-g .live .lv-x b {
-  font-weight: 600;
-}
-.dock-g .live .lv-i {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  color: #fff;
-  background: radial-gradient(circle at 35% 30%, #ffb27c, var(--accent));
-}
-.dock-g .live .lv-i .ic {
-  width: 17px;
-  height: 17px;
-}
 /* 进入这个状态时说一遍（flare），点快门时再说一遍（go） */
-.dock-g .live.flare .lv-x {
-  animation: lv-flare 3.6s ease 0.5s both;
-}
-.dock-g .live.flare.go .lv-x {
-  animation: lv-flare2 3.2s ease both;
-}
-@keyframes lv-flare {
-  0% {
-    opacity: 0;
-    transform: scaleX(0.9);
-  }
-  10%,
-  82% {
-    opacity: 1;
-    transform: none;
-  }
-  100% {
-    opacity: 0;
-  }
-}
-@keyframes lv-flare2 {
-  0% {
-    opacity: 0;
-    transform: scaleX(0.9);
-  }
-  10%,
-  82% {
-    opacity: 1;
-    transform: none;
-  }
-  100% {
-    opacity: 0;
-  }
-}
 /* 灰快门被点：左右轻晃，像 iOS 输错密码 */
 .shutter.nope {
   animation: nope 0.42s ease;
@@ -183,65 +94,6 @@
     transform: translateX(3px);
   }
 }
-
-/* 加载中：骨架 + 微光扫过 */
-@keyframes st-shimmer {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: -100% 0;
-  }
-}
-.st-load {
-  justify-items: stretch;
-  gap: 12px;
-  text-align: left;
-}
-.st-load .mo {
-  justify-self: center;
-}
-.sk {
-  display: block;
-  border-radius: 8px;
-  background:
-    linear-gradient(
-      90deg,
-      transparent 0,
-      color-mix(in srgb, var(--ink) 10%, transparent) 50%,
-      transparent 100%
-    ),
-    var(--line);
-  background-size: 200% 100%;
-  animation: st-shimmer 1.4s linear infinite;
-}
-.sk-k {
-  width: 34%;
-  height: 10px;
-}
-.sk-h {
-  width: 78%;
-  height: 26px;
-}
-.sk-h2 {
-  width: 52%;
-  height: 26px;
-}
-.sk-card {
-  height: 112px;
-  margin-top: 6px;
-  border-radius: 20px;
-}
-.sk-row {
-  height: 14px;
-}
-.st-cap {
-  margin: 4px 0 0;
-  text-align: center;
-  font-size: 13px;
-  color: var(--muted);
-}
-
 /* ============ 插图 ============ */
 .mo {
   display: block;
@@ -250,19 +102,7 @@
   margin: 4px auto 0;
   overflow: visible;
 }
-
 /* 暖光玻璃：一团暖光 */
-@keyframes mo-pulse {
-  0%,
-  100% {
-    transform: scale(0.72);
-    opacity: 0.55;
-  }
-  50% {
-    transform: scale(0.9);
-    opacity: 0.9;
-  }
-}
 @keyframes mo-breathe {
   0%,
   100% {
@@ -301,12 +141,6 @@
   background: radial-gradient(circle, #fff 0, color-mix(in srgb, var(--accent) 60%, #fff) 70%);
   box-shadow: 0 0 30px color-mix(in srgb, var(--accent) 70%, transparent);
 }
-.st-loading .mo-glow i {
-  animation: mo-pulse 1.6s ease-in-out infinite;
-}
-.st-loading .mo-glow b {
-  opacity: 0.5;
-}
 .st-developing .mo-glow i {
   animation: mo-breathe 3.2s ease-in-out infinite;
 }
@@ -326,256 +160,10 @@
   opacity: 0.35;
   filter: grayscale(0.6);
 }
-
-/* 围炉：火 + 一圈座位 */
-@keyframes mo-flicker {
-  0%,
-  100% {
-    transform: scale(var(--fs, 1)) skewX(0deg);
-  }
-  33% {
-    transform: scale(calc(var(--fs, 1) * 1.05), calc(var(--fs, 1) * 0.95)) skewX(-3deg);
-  }
-  66% {
-    transform: scale(calc(var(--fs, 1) * 0.96), calc(var(--fs, 1) * 1.05)) skewX(2deg);
-  }
-}
-@keyframes mo-smoke {
-  from {
-    transform: translateY(6px);
-    opacity: 0;
-  }
-  40% {
-    opacity: 0.8;
-  }
-  to {
-    transform: translateY(-14px);
-    opacity: 0;
-  }
-}
-.mo-hearth .mo-seats {
-  stroke: var(--ink);
-  opacity: 0.32;
-}
-.mo-hearth .mo-flame {
-  fill: var(--accent);
-  transform-origin: 100px 116px;
-  animation: mo-flicker 0.9s ease-in-out infinite;
-}
-.mo-hearth .mo-flame .mo-core {
-  fill: #fff3dc;
-}
-.mo-hearth .mo-ash,
-.mo-hearth .mo-smoke {
-  display: none;
-}
-.mo-hearth .mo-ash {
-  fill: var(--muted);
-}
-.mo-hearth .mo-smoke {
-  stroke: var(--muted);
-}
-.st-loading .mo-hearth .mo-flame {
-  --fs: 0.45;
-  opacity: 0.8;
-}
-.st-delayed .mo-hearth .mo-flame {
-  --fs: 0.72;
-  animation-duration: 1.6s;
-}
-.st-released .mo-hearth .mo-flame {
-  --fs: 1.12;
-  filter: drop-shadow(0 0 14px var(--accent));
-}
-.st-released .mo-hearth .mo-seats {
-  opacity: 0.6;
-}
-.st-empty .mo-hearth .mo-flame,
-.st-denied .mo-hearth .mo-flame,
-.st-error .mo-hearth .mo-flame {
-  display: none;
-}
-.st-empty .mo-hearth .mo-ash,
-.st-denied .mo-hearth .mo-ash,
-.st-error .mo-hearth .mo-ash {
-  display: block;
-}
-.st-error .mo-hearth .mo-smoke {
-  display: block;
-  animation: mo-smoke 2.4s ease-out infinite;
-}
-
-/* 萤火虫罐：罐子 + 萤火虫 */
-@keyframes mo-blink {
-  0%,
-  100% {
-    opacity: 0.25;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-@keyframes mo-rise {
-  from {
-    transform: translate(0, 0);
-    opacity: 1;
-  }
-  to {
-    transform: translate(var(--dx, 0), -110px);
-    opacity: 0;
-  }
-}
-.mo-jar .mo-lid {
-  fill: var(--muted);
-  transform-origin: 100px 20px;
-  transition: transform 0.6s;
-}
-.mo-jar .mo-glass {
-  fill: color-mix(in srgb, var(--ink) 4%, transparent);
-  stroke: var(--ink);
-  stroke-opacity: 0.45;
-  stroke-width: 3;
-}
-.mo-jar .mo-ff {
-  fill: var(--accent);
-  opacity: 0;
-  filter: drop-shadow(0 0 5px var(--accent));
-}
-.st-loading .mo-jar .f0 {
-  animation: mo-blink 1.2s ease-in-out infinite;
-}
-.st-developing .mo-jar .mo-ff {
-  animation: mo-blink 1.8s ease-in-out infinite;
-}
-.st-delayed .mo-jar .mo-ff {
-  animation: mo-blink 3.6s ease-in-out infinite;
-}
-.st-released .mo-jar .mo-lid {
-  transform: translate(26px, -10px) rotate(24deg);
-}
-.st-released .mo-jar .mo-ff {
-  animation: mo-rise 2.6s ease-in infinite;
-}
-.st-released .mo-jar .mo-ff:nth-of-type(odd) {
-  --dx: -26px;
-}
-.st-released .mo-jar .mo-ff:nth-of-type(even) {
-  --dx: 22px;
-}
-.st-error .mo-jar .mo-glass,
-.st-denied .mo-jar .mo-glass,
-.st-empty .mo-jar .mo-glass {
-  stroke-dasharray: 8 7;
-}
-
-/* 放映夜：幕布、光束、片头倒数、片盘 */
-@keyframes mo-count {
-  0%,
-  33% {
-    opacity: 1;
-  }
-  34%,
-  100% {
-    opacity: 0;
-  }
-}
-@keyframes mo-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes mo-beam {
-  0%,
-  100% {
-    opacity: 0.18;
-  }
-  50% {
-    opacity: 0.32;
-  }
-}
-.mo-film .mo-scr {
-  fill: color-mix(in srgb, var(--ink) 8%, transparent);
-  stroke: var(--line);
-  stroke-width: 2;
-}
-.mo-film .mo-beam {
-  fill: var(--accent);
-  opacity: 0;
-}
-.mo-film .mo-leader,
-.mo-film .mo-play {
-  display: none;
-}
-.mo-film .mo-leader {
-  stroke: var(--ink);
-  fill: var(--ink);
-}
-.mo-film .mo-leader circle,
-.mo-film .mo-leader path {
-  stroke-opacity: 0.6;
-}
-.mo-film .mo-leader text {
-  font:
-    600 26px/1 var(--f-mono, monospace),
-    monospace;
-  stroke: none;
-}
-.mo-film .mo-leader .mo-n {
-  opacity: 0;
-  animation: mo-count 2.4s steps(1) infinite;
-}
-.mo-film .mo-leader .mo-n2 {
-  animation-delay: 0.8s;
-}
-.mo-film .mo-leader .mo-n1 {
-  animation-delay: 1.6s;
-}
-.mo-film .mo-reel {
-  stroke: var(--muted);
-  fill: var(--muted);
-  transform-origin: 100px 122px;
-}
-.mo-film .mo-reel circle:first-child {
-  fill: none;
-}
-.st-loading .mo-film .mo-leader {
-  display: block;
-}
-.st-loading .mo-film .mo-beam {
-  animation: mo-beam 1.2s ease-in-out infinite;
-}
-.st-developing .mo-film .mo-reel {
-  animation: mo-spin 2.4s linear infinite;
-}
-.st-developing .mo-film .mo-beam {
-  opacity: 0.12;
-}
-.st-delayed .mo-film .mo-reel {
-  animation: mo-spin 6s linear infinite;
-}
-.st-released .mo-film .mo-scr {
-  fill: #f2ead8;
-}
-.st-released .mo-film .mo-beam {
-  opacity: 0.4;
-}
-.st-released .mo-film .mo-play {
-  display: block;
-  stroke: #c8402f;
-}
-.st-error .mo-film .mo-scr {
-  stroke: var(--muted);
-  stroke-dasharray: 6 6;
-}
-
 /* ============ 状态页 ============ */
 body:not(.view-states) #states-view,
 body.view-states main > .main-h,
 body.view-states #gallery,
-body.view-states .dock-rv,
-body.view-states .review,
-body.view-states #rv-bar,
-body.view-states .rv-side,
 body.view-states #mix {
   display: none;
 }
@@ -584,61 +172,6 @@ body.view-states main {
 }
 .states-view .main-h {
   margin-bottom: 22px;
-}
-.sv-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 18px;
-  align-items: center;
-  margin-bottom: 18px;
-}
-.sv-by {
-  display: inline-flex;
-  gap: 3px;
-  padding: 3px;
-  border-radius: 11px;
-  background: rgba(0, 0, 0, 0.06);
-}
-.sv-by button {
-  padding: 7px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--page-muted);
-}
-.sv-by button[aria-pressed='true'] {
-  color: var(--page-ink);
-  background: #fbfaf7;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
-}
-.sv-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.sv-chips button {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  padding: 7px 13px;
-  border-radius: 999px;
-  font-size: 13px;
-  background: rgba(255, 255, 255, 0.55);
-  box-shadow: inset 0 0 0 1px var(--page-line);
-}
-.sv-chips button span {
-  font:
-    500 11px/1 'DM Mono',
-    monospace;
-  color: var(--page-muted);
-}
-.sv-chips button[aria-pressed='true'] {
-  color: var(--page);
-  background: var(--page-ink);
-  box-shadow: none;
-}
-.sv-chips button[aria-pressed='true'] span {
-  color: rgba(232, 229, 223, 0.7);
 }
 .sv-ev {
   display: flex;
@@ -668,52 +201,16 @@ body.view-states main {
   background: var(--page-ink);
   box-shadow: none;
 }
-.sv-arch {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--page-muted);
-}
-/* 状态页有自己的“含废案”开关，侧栏那个只管其他页 */
-body.view-states .arch-check {
-  display: none;
-}
-.sv-notes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 10px;
-  max-width: 900px;
-  margin: 0 0 24px;
-}
-.sv-notes div {
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.55);
-  box-shadow: inset 0 0 0 1px var(--page-line);
-}
-.sv-notes dt {
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--page-muted);
-}
-.sv-notes dd {
-  margin: 4px 0 0;
-  font-size: 13.5px;
-}
+/* 所有状态排成网格：手机按侧栏缩放再小一点，说明不撑宽手机那一栏 */
 .sv-grid {
+  --s: calc(var(--z, 0.62) * 0.7);
   display: flex;
   flex-wrap: wrap;
-  gap: 30px 26px;
+  gap: 34px 26px;
   align-items: flex-start;
 }
-.sv-grid.by-state {
-  /* 跟随侧栏的缩放 */
-  --s: var(--z, 0.6);
-}
-.sv-grid.by-dir {
-  --s: calc(var(--z, 0.62) * 0.7);
-}
 .sv-ph {
+  width: calc(410px * var(--s));
   margin: 0;
 }
 .sv-card {
@@ -721,20 +218,27 @@ body.view-states .arch-check {
   animation: none;
 }
 .sv-ph figcaption {
-  margin-top: 10px;
-  font-size: 13px;
-  font-weight: 600;
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--page-muted);
 }
-
+.sv-ph figcaption b {
+  font-size: 13.5px;
+  color: var(--page-ink);
+}
+.sv-ph figcaption em {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--page-ink);
+}
 @media (prefers-reduced-motion: reduce) {
   .st .mo *,
   .st .mo,
-  .sk,
   .st-bar i {
     animation: none !important;
-  }
-  .dock-g .live .lv-x {
-    transform: none !important;
   }
   .shutter.nope {
     animation: none;

@@ -1,22 +1,12 @@
 'use strict';
 
-/* ---------- App icon 搭配：选一个 Home 方向 + 一个图标，放进真实场景里看 ----------
+/* ---------- App icon 搭配：选一个首页 + 一个图标，放进真实场景里看 ----------
    场景：手机桌面（60 px 与各种小尺寸）、启动页过渡到这个方向的真实首页、通知横幅、配色对照。
    搭配写进网址（#mix=c6+G，+t 表示圆点跟随方向强调色），复制链接即可分享。 */
 
-// 各方向的底色、墨色、强调色（取自方向的主配色，近似值）
+// 首页的底色、墨色、强调色（暖光玻璃，和草稿本风格的对照稿）
 const PAL = {
-  c1: ['#141210', '#f3e6d6', '#f08a5d'],
-  c2: ['#f1e8dc', '#2a2522', '#b5482f'],
-  c3: ['#16122e', '#f4f1ff', '#b36bff'],
-  c4: ['#1b0d0d', '#ecdcc0', '#c99a3c'],
-  c5: ['#f3f2ee', '#121212', '#ff4d12'],
   c6: ['#fff3e2', '#3a2a22', '#ff9f6b'],
-  c7: ['#1a1210', '#f4d9b8', '#ff7a2f'],
-  c8: ['#f0e4d0', '#2a2522', '#b93a2b'],
-  c9: ['#1e1210', '#e8c9a4', '#ffd27a'],
-  c10: ['#150f10', '#f2ead8', '#c8402f'],
-  c11: ['#f5f1ea', '#2a2522', '#e2725a'],
   sp: ['#ffffff', '#111111', '#ff4d12'],
 };
 // 桌面壁纸只留黑白两种，避免壁纸颜色干扰对图标的判断
@@ -80,7 +70,7 @@ const iconName = (ic) =>
   ic.name
     ? L(ic.name)
     : `${t('mix.pairOf')} ${nameOf(concepts.find((c) => 'p:' + c.id === ic.id))}`;
-// 页面上显示的编号：字标族用数字，方向配套图标和参考不编号
+// 页面上显示的编号：字标族用数字，首页配套图标和参考不编号
 const iconNo = (ic) => (ic.no ? String(ic.no) : '');
 const canBg = (ic) => ic.bg === '#fff';
 const bgHex = () => (mix.bg === 'home' ? PAL[mix.dir][0] : ICON_BGS[mix.bg]);
@@ -110,7 +100,7 @@ function lum(hex) {
 }
 
 /* ---------- 网址 ---------- */
-// #mix=方向+图标[+t 圆点跟随强调色][+bg-cream 图标底色]
+// #mix=首页+图标[+t 圆点跟随强调色][+bg-cream 图标底色]
 function mixHash() {
   return (
     `#mix=${mix.dir}+${encodeURIComponent(mix.icon)}` +
@@ -133,9 +123,9 @@ function readHash() {
   return true;
 }
 
-/* ---------- 视图切换：评审 / 搭配 / 状态 ---------- */
+/* ---------- 视图切换：首页 / 搭配 / 状态 / 底栏图标 ---------- */
 function setView(v) {
-  const view = ['mix', 'states', 'dockicons'].includes(v) ? v : 'review';
+  const view = ['mix', 'states', 'dockicons'].includes(v) ? v : 'home';
   document.body.classList.toggle('view-mix', view === 'mix');
   document.body.classList.toggle('view-states', view === 'states');
   document.body.classList.toggle('view-dockicons', view === 'dockicons');
@@ -164,9 +154,8 @@ function setView(v) {
 
 /* ---------- 绘制 ---------- */
 function pickerHTML() {
-  const dirs = concepts.filter((c) => !isArchived(c.id) || showArch);
   const dirBtn = (id) =>
-    `<button type="button" data-mx-dir="${id}" aria-pressed="${mix.dir === id}"${isArchived(id) ? ' class="arch"' : ''}><span>${dirNo(id)}</span>${dirName(id)}</button>`;
+    `<button type="button" data-mx-dir="${id}" aria-pressed="${mix.dir === id}"><span>${dirNo(id)}</span>${dirName(id)}</button>`;
   const tile = (ic) =>
     `<button type="button" class="mx-tile" data-mx-icon="${ic.id}" aria-pressed="${mix.icon === ic.id}" title="${iconName(ic)}">${iconHTML(ic.id, 46)}<b>${iconNo(ic)}</b>${ic.new ? `<i>${t('mix.new')}</i>` : ''}</button>`;
   const pair = mix.dir === 'sp' ? null : ICON_PAIRS[mix.dir];
@@ -178,8 +167,7 @@ function pickerHTML() {
       .map(tile)
       .join('')}</div>`;
   return (
-    `<p class="lbl">${t('mix.dir')}</p><div class="mx-dirs">${dirs.map((c) => dirBtn(c.id)).join('')}${dirBtn('sp')}</div>` +
-    (showArch ? '' : `<p class="hint">${t('mix.archHint', { n: ARCHIVED.length })}</p>`) +
+    `<p class="lbl">${t('mix.dir')}</p><div class="mx-dirs">${dirBtn('c6')}${dirBtn('sp')}</div>` +
     `<p class="lbl">${t('mix.family')}</p>${cat('word')}${cat('mark')}` +
     (pair ? `<p class="lbl">${t('mix.pair')}</p><div class="mx-tiles">${tile(pair)}</div>` : '') +
     `<p class="lbl">${t('mix.refs')}</p><div class="mx-tiles">${ICON_REFS.map(tile).join('')}</div>` +
@@ -243,7 +231,7 @@ function scratchPhoneHTML() {
 function phoneHTML() {
   const c = concepts.find((x) => x.id === mix.dir);
   const [bg, ink] = PAL[mix.dir];
-  // 启动页放在屏幕里面，跟着屏幕的圆角裁切，不会露出底下的首页（比如暗房杂志的斜胶片）
+  // 启动页放在屏幕里面，跟着屏幕的圆角裁切，不会露出底下的首页
   const splash = `<div class="mx-splash" style="background:${bg}">${iconHTML(mix.icon, 190)}<span style="color:${ink}">Rewind</span></div>`;
   const phone = (c ? screen(c, dataFor(c.id)) : scratchPhoneHTML()).replace(
     /<\/div><\/div>$/,
@@ -298,7 +286,7 @@ let splashTimer;
 function playSplash() {
   const s = document.querySelector('.mx-splash');
   if (!s) return;
-  // 启动页显示期间先把首页藏起来：暗房杂志正在走的胶片是单独合成的图层，会画到启动页上面
+  // 启动页显示期间先把首页藏起来，免得首页的动画图层画到启动页上面
   const scr = s.closest('.screen');
   scr.classList.add('splashing');
   s.classList.remove('gone');
@@ -328,8 +316,6 @@ function renderMix() {
     `<p class="lbl">${t('mix.notif')}</p><div class="mx-notif">${iconHTML(mix.icon, 38)}<div><b>Rewind</b><span>${t('mix.notifText')}</span></div><em>${t('mix.now')}</em></div>` +
     `<p class="lbl">${t('mix.pal')}</p>${paletteHTML()}</section></div></div></div>` +
     `<h2 class="gal-h mx-fam-h">${t('mix.famH')}</h2><p class="hint">${t('mix.famP')}</p>${galleryHTML()}`;
-  const card = root.querySelector('.mx-phone');
-  if (card && mix.dir !== 'sp') startFlies(card, {});
   playSplash();
   try {
     if (document.body.classList.contains('view-mix')) history.replaceState(null, '', mixHash());
@@ -376,7 +362,7 @@ document.addEventListener('change', (e) => {
   renderMix();
 });
 
-// 切换语言、展开废案时重画
+// 切换语言时重画
 function relangMix() {
   if (document.body.classList.contains('view-mix')) renderMix();
   if (document.body.classList.contains('view-states')) window.renderStatesView?.();

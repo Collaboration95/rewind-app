@@ -275,99 +275,11 @@ const ICON_FAMILY = [
 ];
 
 const ICON_PAIRS = {
-  c1: {
-    id: 'p:c1',
-    bg: '#141210',
-    note: [
-      'A tilted film strip with one frame developed in safelight orange.',
-      '倾斜的胶片，其中一格在安全灯橙光下显影。',
-    ],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#141210"/><g transform="rotate(-14 256 256)"><rect x="-40" y="150" width="592" height="212" fill="#3a2416"/><g fill="#141210"><rect x="-10" y="164" width="34" height="22" rx="5"/><rect x="70" y="164" width="34" height="22" rx="5"/><rect x="150" y="164" width="34" height="22" rx="5"/><rect x="230" y="164" width="34" height="22" rx="5"/><rect x="310" y="164" width="34" height="22" rx="5"/><rect x="390" y="164" width="34" height="22" rx="5"/><rect x="470" y="164" width="34" height="22" rx="5"/><rect x="-10" y="326" width="34" height="22" rx="5"/><rect x="70" y="326" width="34" height="22" rx="5"/><rect x="150" y="326" width="34" height="22" rx="5"/><rect x="230" y="326" width="34" height="22" rx="5"/><rect x="310" y="326" width="34" height="22" rx="5"/><rect x="390" y="326" width="34" height="22" rx="5"/><rect x="470" y="326" width="34" height="22" rx="5"/></g><rect x="-10" y="198" width="120" height="116" rx="8" fill="#5a4a40"/><rect x="396" y="198" width="120" height="116" rx="8" fill="#5a4a40"/><rect x="196" y="192" width="122" height="128" rx="8" fill="#f08a5d" stroke="#ffd2b8" stroke-width="5"/></g></svg>',
-    acc: false,
-  },
-  c2: {
-    id: 'p:c2',
-    bg: '#f1e8dc',
-    note: [
-      'A 3×3 sheet: one rust frame is yours, the last is an empty seat.',
-      '3×3 相纸索引，铁锈色那格是你的，最后一格是虚线空位。',
-    ],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#f1e8dc"/><g fill="#dcc7a9"><rect x="96" y="96" width="94" height="94" rx="12"/><rect x="209" y="96" width="94" height="94" rx="12"/><rect x="322" y="96" width="94" height="94" rx="12"/><rect x="96" y="209" width="94" height="94" rx="12"/><rect x="322" y="209" width="94" height="94" rx="12"/><rect x="96" y="322" width="94" height="94" rx="12"/><rect x="209" y="322" width="94" height="94" rx="12"/></g><rect x="209" y="209" width="94" height="94" rx="12" fill="#b5482f"/><rect x="322" y="322" width="94" height="94" rx="12" fill="#b5482f" opacity=".0"/><rect x="322" y="322" width="94" height="94" rx="12" fill="none" stroke="#b5482f" stroke-width="6" stroke-dasharray="10 9"/></svg>',
-    acc: false,
-  },
-  c3: {
-    id: 'p:c3',
-    bg: '#2b2550',
-    note: [
-      'A frosted capsule holding one developing light.',
-      '一枚毛玻璃胶囊，里面是一团正在显影的光。',
-    ],
-    svg: '<svg viewBox="0 0 512 512"><defs><linearGradient id="gc" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2b2550"/><stop offset="1" stop-color="#120f26"/></linearGradient><radialGradient id="go" cx=".4" cy=".35"><stop offset="0" stop-color="#ffe8c9"/><stop offset=".55" stop-color="#ff9d7a"/><stop offset="1" stop-color="#b36bff"/></radialGradient></defs><rect width="512" height="512" rx="112" fill="url(#gc)"/><circle cx="270" cy="270" r="96" fill="#b36bff" opacity=".55" filter="url(#blur18)"/><rect x="92" y="170" width="328" height="172" rx="86" fill="#ffffff" fill-opacity=".10" stroke="#ffffff" stroke-opacity=".45" stroke-width="5"/><circle cx="256" cy="256" r="58" fill="url(#go)"/></svg>',
-    acc: false,
-  },
-  c4: {
-    id: 'p:c4',
-    bg: '#1b0d0d',
-    note: ['Cream ticket with a perforated stub and a gold ‹‹.', '米色票根，带撕线和金色 ‹‹。'],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#1b0d0d"/><g transform="rotate(-6 256 256)"><path d="M92 150h328a0 0 0 0 1 0 0v56a26 26 0 0 0 0 52v0a26 26 0 0 0 0 52v52H92v-52a26 26 0 0 0 0-52v0a26 26 0 0 0 0-52z" fill="#ecdcc0"/><path d="M352 150v212" stroke="#8a6f4a" stroke-width="5" stroke-dasharray="4 12" stroke-linecap="round"/><path d="m196 236-42 32 42 32M252 236l-42 32 42 32" fill="none" stroke="#c99a3c" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/></g></svg>',
-    acc: false,
-  },
-  c5: {
-    id: 'p:c5',
-    bg: '#f3f2ee',
-    note: ['A black R and one orange square.', '黑色 R 加一个橙色方块。'],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#f3f2ee"/><text x="200" y="400" text-anchor="middle" font-family="\'Inter Tight\',Inter,sans-serif" font-weight="800" font-size="420" fill="#121212" letter-spacing="-14">R</text><rect x="318" y="326" width="76" height="76" style="fill:var(--acc,#ff4d12)"/></svg>',
-    acc: true,
-  },
   c6: {
     id: 'p:c6',
     bg: '#fff3e2',
     note: ['Afternoon light through a glass disc.', '午后的光穿过一片玻璃圆盘。'],
     svg: '<svg viewBox="0 0 512 512"><defs><linearGradient id="gw" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff3e2"/><stop offset="1" stop-color="#ffd9c2"/></linearGradient><radialGradient id="gp" cx=".5" cy=".5"><stop offset="0" stop-color="#ffb783"/><stop offset="1" stop-color="#ffb783" stop-opacity="0"/></radialGradient></defs><rect width="512" height="512" rx="112" fill="url(#gw)"/><circle cx="300" cy="300" r="190" fill="url(#gp)"/><circle cx="256" cy="256" r="118" fill="#ffffff" fill-opacity=".55" stroke="#fff" stroke-width="6"/><circle cx="256" cy="256" r="52" fill="#ff9f6b"/></svg>',
-    acc: false,
-  },
-  c7: {
-    id: 'p:c7',
-    bg: '#1a1210',
-    note: [
-      'A fire with a ring of seats around it, glowing on warm black.',
-      '暖黑底上一团火，四周围着一圈座位。',
-    ],
-    svg: '<svg viewBox="0 0 512 512"><defs><radialGradient id="hearth-glow" cx=".5" cy=".55" r=".5"><stop offset="0" stop-color="#ff8a3d" stop-opacity=".55"/><stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/></radialGradient><linearGradient id="hearth-flame" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ff6a1f"/><stop offset="1" stop-color="#ffc56b"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="#1a1210"/><circle cx="256" cy="276" r="210" fill="url(#hearth-glow)"/><circle cx="256" cy="268" r="150" fill="none" stroke="#f4d9b8" stroke-opacity=".55" stroke-width="12" stroke-linecap="round" stroke-dasharray="130 58.5" transform="rotate(-72 256 268)"/><path d="M256 150c30 42 70 76 70 132a70 70 0 0 1-140 0c0-34 18-54 36-74 4 24 16 34 26 34-10-36-2-66 8-92z" fill="url(#hearth-flame)"/><path d="M256 250c16 20 32 36 32 60a32 32 0 0 1-64 0c0-16 10-26 18-36 2 10 8 16 14 16-4-16 0-28 0-40z" fill="#fff4dc"/></svg>',
-    acc: false,
-  },
-  c8: {
-    id: 'p:c8',
-    bg: '#f0e4d0',
-    note: ['A wax seal stamped with ‹‹ on an envelope.', '信封上盖着 ‹‹ 的火漆。'],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#f0e4d0"/><path d="M80 150h352v230a20 20 0 0 1-20 20H100a20 20 0 0 1-20-20z" fill="#faf3e6"/><path d="M80 150l176 132 176-132" fill="none" stroke="#d9c6a6" stroke-width="8" stroke-linejoin="round"/><circle cx="256" cy="280" r="74" fill="#b93a2b"/><circle cx="256" cy="280" r="56" fill="none" stroke="#e48a78" stroke-width="5"/><path d="m270 250-32 30 32 30M304 250l-32 30 32 30" transform="translate(-16 0)" fill="none" stroke="#f6c9bd" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    acc: false,
-  },
-  c9: {
-    id: 'p:c9',
-    bg: '#1e1210',
-    note: ['A jar with a few glowing dots, one per moment.', '罐子里几点亮光，一个片段一只。'],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#1e1210"/><circle cx="256" cy="300" r="170" fill="#ff9b3d" opacity=".16" filter="url(#blur18)"/><rect x="150" y="76" width="212" height="46" rx="14" fill="#a97b4f"/><path d="M168 134h176c34 0 58 26 58 60v150c0 36-26 64-62 64H172c-36 0-62-28-62-64V194c0-34 24-60 58-60z" fill="#fff" fill-opacity=".07" stroke="#e8c9a4" stroke-opacity=".7" stroke-width="7"/><g><circle cx="200" cy="230" r="15" fill="#ffd27a"/><circle cx="300" cy="200" r="12" fill="#ffe9b8"/><circle cx="330" cy="290" r="15" fill="#ff9a86"/><circle cx="230" cy="330" r="12" fill="#ffd27a"/><circle cx="292" cy="372" r="10" fill="#ffe9b8"/></g></svg>',
-    acc: false,
-  },
-  c10: {
-    id: 'p:c10',
-    bg: '#150f10',
-    note: [
-      'A projector beam lighting a screen that shows ‹‹.',
-      '放映机的光打在幕布上，幕布上是 ‹‹。',
-    ],
-    svg: '<svg viewBox="0 0 512 512"><defs><linearGradient id="movie-beam" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#ffe2b0" stop-opacity=".9"/><stop offset="1" stop-color="#ffe2b0" stop-opacity=".08"/></linearGradient></defs><rect width="512" height="512" rx="112" fill="#150f10"/><path d="M240 420h32l128-160H112z" fill="url(#movie-beam)"/><rect x="104" y="104" width="304" height="176" rx="16" fill="#f2ead8"/><g fill="none" stroke="#c8402f" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"><path d="M254 158l-34 34 34 34"/><path d="M300 158l-34 34 34 34"/></g><circle cx="256" cy="424" r="18" fill="#ffe2b0"/><circle cx="256" cy="424" r="34" fill="#ffe2b0" opacity=".18"/></svg>',
-    acc: false,
-  },
-  c11: {
-    id: 'p:c11',
-    bg: '#f5f1ea',
-    note: [
-      'One reel for the group, a colour marker for each member.',
-      '全组一条片轨，每人一个颜色标记。',
-    ],
-    svg: '<svg viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#f5f1ea"/><g><rect x="60" y="196" width="80" height="120" rx="20" fill="#ecd2b0"/><rect x="152" y="196" width="80" height="120" rx="20" fill="#e2725a"/><rect x="244" y="196" width="80" height="120" rx="20" fill="#ecd2b0"/><rect x="336" y="196" width="80" height="120" rx="20" fill="#ecd2b0"/><rect x="428" y="196" width="40" height="120" rx="20" fill="#ecd2b0" opacity=".6"/></g><g fill="#e2725a" opacity=".9"><circle cx="112" cy="150" r="14" fill="#e8b23f"/><circle cx="192" cy="150" r="14"/><circle cx="284" cy="150" r="14" fill="#7fb08f"/><circle cx="376" cy="150" r="14" fill="#b585b5"/></g><g stroke="#2a2522" stroke-width="12" stroke-linecap="round" fill="none"><path d="M112 370h288"/></g></svg>',
     acc: false,
   },
 };
