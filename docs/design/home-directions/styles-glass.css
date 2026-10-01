@@ -126,21 +126,21 @@
   height: 132px;
   margin: -66px 0 0 -66px;
   border-radius: 50%;
-  color: #3a2216;
+  color: rgba(58, 34, 22, 0.78);
+  /* 像一颗透明玻璃珠：中间几乎不加东西，只靠边缘的亮边和高光看出是玻璃 */
   background: radial-gradient(
-    circle at 38% 30%,
-    rgba(255, 255, 255, 0.96) 0,
-    rgba(255, 238, 218, 0.78) 26%,
-    rgba(255, 186, 132, 0.6) 58%,
-    rgba(240, 128, 78, 0.55) 100%
+    circle at 50% 50%,
+    rgba(255, 255, 255, 0.02) 0 60%,
+    rgba(255, 255, 255, 0.12) 84%,
+    rgba(255, 255, 255, 0.3) 100%
   );
-  -webkit-backdrop-filter: blur(12px) saturate(160%);
-  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(2px) saturate(115%);
+  backdrop-filter: blur(2px) saturate(115%);
   box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.95),
-    inset 0 -12px 26px rgba(232, 110, 60, 0.32),
-    0 0 70px 14px rgba(255, 170, 110, 0.45),
-    0 22px 40px -18px rgba(150, 70, 20, 0.5);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.28),
+    inset 0 0 16px rgba(255, 255, 255, 0.32),
+    inset 0 -14px 22px -12px rgba(255, 140, 80, 0.3),
+    0 16px 30px -22px rgba(150, 70, 20, 0.3);
   opacity: 0;
   visibility: hidden;
   transform: scale(0.5);
@@ -149,7 +149,43 @@
     transform 1.2s cubic-bezier(0.2, 0.9, 0.25, 1.15) 0.3s,
     visibility 0s 0.3s;
 }
+/* 左上一块高光 */
+.c6 .orb-play::before {
+  content: '';
+  position: absolute;
+  left: 17%;
+  top: 9%;
+  width: 46%;
+  height: 28%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 45%, rgba(255, 255, 255, 0.8), transparent 70%);
+  transform: rotate(-22deg);
+  pointer-events: none;
+}
+/* 一圈细边：左上亮、右下带一点暖色折射 */
+.c6 .orb-play::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1.2px;
+  border-radius: 50%;
+  background: linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.95),
+    rgba(255, 255, 255, 0.12) 40%,
+    rgba(255, 196, 150, 0.35) 75%,
+    rgba(255, 255, 255, 0.7)
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
 .c6 .orb-play .ic {
+  position: relative;
+  z-index: 1;
   width: 34px;
   height: 34px;
   margin-left: 5px;
@@ -168,12 +204,7 @@
 }
 @keyframes orb-breathe {
   50% {
-    transform: scale(1.04);
-    box-shadow:
-      inset 0 2px 3px rgba(255, 255, 255, 0.95),
-      inset 0 -12px 26px rgba(232, 110, 60, 0.32),
-      0 0 90px 22px rgba(255, 170, 110, 0.55),
-      0 22px 40px -18px rgba(150, 70, 20, 0.5);
+    transform: scale(1.035);
   }
 }
 @media (prefers-reduced-motion: reduce) {
