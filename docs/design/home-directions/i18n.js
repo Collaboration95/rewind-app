@@ -504,6 +504,73 @@ Object.assign(I18N, {
   ],
 });
 
+// 状态页
+Object.assign(I18N, {
+  'tab.states': ['States', '状态'],
+  'sts.k': ['HOME · STATES', 'HOME · 状态'],
+  'sts.h1': ['Every Home state', '首页的各个状态'],
+  'sts.p': [
+    'Pick a state to compare the directions side by side, or pick a direction to see all of its states. They follow the Home on dev; the copy is a draft. The sidebar switch still sets the state on the other tabs.',
+    '选一个状态，把各个方向放在一起比；或选一个方向，看它的全部状态。状态与 dev 上的首页对应，文案是草稿。侧栏里的状态切换仍然作用于其他页。',
+  ],
+  'sts.by.state': ['By state', '按状态看'],
+  'sts.by.dir': ['By direction', '按方向看'],
+  'sts.when': ['When it shows', '什么时候出现'],
+  'sts.shut': ['Shutter', '快门'],
+  'sts.retryToast': ['In the app, this reloads the capsule.', '在 App 里，这会重新读取这一期。'],
+  'sts.when.collect': [
+    'A capsule is open and you still have moments left this week.',
+    '这一期正在收集，你本周还有额度。',
+  ],
+  'sts.when.loading': [
+    'While the app fetches the current capsule for this group.',
+    '正在读取这个小组当前这一期的时候。',
+  ],
+  'sts.when.empty': [
+    'The group has no current capsule (the server returns NotFound).',
+    '小组目前没有进行中的这一期（服务端返回 NotFound）。',
+  ],
+  'sts.when.error': [
+    'The capsule could not be loaded (RecoverableFailure); the member can try again.',
+    '这一期读取失败（RecoverableFailure），可以重试。',
+  ],
+  'sts.when.denied': [
+    'The member is no longer in the group (MembershipDenied).',
+    '成员已经不在这个小组了（MembershipDenied）。',
+  ],
+  'sts.when.quota': [
+    'The member has used all 5 moments or 30 seconds this week.',
+    '本周 5 个片段或 30 秒已经用完。',
+  ],
+  'sts.when.developing': [
+    'The capsule has closed and the film is being put together (compiling).',
+    '这一期已经结束，影片正在合成（compiling）。',
+  ],
+  'sts.when.delayed': [
+    'Putting the film together is taking longer than usual (delayed).',
+    '影片合成比平时慢（delayed）。',
+  ],
+  'sts.when.released': [
+    'The film is published; everyone can watch it together for 24 hours.',
+    '影片已经发布，所有人可以在 24 小时内一起看。',
+  ],
+  'sts.shut.collect': [
+    'Add a moment; the ring shows this week’s allowance.',
+    '可以添加片段，外圈显示本周额度。',
+  ],
+  'sts.shut.loading': ['Disabled until the capsule loads.', '读取完成前不可用。'],
+  'sts.shut.empty': ['Disabled: there is no capsule to add to.', '不可用：没有可以添加的这一期。'],
+  'sts.shut.error': ['Disabled until the capsule loads.', '读取成功前不可用。'],
+  'sts.shut.denied': ['Disabled.', '不可用。'],
+  'sts.shut.quota': ['Shows “used up · resets Sunday”.', '显示“已用完 · 周日重置”。'],
+  'sts.shut.developing': ['Closed while the film develops.', '影片制作期间关闭。'],
+  'sts.shut.delayed': ['Closed while the film develops.', '影片制作期间关闭。'],
+  'sts.shut.released': [
+    'Becomes “watch together”, with the time left on its ring; Archive gets a dot.',
+    '变成“一起看”，外圈显示剩余时间；档案页签出现小红点。',
+  ],
+});
+
 let LANG = 'en';
 try {
   const q = new URLSearchParams(location.search).get('lang');

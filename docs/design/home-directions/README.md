@@ -16,6 +16,8 @@ Write them right on the page, under each phone and each dock. We will combine ev
 
 _Simulate → Home_ in the sidebar switches every phone between the states the Home has on `dev`: collecting, loading, no capsule yet, failed to load, no access, allowance used up, film developing, taking longer and film released. Each state keeps the direction's own header and colours and opens with a small drawing in its metaphor (Warm Glass's glow, Hearth's fire and seats, Firefly Jar's fireflies, Movie Night's countdown leader and reel) that changes with the state. The shutter follows: disabled while loading, on errors and while the film develops, _used up_ for the allowance, and _watch together_ once the film is out. _Try again_ shows loading and then recovers; _Play_ returns to collecting. The copy is a draft.
 
+The third tab at the top, _States_ (or `index.html#states`), shows them on their own: _By state_ puts the four directions side by side in one state, with a note on when it shows and what the shutter does; _By direction_ shows all nine states of one direction. It does not change the state chosen in the sidebar, which still applies to the other tabs. Links keep the choice, for example `#states=developing` or `#states=c7`.
+
 ## App icon · mix and match
 
 The second tab at the top of the page (or `index.html#mix`) pairs a Home direction with an app icon and shows them where people will meet them: the launch screen opening into that Home, a home screen among common apps (white or black wallpaper), the sizes from 120 px down to 29 px, a notification, and the two palettes side by side with a note when one is light and the other dark. There is no voting on this tab yet.

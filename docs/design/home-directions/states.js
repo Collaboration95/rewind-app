@@ -184,9 +184,97 @@ function setHome(v) {
 let retryTimer;
 document.addEventListener('click', (e) => {
   if (!e.target.closest('[data-st-retry]')) return;
+  // 状态页里只说明，不改动其他页的状态
+  if (e.target.closest('#states-view')) return rvToast(t('sts.retryToast'));
   // 演示“重试”：先显示加载，再恢复正常
   setHome('loading');
   clearTimeout(retryTimer);
   retryTimer = setTimeout(() => setHome('collect'), reduceMotion() ? 300 : 1600);
 });
 $('state')?.addEventListener('change', (e) => setHome(e.target.value));
+
+/* ---------- 状态页：按状态看（一个状态、各方向并排）/ 按方向看（一个方向、全部状态） ---------- */
+let sv = { by: 'state', state: 'loading', dir: 'c9' };
+
+// 用指定的状态画一台手机，不影响侧栏里选的状态
+function withHome(state, fn) {
+  const keep = { home: NAV.home, shutter: NAV.shutter };
+  NAV.home = state;
+  NAV.shutter = state === 'quota' ? 'quota' : state === 'released' ? 'premiere' : 'collect';
+  try {
+    return fn();
+  } finally {
+    Object.assign(NAV, keep);
+  }
+}
+function svPhone(id, state, label) {
+  const c = concepts.find((x) => x.id === id);
+  const html = withHome(state, () => screen(c, dataFor(id)));
+  return `<figure class="sv-ph"><div class="card sv-card" data-id="${id}"><div class="phone-wrap">${html}</div></div><figcaption>${label}</figcaption></figure>`;
+}
+
+const statesHash = () => `#states=${sv.by === 'state' ? sv.state : sv.dir}`;
+function readStatesHash() {
+  const m = /^#states(?:=(.+))?$/.exec(location.hash);
+  if (!m) return false;
+  if (HOME_STATES.includes(m[1])) Object.assign(sv, { by: 'state', state: m[1] });
+  else if (concepts.some((c) => c.id === m[1])) Object.assign(sv, { by: 'dir', dir: m[1] });
+  return true;
+}
+
+function renderStatesView() {
+  const root = $('states-view');
+  if (!root) return;
+  const dirs = concepts.filter((c) => !isArchived(c.id) || showArch);
+  if (!dirs.some((c) => c.id === sv.dir)) sv.dir = dirs[0].id;
+  const by = (k) =>
+    `<button type="button" data-sv-by="${k}" aria-pressed="${sv.by === k}">${t('sts.by.' + k)}</button>`;
+  const chips =
+    sv.by === 'state'
+      ? HOME_STATES.map(
+          (s) =>
+            `<button type="button" data-sv-state="${s}" aria-pressed="${sv.state === s}">${t('state.' + s)}</button>`,
+        )
+      : dirs.map(
+          (c) =>
+            `<button type="button" data-sv-dir="${c.id}" aria-pressed="${sv.dir === c.id}"><span>${c.no}</span>${nameOf(c)}</button>`,
+        );
+  const grid =
+    sv.by === 'state'
+      ? dirs.map((c) => svPhone(c.id, sv.state, `${c.no} ${nameOf(c)}`))
+      : HOME_STATES.map((s) => svPhone(sv.dir, s, t('state.' + s)));
+  root.innerHTML =
+    `<header class="main-h"><p class="k">${t('sts.k')}</p><h1>${t('sts.h1')}</h1><p>${t('sts.p')}</p></header>` +
+    `<div class="sv-bar"><div class="sv-by" role="group" aria-label="${t('sts.h1')}">${by('state')}${by('dir')}</div>` +
+    `<div class="sv-chips" role="group">${chips.join('')}</div></div>` +
+    (sv.by === 'state'
+      ? `<dl class="sv-notes"><div><dt>${t('sts.when')}</dt><dd>${t('sts.when.' + sv.state)}</dd></div>` +
+        `<div><dt>${t('sts.shut')}</dt><dd>${t('sts.shut.' + sv.state)}</dd></div></dl>`
+      : '') +
+    `<div class="sv-grid by-${sv.by}">${grid.join('')}</div>`;
+  startFlies(root, {});
+  try {
+    if (document.body.classList.contains('view-states'))
+      history.replaceState(null, '', statesHash());
+  } catch {
+    /* 受限的框架里改不了地址栏也没关系 */
+  }
+}
+
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-sv-by],[data-sv-state],[data-sv-dir]');
+  if (!b) return;
+  const d = b.dataset;
+  if (d.svBy) sv.by = d.svBy;
+  if (d.svState) sv.state = d.svState;
+  if (d.svDir) sv.dir = d.svDir;
+  renderStatesView();
+});
+
+// 打开时如果网址是 #states…，直接进状态页
+const openStatesFromHash = () => {
+  if (readStatesHash()) setView('states');
+};
+openStatesFromHash();
+addEventListener('load', openStatesFromHash);
+addEventListener('hashchange', openStatesFromHash);
