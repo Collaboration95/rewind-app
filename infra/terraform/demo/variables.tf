@@ -90,12 +90,6 @@ variable "demo_instance_enabled" {
   default     = true
 }
 
-variable "public_https_distribution_enabled" {
-  type        = bool
-  description = "Whether to create the existing public HTTPS Lightsail distribution for the Demo web/API origin."
-  default     = false
-}
-
 variable "real_auth_https_distribution_enabled" {
   type        = bool
   description = "Whether to add a separate CloudFront HTTPS distribution with real-origin authentication."
