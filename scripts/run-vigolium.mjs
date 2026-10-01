@@ -61,6 +61,7 @@ try {
     '5m',
   ];
   const credentials = [];
+  const accountIds = new Map();
   async function request(path, token, body, expectedStatus = 200) {
     const response = await fetch(`${origin}${path}`, {
       method: body ? 'POST' : 'GET',
@@ -77,6 +78,7 @@ try {
     const password = randomUUID();
     const account = await createRealAccount(database, username, username, password);
     assert.equal(account.ok, true, 'Disposable account creation failed');
+    accountIds.set(username, account.account.id);
     const auth = await request('/auth/login', null, { username, password, clientType: 'native' });
     assert.equal(typeof auth.token, 'string');
     credentials.push(password, auth.token);
@@ -118,11 +120,15 @@ try {
     },
     201,
   );
-  const groupPath = `/real/groups/${created.group.id}`;
+  const groupId = database
+    .prepare('SELECT group_id AS groupId FROM real_account_group_selections WHERE account_id = ?')
+    .get(accountIds.get('scan-owner')).groupId;
+  assert.equal(created.group.id, groupId);
+  const groupPath = `/real/groups/${groupId}`;
   const invitation = await request(`${groupPath}/invites`, owner, {}, 201);
   credentials.push(invitation.invite.code);
   await request('/real/invites/accept', member, { code: invitation.invite.code });
-  const chatPath = `/realtime/groups/${created.group.id}/messages`;
+  const chatPath = `/realtime/groups/${groupId}/messages`;
   await request(chatPath, owner, { body: 'Disposable scan message' }, 201);
   const ownerTargets = [
     '/auth/session',

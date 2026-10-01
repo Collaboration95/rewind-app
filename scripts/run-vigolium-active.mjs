@@ -31,8 +31,11 @@ let proxy;
 let token;
 const password = randomUUID();
 
-async function run(args) {
-  const child = spawn(process.execPath, [cli, ...args], { stdio: 'inherit' });
+async function run(args, input) {
+  const child = spawn(process.execPath, [cli, ...args], {
+    stdio: input ? ['pipe', 'inherit', 'inherit'] : 'inherit',
+  });
+  if (input) child.stdin.end(input);
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
@@ -82,7 +85,11 @@ try {
   });
   assert.equal(valid.status, 201, 'Group creation baseline must work before scanning');
   const created = await valid.json();
-  const chatPath = `/realtime/groups/${created.group.id}/messages`;
+  const groupId = database
+    .prepare('SELECT group_id AS groupId FROM real_account_group_selections WHERE account_id = ?')
+    .get(account.account.id).groupId;
+  assert.equal(created.group.id, groupId);
+  const chatPath = `/realtime/groups/${groupId}/messages`;
   const chatBaseline = JSON.stringify({ body: 'Disposable active scan message' });
   const chat = await fetch(`${origin}${chatPath}`, {
     method: 'POST',
@@ -110,6 +117,8 @@ try {
       response.end();
       return;
     }
+    const targetUrl =
+      request.url === chatPath ? new URL(chatPath, origin) : new URL('/real/groups', origin);
     const now = Date.now();
     const delay = Math.max(0, nextForwardAt - now);
     nextForwardAt = Math.max(now, nextForwardAt) + 550;
@@ -118,7 +127,7 @@ try {
       if (request.destroyed) return;
       forwardedAt.push(Date.now());
       const upstream = forwardRequest(
-        new URL(request.url, origin),
+        targetUrl,
         {
           method: request.method,
           headers: { ...request.headers, host: new URL(origin).host },
@@ -163,33 +172,32 @@ try {
   });
   const flags = ['--db', join(dataDir, 'scan.sqlite'), '--skip-dependency-check'];
   for (const [path, body] of baselines) {
-    const requestFile = join(dataDir, 'request.http');
-    await writeFile(
-      requestFile,
-      `POST ${path} HTTP/1.1\r\nHost: 127.0.0.1:${proxy.address().port}\r\nAuthorization: Bearer ${token}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+    const rawRequest = `POST ${path} HTTP/1.1\r\nHost: 127.0.0.1:${proxy.address().port}\r\nAuthorization: Bearer ${token}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+    await run(
+      [
+        'scan-request',
+        ...flags,
+        '-i',
+        '-',
+        '-t',
+        scanOrigin,
+        '--module-id',
+        'sqli-error-based',
+        '--module-id',
+        'sqli-boolean-blind',
+        '--no-passive',
+        '--no-tech-filter',
+        '--rate-limit',
+        '2',
+        '--concurrency',
+        '1',
+        '--max-per-host',
+        '1',
+        '--timeout',
+        '5s',
+      ],
+      rawRequest,
     );
-    await run([
-      'scan-request',
-      ...flags,
-      '-i',
-      requestFile,
-      '-t',
-      scanOrigin,
-      '--module-id',
-      'sqli-error-based',
-      '--module-id',
-      'sqli-boolean-blind',
-      '--no-passive',
-      '--no-tech-filter',
-      '--rate-limit',
-      '2',
-      '--concurrency',
-      '1',
-      '--max-per-host',
-      '1',
-      '--timeout',
-      '5s',
-    ]);
     assert.ok(
       endpointEvidence[path].changedBodies > 0,
       `No body mutations observed for ${path}; active coverage not established`,
