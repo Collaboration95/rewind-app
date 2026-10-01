@@ -16,6 +16,17 @@ locals {
   # One branch, one GitHub environment, one host.
   deploy_environment = "dev"
   deploy_branch      = "dev"
+
+  # GitHub issues immutable OIDC subject claims for this repository, so the
+  # sub claim arrives as repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:ENV
+  # instead of the classic repo:OWNER/REPO:environment:ENV. Trust both exact
+  # subjects so the environment-scoped role matches both forms, without
+  # widening the trust relationship to a wildcard.
+  deploy_subjects = [
+    "repo:${var.github_repository}:environment:${local.deploy_environment}",
+    "repo:${var.github_repository_immutable}:environment:${local.deploy_environment}",
+  ]
+
   deploy_instance_arn = try(
     aws_lightsail_instance.rewind[0].arn,
     "arn:aws:lightsail:${var.aws_region}:${var.account_id}:Instance/${local.instance_name}",
@@ -42,7 +53,7 @@ data "aws_iam_policy_document" "deploy_trust" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:environment:${local.deploy_environment}"]
+      values   = local.deploy_subjects
     }
 
     condition {
