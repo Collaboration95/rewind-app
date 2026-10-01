@@ -521,9 +521,9 @@ const bodies = {
     <section class="hero" data-seal aria-label="${plural(d.m, 'moment')}, sealed until Sunday">
       <b>${d.m}</b>
       <span>little ${d.m === 1 ? 'moment' : 'moments'}</span>
+      <button type="button" class="orb-play" aria-label="Watch together · 2 min 14 s">${ic('play')}</button>
     </section>
-    <div class="count"><strong>${pp('2 days, 14 hours', 'Your film is here')}</strong><span>${pp('Sun 8 PM', '2 min 14 s')}</span>
-      <button type="button" class="st-btn wt is-now"><span class="wt-i">${ic('play')}</span>Watch together</button></div>
+    <div class="count"><strong>${pp('2 days, 14 hours', 'Your film is here')}</strong><span>${pp('Sun 8 PM', `${plural(d.m, 'moment')} · 2 min 14 s`)}</span></div>
     <section class="glass">
       <small>This week's prompt</small>
       <h2>What made you pause and smile?</h2>

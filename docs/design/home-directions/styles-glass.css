@@ -104,34 +104,80 @@
   border-radius: 50%;
 }
 
-/* ---------- 揭晓后的“一起看”：和胶囊同一种玻璃，左边一颗暖色播放钮 ---------- */
-.c6 .count .wt {
-  gap: 10px;
-  margin-top: 14px;
-  padding: 6px 22px 6px 6px;
-  font: 500 15px/1 var(--f-body);
-  color: var(--ink);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.34));
-  -webkit-backdrop-filter: blur(20px) saturate(160%);
-  backdrop-filter: blur(20px) saturate(160%);
-  box-shadow:
-    inset 0 1px 1px rgba(255, 255, 255, 1),
-    inset 0 -1px 1px rgba(255, 255, 255, 0.5),
-    0 10px 24px -12px rgba(150, 80, 30, 0.38);
+/* ---------- 已上映：一周攒下的暖光收拢成一颗光球，点它一起看 ---------- */
+.c6 .hero > b,
+.c6 .hero > span {
+  transition:
+    opacity 0.6s ease,
+    transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.c6 .count .wt-i {
+.revealed.c6 .hero > b,
+.revealed.c6 .hero > span {
+  opacity: 0;
+  transform: scale(0.82);
+}
+.c6 .orb-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 132px;
+  height: 132px;
+  margin: -66px 0 0 -66px;
   border-radius: 50%;
-  color: #fff;
-  background: radial-gradient(circle at 35% 30%, #ffb27c, var(--accent));
-  box-shadow: 0 4px 10px -4px var(--accent);
+  color: #3a2216;
+  background: radial-gradient(
+    circle at 38% 30%,
+    rgba(255, 255, 255, 0.96) 0,
+    rgba(255, 238, 218, 0.78) 26%,
+    rgba(255, 186, 132, 0.6) 58%,
+    rgba(240, 128, 78, 0.55) 100%
+  );
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  backdrop-filter: blur(12px) saturate(160%);
+  box-shadow:
+    inset 0 2px 3px rgba(255, 255, 255, 0.95),
+    inset 0 -12px 26px rgba(232, 110, 60, 0.32),
+    0 0 70px 14px rgba(255, 170, 110, 0.45),
+    0 22px 40px -18px rgba(150, 70, 20, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(0.5);
+  transition:
+    opacity 1s ease 0.3s,
+    transform 1.2s cubic-bezier(0.2, 0.9, 0.25, 1.15) 0.3s,
+    visibility 0s 0.3s;
 }
-.c6 .count .wt-i .ic {
-  width: 15px;
-  height: 15px;
-  margin-left: 2px;
+.c6 .orb-play .ic {
+  width: 34px;
+  height: 34px;
+  margin-left: 5px;
   fill: currentColor;
+  stroke: none;
+  opacity: 0.85;
+}
+.revealed.c6 .orb-play {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  animation: orb-breathe 3.6s ease-in-out 1.6s infinite;
+}
+.revealed.c6 .orb-play:active {
+  transform: scale(0.95);
+}
+@keyframes orb-breathe {
+  50% {
+    transform: scale(1.04);
+    box-shadow:
+      inset 0 2px 3px rgba(255, 255, 255, 0.95),
+      inset 0 -12px 26px rgba(232, 110, 60, 0.32),
+      0 0 90px 22px rgba(255, 170, 110, 0.55),
+      0 22px 40px -18px rgba(150, 70, 20, 0.5);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .revealed.c6 .orb-play {
+    animation: none;
+  }
 }
