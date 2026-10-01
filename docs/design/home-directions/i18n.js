@@ -62,11 +62,8 @@ const I18N = {
     '<b>Play</b>, above the phone: watch a whole cycle',
     '手机上方的<b>播放</b>：看完整的一期',
   ],
-  'tap.shutter': ['<b>Shutter</b>: seal a moment', '<b>快门</b>：封存一个片段'],
-  'tap.avatar': [
-    '<b>Avatar</b>: profile and settings. A draft; it could become a full Settings page.',
-    '<b>头像</b>：个人与设置。这是暂定效果，之后可以改成独立的 Settings 页。',
-  ],
+  'tap.shutter': ['<b>Shutter</b>: take a photo or a clip', '<b>快门</b>：拍照或录视频'],
+  'tap.avatar': ['<b>Avatar</b>: settings', '<b>头像</b>：设置'],
   'tap.dock': ['<b>Dock</b>: switch tabs', '<b>底栏</b>：切换页签'],
   'rv.copyFail': [
     'Couldn’t copy. Select the text and press Ctrl+C.',
@@ -234,6 +231,48 @@ const I18N = {
   'dv.h1': ['Try icons in the dock', '试试底栏图标'],
   'dv.p': ['Pick a set below; the phone updates.', '选下面的一套，手机里的底栏会跟着换。'],
   'dv.zoom': ['Close-up', '特写'],
+  'tab.screens': ['Screens', '画面'],
+  'scr.k': ['BEYOND HOME', '首页以外'],
+  'scr.h1': ['Settings, capture and the Sunday film', '设置、拍摄和周日影片'],
+  'scr.p': [
+    'Each flow follows dev. Every phone can be tapped through; on the Home tab, the avatar, the shutter and Watch together open these too.',
+    '每个流程都对应 dev 上的功能，每台手机都能接着点。在首页标签里点头像、快门或“一起看”也会进到这些画面。',
+  ],
+  'scr.set': ['Settings', '设置'],
+  'scr.set.p': [
+    'From the avatar: the group, invites, the Sunday reminder and the account.',
+    '点头像进入：小组、邀请、周日提醒、账号。',
+  ],
+  'scr.set.main': ['Settings', '设置'],
+  'scr.set.invite': ['Invite a friend', '邀请朋友'],
+  'scr.photo': ['Take a photo', '拍照'],
+  'scr.photo.p': [
+    'From the shutter. The pill shows the moments left this week; take a quick look, then seal it.',
+    '点快门进入。顶部显示本周还剩几条；拍完看一眼再封存。',
+  ],
+  'scr.photo.perm': ['Camera access', '相机权限'],
+  'scr.photo.view': ['Viewfinder', '取景'],
+  'scr.photo.review': ['Look, then seal', '看一眼再封存'],
+  'scr.photo.sealed': ['Sealed', '封存好了'],
+  'scr.video': ['Record a clip', '录视频'],
+  'scr.video.p': [
+    'Up to 15 seconds, within 30 seconds a week. Trim it and pick a look before sealing.',
+    '一段最长 15 秒，一周一共 30 秒。封存前可以剪一下、选一个效果。',
+  ],
+  'scr.video.view': ['Video mode', '视频模式'],
+  'scr.video.rec': ['Recording', '录制中'],
+  'scr.video.review': ['Trim and pick a look', '剪辑、选效果'],
+  'scr.video.sealed': ['Sealed', '封存好了'],
+  'scr.film': ['Sunday film', '周日影片'],
+  'scr.film.p': [
+    'From Watch together after the reveal. Everyone starts at the same moment; afterwards it moves to Archive.',
+    '揭晓后点“一起看”进入。大家同一时刻开始看，之后收进档案。',
+  ],
+  'scr.film.wait': ['Waiting for everyone', '等大家到'],
+  'scr.film.play': ['Watching together', '一起看'],
+  'scr.film.end': ['The end', '片尾'],
+  'scr.copied': ['Invite link copied', '邀请链接已复制'],
+  'scr.saved': ['In the app, this saves the film to Photos.', '在 App 里，这会把影片存到相册。'],
 };
 
 let LANG = 'en';

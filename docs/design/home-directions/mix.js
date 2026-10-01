@@ -125,15 +125,17 @@ function readHash() {
 
 /* ---------- 视图切换：首页 / 搭配 / 状态 / 底栏图标 ---------- */
 function setView(v) {
-  const view = ['mix', 'states', 'dockicons'].includes(v) ? v : 'home';
+  const view = ['mix', 'states', 'screens', 'dockicons'].includes(v) ? v : 'home';
   document.body.classList.toggle('view-mix', view === 'mix');
   document.body.classList.toggle('view-states', view === 'states');
+  document.body.classList.toggle('view-screens', view === 'screens');
   document.body.classList.toggle('view-dockicons', view === 'dockicons');
   document
     .querySelectorAll('[data-view]')
     .forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === view)));
   if (view === 'mix') renderMix();
   if (view === 'states') window.renderStatesView?.();
+  if (view === 'screens') window.renderScreensView?.();
   if (view === 'dockicons') window.renderDockView?.();
   try {
     history.replaceState(
@@ -143,9 +145,11 @@ function setView(v) {
         ? mixHash()
         : view === 'states'
           ? statesHash() // 定义在 states.js（同一页面的全局常量）
-          : view === 'dockicons'
-            ? dockHash() // 定义在 dockicons.js
-            : location.pathname + location.search,
+          : view === 'screens'
+            ? '#screens'
+            : view === 'dockicons'
+              ? dockHash() // 定义在 dockicons.js
+              : location.pathname + location.search,
     );
   } catch {
     /* 受限的框架里改不了地址栏也没关系 */
@@ -366,6 +370,7 @@ document.addEventListener('change', (e) => {
 function relangMix() {
   if (document.body.classList.contains('view-mix')) renderMix();
   if (document.body.classList.contains('view-states')) window.renderStatesView?.();
+  if (document.body.classList.contains('view-screens')) window.renderScreensView?.();
   if (document.body.classList.contains('view-dockicons')) window.renderDockView?.();
 }
 

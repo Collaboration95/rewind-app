@@ -167,23 +167,9 @@ function dock(d) {
 }
 
 const me = (withName = true) =>
-  `<button type="button" class="me" aria-label="Alex · profile and settings" aria-haspopup="dialog"><span class="avatar">A</span>${
+  `<button type="button" class="me" aria-label="Alex · settings"><span class="avatar">A</span>${
     withName ? `<span class="me-n">Alex</span>${ic('chev', 'chev')}` : ''
   }</button>`;
-
-const meSheet = (d) =>
-  `<div class="scrim" data-close></div><div class="sheet" role="dialog" aria-label="Profile and settings">` +
-  `<div class="sh-head"><span class="avatar">A</span><div><strong>Alex</strong><small>Local demo · synthetic member</small></div></div>` +
-  `<div class="sh-group"><small>Current group</small><strong>Group name</strong><span>${plural(d.n, 'member')} · Owner</span></div><ul>` +
-  [
-    ['swap', 'Switch demo member'],
-    ['link', 'Invite to group'],
-    ['bell', 'Sunday 7 PM reminder'],
-    ['gear', 'Settings'],
-  ]
-    .map(([i, l]) => `<li><button type="button">${ic(i)}<span>${l}</span></button></li>`)
-    .join('') +
-  `</ul><p class="sh-note">Draft · this could become a full Settings page</p></div>`;
 
 const crew = (d) =>
   d.shown
@@ -200,7 +186,7 @@ const bodies = {
   c6: (d) => `
     <div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>
     <div class="glow-low" aria-hidden="true"></div>
-    <header class="top"><span class="tag">W36</span><button type="button" class="grp">Group name ${ic('chev')}</button>${me(false)}</header>
+    <header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp">Group name ${ic('chev')}</button>${me(false)}</header>
     <section class="hero" data-seal aria-label="${plural(d.m, 'moment')}, sealed until Sunday">
       <b>${d.m}</b>
       <span>little ${d.m === 1 ? 'moment' : 'moments'}</span>
@@ -240,7 +226,7 @@ const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 // 暖光玻璃的“已上映”就是“播放”里揭晓之后的画面，两处保持一致
 const revealedHome = (c) => NAV.home === 'released' && c.id === 'c6';
 const screen = (c, d) =>
-  `<div class="device"><div class="screen ${c.id} gnav nav-g sh-${NAV.shutter} st-${NAV.home}${revealedHome(c) ? ' revealed' : ''}">${statusBar()}<div class="scroll">${NAV.home === 'collect' || revealedHome(c) ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+  `<div class="device"><div class="screen ${c.id} gnav nav-g sh-${NAV.shutter} st-${NAV.home}${revealedHome(c) ? ' revealed' : ''}">${statusBar()}<div class="scroll">${NAV.home === 'collect' || revealedHome(c) ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
 
 // 每台手机的演示数据（播放 / 按快门只改这一台；重置即删除）
 const STORY = {};
@@ -526,11 +512,8 @@ function resetCard(id) {
   setStep(id, '');
 }
 
-const closeSheets = () =>
-  document.querySelectorAll('.screen.open').forEach((s) => s.classList.remove('open'));
-
 document.addEventListener('click', (e) => {
-  const t = e.target.closest('button, [data-close]');
+  const t = e.target.closest('button');
   if (!t) return;
   if (t.dataset.lang) return setLang(t.dataset.lang);
   if (t.dataset.anon) {
@@ -559,13 +542,9 @@ document.addEventListener('click', (e) => {
   }
   const scr = t.closest('.screen');
   if (!scr) return;
-  if (t.classList.contains('me')) {
-    const open = !scr.classList.contains('open');
-    closeSheets();
-    scr.classList.toggle('open', open);
-    return;
-  }
-  if (t.hasAttribute('data-close')) return scr.classList.remove('open');
+  // 头像 → 设置；揭晓后的“一起看” → 周日影片（见 screens.js）
+  if (t.classList.contains('me')) return openSub(scr, 'settings');
+  if (t.classList.contains('wt')) return openSub(scr, 'film');
   if (t.classList.contains('tab')) {
     t.parentElement.querySelectorAll('.tab').forEach((b) => {
       b.classList.toggle('on', b === t);
@@ -582,13 +561,10 @@ document.addEventListener('click', (e) => {
       t.classList.add('nope');
       return t.dataset.tip && flashTip(t, t.dataset.tip);
     }
-    t.classList.remove('press');
-    void t.offsetWidth;
-    t.classList.add('press');
-    sealFlight(scr, t);
+    // 快门 → 相机（拍照 / 录视频），封存后回到首页
+    openSub(scr, 'camera');
   }
 });
-document.addEventListener('keydown', (e) => e.key === 'Escape' && closeSheets());
 $('zoom').addEventListener('input', (e) => setZoom(e.target.value));
 $('hints').addEventListener('change', (e) =>
   $('gallery').classList.toggle('hints', e.target.checked),

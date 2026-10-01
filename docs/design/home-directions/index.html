@@ -24,12 +24,14 @@
     <link rel="stylesheet" href="styles-states.css" />
     <link rel="stylesheet" href="styles-glass.css" />
     <link rel="stylesheet" href="styles-dock.css" />
+    <link rel="stylesheet" href="styles-screens.css" />
     <script defer src="i18n.js"></script>
     <script defer src="app.js"></script>
     <script defer src="icons.js"></script>
     <script defer src="mix.js"></script>
     <script defer src="states.js"></script>
     <script defer src="dockicons.js"></script>
+    <script defer src="screens.js"></script>
   </head>
   <body>
     <!-- 图标共用的滤镜：让字母和笔画的边缘有手绘感 -->
@@ -72,10 +74,8 @@
           >
           <ul class="taps">
             <li data-i18n="tap.play"><b>Play</b>, next to each phone: watch a whole cycle</li>
-            <li data-i18n="tap.shutter"><b>Shutter</b>: seal a moment</li>
-            <li data-i18n="tap.avatar">
-              <b>Avatar</b>: profile and settings. A draft; it could become a full Settings page.
-            </li>
+            <li data-i18n="tap.shutter"><b>Shutter</b>: take a photo or a clip</li>
+            <li data-i18n="tap.avatar"><b>Avatar</b>: settings</li>
             <li data-i18n="tap.dock"><b>Dock</b>: switch tabs</li>
           </ul>
         </div>
@@ -156,7 +156,7 @@
       </aside>
 
       <main>
-        <span class="ver" title="Page version">v3.0</span>
+        <span class="ver" title="Page version">v3.1</span>
         <nav class="view-tabs" data-i18n-aria="tab.aria" aria-label="Page">
           <button type="button" data-view="home" aria-pressed="true" data-i18n="tab.home">
             Home</button
@@ -164,6 +164,8 @@
             App icon · mix and match</button
           ><button type="button" data-view="states" aria-pressed="false" data-i18n="tab.states">
             States</button
+          ><button type="button" data-view="screens" aria-pressed="false" data-i18n="tab.screens">
+            Screens</button
           ><button type="button" data-view="dockicons" aria-pressed="false" data-i18n="tab.dock">
             Dock icons
           </button>
@@ -176,6 +178,7 @@
         <div class="gallery hints" id="gallery"></div>
         <section class="mix" id="mix" aria-label="App icon"></section>
         <section class="states-view" id="states-view" aria-label="Home states"></section>
+        <section class="screens-view" id="screens-view" aria-label="Screens"></section>
         <section class="dock-view" id="dock-view" aria-label="Dock icons"></section>
       </main>
     </div>

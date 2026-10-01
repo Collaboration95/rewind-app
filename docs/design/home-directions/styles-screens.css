@@ -1,0 +1,968 @@
+/* 首页以外的画面：设置、相机（拍照 / 录视频）、周日影片，以及“画面”页 */
+
+/* ============ 子画面通用 ============ */
+.screen.sub-in {
+  animation: sub-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes sub-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+/* 相机和影片是深色的暖黑底，让画面本身最亮 */
+.screen.c6.dark {
+  --bg: #16100c;
+  --ink: #f8ece0;
+  --muted: rgba(248, 236, 224, 0.62);
+  --line: rgba(255, 255, 255, 0.14);
+  --ring-off: rgba(255, 255, 255, 0.3);
+  --ring-on: #ffc08f;
+  --av-bg: #4a3326;
+  --av-ink: #f8ece0;
+  background: var(--bg);
+  color: var(--ink);
+}
+.screen.dark::before,
+.screen.dark::after {
+  display: none;
+}
+.screen.dark .home-ind {
+  background: rgba(255, 255, 255, 0.8);
+}
+/* 深色画面上的玻璃小圆钮、胶囊 */
+.cam-ic,
+.cam-pill,
+.cam-mine,
+.cam-retake,
+.glass-btn,
+.fm-skip,
+.looks button {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.cam-ic {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+}
+.cam-ic .ic {
+  width: 22px;
+  height: 22px;
+}
+.cam-ic.cam-ph {
+  visibility: hidden;
+}
+/* 深色画面上还没来的人：虚线空位 */
+.c6.dark .av.wait {
+  background: transparent;
+  box-shadow: none;
+  outline-color: rgba(255, 255, 255, 0.55);
+}
+
+/* ============ 设置 ============ */
+.sub-settings .scroll {
+  padding-top: 56px;
+}
+.sub-h {
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  height: 56px;
+  margin-bottom: 14px;
+}
+.sub-h h1 {
+  margin: 0;
+  text-align: center;
+  font: 400 22px/1 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.sub-back {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.9),
+    0 4px 12px -4px rgba(150, 80, 30, 0.25);
+}
+.sub-back .ic {
+  width: 20px;
+  height: 20px;
+}
+.set-me {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 18px;
+}
+.set-me .avatar {
+  width: 56px;
+  height: 56px;
+  font-size: 22px;
+}
+.set-me strong {
+  display: block;
+  font: 400 22px/1.15 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+/* 题目卡片里的 small 是大写小标签，这里换回普通小字 */
+.c6 .glass.set-me small,
+.c6 .glass .set-row small {
+  margin: 0;
+  font: 400 13px/1.3 var(--f-body);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+}
+.set-k {
+  margin: 22px 6px 8px;
+  font-size: 11.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.c6 .set-list {
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
+  border-radius: 22px;
+}
+.set-list li + li {
+  margin-left: 48px;
+  border-top: 1px solid var(--line);
+}
+.set-list li + li .set-row {
+  margin-left: -48px;
+  width: calc(100% + 48px);
+}
+.set-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px;
+  font-size: 15px;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+.set-row > .ic:first-child {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+.set-row > span {
+  flex: 1;
+}
+.c6 .glass .set-row small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+}
+.set-row em {
+  font-style: normal;
+  font-size: 14px;
+  color: var(--muted);
+}
+.set-row .go {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  transform: rotate(-90deg);
+}
+.set-row[aria-expanded='true'] .go {
+  transform: none;
+}
+.set-row.out,
+.set-row.out > .ic:first-child {
+  color: #c2452f;
+}
+.set-list li.set-inv {
+  margin-left: 0;
+  padding: 2px 16px 16px;
+  border-top: 0;
+}
+.set-inv p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.set-code {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 8px 8px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9);
+}
+.set-code b {
+  font:
+    500 18px/1 'DM Mono',
+    monospace;
+  letter-spacing: 0.08em;
+}
+.set-copy {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #ffb27c, var(--accent));
+  box-shadow: 0 6px 14px -6px var(--accent);
+}
+.set-copy .ic {
+  width: 16px;
+  height: 16px;
+}
+/* 开关 */
+.sw {
+  position: relative;
+  flex: none;
+  width: 50px;
+  height: 30px;
+  margin: 0;
+  border-radius: 999px;
+  background: rgba(51, 35, 26, 0.16);
+  appearance: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.sw::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s;
+}
+.sw:checked {
+  background: var(--accent);
+}
+.sw:checked::after {
+  transform: translateX(20px);
+}
+.set-foot {
+  margin: 22px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ============ 相机 ============ */
+/* 取景框：虚焦的暖色灯光，慢慢漂；拍下之后停住 */
+.cam-view {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: radial-gradient(120% 80% at 50% 32%, #3d2619, #120b08 70%);
+  transition: filter 0.3s;
+}
+.cam-view i {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.75;
+  filter: blur(18px);
+  mix-blend-mode: screen;
+  transform: translate(-50%, -50%);
+  animation: bk-drift 9s ease-in-out infinite alternate;
+}
+@keyframes bk-drift {
+  to {
+    opacity: 0.95;
+    transform: translate(-44%, -56%) scale(1.12);
+  }
+}
+.screen:not([data-step='view']):not([data-step='rec']):not([data-step='perm']) .cam-view i {
+  animation-play-state: paused;
+}
+.screen[data-step='perm'] .cam-view {
+  filter: blur(14px) brightness(0.45);
+}
+.screen[data-look='soft'] .cam-view {
+  filter: blur(3px) saturate(0.85) brightness(1.1);
+}
+.screen[data-look='contrast'] .cam-view {
+  filter: contrast(1.4) saturate(1.25);
+}
+/* 按下快门时一闪 */
+.cam-flashfx {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+.cam-flashfx.go {
+  animation: cam-flash 0.45s ease-out;
+}
+@keyframes cam-flash {
+  0% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.cam-top,
+.fm-top {
+  position: absolute;
+  z-index: 6;
+  top: 58px;
+  left: 18px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.cam-pill {
+  padding: 10px 15px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+/* 录视频：计时 */
+.cam-time {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  top: 120px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
+  font:
+    500 15px/1 'DM Mono',
+    monospace;
+  color: rgba(255, 255, 255, 0.7);
+}
+.cam-time span {
+  color: #fff;
+}
+.cam-time i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #ff5a4a;
+  vertical-align: 1px;
+  opacity: 0.35;
+}
+.screen[data-mode='video'][data-step='view'] .cam-time,
+.screen[data-step='rec'] .cam-time {
+  display: block;
+}
+.screen[data-step='rec'] .cam-time i {
+  opacity: 1;
+  animation: rec-blink 1s steps(2) infinite;
+}
+@keyframes rec-blink {
+  50% {
+    opacity: 0.2;
+  }
+}
+/* 底部：模式、快门 */
+.cam-bottom {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  bottom: 40px;
+  justify-items: center;
+  gap: 18px;
+}
+.screen[data-step='view'] .cam-bottom,
+.screen[data-step='rec'] .cam-bottom {
+  display: grid;
+}
+.cam-modes {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+.cam-modes button {
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+.cam-modes [aria-selected='true'] {
+  color: #2a1a10;
+  background: #ffd9b0;
+}
+.cam-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0 40px;
+}
+.screen[data-step='rec'] .cam-modes,
+.screen[data-step='rec'] .cam-mine,
+.screen[data-step='rec'] .cam-row > .cam-ic {
+  visibility: hidden;
+}
+.cam-mine {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  font-size: 15px;
+}
+.cam-mine .ic {
+  width: 15px;
+  height: 15px;
+}
+.cam-shut {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+}
+.cam-shut .ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.cam-core {
+  width: 66px;
+  height: 66px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition:
+    transform 0.2s,
+    width 0.25s,
+    height 0.25s,
+    border-radius 0.25s;
+}
+.cam-shut:active .cam-core {
+  transform: scale(0.92);
+}
+.screen[data-mode='video'] .cam-core {
+  background: #f0603f;
+}
+.screen[data-step='rec'] .cam-core {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+}
+/* 没给权限 */
+.c6 .cam-perm {
+  display: none;
+  position: absolute;
+  z-index: 5;
+  top: 300px;
+  left: 26px;
+  right: 26px;
+  padding: 26px 22px;
+  text-align: center;
+  color: #fff;
+}
+.screen[data-step='perm'] .cam-perm {
+  display: block;
+}
+.cam-perm h2 {
+  margin: 0 0 8px;
+  font: 400 26px/1.1 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.cam-perm p {
+  margin: 0 0 20px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.75);
+}
+.cam-allow {
+  height: 48px;
+  padding: 0 30px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #2a1a10;
+  background: #ffd9b0;
+}
+/* 看一眼再封存 */
+.cam-rev {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  bottom: 40px;
+  gap: 14px;
+  padding: 0 22px;
+}
+.screen[data-step='review'] .cam-rev,
+.screen[data-step='sealing'] .cam-rev {
+  display: grid;
+}
+.cam-acts {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  gap: 12px;
+}
+.cam-retake,
+.cam-seal {
+  height: 56px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.cam-seal {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffd2a6, #ff9f6b);
+  box-shadow: 0 10px 26px -10px rgba(255, 140, 80, 0.8);
+}
+.cam-seal .ic {
+  width: 18px;
+  height: 18px;
+}
+.screen[data-step='sealing'] .cam-seal {
+  pointer-events: none;
+  opacity: 0.85;
+}
+.screen[data-step='sealing'] .cam-seal span::after {
+  content: 'ing…';
+}
+.screen[data-step='sealing'] .cam-retake,
+.screen[data-step='sealing'] .looks,
+.screen[data-step='sealing'] .trim {
+  visibility: hidden;
+}
+.cam-play {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  top: 330px;
+  left: 50%;
+  width: 72px;
+  height: 72px;
+  margin-left: -36px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.screen[data-step='review'] .cam-play {
+  display: grid;
+}
+.cam-play .ic {
+  width: 30px;
+  height: 30px;
+  margin-left: 4px;
+  fill: currentColor;
+}
+/* 剪辑：一排画面，两边可以拖的把手 */
+.trim {
+  position: relative;
+  height: 56px;
+}
+.trim-strip {
+  position: relative;
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+}
+.trim-strip i {
+  flex: 1;
+  background: linear-gradient(160deg, #6b3b2a, #e9925f 55%, #ffd2a0);
+}
+.trim-strip i:nth-child(2n) {
+  background: linear-gradient(200deg, #3d2619, #c9704a 60%, #ffcf8a);
+}
+.trim-strip i:nth-child(3n) {
+  filter: brightness(1.15) saturate(1.1);
+}
+.trim-shade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-shadow: 0 0 0 400px rgba(10, 6, 4, 0.55);
+}
+.trim-win {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  border: 3px solid #ffd9b0;
+  border-radius: 14px;
+  pointer-events: none;
+}
+.trim .h {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 38px;
+  margin-top: -19px;
+  border-radius: 6px;
+  background: #ffd9b0;
+  cursor: ew-resize;
+  touch-action: none;
+  pointer-events: auto;
+}
+.trim .h.l {
+  left: -10px;
+}
+.trim .h.r {
+  right: -10px;
+}
+.trim-t {
+  margin: 0;
+  text-align: center;
+  font:
+    500 12.5px/1 'DM Mono',
+    monospace;
+  color: rgba(255, 255, 255, 0.8);
+}
+.looks {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+.looks button {
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+.looks [aria-pressed='true'] {
+  color: #2a1a10;
+  background: #ffd9b0;
+}
+/* 封存好了 */
+.cam-done {
+  display: none;
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+  background: rgba(20, 12, 8, 0.4);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+.screen[data-step='sealed'] .cam-done {
+  display: grid;
+  animation: now-in 0.5s ease both;
+}
+.screen[data-step='sealed'] .cam-pill {
+  visibility: hidden;
+}
+.cam-ok {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffd2a6, #ff9f6b);
+  box-shadow: 0 0 40px rgba(255, 160, 100, 0.6);
+}
+.cam-ok .ic {
+  width: 34px;
+  height: 34px;
+  stroke-width: 2.4;
+}
+.cam-done h2 {
+  margin: 6px 0 0;
+  font: 400 34px/1 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.cam-done p {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* ============ 周日影片 ============ */
+.fm-frames {
+  position: absolute;
+  inset: 0;
+  background: #120b08;
+}
+.screen[data-step='wait'] .fm-frames,
+.screen[data-step='end'] .fm-frames {
+  background:
+    radial-gradient(circle at 50% 36%, rgba(255, 160, 100, 0.38), transparent 58%), #120b08;
+}
+/* 一格：作者色的一片抽象光，揭晓后才有颜色 */
+.fm-f {
+  position: absolute;
+  inset: -20px;
+  opacity: 0;
+  background:
+    radial-gradient(55% 40% at var(--x) var(--y), var(--b), transparent 70%),
+    radial-gradient(
+      70% 55% at calc(100% - var(--x)) calc(100% - var(--y)),
+      color-mix(in srgb, var(--a) 85%, transparent),
+      transparent 72%
+    ),
+    linear-gradient(160deg, #2c1a11, #120b08);
+  filter: blur(8px) saturate(1.2);
+  transition: opacity 0.8s;
+}
+.screen[data-step='play'] .fm-f.on {
+  opacity: 1;
+  animation: fm-ken 1.6s ease-out both;
+}
+@keyframes fm-ken {
+  from {
+    transform: scale(1.07);
+  }
+}
+.fm-title {
+  text-align: center;
+  font: 400 18px/1.1 var(--f-serif);
+}
+.fm-title small {
+  display: block;
+  margin-top: 3px;
+  font: 500 10.5px/1.3 var(--f-body);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* 等大家到 */
+.fm-wait {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  top: 220px;
+  left: 30px;
+  right: 30px;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.screen[data-step='wait'] .fm-wait {
+  display: grid;
+}
+.fm-k {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.fm-count {
+  font: 300 104px/1 var(--f-serif);
+  font-variation-settings:
+    'SOFT' 100,
+    'opsz' 144;
+}
+.sub-film .av {
+  width: 36px;
+  height: 36px;
+  margin-left: -10px;
+  font-size: 13px;
+}
+.sub-film .av:first-child {
+  margin-left: 0;
+}
+.fm-here {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.fm-skip {
+  height: 44px;
+  margin-top: 22px;
+  padding: 0 22px;
+  border-radius: 999px;
+  font-size: 14px;
+}
+/* 放映中 */
+.fm-bar {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  top: 116px;
+  left: 22px;
+  right: 22px;
+  gap: 4px;
+}
+.screen[data-step='play'] .fm-bar {
+  display: flex;
+}
+.fm-bar i {
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.fm-bar b {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: #fff;
+}
+.fm-bar i.done b {
+  width: 100%;
+}
+.fm-bar i.now b {
+  animation: fm-fill 1.4s linear forwards;
+}
+@keyframes fm-fill {
+  to {
+    width: 100%;
+  }
+}
+.screen.paused .fm-bar i.now b,
+.screen.paused .fm-f.on {
+  animation-play-state: paused;
+}
+.fm-ctl {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  left: 22px;
+  right: 22px;
+  bottom: 40px;
+  align-items: center;
+  gap: 12px;
+}
+.screen[data-step='play'] .fm-ctl {
+  display: flex;
+}
+.fm-with {
+  flex: 1;
+  font-size: 13.5px;
+  color: rgba(255, 255, 255, 0.85);
+}
+.fm-ctl .cam-ic .ic {
+  fill: currentColor;
+}
+/* 片尾 */
+.fm-end {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  top: 190px;
+  left: 26px;
+  right: 26px;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.screen[data-step='end'] .fm-end {
+  display: grid;
+  animation: now-in 0.6s ease both;
+}
+.fm-end h2 {
+  margin: 0;
+  font: 400 42px/1 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.fm-end > p {
+  margin: 0;
+  color: var(--muted);
+}
+.fm-cast {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 14px 18px;
+  margin: 20px 0 10px;
+}
+.fm-cast span {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.sub-film .fm-cast .av {
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  font-size: 16px;
+  font-style: normal;
+}
+.fm-acts {
+  display: flex;
+  gap: 10px;
+}
+.glass-btn {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  height: 48px;
+  padding: 0 20px;
+  border-radius: 999px;
+  font-size: 15px;
+  font-weight: 500;
+}
+.glass-btn .ic {
+  width: 18px;
+  height: 18px;
+}
+.fm-note {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* ============ “画面”页 ============ */
+body:not(.view-screens) #screens-view,
+body.view-screens main > .main-h,
+body.view-screens #gallery {
+  display: none;
+}
+body.view-screens main {
+  padding-bottom: 64px;
+}
+.screens-view .main-h {
+  margin-bottom: 10px;
+}
+.scr-flow {
+  margin-top: 30px;
+}
+.scr-flow .gal-h {
+  margin-bottom: 4px;
+}
+.scr-flow > .hint {
+  margin: 0 0 16px;
+}

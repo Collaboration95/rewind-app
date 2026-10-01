@@ -1,6 +1,6 @@
 # Home · Warm Glass
 
-Presentation-only prototype of the Rewind **Home** screen, from the #189 concept review.
+Presentation-only prototype of the Rewind **Home** screen and the screens around it, from the #189 concept review.
 Nothing here changes app code, runtime contracts or data. All members, counts and textures are synthetic;
 sealed moments are never shown as media.
 
@@ -13,16 +13,21 @@ The page only shows the design and how it behaves. Feedback goes in the team cha
 
 ## Warm Glass
 
-- Header: week on the left, group name in the middle, the avatar on the right. The avatar opens the profile and settings panel (a draft; it could become a full Settings page).
+- Header: the group name in the middle and the avatar on the right; the avatar opens Settings.
 - Dock: Home / Chat / Archive are always shown, plus a separate shutter. The shutter's ring shows your 5 moments for the week.
 - The dock, the shutter and the prompt card use the newer iOS glass look (clearer glass, a bright rim and a highlight).
 - Copy is kept short: a placeholder _Group name_, no extra lines.
 
 ## Tabs
 
-- **Home**: the phone you can tap. **Play** resets it and plays a whole cycle: ① a friend joins (a spark of warm light drifts into the count), ② you press the shutter (the count rolls up), ③ at 8 PM everyone opens it at once (the film is released).
+- **Home**: the phone you can tap. The avatar opens Settings, the shutter opens the camera and, after the reveal, _Watch together_ opens the Sunday film. **Play** resets it and plays a whole cycle: ① a friend joins (a spark of warm light drifts into the count), ② you press the shutter (the count rolls up), ③ at 8 PM everyone opens it at once (the film is released).
 - **App icon**: pair Warm Glass (or the scratchpad skin) with an icon and see it on the home screen, the launch screen, in sizes, in a notification and as colours. `#mix=c6+G` links to a pairing.
 - **States**: every Home state side by side, each with when it shows and what the dock does. The buttons play a friend joining, the shutter and the reveal on the Collecting phone. `#states` opens it.
+- **Screens**: the flows around the Home, each step side by side and every phone live. `#screens` opens it.
+  - Settings: the group (members, invite with a link or code, switch group), the Sunday reminder and the account.
+  - Take a photo: camera access, the viewfinder with moments left, a quick look, then seal.
+  - Record a clip: up to 15 seconds within 30 seconds a week; trim it and pick a look (Original, Soft focus, High contrast) before sealing.
+  - Sunday film: wait for everyone, watch together, then the cast with Replay and Save; afterwards it moves to Archive.
 - **Dock icons**: try six icon sets in the dock. `#dock=ios` links to a set.
 
 ## Home states
@@ -57,6 +62,7 @@ Home shows who is in (yes or no) but never how many moments each other person ad
 | `app.js`                                                 | Synthetic data, the Warm Glass Home, dock, shutter and motion |
 | `states.js`, `styles-states.css`                         | Home states and the States tab                                |
 | `mix.js`, `styles-mix.css`, `icons.js`                   | App icon tab and the icon candidates as SVG                   |
+| `screens.js`, `styles-screens.css`                       | Settings, camera, clip and Sunday film; the Screens tab       |
 | `dockicons.js`, `styles-dock.css`                        | Dock icons tab                                                |
 | `i18n.js`                                                | English and Chinese text for the page                         |
 | `styles.css`, `styles-r2.css`, `styles-r3.css`           | Page and phone shell, Warm Glass                              |

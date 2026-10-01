@@ -157,6 +157,11 @@
     0 4px 12px -4px rgba(150, 80, 30, 0.25);
   backdrop-filter: blur(10px);
 }
+/* 页头左边留一个和头像一样宽的空位，组名才在正中间 */
+.c6 .top-sp {
+  width: 40px;
+  flex: none;
+}
 .c6 .tag {
   padding: 7px 11px;
   border-radius: 20px;
