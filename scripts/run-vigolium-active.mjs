@@ -17,6 +17,10 @@ const { createRealAccount } = await import(new URL('auth/index.js', runtimeRoot)
 const outputDir = resolve('vigolium-result/active');
 const dataDir = await mkdtemp(join(tmpdir(), 'rewind-vigolium-active-'));
 const cli = resolve('node_modules/@vigolium/vigolium/bin/vigolium.js');
+const coverage = JSON.parse(
+  await readFile(new URL('../security/vigolium-coverage.json', import.meta.url), 'utf8'),
+);
+assert.equal(coverage.schemaVersion, 1);
 const baseline = JSON.stringify({
   name: 'Active scan fixture',
   prompt: 'Disposable security check',
@@ -98,10 +102,18 @@ try {
   });
   assert.equal(chat.status, 201, 'Chat baseline must work before scanning');
   await chat.json();
-  const baselines = new Map([
+  const fixtures = new Map([
     [chatPath, chatBaseline],
     ['/real/groups', baseline],
   ]);
+  const baselines = new Map(
+    coverage.active.requests.map((entry) => {
+      const path = entry.path.replaceAll('{groupId}', groupId);
+      assert.equal(entry.method, 'POST', 'Active fixtures currently support POST only');
+      assert.ok(fixtures.has(path), `Add a valid baseline fixture before scanning ${path}`);
+      return [path, fixtures.get(path)];
+    }),
+  );
   const endpointEvidence = Object.fromEntries(
     [...baselines.keys()].map((path) => [
       path,
@@ -181,10 +193,7 @@ try {
         '-',
         '-t',
         scanOrigin,
-        '--module-id',
-        'sqli-error-based',
-        '--module-id',
-        'sqli-boolean-blind',
+        ...coverage.active.modules.flatMap((module) => ['--module-id', module]),
         '--no-passive',
         '--no-tech-filter',
         '--rate-limit',
@@ -237,8 +246,8 @@ try {
     completedAt: new Date().toISOString(),
     mode: 'Focused active DAST',
     endpoints: endpointEvidence,
-    inputs: ['name', 'prompt', 'maxMembers', 'body'],
-    modules: ['sqli-error-based', 'sqli-boolean-blind'],
+    inputs: [...new Set(coverage.active.requests.flatMap((request) => request.fields))],
+    modules: coverage.active.modules,
     ...evidence,
     distinctRequestBodies: bodyHashes.size,
     minimumForwardIntervalMs: Math.min(

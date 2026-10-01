@@ -74,7 +74,7 @@ Codex CLI on PATH. It can invoke coding-agent tools and consume model usage;
 run it explicitly when needed. Reports go to `vigolium-result/source-audit/`
 and raw audit artifacts to `vigolium-results/`; both are ignored by Git.
 The `Vigolium security scan` GitHub Actions workflow runs automatically on
-pushes and pull requests to `dev`, and can also be started manually from
+pushes to `dev` and pull requests (including stacked trial branches), and can also be started manually from
 Actions. It starts a disposable loopback backend and passively checks `/health`,
 `/profiles`, `/auth/session`, and `/real/groups` without signing in. It then
 creates disposable owner, joined-member and outsider accounts, checks group and
@@ -127,6 +127,36 @@ This is a bounded assessment. It does not cover time-based injection, XSS,
 browser/media journeys, source auditing or the hosted app. A zero-finding result
 only describes these checks. CORS and version disclosure remain advisory and
 require a product decision; source suggestions are never applied automatically.
+
+### Local-only agentic coverage preparation
+
+Run `npm run security:explore` to prepare an AI discovery prompt locally. This
+command makes **no provider calls**, requires no credentials, and does not run
+an agent or DAST. It finds routing files in the current committed `server/src`
+tree and combines numbered source with `security/vigolium-coverage.json`.
+Commit feature changes before preparing their discovery prompt. Source stays
+in the ignored `vigolium-result/agentic-coverage/prompt.txt` file. Do not send it
+to an external provider unless separately authorized.
+
+If the team later uses an approved local model, save its JSON response as
+`vigolium-result/agentic-coverage/local-model-response.txt`, then run
+`npm run security:explore:review`. This validates matching source file/line/quote
+references and renders `summary.html`, `proposal.json` and `scope.json`. Review
+fails if the source commit has changed since preparation. Matching quotes do
+not establish that the model interpreted a route or business rule correctly.
+Parameter names and inferred methods can require correction. Listed requests
+do not imply complete role or vulnerability coverage.
+
+Verify a useful proposal against source and a disposable app, add the reviewed
+request to `security/vigolium-coverage.json`, implement its fixture in the native
+runner, then run `security:auto` and `security:active`. Manifest edits alone
+cannot create new runtime fixtures. Proposals and generated extensions are
+never executed or applied automatically.
+
+CI tests proposal validation and local preparation without uploading the source
+prompt. Live agentic discovery has not been completed: the user selected local
+preparation only. The earlier incomplete source audit is not resumed or
+bypassed. No API key or local OAuth credential is needed by this branch.
 
 ## Optional local runtime
 
