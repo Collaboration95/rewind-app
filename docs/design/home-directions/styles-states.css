@@ -609,10 +609,11 @@ body.view-states .arch-check {
   align-items: flex-start;
 }
 .sv-grid.by-state {
-  --s: 0.6;
+  /* 跟随侧栏的缩放 */
+  --s: var(--z, 0.6);
 }
 .sv-grid.by-dir {
-  --s: 0.44;
+  --s: calc(var(--z, 0.62) * 0.7);
 }
 .sv-ph {
   margin: 0;

@@ -200,7 +200,8 @@ body.view-mix main {
   align-items: start;
 }
 .mx-block {
-  --s: 0.62;
+  /* 跟随侧栏的缩放 */
+  --s: var(--z, 0.62);
   display: grid;
   gap: 10px;
   align-content: start;

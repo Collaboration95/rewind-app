@@ -1256,6 +1256,8 @@ const setZoom = (v) => {
   $('zoom').value = v;
   $('zoomv').textContent = v + '%';
   document.documentElement.style.setProperty('--s', Math.min(v / 100, fitScale()));
+  // 状态页、搭配页按这个值换算自己的手机大小
+  document.documentElement.style.setProperty('--z', Math.min(v / 100, fitScale()));
 };
 // 默认自动缩放：横屏时每组 4 台手机正好排满一行；手动拖过缩放就不再自动调整
 let zoomTouched = false;
