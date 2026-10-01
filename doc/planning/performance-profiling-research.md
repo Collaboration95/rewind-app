@@ -1,159 +1,484 @@
 # Local performance profiling and before/after evidence
 
 - **Issue:** [#267 — Research local performance profiling and before/after evidence](https://github.com/Collaboration95/rewind-app/issues/267)
-- **Status:** Research recommendation; no profiling campaign, instrumentation, or optimization was run for this brief.
-- **Scope:** Rewind's Expo/React Native iOS and web clients, plus the optional local Node service.
-- **Data rule:** Use synthetic accounts, groups, invitations, and media only. Keep raw captures on the profiling Mac unless they have been reviewed for sensitive content.
+- **Review status:** Jiayu Jiang has reviewed most of this report line by line. Long has reviewed the iOS sections, run the dev/production comparison and a live J1/J2 capture (see §16 and §17), and the open corrections below. **@Collaboration95 (Guru), please review the report content.**
+- **Status:** Research recommendation. No profiling campaign, instrumentation, or optimization was run for this brief. Tool conclusions come from vendor documentation and have not yet been exercised on this repository.
+- **Scope:** Rewind's three clients — web (PWA), iOS (Expo Go), Android (Expo Go, later the planned APK) — plus the local Node service (runtime, worker, FFmpeg subprocess).
+  - **Round 1:** web, iOS, Node service.
+  - **Round 2:** Android, after the S2-D04 APK is available.
+- **Data rule:** Use synthetic accounts, groups, invitations, and media only. Raw traces, recordings, and HAR files stay on the capturing machine and are never committed.
 
-## Recommendation
+---
 
-Use a small, local-first toolchain, with a different profiler at each runtime boundary:
+## 1. Recommendation
 
-1. **iOS client:** Expo Go or a development build on the same iPhone simulator; React Native DevTools Performance and React Profiler for JavaScript and render behavior; Xcode Instruments for native process, CPU, memory, scheduling, and launch investigation. Record the DevTools timeline interactively and save its profile when the installed version supports it; pair that with an Instruments `.trace` document from the same measured journey.
-2. **Web client:** fixed Chromium version and viewport; Chrome DevTools Performance recording for browser-main-thread/rendering detail; Playwright trace with screenshots and DOM snapshots for repeatable journey context; a small script around Playwright navigation/action timings for comparable numbers. Treat Playwright tracing as diagnostic context, not a clean timing benchmark, because trace collection adds work.
-3. **Optional Node service:** built-in Node/V8 CPU and heap profiles for the initial pass, opened in Chrome DevTools; Node trace events only when investigating specific event-loop/runtime categories. Clinic.js is an optional exploratory flame-graph tool; its documentation appears dated, so verify compatibility with the chosen Node release and compare observations with built-in profiles before relying on it.
+No single tool covers every client and layer, so we combine tools by role:
 
-Keep measurements, screenshots, and profiler captures from the same journey in a run folder. Compare the same app commit, build mode, simulator/device, synthetic data seed, service configuration, and browser version. First establish a baseline; do not set performance targets until the team has observed representative runs and agreed user-facing thresholds.
+| Role                                        | Question it answers                                                | Web                             | iOS                                      | Android (round 2)                              | Node service                                 |
+| ------------------------------------------- | ------------------------------------------------------------------ | ------------------------------- | ---------------------------------------- | ---------------------------------------------- | -------------------------------------------- |
+| **Show that it got faster**                 | When does the screen appear, before vs after?                      | sitespeed.io (video, filmstrip) | Maestro (fixed steps + screenshots)      | Maestro; Flashlight (performance curves)       | autocannon (endpoint p50/p95)                |
+| **Find why it is slow**                     | Which component, JS path, or line is slow?                         | Chrome DevTools Performance     | React Native DevTools; Xcode Instruments | React Native DevTools; Android Studio Profiler | `--cpu-prof` flame graph                     |
+| **See the whole request path** (X-Ray-like) | Is an upload slow in transfer, the DB write, the queue, or FFmpeg? | —                               | —                                        | —                                              | OpenTelemetry + Jaeger (**follow-up issue**) |
 
-## Tool comparison
+We also recommend minimal, opt-in timing instrumentation, gated in a follow-up. The discussion is in §13.2; the proposal is #321 _PROPOSAL: Add opt-in request timing logs and client User Timing marks for performance measurement_.
 
-“Supported” below means the named vendor/maintainer documents the capability. “Inference” marks a proposed use of that capability for Rewind or a limitation inferred from the product boundary.
+---
 
-| Option                                                                                                                                                                                                                                                                                                                                                                                               | What it can show (supported)                                                                                                                                                                                                                                                                                                                                                                                          | Rewind fit and gaps (inference unless stated otherwise)                                                                                                                                                                                                                                                                                                                                                                                                                                     | Local / cost / export                                                                                                                                                                                                                                                   |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **React Native DevTools: Performance + React Profiler** ([Expo guide](https://docs.expo.dev/debugging/tools/), [React Native DevTools](https://reactnative.dev/docs/react-native-devtools))                                                                                                                                                                                                          | Expo documents opening DevTools from the Expo CLI and profiling Hermes JavaScript in a debug build; profiles are not yet symbolicated with source maps. React Native DevTools documents JS/React tracks, User Timings, React commits, and heap snapshots. Its network panel records `fetch`, XHR, and images; Expo-specific requests use a separate panel with reduced features and no Performance-panel integration. | Best first view for React/JS work on iOS. Capture is interactive; the current vendor docs do not establish a stable headless capture/export workflow for this repository's pinned Expo/RN versions. Use manual timeline captures/screenshots for diagnosis and separately scripted timing for repeatable numbers. Network timings may omit or separate Expo-specific requests. Expo SDK here is `~57.0.21`, React Native `0.86.3`; verify installed behavior before standardizing.          | Local DevTools connection; no separate hosted account required. Debug profile artifacts may be large and contain source/runtime details. Export/save behavior is version-dependent; retain screenshots and any downloadable profile supported by the installed version. |
-| **Xcode Instruments / `xcrun xctrace`** ([Apple launch profiling](https://developer.apple.com/documentation/xcode/reducing-your-app-s-launch-time), [Testing and performance](https://developer.apple.com/documentation/technologyoverviews/testing-and-performance), [trace help](https://developer.apple.com/library/archive/documentation/AnalysisTools/Conceptual/instruments_help-collection/)) | Apple documents App Launch, Time Profiler, thread-state and other instrument templates. On this host, Xcode 27.0's `xcrun xctrace` CLI exposes record and export commands with template, device, process, and output options; `.trace` documents can be opened in Instruments.                                                                                                                                        | Use to separate native startup, CPU, blocked threads, memory, and system effects from JavaScript timings. **Inference:** Expo Go profiling includes Expo Go's native host process, so it is not identical to a store-signed standalone build; use the same host/build in each comparison and label it. Instruments does not by itself explain React component render causes. A short native trace can be scripted; user-journey timing still needs an app/UI harness or manual interaction. | Local Xcode tooling; no per-run vendor service. `.trace` files can be sizable and may expose process names, paths, and timing details. Xcode/macOS setup required.                                                                                                      |
-| **Chrome DevTools Performance and Memory** ([Performance panel](https://developer.chrome.com/docs/devtools/performance/reference), [save traces](https://developer.chrome.com/docs/devtools/performance/save-trace))                                                                                                                                                                                 | Browser CPU/rendering/network timelines, screenshots, and trace export; Memory tools capture heap snapshots. Saved traces can be reopened in DevTools.                                                                                                                                                                                                                                                                | Primary detailed browser-side profiler for Rewind web. Use fixed Chrome, viewport, and throttling. It measures browser execution and rendering, not iOS native behavior or Node service internals. Capture a clean measurement separately from a heavily instrumented trace when comparing timings.                                                                                                                                                                                         | Local browser tooling; free. Trace/snapshot exports can include page source, URLs, request details, heap object data, and screenshots; keep them local and inspect before sharing.                                                                                      |
-| **Playwright Trace Viewer + scripted timing** ([Trace Viewer](https://playwright.dev/docs/trace-viewer), [trace configuration](https://playwright.dev/docs/trace-viewer-intro))                                                                                                                                                                                                                      | Playwright documents action timeline, before/after snapshots, screenshots/filmstrip, console and network events, and run metadata in its trace viewer. Its browser automation can repeat scripted actions and collect explicit timestamps.                                                                                                                                                                            | Useful for deterministic web journeys and correlating a measured action with visible UI/network evidence. It is not an iOS profiler, and its action duration is not a substitute for browser rendering traces or a statistically controlled benchmark. Trace capture can perturb the run; collect the benchmark timing run with tracing off, then a separate diagnostic trace.                                                                                                              | Local CLI/test runner; free/open source. `trace.zip` is convenient to retain but may contain DOM, screenshots, URLs, headers, and response bodies. Review and sanitize before any external upload.                                                                      |
-| **Node built-in `--cpu-prof`, `--heap-prof`, inspector and trace events** ([Node CLI](https://nodejs.org/api/cli.html), [trace events](https://nodejs.org/api/tracing.html), [inspector](https://nodejs.org/api/inspector.html))                                                                                                                                                                     | Node documents CPU and heap profile flags and trace-event controls. V8 CPU/heap profiles can be inspected in Chrome DevTools; trace events provide runtime-category events.                                                                                                                                                                                                                                           | Lowest-maintenance first choice for the optional local service. Run the same synthetic request sequence against the same locally built server and database. CPU profile locates hot JS stacks; heap profile helps investigate allocations. These are not end-to-end user-perceived latency measurements and do not by themselves identify disk, subprocess, or network waiting.                                                                                                             | Built into Node; local output files; no additional tool cost. CPU profiles, traces, and heap snapshots can contain source paths, function names, object strings, and request-related context. Use a disposable synthetic database and restrict filesystem access.       |
-| **Clinic.js (Doctor / Flame / Bubbleprof)** ([Clinic.js documentation](https://www.clinicjs.org/documentation/))                                                                                                                                                                                                                                                                                     | The project documents local collection and visual reports (including flame and async activity views); its CLI can run a workload such as `autocannon` while collecting.                                                                                                                                                                                                                                               | Potentially convenient single-screen exploration for Node. Its documentation is several years old, so verify current Node-version compatibility and validate observations against built-in Node profiles and measured request timings before relying on it. Do not make it the canonical comparison tool.                                                                                                                                                                                   | Open source / no hosted service by default; local profile and HTML output. Extra dependencies and compatibility/setup risk. Review HTML reports before sharing.                                                                                                         |
-| **Expo Atlas** ([Expo Atlas docs](https://docs.expo.dev/guides/analyzing-bundles/))                                                                                                                                                                                                                                                                                                                  | Expo documents visual inspection of the JavaScript bundle and module contribution.                                                                                                                                                                                                                                                                                                                                    | Bundle composition/size is useful for startup payload investigations, not runtime CPU, frame pacing, or service latency. Keep as an occasional build-analysis view, not the main profiler.                                                                                                                                                                                                                                                                                                  | Local bundle analysis; no separate cloud service required. Retain bundle report with the exact build metadata.                                                                                                                                                          |
-| **EAS Observe** ([Expo docs](https://docs.expo.dev/eas/observe/))                                                                                                                                                                                                                                                                                                                                    | Expo documents production performance monitoring across real devices and conditions, with service-side metrics and usage pricing/limits described in its current docs.                                                                                                                                                                                                                                                | Not recommended for this issue's local-only, synthetic-data research brief. It may be a later option if the team explicitly approves production telemetry, data handling, and recurring cost.                                                                                                                                                                                                                                                                                               | Hosted service; events leave the local environment. Pricing and event limits can change. No setup or account was initiated for this work.                                                                                                                               |
+## 2. Current `dev` state that shapes this plan
 
-### Practical capability boundary
+As of `origin/dev` on 2026-09-30:
 
-- **iOS:** React Native DevTools explains JavaScript/React work; Instruments explains native process and OS behavior. Read them together when an interaction is slow. Neither should be described as a complete end-to-end performance answer alone. React Native DevTools profiling is interactive, while `xcrun xctrace` on this host can script trace collection and export; neither one by itself scripts and times the full user journey.
-- **CLI and automation:** Playwright and Node profiles are directly repeatable from scripts. The installed Xcode 27.0 `xcrun xctrace record/export` commands can capture and export native traces from a selected template/device/process. React Native DevTools is opened from Expo CLI with `J`, but profiling is interactive; this repository's Expo/RN docs do not establish a supported headless trace-capture interface. Script low-overhead journey timestamps separately, and treat manual RN DevTools screenshots/traces as diagnostic evidence. Recheck this boundary after dependency upgrades.
-- **Expo network detail:** React Native DevTools' network capture currently covers `fetch`, XHR, and images. Expo-specific network sources remain in a separate, reduced-feature panel without Performance-panel integration. Do not interpret missing or separated Expo requests as proof that the journey made no network request.
-- **Web:** Chrome's Performance panel explains browser runtime and rendering. Playwright provides repeatable actions and an evidence-rich replay. The browser trace can help locate a bottleneck but should not be used as the sole source of benchmark numbers.
-- **Node:** Node/V8 profiles explain service-process CPU and heap behavior. Separate request-level elapsed time, event-loop delay, and dependency/database timings are needed to understand user-visible service latency. Add such timing instrumentation only in a separately approved profiling issue; this research does not add it.
+1. **All three clients are targets.**
+   - The [Sprint 2 user journey plan](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/sprints/sprint-2-user-journey-plan.md) (S2-D04) plans an Android APK and keeps iOS on Expo Go.
+   - #310 fixed an Android Expo Go entry issue.
+   - #243's acceptance covers web, iPhone, and Android.
+2. **A reusable harness already exists.** `scripts/production-e2e-server.mjs` exports the production web build and starts the runtime with a fixed clock and synthetic seed. It serves both on `127.0.0.1:8083` (override with `REWIND_E2E_PORT`). Web and service measurements should build on it. It re-exports the web build on every start, so startup is slow; that time is not part of any measurement.
+3. **iOS only runs in Expo Go today.** There is no `eas.json` and no `expo-dev-client`; `app.json` sets an iOS bundle identifier but no Android package. See §4.
+4. **The database is `node:sqlite` `DatabaseSync` (synchronous).**
+   - Synchronous queries block the event loop, so they stand out clearly in a `--cpu-prof` flame graph.
+   - We found no OpenTelemetry instrumentation for `node:sqlite`; a third-party plugin exists only for `better-sqlite3`. Database spans would therefore have to be written by hand.
+5. **The service runs as more than one process:** the runtime (`server:start`), the worker (`server:worker`), and FFmpeg subprocesses.
+6. **Entry and screens are changing quickly** (#243, #320, #304, #313, #189). This does not block building the pipeline, but:
+   - automation scripts must follow UI changes;
+   - numbers from different dates are not comparable (see §6, rule 0).
+7. **Known limits:**
+   - #314: Video crashes the signed-in Expo Go app, so the video journey is measured at the service level for now.
+   - Once #243 is implemented, cold launch shows a branded screen for at least 600 ms. That is a floor, not a regression.
+8. **Logging today:** audit events and CLI output only; there is no per-request timing. See §13.2.
+9. **A hosted environment exists.** https://d2m6kz76y4kuvm.cloudfront.net serves the hosted web (PWA) build.
+   - According to `deploy/README.md` and the IaC plan, it is a single Lightsail instance behind a CDN. The instance runs the web container, which proxies `/api/` to the Node runtime. #318 routes sign-in traffic to this URL.
+   - iOS and Android Expo Go can also use this HTTPS API (#243, #305).
+   - **This plan is local-first; hosted runs are supplementary only:**
 
-## Recommended synthetic journeys
+   |           | Local (`production-e2e-server`)                   | Hosted (CloudFront)                                                                                                     |
+   | --------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+   | Network   | No network latency; stable numbers                | Real network and CDN; closer to what users see                                                                          |
+   | Control   | Fixed data, clock, and load                       | Small shared instance; noisy                                                                                            |
+   | Data      | Synthetic only                                    | Includes real pilot accounts (#241); high privacy risk                                                                  |
+   | Use for   | Baselines, before/after, load tests, flame graphs | An occasional J1 run for real-network load experience                                                                   |
+   | **Never** | —                                                 | **Load testing** (it degrades the shared demo and incurs AWS cost), or capturing real accounts in screenshots or traces |
 
-Use fixed, generated fixtures and deterministic IDs. Avoid real user media and credentials. Record a short, versioned script or checklist with every run. Start with journeys that cross representative rendering, local data, media, and service boundaries:
+   Hosted monitoring belongs to #166. Get owner approval before any hosted run.
 
-1. **Cold and warm entry:** launch to Welcome/Sign in; record first usable frame and subsequent warm return. For iOS, distinguish app launch from JavaScript-ready/interactive; for web, distinguish navigation, first content, and action-ready.
-2. **Group Home and navigation:** open a seeded synthetic group, move Home → Members → Conversation → Home, and capture the same Home state. Measure action-to-stable-screen and note visible stalls or dropped-frame symptoms.
-3. **Conversation list:** open a fixed thread with a fixed message count; scroll a fixed distance at a consistent pace; open a message/reaction if available. Capture React commits and browser/native timeline around the same segment.
-4. **Media review:** open a fixed synthetic photo/video item and return. For video, report first-frame readiness and playback startup separately from CPU activity. Use the same local file and dimensions each run.
-5. **Contribution flow:** enter the media capture/review flow with synthetic or generated media, proceed only as far as reproducible without real capture permissions, and cancel/return. Record permission/device caveats instead of mixing unlike devices.
-6. **Optional local service:** against an isolated local database, replay a fixed sequence such as health/readiness, sign-in with a synthetic account, group listing, and a fixed media metadata request. For any throughput test, fix concurrency, duration, payload sizes, and warm-up; report request latency separately from profiler findings.
+10. **The existing E2E config deliberately disables screenshots and tracing** (`playwright.e2e.config.ts`) and redacts invite codes, session IDs, and local paths. Performance capture must meet the same bar.
 
-The first follow-up should choose two or three journeys that are both user-important and reliably repeatable; this list is a menu, not a campaign requirement.
+---
 
-## Repeatable baseline and follow-up method
+## 3. Tool comparison
 
-1. **Freeze the comparison.** Record commit SHA, lockfile hash, app/runtime versions, build type, platform, simulator/device model and OS, display scale, browser version, service version, database seed/fixture version, and whether the profiler is attached. Keep configuration identical for the follow-up except for the intended code change.
-2. **Use the same environment.** Close unrelated CPU-heavy applications, keep power mode and network conditions stable, avoid simulator resizing, and let the device cool to a comparable thermal state. For web, pin viewport, device scale factor, browser, and network/CPU throttling. For Node, pin Node version, database file, environment variables, worker configuration, and request payload/concurrency.
-3. **Define start/end markers.** Write each journey as explicit steps. Define the measured boundary (for example, tap Home → stable Home, route navigation → content-ready, or HTTP request start → response complete) and use the same definition for every run. Do not infer “ready” from a screenshot alone.
-4. **Warm and repeat.** Do one unrecorded warm-up, then at least five measured repetitions for each condition when the journey is short; for long/cold launch scenarios, perform at least five independent launches and state if the device/app state cannot be reset identically. Keep cold and warm results separate. Increase repetitions when spread is high. This is a proposed minimum, not a claim of statistical power.
-5. **Separate timing from diagnosis.** First collect low-overhead, scripted/user-visible timings without a profiler. Then collect a representative DevTools/Chrome/Instruments/Node trace for diagnosis. Profiler and screenshot capture can add overhead; do not compare a profiled baseline with an unprofiled follow-up.
-6. **Pair baseline and follow-up.** Use the same fixture and run order where practical; record individual observations, median and p90 (and sample count), not only a single best number. Show absolute and percentage change. For small samples or noisy values, report the spread and call the result inconclusive rather than claiming improvement.
-7. **Review the evidence.** Compare matching screenshots and trace windows, inspect outliers, verify no functional/path difference changed the measured work, and list any remaining variance. A performance conclusion belongs to the later campaign issue, not this research brief.
+Platforms: `Web` `iOS` `Android` `Node` (`Node` = the local Node service). Android-only tools belong to round 2.
 
-## Metrics to collect later
+| Tool                                                     | Platforms                    | What it shows (documented)                                                                                                                     | Fit for Rewind                                                                                                                                                         | Local / cost / export                                                                | Verdict                                  |
+| -------------------------------------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------- |
+| **sitespeed.io / Browsertime**                           | `Web`                        | Browser video, filmstrip, visual metrics, HAR waterfall, Core Web Vitals, User Timing, HTML report; scripted journeys via `measure.start/stop` | Best for visual before/after evidence. Web only. In-app SPA transitions need a short script                                                                            | Open source; runs via Docker or npm (npm needs a local browser and FFmpeg for video) | **Adopt**                                |
+| **Chrome DevTools Performance / Memory**                 | `Web`                        | Main-thread, rendering, and network timeline; screenshots; heap snapshots; traces can be saved                                                 | Primary web diagnosis tool                                                                                                                                             | Free; keep traces local                                                              | **Adopt**                                |
+| **Playwright Trace Viewer**                              | `Web`                        | Per-action timeline, DOM snapshots, screenshots, network                                                                                       | Already installed; good for repeatable steps and screenshots. Action durations include auto-waiting, so they are not benchmark numbers                                 | Free; `trace.zip` holds sensitive data and must never be committed                   | **Supporting**                           |
+| **React Native DevTools (Performance + React Profiler)** | `iOS` `Android`              | Performance panel (since RN 0.83): JS execution, React tracks, network, User Timings; downloadable traces; heap snapshots                      | First choice for JS/React diagnosis on native. Interactive only. Expo notes that profiles work only in debug builds and are not yet source-map symbolicated            | Local, free                                                                          | **Adopt**                                |
+| **Xcode Instruments / `xcrun xctrace`**                  | `iOS`                        | Launch, CPU, thread state, memory, hangs/hitches; `xctrace` can record and export from the command line                                        | Separates native cost from JS cost. When attached to Expo Go, results include Expo Go's own host overhead                                                              | Mac only, free                                                                       | **Adopt**                                |
+| **Android Studio Profiler / Perfetto**                   | `Android`                    | CPU, memory, frame timing, system traces                                                                                                       | Native Android diagnosis; needs a debuggable or profileable build                                                                                                      | Free; Windows and macOS                                                              | **Supporting (round 2)**                 |
+| **Flashlight**                                           | `Android`                    | FPS, CPU, RAM, JS thread; repeated runs combined into a visual report                                                                          | The closest thing to an out-of-the-box Android performance score; pairs with the APK. Android only; needs a device over adb                                            | Open source; Windows installer available                                             | **Alternative (round 2, after the APK)** |
+| **Maestro**                                              | `iOS` `Android`              | YAML UI flows with screenshots                                                                                                                 | Makes every run perform identical steps and capture the same states. It is not a profiler                                                                              | Open source; supports Expo Go                                                        | **Adopt**                                |
+| **Node `--cpu-prof` / `--heap-prof`**                    | `Node`                       | CPU flame graph, heap allocation                                                                                                               | First choice for the service; shows synchronous SQLite blocking directly                                                                                               | Built in, free                                                                       | **Adopt**                                |
+| **autocannon**                                           | `Node`                       | Fixed-concurrency HTTP load; p50/p95/p99 latency and throughput                                                                                | Fills the load-testing gap in the draft; reusable for #175                                                                                                             | Open-source CLI                                                                      | **Adopt**                                |
+| **OpenTelemetry + Jaeger**                               | `Node` (client optional)     | Distributed trace waterfall with per-span timing                                                                                               | Closest to AWS X-Ray. Jaeger v2 runs as one container with in-memory storage (UI on `:16686`, OTLP on `4317/4318`)                                                     | Open source, Docker                                                                  | **Adopt (follow-up issue)**              |
+| **Aspire Dashboard (standalone)**                        | `Node`                       | OTel traces, metrics, and logs in one UI                                                                                                       | Drop-in alternative to Jaeger; the instrumentation stays the same                                                                                                      | Free, one container                                                                  | **Alternative**                          |
+| **SigNoz (self-hosted)**                                 | `Node`                       | Traces, metrics, logs, dashboards                                                                                                              | The most complete option, but it needs at least 4 GB of Docker memory and five containers (ClickHouse, Keeper, Postgres, collector, UI), which is heavy for local work | Open source; resource-heavy                                                          | **Alternative**                          |
+| **Sentry Spotlight**                                     | `Web` `iOS` `Android` `Node` | Local view of Sentry errors and traces                                                                                                         | Covers client and server, but requires adopting the Sentry SDK                                                                                                         | Local, free                                                                          | **Alternative**                          |
+| **Expo Atlas**                                           | `Web` `iOS` `Android`        | JS bundle composition and size                                                                                                                 | Useful only for startup-bundle investigations                                                                                                                          | Local, free                                                                          | **Supporting**                           |
 
-| Boundary                       | Candidate measurements                                                                                                                                                                                                   | Interpretation / caution                                                                                                                                                              |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| iOS launch and navigation      | launch-to-first-frame; launch-to-ready; tap-to-stable-screen; frame-time/jank evidence; process CPU and memory footprint                                                                                                 | Keep cold and warm launch separate. Simulator timing is comparative evidence, not a physical-device guarantee. Use Instruments for native context and DevTools for JS/React context.  |
-| Web navigation and interaction | navigation-to-content/ready; action-to-stable-state; long tasks; scripting, style/layout, paint and frame timing; transferred bytes; browser heap trend                                                                  | Fix browser/viewport/network. Do not treat Lighthouse score as an isolated reproducible latency measurement; retain its settings and report.                                          |
-| React/JS                       | JS execution spans, React commit/render durations, repeated renders, heap snapshots/allocation trends, network request timing                                                                                            | React Profiler is about React work, not native rendering cost or all JS work. Use Performance trace and React Profiler for complementary views.                                       |
-| Local Node service             | request elapsed time (median/p90); throughput at fixed load; event-loop delay/utilization if available; CPU profile hotspots; heap growth across a fixed workload; DB/file/subprocess timings if separately instrumented | State whether load is single-user or concurrent and whether profiling is attached. Do not compare a synthetic local run with production telemetry as if environments were equivalent. |
-| Evidence quality               | sample count, median, p90, min/max or interquartile range, run order, failures, warm-up count                                                                                                                            | Preserve raw observations so a summary can be recomputed. Avoid unsupported precision and targets before a baseline exists.                                                           |
+<details>
+<summary>Not adopted (click to expand)</summary>
 
-## Evidence bundle and metadata
+| Tool                   | Platforms       | Why not                                                                               |
+| ---------------------- | --------------- | ------------------------------------------------------------------------------------- |
+| Lighthouse             | `Web`           | Covered by sitespeed.io; cannot measure in-app SPA transitions                        |
+| Clinic.js              | `Node`          | Its README states it is not actively maintained and may be inaccurate on current Node |
+| Android Macrobenchmark | `Android`       | Requires a native Android project and a benchmark module; too costly now              |
+| EAS Observe            | `iOS` `Android` | Hosted and usage-priced; outside this local-only scope                                |
 
-For each baseline and follow-up condition, create a local directory such as `performance-evidence/<issue-or-change>/<platform>/<condition>/<run-id>/`. Do not check profiler captures into Git by default: trace/heap artifacts can be large or include source, request, DOM, and object data. Share only reviewed, synthetic artifacts through an explicitly agreed destination.
+</details>
 
-Keep these evidence types paired by `journey-id`, `condition`, and timestamp:
+---
 
-- **Matching UI screenshots:** same screen/state and viewport/device, one baseline and one follow-up image, with sensitive fields absent. Include a short note stating which exact journey step is visible. Screenshots prove state and layout only; they do not prove a timing result.
-- **Timeline/trace view:** one React Native DevTools or Chrome Performance capture for the selected diagnostic repetition; one Instruments `.trace` for the same iOS journey when native analysis is needed; optional Node CPU/heap profile for the matching service workload. Include a screenshot of the relevant timeline/flame-chart region with the interval highlighted.
-- **Raw measurements:** CSV or JSONL with one row per repetition and named boundaries, timestamps/durations, success/failure, plus the summarization script/version if one is used. Retain the unsummarized rows and the derived median/p90 table.
-- **Run manifest:** `run.json` or Markdown with fields below. Record unavailable values explicitly as `unknown` instead of guessing.
+## 4. Native build modes (how far to trust the numbers)
 
-Minimum run metadata:
+Context:
+
+- [#232](https://github.com/Collaboration95/rewind-app/issues/232) defines today's run path: `make run`, then open the app in a compatible Expo Go runtime. It warns that public Expo Go may not match the project's SDK.
+- Sprint 2 S2-D04 plans an Android APK while iOS stays on Expo Go.
+- The formal measurement build should follow #232 and S2-D04 rather than introduce a separate path.
+
+| Mode                               | Platforms       | How                                                                                                                                                                               | Trust                                                                                                      | Use                                                          |
+| ---------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Expo Go, development mode          | `iOS` `Android` | `make run` (#232)                                                                                                                                                                 | Low: dev checks and unminified JS. Expo documents that development mode "slows your app down considerably" | Diagnosis only                                               |
+| Expo Go, production mode           | `iOS` `Android` | `npx expo start --no-dev --minify`. Expo documents this for performance testing; compatibility with Expo Go on SDK 57 must be checked, because an Android issue existed on SDK 50 | Medium: `__DEV__=false` and minified, but still running inside the Expo Go host                            | Interim before/after                                         |
+| Local Release build (simulator)    | `iOS`           | `npx expo run:ios --configuration Release`. This runs prebuild automatically and generates `ios/`, so do it in a throwaway `git worktree` to keep native output out of commits    | Higher                                                                                                     | Candidate for formal comparison; the simulator has no camera |
+| Android APK (S2-D04, round 2)      | `Android`       | After S2-D04 configures the package name and build profile                                                                                                                        | Higher                                                                                                     | Formal Android comparison; pairs with Flashlight             |
+| Release build on a physical device | `iOS` `Android` | iOS requires signing                                                                                                                                                              | Highest                                                                                                    | Capture journeys and final validation                        |
+
+**Rule:** baseline and follow-up must use the same build mode, recorded in `run.json`. Simulator numbers show relative change only.
+
+---
+
+## 5. Candidate journeys
+
+| #   | Journey                                                                    | Platforms                       | Notes                                                                                                                                           |
+| --- | -------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| J1  | Cold launch to Welcome/Home                                                | `Web` `iOS` `Android`           | Record cold and warm launches separately; #243 is merged on `dev`, so the 600 ms branded cold-launch floor already applies, not a future change |
+| J2  | Switch between Home and the primary tabs (Camera, Chat, Archive, Settings) | `Web` `iOS` `Android`           | Measure tap to stable screen; directly relevant to #309                                                                                         |
+| J3  | Open Archive and page through it                                           | `Web` `Node`                    | Seed data using the approach in `server/tests/paging-performance.test.mjs` (55 archived cycles, 51 films)                                       |
+| J4  | Take and submit a photo                                                    | `iOS` `Android` physical device | The simulator has no camera                                                                                                                     |
+| J5  | Video upload to compiled film                                              | `Node`                          | Use the `npm run test:full-cycle` path; not in Expo Go until #314 is fixed                                                                      |
+
+---
+
+## 6. Repeatable before/after method
+
+0. **"Before/after" means the base and head of the same optimization PR**, not two dates.
+1. **Freeze the comparison.** Commit, build mode, device, OS, browser, and seed data are fixed and recorded; only the code under test may differ. The working tree must be clean. Use two `git worktree` checkouts (base and head) so both builds exist side by side.
+2. **Stabilize the environment.** Close CPU-heavy applications and fix the power mode and network conditions. On Windows, copy the project outside OneDrive before measuring.
+3. **Define start and end markers** for every journey, in writing.
+4. **Warm up, repeat, interleave:**
+   - run one unrecorded warm-up;
+   - run **10** measured repetitions by default, and **20** for cold launch, noisy journeys, or whenever the verdict is _Inconclusive_;
+   - **interleave base and head (A-B-A-B…)** rather than running all baseline runs first, so thermal and background drift affect both sides equally;
+   - keep cold and warm results separate.
+5. **Separate timing from diagnosis.** Collect timings with no profiler, trace, or recording attached; collect diagnostic traces in a separate pass.
+6. **One owner per platform.** Numbers from different machines are never compared.
+7. **Review.** Inspect outliers and confirm that the change did not alter the work the journey performs.
+
+### Statistics
+
+- **Do not trim the minimum and maximum; compare the median and the interquartile range (IQR).**
+  - The median already ignores extremes, so trimming barely changes it.
+  - The IQR (the middle 50% of values) excludes both tails by construction.
+  - Trimming can hide real stalls.
+- **Keep every raw row.** Exclude only failed runs (errors, or journeys that did not complete), and record the reason in `results.csv`.
+- **Spread:**
+  - fewer than 10 runs: report min–max;
+  - 10 or more runs: report the IQR;
+  - 20 or more runs: report P90 as well. With fewer samples, P90 is effectively the maximum.
+- **Verdict:**
+  - the after IQR lies entirely below the before IQR → **Faster**;
+  - it lies entirely above → **Slower**;
+  - the two ranges overlap → **Inconclusive**;
+  - where practical, add a Mann-Whitney U test (p < 0.05) as supporting evidence.
+
+### Presenting results
+
+1. **Filmstrip comparison (most intuitive).** Align the before and after sitespeed.io filmstrips on the same time axis. On native, pair Maestro screenshots of the same step with the timing numbers.
+2. **Dot plot (shows spread).** Draw one chart per journey: before and after on the x-axis, one dot per run, with the median line and IQR box. Avoid bar charts of averages, which hide variance.
+3. **Pivot summary (most rigorous).** Generate it directly from `results.csv`; a spreadsheet pivot is enough:
+
+| Journey       | Platform | Before median | After median | Δ       | Δ %  | IQR (before / after) | n     | Verdict      |
+| ------------- | -------- | ------------- | ------------ | ------- | ---- | -------------------- | ----- | ------------ |
+| J2 tab switch | `Web`    | 420 ms        | 260 ms       | −160 ms | −38% | 400–450 / 245–275 ms | 10/10 | Faster       |
+| J2 tab switch | `iOS`    | …             | …            | …       | …    | …                    | …     | Inconclusive |
+
+(The example numbers show the format only; they are not measurements.)
+
+---
+
+## 7. Metrics to collect later
+
+| Layer                                        | Metrics                                                                                         | Caution                                          |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Native launch and navigation `iOS` `Android` | Launch to first frame, launch to interactive, tap to stable screen, dropped frames, CPU, memory | Keep cold and warm separate                      |
+| Web `Web`                                    | Navigation to content, action to stable state, long tasks, visual complete, transferred bytes   | Fixed browser, viewport, and network             |
+| React/JS `Web` `iOS` `Android`               | JS execution, React commit durations, repeated renders, memory trend                            | The React Profiler does not see native rendering |
+| Node service `Node`                          | Endpoint p50/p95, throughput, event-loop delay, CPU hotspots, job execution time, queue wait    | State whether load is single-user or concurrent  |
+| Evidence quality                             | n, median, IQR, failures                                                                        | Keep raw rows                                    |
+
+---
+
+## 8. Evidence capture
+
+### Linking to code
+
+**Do not copy branch code;** reference commits instead:
+
+- the app under test: the PR link plus base and head SHAs;
+- the measurement scripts (sitespeed.io, Maestro, autocannon): their commit too, because a script change changes the numbers;
+- the working tree must be clean.
+
+### Folder layout (one per comparison, kept small)
 
 ```text
-run_id, journey_id, condition (baseline|follow-up), run_index, date/time + timezone
-git_commit, lockfile_hash, fixture_seed, fixture_version, app_build_mode
-Expo SDK, React Native, Hermes/runtime, Node version (if used), service commit/config
-platform, simulator/device model, OS version, screen size/scale, browser + version
-network/CPU throttle, local API/database setup, worker count, background-load notes
-warm-up count, repetition count, profiler/tool versions and capture mode
-measurement boundary, raw result file, screenshot paths, trace/profile paths
-known deviations, errors, thermal/power notes, data review/sanitization state
+perf-evidence/pr-<number>-<topic>/   ← local or shared drive, never committed
+├── run.json      shared metadata: PR, base/head SHA, harness SHA, device, OS, build mode, tool versions
+├── results.csv   every run, one row each: journey, platform, condition, run_index, metrics…, notes
+├── summary.md    pivot table + dot plot + verdict
+├── shots/        one before/after pair per journey
+└── traces/       one diagnostic file per condition (sitespeed.io report, .cpuprofile, .trace)
 ```
 
-Use stable names, for example `ios-home-nav-baseline-r03.png`, `ios-home-nav-baseline-r03.trace`, `ios-home-nav-baseline-r03.devtools.json`, and `ios-home-nav-baseline-results.csv`. Adapt extensions to the actual export format available in the installed tool version. Keep a screenshot of the profiler view adjacent to the raw trace; never substitute one for the other.
+- **By default, post `summary.md` and a few screenshots in the PR description or a PR comment.** Commit them to the repository only if the owner asks. `AGENTS.md` says evidence folders are not required unless an issue makes them the deliverable.
+- `run.json` is written once per comparison; values that change per run are columns in `results.csv`.
+- Example names: `shots/j2-ios-baseline.png`, `shots/j2-ios-followup.png`, `traces/j2-web-baseline.cpuprofile`.
 
-## Setup outline
+### `run.json` fields
 
-- **iOS:** use an iPhone 14 or newer simulator, preferably a notched/Dynamic Island model per this repository's `AGENTS.md`; install/use Expo Go or the same development build in all runs. Start the local app with the documented LAN workflow. Open React Native DevTools from Expo CLI, capture JS/React activity, and use Xcode → Open Developer Tool → Instruments for native launch/CPU/thread/memory traces. Record whether this is Expo Go or a standalone development build.
-- **Web:** install the lockfile-pinned dependencies; build/serve the web app consistently or use a pinned local Expo web server. Use Playwright's existing runner for scripted user journeys. Use Chrome DevTools for a separate browser Performance capture; save the trace and a screenshot of the selected interval. Playwright traces should be collected in a diagnostic pass separate from the low-overhead timing pass.
-- **Node:** build the service with the repository's `npm run server:build`; use an isolated synthetic database and the same service start configuration. Start the built CLI under Node's `--cpu-prof` or `--heap-prof` flags, replay a fixed local request sequence, then open generated profiles in Chrome DevTools. Keep the inspector bound to loopback only; do not expose Node inspector ports to LAN/public interfaces. Add Clinic only if the built-in profile leaves an investigation gap and verify its Node-version compatibility first.
-- **Before any later campaign:** validate capture/export steps and output filenames on one short synthetic run. Do not enable production telemetry or upload captures to a hosted viewer as part of the local workflow.
+```text
+pr, base_sha, head_sha, harness_sha, date + timezone, owner
+platform, device/simulator, OS version, browser version, build mode (§4)
+Expo SDK, React Native, Node version, seed/fixture version
+network/CPU throttling, warm-up count, repetitions, run order, tool versions
+start/end marker definitions, known deviations, sanitization status
+```
 
-## Trade-offs, privacy, and limits
+**Privacy:** raw traces, HAR files, and recordings are never committed. Use synthetic data only, and check redaction before sharing, following the rules in `tests/e2e/production-reset-to-reveal.spec.ts`.
 
-- **One tool cannot cover all runtimes.** React Native DevTools is the most useful shared JS/React view, but native iOS work still needs Instruments and browser rendering still needs browser tools. Node is another process boundary.
-- **Debug versus release.** Expo documents the React Native DevTools profiler as debug-build-only and currently notes missing source-map symbolication for profiles. Debug builds can behave differently from release builds. The chosen workflow is for repeatable diagnosis; any release-performance claim needs a separately specified release-shaped check.
-- **Simulator versus device.** Simulator hardware, thermal behavior, camera/media paths, and OS scheduling differ from a physical iPhone. A simulator comparison can show a local regression under a controlled simulator, but not establish physical-device performance or represent all users.
-- **Capture overhead.** Instrumentation and trace recording can change timing, memory, or scheduling. Keep low-overhead measurements separate from diagnostic captures and record capture mode.
-- **Local data is still sensitive.** Heap snapshots, DOM/network traces, console logs, source paths, URLs, and screenshots may contain secrets even when the intended fixture is synthetic. Use disposable test accounts, redact tokens and personal values, inspect artifacts before sharing, and delete unneeded captures under the team's retention policy.
-- **Cost.** Xcode, React Native DevTools, Chrome DevTools, Playwright, and Node built-ins are local tools with no per-event hosted charge. They still require developer-machine storage and setup. Expo EAS Observe is hosted and usage-priced under its current documentation; exclude it from this local-only recommendation unless separately approved.
-- **Export compatibility.** Saved trace formats and profiler features vary with Expo/RN/Chrome/Xcode/Node versions. Capture tool versions and test that an artifact can be reopened before relying on it. Do not promise interchangeability between Hermes, Chrome, Instruments, and Node trace formats.
-- **No result yet.** This document contains no measured Rewind performance, baseline, regression, or improvement claim.
+---
 
-## Decisions for the profiling follow-up
+## 9. Limits
 
-1. Which two or three journeys are most valuable for the first campaign, and what does “ready” mean for each screen/action?
-2. Should the comparison target Expo Go, a custom development build, a release build, or a staged sequence? For iOS, which simulator/device is the primary regression baseline?
-3. What thresholds are meaningful to product use (launch, navigation, media readiness, request latency), and who accepts them after baseline variability is observed?
-4. Where should larger raw traces live, how long should they be retained, and who checks screenshots/trace contents for secrets before sharing?
-5. Is the optional Node service in scope for the first performance campaign, and which request/media-worker path should it represent?
-6. Which exact installed versions and export formats will the team pin? Recheck vendor docs and local tool support when that campaign starts.
+- **Faster web does not mean faster iOS or Android;** report conclusions per platform.
+- **Debug and release builds differ greatly;** formal numbers come from the production-like modes in §4.
+- **Simulators are not devices,** and simulators have no camera.
+- **Capture has overhead;** keep timing and diagnosis separate.
+- **The app is changing fast;** write formal automation scripts after #320 lands on `dev`.
+- **This report contains no measured data.**
 
-## Follow-up issues
+---
 
-Create these as separate issues after the research recommendation is accepted:
+## 10. Open decisions
 
-1. **Establish a synthetic performance harness and baseline** — choose journey boundaries, fixture seed, simulator/browser/service setup, low-overhead timing collection, repeat count, and raw result format; run and publish the first baseline/follow-up-ready evidence bundle.
-2. **Profile iOS launch and interaction hotspots** — collect paired React Native DevTools and Instruments evidence on the agreed iPhone simulator/device, then identify and prioritize measured bottlenecks.
-3. **Profile web interaction and rendering hotspots** — add/reuse deterministic Playwright journeys, collect Chrome Performance traces separately from low-overhead measurements, and record user-facing timing summaries.
-4. **Profile the local Node service under a fixed synthetic workload** — only if service profiling is in scope; record request-level results and Node CPU/heap profiles, then decide whether more detailed DB/worker instrumentation is justified.
-5. **Set performance budgets and evidence retention rules** — after baseline variability is known, define product-facing targets, acceptable regression criteria, artifact redaction/storage/retention, and whether any production monitoring is warranted.
+1. Which 2–3 journeys go into round 1, and what exactly does "ready" mean for each?
+2. Which native build mode is used for formal comparison? Should it wait for #232 and S2-D04 to settle?
+3. Should we add tracing? Jaeger or Aspire? Should the client be instrumented as well?
+4. Should the timing proposal (#321) stand alone or fold into #166?
+5. May we run limited tests against the hosted environment? If so, with what scope and frequency?
+6. Who sets performance targets? Where do raw artifacts live, and who checks redaction?
 
-## Research and review provenance
+(Decided: Android is measured once the S2-D04 APK is available.)
 
-The source links above are vendor or tool-maintainer documentation. The recommended toolchain, scenarios, controls, and evidence protocol are this brief's synthesis for the repository's declared Expo/React Native, web, and Node stack; they have not been validated by a profiling campaign.
+---
 
-**Agent provenance:** Luna subagent Godel drafted this synthesis. Luna subagent Dewey independently checked the tool claims and protocol; the brief was revised to address that critique. No findings are attributed to Jiayu Jiang or Nguyễn Kim Long, and this does not imply that either named researcher reviewed the brief. No performance campaign was run.
+## 11. Follow-up issues
 
-## Primary references
+1. **Web and service harness plus first baseline:** on `production-e2e-server`, using sitespeed.io and autocannon for J1–J3.
+2. **Minimal instrumentation:** proposal #321, coordinated with #166.
+3. **iOS production-like build:** a Release build, building on #232.
+4. **iOS hotspot analysis:** DevTools, Instruments, and Maestro for J1 and J2.
+5. **OpenTelemetry tracing of the upload-to-compile path**, planned with #166 and #164.
+6. **First optimization with a before/after comparison.**
+7. **Round 2, Android:** after the S2-D04 APK, use React Native DevTools, Android Studio Profiler, Maestro, and Flashlight for J1 and J2.
+
+---
+
+## 12. Work split
+
+| Person              | Owns                                                                                                                           | Delivers                                                                        | Status                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Jiayu** (Windows) | `Web` (sitespeed.io, Chrome DevTools, Playwright trace); `Node` (`--cpu-prof`, autocannon); tracing and instrumentation design | Web and Node rows in §3; 3–4 real tool screenshots; §13 and the timing proposal | ☐                                                                                                      |
+| **Long** (Mac)      | `iOS` (build modes, React Native DevTools, Instruments, Maestro); journeys, metrics, and method                                | iOS rows in §3; §4; 2–3 screenshots; §5–8                                       | ☑️ partial — dev/prod and DevTools capture done (§16); Release build, Instruments, Maestro not yet run |
+| **Both**            | Cross-review (Jiayu reviews the method, Long the tool table); resolve §10                                                      | Final report linked on #267                                                     | ☐                                                                                                      |
+
+### Jiayu's steps
+
+1. Start `production-e2e-server` on port 8083 and confirm it works as the target.
+2. Run sitespeed.io once for J1 and capture the filmstrip.
+3. Enable a Playwright trace locally for one run (not committed) and check it for sensitive data.
+4. Run `test:full-cycle` with `--cpu-prof` and open the flame graph; run autocannon against `/archive`.
+5. Derive job execution time and queue wait from audit events and job rows.
+6. Review Jaeger, Aspire, and SigNoz; confirm the `node:sqlite` instrumentation gap.
+7. Finalize the timing proposal with Long before filing it.
+
+### Long's steps
+
+1. Run iOS through #232, then compare development mode with `--no-dev --minify`.
+2. Try `npx expo run:ios --configuration Release` in a throwaway worktree on the simulator.
+3. Record J1 and J2 in the React Native DevTools Performance panel and download the traces.
+4. Take one Instruments capture and a screenshot of it.
+5. Write a Maestro flow for J2 with a screenshot at each step.
+6. Review §5–8.
+
+### Round 2 (Android, owner TBD)
+
+- After the S2-D04 APK is available, measure J1 and J2 on an emulator or device.
+- Use React Native DevTools, Android Studio Profiler, Maestro, and Flashlight.
+- Either machine works; assign it to whoever has capacity.
+
+---
+
+## 13. Extended discussion: observability (follow-up issues)
+
+Nothing in this section is round-1 work. It covers whether we should change code later.
+
+### 13.1 X-Ray-like tracing
+
+```text
+upload video (client)
+├── validate session
+├── receive request body
+├── write staged file
+├── insert SQLite job (manual span)
+├── wait in queue (runtime → worker)
+├── FFmpeg probe/transcode (subprocess, manual span)
+├── hash and integrity check
+├── update SQLite state (manual span)
+└── respond / notify completion
+```
+
+- **Backend:** Jaeger first; Aspire if the team wants traces, metrics, and logs in one UI. Both accept OTLP, so the instrumentation is written once and the backend can be swapped.
+- **Client:** server-only instrumentation cannot see the client segment. Whether to instrument the client is an open decision.
+- **Plan jointly with #166 and #164.**
+
+### 13.2 Logging and instrumentation
+
+#### Current state (`dev`)
+
+| Exists                                                                                                                                                                    | Missing                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Audit events (`server/src/audit`): session and job start/complete/fail with ISO-8601 millisecond timestamps, stored in SQLite, viewable with `npm run server:diagnostics` | Per-request HTTP timing                                       |
+| CLI output: service start, worker start/stop, errors                                                                                                                      | Structured logs (#166 plans them for CloudWatch; not started) |
+|                                                                                                                                                                           | Any client-side performance marks                             |
+
+**Usable today:** the gap between `job.started` and `job.completed` (written by `runAuditedJob` in `server/src/jobs/index.ts`) gives job execution time without code changes. It **does not include queue wait**; queue wait can be derived from the job's `created_at` in `media_jobs`.
+
+#### Is new instrumentation worth adding?
+
+**Conclusion: minimal instrumentation is worth adding, behind a decision gate. A full logging system is out of scope here.**
+
+What we can do without code changes:
+
+| Need                  | Without code changes            | Gap                                                                  |
+| --------------------- | ------------------------------- | -------------------------------------------------------------------- |
+| Endpoint latency      | autocannon                      | One endpoint at a time; no per-endpoint timing inside a real journey |
+| Finding hotspots      | `--cpu-prof`, DevTools          | High overhead; diagnosis only, not repeated timing                   |
+| Web visual comparison | sitespeed.io video              | Measures when pixels appear, not when data is usable                 |
+| Native tap to usable  | Manual DevTools or video review | Not repeatable; depends on human judgement                           |
+| Job duration          | Audit event arithmetic          | Mostly sufficient                                                    |
+
+**For:**
+
+- cheap, repeatable numbers without attaching a profiler;
+- "ready" is defined in code rather than judged from screenshots;
+- the change is small, because every request passes through `createRuntimeServer` in `server/src/http.ts`;
+- field names can follow the OpenTelemetry HTTP conventions, so they can be reused later.
+
+**Against / cautions:**
+
+- if sitespeed.io and autocannon are enough for round 1, it is unnecessary;
+- logs can leak IDs and invite codes, so only normalized route templates may be logged;
+- log volume and hosted enablement are #166's decision, so it is off by default;
+- it must not become a second logging system alongside #166.
+
+#### Proposed approach (written as a gated proposal)
+
+1. **Server:** one JSON line per request, off by default and enabled by an environment variable. It records the method, normalized route template, status, and duration. Streaming media and long-lived realtime routes are tagged or excluded.
+2. **Jobs:** export execution time and queue wait from existing audit events and job rows; no new event types.
+3. **Client:** `performance.mark` / `performance.measure` at the start and end of J1–J3, enabled by a build-time flag so the marks also work in production-mode builds. React Native DevTools, Chrome Performance, and sitespeed.io all read User Timing.
+4. **Gate:** this report is accepted, round-1 journeys are chosen, and at least one required start or end boundary cannot be observed with external tools.
+
+Full proposal: #321 _PROPOSAL: Add opt-in request timing logs and client User Timing marks for performance measurement_ (links #267, #166, #164, #175, #309).
+
+---
+
+## 14. What we kept from the agent research
+
+**A. Luna draft (drafted by subagent Godel, checked by subagent Dewey; on the PR #320 branch)**
+
+- **Kept:** per-runtime tooling, separating timing from diagnosis, run metadata, privacy and evidence rules, and "no targets before a baseline".
+- **Added:**
+  - tracing (the draft omitted it, although it was the owner's original ask);
+  - sitespeed.io visual comparison;
+  - a load-testing tool;
+  - Android as round 2;
+  - native build modes linked to #232;
+  - the current `dev` state and hosted-environment boundaries;
+  - the logging and instrumentation discussion, plus a gated proposal;
+  - result presentation (filmstrip, dot plot, pivot) and statistics rules (median + IQR, interleaved runs);
+  - a leaner evidence layout;
+  - "before/after = PR base vs head".
+- **Changed:** journeys rewritten against features that exist on `dev`; Clinic.js downgraded to "not adopted"; one folder per comparison plus `results.csv` instead of one folder per run.
+
+**B. A second agent research pass (consulted earlier by Jiayu)**
+
+- **Kept:** sitespeed.io, the OpenTelemetry direction, the upload span tree, repeated runs reported as median and spread, and Flashlight as the round-2 Android option.
+- **Rejected:** Android Macrobenchmark (needs a native project); SigNoz as the primary backend (now an alternative); Lighthouse (covered by sitespeed.io).
+- **Added:** that pass did not address untrustworthy Expo Go numbers; §4 now does.
+
+---
+
+## 15. Provenance
+
+- **First draft:** drafted by Luna subagent Godel and checked by Luna subagent Dewey (original on the PR #320 branch).
+- **Revision:** Jiayu, assisted by Opus 5.5, revised this version using a second agent research pass and the current `dev` state.
+- **Human review:**
+  - [x] Jiayu (most content reviewed line by line)
+  - [x] Long — reviewed the report, ran the iOS checks in §16, filed the corrections in §17
+  - [ ] Guru
+- This report contains no measured performance data.
+
+## 16. Long's iOS verification (live, not vendor documentation)
+
+Run today on this repo's `dev` HEAD, Mac, Xcode 26.3, iOS 26.3.1 simulator, iPhone 15 Pro, local `production-e2e`-style backend (`server:start` + `expo start`). Full raw numbers were posted on the issue; summarized here.
+
+### Dev vs. production bundle (confirms §4's build-mode caution empirically, not just from Expo's docs)
+
+| Mode                           | Metro bundle time | Modules | React Native DevTools attaches?                                                                        |
+| ------------------------------ | ----------------- | ------- | ------------------------------------------------------------------------------------------------------ |
+| `expo start` (development)     | 8.1 s             | 890     | Yes — confirmed via `/json/list` returning a live `host.exp.Exponent` target                           |
+| `expo start --no-dev --minify` | 17.8 s            | 750     | **No** — `/json/list` returned `[]`; the inspector proxy does not register a production-mode JS target |
+
+This is a concrete confirmation of §3's "profiles work only in debug builds" claim for this repo and this Expo SDK (57), not just the vendor doc. It also means RN DevTools timing numbers must never be read as production-equivalent, which the report should state explicitly rather than leave implicit in the build-mode table.
+
+### J1 and J2 captured with React Native DevTools Performance panel
+
+- **J1 (cold launch → Welcome → Try Demo → Home)**: completed and screenshotted. ![J1: Demo Home on iPhone 15 Pro simulator](../../issues/images/perf-267-j1-home-demo-iphone15pro-simulator.jpg)
+- **J2 (Home → Archive tab switch)**: recorded a live Performance trace ("Expo #1"). In the 1,003 ms window around the tap, Scripting time was 141 ms. Bottom-up breakdown:
+
+  | Self time                       | %         | Function            | Location                        |
+  | ------------------------------- | --------- | ------------------- | ------------------------------- |
+  | 55.5 ms                         | 39.2%     | `createTask`        | `AnimatedImplementation.js:239` |
+  | 27.7 ms                         | 19.6%     | `start`             | —                               |
+  | 10.4 ms (103.7 ms total, 73.3%) | 7.3% self | `(anonymous)`       | **`cycle-time.ts:32`**          |
+  | 10.4 ms                         | 7.3%      | `onCommitFiberRoot` | `backend.js:17133`              |
+  | 7.0 ms (53.9 ms total, 38.1%)   | 5.0% self | `beginWork`         | `ReactFabric-dev.js:9198`       |
+
+  `cycle-time.ts` is app code, not a React/Animated internal, and it dominates the total time in this window (73.3%). That is a concrete, named candidate for the "find why it is slow" column of §3's tool table and a reasonable first thing to look at in the "First optimization" follow-up issue (§11.6), rather than a generic "JS was busy" finding. ![J2: React Native DevTools Bottom-up, cycle-time.ts dominating self time](../../issues/images/perf-267-devtools-j2-bottomup-cycletime.jpg)
+
+![J2: Archive tab after the measured switch](../../issues/images/perf-267-j2-archive-iphone15pro-simulator.jpg)
+
+### A real-account finding relevant to §2's "current `dev` state"
+
+Project 11 (#320, merged) replaced the old Demo-only entry chooser with a real Welcome/Sign-in/Create-account screen. Attempting Sign-in from `expo start` (Expo Go, `http://` Metro) is explicitly refused client-side: _"Sign-in is unavailable until this app is connected to its same-origin HTTPS service."_ "Try Demo" still works and is the only path into Home/Camera/Chat/Archive from a plain Expo Go dev session. §2 should say this plainly: **local J1/J2/J3 captures from `expo start` can only exercise the Demo path, not the real-account path**, until the client is served from the same HTTPS origin as the API (i.e., from `production-e2e-server`, matching §2 point 2's own recommendation). This also means any future client-side instrumentation (§13.2 item 3, `performance.mark`) on the real sign-in flow cannot be exercised from a bare `expo start` session.
+
+### Tooling reliability note for §8 (evidence capture)
+
+The iOS Simulator automation available in this environment intermittently served stale screenshots (several consecutive captures returning an identical, frozen frame — detectable because the simulator's own clock had stopped advancing in the image) while taps were in fact being delivered. Driving the real `Simulator.app` window directly (macOS Accessibility API clicks against the actual window, not the simulator automation's synthetic touch path) was reliable throughout. Anyone automating screenshot evidence for this report — including a future Maestro run — should verify each capture against a changing on-screen element (e.g., the status-bar clock) rather than trusting a single screenshot, or drive the real Simulator.app window.
+
+## 17. Corrections from review (Long)
+
+1. **§5, J1 — fixed above.** The 600 ms cold-launch floor from #243 already applies on `dev` (#243 is merged); it is not a future change. Original wording said "applies once implemented."
+2. **§2 point 6 and this section** — #243, #313, #320 are all merged/closed, not open-and-changing; §2's "changing quickly" framing should be dated or softened so a later reader does not assume these are still open.
+3. **§3/§4 should say explicitly** that React Native DevTools timings (debug-build only, per the empirical result in §16) must never substitute for a formal before/after number taken from a production-like build (§4's Release/APK rows). The report implies this via the build-mode table but never states the rule directly.
+4. **§2's "current `dev` state" is missing the real-account/HTTPS constraint** described in §16 — local Expo Go sessions can only reach the Demo path, not real sign-in, which bounds what J1–J3 can actually cover until a same-origin HTTPS local setup is used.
+5. **Maestro's fit for this app is still unverified** (§3 lists it as "Adopt" based on vendor docs that it "supports Expo Go"). Not disproven, just not yet tried here — worth a line in §9 (Limits) or §10 (Open decisions) until someone runs it once.
+
+## References
 
 - [Expo — Debugging and profiling tools](https://docs.expo.dev/debugging/tools/)
-- [React Native — React Native DevTools](https://reactnative.dev/docs/react-native-devtools)
-- [Expo — Analyzing JavaScript bundle size with Expo Atlas](https://docs.expo.dev/guides/analyzing-bundles/)
+- [Expo — Development and production modes](https://docs.expo.dev/workflow/development-mode/)
+- [Expo CLI (run:ios, prebuild)](https://docs.expo.dev/more/expo-cli/)
+- [React Native DevTools](https://reactnative.dev/docs/react-native-devtools)
+- [Expo Atlas](https://docs.expo.dev/guides/analyzing-bundles/)
 - [Apple — Reducing your app's launch time](https://developer.apple.com/documentation/xcode/reducing-your-app-s-launch-time)
-- [Apple — Testing and performance](https://developer.apple.com/documentation/technologyoverviews/testing-and-performance)
-- [Apple — Instruments Help: saving and opening trace documents](https://developer.apple.com/library/archive/documentation/AnalysisTools/Conceptual/instruments_help-collection/)
-- [Chrome DevTools — Performance features reference](https://developer.chrome.com/docs/devtools/performance/reference)
-- [Chrome DevTools — Save and share performance recordings](https://developer.chrome.com/docs/devtools/performance/save-trace)
+- [Android Studio — Profile your app performance](https://developer.android.com/studio/profile)
+- [Flashlight](https://docs.flashlight.dev/)
+- [Chrome DevTools — Performance reference](https://developer.chrome.com/docs/devtools/performance/reference)
 - [Playwright — Trace Viewer](https://playwright.dev/docs/trace-viewer)
-- [Playwright — Trace Viewer introduction and capture options](https://playwright.dev/docs/trace-viewer-intro)
-- [Node.js — Command-line options](https://nodejs.org/api/cli.html)
-- [Node.js — Trace events](https://nodejs.org/api/tracing.html)
-- [Node.js — Inspector](https://nodejs.org/api/inspector.html)
-- [Clinic.js — documentation](https://www.clinicjs.org/documentation/)
+- [sitespeed.io — Measurement commands](https://www.sitespeed.io/documentation/sitespeed.io/scripting/measurement-commands)
+- [sitespeed.io — Testing a single-page application](https://www.sitespeed.io/documentation/sitespeed.io/spa/)
+- [Maestro — React Native](https://docs.maestro.dev/platform-support/react-native)
+- [Node.js — CLI (`--cpu-prof`)](https://nodejs.org/api/cli.html)
+- [autocannon](https://github.com/mcollina/autocannon)
+- [MDN — User Timing](https://developer.mozilla.org/en-US/docs/Web/API/Performance_API/User_timing)
+- [OpenTelemetry JavaScript](https://opentelemetry.io/docs/languages/js/)
+- [Jaeger — Getting started](https://www.jaegertracing.io/docs/latest/getting-started/)
+- [Aspire Dashboard standalone (OTLP example)](https://learn.microsoft.com/en-us/dotnet/core/diagnostics/observability-otlp-example)
+- [SigNoz — Docker install and requirements](https://signoz.io/docs/install/docker/)
+- [Sentry Spotlight (Expo)](https://docs.sentry.io/platforms/react-native/guides/expo/integrations/spotlight/)
+- [Clinic.js (maintenance notice)](https://github.com/clinicjs/node-clinic)
 - [Expo — EAS Observe](https://docs.expo.dev/eas/observe/)
