@@ -575,7 +575,7 @@ function filmHTML(d, o = {}) {
     // 补位的旧片段在放的时候，角上标出来（标签不放在模糊的画面里）
     `<span class="fm-tag">From the archive</span>` +
     `<div class="fm-top"><button type="button" class="cam-ic" data-sub-back aria-label="Close">${ic('close')}</button>` +
-    `<span class="fm-title">${groupName()}<small>${o.film && typeof filmInfo === 'function' ? filmInfo(o.film) : 'Premiere · 18 h left'}</small></span><span class="cam-ic cam-ph" aria-hidden="true"></span></div>` +
+    `<span class="fm-title"><b>${esc(groupName())}</b><small>${o.film && typeof filmInfo === 'function' ? filmInfo(o.film) : 'Premiere · 18 h left'}</small></span><span class="cam-ic cam-ph" aria-hidden="true"></span></div>` +
     // 放映中
     `<div class="fm-bar" aria-hidden="true">${moments.map(() => '<i><b></b></i>').join('')}</div>` +
     `<div class="fm-ctl"><button type="button" class="glass-btn" data-fm-chat>${ic('chat')}Talk about it</button>` +

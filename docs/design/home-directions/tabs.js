@@ -12,6 +12,9 @@
 
 Object.assign(I, { expand: '<path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15"/>' });
 
+// 放进一行小字里的组名：太长就截短
+const short = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);
+
 /* ---------- 组名菜单 ---------- */
 // home：这台手机的状态；不在这个小组时，这一行不能选，写明已经不在
 function groupMenu(home = NAV.home) {
@@ -206,7 +209,7 @@ function chatBody(d, o) {
             `<button type="button" data-chat-unreply aria-label="Cancel reply">${ic('close')}</button></div>`
           : '') +
         `<span class="cmp-n" aria-live="polite"${draft.length > CHAT_MAX - 200 ? '' : ' hidden'}>${draft.length} / ${CHAT_MAX}</span>` +
-        `<div class="glass cmp-row"><textarea data-chat-input rows="1" maxlength="${CHAT_MAX}" placeholder="Message ${esc(groupName())}" aria-label="Message">${esc(draft)}</textarea>` +
+        `<div class="glass cmp-row"><textarea data-chat-input rows="1" maxlength="${CHAT_MAX}" placeholder="Message ${esc(short(groupName(), 20))}" aria-label="Message">${esc(draft)}</textarea>` +
         `<button type="button" class="cmp-send" data-chat-send aria-label="Send"${off || !draft.trim() ? ' disabled' : ''}>${ic('send')}</button></div></div>`)
   );
 }
@@ -312,7 +315,7 @@ function filmRow(f, d, o) {
 }
 
 // 最上面：这一期在哪一步
-function nowCard(d) {
+function nowCard(d, o = {}) {
   const k = cyc();
   const h = NAV.home;
   if (h === 'released') {
@@ -353,7 +356,7 @@ function nowCard(d) {
     return row('lock', 'No capsule running', 'Films from earlier cycles stay here.');
   return row(
     'lock',
-    `Cycle ${isSample() ? NOW.n : grp().no} · collecting`,
+    `Cycle ${o.first ? 1 : isSample() ? NOW.n : grp().no} · collecting`,
     `Opens in ${plural(k.days, 'day')} · sealed until then`,
   );
 }
@@ -380,7 +383,7 @@ function archiveBody(d, o) {
     : NAV.home === 'released'
       ? ''
       : `<section class="a-first"><h2>Your first film</h2><p>It opens when this cycle ends. Every film stays here to watch again.</p></section>`;
-  return `<div class="scroll">${glow}${head}${nowCard(d)}${list}</div>`;
+  return `<div class="scroll">${glow}${head}${nowCard(d, o)}${list}</div>`;
 }
 
 // 卡片里的播放：一格一格往下走，放完停在最后，给一个重播

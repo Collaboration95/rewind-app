@@ -1556,6 +1556,30 @@
   font-variation-settings: 'SOFT' 100;
 }
 
+/* 影片标题：组名一行，后面省略，不压到进度条 */
+.fm-title {
+  min-width: 0;
+  max-width: 240px;
+}
+.fm-title b {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 400;
+}
+/* 片尾“保存自己的片段”：文字链接，点击区域放大 */
+.fm-link {
+  position: relative;
+  min-height: 36px;
+}
+/* Try Demo 面板拉开时，后面压暗 */
+.c6 .glass.si-sheet.open {
+  box-shadow:
+    0 0 0 100vmax rgba(30, 18, 10, 0.4),
+    inset 0 1px 1px rgba(255, 255, 255, 0.95);
+}
+
 /* ============ “画面”页 ============ */
 body:not(.view-screens) #screens-view,
 body.view-screens main > .main-h,

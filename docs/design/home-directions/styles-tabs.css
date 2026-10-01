@@ -862,6 +862,36 @@
   visibility: hidden;
 }
 
+/* 组名太长：一行，后面省略 */
+.gnav .grp {
+  min-width: 0;
+  max-width: calc(100% - 96px);
+}
+.gnav .grp-t {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* 小目标放大点击区域，不改变排版 */
+.rx {
+  min-height: 26px;
+}
+.rx::after,
+.mfail::after,
+.up-link::after {
+  content: '';
+  position: absolute;
+  inset: -8px -6px;
+}
+.mfail,
+.up-link {
+  position: relative;
+}
+.mfail {
+  min-height: 32px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .c6 .glass.gm,
   .msg.open .macts,

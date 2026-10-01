@@ -197,7 +197,7 @@ const me = () =>
 const topBar = () =>
   NAV.home === 'nogroup'
     ? `<header class="top"><span class="top-sp" aria-hidden="true"></span><span class="grp brand">Rewind</span>${me()}</header>`
-    : `<header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp" aria-haspopup="menu" aria-expanded="false" aria-label="${typeof groupName === 'function' ? esc(groupName()) : 'Group name'} · switch group">${typeof groupName === 'function' ? esc(groupName()) : 'Group name'} ${ic('chev')}</button>${me()}</header>`;
+    : `<header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp" aria-haspopup="menu" aria-expanded="false" aria-label="${typeof groupName === 'function' ? esc(groupName()) : 'Group name'} · switch group"><span class="grp-t">${typeof groupName === 'function' ? esc(groupName()) : 'Group name'}</span>${ic('chev')}</button>${me()}</header>`;
 
 const bars = (cls, used, total = 5) =>
   `<div class="${cls}" aria-hidden="true">${Array.from({ length: total }, (_, i) => `<i${i < used ? ' class="on"' : ''}></i>`).join('')}</div>`;
