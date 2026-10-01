@@ -91,16 +91,83 @@
   animation-duration: 3.6s;
   opacity: 0.6;
 }
-.st-banner {
-  margin: 6px 0 14px;
+/* 额度用完：系统通知式的横幅，从顶部滑下、停几秒、收回 */
+.st-drop {
+  position: absolute;
+  z-index: 8;
+  top: 52px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
   padding: 11px 14px;
-  border-radius: 14px;
+  border-radius: 22px;
   font:
-    500 13px/1.4 var(--f-body),
+    500 12px/1.3 var(--f-body),
     sans-serif;
   color: var(--ink);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+  background: rgba(255, 252, 248, 0.72);
+  -webkit-backdrop-filter: blur(18px) saturate(1.8);
+  backdrop-filter: blur(18px) saturate(1.8);
+  box-shadow:
+    0 14px 30px -12px rgba(120, 60, 20, 0.35),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+  opacity: 0;
+  transform: translateY(-140%);
+  pointer-events: none;
+}
+.st-drop.go {
+  animation: st-drop 4.6s cubic-bezier(0.2, 0.9, 0.25, 1) 0.5s both;
+}
+@keyframes st-drop {
+  0% {
+    opacity: 0;
+    transform: translateY(-140%) scale(0.96);
+  }
+  9%,
+  82% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-140%) scale(0.96);
+  }
+}
+@keyframes st-drop-fade {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  6%,
+  85% {
+    opacity: 1;
+    transform: none;
+  }
+}
+.st-drop-i {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #ffb27c, var(--accent));
+}
+.st-drop-i .ic {
+  width: 18px;
+  height: 18px;
+}
+.st-drop b {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.st-drop small {
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* 加载中：骨架 + 微光扫过 */
@@ -623,5 +690,8 @@ body.view-states .arch-check {
   .sk,
   .st-bar i {
     animation: none !important;
+  }
+  .st-drop.go {
+    animation-name: st-drop-fade;
   }
 }

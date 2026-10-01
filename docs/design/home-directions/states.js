@@ -100,17 +100,13 @@ function stateCopy(d) {
 
 // 换掉首页正文：保留方向自己的页头（头像、组名、周数）和页头前的背景装饰
 function stateBody(c, d) {
-  // 额度用完：你自己的条数按 5 条画，和顶部提示对得上
+  // 额度用完：正文照常，你自己的条数按 5 条画；提示见 stateNote
   if (NAV.home === 'quota')
-    d = data((STORY[c.id] || POOL).map((x, i) => (i === 0 ? { ...x, c: 5 } : x)));
+    return bodies[c.id](data((STORY[c.id] || POOL).map((x, i) => (i === 0 ? { ...x, c: 5 } : x))));
   const full = bodies[c.id](d);
   const at = full.indexOf('<header class="top"');
   const end = full.indexOf('</header>', at) + '</header>'.length;
   const head = at < 0 ? '' : full.slice(0, end);
-  if (NAV.home === 'quota')
-    return (
-      head + `<p class="st-banner" role="status">All 5 used · resets Sunday</p>` + full.slice(end)
-    );
   const s = stateCopy(d);
   if (NAV.home === 'loading')
     return (
@@ -133,6 +129,16 @@ function stateBody(c, d) {
       : '') +
     (s.note ? `<p class="st-note">${s.note}</p>` : '') +
     `</section>`
+  );
+}
+
+// 额度用完：像系统通知一样从顶部滑下，停几秒收回，不占正文的位置；
+// 点灰掉的快门会再滑下来一次（见 app.js）
+function stateNote() {
+  if (NAV.home !== 'quota') return '';
+  return (
+    `<div class="st-drop go" role="status"><span class="st-drop-i">${ic('camera')}</span>` +
+    `<span><b>All 5 used</b><small>Resets Sunday</small></span></div>`
   );
 }
 

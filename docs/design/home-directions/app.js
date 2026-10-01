@@ -1019,7 +1019,7 @@ const nameOf = (c) => (LANG === 'zh' ? c.zh : c.en);
 const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 
 const screen = (c, d) =>
-  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter} st-${NAV.home}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}${topNav()}<div class="scroll">${NAV.home === 'collect' ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter} st-${NAV.home}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}${topNav()}${window.stateNote?.() || ''}<div class="scroll">${NAV.home === 'collect' ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
 
 let current = 'all';
 
@@ -1827,9 +1827,15 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (t.classList.contains('shutter')) {
-    // 用不了的快门：点一下才说明原因，几秒后自己消失
-    if (t.getAttribute('aria-disabled') === 'true')
-      return t.dataset.tip && flashTip(t, t.dataset.tip);
+    // 用不了的快门：点一下才说明原因——有顶部通知就让它再滑下来，没有就在快门上闪一下
+    if (t.getAttribute('aria-disabled') === 'true') {
+      const note = scr.querySelector('.st-drop');
+      if (!note) return t.dataset.tip && flashTip(t, t.dataset.tip);
+      note.classList.remove('go');
+      void note.offsetWidth;
+      note.classList.add('go');
+      return;
+    }
     t.classList.remove('press');
     void t.offsetWidth;
     t.classList.add('press');
