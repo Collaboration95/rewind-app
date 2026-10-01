@@ -333,9 +333,14 @@ function dock(d) {
     const lt = liveText(d);
     // 读取中、读取失败时还不知道有没有未读
     const dot = NAV.unread && !['loading', 'error'].includes(NAV.home);
+    // 额度用完：胶囊先变暖色说一遍，几秒后收回成“resets Sun”；点灰快门会再说一遍
+    const used = NAV.shutter === 'quota';
+    const flare = used
+      ? `<span class="lv-x" role="status"><span class="lv-i">${ic('camera')}</span><span><b>All 5 used</b> · resets Sunday</span></span>`
+      : '';
     return (
-      `<nav class="dock dock-g" aria-label="Main navigation"><div class="tabs"><button type="button" class="live" aria-expanded="false" aria-label="Home${lt ? ' · ' + lt : ''} · show tabs">` +
-      `${ic('home')}${dot ? '<i class="badge dot"></i>' : ''}<span><b>Home</b>${lt ? ' · ' + lt : ''}</span>${ic('chev', 'up')}</button>` +
+      `<nav class="dock dock-g" aria-label="Main navigation"><div class="tabs"><button type="button" class="live${used ? ' flare' : ''}" aria-expanded="false" aria-label="Home${lt ? ' · ' + lt : ''} · show tabs">` +
+      `${ic('home')}${dot ? '<i class="badge dot"></i>' : ''}<span><b>Home</b>${lt ? ' · ' + lt : ''}</span>${ic('chev', 'up')}${flare}</button>` +
       `${tabs.map((x, i) => tab(x, i === 0)).join('')}</div>${shutter(d)}</nav>`
     );
   }
@@ -1019,7 +1024,7 @@ const nameOf = (c) => (LANG === 'zh' ? c.zh : c.en);
 const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 
 const screen = (c, d) =>
-  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter} st-${NAV.home}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}${topNav()}${window.stateNote?.() || ''}<div class="scroll">${NAV.home === 'collect' ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+  `<div class="device"><div class="screen ${c.id} gnav nav-${NAV.variant} sh-${NAV.shutter} st-${NAV.home}${NAV.variant === 'c' ? ' mini' : ''}">${statusBar()}${topNav()}<div class="scroll">${NAV.home === 'collect' ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}${meSheet(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
 
 let current = 'all';
 
@@ -1827,13 +1832,14 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (t.classList.contains('shutter')) {
-    // 用不了的快门：点一下才说明原因——有顶部通知就让它再滑下来，没有就在快门上闪一下
+    // 用不了的快门：轻晃一下表示“不行”，胶囊再说一遍原因（别的底栏在快门上闪一下）
     if (t.getAttribute('aria-disabled') === 'true') {
-      const note = scr.querySelector('.st-drop');
-      if (!note) return t.dataset.tip && flashTip(t, t.dataset.tip);
-      note.classList.remove('go');
-      void note.offsetWidth;
-      note.classList.add('go');
+      const live = scr.querySelector('.live.flare');
+      [t, live].forEach((el) => el?.classList.remove(el === t ? 'nope' : 'go'));
+      void t.offsetWidth;
+      t.classList.add('nope');
+      if (!live) return t.dataset.tip && flashTip(t, t.dataset.tip);
+      live.classList.add('go');
       return;
     }
     t.classList.remove('press');

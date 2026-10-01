@@ -570,8 +570,8 @@ Object.assign(I18N, {
     '不显示底栏：聊天和档案也属于这个小组。',
   ],
   'sts.shut.quota': [
-    'A notice drops from the top for a few seconds; the pill says when it resets; tapping the grey shutter brings the notice back.',
-    '顶部像系统通知一样滑下提示，几秒后收回；胶囊写重置时间；点灰色快门会再滑下来一次。',
+    'The pill turns warm and says “All 5 used · resets Sunday” for a few seconds, then settles on “resets Sun”. The shutter is grey with a full ring; tapping it gives a small shake and the pill says it again.',
+    '胶囊变暖色，显示“All 5 used · resets Sunday”几秒，再收回成“resets Sun”。快门变灰、外圈满格，点一下会左右轻晃，胶囊再提示一次。',
   ],
   'sts.shut.developing': ['Pill says developing; no shutter.', '胶囊显示 developing，没有快门。'],
   'sts.shut.delayed': ['Pill says developing; no shutter.', '胶囊显示 developing，没有快门。'],

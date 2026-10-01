@@ -100,7 +100,7 @@ function stateCopy(d) {
 
 // 换掉首页正文：保留方向自己的页头（头像、组名、周数）和页头前的背景装饰
 function stateBody(c, d) {
-  // 额度用完：正文照常，你自己的条数按 5 条画；提示见 stateNote
+  // 额度用完：正文照常，你自己的条数按 5 条画；提示在底栏胶囊里（见 app.js 的 dock）
   if (NAV.home === 'quota')
     return bodies[c.id](data((STORY[c.id] || POOL).map((x, i) => (i === 0 ? { ...x, c: 5 } : x))));
   const full = bodies[c.id](d);
@@ -129,16 +129,6 @@ function stateBody(c, d) {
       : '') +
     (s.note ? `<p class="st-note">${s.note}</p>` : '') +
     `</section>`
-  );
-}
-
-// 额度用完：像系统通知一样从顶部滑下，停几秒收回，不占正文的位置；
-// 点灰掉的快门会再滑下来一次（见 app.js）
-function stateNote() {
-  if (NAV.home !== 'quota') return '';
-  return (
-    `<div class="st-drop go" role="status"><span class="st-drop-i">${ic('camera')}</span>` +
-    `<span><b>All 5 used</b><small>Resets Sunday</small></span></div>`
   );
 }
 
