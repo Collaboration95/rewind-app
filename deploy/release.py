@@ -14,6 +14,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 SHA = re.compile(r"[0-9a-f]{40}")
 VERSION = re.compile(r"[A-Za-z0-9._-]{1,64}")
+BRANCH = re.compile(r"[A-Za-z0-9._/-]{1,255}")
 FILES = ("source.tar", "runtime.tar", "web.tar")
 
 
@@ -82,29 +83,34 @@ def image_id(image_tar, image, sha):
         return f"sha256:{match.group(1)}"
 
 
-def build(output, green_sha, config_version):
+def build(output, green_sha, config_version, branch):
     sha = run("git", "rev-parse", "HEAD", output=True).decode().strip()
     if not SHA.fullmatch(sha) or green_sha != sha:
         fail("release requires the exact explicitly supplied green commit SHA")
     if not VERSION.fullmatch(config_version):
         fail("invalid configuration version")
+    if not BRANCH.fullmatch(branch) or ".." in branch or branch.startswith("/"):
+        fail("invalid release branch")
     if run("git", "status", "--porcelain", "--untracked-files=all", output=True).strip():
         fail("release requires a clean checkout, including untracked files")
-    main = run("git", "rev-parse", "refs/remotes/origin/main", output=True).decode().strip()
-    if sha != main:
-        fail("release commit must equal origin/main")
+    try:
+        head = run("git", "rev-parse", "--verify", f"refs/remotes/origin/{branch}", output=True).decode().strip()
+    except subprocess.CalledProcessError:
+        fail(f"release branch origin/{branch} is not available in this checkout")
+    if sha != head:
+        fail(f"release commit must equal origin/{branch}")
     remote = run("git", "remote", "get-url", "origin", output=True).decode().strip()
     match = re.fullmatch(r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9_.-]+/[^/\s]+?)(?:\.git)?", remote)
     if not match:
         fail("origin must be a GitHub repository")
     receipt = json.loads(run("gh", "api", "-X", "GET",
                              f"repos/{match.group(1)}/actions/workflows/quality.yml/runs",
-                             "-f", f"head_sha={sha}", "-f", "branch=main", "-f", "event=push",
+                             "-f", f"head_sha={sha}", "-f", f"branch={branch}", "-f", "event=push",
                              output=True))
-    if not any(item.get("head_sha") == sha and item.get("head_branch") == "main"
+    if not any(item.get("head_sha") == sha and item.get("head_branch") == branch
                and item.get("event") == "push" and item.get("conclusion") == "success"
                for item in receipt.get("workflow_runs", [])):
-        fail("no successful main-branch Quality checks run for this commit")
+        fail(f"no successful {branch}-branch Quality checks run for this commit")
     with tempfile.TemporaryDirectory(prefix="rewind-release-") as temp:
         temp = Path(temp)
         with open(temp / "source.tar", "wb") as stream:
@@ -186,13 +192,15 @@ def main():
     create.add_argument("--green-sha", required=True)
     create.add_argument("--config-version", required=True)
     create.add_argument("--output", required=True)
+    create.add_argument("--branch", default="main",
+                        help="origin branch whose Quality run gates this release (default: main)")
     check = commands.add_parser("verify")
     check.add_argument("bundle")
     check.add_argument("--extract")
     args = parser.parse_args()
     try:
         if args.command == "build":
-            build(args.output, args.green_sha, args.config_version)
+            build(args.output, args.green_sha, args.config_version, args.branch)
         else:
             verify(args.bundle, args.extract)
     except (ValueError, OSError, subprocess.CalledProcessError, tarfile.TarError) as error:
