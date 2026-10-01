@@ -27,6 +27,10 @@
 .screen.dark::after {
   display: none;
 }
+/* 状态栏压在封存提示的模糊层上面，不被糊掉 */
+.screen.dark .sb {
+  z-index: 8;
+}
 .screen.dark .home-ind {
   background: rgba(255, 255, 255, 0.8);
 }
