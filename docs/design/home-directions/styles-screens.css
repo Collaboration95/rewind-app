@@ -1108,6 +1108,10 @@
   font-size: 16px;
   font-style: normal;
 }
+.set-btn.fm-chat {
+  max-width: 300px;
+  margin-top: 4px;
+}
 .fm-acts {
   display: flex;
   gap: 10px;

@@ -397,6 +397,8 @@ function filmHTML(d) {
     // 片尾
     `<section class="fm-end"><h2>Your film</h2><p>${plural(moments.length - 1, 'moment')} · 2 min 14 s</p>` +
     `<div class="fm-cast">${who.map((x) => `<span><i class="av" style="--mc:${x.col}">${x.name[0]}</i>${x.me ? 'You' : x.name}</span>`).join('')}</div>` +
+    // 看完最自然的下一步：去聊天
+    `<button type="button" class="set-btn primary fm-chat" data-fm-chat>${ic('chat')}Talk about it in Chat</button>` +
     `<div class="fm-acts"><button type="button" class="glass-btn" data-fm-replay>${ic('replay')}Replay</button>` +
     `<button type="button" class="glass-btn" data-fm-save="film">${ic('save')}Save film</button></div>` +
     `<button type="button" class="fm-link" data-fm-save="mine">Save your own moments</button>` +

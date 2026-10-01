@@ -42,7 +42,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
   - Your moments: metadata only; delete one and retake it, once a week.
   - Record a video: camera and mic access, the viewfinder with moments and seconds left, recording, trim and look, upload with cancel, sealed.
   - Take a photo: the photo mode and a quick look before sealing; it counts 3 seconds.
-  - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast with Replay, Save film and Save your own moments.
+  - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast, a main button to talk about it in Chat, and Replay, Save film and Save your own moments.
 - **Dock icons**: try six icon sets in the dock. `#dock=ios` links to a set.
 
 ## Home states
