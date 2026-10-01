@@ -1,34 +1,42 @@
 'use strict';
 
-/* ---------- 首页状态：空、失败、无权限、额度用完、影片制作、延迟、已上映 ----------
-   与 dev 上 CapsuleSummary / 揭晓流程的状态一一对应（empty / error / denied、
-   collecting 的额度、compiling / delayed / released）。文案是草稿。
-   每个状态沿用页头和配色，顶部一团暖光随状态变化。 */
+/* ---------- 首页状态 ----------
+   与 dev 的首页摘要和首映流程对应（collecting 的额度、NotFound / RecoverableFailure / MembershipDenied、
+   片段处理失败、compiling / delayed / released）。文案是草稿。
+   · 额度：5 段或 30 秒，哪个先用完都算用完，每 7 天重置。
+   · 一期结束时下一期马上开始：影片制作中、比平时慢、首映时，首页已经是新一期，快门照常能用，
+     上面多一张状态卡。
+   · 没有这一期：组长能开始，组员只能等组长。 */
 const HOME_STATES = [
   'collect',
-  'empty',
-  'error',
-  'denied',
   'quota',
+  'secs',
+  'failed',
   'developing',
   'delayed',
   'released',
+  'empty',
+  'waiting',
+  'error',
+  'denied',
 ];
-// 这些状态下不显示快门（没有这一期、读取失败、不在小组、影片在做、已上映）：
-// 一时用不了的按钮不灰着摆在那里，直接拿掉；已上映时“一起看”在正文里，不再放第二个入口
-const SHUTTER_OFF = ['empty', 'error', 'denied', 'developing', 'delayed', 'released'];
+// 这些状态下不显示快门（没有这一期、读取失败、不在小组）：用不了的按钮不灰着摆在那里，直接拿掉
+const SHUTTER_OFF = ['empty', 'waiting', 'error', 'denied'];
 NAV.home = 'collect';
+// 每个状态对应的快门：额度用完就灰掉，其余照常
+const shutterOf = (state) => (state === 'quota' || state === 'secs' ? 'quota' : 'collect');
 
 // 一团会呼吸的暖光，靠状态类名切换动画和显隐
 const motif = () => `<div class="mo mo-glow" aria-hidden="true"><i></i><b></b></div>`;
 
-function stateCopy(d) {
+function stateCopy() {
   return {
     empty: {
-      title: 'No capsule this week',
-      body: 'When the owner starts one, it opens here.',
+      title: 'No capsule yet',
+      body: 'Start one and your group’s 4 weeks begin.',
       action: 'Start a capsule',
     },
+    waiting: { title: 'No capsule yet', body: 'Waiting for the owner to start one.' },
     error: {
       title: 'Couldn’t load',
       body: 'Check your connection and try again.',
@@ -40,36 +48,64 @@ function stateCopy(d) {
       body: 'Ask a friend to invite you again.',
       action: 'Choose another group',
     },
-    developing: { title: 'Your film is developing', body: 'Opens Sunday 8 PM.', progress: true },
-    delayed: { title: 'Taking a little longer', body: 'Still developing.', progress: true },
-    released: {
-      title: 'Your film is here',
-      body: `${plural(d.m, 'moment')} · 2 min 14 s`,
-      action: 'Watch together',
-      primary: true,
+    // 下面几种是首页上方的一张状态卡
+    failed: {
+      title: 'A moment didn’t finish',
+      body: 'Retry it, or delete it and retake.',
+      fix: true,
     },
+    developing: {
+      title: 'Your film is developing',
+      body: 'The last 4 weeks, ready soon.',
+      progress: true,
+    },
+    delayed: {
+      title: 'Taking a little longer',
+      body: 'Everyone hears when it’s ready.',
+      progress: true,
+    },
+    released: { title: 'Your film is here', body: 'Premiere · 18 h left', watch: true },
   }[NAV.home];
 }
 
-// 换掉首页正文：保留页头（头像、组名、周数）和页头前的背景暖光
+// 首页上方的状态卡：首映、制作中、处理失败
+function stateCard() {
+  const s = stateCopy();
+  return (
+    `<section class="glass st-card" role="status"><div class="st-ct"><b>${s.title}</b><span>${s.body}</span></div>` +
+    (s.progress
+      ? `<span class="st-bar" role="progressbar" aria-label="Developing"><i></i></span>`
+      : '') +
+    (s.watch
+      ? `<button type="button" class="wt"><span class="wt-i">${ic('play')}</span>Watch</button>`
+      : '') +
+    (s.fix ? `<button type="button" class="st-mini" data-st-retry>Retry</button>` : '') +
+    `</section>`
+  );
+}
+
 function stateBody(c, d) {
-  // 额度用完：正文照常，你自己的条数按 5 条画；点灰掉的快门会提示原因（见 app.js）
-  if (NAV.home === 'quota')
-    return bodies[c.id](data((STORY[c.id] || POOL).map((x, i) => (i === 0 ? { ...x, c: 5 } : x))));
+  const pool = STORY[c.id] || POOL;
+  // 换成“你这周用了 n 段”的数据
+  const mine = (n) => data(pool.map((x, i) => (i === 0 ? { ...x, c: n } : x)));
+  if (NAV.home === 'quota') return bodies[c.id](mine(5));
+  if (NAV.home === 'secs') return bodies[c.id](mine(3), { secs: 30 });
+  if (NAV.home === 'failed') return bodies[c.id](d, { card: stateCard() });
+  // 新一期：从 0 段开始；在这台手机上新封存的照样算进去
+  if (NEW_CYCLE.includes(NAV.home))
+    return bodies[c.id](mine(Math.max(0, pool[0].c - POOL[0].c)), { card: stateCard() });
+  // 没有这一期 / 读取失败 / 不在小组：换掉正文，保留页头
   const full = bodies[c.id](d);
   const at = full.indexOf('<header class="top"');
   const end = full.indexOf('</header>', at) + '</header>'.length;
   const head = at < 0 ? '' : full.slice(0, end);
-  const s = stateCopy(d);
+  const s = stateCopy();
   return (
     head +
     `<section class="st" aria-live="polite">${motif()}` +
     `<h2 class="st-h">${s.title}</h2><p class="st-p">${s.body}</p>` +
-    (s.progress
-      ? `<span class="st-bar" role="progressbar" aria-label="Developing"><i></i></span>`
-      : '') +
     (s.action
-      ? `<button type="button" class="st-btn${s.primary ? ' primary' : ''}"${s.retry ? ' data-st-retry' : ''}>${s.primary ? ic('play') : ''}${s.action}</button>`
+      ? `<button type="button" class="st-btn"${s.retry ? ' data-st-retry' : ''}>${s.action}</button>`
       : '') +
     `</section>`
   );
@@ -80,10 +116,10 @@ function shutterOff() {
   return SHUTTER_OFF.includes(NAV.home);
 }
 
-// 切换首页状态：顺带把快门状态对上（额度用完、首映）
+// 切换首页状态：顺带把快门状态对上
 function setHome(v) {
   NAV.home = HOME_STATES.includes(v) ? v : 'collect';
-  NAV.shutter = NAV.home === 'quota' ? 'quota' : NAV.home === 'released' ? 'premiere' : 'collect';
+  NAV.shutter = shutterOf(NAV.home);
   if ($('state')) $('state').value = NAV.home;
   if ($('shutter-state')) $('shutter-state').value = NAV.shutter;
   clearStories();
@@ -100,12 +136,12 @@ document.addEventListener('click', (e) => {
 });
 $('state')?.addEventListener('change', (e) => setHome(e.target.value));
 
-/* ---------- 状态页：暖光玻璃的每个状态排在一起 ---------- */
+/* ---------- 状态页：所有状态排在一起 ---------- */
 // 用指定的状态画一台手机，不影响侧栏里选的状态
 function withHome(state, fn) {
   const keep = { home: NAV.home, shutter: NAV.shutter };
   NAV.home = state;
-  NAV.shutter = state === 'quota' ? 'quota' : state === 'released' ? 'premiere' : 'collect';
+  NAV.shutter = shutterOf(state);
   try {
     return fn();
   } finally {
@@ -132,7 +168,7 @@ function renderStatesView() {
     `<header class="main-h"><p class="k">${t('sts.k')}</p><h1>${t('sts.h1')}</h1><p>${t('sts.p')}</p></header>` +
     // 收集中那台可以单独触发几个事件，看动画
     `<div class="sv-ev" role="group"><span>${t('sts.ev')}</span>` +
-    ['join', 'seal', 'reveal', 'reset']
+    ['seal', 'reveal', 'reset']
       .map((k) => `<button type="button" data-sv-ev="${k}">${t('sts.ev.' + k)}</button>`)
       .join('') +
     `</div>` +
@@ -150,14 +186,13 @@ document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-sv-ev]');
   if (!b) return;
   const ev = b.dataset.svEv;
-  const scr = document.querySelector('#states-view .screen.st-collect');
+  const scr = document.querySelector('#states-view [data-state="collect"] .screen');
   if (!scr) return;
   if (ev === 'reset') {
     delete STORY[scr.classList[1]];
     return renderStatesView();
   }
-  if (ev === 'join') gatherFlight(scr);
-  if (ev === 'reveal' && !scr.classList.contains('revealed')) reveal(scr);
+  if (ev === 'reveal') return reveal(scr);
   if (ev === 'seal') {
     const btn = scr.querySelector('.shutter');
     if (!btn) return;

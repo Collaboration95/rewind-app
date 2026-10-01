@@ -29,12 +29,3 @@
     0 0 0 2px var(--bg),
     inset 0 0 0 1.5px var(--mc);
 }
-.screen .av.wait[style] {
-  background: var(--bg);
-  color: var(--muted);
-  box-shadow: 0 0 0 2px var(--bg);
-}
-.c6 .av.wait[style] {
-  background: #fbf5ee;
-  box-shadow: 0 0 0 2px #fbf5ee;
-}

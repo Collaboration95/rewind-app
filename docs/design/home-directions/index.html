@@ -74,7 +74,8 @@
           >
           <ul class="taps">
             <li data-i18n="tap.play"><b>Play</b>, next to each phone: watch a whole cycle</li>
-            <li data-i18n="tap.shutter"><b>Shutter</b>: take a photo or a clip</li>
+            <li data-i18n="tap.shutter"><b>Shutter</b>: record a moment</li>
+            <li data-i18n="tap.mine"><b>Your allowance</b>, in the prompt card: your moments</li>
             <li data-i18n="tap.avatar"><b>Avatar</b>: settings</li>
             <li data-i18n="tap.dock"><b>Dock</b>: switch tabs</li>
           </ul>
@@ -93,23 +94,6 @@
               Reset sample
             </button>
           </div>
-          <p class="sub" data-i18n="anon.label">Friends who haven’t added a moment yet</p>
-          <div
-            class="seg"
-            role="group"
-            data-i18n-aria="anon.label"
-            aria-label="Friends who haven’t added a moment yet"
-          >
-            <button type="button" data-anon="1" aria-pressed="true" data-i18n="anon.hide">
-              Empty spot</button
-            ><button type="button" data-anon="0" aria-pressed="false" data-i18n="anon.show">
-              Show names
-            </button>
-          </div>
-          <p class="hint" data-i18n="members.hint">
-            Home shows only who is in, never how many moments someone else added. “Empty spot”
-            follows Reveal, so nobody gets called out. The demo has 5 people.
-          </p>
         </div>
 
         <div class="grp">
@@ -118,9 +102,8 @@
           <select id="shutter-state">
             <option value="collect" data-i18n="shutter.collect">Collecting</option>
             <option value="quota" data-i18n="shutter.quota">Allowance used up</option>
-            <option value="upload" data-i18n="shutter.upload">Sealing</option>
+            <option value="upload" data-i18n="shutter.upload">Uploading</option>
             <option value="sealed" data-i18n="shutter.sealed">Just sealed</option>
-            <option value="premiere" data-i18n="shutter.premiere">Premiere (24 hours)</option>
           </select>
           <label class="check" for="unread"
             ><input type="checkbox" id="unread" checked />
@@ -129,17 +112,19 @@
           <label class="sub" for="state" data-i18n="state.label">Home</label>
           <select id="state">
             <option value="collect" data-i18n="state.collect">Collecting</option>
-            <option value="empty" data-i18n="state.empty">No capsule yet</option>
-            <option value="error" data-i18n="state.error">Failed to load</option>
-            <option value="denied" data-i18n="state.denied">No access</option>
-            <option value="quota" data-i18n="state.quota">Allowance used up</option>
+            <option value="quota" data-i18n="state.quota">5 moments used</option>
+            <option value="secs" data-i18n="state.secs">30 seconds used</option>
+            <option value="failed" data-i18n="state.failed">A moment failed</option>
             <option value="developing" data-i18n="state.developing">Film developing</option>
             <option value="delayed" data-i18n="state.delayed">Taking longer</option>
-            <option value="released" data-i18n="state.released">Film released</option>
+            <option value="released" data-i18n="state.released">Premiere (24 hours)</option>
+            <option value="empty" data-i18n="state.empty">No capsule · owner</option>
+            <option value="waiting" data-i18n="state.waiting">No capsule · member</option>
+            <option value="error" data-i18n="state.error">Failed to load</option>
+            <option value="denied" data-i18n="state.denied">No access</option>
           </select>
           <p class="hint" data-i18n="state.hint">
-            The states follow the Home on dev: no capsule, failed to load, no access, the allowance
-            and the reveal. The copy is a draft. Play returns to collecting.
+            The states follow the Home on dev. The copy is a draft. Play returns to collecting.
           </p>
         </div>
 
@@ -156,7 +141,7 @@
       </aside>
 
       <main>
-        <span class="ver" title="Page version">v3.1</span>
+        <span class="ver" title="Page version">v3.2</span>
         <nav class="view-tabs" data-i18n-aria="tab.aria" aria-label="Page">
           <button type="button" data-view="home" aria-pressed="true" data-i18n="tab.home">
             Home</button

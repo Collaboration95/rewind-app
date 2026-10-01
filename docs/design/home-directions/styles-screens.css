@@ -1,5 +1,4 @@
 /* 首页以外的画面：设置、相机（拍照 / 录视频）、周日影片，以及“画面”页 */
-
 /* ============ 子画面通用 ============ */
 .screen.sub-in {
   animation: sub-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -14,7 +13,7 @@
 .screen.c6.dark {
   --bg: #16100c;
   --ink: #f8ece0;
-  --muted: rgba(248, 236, 224, 0.62);
+  --muted: rgba(248, 236, 224, 0.72);
   --line: rgba(255, 255, 255, 0.14);
   --ring-off: rgba(255, 255, 255, 0.3);
   --ring-on: #ffc08f;
@@ -40,7 +39,6 @@
 .cam-mine,
 .cam-retake,
 .glass-btn,
-.fm-skip,
 .looks button {
   color: #fff;
   background: rgba(255, 255, 255, 0.14);
@@ -64,13 +62,6 @@
 .cam-ic.cam-ph {
   visibility: hidden;
 }
-/* 深色画面上还没来的人：虚线空位 */
-.c6.dark .av.wait {
-  background: transparent;
-  box-shadow: none;
-  outline-color: rgba(255, 255, 255, 0.55);
-}
-
 /* ============ 设置 ============ */
 .sub-settings .scroll {
   padding-top: 56px;
@@ -205,7 +196,8 @@
   stroke-width: 2.4;
 }
 /* 成员头像用各自的专属色 */
-.sub-settings .avatar[style] {
+.sub-settings .avatar[style],
+.sub-signin .avatar[style] {
   color: var(--ink);
   background: color-mix(in srgb, var(--mc) 38%, #fff);
   box-shadow: inset 0 0 0 1.5px var(--mc);
@@ -214,7 +206,8 @@
 .set-row > .avatar {
   flex: none;
 }
-.sub-settings .avatar.sm {
+.sub-settings .avatar.sm,
+.sub-signin .avatar.sm {
   width: 32px;
   height: 32px;
   font-size: 13px;
@@ -311,9 +304,9 @@
   height: 18px;
 }
 .set-btn.primary {
-  color: #fff;
-  background: radial-gradient(120% 140% at 30% 20%, #ffb27c, var(--accent));
-  box-shadow: 0 10px 22px -10px var(--accent);
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffd2a6, #ff9f6b);
+  box-shadow: 0 10px 22px -12px rgba(224, 112, 58, 0.8);
 }
 .set-btn.danger {
   color: #fff;
@@ -410,8 +403,8 @@
   height: 56px;
   margin-bottom: 4px;
   border-radius: 50%;
-  color: #fff;
-  background: radial-gradient(circle at 35% 30%, #ffb27c, var(--accent));
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffd2a6, #ff9f6b);
 }
 .set-okic .ic {
   width: 26px;
@@ -551,7 +544,6 @@
   font-size: 12px;
   color: var(--muted);
 }
-
 /* ============ 相机 ============ */
 /* 取景框：虚焦的暖色灯光，慢慢漂；拍下之后停住 */
 .cam-view {
@@ -589,25 +581,6 @@
   filter: contrast(1.4) saturate(1.25);
 }
 /* 按下快门时一闪 */
-.cam-flashfx {
-  position: absolute;
-  inset: 0;
-  z-index: 7;
-  background: #fff;
-  opacity: 0;
-  pointer-events: none;
-}
-.cam-flashfx.go {
-  animation: cam-flash 0.45s ease-out;
-}
-@keyframes cam-flash {
-  0% {
-    opacity: 0.85;
-  }
-  100% {
-    opacity: 0;
-  }
-}
 .cam-top,
 .fm-top {
   position: absolute;
@@ -681,28 +654,6 @@
 .screen[data-step='rec'] .cam-bottom {
   display: grid;
 }
-.cam-modes {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.28);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-}
-.cam-modes button {
-  padding: 8px 16px;
-  border-radius: 999px;
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.7);
-}
-.cam-modes [aria-selected='true'] {
-  color: #2a1a10;
-  background: #ffd9b0;
-}
 .cam-row {
   display: flex;
   align-items: center;
@@ -710,7 +661,6 @@
   width: 100%;
   padding: 0 40px;
 }
-.screen[data-step='rec'] .cam-modes,
 .screen[data-step='rec'] .cam-mine,
 .screen[data-step='rec'] .cam-row > .cam-ic {
   visibility: hidden;
@@ -998,7 +948,6 @@
   margin: 0;
   color: var(--muted);
 }
-
 /* ============ 周日影片 ============ */
 .fm-frames {
   position: absolute;
@@ -1048,33 +997,6 @@
   color: var(--muted);
 }
 /* 等大家到 */
-.fm-wait {
-  display: none;
-  position: absolute;
-  z-index: 4;
-  top: 220px;
-  left: 30px;
-  right: 30px;
-  justify-items: center;
-  gap: 12px;
-  text-align: center;
-}
-.screen[data-step='wait'] .fm-wait {
-  display: grid;
-}
-.fm-k {
-  margin: 0;
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.fm-count {
-  font: 300 104px/1 var(--f-serif);
-  font-variation-settings:
-    'SOFT' 100,
-    'opsz' 144;
-}
 .sub-film .av {
   width: 36px;
   height: 36px;
@@ -1083,18 +1005,6 @@
 }
 .sub-film .av:first-child {
   margin-left: 0;
-}
-.fm-here {
-  margin: 0;
-  font-size: 13.5px;
-  color: var(--muted);
-}
-.fm-skip {
-  height: 44px;
-  margin-top: 22px;
-  padding: 0 22px;
-  border-radius: 999px;
-  font-size: 14px;
 }
 /* 放映中 */
 .fm-bar {
@@ -1149,11 +1059,6 @@
 }
 .screen[data-step='play'] .fm-ctl {
   display: flex;
-}
-.fm-with {
-  flex: 1;
-  font-size: 13.5px;
-  color: rgba(255, 255, 255, 0.85);
 }
 .fm-ctl .cam-ic .ic {
   fill: currentColor;
@@ -1226,7 +1131,199 @@
   font-size: 12.5px;
   color: var(--muted);
 }
-
+/* ============ 登录：一个 Sign in；上拉选测试用户 ============ */
+.sub-signin .si-scroll {
+  padding-top: 150px;
+  text-align: center;
+}
+.si-brand {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+.si-brand .mx-icon {
+  overflow: hidden;
+  margin-bottom: 10px;
+  border-radius: 22px;
+  box-shadow: 0 14px 30px -14px rgba(150, 80, 30, 0.5);
+}
+.si-brand .mx-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.si-brand h1 {
+  margin: 0;
+  font: 400 44px/1 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.si-brand p {
+  margin: 0;
+  font-size: 14.5px;
+  color: var(--muted);
+}
+.set-btn.si-go {
+  margin-top: 56px;
+}
+.si-note {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.c6 .glass.si-sheet {
+  position: absolute;
+  z-index: 8;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 6px 16px 34px;
+  border-radius: 30px 30px 0 0;
+  background: rgba(255, 250, 244, 0.88);
+  transform: translateY(calc(100% - 70px));
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.c6 .glass.si-sheet.open {
+  transform: none;
+}
+.si-grab {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+}
+.si-grab i {
+  width: 40px;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(51, 35, 26, 0.22);
+}
+.si-sheet .set-list {
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.55);
+}
+/* ============ 设置：组员看到的、不能点的行 ============ */
+.set-row.off {
+  cursor: default;
+}
+.set-row.off > .ic:first-child {
+  color: var(--muted);
+}
+.set-list li.set-hint {
+  padding: 10px 16px 12px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.set-list.set-more {
+  margin-top: 10px;
+}
+.set-row:disabled {
+  cursor: default;
+}
+/* ============ 你的片段：只有时间和长度 ============ */
+.mine-sum b {
+  font: 400 38px/1 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.set-row .del {
+  width: 18px;
+  height: 18px;
+  color: #c2452f;
+  transform: none;
+}
+.sub-mine .set-list .set-row > .ic:first-child {
+  color: var(--muted);
+}
+.sub-mine .set-btn {
+  margin-top: 6px;
+}
+/* ============ 相机：只录视频、上传进度 ============ */
+.sub-camera .cam-core {
+  background: #f0603f;
+}
+.screen[data-step='view'] .cam-time {
+  display: block;
+}
+.cam-up {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  left: 22px;
+  right: 22px;
+  bottom: 40px;
+  gap: 12px;
+}
+.screen[data-step='upload'] .cam-up {
+  display: grid;
+}
+.cam-upbar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.cam-upbar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ffd2a6, #ff9f6b);
+  transition: width 0.1s linear;
+}
+.cam-up p {
+  margin: 0;
+  text-align: center;
+  font:
+    500 14px/1 'DM Mono',
+    monospace;
+  color: #fff;
+}
+.cam-up .cam-retake {
+  height: 52px;
+}
+.screen[data-step='upload'] .cam-pill {
+  visibility: hidden;
+}
+/* ============ 影片：补位的旧片段、去聊天 ============ */
+.fm-tag {
+  position: absolute;
+  z-index: 5;
+  top: 132px;
+  left: 22px;
+  padding: 6px 11px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.screen[data-step='play']:has(.fm-f.filler.on) .fm-tag {
+  opacity: 1;
+}
+.fm-f.filler {
+  filter: blur(8px) saturate(0.5) sepia(0.3);
+}
+.fm-ctl {
+  justify-content: space-between;
+}
+.fm-link {
+  margin-top: 2px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 /* ============ “画面”页 ============ */
 body:not(.view-screens) #screens-view,
 body.view-screens main > .main-h,

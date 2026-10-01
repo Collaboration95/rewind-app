@@ -90,7 +90,10 @@
   border-radius: 50%;
 }
 /* ---------- 揭晓后的“一起看”：和底栏同一种玻璃，左边一颗暖色播放钮 ---------- */
-.c6 .count .wt {
+.c6 .wt {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
   gap: 10px;
   margin-top: 14px;
   padding: 6px 22px 6px 6px;
@@ -104,19 +107,101 @@
     inset 0 -1px 1px rgba(255, 255, 255, 0.5),
     0 10px 24px -12px rgba(150, 80, 30, 0.38);
 }
-.c6 .count .wt-i {
+.c6 .wt-i {
   display: grid;
   place-items: center;
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  color: #fff;
-  background: radial-gradient(circle at 35% 30%, #ffb27c, var(--accent));
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffd2a6, #ff9f6b);
   box-shadow: 0 4px 10px -4px var(--accent);
 }
-.c6 .count .wt-i .ic {
+.c6 .wt-i .ic {
   width: 15px;
   height: 15px;
   margin-left: 2px;
   fill: currentColor;
+}
+/* ---------- 首页：上方的状态卡（首映、制作中、处理失败） ---------- */
+.c6 .st-card {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: center;
+  margin: 0 0 6px;
+  padding: 14px 14px 14px 18px;
+  border-radius: 24px;
+}
+.st-card .st-ct {
+  flex: 1;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.st-card .st-ct b {
+  font: 400 18px/1.15 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.st-card .st-ct span {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.st-card .st-bar {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+}
+.c6 .st-card .wt {
+  flex: none;
+  gap: 8px;
+  margin: 0;
+  padding: 5px 16px 5px 5px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.c6 .st-card .wt-i {
+  width: 32px;
+  height: 32px;
+}
+.st-mini {
+  flex: none;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #2a1a10;
+  background: linear-gradient(180deg, #ffd2a6, #ff9f6b);
+}
+.st-card.fx-in {
+  animation: st-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes st-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+}
+/* 有状态卡时，主视觉矮一点 */
+.c6 .hero.slim {
+  height: 210px;
+}
+/* 额度那一行：点进“你的片段” */
+.c6 .glass .mine-row {
+  width: 100%;
+  gap: 10px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.c6 .glass .mine-row span {
+  flex: 1;
+  text-align: right;
+}
+.mine-row .go {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  transform: rotate(-90deg);
 }

@@ -56,31 +56,19 @@ const POOL = [
 const DEFAULT_C = POOL.map((p) => p.c);
 
 let size = 5;
-let anon = true; // 未参与成员不点名（借鉴 Reveal “no streak, no scolding”）
 const plural = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
 const secs = (c) => String([0, 4, 8, 13, 19, 26][c]).padStart(2, '0');
 
-const hidden = (x) => anon && x.c === 0 && !x.me;
-const init = (x) => (hidden(x) ? '' : x.name[0]);
-
-// 数据口径（提案 A）：只知道每个成员“参与了没有”，不显示别人各贡献了几条；
-// 你自己的条数来自你的台账，全组总数来自周期汇总。成员的 c 只用来模拟这些数字。
+// 首页只显示你自己的额度（dev 的首页也是这样）；成员的 c 只用来模拟你的条数和片尾名单
 function data(pool = POOL) {
   const members = pool.slice(0, size);
-  const waiting = members.filter((x) => x.c === 0);
-  return {
-    members,
-    // 不点名时，把还没贡献的人排到最后，显示成空位
-    shown: anon ? [...members.filter((x) => !hidden(x)), ...members.filter(hidden)] : members,
-    n: members.length,
-    m: members.reduce((s, x) => s + x.c, 0),
-    added: members.length - waiting.length,
-    waiting,
-    me: members[0],
-  };
+  return { members, n: members.length, m: members.reduce((s, x) => s + x.c, 0), me: members[0] };
 }
-// 揭晓前 / 揭晓后两套文案
-const pp = (a, b) => `<span class="is-pre">${a}</span><span class="is-now">${b}</span>`;
+// 一期 4 周，从小组开始那天算；额度每 7 天重置（dev 文档）。演示固定在第 2 周。
+// 影片制作中、比平时慢、首映时，下一期已经开始了：第 1 周
+const NEW_CYCLE = ['developing', 'delayed', 'released'];
+const cyc = () =>
+  NEW_CYCLE.includes(NAV.home) ? { week: 1, days: 27, reset: 7 } : { week: 2, days: 16, reset: 3 };
 
 /* ---------- 共用部件 ---------- */
 // 5 段额度环：已用的段点亮。
@@ -116,29 +104,28 @@ const NAV = { shutter: 'collect', unread: true, home: 'collect' };
 
 function shutter(d) {
   const left = 5 - d.me.c;
-  // 首页在加载、出错、影片制作中等状态时没有快门（见 states.js）
+  const reset = plural(cyc().reset, 'day');
+  // 没有这一期、读取失败、不在小组时没有快门（见 states.js）
   if (NAV.home !== 'collect' && window.shutterOff?.()) return '';
+  // 5 段和 30 秒哪个先用完都算用完
+  const secsOut = NAV.home === 'secs';
   // 第 4 项是点一下才短暂出现的提示，不常驻（常驻会挡住正文）
   const s = {
     collect: [ring(d.me.c), 'camera', `Add a moment · ${left} of 5 left`, ''],
     quota: [
       ring(5),
       'camera',
-      'Weekly allowance used up · resets Sunday',
-      'All 5 used · resets Sun',
+      secsOut
+        ? `This week's 30 seconds are used · resets in ${reset}`
+        : `This week's 5 moments are used · resets in ${reset}`,
+      secsOut ? `30 s used · resets in ${reset}` : `All 5 used · resets in ${reset}`,
     ],
-    upload: [arcRing(0.28, true), 'camera', 'Sealing your moment', 'Sealing…'],
+    upload: [arcRing(0.28, true), 'camera', 'Uploading your moment', 'Uploading…'],
     sealed: [
       ring(Math.min(5, d.me.c + 1)),
       'check',
       `Moment sealed · ${Math.max(0, left - 1)} of 5 left`,
       'Sealed',
-    ],
-    premiere: [
-      arcRing(0.75),
-      'play',
-      'Watch the premiere together · 18 hours left',
-      'Premiere · 18h left',
     ],
   }[NAV.shutter];
   return (
@@ -156,8 +143,8 @@ function dock(d) {
     [
       'archive',
       'Archive',
-      NAV.shutter === 'premiere' ? '<i class="badge dot"></i>' : '',
-      NAV.shutter === 'premiere' ? ', new film' : '',
+      NAV.home === 'released' ? '<i class="badge dot"></i>' : '',
+      NAV.home === 'released' ? ', new film' : '',
     ],
   ];
   const tab = ([k, l, badge, extra], on) =>
@@ -166,39 +153,37 @@ function dock(d) {
   return `<nav class="dock dock-g open" aria-label="Main navigation"><div class="tabs">${tabs.map((x, i) => tab(x, i === 0)).join('')}</div>${shutter(d)}</nav>`;
 }
 
-const me = (withName = true) =>
-  `<button type="button" class="me" aria-label="Alex · settings"><span class="avatar">A</span>${
-    withName ? `<span class="me-n">Alex</span>${ic('chev', 'chev')}` : ''
-  }</button>`;
+const acting = () => (typeof SET === 'undefined' ? POOL[0] : POOL[SET.me]);
+const me = () =>
+  `<button type="button" class="me" aria-label="${acting().name} · settings"><span class="avatar">${acting().name[0]}</span></button>`;
 
-const crew = (d) =>
-  d.shown
-    .map(
-      (x) =>
-        `<span class="av${x.c ? '' : ' wait'}" data-who="${x.name}" style="--mc:${x.col}" title="${hidden(x) ? 'Not yet' : x.name}">${init(x)}</span>`,
-    )
-    .join('');
 const bars = (cls, used, total = 5) =>
   `<div class="${cls}" aria-hidden="true">${Array.from({ length: total }, (_, i) => `<i${i < used ? ' class="on"' : ''}></i>`).join('')}</div>`;
 
 /* ---------- 首页正文 ---------- */
 const bodies = {
-  c6: (d) => `
+  // o.card：首映、制作中、处理失败时放在页头下面的一张状态卡；o.secs：30 秒用完时的秒数
+  c6: (d, o = {}) => {
+    const k = cyc();
+    const used = o.secs ?? Number(secs(Math.min(5, d.me.c)));
+    const prompt =
+      typeof promptText === 'function' ? promptText() : 'What made you pause and smile?';
+    return `
     <div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>
     <div class="glow-low" aria-hidden="true"></div>
-    <header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp">Group name ${ic('chev')}</button>${me(false)}</header>
-    <section class="hero" data-seal aria-label="${plural(d.m, 'moment')}, sealed until Sunday">
-      <b>${d.m}</b>
-      <span>little ${d.m === 1 ? 'moment' : 'moments'}</span>
+    <header class="top"><span class="top-sp" aria-hidden="true"></span><button type="button" class="grp">${typeof SET === 'undefined' ? 'Group name' : SET.group} ${ic('chev')}</button>${me()}</header>
+    ${o.card || ''}
+    <section class="hero${o.card ? ' slim' : ''}" aria-label="${plural(k.days, 'day')} until the film">
+      <b>${k.days}</b>
+      <span>days until our film</span>
     </section>
-    <div class="count"><strong>${pp('2 days, 14 hours', 'Your film is here')}</strong><span>${pp('Sun 8 PM', '2 min 14 s')}</span>
-      <button type="button" class="st-btn wt is-now"><span class="wt-i">${ic('play')}</span>Watch together</button></div>
+    <div class="count"><strong>Week ${k.week} of 4</strong><span>Your moments reset in ${plural(k.reset, 'day')}</span></div>
     <section class="glass">
-      <small>This week's prompt</small>
-      <h2>What made you pause and smile?</h2>
-      <div class="rowx"><div class="stack">${crew(d)}</div><span>${pp(`${d.added} of ${d.n} are in`, `${d.added} of ${d.n} took part`)}</span></div>
-      <div class="rowx is-pre">${bars('pills', d.me.c)}<span>You · ${d.me.c}/5 · ${secs(d.me.c)}/30s</span></div>
-    </section>`,
+      <small>This cycle's prompt</small>
+      <h2>${prompt}</h2>
+      <button type="button" class="rowx mine-row" data-open-mine aria-label="Your moments: ${d.me.c} of 5, ${used} of 30 seconds">${bars('pills', d.me.c)}<span>You · ${d.me.c} of 5 · ${used} of 30 s</span>${ic('chev', 'go')}</button>
+    </section>`;
+  },
 };
 
 /* ---------- 首页说明 ---------- */
@@ -223,10 +208,8 @@ const concepts = [
 const nameOf = (c) => (LANG === 'zh' ? c.zh : c.en);
 const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
 
-// 暖光玻璃的“已上映”就是“播放”里揭晓之后的画面，两处保持一致
-const revealedHome = (c) => NAV.home === 'released' && c.id === 'c6';
 const screen = (c, d) =>
-  `<div class="device"><div class="screen ${c.id} gnav nav-g sh-${NAV.shutter} st-${NAV.home}${revealedHome(c) ? ' revealed' : ''}">${statusBar()}<div class="scroll">${NAV.home === 'collect' || revealedHome(c) ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
+  `<div class="device"><div class="screen ${c.id} gnav nav-g sh-${NAV.shutter} st-${NAV.home}">${statusBar()}<div class="scroll">${NAV.home === 'collect' ? bodies[c.id](d) : stateBody(c, d)}</div>${dock(d)}<span class="home-ind" aria-hidden="true"></span></div></div>`;
 
 // 每台手机的演示数据（播放 / 按快门只改这一台；重置即删除）
 const STORY = {};
@@ -337,24 +320,7 @@ function flashTip(btn, text) {
   setTimeout(() => tip.remove(), 1900);
 }
 
-/* ---------- 动效：朋友加入 与 你按快门 ----------
-   两者刻意区分：
-   · 朋友加入——你看不到他拍了什么，只知道他来了：从屏幕外进来，用这个方向自己的隐喻，不出现照片。
-   · 你按快门——你知道自己拍了什么：从快门出发，你的照片变成这个方向的隐喻物件。 */
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const play = (el, frames, opts) =>
-  new Promise((res) => {
-    const a = el.animate(frames, opts);
-    a.onfinish = () => res();
-    a.oncancel = () => res();
-  });
-// 元素中心在手机画面里的坐标（画面按缩放比例换算回 390 宽）
-function pt(scr, el) {
-  const sr = scr.getBoundingClientRect(),
-    k = sr.width / 390,
-    r = (el || scr).getBoundingClientRect();
-  return { x: (r.left + r.width / 2 - sr.left) / k, y: (r.top + r.height / 2 - sr.top) / k };
-}
+/* ---------- 动效：你按快门 ---------- */
 // 给元素挂一个一次性的效果类
 function fx(el, cls, ms = 1000) {
   if (!el) return;
@@ -363,72 +329,22 @@ function fx(el, cls, ms = 1000) {
   el.classList.add(cls);
   setTimeout(() => el.classList.remove(cls), ms);
 }
-const glow = (c) => `0 0 10px 4px ${c}, 0 0 26px 10px ${c}55`;
 
-// 一点光沿路径飞：wander 先绕一圈再进；toColor 进去之后变色
-function dotFly(scr, from, to, color, o = {}) {
-  const { size = 12, dur = 1500, wander = false, toColor } = o;
-  const d = document.createElement('i');
-  d.className = 'orb-dot';
-  d.style.cssText = `left:${from.x}px;top:${from.y}px;width:${size}px;height:${size}px;margin:${-size / 2}px 0 0 ${-size / 2}px;--mc:${color}`;
-  scr.appendChild(d);
-  const dx = to.x - from.x,
-    dy = to.y - from.y;
-  const c0 = { background: color, boxShadow: glow(color) };
-  const c1 = toColor ? { background: toColor, boxShadow: glow(toColor) } : c0;
-  // [x, y, 缩放, 透明度, 颜色, 时间点]
-  const P = wander
-    ? [
-        [0, 0, 0.4, 0, c0, 0],
-        [dx * 0.3, dy * 0.15 - 40, 1.2, 1, c0, 0.22],
-        [dx * 0.55 + 46, dy * 0.4 + 16, 1, 0.6, c0, 0.42],
-        [dx * 0.8 - 34, dy * 0.62 - 34, 1.15, 1, c0, 0.62],
-        [dx, dy - 26, 1, 1, c0, 0.8],
-        [dx, dy + 18, 0.8, 1, c1, 0.93],
-        [dx, dy + 26, 0.6, 0, c1, 1],
-      ]
-    : [
-        [0, 0, 0.4, 0, c0, 0],
-        [dx * 0.25 - 30, dy * 0.15 - 30, 1.3, 1, c0, 0.25],
-        [dx * 0.7, dy * 0.6 - 40, 1, 1, c0, 0.7],
-        [dx, dy, 0.5, 0, c1, 1],
-      ];
-  const frames = P.map(([x, y, sc, op, col, off]) => ({
-    transform: `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(${sc})`,
-    opacity: op,
-    ...col,
-    offset: off,
-  }));
-  return play(d, frames, { duration: dur, easing: 'cubic-bezier(.35,.6,.3,1)' }).then(() =>
-    d.remove(),
-  );
-}
-const q = (root, sel) => root?.querySelector(sel);
-const EDGE_R = { x: 384, y: 170 };
-
-// 一对动画：join 发生在数据变化前；joined 在重绘后点亮新出现的元素。sealed 同理。
+// 封存之后：额度那一行跳一下
 const FX = {
-  c6: {
-    // 暖光玻璃：一粒暖光飘进阳光里；你按快门后不再有照片飞向中间，只有数字滚动
-    join: (scr, f) =>
-      dotFly(scr, EDGE_R, pt(scr, q(scr, '.hero b')), f.col, { toColor: '#ffc98a' }),
-    joined: (ns) => fx(q(ns, '.hero b'), 'fx-roll', 700),
-    sealed: (ns) => fx(q(ns, '.hero b'), 'fx-roll', 700),
-  },
+  c6: { sealed: (ns) => fx(ns.querySelector('.mine-row'), 'fx-roll', 700) },
 };
 
 // 你按快门：封存一个片段
 async function sealFlight(scr, btn, then) {
-  if (NAV.shutter !== 'collect' || scr.classList.contains('revealed')) return then?.();
+  if (NAV.shutter !== 'collect') return then?.();
   const id = scr.classList[1];
   const mine = storyPool(id)[0];
   if (mine.c >= 5) {
-    flashTip(btn, 'All 5 used this week');
+    flashTip(btn, `All 5 used · resets in ${plural(cyc().reset, 'day')}`);
     return then?.();
   }
   const S = FX[id] || {};
-  if (!reduceMotion() && S.seal) await S.seal(scr, btn, mine);
-  if (!scr.isConnected) return;
   mine.c += 1;
   const ns = renderCard(id, scr);
   if (ns) {
@@ -439,43 +355,17 @@ async function sealFlight(scr, btn, then) {
   then?.();
 }
 
-// 朋友加入：一位还没参与的朋友添了一个片段
-async function gatherFlight(scr, then) {
-  const id = scr.classList[1];
-  const friend = storyPool(id)
-    .slice(0, size)
-    .find((x) => !x.me && x.c === 0);
-  if (!friend) return then?.();
-  const S = FX[id] || {};
-  if (!reduceMotion() && S.join) await S.join(scr, friend);
-  if (!scr.isConnected) return;
-  friend.c = 1;
-  const ns = renderCard(id, scr);
-  if (ns) {
-    toast(ns, friend, `${friend.name} added a moment`);
-    if (!reduceMotion()) await S.joined?.(ns, friend);
-  }
-  then?.();
-}
-
-function toast(scr, who, text) {
-  const t = document.createElement('div');
-  t.className = 'toast';
-  t.setAttribute('role', 'status');
-  t.innerHTML = `<i style="--mc:${who.col}">${who.name[0]}</i>${text}`;
-  scr.appendChild(t);
-  setTimeout(() => t.remove(), 2500);
-}
-
-// 揭晓：周日 8 点，所有人同一时刻打开
+// 揭晓：4 周到了，影片首映 24 小时，下一期马上开始
 function reveal(scr) {
-  scr.classList.add('revealed');
-  // 底栏换成“已上映”：没有快门，档案出现小红点
-  const dk = scr.querySelector('.dock');
-  if (dk) dk.outerHTML = withHome('released', () => dock(dataFor(scr.classList[1])));
+  const wrap = scr.closest('.phone-wrap');
+  const id = scr.classList[1];
+  const c = concepts.find((x) => x.id === id);
+  if (!wrap || !c) return;
+  wrap.innerHTML = withHome('released', () => screen(c, dataFor(id)));
+  wrap.querySelector('.st-card')?.classList.add('fx-in');
 }
 
-// 播放：①朋友加入 → ②你按快门封存 → ③时间到，一起揭晓
+// 播放：①你按快门封存 → ②这一期结束，影片首映
 const TIMERS = {};
 function setStep(id, text) {
   const el = $('step-' + id);
@@ -486,23 +376,20 @@ function playStory(id) {
   const scrOf = () => document.querySelector(`.card[data-id="${id}"] .screen`);
   const later = (ms, fn) => (TIMERS[id] ||= []).push(setTimeout(fn, ms));
   setStep(id, t('step.1'));
-  gatherFlight(scrOf(), () =>
-    later(700, () => {
-      setStep(id, t('step.2'));
-      const scr = scrOf();
-      const btn = scr?.querySelector('.shutter');
-      if (!scr || !btn) return;
-      btn.classList.add('press');
-      sealFlight(scr, btn, () =>
-        later(1300, () => {
-          setStep(id, t('step.3'));
-          const s2 = scrOf();
-          if (s2) reveal(s2);
-          later(3200, () => setStep(id, t('step.done')));
-        }),
-      );
-    }),
-  );
+  later(500, () => {
+    const scr = scrOf();
+    const btn = scr?.querySelector('.shutter');
+    if (!scr || !btn) return;
+    btn.classList.add('press');
+    sealFlight(scr, btn, () =>
+      later(1500, () => {
+        setStep(id, t('step.2'));
+        const s2 = scrOf();
+        if (s2) reveal(s2);
+        later(3000, () => setStep(id, t('step.done')));
+      }),
+    );
+  });
 }
 function resetCard(id) {
   (TIMERS[id] || []).forEach(clearTimeout);
@@ -516,13 +403,6 @@ document.addEventListener('click', (e) => {
   const t = e.target.closest('button');
   if (!t) return;
   if (t.dataset.lang) return setLang(t.dataset.lang);
-  if (t.dataset.anon) {
-    anon = t.dataset.anon === '1';
-    document
-      .querySelectorAll('[data-anon]')
-      .forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
-    return render();
-  }
   if (t.dataset.play) {
     // 播放演示的是收集中的一期：先回到正常状态
     if (NAV.home !== 'collect') window.setHome?.('collect');
@@ -545,6 +425,7 @@ document.addEventListener('click', (e) => {
   // 头像 → 设置；揭晓后的“一起看” → 周日影片（见 screens.js）
   if (t.classList.contains('me')) return openSub(scr, 'settings');
   if (t.classList.contains('wt')) return openSub(scr, 'film');
+  if (t.hasAttribute('data-open-mine')) return openSub(scr, 'mine');
   if (t.classList.contains('tab')) {
     t.parentElement.querySelectorAll('.tab').forEach((b) => {
       b.classList.toggle('on', b === t);

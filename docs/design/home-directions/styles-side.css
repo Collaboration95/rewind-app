@@ -37,14 +37,6 @@
 .taps b {
   color: var(--page-ink);
 }
-/* ============ 头像面板：暂定说明 ============ */
-.sh-note {
-  margin: 8px 4px 0;
-  padding-top: 10px;
-  border-top: 1px dashed var(--line);
-  font-size: 11.5px;
-  color: var(--muted);
-}
 /* ============ 手机上的可点提示（呼吸光圈） ============ */
 @keyframes tap-hint {
   0% {
