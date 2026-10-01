@@ -1575,12 +1575,10 @@ const FX = {
     },
   },
   c6: {
-    // 暖光玻璃：一粒暖光飘进阳光里；你的照片化成阳光
+    // 暖光玻璃：一粒暖光飘进阳光里；你按快门后不再有照片飞向中间，只有数字滚动
     join: (scr, f) =>
       dotFly(scr, EDGE_R, pt(scr, q(scr, '.hero b')), f.col, { toColor: '#ffc98a' }),
     joined: (ns) => fx(q(ns, '.hero b .is-pre'), 'fx-roll', 700),
-    seal: (scr, btn, me) =>
-      cardFly(scr, pt(scr, btn), pt(scr, q(scr, '.hero b')), me, { flip: false, dissolve: true }),
     sealed: (ns) => fx(q(ns, '.hero b .is-pre'), 'fx-roll', 700),
   },
   c7: {
