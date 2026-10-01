@@ -49,8 +49,10 @@ The remaining Demo-specific procedures in this README describe the existing
 implementation only. They do not override the dev/prod decisions above or
 authorize applying that legacy lifecycle to either new environment.
 
-No environment resources, state migration, IAM grants, or deployment workflows
-are ready for live use until all of these gates have evidence:
+The `Deploy dev` workflow now deploys the integration branch from GitHub
+Actions, but it is not live until a human has reviewed the Terraform change
+that grants it an identity, and no environment is complete until all of these
+gates have evidence:
 
 1. Reconcile the live Demo resources, S3 buckets, Terraform state addresses,
    ownership, and existing state keys with read-only access.
@@ -65,6 +67,38 @@ are ready for live use until all of these gates have evidence:
    escalation owners. Budgets are alerts, not spend caps.
 6. Review the exact Terraform plan before any human-run apply. No automated
    apply is permitted.
+
+## Online deployment identity (#230)
+
+There is no separate integration host. The integration branch deploys to the
+existing hosted Demo instance, replacing the operator-machine flow of building
+a bundle and running `release-host.sh install` over SSH. Two reviewed changes
+make that possible, and neither creates compute:
+
+- The bootstrap root creates the account-level GitHub Actions OIDC provider
+  (`output github_oidc_provider_arn`). Set `github_oidc_provider_arn` instead
+  when the account already has a provider for the same URL.
+- The Demo root creates `rewind-demo-deploy`, which trusts only the OIDC
+  `sub` claim `repo:<owner>/<repo>:environment:dev` together with
+  `ref refs/heads/dev`. It is declared next to the instance so its policy
+  always carries the current `aws_lightsail_instance.rewind[0].arn`; a
+  hard-coded ARN would silently stop matching after the documented
+  hibernation/wake cycle replaces the host. It may read the instance address
+  and open or close ports on that one host, and nothing else: no start, stop,
+  delete, resize, or media/bucket access.
+
+Apply the bootstrap root first (the Demo root looks the provider up by URL),
+then the Demo root. The Demo plan should show only the role, its policy, and
+the new variable, with no change to the running host:
+
+```sh
+export AWS_PROFILE=rewind-terraform-apply
+cd infra/terraform/bootstrap && terraform init -backend-config=backend.hcl && terraform plan -var-file=terraform.tfvars
+cd ../demo && terraform init -backend-config=backend.hcl && terraform plan -var-file=terraform.tfvars
+```
+
+Deployment itself stays application-only: `.github/workflows/deploy-dev.yml`
+never runs Terraform.
 
 The offline preservation test pins only the Demo Lightsail instance name and
 resource address, static-IP name and resource address, static-IP attachment

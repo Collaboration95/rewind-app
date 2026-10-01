@@ -25,7 +25,7 @@ cat > "$root/bin/gh" <<'GH'
 if [[ "${FIXTURE_CI_FAILED:-0}" == 1 ]]; then
   printf '{"workflow_runs":[]}\n'
 else
-  printf '{"workflow_runs":[{"head_sha":"%s","head_branch":"main","event":"push","conclusion":"success"}]}\n' "$FIXTURE_GREEN_SHA"
+  printf '{"workflow_runs":[{"head_sha":"%s","head_branch":"%s","event":"push","conclusion":"success"}]}\n' "$FIXTURE_GREEN_SHA" "${FIXTURE_CI_BRANCH:-main}"
 fi
 GH
 chmod +x "$root/bin/gh"
@@ -142,6 +142,20 @@ grep -q 'image ID mismatch' "$root/error"
 
 python3 "$repo/deploy/release.py" verify "$root/release.tar" --extract "$root/extracted" >/dev/null
 [[ -f "$root/extracted/source/deploy/compose.yaml" ]]
+
+# The release branch is an explicit input: a dev release is gated on the dev
+# branch's own Quality run, not on main's.
+git -C "$repo" update-ref refs/remotes/origin/dev "$sha"
+if (cd "$repo" && python3 deploy/release.py build --green-sha "$sha" --config-version dev-v1 --branch dev --output "$root/dev.tar") >"$root/error" 2>&1; then
+  echo 'a main-only Quality run was accepted for the dev branch' >&2; exit 1
+fi
+grep -q 'no successful dev-branch' "$root/error"
+if (cd "$repo" && python3 deploy/release.py build --green-sha "$sha" --config-version dev-v1 --branch missing --output "$root/dev.tar") >"$root/error" 2>&1; then
+  echo 'an unknown release branch was accepted' >&2; exit 1
+fi
+grep -q 'origin/missing is not available' "$root/error"
+(cd "$repo" && FIXTURE_CI_BRANCH=dev python3 deploy/release.py build --green-sha "$sha" --config-version dev-v1 --branch dev --output "$root/dev.tar")
+[[ "$(python3 "$repo/deploy/release.py" verify "$root/dev.tar")" == "$sha" ]]
 
 # A disposable host keeps the first bundle, promotes the second, and refuses
 # rollback once the database schema outruns the prior image's declared range.
