@@ -15,7 +15,8 @@ const HOME_STATES = [
   'delayed',
   'released',
 ];
-// 这些状态下快门不可用（加载中、没有这一期、看不到、影片在做）
+// 这些状态下不显示快门（加载中、没有这一期、读取失败、不在小组、影片在做）：
+// 一时用不了的按钮不灰着摆在那里，直接拿掉
 const SHUTTER_OFF = ['loading', 'empty', 'error', 'denied', 'developing', 'delayed'];
 NAV.home = 'collect';
 
@@ -135,18 +136,9 @@ function stateBody(c, d) {
   );
 }
 
-// 快门不可用时的样子与说明（返回 null 表示照常）
+// 这个状态下有没有快门（函数声明，app.js 经 window 调用）
 function shutterOff() {
-  if (!SHUTTER_OFF.includes(NAV.home)) return null;
-  const why = {
-    loading: ['Loading', ''],
-    empty: ['No capsule to add to', ''],
-    error: ['Capture unavailable', ''],
-    denied: ['Capture unavailable', ''],
-    developing: ['Capture is closed while the film develops', 'Closed · developing'],
-    delayed: ['Capture is closed while the film develops', 'Closed · developing'],
-  }[NAV.home];
-  return [ring(0), 'camera', why[0], why[1]];
+  return SHUTTER_OFF.includes(NAV.home);
 }
 
 // 切换首页状态：顺带把快门状态对上（额度用完、首映）

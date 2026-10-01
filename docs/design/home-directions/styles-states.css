@@ -161,17 +161,6 @@
   color: var(--muted);
 }
 
-/* 快门不可用 */
-.st-loading .shutter,
-.st-empty .shutter,
-.st-error .shutter,
-.st-denied .shutter,
-.st-developing .shutter,
-.st-delayed .shutter {
-  opacity: 0.42;
-  filter: saturate(0.4);
-}
-
 /* ============ 插图 ============ */
 .mo {
   display: block;

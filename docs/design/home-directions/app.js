@@ -238,35 +238,34 @@ const NAV = { variant: 'g', shutter: 'collect', unread: true, home: 'collect' };
 
 function shutter(d) {
   const left = 5 - d.me.c;
-  // 首页在加载、出错、影片制作中等状态时快门不可用（见 states.js）
-  const off = NAV.home === 'collect' ? null : window.shutterOff?.();
-  const s =
-    off ||
-    {
-      collect: [ring(d.me.c), 'camera', `Add a moment · ${left} of 5 left`, ''],
-      quota: [
-        ring(5),
-        'camera',
-        'Weekly allowance used up · resets Sunday',
-        'All 5 used · resets Sun',
-      ],
-      upload: [arcRing(0.28, true), 'camera', 'Sealing your moment', 'Sealing…'],
-      sealed: [
-        ring(Math.min(5, d.me.c + 1)),
-        'check',
-        `Moment sealed · ${Math.max(0, left - 1)} of 5 left`,
-        'Sealed',
-      ],
-      premiere: [
-        arcRing(0.75),
-        'play',
-        'Watch the premiere together · 18 hours left',
-        'Premiere · 18h left',
-      ],
-    }[NAV.shutter];
+  // 首页在加载、出错、影片制作中等状态时没有快门（见 states.js）
+  if (NAV.home !== 'collect' && window.shutterOff?.()) return '';
+  // 第 4 项是点一下才短暂出现的提示，不常驻（常驻会挡住正文）
+  const s = {
+    collect: [ring(d.me.c), 'camera', `Add a moment · ${left} of 5 left`, ''],
+    quota: [
+      ring(5),
+      'camera',
+      'Weekly allowance used up · resets Sunday',
+      'All 5 used · resets Sun',
+    ],
+    upload: [arcRing(0.28, true), 'camera', 'Sealing your moment', 'Sealing…'],
+    sealed: [
+      ring(Math.min(5, d.me.c + 1)),
+      'check',
+      `Moment sealed · ${Math.max(0, left - 1)} of 5 left`,
+      'Sealed',
+    ],
+    premiere: [
+      arcRing(0.75),
+      'play',
+      'Watch the premiere together · 18 hours left',
+      'Premiere · 18h left',
+    ],
+  }[NAV.shutter];
   return (
-    `<button type="button" class="shutter" aria-label="${s[2]}"${NAV.shutter === 'quota' || off ? ' aria-disabled="true"' : ''}>` +
-    `${s[0]}<span class="core">${ic(s[1])}</span>${s[3] ? `<span class="tip" aria-hidden="true">${s[3]}</span>` : ''}</button>`
+    `<button type="button" class="shutter" aria-label="${s[2]}"${NAV.shutter === 'quota' ? ' aria-disabled="true"' : ''}${s[3] ? ` data-tip="${s[3]}"` : ''}>` +
+    `${s[0]}<span class="core">${ic(s[1])}</span></button>`
   );
 }
 
@@ -282,7 +281,22 @@ function topNav() {
   return `<div class="topnav">${archive}${chat}</div>`;
 }
 
+// G 胶囊里“Home”后面那一小段：随首页状态和快门状态变，不和正文重复
+function liveText(d) {
+  if (['loading', 'empty', 'error'].includes(NAV.home)) return '';
+  if (NAV.home === 'developing' || NAV.home === 'delayed') return 'developing';
+  return {
+    collect: `2d 14h · ${5 - d.me.c} left`,
+    quota: 'resets Sun',
+    upload: 'sealing…',
+    sealed: `2d 14h · ${Math.max(0, 4 - d.me.c)} left`,
+    premiere: '18h left',
+  }[NAV.shutter];
+}
+
 function dock(d) {
+  // 不在这个小组里：聊天、档案、快门都属于这个小组，整个底栏不显示
+  if (NAV.home === 'denied') return '';
   const tabs = [
     ['home', 'Home', '', ''],
     ['chat', 'Chat', NAV.unread ? '<i class="badge">3</i>' : '', NAV.unread ? ', 3 unread' : ''],
@@ -315,12 +329,16 @@ function dock(d) {
     );
   }
   // G 实时胶囊：显示这一期的状态，点开才出现三个页签
-  if (v === 'g')
+  if (v === 'g') {
+    const lt = liveText(d);
+    // 读取中、读取失败时还不知道有没有未读
+    const dot = NAV.unread && !['loading', 'error'].includes(NAV.home);
     return (
-      `<nav class="dock dock-g" aria-label="Main navigation"><div class="tabs"><button type="button" class="live" aria-expanded="false" aria-label="Home · 2 days 14 hours · ${5 - d.me.c} left · show tabs">` +
-      `${ic('home')}${NAV.unread ? '<i class="badge dot"></i>' : ''}<span><b>Home</b> · 2d 14h · ${5 - d.me.c} left</span>${ic('chev', 'up')}</button>` +
+      `<nav class="dock dock-g" aria-label="Main navigation"><div class="tabs"><button type="button" class="live" aria-expanded="false" aria-label="Home${lt ? ' · ' + lt : ''} · show tabs">` +
+      `${ic('home')}${dot ? '<i class="badge dot"></i>' : ''}<span><b>Home</b>${lt ? ' · ' + lt : ''}</span>${ic('chev', 'up')}</button>` +
       `${tabs.map((x, i) => tab(x, i === 0)).join('')}</div>${shutter(d)}</nav>`
     );
+  }
   return (
     `<nav class="dock" aria-label="Main navigation"><div class="tabs${tabs.some((t) => t[2]) ? ' has-badge' : ''}">` +
     tabs
@@ -1660,7 +1678,7 @@ async function sealFlight(scr, btn, then) {
   if (ns) {
     S.sealed?.(ns);
     const nb = ns.querySelector('.shutter');
-    if (nb) flashTip(nb, 'Sealed · not even you can peek');
+    if (nb) flashTip(nb, 'Sealed');
   }
   then?.();
 }
@@ -1809,7 +1827,9 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (t.classList.contains('shutter')) {
-    if (t.getAttribute('aria-disabled') === 'true') return;
+    // 用不了的快门：点一下才说明原因，几秒后自己消失
+    if (t.getAttribute('aria-disabled') === 'true')
+      return t.dataset.tip && flashTip(t, t.dataset.tip);
     t.classList.remove('press');
     void t.offsetWidth;
     t.classList.add('press');

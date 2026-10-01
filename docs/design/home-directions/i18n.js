@@ -516,7 +516,7 @@ Object.assign(I18N, {
   'sts.by.state': ['By state', '按状态看'],
   'sts.by.dir': ['By direction', '按方向看'],
   'sts.when': ['When it shows', '什么时候出现'],
-  'sts.shut': ['Shutter', '快门'],
+  'sts.shut': ['Dock', '底栏'],
   'sts.arch': ['Include the {n} archived directions', '包含 {n} 个废案'],
   'sts.retryToast': ['In the app, this reloads the capsule.', '在 App 里，这会重新读取这一期。'],
   'sts.when.collect': [
@@ -556,19 +556,28 @@ Object.assign(I18N, {
     '影片已经发布，所有人可以在 24 小时内一起看。',
   ],
   'sts.shut.collect': [
-    'Add a moment; the ring shows this week’s allowance.',
-    '可以添加片段，外圈显示本周额度。',
+    'Pill: time left and moments left. The shutter adds a moment.',
+    '胶囊：剩余时间和剩余条数；快门添加片段。',
   ],
-  'sts.shut.loading': ['Disabled until the capsule loads.', '读取完成前不可用。'],
-  'sts.shut.empty': ['Disabled: there is no capsule to add to.', '不可用：没有可以添加的这一期。'],
-  'sts.shut.error': ['Disabled until the capsule loads.', '读取成功前不可用。'],
-  'sts.shut.denied': ['Disabled.', '不可用。'],
-  'sts.shut.quota': ['Shows “used up · resets Sunday”.', '显示“已用完 · 周日重置”。'],
-  'sts.shut.developing': ['Closed while the film develops.', '影片制作期间关闭。'],
-  'sts.shut.delayed': ['Closed while the film develops.', '影片制作期间关闭。'],
+  'sts.shut.loading': [
+    'Pill only; the shutter appears once it loads.',
+    '只有胶囊，读取完才出现快门。',
+  ],
+  'sts.shut.empty': ['Pill only; there is nothing to add to.', '只有胶囊，没有可以添加的这一期。'],
+  'sts.shut.error': ['Pill only; Try again is on the page.', '只有胶囊，重试按钮在页面里。'],
+  'sts.shut.denied': [
+    'No dock: chat and archive belong to the group too.',
+    '不显示底栏：聊天和档案也属于这个小组。',
+  ],
+  'sts.shut.quota': [
+    'Pill says when it resets; the shutter is grey with a full ring. Tapping it shows a short hint.',
+    '胶囊写重置时间；快门变灰、外圈满格，点一下才短暂提示。',
+  ],
+  'sts.shut.developing': ['Pill says developing; no shutter.', '胶囊显示 developing，没有快门。'],
+  'sts.shut.delayed': ['Pill says developing; no shutter.', '胶囊显示 developing，没有快门。'],
   'sts.shut.released': [
-    'Becomes “watch together”, with the time left on its ring; Archive gets a dot.',
-    '变成“一起看”，外圈显示剩余时间；档案页签出现小红点。',
+    'The shutter becomes “watch together”; the pill shows the time left; Archive gets a dot.',
+    '快门变成“一起看”，胶囊显示剩余时间，档案页签出现小红点。',
   ],
 });
 
