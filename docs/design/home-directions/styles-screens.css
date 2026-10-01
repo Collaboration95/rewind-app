@@ -75,6 +75,10 @@
 .sub-settings .scroll {
   padding-top: 56px;
 }
+/* 设置页没有底栏，不需要底部的渐隐 */
+.sub-settings::after {
+  display: none;
+}
 .sub-h {
   display: grid;
   grid-template-columns: 44px 1fr 44px;
@@ -121,7 +125,8 @@
 }
 /* 题目卡片里的 small 是大写小标签，这里换回普通小字 */
 .c6 .glass.set-me small,
-.c6 .glass .set-row small {
+.c6 .glass .set-row small,
+.c6 .glass .set-grp small {
   margin: 0;
   font: 400 13px/1.3 var(--f-body);
   letter-spacing: 0;
@@ -193,48 +198,321 @@
 .set-row.out > .ic:first-child {
   color: #c2452f;
 }
-.set-list li.set-inv {
-  margin-left: 0;
-  padding: 2px 16px 16px;
-  border-top: 0;
+.set-row .sel {
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+  stroke-width: 2.4;
 }
-.set-inv p {
-  margin: 0 0 10px;
+/* 成员头像用各自的专属色 */
+.sub-settings .avatar[style] {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--mc) 38%, #fff);
+  box-shadow: inset 0 0 0 1.5px var(--mc);
+}
+/* 头像不跟着行里的文字一起拉宽 */
+.set-row > .avatar {
+  flex: none;
+}
+.sub-settings .avatar.sm {
+  width: 32px;
+  height: 32px;
   font-size: 13px;
-  color: var(--muted);
 }
-.set-code {
+/* 个人卡片可以点：去切换成员 */
+.c6 .set-me {
+  width: 100%;
+  text-align: left;
+  color: var(--ink);
+}
+.set-me > div {
+  flex: 1;
+}
+.set-me .go {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  transform: rotate(-90deg);
+}
+/* 小组：名字、身份、人数和成员头像 */
+.set-list li.set-grp {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 8px 8px 16px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.55);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9);
+  padding: 14px 16px;
 }
-.set-code b {
+.set-grp strong {
+  display: block;
+  font: 400 19px/1.15 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.c6 .glass .set-grp small {
+  display: block;
+  margin-top: 3px;
+}
+.set-grp .av {
+  width: 26px;
+  height: 26px;
+  margin-left: -7px;
+  font-size: 10.5px;
+}
+.set-grp .av:first-child {
+  margin-left: 0;
+}
+/* 子页面的说明、卡片、按钮、输入框 */
+.set-lead {
+  margin: 0 6px 16px;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.c6 .set-card {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin-bottom: 18px;
+  padding: 22px 18px 20px;
+  text-align: center;
+}
+.set-card .set-k {
+  margin: 0;
+}
+.inv-code {
   font:
-    500 18px/1 'DM Mono',
+    500 34px/1.1 'DM Mono',
     monospace;
   letter-spacing: 0.08em;
 }
-.set-copy {
-  display: inline-flex;
-  gap: 6px;
+.set-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.set-btn {
+  display: flex;
+  gap: 8px;
   align-items: center;
-  height: 38px;
-  padding: 0 14px;
+  justify-content: center;
+  width: 100%;
+  height: 52px;
   border-radius: 999px;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 600;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 1),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.8),
+    0 6px 16px -10px rgba(150, 80, 30, 0.4);
+}
+.set-btn .ic {
+  width: 18px;
+  height: 18px;
+}
+.set-btn.primary {
+  color: #fff;
+  background: radial-gradient(120% 140% at 30% 20%, #ffb27c, var(--accent));
+  box-shadow: 0 10px 22px -10px var(--accent);
+}
+.set-btn.danger {
+  color: #fff;
+  background: #c2452f;
+  box-shadow: none;
+}
+.set-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.c6 .set-field {
+  display: grid;
+  gap: 6px;
+  padding: 12px 16px;
+  border-radius: 18px;
+}
+.set-field span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.set-field input {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  font-size: 18px;
+  color: var(--ink);
+  background: none;
+  outline: none;
+}
+.set-field input[data-set-code] {
+  font:
+    500 22px/1.2 'DM Mono',
+    monospace;
+  letter-spacing: 0.1em;
+}
+.set-field input::placeholder,
+.set-custom::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+.set-err {
+  min-height: 18px;
+  margin: 8px 6px 10px;
+  font-size: 12.5px;
+  color: #c2452f;
+}
+/* 新建小组：三个内置题目，或者自己写 */
+.set-prompts {
+  padding: 4px 0;
+}
+.set-opt {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  font-size: 14.5px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.set-opt + .set-opt {
+  border-top: 1px solid var(--line);
+}
+.set-opt input {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+.set-custom {
+  display: block;
+  width: calc(100% - 32px);
+  height: 64px;
+  margin: 0 16px 12px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 12px;
+  font: 400 14px/1.4 var(--f-body);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.6);
+  resize: none;
+  outline: none;
+}
+.set-custom[hidden] {
+  display: none;
+}
+/* 加入成功 */
+.set-okic {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 4px;
+  border-radius: 50%;
   color: #fff;
   background: radial-gradient(circle at 35% 30%, #ffb27c, var(--accent));
-  box-shadow: 0 6px 14px -6px var(--accent);
 }
-.set-copy .ic {
-  width: 16px;
-  height: 16px;
+.set-okic .ic {
+  width: 26px;
+  height: 26px;
+  stroke-width: 2.4;
+}
+.set-ok h2 {
+  margin: 0;
+  font: 400 24px/1.15 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+/* 清空数据的确认框 */
+.set-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  background: rgba(40, 24, 14, 0.32);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.c6 .set-dlg {
+  position: absolute;
+  z-index: 9;
+  left: 22px;
+  right: 22px;
+  bottom: 34px;
+  display: grid;
+  gap: 10px;
+  padding: 22px 18px 18px;
+  text-align: center;
+  background: rgba(255, 250, 244, 0.92);
+}
+.set-dlg h2 {
+  margin: 0;
+  font: 400 22px/1.2 var(--f-serif);
+  font-variation-settings: 'SOFT' 100;
+}
+.set-dlg p {
+  margin: 0 0 8px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+/* 测试提醒：系统通知从顶部落下 */
+.set-push {
+  position: absolute;
+  z-index: 9;
+  top: 52px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 14px 11px 11px;
+  border-radius: 22px;
+  color: #1d1b18;
+  background: rgba(250, 248, 245, 0.86);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: 0 14px 30px -12px rgba(0, 0, 0, 0.35);
+  animation: push-in 3.2s cubic-bezier(0.2, 0.9, 0.25, 1) both;
+}
+.set-push .mx-icon {
+  flex: none;
+  overflow: hidden;
+  border-radius: 9px;
+}
+.set-push .mx-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.set-push > div {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+.set-push span {
+  color: rgba(29, 27, 24, 0.7);
+}
+.set-push em {
+  align-self: flex-start;
+  font-style: normal;
+  font-size: 12px;
+  color: rgba(29, 27, 24, 0.5);
+}
+@keyframes push-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-120%);
+  }
+  10%,
+  85% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-120%);
+  }
 }
 /* 开关 */
 .sw {

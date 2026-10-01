@@ -19,6 +19,11 @@ Object.assign(I, {
   save: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14"/>',
   replay: '<path d="M5 12a7 7 0 1 0 2.1-5"/><path d="M5 4.5V9h4.5"/>',
   copy: '<rect x="8" y="8" width="11" height="11" rx="2"/><path d="M5 15V6.5A1.5 1.5 0 0 1 6.5 5H15"/>',
+  share:
+    '<path d="M12 15V4M8 7.5 12 4l4 3.5"/><path d="M8.5 10H7a1.5 1.5 0 0 0-1.5 1.5v7A1.5 1.5 0 0 0 7 20h10a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 17 10h-1.5"/>',
+  key: '<circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M15.5 7.5l2 2M17.5 5.5l1.5 1.5"/>',
+  send: '<path d="M4 11.5 20 4l-6.5 16-2.5-6.5z"/><path d="m11 13.5 9-9.5"/>',
+  trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12.5h8L17 7"/>',
 });
 
 // 取景框里的暖色光斑（虚焦的灯），位置固定，慢慢漂
@@ -44,30 +49,127 @@ const left5 = (d) => Math.max(0, 5 - d.me.c);
 const secLeft = (d) => 30 - Number(secs(Math.min(5, d.me.c)));
 const tm = (s) => `0:${String(Math.floor(s)).padStart(2, '0')}`;
 
-/* ---------- 设置 ---------- */
+/* ---------- 设置（按 dev 的 Settings：成员、小组与邀请、周日提醒、Demo 账号） ----------
+   step：main | invite | join | joined | create | member | reset（清空数据的确认框） */
+// 演示状态：当前扮演的样例成员、提醒开关；只在这一页里记着
+const SET = { me: 0, reminder: true };
+const PROMPTS = [
+  'What made you pause and smile?',
+  'What is one small detail from today worth keeping?',
+  'What would you like to remember about this moment?',
+];
+let setUid = 0;
+const setHead = (title, back = 'main') =>
+  `<header class="sub-h"><button type="button" class="sub-back" ${back === 'close' ? 'data-sub-back' : `data-set-go="${back}"`} aria-label="Back">${ic('back')}</button><h1>${title}</h1><span></span></header>`;
+const setRow = (icon, label, note, attrs = '', cls = '') =>
+  `<li><button type="button" class="set-row${cls}"${attrs}>${ic(icon)}<span>${label}</span>${note ? `<em>${note}</em>` : ''}${attrs.includes('data-set-go') ? ic('chev', 'go') : ''}</button></li>`;
+const avatarOf = (x, cls = '') =>
+  `<span class="avatar${cls}" style="--mc:${x.col}">${x.name[0]}</span>`;
+
 function settingsHTML(d, step) {
-  const row = (icon, label, note, extra = '') =>
-    `<li><button type="button" class="set-row"${extra}>${ic(icon)}<span>${label}</span>${note ? `<em>${note}</em>` : ''}${ic('chev', 'go')}</button></li>`;
+  const me = POOL[SET.me];
+  const main = () =>
+    setHead('Settings', 'close') +
+    `<button type="button" class="glass set-me" data-set-go="member">${avatarOf(me)}<div><strong>${me.name}</strong><small>Sample member · Demo</small></div>${ic('chev', 'go')}</button>` +
+    `<p class="set-k">Group</p><ul class="glass set-list">` +
+    `<li class="set-grp"><div><strong>Group name</strong><small>Owner · ${d.n} of 10 members</small></div><div class="stack">${d.members
+      .map((x) => `<span class="av" style="--mc:${x.col}">${x.name[0]}</span>`)
+      .join('')}</div></li>` +
+    setRow('link', 'Invite friends', '', ' data-set-go="invite"') +
+    setRow('key', 'Have an invite?', '', ' data-set-go="join"') +
+    setRow('plus', 'Create a group', '', ' data-set-go="create"') +
+    `</ul><p class="set-k">Reminder</p><ul class="glass set-list">` +
+    `<li><label class="set-row">${ic('bell')}<span>Sunday at 7 PM<small>A nudge to add a moment</small></span>` +
+    `<input type="checkbox" role="switch" class="sw" data-set-rem${SET.reminder ? ' checked' : ''} /></label></li>` +
+    setRow('send', 'Send a test reminder', '', ' data-set-test') +
+    `</ul><p class="set-k">Demo access</p><ul class="glass set-list">` +
+    setRow('out', 'Sign out of Demo', '', ' data-set-out') +
+    setRow('trash', 'Reset local Demo data', '', ' data-set-go="reset"', ' out') +
+    `</ul><p class="set-foot">Rewind · Demo access on this device</p>`;
+  const pages = {
+    main,
+    reset: main,
+    invite: () =>
+      setHead('Invite friends') +
+      `<section class="glass set-card set-inv"><p class="set-k">Invite code</p><b class="inv-code">7K2Q X9MB</b>` +
+      `<p class="set-note">Works once · expires in 24 hours</p></section>` +
+      `<button type="button" class="set-btn primary" data-set-toast="share">${ic('share')}Share invite link</button>` +
+      `<div class="set-two"><button type="button" class="set-btn" data-set-toast="link">${ic('link')}Copy link</button>` +
+      `<button type="button" class="set-btn" data-set-toast="code">${ic('copy')}Copy code</button></div>` +
+      `<p class="set-foot">${d.n} of 10 members in Group name</p>`,
+    join: () =>
+      setHead('Have an invite?') +
+      `<p class="set-lead">Enter the 8-character code a friend sent you.</p>` +
+      `<label class="glass set-field"><span>Invite code</span><input data-set-code maxlength="9" placeholder="8-character code" autocomplete="off" autocapitalize="characters" spellcheck="false" /></label>` +
+      `<p class="set-err" role="alert"></p>` +
+      `<button type="button" class="set-btn primary" data-set-join>Accept invitation</button>`,
+    joined: () =>
+      setHead('Have an invite?') +
+      `<section class="glass set-card set-ok"><span class="set-okic">${ic('check')}</span><h2>Joined Saturday table</h2>` +
+      `<p class="set-note">The code is now used.</p></section>` +
+      `<button type="button" class="set-btn primary" data-sub-back>Go to the group</button>`,
+    create: () => {
+      const n = `pr-${++setUid}`;
+      return (
+        setHead('New group') +
+        `<label class="glass set-field"><span>Group name</span><input data-set-name maxlength="80" placeholder="e.g. Saturday table" autocomplete="off" /></label>` +
+        `<p class="set-k">Prompt</p><div class="glass set-list set-prompts" role="radiogroup" aria-label="Prompt">` +
+        PROMPTS.map(
+          (x, i) =>
+            `<label class="set-opt"><input type="radio" name="${n}" value="${i}"${i === 0 ? ' checked' : ''} /><span>${x}</span></label>`,
+        ).join('') +
+        `<label class="set-opt"><input type="radio" name="${n}" value="custom" data-set-custom /><span>Write a custom prompt</span></label>` +
+        `<textarea class="set-custom" maxlength="160" placeholder="Write a short prompt" aria-label="Custom prompt" hidden></textarea></div>` +
+        `<p class="set-err" role="alert"></p>` +
+        `<button type="button" class="set-btn primary" data-set-create>Create group</button>`
+      );
+    },
+    member: () =>
+      setHead('Switch member') +
+      `<p class="set-lead">Demo only: act as one of the sample members on this device.</p>` +
+      `<ul class="glass set-list">` +
+      d.members
+        .map(
+          (x, i) =>
+            `<li><button type="button" class="set-row" data-set-me="${i}" aria-pressed="${i === SET.me}">${avatarOf(x, ' sm')}<span>${x.name}<small>Sample member</small></span>${i === SET.me ? ic('check', 'sel') : ''}</button></li>`,
+        )
+        .join('') +
+      `</ul>`,
+  };
   return (
     `<div class="scroll">` +
     `<div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>` +
-    `<header class="sub-h"><button type="button" class="sub-back" data-sub-back aria-label="Back">${ic('back')}</button><h1>Settings</h1><span></span></header>` +
-    `<section class="glass set-me"><span class="avatar">A</span><div><strong>Alex</strong><small>Group name · ${plural(d.n, 'member')}</small></div></section>` +
-    `<p class="set-k">Group</p><ul class="glass set-list">` +
-    row('users', 'Members', String(d.n)) +
-    row('link', 'Invite friends', '', ` data-set-invite aria-expanded="${step === 'invite'}"`) +
-    (step === 'invite'
-      ? `<li class="set-inv"><p>Share this link, or the code, with a friend.</p><div class="set-code"><b>RW-7K2Q</b><button type="button" class="set-copy" data-set-copy>${ic('copy')}Copy link</button></div></li>`
-      : '') +
-    row('swap', 'Switch group', '') +
-    `</ul><p class="set-k">Reminder</p><ul class="glass set-list">` +
-    `<li><label class="set-row">${ic('bell')}<span>Sunday reminder<small>7 PM, an hour before the film</small></span><input type="checkbox" role="switch" class="sw" checked /></label></li>` +
-    `</ul><p class="set-k">Account</p><ul class="glass set-list">` +
-    row('swap', 'Switch demo member', '') +
-    `<li><button type="button" class="set-row out">${ic('out')}<span>Sign out</span></button></li></ul>` +
-    `<p class="set-foot">Rewind · Demo</p></div>`
+    (pages[step] || main)() +
+    `</div>` +
+    // 清空本地数据：先确认
+    (step === 'reset'
+      ? `<div class="set-dim" data-set-go="main"></div><section class="glass set-dlg" role="dialog" aria-label="Reset local Demo data confirmation">` +
+        `<h2>Reset local Demo data?</h2><p>Groups, moments and the member you chose on this device are cleared.</p>` +
+        `<button type="button" class="set-btn" data-set-go="main">Keep local data</button>` +
+        `<button type="button" class="set-btn danger" data-set-reset>Reset</button></section>`
+      : '')
   );
 }
+
+// 设置里换一页：重画这台手机，记得它是不是从首页来的
+function goSettings(scr, step) {
+  const wrap = scr.closest('.phone-wrap');
+  const from = wrap.dataset.from;
+  wrap.innerHTML = subScreen('settings', scr.classList[1], { step });
+  if (from) wrap.dataset.from = from;
+  return wrap.querySelector('.screen');
+}
+// 测试提醒：像系统通知一样从顶部落下
+function testReminder(scr) {
+  scr.querySelector('.set-push')?.remove();
+  const n = document.createElement('div');
+  n.className = 'set-push';
+  n.setAttribute('role', 'status');
+  n.innerHTML = `${iconHTML(mix.icon, 38)}<div><b>Rewind test reminder</b><span>Local reminders are working on this device.</span></div><em>now</em>`;
+  scr.appendChild(n);
+  setTimeout(() => n.remove(), 3200);
+}
+const normCode = (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 /* ---------- 相机：拍照 / 录视频 ----------
    data-mode：photo | video；data-step：perm（还没给权限）| view | rec | review | sealing | sealed */
@@ -332,7 +434,7 @@ function startFilm(scr) {
 
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
-    '[data-sub-back],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-look],[data-set-invite],[data-set-copy],[data-fm-start],[data-fm-pause],[data-fm-replay],[data-fm-save]',
+    '[data-sub-back],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-look],[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-reset],[data-set-me],[data-set-join],[data-set-create],[data-fm-start],[data-fm-pause],[data-fm-replay],[data-fm-save]',
   );
   if (!b) return;
   const scr = b.closest('.screen');
@@ -367,15 +469,35 @@ document.addEventListener('click', (e) => {
     scr.dataset.look = d.look;
     return;
   }
-  if ('setInvite' in d) {
-    const wrap = scr.closest('.phone-wrap');
-    const from = wrap.dataset.from;
-    const open = b.getAttribute('aria-expanded') !== 'true';
-    wrap.innerHTML = subScreen('settings', scr.classList[1], { step: open ? 'invite' : 'main' });
-    if (from) wrap.dataset.from = from;
+  if (d.setGo) return goSettings(scr, d.setGo);
+  if (d.setToast) return rvToast(t('scr.toast.' + d.setToast));
+  if ('setTest' in d) return testReminder(scr);
+  if ('setOut' in d) return rvToast(t('scr.toast.out'));
+  if ('setReset' in d) {
+    goSettings(scr, 'main');
+    return rvToast(t('scr.toast.reset'));
+  }
+  if (d.setMe) {
+    SET.me = Number(d.setMe);
+    return goSettings(scr, 'member');
+  }
+  if ('setJoin' in d) {
+    const code = normCode(scr.querySelector('[data-set-code]').value);
+    if (/^(?:[A-Z0-9]{8}|[A-Z]{6})$/.test(code)) return goSettings(scr, 'joined');
+    scr.querySelector('.set-err').textContent =
+      'Enter the eight-character invite code using letters and numbers.';
     return;
   }
-  if ('setCopy' in d) return rvToast(t('scr.copied'));
+  if ('setCreate' in d) {
+    const name = scr.querySelector('[data-set-name]').value.trim();
+    const custom = scr.querySelector('[data-set-custom]').checked;
+    const own = scr.querySelector('.set-custom').value.trim();
+    const err = scr.querySelector('.set-err');
+    if (!name) return (err.textContent = 'Enter a group name.');
+    if (custom && !own) return (err.textContent = 'Write a prompt, or pick one above.');
+    goSettings(scr, 'main');
+    return rvToast(t('scr.toast.created').replace('{name}', name));
+  }
   if ('fmStart' in d) return startFilm(scr);
   if ('fmPause' in d) {
     const p = scr.classList.toggle('paused');
@@ -390,6 +512,29 @@ document.addEventListener('click', (e) => {
   if ('fmSave' in d) return rvToast(t('scr.saved'));
 });
 
+document.addEventListener('change', (e) => {
+  const el = e.target;
+  if (el.matches('[data-set-rem]')) {
+    SET.reminder = el.checked;
+    return rvToast(t(el.checked ? 'scr.toast.remOn' : 'scr.toast.remOff'));
+  }
+  // 选了“自己写”才出现输入框
+  if (el.matches('.set-opt input')) {
+    const ta = el.closest('.set-prompts').querySelector('.set-custom');
+    ta.hidden = !el.matches('[data-set-custom]');
+    if (!ta.hidden) ta.focus();
+  }
+});
+document.addEventListener('input', (e) => {
+  // 重新输入时先清掉上一次的错误
+  if (e.target.matches('[data-set-name], .set-custom'))
+    e.target.closest('.scroll').querySelector('.set-err').textContent = '';
+  if (!e.target.matches('[data-set-code]')) return;
+  const v = normCode(e.target.value).slice(0, 8);
+  e.target.value = v.length > 4 ? v.slice(0, 4) + ' ' + v.slice(4) : v;
+  e.target.closest('.scroll').querySelector('.set-err').textContent = '';
+});
+
 /* ---------- “画面”页：每个流程的关键步骤并排 ---------- */
 const FLOWS = [
   [
@@ -398,6 +543,10 @@ const FLOWS = [
     [
       ['main', {}],
       ['invite', { step: 'invite' }],
+      ['join', { step: 'join' }],
+      ['create', { step: 'create' }],
+      ['member', { step: 'member' }],
+      ['reset', { step: 'reset' }],
     ],
   ],
   [

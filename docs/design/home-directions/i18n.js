@@ -240,8 +240,8 @@ const I18N = {
   ],
   'scr.set': ['Settings', '设置'],
   'scr.set.p': [
-    'From the avatar: the group, invites, the Sunday reminder and the account.',
-    '点头像进入：小组、邀请、周日提醒、账号。',
+    'From the avatar, following Settings on dev: the group and invites, the Sunday reminder and Demo access. Each row opens its own page.',
+    '点头像进入，内容和 dev 上的设置一致：小组和邀请、周日提醒、演示账号。每一行点进去是对应的页面。',
   ],
   'scr.set.main': ['Settings', '设置'],
   'scr.set.invite': ['Invite a friend', '邀请朋友'],
@@ -271,8 +271,28 @@ const I18N = {
   'scr.film.wait': ['Waiting for everyone', '等大家到'],
   'scr.film.play': ['Watching together', '一起看'],
   'scr.film.end': ['The end', '片尾'],
-  'scr.copied': ['Invite link copied', '邀请链接已复制'],
   'scr.saved': ['In the app, this saves the film to Photos.', '在 App 里，这会把影片存到相册。'],
+  'scr.set.join': ['Join with a code', '输入邀请码加入'],
+  'scr.set.create': ['New group', '新建小组'],
+  'scr.set.member': ['Switch member (Demo)', '切换成员（演示）'],
+  'scr.set.reset': ['Reset local data', '清空本地数据'],
+  'scr.toast.share': [
+    'In the app, this opens the share sheet with the invite link.',
+    '在 App 里，这会打开系统分享，发出邀请链接。',
+  ],
+  'scr.toast.link': ['Invitation link copied.', '邀请链接已复制。'],
+  'scr.toast.code': ['Invitation code copied.', '邀请码已复制。'],
+  'scr.toast.out': [
+    'In the app, this ends Demo access and returns to the start.',
+    '在 App 里，这会结束演示并回到开始页。',
+  ],
+  'scr.toast.reset': ['Local Demo data was reset.', '本地演示数据已清空。'],
+  'scr.toast.created': ['Created “{name}”.', '已创建“{name}”。'],
+  'scr.toast.remOn': [
+    'Sunday 7 PM reminders are on for this device.',
+    '这台设备的周日晚 7 点提醒已打开。',
+  ],
+  'scr.toast.remOff': ['Sunday 7 PM reminders are off.', '周日晚 7 点提醒已关闭。'],
 };
 
 let LANG = 'en';
