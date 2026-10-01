@@ -92,14 +92,6 @@
   opacity: 0.45;
   box-shadow: none;
 }
-.sh-sealed .shutter .core {
-  animation: sealpop 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-@keyframes sealpop {
-  40% {
-    transform: scale(1.12);
-  }
-}
 /* ============ 角标 ============ */
 .badge {
   position: absolute;

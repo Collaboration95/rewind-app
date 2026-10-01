@@ -72,8 +72,8 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 
 ## Sidebar
 
-- Drag **group size** (2–10; at 10 the owner can't invite) and **shuffle** contributions.
-- Simulate the **shutter state**, **chat unread** and the **Home state**.
+- Drag **group size** (2–10) and **shuffle** contributions. Home only shows your own moments, so the size shows in Settings (no invites at 10), the film's cast and Archive.
+- Every Home state is on the **States** tab, so the sidebar doesn't switch states.
 - Switch the page between **EN** (default) and **中文**; `?lang=zh` opens it in Chinese. The phone stays in English.
 - **Zoom** sets the phone size on every tab.
 

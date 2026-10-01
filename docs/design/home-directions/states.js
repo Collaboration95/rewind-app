@@ -131,8 +131,6 @@ function setHome(v) {
   NAV.home = HOME_STATES.includes(v) ? v : 'collect';
   SEEN.archive = false;
   NAV.shutter = shutterOf(NAV.home);
-  if ($('state')) $('state').value = NAV.home;
-  if ($('shutter-state')) $('shutter-state').value = NAV.shutter;
   clearStories();
   render();
   window.relangMix?.();
@@ -145,7 +143,6 @@ document.addEventListener('click', (e) => {
   // 演示“重试”：直接回到正常的首页
   setHome('collect');
 });
-$('state')?.addEventListener('change', (e) => setHome(e.target.value));
 
 /* ---------- 状态页：所有状态排在一起 ---------- */
 // 用指定的状态画一台手机，不影响侧栏里选的状态

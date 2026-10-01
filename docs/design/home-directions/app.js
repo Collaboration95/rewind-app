@@ -141,13 +141,6 @@ function shutter(d) {
         : `This week's 5 moments are used · resets in ${reset}`,
       secsOut ? `30 s used · resets in ${reset}` : `All 5 used · resets in ${reset}`,
     ],
-    upload: [arcRing(0.28, true), 'camera', 'Uploading your moment', 'Uploading…'],
-    sealed: [
-      ring(Math.min(5, d.me.c + 1)),
-      'check',
-      `Moment sealed · ${Math.max(0, left - 1)} of 5 left`,
-      'Sealed',
-    ],
   }[NAV.shutter];
   return (
     `<button type="button" class="shutter" aria-label="${s[2]}"${NAV.shutter === 'quota' ? ' aria-disabled="true"' : ''}${s[3] ? ` data-tip="${s[3]}"` : ''}>` +
@@ -483,7 +476,8 @@ document.addEventListener('click', (e) => {
       delete p.clips;
     });
     clearStories();
-    return render();
+    render();
+    return window.relangMix?.();
   }
   if (t.id === 'replay') return playIntro();
   if (t.id === 'restore') {
@@ -492,7 +486,8 @@ document.addEventListener('click', (e) => {
       delete p.clips;
     });
     clearStories();
-    return render();
+    render();
+    return window.relangMix?.();
   }
   const scr = t.closest('.screen');
   if (!scr) return;
@@ -529,20 +524,13 @@ $('zoom').addEventListener('input', (e) => setZoom(e.target.value));
 $('hints').addEventListener('change', (e) =>
   $('gallery').classList.toggle('hints', e.target.checked),
 );
-$('shutter-state').addEventListener('change', (e) => {
-  NAV.shutter = e.target.value;
-  render();
-});
-$('unread').addEventListener('change', (e) => {
-  NAV.unread = e.target.checked;
-  SEEN.chat = false;
-  render();
-});
+// 小组人数：首页不显示人数，所以连当前页签（状态、画面）一起重画
 $('members').addEventListener('input', (e) => {
   size = Number(e.target.value);
   $('membersv').textContent = t('members.unit', { n: size });
   clearStories();
   render();
+  window.relangMix?.();
 });
 
 function setLang(l) {

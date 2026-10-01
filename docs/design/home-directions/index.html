@@ -97,37 +97,9 @@
               Reset sample
             </button>
           </div>
-        </div>
-
-        <div class="grp">
-          <p class="lbl" data-i18n="sim.label">Simulate</p>
-          <label class="sub" for="shutter-state" data-i18n="shutter.label">Shutter</label>
-          <select id="shutter-state">
-            <option value="collect" data-i18n="shutter.collect">Collecting</option>
-            <option value="quota" data-i18n="shutter.quota">Allowance used up</option>
-            <option value="upload" data-i18n="shutter.upload">Uploading</option>
-            <option value="sealed" data-i18n="shutter.sealed">Just sealed</option>
-          </select>
-          <label class="check" for="unread"
-            ><input type="checkbox" id="unread" checked />
-            <span data-i18n="unread">Chat has 3 unread</span></label
-          >
-          <label class="sub" for="state" data-i18n="state.label">Home</label>
-          <select id="state">
-            <option value="collect" data-i18n="state.collect">Collecting</option>
-            <option value="quota" data-i18n="state.quota">5 moments used</option>
-            <option value="secs" data-i18n="state.secs">30 seconds used</option>
-            <option value="failed" data-i18n="state.failed">A moment failed</option>
-            <option value="developing" data-i18n="state.developing">Film developing</option>
-            <option value="delayed" data-i18n="state.delayed">Taking longer</option>
-            <option value="released" data-i18n="state.released">Premiere (24 hours)</option>
-            <option value="empty" data-i18n="state.empty">No capsule · owner</option>
-            <option value="waiting" data-i18n="state.waiting">No capsule · member</option>
-            <option value="error" data-i18n="state.error">Failed to load</option>
-            <option value="denied" data-i18n="state.denied">No access</option>
-          </select>
-          <p class="hint" data-i18n="state.hint">
-            The states follow the Home on dev. The copy is a draft. Play returns to collecting.
+          <p class="hint" data-i18n="group.hint">
+            Home only shows your own moments. The group size shows in Settings (no invites at 10),
+            the film’s cast and Archive.
           </p>
         </div>
 
