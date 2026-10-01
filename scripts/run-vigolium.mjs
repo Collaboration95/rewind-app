@@ -6,10 +6,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 
-import { parseConfig } from '../server/dist/config.js';
-import { openDatabase } from '../server/dist/db.js';
-import { createRuntimeServer } from '../server/dist/http.js';
-import { createRealAccount } from '../server/dist/auth/index.js';
+const { parseConfig } = await import('../server/dist/config.js');
+const { openDatabase } = await import('../server/dist/db.js');
+const { createRuntimeServer } = await import('../server/dist/http.js');
+const { createRealAccount } = await import('../server/dist/auth/index.js');
 import { generateSummary } from './vigolium-summary.mjs';
 
 const outputDir = resolve('vigolium-result/automatic');
