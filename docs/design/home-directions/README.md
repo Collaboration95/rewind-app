@@ -34,7 +34,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 ## Tabs
 
 - **Home**: the phone you can tap. The avatar opens Settings, the shutter opens the camera, your allowance opens _Your moments_ and, during the premiere, _Watch_ opens the film. **Play** resets it: ① you add a moment, ② the 4 weeks end and the film premieres.
-- **App icon**: pair Warm Glass (or the scratchpad skin) with an icon and see it on the home screen, the launch screen, in sizes, in a notification and as colours. `#mix=c6+G` links to a pairing.
+- **App icon**: pair Warm Glass (or the scratchpad skin) with an icon and see it on the home screen, the launch screen, in sizes, in a notification and as colours. The default icon is the two dots from the local build. `#mix=c6+r%3Adots` links to a pairing.
 - **States**: every Home state side by side, with when it shows and what the dock does. The buttons add a moment and end the cycle on the Collecting phone. `#states` opens it.
 - **Screens**: the flows around the Home, each step side by side and every phone live. `#screens` opens it.
   - Welcome and sign in: username and password (in the prototype the password is `rewind`), with wrong password, offline and expired session; _Try Demo_ pulls up synthetic members.

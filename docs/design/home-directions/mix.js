@@ -2,7 +2,7 @@
 
 /* ---------- App icon 搭配：选一个首页 + 一个图标，放进真实场景里看 ----------
    场景：手机桌面（60 px 与各种小尺寸）、启动页过渡到这个方向的真实首页、通知横幅、配色对照。
-   搭配写进网址（#mix=c6+G，+t 表示圆点跟随方向强调色），复制链接即可分享。 */
+   搭配写进网址（#mix=c6+r%3Adots，+t 表示圆点跟随方向强调色），复制链接即可分享。 */
 
 // 首页的底色、墨色、强调色（暖光玻璃，和草稿本风格的对照稿）
 const PAL = {
@@ -59,7 +59,8 @@ const appIcon = (k, size) =>
 // 图标底色：只给白底的字标族换，选项少一点
 const ICON_BGS = { white: '#ffffff', cream: '#f3ebdd', black: '#161514', home: '' };
 
-let mix = { dir: 'c6', icon: 'G', tint: false, wall: 'light', bg: 'white' };
+// 默认图标：本地版的两个点（r:dots）
+let mix = { dir: 'c6', icon: 'r:dots', tint: false, wall: 'light', bg: 'white' };
 
 const iconOf = (id) =>
   ICON_FAMILY.find((i) => i.id === id) ||
