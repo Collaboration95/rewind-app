@@ -99,8 +99,12 @@ function fixture() {
       });
     }
     if (path === `${root}/intent-1`) return response({ intent: current });
-    if (path === `${root}/intent-1/complete`) {
-      expect(JSON.parse(String(init?.body))).toEqual({ versionId: 'version-1' });
+    if (path === `${root}/intent-1/complete` || path === `${root}/intent-1/reconcile`) {
+      expect(JSON.parse(String(init?.body))).toEqual(
+        path.endsWith('/reconcile') ? {} : { versionId: 'version-1' },
+      );
+      if (path.endsWith('/reconcile') && uploaded === null)
+        return response({ error: 'upload_intent_source_unavailable' }, 503);
       expect(uploaded).toEqual(bytes);
       if (current.state !== 'completed') contributions++;
       current = {
@@ -416,7 +420,7 @@ describe('direct private transfer', () => {
     expect(c.contributions).toBe(1);
   });
 
-  it('lost PUT response journals before dispatch, queries status and never silently PUTs again across restart', async () => {
+  it('lost PUT response journals before dispatch and reconciles exact bytes without a second PUT across restart', async () => {
     const c = fixture();
     const original = c.storageFetch.getMockImplementation()!;
     c.storageFetch.mockImplementationOnce(async (url, init) => {
@@ -424,15 +428,20 @@ describe('direct private transfer', () => {
       await original(url, init);
       throw new Error('lost PUT');
     });
-    await expect(c.client.transferContribution('group-1', input, c.source())).rejects.toMatchObject(
-      { code: 'version_unknown' },
-    );
+    const dispose = jest.fn();
+    await expect(
+      c.client.transferContribution('group-1', input, { ...c.source(), dispose }),
+    ).resolves.toMatchObject({ state: 'completed', versionId: 'version-1' });
     const restarted = createDirectTransferClient(c.api, c.options);
     await expect(
       restarted.transferContribution('group-1', input, c.source()),
-    ).rejects.toMatchObject({ code: 'version_unknown' });
+    ).resolves.toMatchObject({ state: 'completed', versionId: 'version-1' });
     expect(c.puts).toBe(1);
-    expect(c.contributions).toBe(0);
+    expect(c.contributions).toBe(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    const reconcile = c.api.mock.calls.filter(([path]) => path.endsWith('/reconcile'));
+    expect(reconcile).toHaveLength(1);
+    expect(reconcile[0][1]).toMatchObject({ method: 'POST', body: '{}' });
     expect(c.api.mock.calls.at(-1)?.[0]).toBe(`${c.root}/intent-1`);
   });
 
@@ -440,9 +449,152 @@ describe('direct private transfer', () => {
     const c = fixture();
     c.storageFetch.mockResolvedValueOnce(response(null));
     await expect(c.client.transferContribution('group-1', input, c.source())).rejects.toMatchObject(
-      { code: 'version_unknown' },
+      { code: 'upload_intent_source_unavailable' },
     );
     expect(c.api.mock.calls.some(([path]) => path.endsWith('/complete'))).toBe(false);
+  });
+
+  it('missing CORS version exposure reconciles a stored upload before any source disposal', async () => {
+    const c = fixture();
+    const original = c.storageFetch.getMockImplementation()!;
+    c.storageFetch.mockImplementationOnce(async (url, init) => {
+      await original(url, init);
+      return response(null);
+    });
+    const dispose = jest.fn(() => {
+      expect(c.status.state).toBe('completed');
+    });
+    await c.client.transferContribution('group-1', input, { ...c.source(), dispose });
+    expect(c.puts).toBe(1);
+    expect(c.contributions).toBe(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(c.api.mock.calls.some(([path]) => path.endsWith('/complete'))).toBe(false);
+  });
+
+  it.each(['response', 'request'])(
+    'lost reconciliation %s checks status and bounds retries without another PUT',
+    async (kind) => {
+      const c = fixture();
+      const put = c.storageFetch.getMockImplementation()!;
+      c.storageFetch.mockImplementationOnce(async (url, init) => {
+        await put(url, init);
+        throw new Error('lost storage response');
+      });
+      const api = c.api.getMockImplementation()!;
+      let lost = false;
+      c.api.mockImplementation(async (path, init) => {
+        if (path.endsWith('/reconcile') && !lost) {
+          lost = true;
+          if (kind === 'response') await api(path, init);
+          throw new Error('lost reconciliation ' + kind);
+        }
+        return api(path, init);
+      });
+      await c.client.transferContribution('group-1', input, c.source());
+      expect(c.puts).toBe(1);
+      expect(c.contributions).toBe(1);
+      expect(c.api.mock.calls.filter(([path]) => path.endsWith('/reconcile'))).toHaveLength(
+        kind === 'request' ? 2 : 1,
+      );
+    },
+  );
+
+  it.each([
+    ['upload_intent_source_unavailable', 503, 2],
+    ['upload_intent_version_conflict', 409, 1],
+  ] as const)(
+    'unresolved reconciliation %s never reuploads or disposes, including durable retry',
+    async (code, status, attempts) => {
+      const c = fixture();
+      const put = c.storageFetch.getMockImplementation()!;
+      c.storageFetch.mockImplementationOnce(async (url, init) => {
+        await put(url, init);
+        throw new Error('lost storage response');
+      });
+      const api = c.api.getMockImplementation()!;
+      c.api.mockImplementation(async (path, init) =>
+        path.endsWith('/reconcile') ? response({ error: code }, status) : api(path, init),
+      );
+      const dispose = jest.fn();
+      await expect(
+        c.client.transferContribution('group-1', input, { ...c.source(), dispose }),
+      ).rejects.toMatchObject({ code });
+      expect(c.api.mock.calls.filter(([path]) => path.endsWith('/reconcile'))).toHaveLength(
+        attempts,
+      );
+      await expect(
+        createDirectTransferClient(c.api, c.options).transferContribution('group-1', input, {
+          ...c.source(),
+          dispose,
+        }),
+      ).rejects.toMatchObject({ code });
+      expect(c.api.mock.calls.filter(([path]) => path.endsWith('/reconcile'))).toHaveLength(
+        attempts * 2,
+      );
+      expect(c.puts).toBe(1);
+      expect(c.contributions).toBe(0);
+      expect(dispose).not.toHaveBeenCalled();
+    },
+  );
+
+  it('cancel/group switch during reconciliation suppresses late confirmed acceptance and disposal', async () => {
+    const c = fixture();
+    const put = c.storageFetch.getMockImplementation()!;
+    c.storageFetch.mockImplementationOnce(async (url, init) => {
+      await put(url, init);
+      throw new Error('lost');
+    });
+    const started = deferred<void>();
+    const wait = deferred<Response>();
+    const api = c.api.getMockImplementation()!;
+    c.api.mockImplementation(async (path, init) => {
+      if (path.endsWith('/reconcile')) {
+        started.resolve();
+        return wait.promise;
+      }
+      return api(path, init);
+    });
+    const dispose = jest.fn();
+    const work = c.client.transferContribution('group-1', input, { ...c.source(), dispose });
+    const rejected = expect(work).rejects.toMatchObject({ code: 'cancelled' });
+    await started.promise;
+    c.client.cancel('group-1');
+    wait.resolve(await api(`${c.root}/intent-1/reconcile`, { method: 'POST', body: '{}' }));
+    await rejected;
+    expect(dispose).not.toHaveBeenCalled();
+  });
+
+  it('a durable unknown-version retry reconciles without rereading a missing source file', async () => {
+    const c = fixture();
+    const put = c.storageFetch.getMockImplementation()!;
+    c.storageFetch.mockImplementationOnce(async (url, init) => {
+      await put(url, init);
+      throw new Error('lost');
+    });
+    const api = c.api.getMockImplementation()!;
+    c.api.mockImplementation(async (path, init) =>
+      path.endsWith('/reconcile')
+        ? response({ error: 'upload_intent_source_unavailable' }, 503)
+        : api(path, init),
+    );
+    const dispose = jest.fn();
+    await expect(
+      c.client.transferContribution('group-1', input, { ...c.source(), dispose }),
+    ).rejects.toMatchObject({ code: 'upload_intent_source_unavailable' });
+    expect(dispose).not.toHaveBeenCalled();
+    c.api.mockImplementation(api);
+    const readNativeFile = jest.fn(async () => {
+      throw new Error('source removed');
+    });
+    const recovered = await createDirectTransferClient(c.api, {
+      ...c.options,
+      readNativeFile,
+    }).transferContribution('group-1', input, { kind: 'file', uri: input.sourceUri, dispose });
+    expect(recovered.state).toBe('completed');
+    expect(readNativeFile).not.toHaveBeenCalled();
+    expect(c.puts).toBe(1);
+    expect(c.contributions).toBe(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it('completed retry uses authenticated status without rereading disposed source or duplicating quota', async () => {

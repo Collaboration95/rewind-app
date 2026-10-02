@@ -438,11 +438,15 @@ export function createDirectTransferClient(
             ? 'Sign in and select this group again to check the transfer.'
             : code.endsWith('quota_exceeded')
               ? 'This week has no remaining contribution allowance.'
-              : code.endsWith('closed_cycle')
-                ? 'This collection has closed. Check the transfer status before capturing for the next cycle.'
-                : code.endsWith('expired')
-                  ? 'The transfer has expired. Start a new capture after checking its status.'
-                  : 'The contribution could not be accepted. Check its status and capture allowance.';
+              : code.endsWith('source_unavailable') || code.endsWith('storage_failed')
+                ? 'Storage has not confirmed one exact uploaded version. Check status again; do not resend the media.'
+                : code.endsWith('version_conflict')
+                  ? 'This transfer has conflicting media versions. Keep the original capture and check its status.'
+                  : code.endsWith('closed_cycle')
+                    ? 'This collection has closed. Check the transfer status before capturing for the next cycle.'
+                    : code.endsWith('expired')
+                      ? 'The transfer has expired. Start a new capture after checking its status.'
+                      : 'The contribution could not be accepted. Check its status and capture allowance.';
         throw failure(
           code,
           message,
@@ -491,6 +495,21 @@ export function createDirectTransferClient(
       return checkedIntent(
         (await json(`${root}/${encodeURIComponent(checkpoint.intentId!)}`)).intent,
       );
+    }
+    async function reconcile(): Promise<DirectTransferIntent> {
+      progress('reconciling');
+      const path = `${root}/${encodeURIComponent(checkpoint.intentId!)}/reconcile`;
+      const init = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' };
+      try {
+        return checkedIntent((await json(path, init)).intent);
+      } catch (error) {
+        if (!(error instanceof ClipUploadError) || !error.retryable) throw error;
+        // Reconciliation may have registered the contribution before its
+        // response was lost. Check status before one bounded, idempotent retry.
+        const selected = await status();
+        if (selected.state === 'completed' || selected.versionId) return selected;
+        return checkedIntent((await json(path, init)).intent);
+      }
     }
     async function readBytes(): Promise<Uint8Array<ArrayBuffer>> {
       if (bytes) return bytes;
@@ -620,10 +639,16 @@ export function createDirectTransferClient(
           // A lost completion request may never have reached the CAS. The
           // version recorded from the PUT is still safe to complete exactly.
         } else if (checkpoint.putStarted) {
-          throw failure(
-            'version_unknown',
-            'The upload response was lost and its version is not yet known. Check status again; do not resend the media.',
-          );
+          selected = await reconcile();
+          if (selected.state === 'completed') accepted = selected;
+          else if (selected.versionId) {
+            checkpoint.versionId = selected.versionId;
+            await save();
+          } else
+            throw failure(
+              'version_unknown',
+              'Storage could not confirm one exact uploaded version. Check status; do not resend the media.',
+            );
         } else {
           if (upload === null) {
             progress('requesting');
@@ -692,13 +717,20 @@ export function createDirectTransferClient(
               else if (selected.versionId) {
                 checkpoint.versionId = selected.versionId;
                 await save();
-              } else
-                throw error instanceof ClipUploadError
-                  ? error
-                  : failure(
-                      'version_unknown',
-                      'The upload response was lost. Its status is unknown; do not resend the media.',
-                    );
+              } else {
+                if (error instanceof ClipUploadError && error.code === 'storage_expired')
+                  throw error;
+                selected = await reconcile();
+                if (selected.state === 'completed') accepted = selected;
+                else if (selected.versionId) {
+                  checkpoint.versionId = selected.versionId;
+                  await save();
+                } else
+                  throw failure(
+                    'version_unknown',
+                    'Storage could not confirm one exact uploaded version. Check status; do not resend the media.',
+                  );
+              }
             }
           }
         }

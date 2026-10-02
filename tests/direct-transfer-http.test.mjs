@@ -7,9 +7,11 @@ import { readFileSync } from 'node:fs';
 import { createServer } from 'node:https';
 import { dirname, resolve } from 'node:path';
 import test from 'node:test';
+import { setImmediate } from 'node:timers';
 import { chromium } from '@playwright/test';
 import ts from 'typescript';
 import { createRuntimeServer } from '../server/dist/http.js';
+import { reconcileUploadIntent } from '../server/dist/media/upload-intents.js';
 import { withIntentFixture } from '../server/tests/helpers/upload-intents.mjs';
 
 // Execute the actual client, protocol and adapter in Chromium without mounting
@@ -98,6 +100,7 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
     const photoBytes = readFileSync('public/icons/rewind-icon-192.png');
     let hideVersion = false;
     let rejectPut = false;
+    let losePutResponse = false;
     const runtime = createRuntimeServer(
       {
         ...c.config,
@@ -112,7 +115,7 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
         uploadIntents: c.deps,
       },
     );
-    const app = createServer(tls, (request, response) => {
+    const app = createServer(tls, async (request, response) => {
       if (request.url === '/') {
         response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
         response.end(
@@ -132,6 +135,51 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
       request.on('data', (chunk) => entry.chunks.push(chunk));
       request.headers['x-rewind-origin-auth'] = secret;
       request.headers['x-forwarded-proto'] = 'https';
+      // The lead owns production HTTP wiring. This narrowly scoped transport
+      // bridge exercises the allocated module/client recovery protocol until
+      // that route lands; all other requests use the canonical HTTP handler.
+      const reconcile = /^\/real\/groups\/([^/]+)\/upload-intents\/([^/]+)\/reconcile$/.exec(
+        request.url,
+      );
+      if (reconcile) {
+        try {
+          assert.equal(request.method, 'POST');
+          assert.equal(request.headers.origin, origin);
+          const chunks = [];
+          let size = 0;
+          for await (const chunk of request) {
+            size += chunk.length;
+            assert.ok(size <= 16);
+            chunks.push(chunk);
+          }
+          assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), {});
+          const sessionToken =
+            (request.headers.cookie || '')
+              .split(';')
+              .map((value) => value.trim())
+              .find((value) => value.startsWith('__Host-rewind_session='))
+              ?.slice('__Host-rewind_session='.length) || '';
+          const result = await reconcileUploadIntent(
+            c.database,
+            { groupId: decodeURIComponent(reconcile[1]), sessionToken },
+            { intentId: decodeURIComponent(reconcile[2]) },
+            c.deps,
+          );
+          response.writeHead(result.ok ? 200 : 409, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          });
+          response.end(
+            JSON.stringify(
+              result.ok ? { intent: result.value } : { error: `upload_intent_${result.reason}` },
+            ),
+          );
+        } catch {
+          response.writeHead(400, { 'Content-Type': 'application/json' });
+          response.end(JSON.stringify({ error: 'invalid_request' }));
+        }
+        return;
+      }
       runtime.emit('request', request, response);
     });
     c.deps.transport.signPut = async (scope, target) => {
@@ -186,6 +234,17 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
           return;
         }
         const version = await c.put({ url: storageOrigin + request.url }, bytes);
+        if (losePutResponse) {
+          losePutResponse = false;
+          // Send a partial response without a version receipt, then lose it.
+          // Cutting a reused socket before any headers can cause Chromium's
+          // transport to retry an idempotent PUT independently of app code.
+          response.writeHead(200, { ...headers, 'Content-Length': '100' });
+          response.write('partial');
+          response.flushHeaders();
+          setImmediate(() => response.destroy());
+          return;
+        }
         response.writeHead(200, { ...headers, 'x-amz-version-id': version });
         response.end();
       } catch (error) {
@@ -341,37 +400,60 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
         2,
       );
 
-      // Actual CORS omission leaves a version unknown. Reload must reconcile,
-      // never PUT another version or fabricate registration/source disposal.
+      // A stored upload with a CORS-hidden version is accepted only after
+      // server reconciliation verifies its unique exact bytes. Reload queries
+      // the completed receipt and never PUTs another version or spends quota.
       hideVersion = true;
       const hidden = await transfer('browser-http-key-2');
-      assert.equal(hidden.error, 'version_unknown');
+      assert.equal(hidden.intent.state, 'completed', JSON.stringify(hidden));
+      assert.equal(await page.evaluate(() => window.disposals), 3);
+      const reconciliationRequests = apiRequests.filter((entry) =>
+        entry.path.endsWith('/reconcile'),
+      );
+      assert.equal(reconciliationRequests.length, 1);
+      assert.equal(Buffer.concat(reconciliationRequests[0].chunks).toString(), '{}');
       await page.reload();
-      assert.equal((await transfer('browser-http-key-2')).error, 'version_unknown');
+      assert.deepEqual((await transfer('browser-http-key-2', true)).intent, hidden.intent);
       assert.equal(storageRequests.length, 3);
       assert.equal(
         c.database
           .prepare('SELECT count(*) AS n FROM contributions WHERE cycle_id=?')
           .get(c.group.cycle.id).n,
-        2,
+        3,
       );
-      assert.equal(await page.evaluate(() => window.disposals || 0), 0);
+      assert.equal(
+        c.database
+          .prepare('SELECT count_used FROM contribution_quota_windows WHERE member_id=?')
+          .get(hidden.intent.profileId).count_used,
+        3,
+      );
 
       hideVersion = false;
+      losePutResponse = true;
+      const lostPut = await transfer('browser-http-lost-put');
+      assert.equal(lostPut.intent.state, 'completed', JSON.stringify(lostPut));
+      assert.equal(storageRequests.length, 4);
+      assert.equal(
+        c.database
+          .prepare('SELECT count_used FROM contribution_quota_windows WHERE member_id=?')
+          .get(lostPut.intent.profileId).count_used,
+        4,
+      );
+      assert.equal(apiRequests.filter((entry) => entry.path.endsWith('/reconcile')).length, 2);
       rejectPut = true;
       const rejected = await transfer('browser-http-key-3');
       assert.equal(rejected.error, 'storage_expired');
       assert.equal(rejected.message.includes('<Error>'), false);
-      assert.equal(storageRequests.length, 4);
+      assert.equal(storageRequests.length, 5);
       c.database.prepare("UPDATE cycles SET status='revealing' WHERE id=?").run(c.group.cycle.id);
       const closed = await transfer('browser-http-key-4');
       assert.equal(closed.error, 'upload_intent_closed_cycle');
-      assert.equal(storageRequests.length, 4);
+      assert.equal(storageRequests.length, 5);
       c.database
         .prepare('DELETE FROM real_account_sessions WHERE account_id=?')
         .run('intent-owner');
       assert.equal((await transfer('browser-http-key-1', true)).error, 'authorization');
-      assert.equal(storageRequests.length, 4);
+      assert.equal(storageRequests.length, 5);
 
       for (const entry of apiRequests) {
         assert.equal(entry.headers.authorization, undefined);
