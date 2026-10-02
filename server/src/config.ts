@@ -1,6 +1,7 @@
 import { isAbsolute, parse, resolve } from 'node:path';
 import type { MediaRuntimeConfig } from './media/runtime-store';
 import type { ReminderProviderConfig } from './reminders/providers';
+import { validateReminderVapidConfig } from './reminders/config';
 
 export const SERVICE_VERSION = '0.1.0';
 export const DEFAULT_PORT = 8787;
@@ -180,7 +181,7 @@ function parseReminderConfig(env: NodeJS.ProcessEnv): ReminderProviderConfig | n
         'Invalid Web Push reminder configuration.',
         'Set the complete environment-supplied VAPID subject/key pair; never use application or account credentials.',
       );
-    config.webpush = { subject: subject!, publicKey, privateKey };
+    config.webpush = validateReminderVapidConfig({ subject: subject!, publicKey, privateKey });
   }
   return Object.keys(config).length ? config : null;
 }
