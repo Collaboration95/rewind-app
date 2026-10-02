@@ -41,9 +41,9 @@ The selected direction favors explicit identity adapters plus the shared policy 
 
 ## Code evidence
 
-- Demo policy and group binding: [`server/src/policy.ts`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/policy.ts#L21), [`requireAuthorisedGroup`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/http.ts#L278).
-- Real account request boundary and group routes: [`handleRealGroupRequest`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/http.ts#L3188), [`getRealGroup` / `selectRealGroup`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/groups/real.ts#L110).
-- Real invitation owner, replay, expiry, capacity and transaction checks: [`server/src/groups/invites.ts`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/groups/invites.ts#L124).
-- Media identity adapter's mixed-credential rejection: [`requireAuthorisedMediaGroup`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/http.ts#L302).
+- Demo policy and group binding: [`authorizeMember`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/policy.ts#L28), [`requireAuthorisedGroup`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/http.ts#L301).
+- Real account request boundary and group routes: [`handleRealGroupRequest`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/http.ts#L3494), [`getRealGroup` / `selectRealGroup`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/groups/real.ts#L121).
+- Real invitation owner, replay, expiry, capacity and transaction checks: [`server/src/groups/invites.ts`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/groups/invites.ts#L124).
+- Media identity adapter's mixed-credential rejection: [`requireAuthorisedMediaGroup`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/http.ts#L337).
 
 The “before” diagrams compare a route-local design option with the current implementation. They do not assert a historical vulnerability or an undocumented team decision.

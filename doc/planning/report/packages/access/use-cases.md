@@ -1,6 +1,6 @@
 # Access use cases
 
-**Evidence cut:** `450a7199767ecc4ea3e96f0f7503d0f2170d382c` (2 October 2026). “Account” below means the current local real-account pilot. “Demo” means the separate synthetic session runtime.
+**Evidence cut:** `a6b6b312f219c268a16401f64efe6c3b8f808a54` (published PR #368 head, 2 October 2026; PR remains open/draft). “Account” below means the current local real-account pilot. “Demo” means the separate synthetic session runtime.
 
 ## Scope and actors
 
@@ -12,7 +12,7 @@
 | Non-member / unauthenticated visitor | May attempt a protected operation but receives no account or group authority. |
 | Identity provider (target) | Managed OIDC/Cognito in Sprint 3; not active in this code snapshot. |
 
-The model covers the access slice of proposal FR-01 (identity and private groups) and FR-02 (group creation and invitations). The proposal calls its combined entry journey UC-01; this report follows issue #357's expanded UC01 authentication/session, UC02 group, and UC03 invitation boundaries so that each has a usable model. The issue contract cites `R01–R03,R22`; their canonical requirement text is not present in the committed source set inspected for this draft, so no invented crosswalk is supplied.
+The model covers the access slice of proposal FR-01 (identity and private groups) and FR-02 (group creation and invitations). The proposal calls its combined entry journey UC-01; this report follows issue #357's expanded UC01 authentication/session, UC02 group, and UC03 invitation boundaries so that each has a usable model. Issue #357 cites `R01–R03,R22`; the execution-plan-derived bounded trace is in [README.md](README.md), with its source limitation stated there.
 
 ![Overall access use-case view](diagrams/use-case-overview.svg)
 
@@ -54,19 +54,31 @@ The proposal requires managed OIDC. The target entry will redirect to Cognito, h
 
 **Goal:** establish a private group with its owner and first cycle, then let an account select only a group of which it is a member.
 
-**Preconditions:** a valid real-account session. Creation accepts a group name, prompt, and member cap in the supported 2–10 range.
+**Preconditions:** a valid real-account session. Creation accepts a group name, prompt, and member cap in the supported 2–10 range. The UI omits timezone; the API accepts an optional validated IANA timezone and defaults it to UTC.
 
 ### UC02-F1 — Create a group
 
-**Normal flow:** the owner submits group details to `POST /real/groups`; the server validates them and, in one transaction, creates/reuses the owner profile, group metadata, the initial four-week cycle, owner membership, and current-group selection; it commits and returns the created group.
+**Normal flow:** the owner submits group details to `POST /real/groups`; the UI sends name, prompt, and member cap without a timezone. The server validates fields, defaults the absent timezone to UTC (or canonicalizes a valid API-supplied IANA zone), and in one transaction creates/reuses the owner profile, group metadata including timezone, the initial four-week cycle, owner membership, and current-group selection; it commits and returns the created group.
 
-**Relevant exceptions:** malformed body or invalid name/prompt/member cap is rejected; a persistence error rolls back the transaction and returns a no-partial-group response. A missing/invalid session is rejected before group creation.
+**Relevant exceptions:** malformed body or invalid name/prompt/member cap/timezone is rejected; a persistence error rolls back the transaction and returns a no-partial-group response. A missing/invalid session is rejected before group creation.
 
 ### UC02-F2 — List, read, and select a group
 
 **Normal flow:** the account requests its current group/list; the server derives the account from the validated session and lists only joined groups. To switch, the client posts a group ID; the server checks membership before persisting the selection and returning the selected group.
 
 **Relevant exceptions:** an account with no selection receives a null current group; a malformed group identifier is rejected; an unjoined or unknown group is denied without making it current. A stale session is denied before lookup.
+
+### UC02-F3 — Edit current collecting-cycle prompt and group timezone
+
+**Normal flow:** the group owner changes the prompt and an IANA timezone in the group settings panel. The authenticated settings route verifies owner role and that the current cycle is still collecting and has not ended, then transactionally updates group metadata timezone and the current cycle prompt. Success returns refreshed group data. When a successor cycle is created, it copies the current cycle prompt.
+
+**Relevant exceptions:** invalid prompt/timezone is rejected; a non-owner or inaccessible group is forbidden; a closed or elapsed cycle is rejected; storage failure rolls back both updates. Existing cycles are not all rewritten by this setting change.
+
+### UC02-F4 — Save a member reminder preference
+
+**Normal flow:** any group member can enable/disable their own reminder preference or set a snooze. The service validates membership and preference fields, limits snooze to 31 days, and upserts the preference by `(group_id, account_id)`. The response calculates the next Sunday 19:00 occurrence in the group's IANA timezone and reports delivery as `not-configured`.
+
+**Relevant exceptions:** non-member/unknown group is forbidden; malformed enabled or snooze values are rejected; an invalid schedule or persistence failure does not imply a notification was sent. A nonexistent local Sunday 19:00 during a timezone transition is skipped by the scheduler's bounded resolver.
 
 ## UC03 — Issue, revoke, and accept a group invitation
 
@@ -108,6 +120,8 @@ Each row has a separate analysis sequence and design sequence in [models.md](mod
 | UC01-F4 | Session revoked and client signs out | Remote failure/pending state |
 | UC02-F1 | Group, cycle, owner membership, selection committed | Invalid fields, no session, transaction rollback |
 | UC02-F2 | Member lists/selects own group | Null selection, malformed/unknown/non-member group, stale session |
+| UC02-F3 | Owner updates collecting-cycle prompt and group timezone | Non-owner, invalid prompt/zone, closed cycle, rollback |
+| UC02-F4 | Member saves personal group reminder preference | Non-member, invalid/snooze boundary, persistence/schedule failure; delivery unconfigured |
 | UC03-F1 | Owner creates unique expiring invitation | Missing group, non-owner, invalid expiry, persistence/allocation failure |
 | UC03-F2 | Owner revokes active invite | Missing, inactive, used, cross-group, non-owner |
 | UC03-F3 | Invitee joins and group becomes selected | Existing/new profile branches within successful transaction |
@@ -115,4 +129,4 @@ Each row has a separate analysis sequence and design sequence in [models.md](mod
 
 ## Explicit exclusions and target cases
 
-Public discovery, public profiles, owner transfer, member removal, leaving/rejoining, account deletion, and account recovery are outside this access slice. Managed OIDC login, provider cancellation/callback, and provider-subject mapping are target behavior for Sprint 3 and are not part of the ten implemented pilot flow families.
+Public discovery, public profiles, owner transfer, member removal, leaving/rejoining, account deletion, and account recovery are outside this access slice. Managed OIDC login, provider cancellation/callback, and provider-subject mapping are target behavior for Sprint 3 and are not part of the twelve current pilot flow families. Reminder delivery is also not configured; only schedule calculation and preference storage are modeled as implemented.

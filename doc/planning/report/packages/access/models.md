@@ -1,6 +1,6 @@
 # Access analysis and design models
 
-**Code baseline:** [integrated commit `450a719`](https://github.com/Collaboration95/rewind-app/commit/450a7199767ecc4ea3e96f0f7503d0f2170d382c). Analysis models express account/group/invitation responsibilities. Design models name only components or persistence concepts evidenced in that snapshot. The dashed Cognito box is a future target, not a deployed dependency.
+**Code baseline:** [published PR #368 source snapshot `a6b6b312f219c268a16401f64efe6c3b8f808a54`](https://github.com/Collaboration95/rewind-app/commit/a6b6b312f219c268a16401f64efe6c3b8f808a54). This is the fixed evidence cut; PR #368 remains open/draft. Analysis models express account/group/invitation responsibilities. Design models name only components or persistence concepts evidenced in that snapshot. The dashed Cognito box is a Sprint 3 target, not a deployed dependency.
 
 ## UC01 — Account authentication and session
 
@@ -82,6 +82,26 @@
 
 ![UC02-F2 design sequence](diagrams/uc02-f2-design-sequence.svg)
 
+### UC02-F3 — Edit collecting-cycle prompt and group timezone
+
+**Analysis sequence**
+
+![UC02-F3 analysis sequence](diagrams/uc02-f3-analysis-sequence.svg)
+
+**Design sequence**
+
+![UC02-F3 design sequence](diagrams/uc02-f3-design-sequence.svg)
+
+### UC02-F4 — Save a member reminder preference
+
+**Analysis sequence**
+
+![UC02-F4 analysis sequence](diagrams/uc02-f4-analysis-sequence.svg)
+
+**Design sequence**
+
+![UC02-F4 design sequence](diagrams/uc02-f4-design-sequence.svg)
+
 ## UC03 — Invitations
 
 ### Analysis class diagram
@@ -134,9 +154,13 @@
 
 ## Source trace
 
-- Account screen and provider state: [`RealAccountProvider.tsx`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/src/auth/RealAccountProvider.tsx#L55), [`real-account-client.ts`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/src/auth/real-account-client.ts#L101).
-- Account registration, password verification, session validation and revocation: [`server/src/auth/index.ts`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/auth/index.ts#L122), [`server/src/http.ts` auth routes](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/http.ts#L3460).
-- Real group creation and selection: [`server/src/groups/real.ts`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/groups/real.ts#L14), [`server/src/http.ts` real-group routes](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/http.ts#L3215).
-- Invitation create/revoke/accept: [`server/src/groups/invites.ts`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/server/src/groups/invites.ts#L124), [`RealAccountGroupExperience.tsx`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/src/groups/RealAccountGroupExperience.tsx#L388), [`deep-links.ts`](https://github.com/Collaboration95/rewind-app/blob/450a7199767ecc4ea3e96f0f7503d0f2170d382c/src/invites/deep-links.ts#L49).
+- Account screen and provider state: [`RealAccountProvider.tsx`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/src/auth/RealAccountProvider.tsx#L55), [`real-account-client.ts`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/src/auth/real-account-client.ts#L101).
+- Account registration, password verification, session validation and revocation: [`server/src/auth/index.ts`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/auth/index.ts#L122), [`server/src/http.ts` auth routes](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/http.ts#L3968).
+- Real group input/default timezone, create, read and select: [`server/src/groups/real.ts`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/groups/real.ts#L15), [`UTC default + validation`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/groups/real.ts#L40), [`createRealGroup`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/groups/real.ts#L45), [`handleRealGroupRequest`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/http.ts#L3494).
+- UC02 settings and reminders: [`updateRealGroupSettings`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/groups/settings.ts#L5), [`getRealReminderPreference`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/groups/settings.ts#L44), [`updateRealReminderPreference`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/groups/settings.ts#L70), and [HTTP routes](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/http.ts#L3638).
+- UI evidence: [group create JSON omits timeZone](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/src/groups/RealAccountGroupExperience.tsx#L398), [owner-only prompt/timezone controls](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/src/reminders/RealGroupSettings.tsx#L117), and [member reminder controls](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/src/reminders/RealGroupSettings.tsx#L170).
+- Timezone validation and Sunday schedule: [`validateTimeZone`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/reminders/schedule.ts#L3), [`nextWeeklyReminderAt`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/reminders/schedule.ts#L55). [UTC migration default and reminder table setup](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/db.ts#L216); preference schema [`025-real-group-reminders.sql`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/migrations/025-real-group-reminders.sql#L3).
+- Successor cycle copies prompt: [`ensureSuccessor`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/cycles/lifecycle.ts#L276).
+- Invitation create/revoke/accept: [`server/src/groups/invites.ts`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/server/src/groups/invites.ts#L124), [`RealAccountGroupExperience.tsx`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/src/groups/RealAccountGroupExperience.tsx#L421), [`deep-links.ts`](https://github.com/Collaboration95/rewind-app/blob/a6b6b312f219c268a16401f64efe6c3b8f808a54/src/invites/deep-links.ts#L52).
 
-The figure source files are editable SVG. They intentionally show the current SQLite-backed persistence and account-specific membership checks. The separate Demo member/session lane appears in the design-problem figures because its policy boundary is part of the observed authorization design; it is not a substitute for real-account identity.
+The figure source files are editable SVG. They intentionally show the current SQLite-backed persistence, timezone settings, persisted reminder preference, and account-specific membership checks. Reminder delivery is marked unconfigured. The separate Demo member/session lane appears in the design-problem figures because its policy boundary is part of the observed authorization design; it is not a substitute for real-account identity.
