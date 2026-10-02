@@ -11,7 +11,7 @@
     "start": "expo start",
     "dev:lan": "node scripts/run-local-dev.mjs",
     "web": "expo start --web",
-    "build:web": "expo export --clear --platform web --output-dir dist",
+    "build:web": "expo export --clear --platform web --output-dir dist && node scripts/stamp-pwa-build.mjs dist",
     "test:pwa": "npm run build:web && node scripts/check-pwa.mjs dist",
     "web:smoke-server": "node scripts/web-smoke-server.mjs",
     "server:build": "tsc -p tsconfig.server.json",
