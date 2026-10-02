@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
+import { constants } from 'node:fs';
 import {
   lstat,
   mkdir,
+  open,
   mkdtemp,
   readFile,
   readdir,
@@ -44,6 +46,12 @@ function trackedAndDirtyFiles(projectRoot) {
   ].sort();
 }
 
+function sameFileSnapshot(before, after) {
+  return ['dev', 'ino', 'mode', 'size', 'mtimeNs', 'ctimeNs'].every(
+    (field) => before[field] === after[field],
+  );
+}
+
 async function hashInputs(projectRoot, files) {
   const hash = createHash('sha256');
   for (const path of files) {
@@ -53,32 +61,57 @@ async function hashInputs(projectRoot, files) {
     if (!absolute.startsWith(`${resolve(projectRoot)}/`)) {
       throw new Error(`Build input escapes the project root: ${path}`);
     }
+    let handle;
+    let observed = false;
     try {
-      const details = await lstat(absolute);
-      hash.update(String(details.mode & 0o777));
-      if (details.isSymbolicLink()) {
+      // Open once. All target metadata and bytes refer to this same descriptor,
+      // including intentionally followed repository skill/source symlinks.
+      // NONBLOCK also prevents a replaced input FIFO from hanging verification.
+      handle = await open(absolute, constants.O_RDONLY | constants.O_NONBLOCK);
+      observed = true;
+      const target = await handle.stat({ bigint: true });
+      const entry = await lstat(absolute, { bigint: true });
+      const link = entry.isSymbolicLink() ? await readlink(absolute) : null;
+      if (link === null && !sameFileSnapshot(entry, target)) {
+        throw new Error(`Build input changed while opening: ${path}`);
+      }
+      hash.update(String(entry.mode & 0o777n));
+      if (link !== null) {
         hash.update('symlink\0');
-        hash.update(await readlink(absolute));
-        const target = await stat(absolute);
-        if (target.isFile()) {
-          hash.update('file\0');
-          hash.update(await readFile(absolute));
-        } else if (target.isDirectory()) {
-          hash.update('directory\0');
-        } else {
-          hash.update('special\0');
-        }
-      } else if (details.isFile()) {
+        hash.update(link);
+        hash.update(String(target.mode & 0o777n));
+      }
+      if (target.isFile()) {
         hash.update('file\0');
-        hash.update(await readFile(absolute));
-      } else if (details.isDirectory()) {
+        hash.update(await handle.readFile());
+      } else if (target.isDirectory()) {
         hash.update('directory\0');
       } else {
-        hash.update('special\0');
+        throw new Error(`Build input contains an unsupported entry: ${path}`);
+      }
+      const afterTarget = await handle.stat({ bigint: true });
+      const afterEntry = await lstat(absolute, { bigint: true });
+      const afterPathTarget = link === null ? afterEntry : await stat(absolute, { bigint: true });
+      if (
+        !sameFileSnapshot(target, afterTarget) ||
+        !sameFileSnapshot(target, afterPathTarget) ||
+        !sameFileSnapshot(entry, afterEntry) ||
+        (link !== null && link !== (await readlink(absolute)))
+      ) {
+        throw new Error(`Build input changed while reading: ${path}`);
       }
     } catch (error) {
-      if (error?.code !== 'ENOENT') throw error;
+      if (error?.code !== 'ENOENT' || observed) throw error;
+      // An absent input is part of the key; a dangling input symlink is an
+      // invalid snapshot, not equivalent to an absent input.
+      const entry = await lstat(absolute).catch((entryError) => {
+        if (entryError?.code !== 'ENOENT') throw entryError;
+        return null;
+      });
+      if (entry) throw error;
       hash.update('missing\0');
+    } finally {
+      await handle?.close();
     }
   }
   return hash.digest('hex');

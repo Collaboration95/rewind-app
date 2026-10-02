@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -185,3 +195,49 @@ test('source mutation during export fails closed without publishing an artifact'
   );
   assert.deepEqual(await readdir(cacheRoot), []);
 });
+
+test('symlink target content participates in the key without path-based target reads', async (t) => {
+  const { projectRoot } = await createProject(t);
+  await symlink('App.tsx', join(projectRoot, 'linked-source.ts'));
+  const inputs = { projectRoot, env: {}, mode: 'test', files: ['linked-source.ts'] };
+  const first = await computeBuildArtifactKey(inputs);
+  await writeFile(join(projectRoot, 'App.tsx'), 'changed target bytes\n');
+  assert.notEqual(await computeBuildArtifactKey(inputs), first);
+});
+
+for (const mutation of ['replace with symlink', 'write through open file', 'remove input']) {
+  test(`input ${mutation} during descriptor reading fails closed`, async (t) => {
+    const { projectRoot } = await createProject(t);
+    const source = join(projectRoot, 'App.tsx');
+    const probe = await open(source, 'r');
+    const originalIdentity = await probe.stat({ bigint: true });
+    const prototype = Object.getPrototypeOf(probe);
+    const originalRead = prototype.readFile;
+    await probe.close();
+    let mutated = false;
+    t.mock.method(prototype, 'readFile', async function (...args) {
+      const identity = await this.stat({ bigint: true });
+      if (
+        !mutated &&
+        identity.ino === originalIdentity.ino &&
+        identity.dev === originalIdentity.dev
+      ) {
+        mutated = true;
+        if (mutation === 'replace with symlink') {
+          await rename(source, join(projectRoot, 'original.ts'));
+          await symlink('app.json', source);
+        } else if (mutation === 'write through open file') {
+          await writeFile(source, 'different input while descriptor is open\n');
+        } else {
+          await rm(source);
+        }
+      }
+      return originalRead.apply(this, args);
+    });
+    await assert.rejects(
+      computeBuildArtifactKey({ projectRoot, env: {}, mode: 'test', files: ['App.tsx'] }),
+      mutation === 'remove input' ? /ENOENT/ : /Build input changed while reading/,
+    );
+    assert.equal(mutated, true);
+  });
+}
