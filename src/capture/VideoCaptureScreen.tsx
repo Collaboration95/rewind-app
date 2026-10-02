@@ -1,6 +1,15 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  AppState,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
@@ -1230,7 +1239,12 @@ export function VideoCaptureScreen({
         })()
       : null;
   return (
-    <View style={styles.screen} testID="video-capture-screen">
+    <ScrollView
+      contentContainerStyle={styles.screenContent}
+      keyboardShouldPersistTaps="handled"
+      style={styles.screen}
+      testID="video-capture-screen"
+    >
       <View style={styles.header}>
         {onBack ? (
           <Pressable accessibilityRole="button" onPress={leaveCapture} style={styles.backButton}>
@@ -1508,7 +1522,7 @@ export function VideoCaptureScreen({
           {error}
         </Text>
       ) : null}
-    </View>
+    </ScrollView>
   );
 }
 
@@ -1704,7 +1718,8 @@ function Panel({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 16, padding: 24 },
+  screen: { backgroundColor: COLORS.background, flex: 1, width: '100%' },
+  screenContent: { flexGrow: 1, gap: 16, padding: 24, paddingBottom: 32 },
   header: { gap: 7 },
   backButton: { alignSelf: 'flex-start', paddingVertical: 4 },
   backText: { color: COLORS.accent, fontSize: 14, fontWeight: '700' },

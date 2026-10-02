@@ -82,7 +82,14 @@ test('accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadat
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/contributions/upload',
   );
-  await page.getByRole('button', { name: 'Upload clip' }).click();
+  const uploadButton = page.getByRole('button', { name: 'Upload clip' });
+  await uploadButton.scrollIntoViewIfNeeded();
+  const uploadBounds = await uploadButton.boundingBox();
+  const navigationBounds = await page.getByTestId('main-navigation').boundingBox();
+  expect(uploadBounds).not.toBeNull();
+  expect(navigationBounds).not.toBeNull();
+  expect(uploadBounds!.y + uploadBounds!.height).toBeLessThanOrEqual(navigationBounds!.y);
+  await uploadButton.click();
   const uploadRequest = await uploadRequestPromise;
   const uploadBody = JSON.parse(uploadRequest.postData() ?? '{}') as Record<string, unknown>;
   expect(uploadBody.mimeType).toBe('video/mp4');
@@ -199,7 +206,14 @@ test('records from browser camera and microphone after the member action and upl
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/contributions/upload',
   );
-  await page.getByRole('button', { name: 'Upload clip' }).click();
+  const uploadButton = page.getByRole('button', { name: 'Upload clip' });
+  await uploadButton.scrollIntoViewIfNeeded();
+  const uploadBounds = await uploadButton.boundingBox();
+  const navigationBounds = await page.getByTestId('main-navigation').boundingBox();
+  expect(uploadBounds).not.toBeNull();
+  expect(navigationBounds).not.toBeNull();
+  expect(uploadBounds!.y + uploadBounds!.height).toBeLessThanOrEqual(navigationBounds!.y);
+  await uploadButton.click();
   const uploadRequest = await uploadRequestPromise;
   const uploadBody = JSON.parse(uploadRequest.postData() ?? '{}') as Record<string, unknown>;
   expect(uploadBody.mimeType).toBe('video/mp4');
