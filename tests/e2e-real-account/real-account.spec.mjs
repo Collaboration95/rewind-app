@@ -13,6 +13,12 @@ function fixtureValue(name, value) {
   return value;
 }
 
+function safeApiPath(pathname) {
+  return pathname
+    .replace(/\/real\/groups\/[^/]+/g, '/real/groups/:id')
+    .replace(/\/real\/invites\/[^/]+/g, '/real/invites/:id');
+}
+
 async function registerAndSignIn(page, username, { invitation = false } = {}) {
   if (invitation) {
     await expect(page.getByTestId('invite-sign-in-intent')).toBeVisible();
@@ -134,8 +140,24 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     headless: true,
     ignoreHTTPSErrors: false,
   });
+  const diagnostics = [];
   try {
     const page = context.pages()[0] ?? (await context.newPage());
+    page.on('pageerror', (error) => diagnostics.push(`pageerror:${error.name}`));
+    page.on('requestfailed', (request) => {
+      const url = new URL(request.url());
+      if (url.pathname.startsWith('/api/')) {
+        diagnostics.push(`requestfailed:${request.method()}:${safeApiPath(url.pathname)}`);
+      }
+    });
+    page.on('response', (response) => {
+      const url = new URL(response.url());
+      if (url.pathname.startsWith('/api/')) {
+        diagnostics.push(
+          `response:${response.request().method()}:${safeApiPath(url.pathname)}:${response.status()}`,
+        );
+      }
+    });
     const originResponse = await page.goto(`${webOrigin}/`);
     expect(originResponse?.status()).toBe(200);
     expect(await page.evaluate(() => window.isSecureContext)).toBe(true);
@@ -153,6 +175,8 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     await page.getByTestId('real-group-name').fill(`Fixture Group ${suffix}`);
     await page.getByTestId('real-group-create-submit').click();
     await expect(page.getByTestId('real-group-empty-contributions')).toBeVisible();
+    const screenshotPath = process.env.REWIND_REAL_ACCOUNT_SCREENSHOT;
+    if (screenshotPath) await page.screenshot({ path: screenshotPath, fullPage: true });
     const ownerGroup = await readCurrentGroup(page);
     const ownerGroupId = ownerGroup.group.id;
 
@@ -200,6 +224,7 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     await waitForSchedulerAdvance(databasePath, ownerGroupId, oldCycleId);
 
     await page.getByTestId('real-group-sign-out').click();
+    await page.goto('/');
     await expect(page.getByTestId('welcome-entry')).toBeVisible();
     await registerAndSignIn(page, outsiderUsername);
     await expect(page.getByRole('heading', { name: 'Choose a group' })).toBeVisible();
@@ -212,8 +237,23 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     expect(forbiddenGroup.status).toBe(404);
     expect(forbiddenGroup.body.error).toBe('forbidden');
   } catch (error) {
+    const page = context.pages()[0];
+    if (page) {
+      try {
+        const state = await page.evaluate(() => ({
+          title: document.title,
+          testIds: [...document.querySelectorAll('[data-testid]')]
+            .slice(0, 30)
+            .map((element) => element.getAttribute('data-testid')),
+        }));
+        diagnostics.push(`startup:${JSON.stringify(state)}`);
+      } catch (diagnosticError) {
+        diagnostics.push(`startup-diagnostic:${diagnosticError.name}`);
+      }
+    }
     throw new Error(
-      redactRealAccountDiagnostic(error instanceof Error ? (error.stack ?? error.message) : error),
+      `${redactRealAccountDiagnostic(error instanceof Error ? (error.stack ?? error.message) : error)}\n` +
+        `Fixture diagnostics: ${redactRealAccountDiagnostic(diagnostics.slice(-30).join(' | '))}`,
     );
   } finally {
     await context.close();

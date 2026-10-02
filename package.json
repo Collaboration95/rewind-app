@@ -38,7 +38,7 @@
     "format:write": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs scripts/focused-test.test.mjs && npm run server:test && jest --runInBand",
+    "test": "node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs scripts/focused-test.test.mjs scripts/real-account-e2e-utils.test.mjs && npm run server:test && jest --runInBand",
     "test:fast": "npm test",
     "test:slow": "npm run build:web && node scripts/check-pwa.mjs dist && playwright test && npm run test:production-e2e",
     "test:coverage:frontend": "jest --runInBand --coverage",
@@ -46,6 +46,7 @@
     "test:a11y": "npm run build:web && playwright test --config=playwright.config.ts tests/responsive/accessibility.spec.ts",
     "test:web-smoke": "playwright test tests/responsive/production-web-routing.spec.ts",
     "test:production-e2e": "node scripts/run-production-e2e.mjs",
+    "test:real-account-e2e": "node scripts/run-real-account-e2e.mjs",
     "test:responsive": "npm run build:web && playwright test",
     "check": "npm run format:check && npm run lint && npm run architecture:check && npm run typecheck && npm test && npm run test:a11y",
     "test:focused": "node scripts/focused-test.mjs"

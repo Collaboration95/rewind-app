@@ -17,8 +17,10 @@ import {
 import { assertStaticArtifact, createProductionWebServer } from './production-web-proxy.mjs';
 
 const projectRoot = process.cwd();
-const nodeMajor = Number(process.versions.node.split('.')[0]);
-if (nodeMajor !== 24) throw new Error('Real-account E2E requires Node 24 for this project run.');
+const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number);
+if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 13)) {
+  throw new Error('Real-account E2E requires Node >=22.13.0, matching the project engine.');
+}
 
 const activeChildren = new Set();
 for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -126,6 +128,7 @@ async function runPlaywright(runNumber, fixtureDir, profileDir, webOrigin) {
     REWIND_REAL_ACCOUNT_WEB_ORIGIN: webOrigin,
     REWIND_REAL_ACCOUNT_OUTPUT_DIR: join(fixtureDir, 'playwright-output'),
     REWIND_REAL_ACCOUNT_RUNTIME_PORT: String(runtimePort),
+    REWIND_REAL_ACCOUNT_SCREENSHOT: join(tmpdir(), 'rewind-s2-real-account-journey.png'),
   });
   const playwrightCli = join(projectRoot, 'node_modules/@playwright/test/cli.js');
   const result = startOwnedProcess(
