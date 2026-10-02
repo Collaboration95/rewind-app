@@ -27,6 +27,7 @@ import {
 import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
 import type { PendingClipUpload } from '../domain/video';
 import { RealGroupSettings } from '../reminders/RealGroupSettings';
+import { RealAccountArchiveScreen } from '../archive/ArchiveScreen';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -86,6 +87,14 @@ interface RealGroup {
     contributionUsage: { countUsed: number; secondsUsed: number };
     contributionCount: number;
   };
+  releases?: RealGroupRelease[];
+}
+
+interface RealGroupRelease {
+  cycleId: string;
+  endsAt: string;
+  publishedAt: string | null;
+  state: 'processing' | 'delayed' | 'premiere' | 'archived';
 }
 
 interface RealGroupMembers {
@@ -146,7 +155,7 @@ export function RealAccountGroupExperience({
   const groupMembersRequest = useRef(0);
   const selectedGroupId = useRef<string | null>(null);
   const [screen, setScreen] = useState<
-    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'error'
+    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'archive' | 'error'
   >('loading');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState<string>(BUILT_IN_PROMPTS[0]);
@@ -368,6 +377,25 @@ export function RealAccountGroupExperience({
           members={groupMembers?.members ?? []}
           memberProfilesError={groupMembersError}
           currentMemberId={group.memberId}
+          onBack={() => setScreen('home')}
+        />
+      </View>
+    );
+  }
+
+  if (screen === 'archive' && group) {
+    return (
+      <View style={styles.captureContainer}>
+        <View style={styles.brand}>
+          <Text style={styles.wordmark}>REWIND</Text>
+          <Text style={styles.label}>{group.group.name}</Text>
+        </View>
+        <RealAccountArchiveScreen
+          key={`${group.group.id}:${auth.session?.account.id ?? ''}`}
+          baseUrl={auth.baseUrl}
+          groupId={group.group.id}
+          cycleId={group.cycle.id}
+          authenticatedRequest={auth.authenticatedRequest}
           onBack={() => setScreen('home')}
         />
       </View>
@@ -900,7 +928,10 @@ export function RealAccountGroupExperience({
             </View>
           ) : null}
           <View style={styles.divider} />
-          <Text style={styles.label}>FOUR-WEEK CYCLE</Text>
+          <Text style={styles.label}>CURRENT CAPTURE CYCLE</Text>
+          <Text style={styles.body}>
+            Contributions here are separate from previously released films.
+          </Text>
           <Text style={styles.body} testID="real-group-countdown">
             {remainingLabel(group.cycle.endsAt)}
           </Text>
@@ -908,11 +939,47 @@ export function RealAccountGroupExperience({
           <Text style={styles.prompt} testID="real-group-cycle-prompt">
             {group.cycle.prompt}
           </Text>
+          <View style={styles.invitationPanel} testID="real-group-releases">
+            <Text style={styles.label}>PREVIOUS RELEASES</Text>
+            {(group.releases ?? []).filter((release) => release.cycleId !== group.cycle.id)
+              .length === 0 ? (
+              <Text style={styles.body} testID="real-group-releases-empty">
+                Earlier group films will remain available in Archive after release.
+              </Text>
+            ) : (
+              (group.releases ?? [])
+                .filter((release) => release.cycleId !== group.cycle.id)
+                .map((release) => (
+                  <View key={release.cycleId} style={styles.releaseRow}>
+                    <Text style={styles.body} testID={`real-group-release-${release.cycleId}`}>
+                      {release.state === 'processing'
+                        ? 'Film processing'
+                        : release.state === 'delayed'
+                          ? 'Release delayed'
+                          : release.state === 'premiere'
+                            ? 'Premiere ready'
+                            : 'Archived film'}
+                      {' · '}
+                      Cycle ended {new Date(release.endsAt).toLocaleDateString()}
+                    </Text>
+                  </View>
+                ))
+            )}
+            <Action
+              title="Open Archive"
+              onPress={() => setScreen('archive')}
+              testID="real-group-open-archive"
+            />
+          </View>
           <RealGroupSettings
             key={group.group.id}
             group={group}
             authenticatedRequest={auth.authenticatedRequest}
-            onUpdated={setGroup}
+            onUpdated={(updated) =>
+              setGroup((current) =>
+                current ? { ...updated, releases: updated.releases ?? current.releases } : updated,
+              )
+            }
           />
           <Text style={styles.label}>MY ALLOWANCE</Text>
           <Text style={styles.body} testID="real-group-allowance">
@@ -1065,6 +1132,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     padding: 14,
   },
+  releaseRow: { borderTopColor: COLORS.line, borderTopWidth: 1, paddingTop: 8 },
   inviteIntent: {
     backgroundColor: COLORS.paper,
     borderRadius: 12,

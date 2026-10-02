@@ -12,7 +12,8 @@ type MockVideoViewProps = ComponentProps<typeof View> & {
 };
 
 export class MockVideoPlayer {
-  readonly source: VideoSource;
+  readonly source: VideoSource | null;
+  readonly replacements: VideoSource[] = [];
   loop = false;
   muted = false;
   timeUpdateEventInterval = 0;
@@ -21,7 +22,7 @@ export class MockVideoPlayer {
   released = false;
   private readonly listeners = new Map<string, Set<MockListener>>();
 
-  constructor(source: VideoSource) {
+  constructor(source: VideoSource | null) {
     this.source = source;
   }
 
@@ -47,6 +48,10 @@ export class MockVideoPlayer {
   pause() {
     this.playing = false;
     this.emit('playingChange', { isPlaying: false });
+  }
+
+  async replaceAsync(source: VideoSource): Promise<void> {
+    this.replacements.push(source);
   }
 
   seekBy(seconds: number) {
