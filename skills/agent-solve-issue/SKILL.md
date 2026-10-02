@@ -37,9 +37,16 @@ and likely implementation boundary. Do not change files.
    Do not include secrets, personal data, or sensitive local paths.
 4. Implement the agreed scope. Preserve unrelated work and stop if a new
    material decision or blocker appears.
-5. Add or update focused tests and run the relevant documented checks. For UI
-   changes, verify accessibility behaviour that the issue or platform supports.
-   Report only commands that actually ran.
+5. Add or update focused tests and run the relevant documented checks. For
+   local diagnosis, use one exact file with `npm run test:focused -- frontend
+   <tests/name.test.tsx>`, `npm run test:focused -- server
+   <server/tests/name.test.mjs>`, or `npm run test:focused -- root
+   <tests/name.test.mjs>`. A focused pass does not replace the documented
+   fast, slow, coverage, PR Quality, or review requirements. Limit focused
+   diagnosis to two attempts; do not remove assertions to obtain a pass. Clean
+   up only resources owned by the current run. For UI changes, verify
+   accessibility behaviour that the issue or platform supports. Report only
+   commands that actually ran.
 6. Open a focused PR against `dev` linked with `Refs #123`. After its acceptance
    criteria are verified, relevant checks pass, the change is reviewed, and the
    accepted change is on `dev`, close the Issue explicitly and move it to Done.
