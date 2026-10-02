@@ -10,9 +10,14 @@ import test from 'node:test';
 import { setImmediate } from 'node:timers';
 import { chromium } from '@playwright/test';
 import ts from 'typescript';
-import { createRuntimeServer } from '../server/dist/http.js';
-import { reconcileUploadIntent } from '../server/dist/media/upload-intents.js';
 import { withIntentFixture } from '../server/tests/helpers/upload-intents.mjs';
+
+// Like the server tests, load generated modules after the server build. Static
+// checks must also work in a clean checkout where server/dist does not exist.
+const { createRuntimeServer } = await import(new URL('../server/dist/http.js', import.meta.url));
+const { reconcileUploadIntent } = await import(
+  new URL('../server/dist/media/upload-intents.js', import.meta.url)
+);
 
 // Execute the actual client, protocol and adapter in Chromium without mounting
 // another worker's capture UI. Only unused native platform services are facades;
@@ -65,7 +70,7 @@ async function listen(server, port) {
   await once(server, 'listening');
 }
 
-test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pinned completion and processing', async () => {
+test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pinned completion and processing', async (t) => {
   await withIntentFixture(async (c) => {
     const origin = 'https://127.0.0.1:5421';
     const storageOrigin = 'https://127.0.0.1:5422';
@@ -97,6 +102,9 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
     const browserCode = browserBundle(c.now);
     const apiRequests = [];
     const storageRequests = [];
+    // Preserve assertion details in the test runner, never in HTTP responses.
+    const fixtureErrors = [];
+    t.after(() => assert.deepEqual(fixtureErrors, [], 'fixture handlers must not fail'));
     const photoBytes = readFileSync('public/icons/rewind-icon-192.png');
     let hideVersion = false;
     let rejectPut = false;
@@ -174,7 +182,8 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
               result.ok ? { intent: result.value } : { error: `upload_intent_${result.reason}` },
             ),
           );
-        } catch {
+        } catch (error) {
+          fixtureErrors.push(error);
           response.writeHead(400, { 'Content-Type': 'application/json' });
           response.end(JSON.stringify({ error: 'invalid_request' }));
         }
@@ -248,8 +257,13 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
         response.writeHead(200, { ...headers, 'x-amz-version-id': version });
         response.end();
       } catch (error) {
-        response.writeHead(500, headers);
-        response.end(String(error));
+        fixtureErrors.push(error);
+        response.writeHead(500, {
+          ...headers,
+          'Content-Type': 'text/plain; charset=utf-8',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        response.end('Fixture request failed');
       }
     });
     let browser;
@@ -275,6 +289,18 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
       page.on('pageerror', (error) => scriptErrors.push(error.message));
       await page.goto(origin);
       assert.deepEqual(scriptErrors, []);
+      // Deliberately violate the storage method assertion. The HTTP response
+      // must stay constant while the original assertion remains private.
+      const invalidStorageResponse = await context.request.get(storageOrigin);
+      assert.equal(invalidStorageResponse.status(), 500);
+      assert.equal(invalidStorageResponse.headers()['content-type'], 'text/plain; charset=utf-8');
+      assert.equal(invalidStorageResponse.headers()['x-content-type-options'], 'nosniff');
+      assert.equal(await invalidStorageResponse.text(), 'Fixture request failed');
+      assert.equal(fixtureErrors.length, 1);
+      assert.ok(fixtureErrors[0] instanceof assert.AssertionError);
+      assert.equal(fixtureErrors[0].actual, 'GET');
+      assert.equal(fixtureErrors[0].expected, 'PUT');
+      fixtureErrors.pop();
       assert.equal(
         await page.evaluate(async () => (await window.auth.restore()).account.id),
         'intent-owner',
