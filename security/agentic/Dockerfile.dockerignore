@@ -1,0 +1,13 @@
+# Dockerfile-specific allowlist prevents secrets and app source entering the build context.
+**
+!package.json
+!package-lock.json
+!scripts/
+!scripts/run-vigolium-agentic.mjs
+!scripts/vigolium-provider.mjs
+!scripts/vigolium-fixture.mjs
+!scripts/check-vigolium-isolation.mjs
+!security/
+!security/agentic/
+!security/agentic/Dockerfile
+!security/agentic/Dockerfile.dockerignore

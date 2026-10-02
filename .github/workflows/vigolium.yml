@@ -28,7 +28,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Validate report generation
-        run: node --test tests/vigolium-summary.test.mjs tests/vigolium-provider.test.mjs
+        run: node --test tests/vigolium-summary.test.mjs tests/vigolium-provider.test.mjs tests/vigolium-fixture.test.mjs
       - name: Scan disposable backend
         run: npm run security:auto
       - name: Active checks on disposable backend

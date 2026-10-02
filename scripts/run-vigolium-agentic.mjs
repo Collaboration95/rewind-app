@@ -7,13 +7,18 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { providerSettings, redact, scopedProxy, summaryHtml } from './vigolium-provider.mjs';
+import { createScanFixture } from './vigolium-fixture.mjs';
 
 const mode = process.argv[2];
 if (!['--prepare', '--verify', '--run'].includes(mode))
   throw new Error('Choose --prepare, --verify, or --run');
 // Fail before starting the backend or scanner when live configuration is missing.
 const settings = providerSettings(process.env, mode === '--run');
-const output = resolve('vigolium-result/agentic');
+const fixtureMode = process.argv.includes('--fixture');
+const output = resolve(
+  process.env.REWIND_AGENT_REPORT_DIR ||
+    (fixtureMode ? 'vigolium-result/agentic-fixture' : 'vigolium-result/agentic'),
+);
 const cli = resolve('node_modules/@vigolium/vigolium/bin/vigolium.js');
 const temporary = await mkdtemp(join(tmpdir(), 'rewind-agentic-'));
 const secrets = [process.env[settings.keyName]];
@@ -23,6 +28,7 @@ const report = {
   model: settings.model,
   message: 'Preparation only. No AI requests or vulnerability assessment performed.',
   scope: 'One disposable group chat endpoint; GET and POST only.',
+  target: fixtureMode ? 'intentionally-vulnerable-synthetic-fixture' : 'disposable-rewind-backend',
   limitations:
     'The proxy restricts seed-target traffic, not agent tools or host filesystem/network access. Run live scans on an isolated disposable worker. Source code is not supplied to the scanner.',
 };
@@ -71,47 +77,66 @@ try {
   // Remove previous findings before a new attempt, so failures cannot display stale results.
   for (const name of ['report.html', 'report.jsonl']) await rm(join(output, name), { force: true });
   if (mode !== '--prepare') {
-    const runtime = new URL('../server/dist/', import.meta.url);
-    const { parseConfig } = await import(new URL('config.js', runtime));
-    const { openDatabase } = await import(new URL('db.js', runtime));
-    const { createRuntimeServer } = await import(new URL('http.js', runtime));
-    const { createRealAccount } = await import(new URL('auth/index.js', runtime));
-    const config = parseConfig({
-      REWIND_DATA_DIR: temporary,
-      REWIND_HOST: '127.0.0.1',
-      REWIND_PORT: '0',
-      REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
-    });
-    database = openDatabase(config);
-    const password = randomUUID();
-    secrets.push(password);
-    const account = await createRealAccount(database, 'agentic-owner', 'Agentic owner', password);
-    assert.equal(account.ok, true);
-    server = createRuntimeServer(config, database);
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    const origin = `http://127.0.0.1:${server.address().port}`;
-    const login = await fetch(`${origin}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'agentic-owner', password, clientType: 'native' }),
-    });
-    assert.equal(login.status, 200);
-    const token = (await login.json()).token;
-    assert.equal(typeof token, 'string');
-    secrets.push(token);
+    let origin;
+    let token;
+    let path;
+    if (fixtureMode) {
+      const fixture = await createScanFixture();
+      ({ origin, token, path, server, database } = fixture);
+      secrets.push(token);
+      report.scope = 'Synthetic /fixture/chat GET/POST only; not the Rewind app.';
+      report.expectedFinding =
+        'SQL injection caused by string interpolation; the parameterized control must reject the same payload.';
+    } else {
+      const runtime = new URL('../server/dist/', import.meta.url);
+      const { parseConfig } = await import(new URL('config.js', runtime));
+      const { openDatabase } = await import(new URL('db.js', runtime));
+      const { createRuntimeServer } = await import(new URL('http.js', runtime));
+      const { createRealAccount } = await import(new URL('auth/index.js', runtime));
+      const config = parseConfig({
+        REWIND_DATA_DIR: temporary,
+        REWIND_HOST: '127.0.0.1',
+        REWIND_PORT: '0',
+        REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
+      });
+      database = openDatabase(config);
+      const password = randomUUID();
+      secrets.push(password);
+      const account = await createRealAccount(database, 'agentic-owner', 'Agentic owner', password);
+      assert.equal(account.ok, true);
+      server = createRuntimeServer(config, database);
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      origin = `http://127.0.0.1:${server.address().port}`;
+      const login = await fetch(`${origin}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'agentic-owner', password, clientType: 'native' }),
+      });
+      assert.equal(login.status, 200);
+      token = (await login.json()).token;
+      assert.equal(typeof token, 'string');
+      secrets.push(token);
+      const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+      const group = await fetch(`${origin}/real/groups`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          name: 'Agentic fixture',
+          prompt: 'Disposable trial',
+          maxMembers: 4,
+        }),
+      });
+      assert.equal(group.status, 201);
+      const groupId = database
+        .prepare(
+          'SELECT group_id AS groupId FROM real_account_group_selections WHERE account_id = ?',
+        )
+        .get(account.account.id).groupId;
+      assert.equal((await group.json()).group.id, groupId);
+      path = `/realtime/groups/${groupId}/messages`;
+    }
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-    const group = await fetch(`${origin}/real/groups`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ name: 'Agentic fixture', prompt: 'Disposable trial', maxMembers: 4 }),
-    });
-    assert.equal(group.status, 201);
-    const groupId = database
-      .prepare('SELECT group_id AS groupId FROM real_account_group_selections WHERE account_id = ?')
-      .get(account.account.id).groupId;
-    assert.equal((await group.json()).group.id, groupId);
-    const path = `/realtime/groups/${groupId}/messages`;
     proxy = await scopedProxy(origin, path);
     const body = JSON.stringify({ body: 'Disposable agentic trial message' });
     const accepted = await fetch(`${proxy.origin}${path}`, { method: 'POST', headers, body });
@@ -126,6 +151,35 @@ try {
     report.baselines = { authenticatedChat: 201, anonymousChat: 401, outsideScope: 403 };
     report.evidence = proxy.evidence;
     if (mode === '--verify') {
+      if (fixtureMode) {
+        const injected = await fetch(`${proxy.origin}${path}`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ body: "' OR 1=1 --" }),
+        });
+        const evidence = await injected.json();
+        assert.ok(evidence.messages.some((message) => message.body === 'SYNTHETIC_PRIVATE_CANARY'));
+        const control = await createScanFixture({ vulnerable: false });
+        try {
+          const rejected = await fetch(`${control.origin}${control.path}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${control.token}`,
+            },
+            body: JSON.stringify({ body: "' OR 1=1 --" }),
+          });
+          assert.deepEqual((await rejected.json()).messages, []);
+        } finally {
+          await control.close();
+        }
+        report.fixtureCheck = {
+          knownPayload: 'verified',
+          vulnerableCanaryExposed: true,
+          parameterizedControlCanaryExposed: false,
+          discoveredByAI: false,
+        };
+      }
       report.status = 'verified-offline';
       report.message =
         'Disposable backend, authentication, scope gate and reporting verified. No AI provider contacted; no vulnerability findings claimed.';
