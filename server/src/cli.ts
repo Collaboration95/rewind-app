@@ -7,6 +7,8 @@ import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 import { cleanupOrphanedStagedSources } from './jobs';
 import { configureRuntimeMedia } from './media/configured-runtime';
+import { createConfiguredReminderProviders } from './reminders/providers';
+import { runReminderOutboxTick, scanDueReminderJobs } from './reminders/outbox';
 import {
   runWorkerTick,
   safeWorkerErrorLabel,
@@ -593,6 +595,17 @@ async function start(config: RuntimeConfig): Promise<void> {
     database.close();
     throw error;
   }
+  let reminderProviders: Awaited<ReturnType<typeof createConfiguredReminderProviders>>;
+  try {
+    reminderProviders = await createConfiguredReminderProviders(config.reminders);
+  } catch {
+    media.close();
+    database.close();
+    throw new ConfigError(
+      'Reminder provider unavailable.',
+      'Install the locked provider dependencies and check explicit provider configuration.',
+    );
+  }
   let schedulerDatabase: ReturnType<typeof openDatabase>;
   try {
     await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
@@ -602,7 +615,11 @@ async function start(config: RuntimeConfig): Promise<void> {
     database.close();
     throw error;
   }
-  const server = createRuntimeServer(config, database, media.options);
+  const server = createRuntimeServer(config, database, {
+    ...media.options,
+    reminderProviders,
+    reminderWebPushPublicKey: config.reminders?.webpush?.publicKey,
+  });
   let scheduler: ReturnType<typeof startCycleSchedulerLoop> | undefined;
   let closing: Promise<void> | undefined;
   const close = () => {
@@ -654,6 +671,58 @@ async function start(config: RuntimeConfig): Promise<void> {
     console.log(`SQLite data: ${config.databasePath}`);
     console.log('Real-group automatic cycle/media loop started. Press Ctrl-C to stop.');
   });
+}
+
+async function runReminderCommand(config: RuntimeConfig, argv: string[]): Promise<void> {
+  if (!argv.includes('--once'))
+    throw new ConfigError(
+      'Reminder execution requires --once.',
+      'This command performs one explicit bounded scan/send pass; it does not start a schedule.',
+    );
+  const bound = (flag: string, fallback: number) => {
+    const raw = readOption(argv, [flag]);
+    const value = raw === undefined ? fallback : Number(raw);
+    if (!Number.isInteger(value) || value < 1 || value > 100)
+      throw new ConfigError(
+        `${flag} must be an integer from 1 to 100.`,
+        'Use bounded local reminder work.',
+      );
+    return value;
+  };
+  const scanLimit = bound('--scan-limit', 100);
+  const maxJobs = bound('--max-jobs', 10);
+  const providers = await createConfiguredReminderProviders(config.reminders);
+  const json = argv.includes('--json');
+  if (!Object.keys(providers).length) {
+    const report = { state: 'not-configured', scanned: 0, queued: 0, jobs: [] };
+    console.log(
+      json
+        ? JSON.stringify(report)
+        : 'Reminder providers are not configured; no scan or send was performed.',
+    );
+    return;
+  }
+  const database = await openRuntimeDatabase(config);
+  try {
+    const scan = scanDueReminderJobs(database, new Date(), {
+      limit: scanLimit,
+      ...(readOption(argv, ['--after']) ? { after: readOption(argv, ['--after'])! } : {}),
+    });
+    const jobs: Awaited<ReturnType<typeof runReminderOutboxTick>>[] = [];
+    for (let attempt = 0; attempt < maxJobs; attempt++) {
+      const job = await runReminderOutboxTick(database, providers);
+      if (!job.claimed) break;
+      jobs.push(job);
+    }
+    const report = { state: 'completed', ...scan, jobs };
+    console.log(
+      json
+        ? JSON.stringify(report)
+        : `Reminder pass scanned ${scan.scanned}, queued ${scan.queued}, and attempted ${jobs.length} jobs.`,
+    );
+  } finally {
+    database.close();
+  }
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
@@ -761,6 +830,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       await runWorker(config, argv);
       return;
     }
+    if (command === 'reminders') {
+      await runReminderCommand(config, argv);
+      return;
+    }
     if (command === 'jobs' || command === 'queue') {
       const database = await openRuntimeDatabase(config);
       try {
@@ -773,7 +846,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (command !== 'start') {
       throw new ConfigError(
         `Unknown local runtime command ${JSON.stringify(command)}.`,
-        'Use start, worker, preflight, migrate, reset, accounts, diagnostics, jobs, retention, or consistency.',
+        'Use start, worker, reminders, preflight, migrate, reset, accounts, diagnostics, jobs, retention, or consistency.',
       );
     }
     await start(config);

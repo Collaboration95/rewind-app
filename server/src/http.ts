@@ -8,6 +8,13 @@ import { URL } from 'node:url';
 
 import { SERVICE_VERSION, type RuntimeConfig } from './config';
 import {
+  registerReminderDestination,
+  listReminderDestinations,
+  disableReminderDestination,
+  listReminderOutbox,
+  type ReminderProviders,
+} from './reminders/outbox';
+import {
   getContribution,
   getCurrentCycle,
   getGroup,
@@ -924,6 +931,8 @@ function streamMp4(
 }
 
 export interface RuntimeServerOptions extends StoredJobOptions {
+  reminderProviders?: ReminderProviders;
+  reminderWebPushPublicKey?: string;
   uploadIntents?: Omit<UploadIntentDependencies, 'now'>;
   mediaCapabilities?: MediaCapabilities;
   now?: () => Date;
@@ -3526,6 +3535,106 @@ async function handleRealGroupRequest(
       error: 'session_required',
       message: 'A valid sign-in is required.',
     });
+    return;
+  }
+
+  if (url.pathname === '/real/reminders/config' && request.method === 'GET') {
+    authJson(request, response, config, 200, {
+      providers: Object.keys(options.reminderProviders ?? {}).filter(
+        (name) => name === 'expo' || name === 'webpush',
+      ),
+      webPushPublicKey: options.reminderProviders?.webpush
+        ? (options.reminderWebPushPublicKey ?? null)
+        : null,
+    });
+    return;
+  }
+  if (url.pathname === '/real/media/config' && request.method === 'GET') {
+    authJson(request, response, config, 200, {
+      directTransfer: options.uploadIntents?.transport.backend === 's3',
+      maxVideoBytes: MAX_STAGED_SOURCE_BYTES,
+      maxPhotoBytes: 10 * 1024 * 1024,
+    });
+    return;
+  }
+  const reminderDestinationMatch = url.pathname.match(
+    /^\/real\/groups\/([^/]+)\/reminders\/(destinations|outbox)(?:\/([^/]+))?$/,
+  );
+  if (reminderDestinationMatch) {
+    const groupId = decodePathSegment(reminderDestinationMatch[1], response, config);
+    const id = reminderDestinationMatch[3]
+      ? decodePathSegment(reminderDestinationMatch[3], response, config)
+      : null;
+    if (!groupId || (reminderDestinationMatch[3] && !id)) return;
+    if (
+      url.searchParams.has('sessionId') ||
+      !getRealGroup(database, session.account.id, groupId) ||
+      getCurrentRealGroup(database, session.account.id)?.group.id !== groupId
+    )
+      return sendDenied(response, config);
+    const actor = { sessionToken: token!, groupId };
+    if (request.method === 'GET' && !id) {
+      const kind = reminderDestinationMatch[2];
+      const rows =
+        kind === 'outbox'
+          ? listReminderOutbox(database, actor, currentClock())
+          : listReminderDestinations(database, actor, currentClock());
+      if (!rows) return sendDenied(response, config);
+      authJson(request, response, config, 200, { [kind]: rows });
+      return;
+    }
+    if (request.method !== 'POST' || reminderDestinationMatch[2] !== 'destinations') {
+      authJson(request, response, config, 405, {
+        error: 'method_not_allowed',
+        message: 'Use the supported reminder action.',
+      });
+      return;
+    }
+    const body = await requestBody(request, config, 8192);
+    const keys = id ? ['enabled'] : ['deviceId', 'provider', 'destination'];
+    if (!body || Object.keys(body).some((key) => !keys.includes(key))) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_destination',
+        message: 'Use a valid reminder destination for this device.',
+      });
+      return;
+    }
+    if (id) {
+      if (
+        body.enabled !== false ||
+        !disableReminderDestination(database, actor, id, currentClock())
+      ) {
+        authJson(request, response, config, 404, {
+          error: 'destination_unavailable',
+          message: 'This reminder destination is unavailable.',
+        });
+        return;
+      }
+      authJson(request, response, config, 200, { disabled: true });
+      return;
+    }
+    const provider = body.provider;
+    if ((provider !== 'expo' && provider !== 'webpush') || !options.reminderProviders?.[provider]) {
+      authJson(request, response, config, 503, {
+        error: 'reminders_unavailable',
+        message: 'This reminder provider is not configured.',
+      });
+      return;
+    }
+    const result = registerReminderDestination(
+      database,
+      actor,
+      { deviceId: body.deviceId, provider, destination: body.destination },
+      currentClock(),
+    );
+    if (!result.ok) {
+      authJson(request, response, config, result.reason === 'forbidden' ? 403 : 400, {
+        error: result.reason,
+        message: 'This reminder destination cannot be registered.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, { destination: result.destination });
     return;
   }
 

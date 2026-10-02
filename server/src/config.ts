@@ -1,5 +1,6 @@
 import { isAbsolute, parse, resolve } from 'node:path';
 import type { MediaRuntimeConfig } from './media/runtime-store';
+import type { ReminderProviderConfig } from './reminders/providers';
 
 export const SERVICE_VERSION = '0.1.0';
 export const DEFAULT_PORT = 8787;
@@ -24,6 +25,7 @@ export interface RuntimeConfig {
   maxConcurrentProcessing: number;
   /** Unset preserves legacy disk paths; opt-in stores use immutable references. */
   media?: MediaRuntimeConfig | null;
+  reminders?: ReminderProviderConfig | null;
 }
 
 export class ConfigError extends Error {
@@ -133,7 +135,54 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
       64,
     ),
     media: parseMediaConfig(env, dataDir),
+    reminders: parseReminderConfig(env),
   };
+}
+
+function parseReminderConfig(env: NodeJS.ProcessEnv): ReminderProviderConfig | null {
+  const config: ReminderProviderConfig = {};
+  const enabled = env.REWIND_REMINDER_EXPO_ENABLED?.trim();
+  if (enabled && !['true', 'false'].includes(enabled))
+    throw new ConfigError(
+      'REWIND_REMINDER_EXPO_ENABLED must be true or false.',
+      'Leave providers unset to disable remote sending.',
+    );
+  if (enabled === 'true') {
+    const accessToken = env.REWIND_REMINDER_EXPO_ACCESS_TOKEN?.trim();
+    if (accessToken && (accessToken.length > 4096 || /\s/.test(accessToken)))
+      throw new ConfigError(
+        'Invalid Expo reminder credential.',
+        'Use an environment-supplied provider access token.',
+      );
+    config.expo = accessToken ? { accessToken } : {};
+  }
+  const subject = env.REWIND_REMINDER_VAPID_SUBJECT?.trim();
+  const publicKey = env.REWIND_REMINDER_VAPID_PUBLIC_KEY?.trim();
+  const privateKey = env.REWIND_REMINDER_VAPID_PRIVATE_KEY?.trim();
+  if (subject || publicKey || privateKey) {
+    let validSubject = false;
+    try {
+      const url = new URL(subject ?? '');
+      validSubject = ['mailto:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+    } catch {
+      /* Invalid provider identity. */
+    }
+    if (
+      !validSubject ||
+      !publicKey ||
+      !privateKey ||
+      !/^[A-Za-z0-9_-]{87}$/.test(publicKey) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(privateKey) ||
+      Buffer.from(publicKey, 'base64url').length !== 65 ||
+      Buffer.from(privateKey, 'base64url').length !== 32
+    )
+      throw new ConfigError(
+        'Invalid Web Push reminder configuration.',
+        'Set the complete environment-supplied VAPID subject/key pair; never use application or account credentials.',
+      );
+    config.webpush = { subject: subject!, publicKey, privateKey };
+  }
+  return Object.keys(config).length ? config : null;
 }
 
 function parseMediaConfig(env: NodeJS.ProcessEnv, dataDir: string): MediaRuntimeConfig | null {

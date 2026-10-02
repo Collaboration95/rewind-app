@@ -183,7 +183,7 @@ test('upload-intent HTTP rechecks closure/quota and uses actual canonical fresh/
         .endsAt,
       originalEnds,
     );
-    assert.equal(schemaReadiness(c.database).expectedMigrationVersion, 26);
+    assert.equal(schemaReadiness(c.database).expectedMigrationVersion, 27);
     assert.equal(schemaReadiness(c.database).ready, true);
     c.database.prepare('DELETE FROM upload_intents WHERE group_id=?').run(c.group.group.id);
     c.database.exec('DROP TABLE upload_intents');
