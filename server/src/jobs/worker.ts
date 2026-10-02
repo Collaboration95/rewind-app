@@ -1,4 +1,5 @@
 import type { RewindDatabase } from '../db';
+import type { StoredJobOptions } from './index';
 import {
   processClipJobForWorker,
   processCompilationJobForWorker,
@@ -63,7 +64,7 @@ export interface WorkerRunRecord {
   terminal: boolean;
 }
 
-export interface WorkerOptions {
+export interface WorkerOptions extends StoredJobOptions {
   ffmpegBin: string;
   stagingDir: string;
   outputDir: string;
@@ -281,6 +282,8 @@ export async function runWorkerTick(
           jobId: candidate.id,
           groupId: candidate.groupId || undefined,
           ffmpegBin: options.ffmpegBin,
+          mediaStore: options.mediaStore,
+          mediaEnvironment: options.mediaEnvironment,
           outputDir: options.outputDir,
           actorMemberId: options.actorMemberId ?? null,
         },
@@ -293,6 +296,8 @@ export async function runWorkerTick(
           jobId: candidate.id,
           groupId: candidate.groupId || undefined,
           ffmpegBin: options.ffmpegBin,
+          mediaStore: options.mediaStore,
+          mediaEnvironment: options.mediaEnvironment,
           stagingDir: options.stagingDir,
           outputDir: options.outputDir,
           actorMemberId: options.actorMemberId ?? null,

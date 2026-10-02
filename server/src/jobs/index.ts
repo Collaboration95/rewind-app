@@ -4,6 +4,17 @@ import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
 
 import type { RewindDatabase } from '../db';
+import {
+  decodeMediaRef,
+  encodeMediaRef,
+  isMediaRef,
+  MediaStoreError,
+  verifyStoredMedia,
+  type MediaObjectRef,
+  type MediaScope,
+  type MediaStore,
+} from '../media/store';
+import { materializeStoredMedia, putProcessedFile } from '../media/store-files';
 import { recordAuditEvent } from '../audit';
 import {
   cleanupStagedSource,
@@ -94,7 +105,13 @@ export async function runAuditedJob<T>(
   }
 }
 
-export interface ProcessClipJobOptions {
+export interface StoredJobOptions {
+  /** Explicit injection: absence keeps disk rollback, remote refs fail closed. */
+  mediaStore?: MediaStore;
+  mediaEnvironment?: string;
+}
+
+export interface ProcessClipJobOptions extends StoredJobOptions {
   jobId: string;
   ffmpegBin: string;
   groupId?: string;
@@ -647,7 +664,7 @@ export type ProcessCompilationJobResult =
       message: string;
     };
 
-export interface ProcessCompilationJobOptions {
+export interface ProcessCompilationJobOptions extends StoredJobOptions {
   jobId: string;
   ffmpegBin: string;
   groupId?: string;
@@ -789,12 +806,14 @@ async function publishCompilationOutput(
   expectedClipJobIds: string[],
   temporaryOutputPath: string,
   finalOutputPath: string,
+  stored?: { ref: MediaObjectRef; store: MediaStore; scope: MediaScope },
 ): Promise<boolean> {
   // FFmpeg has closed this unique temp file. Hash it before taking SQLite's
   // writer lock; the short publication transaction checks the same inode and
   // atomically renames it while applying the job-generation fence.
   const integrity = await hashFileWithIdentity(temporaryOutputPath);
   if (!integrity) return false;
+  if (stored) await verifyStoredMedia(stored.store, stored.scope, stored.ref, integrity);
   beginJobTransaction(database);
   try {
     const current = reconcileCompilationJobInputsLocked(database, job.id);
@@ -813,7 +832,7 @@ async function publishCompilationOutput(
       database.exec('ROLLBACK');
       return false;
     }
-    renameSync(temporaryOutputPath, finalOutputPath);
+    if (!stored) renameSync(temporaryOutputPath, finalOutputPath);
     const finalizedAt = new Date().toISOString();
     const result = database
       .prepare(
@@ -824,7 +843,7 @@ async function publishCompilationOutput(
          WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
       )
       .run(
-        finalOutputPath,
+        stored ? encodeMediaRef(stored.ref) : finalOutputPath,
         finalizedAt,
         integrity.sha256,
         integrity.byteLength,
@@ -909,6 +928,9 @@ async function processCompilationJobInternal(
     outputDir,
     `.${filmOutputName(claim.job.id, claim.job.claimGeneration)}.${randomUUID()}.part.mp4`,
   );
+  const snapshots: { dispose: () => Promise<void> }[] = [];
+  let storedOutput: MediaObjectRef | undefined;
+  let published = false;
   try {
     if (claim.job.inputCount === 0) {
       throw new FfmpegProcessingError(
@@ -927,9 +949,26 @@ async function processCompilationJobInternal(
       );
     }
     await mkdir(outputDir, { recursive: true });
-    const inputPaths = await Promise.all(
-      inputs.map((input) => resolveProcessedMediaPath(input.outputPath, outputDir)),
-    );
+    const inputPaths: string[] = [];
+    for (const input of inputs) {
+      inputPaths.push(
+        await (async () => {
+          if (!isMediaRef(input.outputPath))
+            return resolveProcessedMediaPath(input.outputPath, outputDir);
+          const { store, scope } = storedContext(options, claim.job.groupId);
+          const ref = decodeMediaRef(input.outputPath);
+          if (
+            ref.prefix !== 'processed' ||
+            input.sha256 !== ref.sha256 ||
+            input.byteLength !== ref.byteLength
+          )
+            throw new MediaStoreError('integrity_mismatch');
+          const snapshot = await materializeStoredMedia(store, scope, ref, outputDir);
+          snapshots.push(snapshot);
+          return snapshot.path;
+        })(),
+      );
+    }
     // A film is only as trustworthy as the clips it joins. Verify each
     // retained input against the digest persisted when that clip finalized,
     // so a tampered or truncated clip cannot be compiled into a "verified"
@@ -966,6 +1005,14 @@ async function processCompilationJobInternal(
           outputPath: temporaryOutputPath,
         });
         await probeClipWithFfmpeg(options.ffmpegBin, temporaryOutputPath);
+        const context = options.mediaStore ? storedContext(options, claim.job.groupId) : undefined;
+        if (context)
+          storedOutput = await putProcessedFile(
+            context.store,
+            context.scope,
+            temporaryOutputPath,
+            'films',
+          );
         if (
           !(await publishCompilationOutput(
             database,
@@ -973,6 +1020,7 @@ async function processCompilationJobInternal(
             claim.job.clipJobIds,
             temporaryOutputPath,
             finalOutputPath,
+            context && storedOutput ? { ...context, ref: storedOutput } : undefined,
           ))
         ) {
           throw new FfmpegProcessingError(
@@ -980,6 +1028,7 @@ async function processCompilationJobInternal(
             'The film inputs changed while finalizing.',
           );
         }
+        published = true;
       },
     });
     return { ok: true, jobId: claim.job.id, status: 'ready' };
@@ -1002,6 +1051,13 @@ async function processCompilationJobInternal(
         ? 'The film is delayed after the maximum number of compile attempts.'
         : 'The film could not be compiled. Retry the job.',
     };
+  } finally {
+    for (const snapshot of snapshots) await snapshot.dispose();
+    await rm(temporaryOutputPath, { force: true });
+    if (storedOutput && !published) {
+      const { store, scope } = storedContext(options, claim.job.groupId);
+      await store.delete(scope, storedOutput).catch(() => undefined);
+    }
   }
 }
 
@@ -1020,6 +1076,7 @@ export type ProcessClipJobResult =
 
 interface ClipJobRow {
   id: string;
+  groupId: string;
   status: string;
   claimGeneration: number;
   outputPath: string | null;
@@ -1044,7 +1101,7 @@ type ClipJobClaimResult =
 function readClipJob(database: RewindDatabase, jobId: string, groupId?: string): ClipJobRow | null {
   const row = database
     .prepare(
-      `SELECT id, status, claim_generation AS claimGeneration,
+      `SELECT id, group_id AS groupId, status, claim_generation AS claimGeneration,
               output_path AS outputPath, source_uri AS sourceUri,
               source_generation AS sourceGeneration, source_path AS sourcePath,
               trim_start_seconds AS trimStartSeconds,
@@ -1425,6 +1482,8 @@ async function processClipJobInternal(
     options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
   const stagingDir =
     options.stagingDir ?? resolve(process.cwd(), '.local-data', 'media', 'staging');
+  if (row.sourcePath && isMediaRef(row.sourcePath))
+    return processStoredClip(database, row, options, outputDir, onWorkerWork);
   let finalOutputPath = resolve(outputDir, safeOutputName(row.id, row.claimGeneration));
   // A stale worker may have already persisted the output marker. Finish that
   // hand-off first; rerunning FFmpeg would risk replacing a file while another
@@ -1684,4 +1743,248 @@ export async function cleanupOrphanedStagedSources(
     if (!findStagedSource(database, row.sourceUri) && before) removed += 1;
   }
   return removed;
+}
+
+function storedContext(
+  options: StoredJobOptions,
+  groupId: string,
+): { store: MediaStore; scope: MediaScope } {
+  if (!options.mediaStore || !options.mediaEnvironment) throw new MediaStoreError('scope_mismatch');
+  return { store: options.mediaStore, scope: { environment: options.mediaEnvironment, groupId } };
+}
+
+/** Async publication guard for lifecycle and authorized retrieval. Always requires
+ * the persisted output digest/size/verified timestamp, including legacy disk. */
+export async function verifyReadyJobOutput(
+  database: RewindDatabase,
+  jobId: string,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<boolean> {
+  const row = database
+    .prepare(
+      `SELECT group_id AS groupId, status, output_path AS path,
+    output_sha256 AS sha256, output_bytes AS byteLength, output_verified_at AS verifiedAt
+    FROM media_jobs WHERE id = ?`,
+    )
+    .get(jobId) as
+    | {
+        groupId: string;
+        status: string;
+        path: string | null;
+        sha256: string | null;
+        byteLength: number | null;
+        verifiedAt: string | null;
+      }
+    | undefined;
+  if (
+    !row ||
+    row.status !== 'ready' ||
+    !row.path ||
+    !row.sha256 ||
+    !/^[a-f0-9]{64}$/.test(row.sha256) ||
+    !row.byteLength ||
+    !row.verifiedAt ||
+    !Number.isFinite(Date.parse(row.verifiedAt))
+  )
+    return false;
+  try {
+    if (isMediaRef(row.path)) {
+      const ref = decodeMediaRef(row.path);
+      if (ref.prefix === 'incoming') return false;
+      const { store, scope } = storedContext(options, row.groupId);
+      await verifyStoredMedia(store, scope, ref, {
+        sha256: row.sha256,
+        byteLength: row.byteLength,
+      });
+    } else {
+      const path = await resolveProcessedMediaPath(row.path, options.outputDir);
+      const observed = await hashFile(path);
+      if (!observed || observed.sha256 !== row.sha256 || observed.byteLength !== row.byteLength)
+        return false;
+    }
+    // A concurrent deletion/replacement must not be mistaken for this verified output.
+    const current = database
+      .prepare(
+        'SELECT status, output_path AS path, output_sha256 AS sha256, output_bytes AS byteLength, output_verified_at AS verifiedAt FROM media_jobs WHERE id = ?',
+      )
+      .get(jobId) as typeof row;
+    return Boolean(
+      current &&
+      current.status === 'ready' &&
+      current.path === row.path &&
+      current.sha256 === row.sha256 &&
+      current.byteLength === row.byteLength &&
+      current.verifiedAt === row.verifiedAt,
+    );
+  } catch {
+    return false;
+  }
+}
+
+function storedClipFence(database: RewindDatabase, row: ClipJobRow, output: string): boolean {
+  const current = readClipJob(database, row.id);
+  return Boolean(
+    current &&
+    current.status === 'processing' &&
+    current.claimGeneration === row.claimGeneration &&
+    current.processingStartedAt === row.processingStartedAt &&
+    current.sourcePath === row.sourcePath &&
+    current.sourceUri === row.sourceUri &&
+    current.sourceGeneration === row.sourceGeneration &&
+    current.outputPath === output &&
+    stagedBindingMatches(database, current),
+  );
+}
+
+/** A committed prepared ref survives deletion/COMMIT crashes. Cleanup retries
+ * verify that output first, and never fall back to the current object version. */
+async function finalizeStoredClip(
+  database: RewindDatabase,
+  row: ClipJobRow,
+  options: StoredJobOptions,
+  output: MediaObjectRef,
+): Promise<boolean> {
+  const context = storedContext(options, row.groupId);
+  if (output.prefix !== 'processed') throw new MediaStoreError('invalid_ref');
+  await verifyStoredMedia(context.store, context.scope, output, output);
+  const encoded = encodeMediaRef(output);
+  if (!storedClipFence(database, row, encoded)) return false;
+  const source = decodeMediaRef(row.sourcePath ?? '');
+  if (source.prefix !== 'incoming') throw new MediaStoreError('invalid_ref');
+  // No SQLite transaction is held over network I/O. A stale invocation can only
+  // delete this exact accepted version, with its verified output already durable.
+  await context.store.delete(context.scope, source);
+  beginJobTransaction(database);
+  try {
+    if (!storedClipFence(database, row, encoded)) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    const now = new Date().toISOString();
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'ready', source_path = NULL,
+      output_sha256 = ?, output_bytes = ?, output_verified_at = ?, error_code = NULL,
+      processing_started_at = NULL, updated_at = ?, failed_at = NULL WHERE id = ?`,
+      )
+      .run(output.sha256, output.byteLength, now, now, row.id);
+    if (row.sourceUri) {
+      database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(row.sourceUri);
+      database
+        .prepare(
+          'DELETE FROM staged_sources WHERE source_uri = ? AND claim_generation = ? AND source_path IS ?',
+        )
+        .run(row.sourceUri, row.sourceGeneration, row.sourcePath);
+    }
+    database.exec('COMMIT');
+    return true;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+async function processStoredClip(
+  database: RewindDatabase,
+  row: ClipJobRow,
+  options: ProcessClipJobOptions,
+  outputDir: string,
+  onWorkerWork?: WorkerWorkObserver,
+): Promise<ProcessClipJobResult> {
+  const claim = claimClipJob(database, row, options.workerAttemptCap);
+  if (!claim.claimed)
+    return {
+      ok: false,
+      jobId: row.id,
+      status: claim.reason === 'already_processing' ? 'processing' : 'failed',
+      reason:
+        claim.reason === 'retry_exhausted'
+          ? 'retry_exhausted'
+          : claim.reason === 'already_processing'
+            ? 'already_processing'
+            : 'processing_failed',
+      message: 'The media job cannot be claimed.',
+    };
+  row = claim.row;
+  onWorkerWork?.();
+  let output: MediaObjectRef | undefined;
+  let prepared = Boolean(row.outputPath && isMediaRef(row.outputPath));
+  let snapshot: { dispose: () => Promise<void> } | undefined;
+  const temp = resolve(
+    outputDir,
+    `.${safeOutputName(row.id, row.claimGeneration)}.${randomUUID()}.part.mp4`,
+  );
+  recordJobStarted(database, row.id, options.actorMemberId);
+  try {
+    const { store, scope } = storedContext(options, row.groupId);
+    if (prepared) output = decodeMediaRef(row.outputPath!);
+    else {
+      if (row.trimStartSeconds === null || row.trimEndSeconds === null)
+        throw new FfmpegProcessingError('invalid_metadata', 'Invalid processing metadata.');
+      const source = decodeMediaRef(row.sourcePath!);
+      if (source.prefix !== 'incoming') throw new MediaStoreError('invalid_ref');
+      const materialized = await materializeStoredMedia(store, scope, source, outputDir);
+      snapshot = materialized;
+      if (row.mediaType === 'photo')
+        await processPhotoWithFfmpeg(options.ffmpegBin, {
+          inputPath: materialized.path,
+          outputPath: temp,
+          mode: row.mode as CaptureMode,
+        });
+      else
+        await processClipWithFfmpeg(options.ffmpegBin, {
+          inputPath: materialized.path,
+          outputPath: temp,
+          trimStartSeconds: row.trimStartSeconds!,
+          trimEndSeconds: row.trimEndSeconds!,
+          mode: row.mode as CaptureMode,
+        });
+      await probeClipWithFfmpeg(options.ffmpegBin, temp);
+      output = await putProcessedFile(store, scope, temp, 'processed');
+      prepared = markOutputPrepared(database, row, encodeMediaRef(output));
+      if (!prepared) throw new MediaStoreError('scope_mismatch');
+    }
+    if (!output || !(await finalizeStoredClip(database, row, options, output)))
+      throw new MediaStoreError('scope_mismatch');
+    recordJobCompleted(database, row.id, options.actorMemberId);
+    return { ok: true, jobId: row.id, status: 'ready' };
+  } catch (error) {
+    const code =
+      error instanceof FfmpegProcessingError
+        ? error.code
+        : error instanceof MediaStoreError && error.code !== 'cleanup_failed'
+          ? 'source_unavailable'
+          : 'cleanup_failed';
+    // Keep the prepared output for bounded cleanup/restart recovery, even when
+    // the raw version was already deleted before a failed database COMMIT.
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'failed', error_code = ?,
+      processing_started_at = NULL, failed_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'processing' AND claim_generation = ? AND processing_started_at IS ?`,
+      )
+      .run(
+        code,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        row.id,
+        row.claimGeneration,
+        row.processingStartedAt,
+      );
+    recordJobFailed(database, row.id, options.actorMemberId);
+    if (output && !prepared) {
+      const { store, scope } = storedContext(options, row.groupId);
+      await store.delete(scope, output).catch(() => undefined);
+    }
+    return {
+      ok: false,
+      jobId: row.id,
+      status: 'failed',
+      reason: 'processing_failed',
+      message: 'The private media job could not be processed.',
+    };
+  } finally {
+    await snapshot?.dispose();
+    await rm(temp, { force: true });
+  }
 }
