@@ -20,6 +20,7 @@ import {
   runReminderOutboxTick,
   listReminderOutbox,
   validReminderDestination,
+  reminderDeliveryStatus,
 } from '../dist/reminders/outbox.js';
 
 const execFileAsync = promisify(execFile);
@@ -92,6 +93,31 @@ async function fixture(run, { zone = 'UTC' } = {}) {
     await rm(root, { recursive: true, force: true });
   }
 }
+
+test('delivery status reflects configured providers and live registration without claiming delivery', async () => {
+  await fixture(async (c) => {
+    assert.equal(reminderDeliveryStatus(c.db, 'reminder-owner', {}).state, 'not-configured');
+    const registered = reminderDeliveryStatus(c.db, 'reminder-owner', c.providers, c.now);
+    assert.equal(registered.state, 'registered');
+    assert.match(registered.message, /delivery is not confirmed/);
+    assert.equal(
+      reminderDeliveryStatus(c.db, 'reminder-outsider', c.providers, c.now).state,
+      'registration-required',
+    );
+    assert.doesNotMatch(JSON.stringify(registered), /synthetic_reminder_token|session|destination/);
+    disableReminderDestination(c.db, c.actor, c.destination.destination.id, c.now);
+    assert.equal(
+      reminderDeliveryStatus(c.db, 'reminder-owner', c.providers, c.now).state,
+      'registration-required',
+    );
+    registerReminderDestination(c.db, c.actor, registration, c.now);
+    revokeRealSession(c.db, c.session, c.now);
+    assert.equal(
+      reminderDeliveryStatus(c.db, 'reminder-owner', c.providers, c.now).state,
+      'registration-required',
+    );
+  });
+});
 
 test('group-local Sunday queues once across duplicate scans, DB reopen and repeated sends', async () => {
   await fixture(
@@ -414,6 +440,11 @@ test('HTTPS-policy API binds registration/status/disable to the current real mem
       const configured = await fetch(`${base}/real/reminders/config`, { headers: headers() });
       assert.equal(configured.status, 200);
       assert.deepEqual(await configured.json(), { providers: ['expo'], webPushPublicKey: null });
+      const preferences = await fetch(`${base}/real/groups/${c.actor.groupId}/reminders`, {
+        headers: headers(),
+      });
+      assert.equal(preferences.status, 200);
+      assert.equal((await preferences.json()).preference.delivery.state, 'registered');
       const mediaConfig = await fetch(`${base}/real/media/config`, { headers: headers() });
       assert.equal(mediaConfig.status, 200);
       assert.deepEqual(await mediaConfig.json(), {

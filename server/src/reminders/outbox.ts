@@ -544,3 +544,37 @@ export function listReminderOutbox(db: RewindDatabase, actor: ReminderActor, now
     )
     .all(actor.groupId, accountId);
 }
+
+export function reminderDeliveryStatus(
+  db: RewindDatabase,
+  accountId: string,
+  providers: ReminderProviders,
+  now = new Date(),
+) {
+  const names = (['expo', 'webpush'] as const).filter((name) => providers[name]);
+  if (!names.length)
+    return {
+      state: 'not-configured',
+      message: 'Reminder delivery is not configured. Your preference is saved for this group.',
+    };
+  const active = db
+    .prepare(
+      `SELECT d.id FROM reminder_destinations d
+    JOIN real_account_sessions s ON s.token_hash = d.session_token_hash
+    WHERE d.account_id = ? AND s.account_id = d.account_id AND d.enabled = 1
+    AND d.provider IN (${names.map(() => '?').join(',')}) AND s.revoked_at IS NULL
+    AND s.idle_expires_at > ? AND s.absolute_expires_at > ? LIMIT 1`,
+    )
+    .get(accountId, ...names, now.toISOString(), now.toISOString());
+  return active
+    ? {
+        state: 'registered',
+        message:
+          'An active device is registered. A reminder worker must run; delivery is not confirmed.',
+      }
+    : {
+        state: 'registration-required',
+        message:
+          'A reminder provider is configured. Register a supported device to receive reminders.',
+      };
+}

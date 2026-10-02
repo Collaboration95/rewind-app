@@ -12,6 +12,7 @@ import {
   listReminderDestinations,
   disableReminderDestination,
   listReminderOutbox,
+  reminderDeliveryStatus,
   type ReminderProviders,
 } from './reminders/outbox';
 import {
@@ -100,6 +101,7 @@ import {
   requestUploadIntent,
   getUploadIntentStatus,
   completeUploadIntent,
+  reconcileUploadIntent,
   type UploadIntentDependencies,
   type UploadIntentRequest,
   type UploadIntentFailure,
@@ -3639,7 +3641,7 @@ async function handleRealGroupRequest(
   }
 
   const uploadIntentMatch = url.pathname.match(
-    /^\/real\/groups\/([^/]+)\/upload-intents(?:\/([^/]+)(\/complete)?)?$/,
+    /^\/real\/groups\/([^/]+)\/upload-intents(?:\/([^/]+)(\/(?:complete|reconcile))?)?$/,
   );
   if (uploadIntentMatch) {
     const groupId = decodePathSegment(uploadIntentMatch[1], response, config);
@@ -3705,7 +3707,9 @@ async function handleRealGroupRequest(
     }
     const body = await requestBody(request, config, 8 * 1024);
     const keys = intentId
-      ? ['versionId']
+      ? uploadIntentMatch[3] === '/reconcile'
+        ? []
+        : ['versionId']
       : [
           'idempotencyKey',
           'mediaType',
@@ -3729,12 +3733,15 @@ async function handleRealGroupRequest(
     if (!release) return;
     try {
       if (intentId) {
-        const result = await completeUploadIntent(
-          database,
-          actor,
-          { intentId, versionId: typeof body.versionId === 'string' ? body.versionId : '' },
-          deps,
-        );
+        const result =
+          uploadIntentMatch[3] === '/reconcile'
+            ? await reconcileUploadIntent(database, actor, { intentId }, deps)
+            : await completeUploadIntent(
+                database,
+                actor,
+                { intentId, versionId: typeof body.versionId === 'string' ? body.versionId : '' },
+                deps,
+              );
         if (!result.ok) return failed(result.reason);
         authJson(request, response, config, 200, { intent: result.value });
       } else {
@@ -3767,13 +3774,22 @@ async function handleRealGroupRequest(
     }
     if (request.method === 'GET') {
       if (kind !== 'reminders') return sendNotFound(response, config);
+      const preference = getRealReminderPreference(
+        database,
+        session.account.id,
+        groupId,
+        currentClock(),
+      );
       authJson(request, response, config, 200, {
-        preference: getRealReminderPreference(
-          database,
-          session.account.id,
-          groupId,
-          currentClock(),
-        ),
+        preference: preference && {
+          ...preference,
+          delivery: reminderDeliveryStatus(
+            database,
+            session.account.id,
+            options.reminderProviders ?? {},
+            currentClock(),
+          ),
+        },
       });
       return;
     }
@@ -3829,7 +3845,26 @@ async function handleRealGroupRequest(
       );
       return;
     }
-    authJson(request, response, config, 200, result);
+    authJson(
+      request,
+      response,
+      config,
+      200,
+      kind === 'reminders' && 'preference' in result && result.preference
+        ? {
+            ...result,
+            preference: {
+              ...result.preference,
+              delivery: reminderDeliveryStatus(
+                database,
+                session.account.id,
+                options.reminderProviders ?? {},
+                currentClock(),
+              ),
+            },
+          }
+        : result,
+    );
     return;
   }
 

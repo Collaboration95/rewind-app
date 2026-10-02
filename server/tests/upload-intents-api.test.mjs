@@ -80,6 +80,17 @@ async function apiFixture(run) {
 test('real HTTPS-policy JSON request→direct PUT→complete→process is idempotent and denies outsider/forged identity', async () =>
   apiFixture(async (c) => {
     const input = c.input('http-intent-key');
+    const mediaConfig = await fetch(c.base + '/real/media/config', {
+      headers: { ...c.proxy, Authorization: `Bearer ${c.owner.token}` },
+    });
+    assert.equal(mediaConfig.status, 200);
+    assert.equal(mediaConfig.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await mediaConfig.json(), {
+      directTransfer: true,
+      maxVideoBytes: 50 * 1024 * 1024,
+      maxPhotoBytes: 10 * 1024 * 1024,
+    });
+    assert.equal((await fetch(c.base + '/real/media/config', { headers: c.proxy })).status, 401);
     assert.equal((await c.request(c.outsider, '', 'POST', input)).status, 403);
     assert.equal(
       (await c.request(c.owner, '', 'POST', { ...input, accountId: c.outsider.account.id })).status,
@@ -151,6 +162,38 @@ test('real HTTPS-policy JSON request→direct PUT→complete→process is idempo
       c.database
         .prepare('SELECT count_used AS n FROM contribution_quota_windows WHERE member_id=?')
         .get(registered.profileId).n,
+      1,
+    );
+  }));
+
+test('lost PUT receipt recovery uses authenticated empty-body reconciliation and registers once', async () =>
+  apiFixture(async (c) => {
+    const requested = await (
+      await c.request(c.owner, '', 'POST', c.input('http-lost-receipt'))
+    ).json();
+    const version = await c.put(requested.upload);
+    const path = '/' + requested.intent.id + '/reconcile';
+    assert.equal((await c.request(c.outsider, path, 'POST', {})).status, 403);
+    assert.equal((await c.request(c.owner, path, 'POST', { versionId: version })).status, 400);
+    const recovered = await c.request(c.owner, path, 'POST', {});
+    assert.equal(recovered.status, 200);
+    assert.equal(recovered.headers.get('cache-control'), 'no-store');
+    const result = await recovered.json();
+    assert.equal(result.intent.state, 'completed');
+    assert.equal(result.intent.versionId, version);
+    assert.doesNotMatch(JSON.stringify(result), /media-object:|synthetic-intent-proxy-secret/);
+    const replay = await (await c.request(c.owner, path, 'POST', {})).json();
+    assert.equal(replay.intent.jobId, result.intent.jobId);
+    assert.equal(
+      c.database
+        .prepare('SELECT COUNT(*) AS n FROM contributions WHERE id = ?')
+        .get(result.intent.contributionId).n,
+      1,
+    );
+    assert.equal(
+      c.database
+        .prepare('SELECT count_used AS n FROM contribution_quota_windows WHERE member_id = ?')
+        .get(result.intent.profileId).n,
       1,
     );
   }));
