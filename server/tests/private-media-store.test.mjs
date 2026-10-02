@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { Buffer } from 'node:buffer';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -28,7 +29,7 @@ function input(extra = {}) {
   };
 }
 async function temporary(run) {
-  const root = await mkdtemp('/private/tmp/rewind-media-store-');
+  const root = await mkdtemp(`${tmpdir()}/rewind-media-store-`);
   try {
     return await run(root);
   } finally {

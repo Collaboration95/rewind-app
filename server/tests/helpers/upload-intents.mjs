@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { Buffer } from 'node:buffer';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -46,7 +47,7 @@ export function accountFixture(database, id, now) {
   return token;
 }
 export async function withIntentFixture(run) {
-  const root = await mkdtemp('/private/tmp/rewind-upload-intents-');
+  const root = await mkdtemp(`${tmpdir()}/rewind-upload-intents-`);
   const config = parseConfig({ REWIND_DATA_DIR: root });
   const now = new Date('2026-10-02T12:00:00Z');
   const database = openDatabase(config);

@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { Buffer } from 'node:buffer';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -19,7 +20,7 @@ import { clearDemoMedia } from './helpers/demo-media.mjs';
 import { s3Double, s3Store } from './helpers/private-media-store.mjs';
 const scope = { environment: 'test', groupId: 'demo-group' };
 async function scenario(run) {
-  const root = await mkdtemp('/private/tmp/rewind-private-jobs-');
+  const root = await mkdtemp(`${tmpdir()}/rewind-private-jobs-`);
   const config = parseConfig({ REWIND_DATA_DIR: root });
   const database = openDatabase(config);
   clearDemoMedia(database);
