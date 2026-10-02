@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -9,6 +10,10 @@ import { localOnlyEnv, runOwnedCommand, runProductionE2ePair } from './run-produ
 
 async function makeTemporaryDirectory(t) {
   const directory = await mkdtemp(join(tmpdir(), 'rewind-production-runner-test-'));
+  execFileSync('git', ['init', '-q'], { cwd: directory });
+  await writeFile(join(directory, 'App.tsx'), 'export default 1;\n');
+  await writeFile(join(directory, 'package-lock.json'), '{"lockfileVersion":3}\n');
+  execFileSync('git', ['add', 'App.tsx', 'package-lock.json'], { cwd: directory });
   t.after(() => rm(directory, { recursive: true, force: true }));
   return directory;
 }
@@ -145,6 +150,50 @@ test('production pair preserves server-build failure and skips browser runs', as
   });
   assert.equal(exitCode, 31);
   assert.equal(calls.length, 1);
+  await assert.rejects(rm(cacheRoot, { recursive: false }), { code: 'ENOENT' });
+});
+
+test('production pair rejects source changes made during the shared server build', async (t) => {
+  const root = await makeTemporaryDirectory(t);
+  const cacheRoot = join(root, 'artifact-cache');
+  await mkdir(cacheRoot);
+  const calls = [];
+  const exitCode = await runProductionE2ePair({
+    root,
+    sourceEnv: {},
+    makeCacheRoot: async () => cacheRoot,
+    execute: async (_command, args) => {
+      calls.push(args);
+      await writeFile(join(root, 'App.tsx'), 'export default "changed during server build";\n');
+      return 0;
+    },
+    log: () => {},
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(calls.length, 1);
+  await assert.rejects(rm(cacheRoot, { recursive: false }), { code: 'ENOENT' });
+});
+
+test('production pair rejects source changes between its isolated browser runs', async (t) => {
+  const root = await makeTemporaryDirectory(t);
+  const cacheRoot = join(root, 'artifact-cache');
+  await mkdir(cacheRoot);
+  const calls = [];
+  const exitCode = await runProductionE2ePair({
+    root,
+    sourceEnv: {},
+    makeCacheRoot: async () => cacheRoot,
+    execute: async (_command, args) => {
+      calls.push(args);
+      if (calls.length === 2) {
+        await writeFile(join(root, 'App.tsx'), 'export default "changed between runs";\n');
+      }
+      return 0;
+    },
+    log: () => {},
+  });
+  assert.equal(exitCode, 1);
+  assert.equal(calls.length, 2);
   await assert.rejects(rm(cacheRoot, { recursive: false }), { code: 'ENOENT' });
 });
 

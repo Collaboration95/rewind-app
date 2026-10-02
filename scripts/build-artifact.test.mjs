@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -18,7 +18,16 @@ async function createProject(t) {
   await writeFile(join(projectRoot, 'App.tsx'), 'export default 1;\n');
   await writeFile(join(projectRoot, 'app.json'), '{"expo":{"name":"Test"}}\n');
   await writeFile(join(projectRoot, 'package-lock.json'), '{"lockfileVersion":3}\n');
-  execFileSync('git', ['add', 'App.tsx', 'app.json', 'package-lock.json'], { cwd: projectRoot });
+  await mkdir(join(projectRoot, 'skills'));
+  await writeFile(join(projectRoot, 'skills/shared.md'), 'shared instructions\n');
+  await symlink('skills', join(projectRoot, '.codex-skills'));
+  execFileSync(
+    'git',
+    ['add', 'App.tsx', 'app.json', 'package-lock.json', 'skills', '.codex-skills'],
+    {
+      cwd: projectRoot,
+    },
+  );
   t.after(async () => {
     await rm(cacheRoot, { recursive: true, force: true });
     await rm(projectRoot, { recursive: true, force: true });
@@ -155,6 +164,24 @@ test('failed artifact builds preserve the error and clean their staging director
       log: () => {},
     }),
     /fixture build failed/,
+  );
+  assert.deepEqual(await readdir(cacheRoot), []);
+});
+
+test('source mutation during export fails closed without publishing an artifact', async (t) => {
+  const { projectRoot, cacheRoot } = await createProject(t);
+  await assert.rejects(
+    ensureBuildArtifact({
+      projectRoot,
+      cacheRoot,
+      env: {},
+      build: async (outputDir) => {
+        await writeWebArtifact(outputDir);
+        await writeFile(join(projectRoot, 'App.tsx'), 'export default "changed during export";\n');
+      },
+      log: () => {},
+    }),
+    /source changed during the web export/,
   );
   assert.deepEqual(await readdir(cacheRoot), []);
 });

@@ -4,7 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { computeBuildArtifactKey, productionE2eBuildEnv } from './build-artifact.mjs';
+
 const projectRoot = process.cwd();
+const PAIR_MODE = 'production-e2e-pair';
+const PAIR_OUTPUT = 'production-e2e-server-and-web-v1';
 export function localOnlyEnv(runId, artifactCacheDir, source = process.env) {
   const env = {
     ...source,
@@ -49,6 +53,21 @@ export async function runProductionE2ePair({
   const artifactCacheDir = await makeCacheRoot();
   let exitCode = 0;
   try {
+    const buildInputs = {
+      projectRoot: root,
+      env: productionE2eBuildEnv(sourceEnv),
+      mode: PAIR_MODE,
+      output: PAIR_OUTPUT,
+    };
+    const pairKey = await computeBuildArtifactKey(buildInputs);
+    async function assertPairInputsUnchanged(phase) {
+      const currentKey = await computeBuildArtifactKey(buildInputs);
+      if (currentKey !== pairKey) {
+        throw new Error(
+          `Production E2E source changed ${phase}; refusing to reuse the server build.`,
+        );
+      }
+    }
     const buildStartedAt = performance.now();
     const npmCommand = sourceEnv.npm_execpath ? process.execPath : 'npm';
     const npmArgs = sourceEnv.npm_execpath
@@ -67,8 +86,10 @@ export async function runProductionE2ePair({
     if (buildCode !== 0) {
       exitCode = buildCode;
     } else {
+      await assertPairInputsUnchanged('during the server build');
       const playwrightCliPath = join(root, 'node_modules/@playwright/test/cli.js');
       for (const runId of ['1', '2']) {
+        await assertPairInputsUnchanged(`before isolated run ${runId}`);
         const code = await execute(
           process.execPath,
           [playwrightCliPath, 'test', '--config=playwright.e2e.config.ts'],

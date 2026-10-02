@@ -9,6 +9,7 @@ import {
   readlink,
   rename,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -58,7 +59,15 @@ async function hashInputs(projectRoot, files) {
       if (details.isSymbolicLink()) {
         hash.update('symlink\0');
         hash.update(await readlink(absolute));
-        hash.update(await readFile(absolute));
+        const target = await stat(absolute);
+        if (target.isFile()) {
+          hash.update('file\0');
+          hash.update(await readFile(absolute));
+        } else if (target.isDirectory()) {
+          hash.update('directory\0');
+        } else {
+          hash.update('special\0');
+        }
       } else if (details.isFile()) {
         hash.update('file\0');
         hash.update(await readFile(absolute));
@@ -81,6 +90,16 @@ function publicEnvironment(env) {
       .filter(([name]) => name.startsWith('EXPO_PUBLIC_'))
       .sort(([left], [right]) => left.localeCompare(right)),
   );
+}
+
+export function productionE2eBuildEnv(source = process.env) {
+  const env = {
+    ...source,
+    EXPO_PUBLIC_CAMERA_MODE: 'demo',
+    EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
+  };
+  delete env.EXPO_PUBLIC_DEMO_ACCESS;
+  return env;
 }
 
 export async function computeBuildArtifactKey({
@@ -175,6 +194,10 @@ export async function ensureBuildArtifact({
   const key = await computeBuildArtifactKey({ projectRoot: root, env, mode, output });
   const artifactDir = join(cache, key);
   if (await verifyBuildArtifact(artifactDir, key, output)) {
+    const currentKey = await computeBuildArtifactKey({ projectRoot: root, env, mode, output });
+    if (currentKey !== key) {
+      throw new Error('Production E2E source changed while verifying the cached web artifact.');
+    }
     const buildId = await pwaBuildId(artifactDir);
     log(`Production E2E web artifact cache hit: ${key.slice(0, 12)} (${buildId}).`);
     return { artifactDir, key, buildId, cacheHit: true };
@@ -195,6 +218,12 @@ export async function ensureBuildArtifact({
       );
     }
     const buildId = await stampPwaBuild(stagingDir);
+    const postBuildKey = await computeBuildArtifactKey({ projectRoot: root, env, mode, output });
+    if (postBuildKey !== key) {
+      throw new Error(
+        'Production E2E source changed during the web export; refusing to publish it.',
+      );
+    }
     await assertStaticArtifact(stagingDir);
     const integrity = await artifactIntegrity(stagingDir);
     await writeFile(
@@ -202,6 +231,10 @@ export async function ensureBuildArtifact({
       `${JSON.stringify({ schema: MANIFEST_SCHEMA, key, output, buildId, integrity }, null, 2)}\n`,
       { mode: 0o600 },
     );
+    const prePublishKey = await computeBuildArtifactKey({ projectRoot: root, env, mode, output });
+    if (prePublishKey !== key) {
+      throw new Error('Production E2E source changed before web artifact publication.');
+    }
     await rename(stagingDir, artifactDir);
     log(
       `Production E2E web artifact built: ${key.slice(0, 12)} (${buildId}) in ${(
