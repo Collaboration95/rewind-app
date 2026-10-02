@@ -131,12 +131,13 @@ export function RealAccountGroupExperience({
   inviteWebOrigin?: string;
 }) {
   const auth = useRealAccount();
+  const [group, setGroup] = useState<RealGroup | null>(null);
+  const [transferMode, setTransferMode] = useState<'server' | 'direct'>('server');
   const mediaClient = useMemo(
-    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest),
-    [auth.authenticatedRequest],
+    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest, { transferMode }),
+    [auth.authenticatedRequest, transferMode],
   );
   const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
-  const [group, setGroup] = useState<RealGroup | null>(null);
   const [homeAllowance, setHomeAllowance] = useState<ContributionLedgerAllowance | null>(null);
   const loadContributionLedger = useCallback(
     () =>
@@ -169,6 +170,74 @@ export function RealAccountGroupExperience({
   const [invitePending, setInvitePending] = useState(false);
   const [acceptPending, setAcceptPending] = useState(false);
   const [enteredCode, setEnteredCode] = useState('');
+  const [capturePending, setCapturePending] = useState(false);
+  const captureRequest = useRef(0);
+  const captureMounted = useRef(true);
+  const captureAccount = useRef(auth.session?.account.id);
+
+  useEffect(() => {
+    captureMounted.current = true;
+    return () => {
+      captureMounted.current = false;
+      captureRequest.current += 1;
+    };
+  }, []);
+  useEffect(() => {
+    captureAccount.current = auth.session?.account.id;
+  }, [auth.session?.account.id]);
+  useEffect(() => () => mediaClient.dispose(), [mediaClient]);
+  useEffect(() => {
+    if (screen !== 'capture') mediaClient.cancelDirectTransfers();
+    return () => mediaClient.cancelDirectTransfers();
+  }, [mediaClient, screen, group?.group.id, auth.session?.account.id]);
+
+  const openCapture = async () => {
+    if (!group) return;
+    const request = ++captureRequest.current;
+    const context = groupContextVersion.current;
+    const groupId = group.group.id;
+    const accountId = auth.session?.account.id;
+    setCapturePending(true);
+    setMessage(null);
+    try {
+      const response = await auth.authenticatedRequest('/real/media/config');
+      let mode: 'server' | 'direct' = 'server';
+      if (response.status !== 404) {
+        if (!response.ok)
+          throw new Error(
+            'Capture settings are unavailable. Reconnect or sign in again, then retry.',
+          );
+        const config = (await response.json()) as { directTransfer?: unknown };
+        if (typeof config.directTransfer !== 'boolean')
+          throw new Error('Capture settings could not be verified. Retry when connected.');
+        mode = config.directTransfer ? 'direct' : 'server';
+      }
+      if (
+        !captureMounted.current ||
+        request !== captureRequest.current ||
+        context !== groupContextVersion.current ||
+        selectedGroupId.current !== groupId ||
+        captureAccount.current !== accountId
+      )
+        return;
+      setTransferMode(mode);
+      setHomeAllowance(null);
+      setScreen('capture');
+    } catch (error) {
+      if (
+        captureMounted.current &&
+        request === captureRequest.current &&
+        context === groupContextVersion.current
+      )
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : 'Capture settings are unavailable. Retry when connected.',
+        );
+    } finally {
+      if (captureMounted.current && request === captureRequest.current) setCapturePending(false);
+    }
+  };
 
   const loadGroupMembers = useCallback(
     async (groupId: string, contextVersion: number) => {
@@ -355,6 +424,7 @@ export function RealAccountGroupExperience({
               realAccount={{
                 groupId: group.group.id,
                 authenticatedRequest: auth.authenticatedRequest,
+                transferMode,
               }}
             />
           )}
@@ -1009,12 +1079,9 @@ export function RealAccountGroupExperience({
             </View>
           )}
           <Action
-            title="Capture a moment"
-            onPress={() => {
-              setMessage(null);
-              setHomeAllowance(null);
-              setScreen('capture');
-            }}
+            title={capturePending ? 'Checking capture…' : 'Capture a moment'}
+            disabled={capturePending}
+            onPress={() => void openCapture()}
             testID="real-group-capture-action"
           />
           <Action

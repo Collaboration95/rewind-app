@@ -70,7 +70,11 @@ type AccessStatus =
 export interface VideoCaptureScreenProps {
   platform?: CameraPlatform;
   runtimeClient?: RuntimeClient | null;
-  realAccount?: { groupId: string; authenticatedRequest: AuthenticatedRequest };
+  realAccount?: {
+    groupId: string;
+    authenticatedRequest: AuthenticatedRequest;
+    transferMode?: 'server' | 'direct';
+  };
   onBack?: () => void;
   onContributionDeleted?: () => void;
 }
@@ -170,11 +174,18 @@ export function VideoCaptureScreen({
   const demoSession = useOptionalDemoSession();
   const realGroupId = realAccount?.groupId;
   const authenticatedRequest = realAccount?.authenticatedRequest;
-  const activeRuntimeClient = useMemo(
+  const transferMode = realAccount?.transferMode ?? 'server';
+  const ownedRealRuntimeClient = useMemo(
     () =>
-      runtimeClient ??
-      (authenticatedRequest ? createRealAccountVideoRuntimeClient(authenticatedRequest) : null),
-    [authenticatedRequest, runtimeClient],
+      authenticatedRequest && realGroupId
+        ? createRealAccountVideoRuntimeClient(authenticatedRequest, { transferMode })
+        : null,
+    [authenticatedRequest, realGroupId, transferMode],
+  );
+  useEffect(() => () => ownedRealRuntimeClient?.dispose(), [ownedRealRuntimeClient]);
+  const activeRuntimeClient = useMemo(
+    () => runtimeClient ?? ownedRealRuntimeClient,
+    [ownedRealRuntimeClient, runtimeClient],
   );
   const uploadSessionId = demoSession?.session?.id ?? (realGroupId ? 'real-account-session' : null);
   const uploadGroupId = demoSession?.session?.groupId ?? realGroupId ?? null;
