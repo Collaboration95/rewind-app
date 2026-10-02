@@ -196,11 +196,10 @@ export async function digestTransferBytes(bytes: Uint8Array<ArrayBuffer>): Promi
       digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
     } else {
       // eslint-disable-next-line @typescript-eslint/no-require-imports -- Load native crypto only for the native adapter.
-      const crypto = require('expo-crypto') as {
-        digest(algorithm: string, bytes: Uint8Array): Promise<ArrayBuffer>;
-      };
-      digest = await crypto.digest('SHA-256', bytes);
+      const crypto = require('expo-crypto') as typeof import('expo-crypto');
+      digest = await crypto.digest(crypto.CryptoDigestAlgorithm.SHA256, bytes);
     }
+    if (!(digest instanceof ArrayBuffer) || digest.byteLength !== 32) throw new Error();
     return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join(
       '',
     );

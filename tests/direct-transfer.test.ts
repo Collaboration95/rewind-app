@@ -22,17 +22,14 @@ jest.mock('expo-file-system/legacy', () => ({
   EncodingType: { Base64: 'base64' },
 }));
 
-jest.mock(
-  'expo-crypto',
-  () => ({
-    digest: jest.fn(async (_algorithm: string, bytes: Uint8Array) => {
-      const { createHash } = jest.requireActual('node:crypto') as typeof import('node:crypto');
-      const buffer = createHash('sha256').update(bytes).digest();
-      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-    }),
+jest.mock('expo-crypto', () => ({
+  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+  digest: jest.fn(async (_algorithm: string, bytes: Uint8Array) => {
+    const { createHash } = jest.requireActual('node:crypto') as typeof import('node:crypto');
+    const buffer = createHash('sha256').update(bytes).digest();
+    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
   }),
-  { virtual: true },
-);
+}));
 
 const bytes = Uint8Array.from([0, 255, 128, 42]);
 const now = new Date('2026-10-02T12:00:00Z');
@@ -669,6 +666,21 @@ describe('platform checksum adapters', () => {
     expect(await digestTransferBytes(bytes)).not.toBe(
       await sha(new TextEncoder().encode(Buffer.from(bytes).toString('base64'))),
     );
+  });
+
+  it('passes an exact ArrayBuffer through the installed React Native binary request converter', async () => {
+    const c = fixture();
+    await c.client.transferContribution('group-1', input, c.source());
+    const body = c.storageFetch.mock.calls[0][1]!.body;
+    expect(body).toBeInstanceOf(ArrayBuffer);
+    const { default: convertRequestBody } = jest.requireActual(
+      'react-native/Libraries/Network/convertRequestBody',
+    ) as { default: (body: unknown) => { base64: string } };
+    // Both installed RCTNetworking platform wrappers call this converter;
+    // their native implementations decode this bridge value to binary bytes.
+    const bridge = convertRequestBody(body);
+    expect(new Uint8Array(Buffer.from(bridge.base64, 'base64'))).toEqual(bytes);
+    expect(c.storageFetch.mock.calls[0][1]!.credentials).toBe('omit');
   });
   it('browser uses Web Crypto on exact bytes and requires a secure crypto boundary', async () => {
     const os = Object.getOwnPropertyDescriptor(Platform, 'OS');
