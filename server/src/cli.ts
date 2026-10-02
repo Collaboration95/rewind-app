@@ -1,4 +1,5 @@
 import { once } from 'node:events';
+import { startCycleSchedulerLoop } from './cycles/scheduler';
 import { listAuditEvents, type AuditEvent } from './audit';
 import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from './config';
 import { backfillMediaIntegrity, openDatabase, resetDatabase, fixtureSummary } from './db';
@@ -575,20 +576,39 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
 
 async function start(config: RuntimeConfig): Promise<void> {
   const database = await openRuntimeDatabase(config);
-  await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
-  const server = createRuntimeServer(config, database);
-  const close = () => {
-    server.close(() => database.close());
-  };
-  process.once('SIGINT', close);
-  process.once('SIGTERM', close);
-  server.on('error', (error) => {
-    console.error(
-      `Could not start the local runtime on ${config.host}:${config.port}: ${error.message}. ` +
-        'Try another REWIND_PORT or stop the process using that port.',
-    );
+  let schedulerDatabase: ReturnType<typeof openDatabase>;
+  try {
+    await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
+    schedulerDatabase = await openRuntimeDatabase(config);
+  } catch (error) {
     database.close();
+    throw error;
+  }
+  const server = createRuntimeServer(config, database);
+  let scheduler: ReturnType<typeof startCycleSchedulerLoop> | undefined;
+  let closing: Promise<void> | undefined;
+  const close = () => {
+    if (closing) return closing;
+    closing = (async () => {
+      // Stop claims and finish in-flight media work before closing its connection.
+      await Promise.all([
+        scheduler?.stop().catch(() => undefined),
+        new Promise<void>((resolveClose) => server.close(() => resolveClose())),
+      ]);
+      schedulerDatabase.close();
+      database.close();
+      process.off('SIGINT', shutdown);
+      process.off('SIGTERM', shutdown);
+    })();
+    return closing;
+  };
+  const shutdown = () => void close();
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+  server.on('error', () => {
+    console.error('Could not start the runtime listener. Check REWIND_HOST and REWIND_PORT.');
     process.exitCode = 1;
+    void close();
   });
   server.listen(config.port, config.host, () => {
     const address = server.address();
@@ -596,12 +616,23 @@ async function start(config: RuntimeConfig): Promise<void> {
     config.port = actualPort;
     const host = config.host === '0.0.0.0' || config.host === '::' ? '127.0.0.1' : config.host;
     const lan = getLanAddress();
+    scheduler = startCycleSchedulerLoop(schedulerDatabase, {
+      ffmpegBin: config.ffmpegBin,
+      stagingDir: resolve(config.dataDir, 'media', 'staging'),
+      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      onError: (category) => console.error('Cycle scheduler: ' + category),
+    });
+    void scheduler.done.catch(() => {
+      console.error('Cycle scheduler stopped after repeated failures.');
+      process.exitCode = 1;
+      void close();
+    });
     console.log(
       `Rewind local runtime ${SERVICE_VERSION} listening on http://${host}:${actualPort}`,
     );
     if (lan) console.log(`LAN address: http://${lan}:${actualPort}`);
     console.log(`SQLite data: ${config.databasePath}`);
-    console.log('Press Ctrl-C to stop.');
+    console.log('Real-group automatic cycle/media loop started. Press Ctrl-C to stop.');
   });
 }
 
