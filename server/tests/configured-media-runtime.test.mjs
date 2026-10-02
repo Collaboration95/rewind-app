@@ -93,6 +93,17 @@ test('one configured adapter binds HTTP, lifecycle, worker and upload intents to
   );
 });
 
+test('installed SDK constructs the configured private runtime offline and closes idempotently', async () => {
+  // No object operation or presigning is invoked: this proves the packaged
+  // runtime can load its real SDK, not any live provider semantics.
+  const runtime = await configureRuntimeMedia(parseConfig(s3));
+  assert.equal(runtime.options.mediaEnvironment, 'test');
+  assert.equal(runtime.options.uploadIntents.transport.backend, 's3');
+  assert.equal(typeof runtime.options.mediaStore.read, 'function');
+  runtime.close();
+  runtime.close();
+});
+
 test('worker CLI uses opt-in local store for pinned input, verified output and input cleanup', async () => {
   const root = await mkdtemp(`${tmpdir()}/rewind-configured-worker-`);
   const env = {
