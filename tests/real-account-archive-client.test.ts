@@ -48,6 +48,25 @@ it('resolves only same-origin HTTPS capability paths without application credent
   }
 });
 
+it('resolves browser same-origin API bases while preserving the proxy path', () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { location: { href: 'https://site.example/' } },
+  });
+  try {
+    expect(resolvePublicMediaPath('/api', mediaCapability('a'))).toBe(
+      `https://site.example/api${mediaCapability('a')}`,
+    );
+    expect(() => resolvePublicMediaPath('/api?token=private', mediaCapability('a'))).toThrow(
+      AuthRequestError,
+    );
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'window', previous);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+});
+
 it('maps the server-shaped ready premiere response and scoped archive capabilities', async () => {
   const request = jest.fn(async (path: string) => {
     if (path.startsWith('/archive?'))

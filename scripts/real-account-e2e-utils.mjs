@@ -107,6 +107,7 @@ export function localOnlyEnv(source = process.env, overrides = {}) {
 
 export function redactRealAccountDiagnostic(value) {
   return String(value)
+    .replace(/\/media\/access\/[A-Za-z0-9_-]+/g, '/media/access/<capability>')
     .replace(
       /((?:sessionId|groupId|cycleId|jobId|contributionId|accountId|token|password|inviteCode|code)=)[^&\s)]+/gi,
       '$1<redacted>',

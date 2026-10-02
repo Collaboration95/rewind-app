@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import { expect, firefox, test } from '@playwright/test';
 
@@ -16,7 +19,8 @@ function fixtureValue(name, value) {
 function safeApiPath(pathname) {
   return pathname
     .replace(/\/real\/groups\/[^/]+/g, '/real/groups/:id')
-    .replace(/\/real\/invites\/[^/]+/g, '/real/invites/:id');
+    .replace(/\/real\/invites\/[^/]+/g, '/real/invites/:id')
+    .replace(/\/media\/access\/[^/]+/g, '/media/access/:capability');
 }
 
 async function registerAndSignIn(page, username, { invitation = false } = {}) {
@@ -108,7 +112,7 @@ async function waitForSchedulerAdvance(databasePath, groupId, oldCycleId) {
   while (Date.now() < deadline) {
     const current = readCycleAdvance(databasePath, groupId, oldCycleId);
     if (
-      current?.oldStatus === 'revealing' &&
+      ['revealing', 'premiere', 'archived'].includes(current?.oldStatus) &&
       current.successorId &&
       current.previousCycleId === oldCycleId &&
       current.currentCycleId === current.successorId &&
@@ -121,6 +125,93 @@ async function waitForSchedulerAdvance(databasePath, groupId, oldCycleId) {
   throw new Error(
     'The real cycle scheduler did not persist closure and the next-cycle transition.',
   );
+}
+
+async function contributeFixturePhoto(page, databasePath, groupId, suffix) {
+  const photoPath = join(dirname(databasePath), 'archive-fixture.png');
+  execFileSync('ffmpeg', [
+    '-v',
+    'error',
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=navy:s=128x256',
+    '-frames:v',
+    '1',
+    '-threads',
+    '1',
+    photoPath,
+  ]);
+  const result = await page.evaluate(
+    async ({ base64, groupId, key }) => {
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const query = `groupId=${encodeURIComponent(groupId)}`;
+      const staged = await fetch(
+        `/api/contributions/upload/source?${query}&idempotencyKey=${key}`,
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'image/png' },
+          body: bytes,
+        },
+      );
+      if (!staged.ok) return { stageStatus: staged.status };
+      const { source } = await staged.json();
+      const upload = await fetch(`/api/contributions/upload?${query}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mediaType: 'photo',
+          idempotencyKey: key,
+          sourceUri: source.uri,
+          mimeType: 'image/png',
+          byteLength: source.byteLength,
+          durationSeconds: 3,
+          width: 128,
+          height: 256,
+          hasAudio: true,
+          mode: 'soft-focus',
+          trimStartSeconds: 0,
+          trimEndSeconds: 3,
+        }),
+      });
+      if (!upload.ok) return { stageStatus: staged.status, uploadStatus: upload.status };
+      const { upload: pending } = await upload.json();
+      const processed = await fetch(`/api/contributions/jobs/${pending.job.id}/process?${query}`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      return {
+        stageStatus: staged.status,
+        uploadStatus: upload.status,
+        processStatus: processed.status,
+        result: await processed.json(),
+      };
+    },
+    { base64: readFileSync(photoPath).toString('base64'), groupId, key: `archive-photo-${suffix}` },
+  );
+  expect(result.stageStatus).toBe(201);
+  expect(result.uploadStatus).toBe(201);
+  expect(result.processStatus).toBe(200);
+}
+
+async function waitForPublication(databasePath, cycleId) {
+  const database = new DatabaseSync(databasePath);
+  try {
+    database.exec('PRAGMA busy_timeout = 5000');
+    await expect
+      .poll(
+        () =>
+          database.prepare('SELECT release_status AS status FROM cycles WHERE id = ?').get(cycleId)
+            ?.status,
+        { timeout: 20000 },
+      )
+      .toBe('published');
+  } finally {
+    database.close();
+  }
 }
 
 test('real owner, invited member, outsider, strict local HTTPS, and automatic next cycle', async () => {
@@ -228,8 +319,38 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
       membershipDb.close();
     }
 
+    await contributeFixturePhoto(page, databasePath, ownerGroupId, suffix);
     const oldCycleId = seedCurrentCycleDue(databasePath, ownerGroupId);
     await waitForSchedulerAdvance(databasePath, ownerGroupId, oldCycleId);
+    await waitForPublication(databasePath, oldCycleId);
+    await page.reload();
+    await expect(page.getByTestId('real-group-home')).toBeVisible();
+    await page.getByTestId('real-group-open-archive').click();
+    await expect(page.getByTestId(/^archive-play-film-/).first()).toBeVisible();
+    await page
+      .getByTestId(/^archive-play-film-/)
+      .first()
+      .click();
+    const playbackResponse = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname.startsWith('/api/media/access/') &&
+        [200, 206].includes(response.status()),
+    );
+    await page.getByTestId('real-archive-play').click();
+    const media = await playbackResponse;
+    expect(media.headers()['content-type']).toMatch(/^video\/mp4/);
+    const capabilityPath = new URL(media.url()).pathname;
+    await expect
+      .poll(() =>
+        page
+          .locator('video')
+          .first()
+          .evaluate((video) => video.readyState),
+      )
+      .toBeGreaterThanOrEqual(2);
+    if (screenshotPath)
+      await page.screenshot({ path: `${screenshotPath}.archive.png`, fullPage: true });
+    await page.getByRole('button', { name: 'Back to group', exact: true }).click();
 
     await page.getByTestId('real-group-sign-out').click();
     await page.goto('/');
@@ -244,6 +365,11 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     }, ownerGroupId);
     expect(forbiddenGroup.status).toBe(404);
     expect(forbiddenGroup.body.error).toBe('forbidden');
+    const revokedCapability = await page.evaluate(
+      async (path) => (await fetch(path, { credentials: 'same-origin' })).status,
+      capabilityPath,
+    );
+    expect([401, 403, 404]).toContain(revokedCapability);
   } catch (error) {
     const page = context.pages()[0];
     if (page) {

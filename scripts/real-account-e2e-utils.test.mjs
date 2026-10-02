@@ -109,7 +109,7 @@ test('fixture origin authentication cannot be enabled on an HTTP web boundary', 
 
 test('failure diagnostics redact credentials, invite codes, local paths, and URLs', () => {
   const redacted = redactRealAccountDiagnostic(
-    'password=secret token=opaque inviteCode=ABCDEF groupId=real-id code=ABC-DEF at /private/tmp/run https://127.0.0.1:5432',
+    'password=secret token=opaque inviteCode=ABCDEF groupId=real-id code=ABC-DEF at /private/tmp/run https://127.0.0.1:5432 /api/media/access/private_capability',
   );
   for (const secret of [
     'secret',
@@ -119,6 +119,7 @@ test('failure diagnostics redact credentials, invite codes, local paths, and URL
     'real-id',
     '/private/tmp/run',
     '5432',
+    'private_capability',
   ]) {
     assert.equal(redacted.includes(secret), false, `diagnostic still contains ${secret}`);
   }

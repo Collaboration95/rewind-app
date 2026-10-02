@@ -335,7 +335,7 @@ export function resolvePublicMediaPath(baseUrl: string, capabilityPath: string):
   let capability: URL;
   let target: URL;
   try {
-    base = new URL(baseUrl);
+    base = new URL(baseUrl, typeof window !== 'undefined' ? window.location?.href : undefined);
     capability = new URL(capabilityPath, 'https://rewind-capability.invalid');
     const basePath = base.pathname.replace(/\/+$/, '');
     target = new URL(`${basePath}${capabilityPath}`, base.origin);
