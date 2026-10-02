@@ -1266,7 +1266,7 @@ export function VideoCaptureScreen({
           body={error ?? 'Try again.'}
         />
       ) : null}
-      {access === 'ready' && !clip && !recording ? (
+      {access === 'ready' && !clip ? (
         <View style={styles.captureArea}>
           {Platform.OS === 'web' ? (
             <View style={styles.preview}>
@@ -1281,34 +1281,37 @@ export function VideoCaptureScreen({
               testID="video-live-preview"
             />
           )}
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void startRecording()}
-            style={styles.recordButton}
-            testID="video-record"
-          >
-            <Text style={styles.recordButtonText}>Start recording</Text>
-          </Pressable>
-        </View>
-      ) : null}
-      {recording ? (
-        <View style={styles.recordingPanel} testID="video-recording">
-          <Text style={styles.recordingTitle}>Recording…</Text>
-          <Text style={styles.timer}>{Math.floor(elapsedSeconds)} / 15 seconds</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={cancelRecording}
-            style={styles.outlineButton}
-          >
-            <Text style={styles.outlineText}>Cancel recording</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => recorder?.stop()}
-            style={styles.recordButton}
-          >
-            <Text style={styles.recordButtonText}>Stop and review</Text>
-          </Pressable>
+          {recording ? (
+            <View style={styles.recordingPanel} testID="video-recording">
+              <Text style={styles.recordingTitle}>Recording…</Text>
+              <Text style={styles.timer}>{Math.floor(elapsedSeconds)} / 15 seconds</Text>
+              <View style={styles.recordingActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={cancelRecording}
+                  style={styles.outlineButton}
+                >
+                  <Text style={styles.outlineText}>Cancel recording</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => recorder?.stop()}
+                  style={styles.recordButton}
+                >
+                  <Text style={styles.recordButtonText}>Stop and review</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void startRecording()}
+              style={styles.recordButton}
+              testID="video-record"
+            >
+              <Text style={styles.recordButtonText}>Start recording</Text>
+            </Pressable>
+          )}
         </View>
       ) : null}
       {review && clip && !recording ? (
@@ -1481,8 +1484,8 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   panelTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  captureArea: { flex: 1, gap: 14, minHeight: 440 },
-  preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 320 },
+  captureArea: { flex: 1, gap: 14, minHeight: 0 },
+  preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 240 },
   recordButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
@@ -1497,11 +1500,12 @@ const styles = StyleSheet.create({
     borderColor: COLORS.accent,
     borderRadius: 10,
     borderWidth: 1,
-    gap: 14,
-    padding: 20,
+    gap: 8,
+    padding: 12,
   },
   recordingTitle: { color: COLORS.accent, fontSize: 24, fontWeight: '800' },
   timer: { color: COLORS.ink, fontSize: 20, fontVariant: ['tabular-nums'] },
+  recordingActions: { flexDirection: 'row', gap: 8 },
   reviewPanel: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,

@@ -469,6 +469,7 @@ describe('VideoCaptureScreen', () => {
 
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-recording');
+    expect(result.getByTestId('video-live-preview')).toBeTruthy();
     expect(result.getByText(/0 \/ 15 seconds/)).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Stop and review' }));
     expect(platform.stopRecording).toHaveBeenCalledTimes(1);
@@ -803,6 +804,7 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByRole('button', { name: 'Cancel recording' }));
     expect(platform.cancelRecording).toHaveBeenCalledTimes(1);
     expect(result.queryByTestId('video-review')).toBeNull();
+    expect(result.getByTestId('video-live-preview')).toBeTruthy();
     expect(result.getByTestId('video-record')).toBeTruthy();
     resolveRecording(clip);
     await waitFor(() => expect(result.queryByTestId('video-review')).toBeNull());
