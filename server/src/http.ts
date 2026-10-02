@@ -116,6 +116,11 @@ import {
   revokeRealGroupInvite,
 } from './groups/invites';
 import { listRealGroupMemberSummaries } from './groups/profiles';
+import {
+  getRealReminderPreference,
+  updateRealGroupSettings,
+  updateRealReminderPreference,
+} from './groups/settings';
 
 export interface HealthPayload {
   ok: boolean;
@@ -1319,7 +1324,7 @@ export async function handleRequest(
   }
 
   if (url.pathname.startsWith('/real/')) {
-    await handleRealGroupRequest(request, response, config, database, url, now());
+    await handleRealGroupRequest(request, response, config, database, url, now(), now);
     return;
   }
 
@@ -3207,6 +3212,7 @@ async function handleRealGroupRequest(
   database: RewindDatabase,
   url: URL,
   now: Date,
+  currentClock: () => Date = () => now,
 ): Promise<void> {
   if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
     authJson(request, response, config, 403, {
@@ -3224,6 +3230,86 @@ async function handleRealGroupRequest(
       error: 'session_required',
       message: 'A valid sign-in is required.',
     });
+    return;
+  }
+
+  const groupSettingsMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/(settings|reminders)$/);
+  if (groupSettingsMatch && (request.method === 'GET' || request.method === 'POST')) {
+    const groupId = decodePathSegment(groupSettingsMatch[1], response, config);
+    if (groupId === null) return;
+    const kind = groupSettingsMatch[2];
+    if (!getRealGroup(database, session.account.id, groupId)) {
+      authJson(request, response, config, 403, {
+        error: 'forbidden',
+        message: 'You do not have access to this group.',
+      });
+      return;
+    }
+    if (request.method === 'GET') {
+      if (kind !== 'reminders') return sendNotFound(response, config);
+      authJson(request, response, config, 200, {
+        preference: getRealReminderPreference(
+          database,
+          session.account.id,
+          groupId,
+          currentClock(),
+        ),
+      });
+      return;
+    }
+    const body = await requestBody(request, config);
+    const allowedKeys = kind === 'settings' ? ['prompt', 'timeZone'] : ['enabled', 'snoozedUntil'];
+    if (!body || Object.keys(body).some((key) => !allowedKeys.includes(key))) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_settings',
+        message: 'Enter valid group settings or your own reminder preference.',
+      });
+      return;
+    }
+    const authorize = () =>
+      token !== null && validateRealSession(database, token, currentClock()).status === 'valid';
+    if (!authorize()) {
+      authJson(request, response, config, 401, {
+        error: 'session_required',
+        message: 'A valid sign-in is required.',
+      });
+      return;
+    }
+    const result =
+      kind === 'settings'
+        ? updateRealGroupSettings(
+            database,
+            session.account.id,
+            groupId,
+            { prompt: body.prompt, timeZone: body.timeZone },
+            currentClock(),
+            authorize,
+          )
+        : updateRealReminderPreference(
+            database,
+            session.account.id,
+            groupId,
+            { enabled: body.enabled, snoozedUntil: body.snoozedUntil },
+            currentClock(),
+            authorize,
+          );
+    if (!result.ok) {
+      authJson(
+        request,
+        response,
+        config,
+        result.reason === 'forbidden' ? 403 : result.reason === 'cycle_closed' ? 409 : 400,
+        {
+          error: result.reason,
+          message:
+            result.reason === 'forbidden'
+              ? 'Only the group owner can change these settings.'
+              : 'Check the prompt, timezone and reminder preference, then retry.',
+        },
+      );
+      return;
+    }
+    authJson(request, response, config, 200, result);
     return;
   }
 
@@ -3368,7 +3454,12 @@ async function handleRealGroupRequest(
       created = createRealGroup(
         database,
         session.account,
-        { name: body.name, prompt: body.prompt, maxMembers: body.maxMembers },
+        {
+          name: body.name,
+          prompt: body.prompt,
+          maxMembers: body.maxMembers,
+          timeZone: body.timeZone,
+        },
         now,
       );
     } catch {

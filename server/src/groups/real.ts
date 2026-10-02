@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { RewindDatabase } from '../db';
 import { createCycleWindow } from '../cycles/engine';
+import { DEFAULT_GROUP_TIME_ZONE, validateTimeZone } from '../reminders/schedule';
 const GROUP_NAME_MAX_LENGTH = 80;
 const PROMPT_MAX_LENGTH = 160;
 
@@ -15,7 +16,8 @@ export function validateRealGroupInput(input: {
   name: unknown;
   prompt: unknown;
   maxMembers: unknown;
-}): { name: string; prompt: string; maxMembers: number } | null {
+  timeZone?: unknown;
+}): { name: string; prompt: string; maxMembers: number; timeZone: string } | null {
   if (typeof input.name !== 'string' || typeof input.prompt !== 'string') return null;
   const name = input.name.trim();
   const prompt = input.prompt.trim();
@@ -35,13 +37,15 @@ export function validateRealGroupInput(input: {
   ) {
     return null;
   }
-  return { name, prompt, maxMembers: input.maxMembers };
+  const timeZone = validateTimeZone(input.timeZone ?? DEFAULT_GROUP_TIME_ZONE);
+  if (!timeZone) return null;
+  return { name, prompt, maxMembers: input.maxMembers, timeZone };
 }
 
 export function createRealGroup(
   database: RewindDatabase,
   account: { id: string; displayName: string },
-  rawInput: { name: unknown; prompt: unknown; maxMembers: unknown },
+  rawInput: { name: unknown; prompt: unknown; maxMembers: unknown; timeZone?: unknown },
   now = new Date(),
 ) {
   const input = validateRealGroupInput(rawInput);
@@ -73,10 +77,17 @@ export function createRealGroup(
     database
       .prepare(
         `INSERT INTO real_group_metadata
-          (group_id, owner_account_id, max_members, cycle_duration_ms, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
+          (group_id, owner_account_id, max_members, cycle_duration_ms, created_at, time_zone)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(groupId, account.id, input.maxMembers, REAL_CYCLE_DURATION_MS, startedAt);
+      .run(
+        groupId,
+        account.id,
+        input.maxMembers,
+        REAL_CYCLE_DURATION_MS,
+        startedAt,
+        input.timeZone,
+      );
     database
       .prepare(
         `INSERT INTO cycles
@@ -112,7 +123,7 @@ export function getRealGroup(database: RewindDatabase, accountId: string, groupI
     .prepare(
       `SELECT g.id AS groupId, g.name, member.profile_id AS memberId,
               g.current_cycle_id AS cycleId,
-              member.role, metadata.max_members AS maxMembers, c.prompt,
+              member.role, metadata.max_members AS maxMembers, metadata.time_zone AS timeZone, c.prompt,
               c.starts_at AS startsAt, c.ends_at AS endsAt,
               c.status, c.lock_state AS lockState,
               c.max_count AS maxCount, c.max_seconds AS maxSeconds,
@@ -173,6 +184,7 @@ function mapRealGroup(row: Record<string, unknown> | undefined) {
       name: String(row.name),
       role: String(row.role),
       maxMembers: Number(row.maxMembers),
+      timeZone: String(row.timeZone),
     },
     cycle: {
       id: String(row.cycleId),

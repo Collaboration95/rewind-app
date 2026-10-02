@@ -26,6 +26,7 @@ import {
 } from '../capture/contribution-status';
 import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
 import type { PendingClipUpload } from '../domain/video';
+import { RealGroupSettings } from '../reminders/RealGroupSettings';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -69,7 +70,13 @@ function displayInviteCode(code: string): string {
 
 interface RealGroup {
   memberId?: string;
-  group: { id: string; name: string; role: 'owner' | 'member'; maxMembers: number };
+  group: {
+    id: string;
+    name: string;
+    role: 'owner' | 'member';
+    maxMembers: number;
+    timeZone?: string;
+  };
   cycle: {
     id: string;
     prompt: string;
@@ -901,6 +908,12 @@ export function RealAccountGroupExperience({
           <Text style={styles.prompt} testID="real-group-cycle-prompt">
             {group.cycle.prompt}
           </Text>
+          <RealGroupSettings
+            key={group.group.id}
+            group={group}
+            authenticatedRequest={auth.authenticatedRequest}
+            onUpdated={setGroup}
+          />
           <Text style={styles.label}>MY ALLOWANCE</Text>
           <Text style={styles.body} testID="real-group-allowance">
             {homeAllowance
