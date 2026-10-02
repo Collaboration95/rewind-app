@@ -180,6 +180,14 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     const ownerGroup = await readCurrentGroup(page);
     const ownerGroupId = ownerGroup.group.id;
 
+    await page.getByTestId('real-group-open-archive').click();
+    await expect(page.getByTestId('route-heading-archive')).toBeVisible();
+    await expect(page.getByTestId('archive-empty-films')).toBeVisible();
+    await expect(page.getByTestId('archive-empty-clips')).toBeVisible();
+    await expect(page.getByTestId('archive-locked')).toBeVisible();
+    await page.getByRole('button', { name: 'Back to group', exact: true }).click();
+    await expect(page.getByTestId('real-group-empty-contributions')).toBeVisible();
+
     const inviteResponsePromise = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return (
