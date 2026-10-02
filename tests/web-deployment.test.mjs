@@ -52,6 +52,7 @@ test('Compose starts the web proxy only after the healthy runtime', () => {
 });
 
 test('the web image bakes the same-origin API prefix into the Expo artifact', () => {
+  assert.match(dockerfile, /COPY scripts\/stamp-pwa-build\.mjs \.\/scripts\/stamp-pwa-build\.mjs/);
   assert.match(dockerfile, /EXPO_PUBLIC_LOCAL_BASE_URL=\/api npm run build:web/);
   assert.match(dockerfile, /COPY deploy\/nginx\.conf \/etc\/nginx\/conf\.d\/default\.conf/);
   assert.match(dockerfile, /COPY --from=build \/app\/dist \/usr\/share\/nginx\/html/);

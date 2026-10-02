@@ -26,6 +26,8 @@ import {
 } from '../capture/contribution-status';
 import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
 import type { PendingClipUpload } from '../domain/video';
+import { RealGroupSettings } from '../reminders/RealGroupSettings';
+import { RealAccountArchiveScreen } from '../archive/ArchiveScreen';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -69,7 +71,13 @@ function displayInviteCode(code: string): string {
 
 interface RealGroup {
   memberId?: string;
-  group: { id: string; name: string; role: 'owner' | 'member'; maxMembers: number };
+  group: {
+    id: string;
+    name: string;
+    role: 'owner' | 'member';
+    maxMembers: number;
+    timeZone?: string;
+  };
   cycle: {
     id: string;
     prompt: string;
@@ -79,6 +87,14 @@ interface RealGroup {
     contributionUsage: { countUsed: number; secondsUsed: number };
     contributionCount: number;
   };
+  releases?: RealGroupRelease[];
+}
+
+interface RealGroupRelease {
+  cycleId: string;
+  endsAt: string;
+  publishedAt: string | null;
+  state: 'processing' | 'delayed' | 'premiere' | 'archived';
 }
 
 interface RealGroupMembers {
@@ -115,12 +131,13 @@ export function RealAccountGroupExperience({
   inviteWebOrigin?: string;
 }) {
   const auth = useRealAccount();
+  const [group, setGroup] = useState<RealGroup | null>(null);
+  const [transferMode, setTransferMode] = useState<'server' | 'direct'>('server');
   const mediaClient = useMemo(
-    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest),
-    [auth.authenticatedRequest],
+    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest, { transferMode }),
+    [auth.authenticatedRequest, transferMode],
   );
   const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
-  const [group, setGroup] = useState<RealGroup | null>(null);
   const [homeAllowance, setHomeAllowance] = useState<ContributionLedgerAllowance | null>(null);
   const loadContributionLedger = useCallback(
     () =>
@@ -139,7 +156,7 @@ export function RealAccountGroupExperience({
   const groupMembersRequest = useRef(0);
   const selectedGroupId = useRef<string | null>(null);
   const [screen, setScreen] = useState<
-    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'error'
+    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'archive' | 'error'
   >('loading');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState<string>(BUILT_IN_PROMPTS[0]);
@@ -153,6 +170,74 @@ export function RealAccountGroupExperience({
   const [invitePending, setInvitePending] = useState(false);
   const [acceptPending, setAcceptPending] = useState(false);
   const [enteredCode, setEnteredCode] = useState('');
+  const [capturePending, setCapturePending] = useState(false);
+  const captureRequest = useRef(0);
+  const captureMounted = useRef(true);
+  const captureAccount = useRef(auth.session?.account.id);
+
+  useEffect(() => {
+    captureMounted.current = true;
+    return () => {
+      captureMounted.current = false;
+      captureRequest.current += 1;
+    };
+  }, []);
+  useEffect(() => {
+    captureAccount.current = auth.session?.account.id;
+  }, [auth.session?.account.id]);
+  useEffect(() => () => mediaClient.dispose(), [mediaClient]);
+  useEffect(() => {
+    if (screen !== 'capture') mediaClient.cancelDirectTransfers();
+    return () => mediaClient.cancelDirectTransfers();
+  }, [mediaClient, screen, group?.group.id, auth.session?.account.id]);
+
+  const openCapture = async () => {
+    if (!group) return;
+    const request = ++captureRequest.current;
+    const context = groupContextVersion.current;
+    const groupId = group.group.id;
+    const accountId = auth.session?.account.id;
+    setCapturePending(true);
+    setMessage(null);
+    try {
+      const response = await auth.authenticatedRequest('/real/media/config');
+      let mode: 'server' | 'direct' = 'server';
+      if (response.status !== 404) {
+        if (!response.ok)
+          throw new Error(
+            'Capture settings are unavailable. Reconnect or sign in again, then retry.',
+          );
+        const config = (await response.json()) as { directTransfer?: unknown };
+        if (typeof config.directTransfer !== 'boolean')
+          throw new Error('Capture settings could not be verified. Retry when connected.');
+        mode = config.directTransfer ? 'direct' : 'server';
+      }
+      if (
+        !captureMounted.current ||
+        request !== captureRequest.current ||
+        context !== groupContextVersion.current ||
+        selectedGroupId.current !== groupId ||
+        captureAccount.current !== accountId
+      )
+        return;
+      setTransferMode(mode);
+      setHomeAllowance(null);
+      setScreen('capture');
+    } catch (error) {
+      if (
+        captureMounted.current &&
+        request === captureRequest.current &&
+        context === groupContextVersion.current
+      )
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : 'Capture settings are unavailable. Retry when connected.',
+        );
+    } finally {
+      if (captureMounted.current && request === captureRequest.current) setCapturePending(false);
+    }
+  };
 
   const loadGroupMembers = useCallback(
     async (groupId: string, contextVersion: number) => {
@@ -339,6 +424,7 @@ export function RealAccountGroupExperience({
               realAccount={{
                 groupId: group.group.id,
                 authenticatedRequest: auth.authenticatedRequest,
+                transferMode,
               }}
             />
           )}
@@ -361,6 +447,25 @@ export function RealAccountGroupExperience({
           members={groupMembers?.members ?? []}
           memberProfilesError={groupMembersError}
           currentMemberId={group.memberId}
+          onBack={() => setScreen('home')}
+        />
+      </View>
+    );
+  }
+
+  if (screen === 'archive' && group) {
+    return (
+      <View style={styles.captureContainer}>
+        <View style={styles.brand}>
+          <Text style={styles.wordmark}>REWIND</Text>
+          <Text style={styles.label}>{group.group.name}</Text>
+        </View>
+        <RealAccountArchiveScreen
+          key={`${group.group.id}:${auth.session?.account.id ?? ''}`}
+          baseUrl={auth.baseUrl}
+          groupId={group.group.id}
+          cycleId={group.cycle.id}
+          authenticatedRequest={auth.authenticatedRequest}
           onBack={() => setScreen('home')}
         />
       </View>
@@ -893,7 +998,10 @@ export function RealAccountGroupExperience({
             </View>
           ) : null}
           <View style={styles.divider} />
-          <Text style={styles.label}>FOUR-WEEK CYCLE</Text>
+          <Text style={styles.label}>CURRENT CAPTURE CYCLE</Text>
+          <Text style={styles.body}>
+            Contributions here are separate from previously released films.
+          </Text>
           <Text style={styles.body} testID="real-group-countdown">
             {remainingLabel(group.cycle.endsAt)}
           </Text>
@@ -901,6 +1009,48 @@ export function RealAccountGroupExperience({
           <Text style={styles.prompt} testID="real-group-cycle-prompt">
             {group.cycle.prompt}
           </Text>
+          <View style={styles.invitationPanel} testID="real-group-releases">
+            <Text style={styles.label}>PREVIOUS RELEASES</Text>
+            {(group.releases ?? []).filter((release) => release.cycleId !== group.cycle.id)
+              .length === 0 ? (
+              <Text style={styles.body} testID="real-group-releases-empty">
+                Earlier group films will remain available in Archive after release.
+              </Text>
+            ) : (
+              (group.releases ?? [])
+                .filter((release) => release.cycleId !== group.cycle.id)
+                .map((release) => (
+                  <View key={release.cycleId} style={styles.releaseRow}>
+                    <Text style={styles.body} testID={`real-group-release-${release.cycleId}`}>
+                      {release.state === 'processing'
+                        ? 'Film processing'
+                        : release.state === 'delayed'
+                          ? 'Release delayed'
+                          : release.state === 'premiere'
+                            ? 'Premiere ready'
+                            : 'Archived film'}
+                      {' · '}
+                      Cycle ended {new Date(release.endsAt).toLocaleDateString()}
+                    </Text>
+                  </View>
+                ))
+            )}
+            <Action
+              title="Open Archive"
+              onPress={() => setScreen('archive')}
+              testID="real-group-open-archive"
+            />
+          </View>
+          <RealGroupSettings
+            key={group.group.id}
+            group={group}
+            authenticatedRequest={auth.authenticatedRequest}
+            onUpdated={(updated) =>
+              setGroup((current) =>
+                current ? { ...updated, releases: updated.releases ?? current.releases } : updated,
+              )
+            }
+          />
           <Text style={styles.label}>MY ALLOWANCE</Text>
           <Text style={styles.body} testID="real-group-allowance">
             {homeAllowance
@@ -929,12 +1079,9 @@ export function RealAccountGroupExperience({
             </View>
           )}
           <Action
-            title="Capture a moment"
-            onPress={() => {
-              setMessage(null);
-              setHomeAllowance(null);
-              setScreen('capture');
-            }}
+            title={capturePending ? 'Checking capture…' : 'Capture a moment'}
+            disabled={capturePending}
+            onPress={() => void openCapture()}
             testID="real-group-capture-action"
           />
           <Action
@@ -1052,6 +1199,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     padding: 14,
   },
+  releaseRow: { borderTopColor: COLORS.line, borderTopWidth: 1, paddingTop: 8 },
   inviteIntent: {
     backgroundColor: COLORS.paper,
     borderRadius: 12,

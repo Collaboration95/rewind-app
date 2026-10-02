@@ -8,6 +8,14 @@ import { URL } from 'node:url';
 
 import { SERVICE_VERSION, type RuntimeConfig } from './config';
 import {
+  registerReminderDestination,
+  listReminderDestinations,
+  disableReminderDestination,
+  listReminderOutbox,
+  reminderDeliveryStatus,
+  type ReminderProviders,
+} from './reminders/outbox';
+import {
   getContribution,
   getCurrentCycle,
   getGroup,
@@ -82,7 +90,25 @@ import {
   recordIntegrityFailure,
   verifyMediaIntegrity,
 } from './media/integrity';
-import { getCompilationJob, processClipJob, processCompilationJob } from './jobs';
+import {
+  getCompilationJob,
+  processClipJob,
+  processCompilationJob,
+  verifyReadyJobOutput,
+  type StoredJobOptions,
+} from './jobs';
+import {
+  requestUploadIntent,
+  getUploadIntentStatus,
+  completeUploadIntent,
+  reconcileUploadIntent,
+  type UploadIntentDependencies,
+  type UploadIntentRequest,
+  type UploadIntentFailure,
+} from './media/upload-intents';
+import { MediaCapabilities } from './archive/capabilities';
+import { openStoredServingFile } from './archive/store-serving';
+import { isMediaRef, decodeMediaRef } from './media/store';
 import { maybeCleanupOrphanedStagedSources } from './jobs/staged-cleanup-scheduler';
 import {
   listQueueJobs,
@@ -116,6 +142,11 @@ import {
   revokeRealGroupInvite,
 } from './groups/invites';
 import { listRealGroupMemberSummaries } from './groups/profiles';
+import {
+  getRealReminderPreference,
+  updateRealGroupSettings,
+  updateRealReminderPreference,
+} from './groups/settings';
 
 export interface HealthPayload {
   ok: boolean;
@@ -147,9 +178,10 @@ function sendJson(
 ): void {
   const encoded = JSON.stringify(body);
   response.writeHead(status, {
-    'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Origin': config.allowOrigin,
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range, Last-Event-ID',
+    'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Origin':
+      response.getHeader('Access-Control-Allow-Origin') ?? config.allowOrigin,
     'Cache-Control': 'no-store',
     'Content-Type': 'application/json; charset=utf-8',
   });
@@ -223,7 +255,7 @@ function sendRealtimeAccessDenied(
     ...(hasAuthCredential
       ? authCorsHeaders(request, config)
       : { 'Access-Control-Allow-Origin': config.allowOrigin }),
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, Last-Event-ID',
     'Cache-Control': 'no-cache, no-store',
     Connection: 'keep-alive',
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -373,6 +405,8 @@ function requireAuthorisedMediaGroup(
     sendDenied(response, config);
     return null;
   }
+  for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
+    response.setHeader(name, value);
   return { accountId: session.account.id, groupId, memberId: membership.profileId };
 }
 
@@ -475,6 +509,8 @@ function requireAuthorisedChatGroup(
   ) {
     return deny();
   }
+  for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
+    response.setHeader(name, value);
   return { accountId: session.account.id, groupId, memberId: membership.profileId };
 }
 
@@ -535,6 +571,44 @@ function requireAuthorisedOwner(
 
 type PremiereState = 'locked' | 'processing' | 'delayed' | 'ready';
 
+function protectedAssetPath(
+  database: RewindDatabase,
+  request: IncomingMessage,
+  identity: AuthorisedMediaIdentity,
+  jobId: string,
+  kind: 'film' | 'clip',
+  purpose: 'play' | 'download',
+  options: RuntimeServerOptions,
+  now: Date,
+): string | null {
+  if (identity.sessionId)
+    return `/${kind}s/${encodeURIComponent(jobId)}/${purpose}?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`;
+  const sessionToken = authToken(request);
+  if (!sessionToken || !identity.accountId || !options.mediaCapabilities) return null;
+  const row = database
+    .prepare(
+      `SELECT output_path AS outputPath, output_sha256 AS sha256,
+    output_bytes AS byteLength FROM media_jobs WHERE id = ? AND group_id = ? AND kind = ?
+    AND status = 'ready' AND output_verified_at IS NOT NULL`,
+    )
+    .get(jobId, identity.groupId, kind) as
+    { outputPath: string; sha256: string; byteLength: number } | undefined;
+  if (!row?.outputPath || !row.sha256 || !row.byteLength) return null;
+  return options.mediaCapabilities.issue(
+    {
+      sessionToken,
+      accountId: identity.accountId,
+      groupId: identity.groupId,
+      memberId: identity.memberId,
+      jobId,
+      kind,
+      purpose,
+      ...row,
+    },
+    now,
+  );
+}
+
 function premiereState(film: ReturnType<typeof getPremiereFilm>): PremiereState {
   if (!film) return 'locked';
   if (film.filmStatus === 'failed' && film.attemptCount >= 3) return 'delayed';
@@ -591,11 +665,23 @@ async function openVerifiedServingFile(
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
+  storage: StoredJobOptions = {},
 ): Promise<
   | { path: string; handle: FileHandle; size: number; releaseBudget: () => void }
   | { capacityExceeded: true; reason: 'size_policy' | 'busy' }
   | null
 > {
+  if (isMediaRef(outputPath))
+    return openStoredServingFile(
+      database,
+      jobId,
+      kind,
+      outputPath,
+      dataDir,
+      actorMemberId,
+      now,
+      storage,
+    );
   const path = await resolveOwnedProcessedPath(outputPath, dataDir);
   if (!path) return null;
   const sourceDetails = await stat(path).catch(() => null);
@@ -653,7 +739,18 @@ async function verifiedServingPath(
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
+  storage: StoredJobOptions = {},
 ): Promise<{ path: string; size: number } | null> {
+  if (isMediaRef(outputPath)) {
+    if (
+      !(await verifyReadyJobOutput(database, jobId, {
+        ...storage,
+        outputDir: resolve(dataDir, 'media/processed'),
+      }))
+    )
+      return null;
+    return { path: outputPath, size: decodeMediaRef(outputPath).byteLength };
+  }
   const path = await resolveOwnedProcessedPath(outputPath, dataDir);
   const result = await verifyMediaIntegrity(database, jobId, path);
   if (integrityBlocksServing(result)) {
@@ -680,7 +777,18 @@ async function verifiedArchiveListingPath(
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
+  storage: StoredJobOptions = {},
 ): Promise<{ path: string; size: number } | null> {
+  if (isMediaRef(outputPath)) {
+    if (
+      !(await verifyReadyJobOutput(database, jobId, {
+        ...storage,
+        outputDir: resolve(dataDir, 'media/processed'),
+      }))
+    )
+      return null;
+    return { path: outputPath, size: decodeMediaRef(outputPath).byteLength };
+  }
   const path = await resolveOwnedProcessedPath(outputPath, dataDir);
   const result = await verifyArchiveListingIntegrity(database, jobId, path);
   if (integrityBlocksServing(result)) {
@@ -710,6 +818,7 @@ async function filterServableArchive<T extends { id: string; outputPath: string 
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
+  storage: StoredJobOptions = {},
 ): Promise<Omit<T, 'outputPath'>[]> {
   const safeEntries: Omit<T, 'outputPath'>[] = [];
   // Process at most three hashes at once. Archive calls await the film batch
@@ -725,6 +834,7 @@ async function filterServableArchive<T extends { id: string; outputPath: string 
           dataDir,
           actorMemberId,
           now,
+          storage,
         );
         if (!served) return null;
         const { outputPath, ...safe } = entry;
@@ -794,7 +904,8 @@ function streamMp4(
   try {
     response.writeHead(status, {
       'Accept-Ranges': 'bytes',
-      'Access-Control-Allow-Origin': config.allowOrigin,
+      'Access-Control-Allow-Origin':
+        response.getHeader('Access-Control-Allow-Origin') ?? config.allowOrigin,
       'Cache-Control': 'no-store',
       'Content-Length': String(end - start + 1),
       'Content-Type': 'video/mp4',
@@ -807,6 +918,11 @@ function streamMp4(
     void handle.close().finally(releaseBudget);
     return;
   }
+  if (request.method === 'HEAD') {
+    response.end();
+    void handle.close().finally(releaseBudget);
+    return;
+  }
   const stream = handle.createReadStream({ start, end, autoClose: true });
   releaseBudgetWhenSnapshotCloses({ release: releaseBudget }, stream, response);
   stream
@@ -816,7 +932,11 @@ function streamMp4(
     .pipe(response);
 }
 
-export interface RuntimeServerOptions {
+export interface RuntimeServerOptions extends StoredJobOptions {
+  reminderProviders?: ReminderProviders;
+  reminderWebPushPublicKey?: string;
+  uploadIntents?: Omit<UploadIntentDependencies, 'now'>;
+  mediaCapabilities?: MediaCapabilities;
   now?: () => Date;
   realtimeHub?: RealtimeHub;
   realtimeHeartbeatIntervalMs?: number;
@@ -1196,7 +1316,16 @@ async function stageSourceBody(
     if (!committed) {
       // Keep the error listener attached while destroying a failed stream;
       // destroy() may report its filesystem error on a later turn.
-      output?.destroy();
+      if (output && !output.closed) {
+        // destroy() can run before the asynchronous open has created the leaf.
+        // Wait for close before unlinking, otherwise that late open can leave
+        // a .part file after the claim has already become retryable.
+        const stream = output;
+        await new Promise<void>((resolveClosed) => {
+          stream.once('close', resolveClosed);
+          stream.destroy();
+        });
+      }
       cleanupStagedSourcePath(partialPath, stagingDir);
       await rm(partialPath, { force: true }).catch(() => undefined);
     } else {
@@ -1273,27 +1402,36 @@ export async function handleRequest(
     if (
       url.pathname.startsWith('/auth/') ||
       url.pathname.startsWith('/real/') ||
-      url.pathname.startsWith('/realtime/groups/')
+      url.pathname.startsWith('/realtime/groups/') ||
+      /^\/(?:archive$|media\/access\/|cycles\/[^/]+\/premiere$|films\/|clips\/|contributions\/)/.test(
+        url.pathname,
+      )
     ) {
       const corsHeaders = authCorsHeaders(request, config);
       response.writeHead(204, {
         ...corsHeaders,
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
-        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, Last-Event-ID',
+        'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
         'Cache-Control': 'no-store',
       });
       response.end();
       return;
     }
     response.writeHead(204, {
-      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
-      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-      'Access-Control-Allow-Origin': config.allowOrigin,
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range, Last-Event-ID',
+      'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Origin':
+        response.getHeader('Access-Control-Allow-Origin') ?? config.allowOrigin,
     });
     response.end();
     return;
   }
-  if (!['GET', 'POST', 'DELETE'].includes(request.method ?? '')) {
+  const mediaHead =
+    request.method === 'HEAD' &&
+    /^\/(?:media\/access\/|films\/[^/]+\/(?:play|download)$|clips\/[^/]+\/download$)/.test(
+      url.pathname,
+    );
+  if (!mediaHead && !['GET', 'POST', 'DELETE'].includes(request.method ?? '')) {
     const send =
       url.pathname.startsWith('/auth/') || url.pathname.startsWith('/real/')
         ? authJson.bind(null, request, response, config)
@@ -1302,6 +1440,65 @@ export async function handleRequest(
       error: 'method_not_allowed',
       message: 'Only GET, POST, and DELETE are supported.',
     });
+    return;
+  }
+
+  const mediaAccessMatch = url.pathname.match(/^\/media\/access\/([A-Za-z0-9_-]{43})$/);
+  if (mediaAccessMatch && (request.method === 'GET' || request.method === 'HEAD')) {
+    if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config))
+      return sendDenied(response, config);
+    const presented = authToken(request);
+    if (
+      (request.headers.authorization ||
+        (request.headers.cookie ?? '').includes(`${REAL_SESSION_COOKIE}=`)) &&
+      !presented
+    )
+      return sendDenied(response, config);
+    const grant = options.mediaCapabilities?.resolve(
+      database,
+      mediaAccessMatch[1],
+      now(),
+      presented,
+    );
+    if (!grant) return sendNotFound(response, config);
+    for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
+      response.setHeader(name, value);
+    const served = await openVerifiedServingFile(
+      database,
+      grant.jobId,
+      grant.kind,
+      grant.outputPath,
+      config.dataDir,
+      grant.memberId,
+      now(),
+      options,
+    );
+    if (!served) return sendNotFound(response, config);
+    if ('capacityExceeded' in served) {
+      sendJson(response, config, served.reason === 'size_policy' ? 413 : 429, {
+        error: 'media_unavailable',
+        message: 'Media delivery is unavailable. Retry shortly.',
+      });
+      return;
+    }
+    if (!options.mediaCapabilities?.resolve(database, mediaAccessMatch[1], now(), presented)) {
+      await served.handle.close();
+      served.releaseBudget();
+      return sendNotFound(response, config);
+    }
+    streamMp4(
+      request,
+      response,
+      config,
+      served.handle,
+      served.size,
+      grant.purpose === 'download'
+        ? grant.kind === 'film'
+          ? 'rewind-group-film.mp4'
+          : 'rewind-my-clip.mp4'
+        : undefined,
+      served.releaseBudget,
+    );
     return;
   }
 
@@ -1319,7 +1516,7 @@ export async function handleRequest(
   }
 
   if (url.pathname.startsWith('/real/')) {
-    await handleRealGroupRequest(request, response, config, database, url, now());
+    await handleRealGroupRequest(request, response, config, database, url, now(), now, options);
     return;
   }
 
@@ -1505,7 +1702,7 @@ export async function handleRequest(
       ...(identity.accountId && (request.headers.authorization || request.headers.cookie)
         ? authCorsHeaders(request, config)
         : { 'Access-Control-Allow-Origin': config.allowOrigin }),
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, Last-Event-ID',
       'Cache-Control': 'no-cache, no-store',
       Connection: 'keep-alive',
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -2344,6 +2541,8 @@ export async function handleRequest(
     let result: Awaited<ReturnType<typeof processClipJob>>;
     try {
       result = await processClipJob(database, {
+        mediaStore: options.mediaStore,
+        mediaEnvironment: options.mediaEnvironment,
         jobId,
         groupId: identity.groupId,
         ffmpegBin: config.ffmpegBin,
@@ -2482,7 +2681,18 @@ export async function handleRequest(
     const identity = requireAuthorisedOwner(database, url, response, config, now(), groupId);
     if (!identity) return;
 
-    const lifecycle = advanceCycleLifecycle(database, { groupId: identity.groupId, clock: now });
+    // Demo controls follow the older release independently of the current capture cycle.
+    const pendingRelease = database
+      .prepare(
+        `SELECT id FROM cycles WHERE group_id = ? AND status = 'revealing'
+       ORDER BY ends_at ASC, id ASC LIMIT 1`,
+      )
+      .get(identity.groupId) as { id: string } | undefined;
+    const lifecycle = advanceCycleLifecycle(database, {
+      groupId: identity.groupId,
+      ...(pendingRelease ? { cycleId: pendingRelease.id } : {}),
+      clock: now,
+    });
     if (!lifecycle.ok) return sendNotFound(response, config);
     if (lifecycle.action === 'waiting_for_boundary') {
       sendJson(response, config, 200, {
@@ -2498,7 +2708,11 @@ export async function handleRequest(
       });
       return;
     }
-    if (lifecycle.action === 'archived' || lifecycle.action === 'already_archived') {
+    if (
+      lifecycle.action === 'premiere' ||
+      lifecycle.action === 'archived' ||
+      lifecycle.action === 'already_archived'
+    ) {
       sendJson(response, config, 200, {
         reveal: { state: 'released', cycleId: lifecycle.cycle.id },
       });
@@ -2523,6 +2737,8 @@ export async function handleRequest(
     let compiled: Awaited<ReturnType<typeof processCompilationJob>>;
     try {
       compiled = await processCompilationJob(database, {
+        mediaStore: options.mediaStore,
+        mediaEnvironment: options.mediaEnvironment,
         jobId: job.id,
         groupId: identity.groupId,
         ffmpegBin: config.ffmpegBin,
@@ -2779,7 +2995,8 @@ export async function handleRequest(
     const cycleId = decodePathSegment(premiereMatch[1], response, config);
     if (cycleId === null) return;
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2804,9 +3021,20 @@ export async function handleRequest(
         config.dataDir,
         identity.memberId,
         now(),
+        options,
       );
       if (!served) state = 'delayed';
     }
+    if (!mediaIdentityIsCurrent(request, database, identity, now()))
+      return sendDenied(response, config);
+    const currentFilm = getPremiereFilm(database, identity.groupId, cycleId);
+    if (
+      state === 'ready' &&
+      (currentFilm?.filmId !== film.filmId ||
+        currentFilm.outputPath !== film.outputPath ||
+        premiereState(currentFilm) !== 'ready')
+    )
+      state = 'delayed';
     sendJson(response, config, 200, {
       premiere:
         state === 'ready'
@@ -2814,7 +3042,16 @@ export async function handleRequest(
               state,
               cycleId,
               filmId: film.filmId,
-              playbackPath: `/films/${encodeURIComponent(film.filmId!)}/play?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+              playbackPath: protectedAssetPath(
+                database,
+                request,
+                identity,
+                film.filmId!,
+                'film',
+                'play',
+                options,
+                now(),
+              ),
             }
           : { state, cycleId },
     });
@@ -2822,11 +3059,12 @@ export async function handleRequest(
   }
 
   const playbackMatch = url.pathname.match(/^\/films\/([^/]+)\/play$/);
-  if (playbackMatch && request.method === 'GET') {
+  if (playbackMatch && (request.method === 'GET' || request.method === 'HEAD')) {
     const filmId = decodePathSegment(playbackMatch[1], response, config);
     if (filmId === null) return;
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2860,6 +3098,7 @@ export async function handleRequest(
       config.dataDir,
       identity.memberId,
       now(),
+      options,
     );
     if (!served) return sendNotFound(response, config);
     if ('capacityExceeded' in served) {
@@ -2879,6 +3118,17 @@ export async function handleRequest(
       );
       return;
     }
+    const currentPremiere = getPremiereFilm(database, identity.groupId, film.cycleId);
+    if (
+      !mediaIdentityIsCurrent(request, database, identity, now()) ||
+      currentPremiere?.filmId !== filmId ||
+      currentPremiere.outputPath !== premiere.outputPath ||
+      premiereState(currentPremiere) !== 'ready'
+    ) {
+      await served.handle.close();
+      served.releaseBudget();
+      return sendNotFound(response, config);
+    }
     streamMp4(
       request,
       response,
@@ -2893,7 +3143,8 @@ export async function handleRequest(
 
   if (url.pathname === '/archive' && request.method === 'GET') {
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2942,6 +3193,7 @@ export async function handleRequest(
         config.dataDir,
         identity.memberId,
         now(),
+        options,
       );
       const clips = await filterServableArchive(
         database,
@@ -2950,16 +3202,47 @@ export async function handleRequest(
         config.dataDir,
         identity.memberId,
         now(),
+        options,
       );
+      if (!mediaIdentityIsCurrent(request, database, identity, now()))
+        return sendDenied(response, config);
       sendJson(response, config, 200, {
         archive: {
           films: films.map((film) => ({
             ...film,
-            downloadPath: `/films/${encodeURIComponent(film.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+            downloadPath: protectedAssetPath(
+              database,
+              request,
+              identity,
+              film.id,
+              'film',
+              'download',
+              options,
+              now(),
+            ),
+            playbackPath: protectedAssetPath(
+              database,
+              request,
+              identity,
+              film.id,
+              'film',
+              'play',
+              options,
+              now(),
+            ),
           })),
           clips: clips.map((clip) => ({
             ...clip,
-            downloadPath: `/clips/${encodeURIComponent(clip.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+            downloadPath: protectedAssetPath(
+              database,
+              request,
+              identity,
+              clip.id,
+              'clip',
+              'download',
+              options,
+              now(),
+            ),
           })),
         },
         pagination: {
@@ -2977,7 +3260,10 @@ export async function handleRequest(
 
   const filmDownloadMatch = url.pathname.match(/^\/films\/([^/]+)\/download$/);
   const clipDownloadMatch = url.pathname.match(/^\/clips\/([^/]+)\/download$/);
-  if ((filmDownloadMatch || clipDownloadMatch) && request.method === 'GET') {
+  if (
+    (filmDownloadMatch || clipDownloadMatch) &&
+    (request.method === 'GET' || request.method === 'HEAD')
+  ) {
     const resourceId = decodePathSegment(
       (filmDownloadMatch ?? clipDownloadMatch)![1],
       response,
@@ -3008,6 +3294,7 @@ export async function handleRequest(
       config.dataDir,
       identity.memberId,
       now(),
+      options,
     );
     if (!served) return sendNotFound(response, config);
     if ('capacityExceeded' in served) {
@@ -3026,6 +3313,17 @@ export async function handleRequest(
             },
       );
       return;
+    }
+    const currentMedia = filmDownloadMatch
+      ? getReleasedFilmDownload(database, identity.groupId, resourceId)
+      : getReleasedOwnClipDownload(database, identity.groupId, identity.memberId, resourceId);
+    if (
+      !mediaIdentityIsCurrent(request, database, identity, now()) ||
+      currentMedia?.outputPath !== media.outputPath
+    ) {
+      await served.handle.close();
+      served.releaseBudget();
+      return sendNotFound(response, config);
     }
     streamMp4(
       request,
@@ -3056,6 +3354,34 @@ export async function handleRequest(
         resource,
       );
       if (!identity) return;
+      if (identity.accountId) {
+        const released =
+          resource === 'film'
+            ? getReleasedFilmDownload(database, identity.groupId, resourceId)
+            : resource === 'clip'
+              ? getReleasedOwnClipDownload(
+                  database,
+                  identity.groupId,
+                  identity.memberId,
+                  resourceId,
+                )
+              : null;
+        if (
+          !released ||
+          !(await verifiedServingPath(
+            database,
+            resourceId,
+            resource,
+            released.outputPath,
+            config.dataDir,
+            identity.memberId,
+            now(),
+            options,
+          )) ||
+          !mediaIdentityIsCurrent(request, database, identity, now())
+        )
+          return sendNotFound(response, config);
+      }
       const job = getMediaJob(database, identity.groupId, resourceId, resource);
       if (!job) return sendNotFound(response, config);
       sendJson(response, config, 200, { [resource]: job });
@@ -3192,6 +3518,8 @@ async function handleRealGroupRequest(
   database: RewindDatabase,
   url: URL,
   now: Date,
+  currentClock: () => Date = () => now,
+  options: RuntimeServerOptions = {},
 ): Promise<void> {
   if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
     authJson(request, response, config, 403, {
@@ -3209,6 +3537,334 @@ async function handleRealGroupRequest(
       error: 'session_required',
       message: 'A valid sign-in is required.',
     });
+    return;
+  }
+
+  if (url.pathname === '/real/reminders/config' && request.method === 'GET') {
+    authJson(request, response, config, 200, {
+      providers: Object.keys(options.reminderProviders ?? {}).filter(
+        (name) => name === 'expo' || name === 'webpush',
+      ),
+      webPushPublicKey: options.reminderProviders?.webpush
+        ? (options.reminderWebPushPublicKey ?? null)
+        : null,
+    });
+    return;
+  }
+  if (url.pathname === '/real/media/config' && request.method === 'GET') {
+    authJson(request, response, config, 200, {
+      directTransfer: options.uploadIntents?.transport.backend === 's3',
+      maxVideoBytes: MAX_STAGED_SOURCE_BYTES,
+      maxPhotoBytes: 10 * 1024 * 1024,
+    });
+    return;
+  }
+  const reminderDestinationMatch = url.pathname.match(
+    /^\/real\/groups\/([^/]+)\/reminders\/(destinations|outbox)(?:\/([^/]+))?$/,
+  );
+  if (reminderDestinationMatch) {
+    const groupId = decodePathSegment(reminderDestinationMatch[1], response, config);
+    const id = reminderDestinationMatch[3]
+      ? decodePathSegment(reminderDestinationMatch[3], response, config)
+      : null;
+    if (!groupId || (reminderDestinationMatch[3] && !id)) return;
+    if (
+      url.searchParams.has('sessionId') ||
+      !getRealGroup(database, session.account.id, groupId) ||
+      getCurrentRealGroup(database, session.account.id)?.group.id !== groupId
+    )
+      return sendDenied(response, config);
+    const actor = { sessionToken: token!, groupId };
+    if (request.method === 'GET' && !id) {
+      const kind = reminderDestinationMatch[2];
+      const rows =
+        kind === 'outbox'
+          ? listReminderOutbox(database, actor, currentClock())
+          : listReminderDestinations(database, actor, currentClock());
+      if (!rows) return sendDenied(response, config);
+      authJson(request, response, config, 200, { [kind]: rows });
+      return;
+    }
+    if (request.method !== 'POST' || reminderDestinationMatch[2] !== 'destinations') {
+      authJson(request, response, config, 405, {
+        error: 'method_not_allowed',
+        message: 'Use the supported reminder action.',
+      });
+      return;
+    }
+    const body = await requestBody(request, config, 8192);
+    const keys = id ? ['enabled'] : ['deviceId', 'provider', 'destination'];
+    if (!body || Object.keys(body).some((key) => !keys.includes(key))) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_destination',
+        message: 'Use a valid reminder destination for this device.',
+      });
+      return;
+    }
+    if (id) {
+      if (
+        body.enabled !== false ||
+        !disableReminderDestination(database, actor, id, currentClock())
+      ) {
+        authJson(request, response, config, 404, {
+          error: 'destination_unavailable',
+          message: 'This reminder destination is unavailable.',
+        });
+        return;
+      }
+      authJson(request, response, config, 200, { disabled: true });
+      return;
+    }
+    const provider = body.provider;
+    if ((provider !== 'expo' && provider !== 'webpush') || !options.reminderProviders?.[provider]) {
+      authJson(request, response, config, 503, {
+        error: 'reminders_unavailable',
+        message: 'This reminder provider is not configured.',
+      });
+      return;
+    }
+    const result = registerReminderDestination(
+      database,
+      actor,
+      { deviceId: body.deviceId, provider, destination: body.destination },
+      currentClock(),
+    );
+    if (!result.ok) {
+      authJson(request, response, config, result.reason === 'forbidden' ? 403 : 400, {
+        error: result.reason,
+        message: 'This reminder destination cannot be registered.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, { destination: result.destination });
+    return;
+  }
+
+  const uploadIntentMatch = url.pathname.match(
+    /^\/real\/groups\/([^/]+)\/upload-intents(?:\/([^/]+)(\/(?:complete|reconcile))?)?$/,
+  );
+  if (uploadIntentMatch) {
+    const groupId = decodePathSegment(uploadIntentMatch[1], response, config);
+    const intentId = uploadIntentMatch[2]
+      ? decodePathSegment(uploadIntentMatch[2], response, config)
+      : null;
+    if (groupId === null || (uploadIntentMatch[2] && intentId === null)) return;
+    if (url.searchParams.has('sessionId')) return sendDenied(response, config);
+    const actor = { sessionToken: token!, groupId };
+    if (
+      !getRealGroup(database, session.account.id, groupId) ||
+      getCurrentRealGroup(database, session.account.id)?.group.id !== groupId
+    )
+      return sendDenied(response, config);
+    const deps = options.uploadIntents ? { ...options.uploadIntents, now: currentClock } : null;
+    if (!deps) {
+      authJson(request, response, config, 503, {
+        error: 'upload_intents_unavailable',
+        message: 'Direct transfer is unavailable. Use the existing upload option.',
+      });
+      return;
+    }
+    const failed = (reason: UploadIntentFailure) => {
+      const status =
+        reason === 'session_required'
+          ? 401
+          : reason === 'forbidden'
+            ? 403
+            : reason === 'not_found'
+              ? 404
+              : reason === 'storage_failed'
+                ? 503
+                : [
+                      'closed_cycle',
+                      'quota_exceeded',
+                      'idempotency_conflict',
+                      'expired',
+                      'version_conflict',
+                      'replacement_conflict',
+                    ].includes(reason)
+                  ? 409
+                  : 400;
+      authJson(request, response, config, status, {
+        error: `upload_intent_${reason}`,
+        message:
+          reason === 'quota_exceeded'
+            ? 'This week has no remaining contribution allowance.'
+            : 'This transfer cannot be completed. Check your connection and capture allowance.',
+      });
+    };
+    if (intentId && !uploadIntentMatch[3] && request.method === 'GET') {
+      const result = getUploadIntentStatus(database, actor, intentId, deps);
+      if (!result.ok) return failed(result.reason);
+      authJson(request, response, config, 200, { intent: result.value });
+      return;
+    }
+    if (request.method !== 'POST' || (intentId && !uploadIntentMatch[3])) {
+      authJson(request, response, config, 405, {
+        error: 'method_not_allowed',
+        message: 'Use the supported intent request, status or completion action.',
+      });
+      return;
+    }
+    const body = await requestBody(request, config, 8 * 1024);
+    const keys = intentId
+      ? uploadIntentMatch[3] === '/reconcile'
+        ? []
+        : ['versionId']
+      : [
+          'idempotencyKey',
+          'mediaType',
+          'contentType',
+          'byteLength',
+          'sha256',
+          'durationSeconds',
+          'trimStartSeconds',
+          'trimEndSeconds',
+          'mode',
+          'replacesContributionId',
+        ];
+    if (!body || Object.keys(body).some((key) => !keys.includes(key)))
+      return failed('invalid_request');
+    const release = acquireRequestCapacity(
+      (options.requestLimiters ?? createRequestLimiters(config)).processing,
+      request,
+      response,
+      config,
+    );
+    if (!release) return;
+    try {
+      if (intentId) {
+        const result =
+          uploadIntentMatch[3] === '/reconcile'
+            ? await reconcileUploadIntent(database, actor, { intentId }, deps)
+            : await completeUploadIntent(
+                database,
+                actor,
+                { intentId, versionId: typeof body.versionId === 'string' ? body.versionId : '' },
+                deps,
+              );
+        if (!result.ok) return failed(result.reason);
+        authJson(request, response, config, 200, { intent: result.value });
+      } else {
+        const result = await requestUploadIntent(
+          database,
+          actor,
+          body as unknown as UploadIntentRequest,
+          deps,
+        );
+        if (!result.ok) return failed(result.reason);
+        authJson(request, response, config, 200, result.value);
+      }
+    } finally {
+      release();
+    }
+    return;
+  }
+
+  const groupSettingsMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/(settings|reminders)$/);
+  if (groupSettingsMatch && (request.method === 'GET' || request.method === 'POST')) {
+    const groupId = decodePathSegment(groupSettingsMatch[1], response, config);
+    if (groupId === null) return;
+    const kind = groupSettingsMatch[2];
+    if (!getRealGroup(database, session.account.id, groupId)) {
+      authJson(request, response, config, 403, {
+        error: 'forbidden',
+        message: 'You do not have access to this group.',
+      });
+      return;
+    }
+    if (request.method === 'GET') {
+      if (kind !== 'reminders') return sendNotFound(response, config);
+      const preference = getRealReminderPreference(
+        database,
+        session.account.id,
+        groupId,
+        currentClock(),
+      );
+      authJson(request, response, config, 200, {
+        preference: preference && {
+          ...preference,
+          delivery: reminderDeliveryStatus(
+            database,
+            session.account.id,
+            options.reminderProviders ?? {},
+            currentClock(),
+          ),
+        },
+      });
+      return;
+    }
+    const body = await requestBody(request, config);
+    const allowedKeys = kind === 'settings' ? ['prompt', 'timeZone'] : ['enabled', 'snoozedUntil'];
+    if (!body || Object.keys(body).some((key) => !allowedKeys.includes(key))) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_settings',
+        message: 'Enter valid group settings or your own reminder preference.',
+      });
+      return;
+    }
+    const authorize = () =>
+      token !== null && validateRealSession(database, token, currentClock()).status === 'valid';
+    if (!authorize()) {
+      authJson(request, response, config, 401, {
+        error: 'session_required',
+        message: 'A valid sign-in is required.',
+      });
+      return;
+    }
+    const result =
+      kind === 'settings'
+        ? updateRealGroupSettings(
+            database,
+            session.account.id,
+            groupId,
+            { prompt: body.prompt, timeZone: body.timeZone },
+            currentClock(),
+            authorize,
+          )
+        : updateRealReminderPreference(
+            database,
+            session.account.id,
+            groupId,
+            { enabled: body.enabled, snoozedUntil: body.snoozedUntil },
+            currentClock(),
+            authorize,
+          );
+    if (!result.ok) {
+      authJson(
+        request,
+        response,
+        config,
+        result.reason === 'forbidden' ? 403 : result.reason === 'cycle_closed' ? 409 : 400,
+        {
+          error: result.reason,
+          message:
+            result.reason === 'forbidden'
+              ? 'Only the group owner can change these settings.'
+              : 'Check the prompt, timezone and reminder preference, then retry.',
+        },
+      );
+      return;
+    }
+    authJson(
+      request,
+      response,
+      config,
+      200,
+      kind === 'reminders' && 'preference' in result && result.preference
+        ? {
+            ...result,
+            preference: {
+              ...result.preference,
+              delivery: reminderDeliveryStatus(
+                database,
+                session.account.id,
+                options.reminderProviders ?? {},
+                currentClock(),
+              ),
+            },
+          }
+        : result,
+    );
     return;
   }
 
@@ -3353,7 +4009,12 @@ async function handleRealGroupRequest(
       created = createRealGroup(
         database,
         session.account,
-        { name: body.name, prompt: body.prompt, maxMembers: body.maxMembers },
+        {
+          name: body.name,
+          prompt: body.prompt,
+          maxMembers: body.maxMembers,
+          timeZone: body.timeZone,
+        },
         now,
       );
     } catch {
@@ -3623,11 +4284,13 @@ export function createRuntimeServer(
   options: RuntimeServerOptions = {},
 ): Server {
   const realtimeHub = options.realtimeHub ?? new RealtimeHub();
+  const mediaCapabilities = options.mediaCapabilities ?? new MediaCapabilities();
   const requestLimiters = options.requestLimiters ?? createRequestLimiters(config);
   return createServer((request, response) => {
     void handleRequest(request, response, config, database, {
       ...options,
       realtimeHub,
+      mediaCapabilities,
       requestLimiters,
     }).catch((error: unknown) => {
       const authRequest = (request.url ?? '').split('?', 1)[0].startsWith('/auth/');

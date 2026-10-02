@@ -60,6 +60,9 @@ const MIGRATIONS = [
     key: 'real-invite-guess-throttles-v1',
     fileName: '024-real-invite-guess-throttles.sql',
   },
+  { version: 25, key: 'real-group-reminders-v1', fileName: '025-real-group-reminders.sql' },
+  { version: 26, key: 'upload-intents-v1', fileName: '026-upload-intents.sql' },
+  { version: 27, key: 'reminder-outbox-v1', fileName: '027-reminder-outbox.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -206,7 +209,17 @@ export function migrateDatabase(database: RewindDatabase): void {
         applyRealMediaProfileBridge(database);
       } else if (migration.key === 'photo-media-v1') {
         ensurePhotoMediaSchema(database);
+      } else if (migration.key === 'upload-intents-v1') {
+        database.exec(migration.sql);
+      } else if (migration.key === 'reminder-outbox-v1') {
+        database.exec(migration.sql);
       } else if (migration.key === 'real-invite-guess-throttles-v1') {
+        database.exec(migration.sql);
+      } else if (migration.key === 'real-group-reminders-v1') {
+        if (!tableColumns(database, 'real_group_metadata').has('time_zone'))
+          database.exec(
+            "ALTER TABLE real_group_metadata ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC'",
+          );
         database.exec(migration.sql);
       } else if (!appliedInside?.applied) {
         database.exec(migration.sql);
@@ -354,6 +367,14 @@ function migrationNeedsRepair(database: RewindDatabase, key: string): boolean {
   if (key === 'real-invite-guess-throttles-v1') {
     return !hasTable(database, 'real_invite_guess_throttles');
   }
+  if (key === 'upload-intents-v1') return !hasTable(database, 'upload_intents');
+  if (key === 'reminder-outbox-v1')
+    return !hasTable(database, 'reminder_destinations') || !hasTable(database, 'reminder_outbox');
+  if (key === 'real-group-reminders-v1')
+    return (
+      !tableColumns(database, 'real_group_metadata').has('time_zone') ||
+      !hasTable(database, 'real_group_reminder_preferences')
+    );
   return false;
 }
 

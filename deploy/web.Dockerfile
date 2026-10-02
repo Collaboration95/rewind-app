@@ -4,12 +4,14 @@ FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057
 
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor/node-forge ./vendor/node-forge
 RUN npm ci --ignore-scripts
 
 COPY app.json tsconfig.json ./
 COPY App.tsx .
 COPY src ./src
 COPY public ./public
+COPY scripts/stamp-pwa-build.mjs ./scripts/stamp-pwa-build.mjs
 RUN EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
 
 FROM nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 AS runtime
