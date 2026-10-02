@@ -348,6 +348,13 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
           .evaluate((video) => video.readyState),
       )
       .toBeGreaterThanOrEqual(2);
+    const video = page.locator('video').first();
+    if (await video.evaluate((element) => element.paused)) {
+      const bounds = await video.boundingBox();
+      expect(bounds).not.toBeNull();
+      await video.click({ position: { x: bounds.width / 2, y: bounds.height / 2 } });
+    }
+    await expect.poll(() => video.evaluate((element) => element.currentTime)).toBeGreaterThan(0.1);
     if (screenshotPath)
       await page.screenshot({ path: `${screenshotPath}.archive.png`, fullPage: true });
     await page.getByRole('button', { name: 'Back to group', exact: true }).click();
