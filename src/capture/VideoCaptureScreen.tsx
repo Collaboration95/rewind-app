@@ -9,6 +9,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
@@ -193,6 +194,11 @@ export function VideoCaptureScreen({
   const [access, setAccess] = useState<AccessStatus>('checking');
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
+  const { height: viewportHeight } = useWindowDimensions();
+  const webPreviewHeight = Math.max(
+    160,
+    Math.min(320, viewportHeight * 0.35) - (recording ? 96 : 0),
+  );
   const [browserPreviewStream, setBrowserPreviewStream] = useState<MediaStream | null>(null);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -1377,7 +1383,7 @@ export function VideoCaptureScreen({
       {access === 'ready' && !clip ? (
         <View style={styles.captureArea}>
           {Platform.OS === 'web' ? (
-            <View style={styles.preview}>
+            <View style={[styles.preview, styles.webPreview, { height: webPreviewHeight }]}>
               <BrowserVideoPreview stream={browserPreviewStream} />
             </View>
           ) : (
@@ -1748,6 +1754,7 @@ const styles = StyleSheet.create({
   panelTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
   captureArea: { flex: 1, gap: 14, minHeight: 0 },
   preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 240 },
+  webPreview: { flex: 0, minHeight: 160, maxHeight: 320, overflow: 'hidden' },
   recordButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
