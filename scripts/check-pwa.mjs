@@ -53,11 +53,13 @@ for (const icon of manifest.icons) {
 
 assert.match(serviceWorker, /Server-backed actions are unavailable offline/);
 assert.match(serviceWorker, /Never cache server-backed responses/);
-assert.match(serviceWorker, /caches\.match\('\/index\.html'\)/);
+assert.match(serviceWorker, /cache\.match\('\/index\.html'\)/);
+assert.match(serviceWorker, /const CACHE_NAME = 'rewind-shell-v3-[a-f0-9]{24}'/);
+assert.doesNotMatch(serviceWorker, /__BUILD_ID__/);
 assert.doesNotMatch(serviceWorker, /cache\.put\([^\n]*\/api/);
-const apiGuardIndex = serviceWorker.indexOf('if (isApiRequest(url))');
+const apiGuardIndex = serviceWorker.indexOf('if (isApiRequest(url)');
 const navigationGuardIndex = serviceWorker.indexOf("event.request.mode === 'navigate'");
-const shellAssetGuardIndex = serviceWorker.indexOf('if (!isShellAsset(url)) return;');
+const shellAssetGuardIndex = serviceWorker.indexOf('if (!isShellAsset(url)');
 assert.ok(apiGuardIndex >= 0, 'service worker has no API guard');
 assert.ok(navigationGuardIndex > apiGuardIndex, 'navigation must remain behind the API guard');
 assert.ok(
