@@ -47,6 +47,15 @@ export function validateTrimBounds(
   return { ok: true, bounds: { startSeconds, endSeconds } };
 }
 
+export function clampTrimmedPlaybackTime(
+  seconds: number,
+  startSeconds: number,
+  endSeconds: number,
+): number {
+  if (!Number.isFinite(seconds)) return startSeconds;
+  return Math.min(endSeconds, Math.max(startSeconds, seconds));
+}
+
 function isPendingMetadata(value: unknown): value is PendingClipMetadata {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<PendingClipMetadata>;
