@@ -1,7 +1,8 @@
 import { Buffer } from 'node:buffer';
 import { createReadStream } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
-import { createServer, request as requestUpstream } from 'node:http';
+import { createServer as createHttpServer, request as requestUpstream } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { extname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -135,9 +136,21 @@ export function apiTarget(runtimeOrigin, url) {
   return target;
 }
 
-function proxyApi(request, response, runtimeOrigin, url, runtimeTimeoutMs) {
+export function runtimeProxyHeaders(inboundHeaders, originAuthSecret) {
+  const headers = { ...inboundHeaders };
+  if (originAuthSecret) {
+    headers['x-forwarded-proto'] = 'https';
+    headers['x-rewind-origin-auth'] = originAuthSecret;
+  }
+  return headers;
+}
+
+function proxyApi(request, response, runtimeOrigin, url, runtimeTimeoutMs, originAuthSecret) {
   const target = apiTarget(runtimeOrigin, url);
-  const headers = { ...request.headers, host: target.host };
+  const headers = {
+    ...runtimeProxyHeaders(request.headers, originAuthSecret),
+    host: target.host,
+  };
   const upstream = requestUpstream(
     target,
     { method: request.method, headers },
@@ -169,16 +182,25 @@ function proxyApi(request, response, runtimeOrigin, url, runtimeTimeoutMs) {
   request.pipe(upstream);
 }
 
-export function createProductionWebServer({ staticDir, runtimeOrigin, runtimeTimeoutMs = 5_000 }) {
+export function createProductionWebServer({
+  staticDir,
+  runtimeOrigin,
+  runtimeTimeoutMs = 5_000,
+  tls,
+  originAuthSecret,
+}) {
   const staticRoot = resolve(staticDir);
   const runtimeUrl = new URL(runtimeOrigin);
   if (!['http:', 'https:'].includes(runtimeUrl.protocol)) {
     throw new Error('runtimeOrigin must use http:// or https://.');
   }
-  return createServer((request, response) => {
+  if (originAuthSecret && !tls) {
+    throw new Error('originAuthSecret requires a TLS web boundary.');
+  }
+  const handleRequest = (request, response) => {
     const url = new URL(request.url ?? '/', 'http://rewind-web.local');
     if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
-      proxyApi(request, response, runtimeUrl, url, runtimeTimeoutMs);
+      proxyApi(request, response, runtimeUrl, url, runtimeTimeoutMs, originAuthSecret);
       return;
     }
     void serveStatic(request, response, staticRoot, url).catch(() => {
@@ -191,7 +213,8 @@ export function createProductionWebServer({ staticDir, runtimeOrigin, runtimeTim
         response.destroy();
       }
     });
-  });
+  };
+  return tls ? createHttpsServer(tls, handleRequest) : createHttpServer(handleRequest);
 }
 
 export async function assertStaticArtifact(staticDir) {
