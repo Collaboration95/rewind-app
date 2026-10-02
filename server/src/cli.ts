@@ -6,6 +6,7 @@ import { backfillMediaIntegrity, openDatabase, resetDatabase, fixtureSummary } f
 import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 import { cleanupOrphanedStagedSources } from './jobs';
+import { configureRuntimeMedia } from './media/configured-runtime';
 import {
   runWorkerTick,
   safeWorkerErrorLabel,
@@ -496,7 +497,15 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
   const idleMs = parseWorkerMsOption(argv, '--idle-ms');
   const maxJobs = parseWorkerMaxJobs(argv);
   const database = await openRuntimeDatabase(config);
+  let media: Awaited<ReturnType<typeof configureRuntimeMedia>>;
+  try {
+    media = await configureRuntimeMedia(config);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
   const workerOptions = {
+    ...media.options,
     ffmpegBin: config.ffmpegBin,
     stagingDir: resolve(config.dataDir, 'media', 'staging'),
     outputDir: resolve(config.dataDir, 'media', 'processed'),
@@ -508,6 +517,7 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
     if (closed) return;
     closed = true;
     database.close();
+    media.close();
   };
 
   if (once) {
@@ -576,15 +586,23 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
 
 async function start(config: RuntimeConfig): Promise<void> {
   const database = await openRuntimeDatabase(config);
+  let media: Awaited<ReturnType<typeof configureRuntimeMedia>>;
+  try {
+    media = await configureRuntimeMedia(config);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
   let schedulerDatabase: ReturnType<typeof openDatabase>;
   try {
     await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
     schedulerDatabase = await openRuntimeDatabase(config);
   } catch (error) {
+    media.close();
     database.close();
     throw error;
   }
-  const server = createRuntimeServer(config, database);
+  const server = createRuntimeServer(config, database, media.options);
   let scheduler: ReturnType<typeof startCycleSchedulerLoop> | undefined;
   let closing: Promise<void> | undefined;
   const close = () => {
@@ -597,6 +615,7 @@ async function start(config: RuntimeConfig): Promise<void> {
       ]);
       schedulerDatabase.close();
       database.close();
+      media.close();
       process.off('SIGINT', shutdown);
       process.off('SIGTERM', shutdown);
     })();
@@ -617,6 +636,7 @@ async function start(config: RuntimeConfig): Promise<void> {
     const host = config.host === '0.0.0.0' || config.host === '::' ? '127.0.0.1' : config.host;
     const lan = getLanAddress();
     scheduler = startCycleSchedulerLoop(schedulerDatabase, {
+      ...media.options,
       ffmpegBin: config.ffmpegBin,
       stagingDir: resolve(config.dataDir, 'media', 'staging'),
       outputDir: resolve(config.dataDir, 'media', 'processed'),

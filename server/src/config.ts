@@ -1,4 +1,5 @@
 import { isAbsolute, parse, resolve } from 'node:path';
+import type { MediaRuntimeConfig } from './media/runtime-store';
 
 export const SERVICE_VERSION = '0.1.0';
 export const DEFAULT_PORT = 8787;
@@ -21,6 +22,8 @@ export interface RuntimeConfig {
   uploadTimeoutMs: number;
   maxConcurrentIntakes: number;
   maxConcurrentProcessing: number;
+  /** Unset preserves legacy disk paths; opt-in stores use immutable references. */
+  media?: MediaRuntimeConfig | null;
 }
 
 export class ConfigError extends Error {
@@ -129,5 +132,44 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
       DEFAULT_HTTP_MAX_CONCURRENT_PROCESSING,
       64,
     ),
+    media: parseMediaConfig(env, dataDir),
+  };
+}
+
+function parseMediaConfig(env: NodeJS.ProcessEnv, dataDir: string): MediaRuntimeConfig | null {
+  const backend = env.REWIND_MEDIA_BACKEND?.trim() || 'disk';
+  if (backend === 'disk') return null;
+  const invalid = (name: string): never => {
+    throw new ConfigError(
+      `${name} is invalid for the configured media backend.`,
+      'Use disk for filesystem rollback, or configure an explicit local/S3 store and namespace.',
+    );
+  };
+  if (backend !== 'local' && backend !== 's3') invalid('REWIND_MEDIA_BACKEND');
+  const environment = env.REWIND_MEDIA_ENVIRONMENT?.trim() || '';
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(environment)) invalid('REWIND_MEDIA_ENVIRONMENT');
+  if (backend === 'local') {
+    // Keep the versioned adapter separate from legacy processed/staged paths.
+    return { backend, environment, root: resolve(dataDir, 'media', 'objects') };
+  }
+  const bucket = env.REWIND_MEDIA_S3_BUCKET?.trim() || '';
+  const expectedBucketOwner = env.REWIND_MEDIA_S3_OWNER?.trim() || '';
+  const region = env.REWIND_MEDIA_S3_REGION?.trim() || '';
+  const kmsKeyId = env.REWIND_MEDIA_S3_KMS_KEY_ARN?.trim();
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket)) invalid('REWIND_MEDIA_S3_BUCKET');
+  if (!/^\d{12}$/.test(expectedBucketOwner)) invalid('REWIND_MEDIA_S3_OWNER');
+  if (!/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region)) invalid('REWIND_MEDIA_S3_REGION');
+  if (
+    kmsKeyId &&
+    !/^arn:aws(?:-cn|-us-gov)?:kms:[a-z0-9-]+:\d{12}:key\/[A-Za-z0-9-]+$/.test(kmsKeyId)
+  )
+    invalid('REWIND_MEDIA_S3_KMS_KEY_ARN');
+  return {
+    backend: 's3',
+    environment,
+    bucket,
+    expectedBucketOwner,
+    region,
+    ...(kmsKeyId ? { kmsKeyId } : {}),
   };
 }

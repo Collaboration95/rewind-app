@@ -95,6 +95,22 @@ Slow or aborted bodies use a deterministic 408 response when the connection
 is still writable, oversized bodies use 413, and capacity rejections use 429;
 there is no distributed rate limiter.
 
+Media defaults to `REWIND_MEDIA_BACKEND=disk`, preserving the staged intake and
+filesystem rollback. `local` enables immutable private object references under
+the data directory; it requires `REWIND_MEDIA_ENVIRONMENT` (for example, `test`).
+The same configured store is used by HTTP retrieval, clip workers and the cycle
+scheduler. Local stores retain the authenticated staged-upload path.
+
+The opt-in `s3` backend additionally requires `REWIND_MEDIA_S3_BUCKET`,
+`REWIND_MEDIA_S3_OWNER` (12-digit expected owner) and `REWIND_MEDIA_S3_REGION`.
+Optional `REWIND_MEDIA_S3_KMS_KEY_ARN` must be a canonical key ARN. The SDK uses
+its standard credential provider chain; credentials are not application settings.
+Construction sends no cloud requests. Signed PUT intents bind incoming bytes,
+checksum and version; retrieval stays behind the application's authorization
+boundary. A provider environment still needs separately verified private bucket
+versioning, encryption, lifecycle and browser CORS before this mode is usable.
+Local tests do not establish those provider guarantees.
+
 ## Current scope and limits
 
 - The Demo has five synthetic members and local-only session state.
