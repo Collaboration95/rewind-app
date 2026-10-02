@@ -645,7 +645,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     auth.notice === 'expired'
       ? 'Your session expired or an administrator reset your password. Sign in again to continue.'
       : auth.notice === 'revoked'
-        ? 'Your account session was reset by an administrator. Sign in again to continue.'
+        ? 'Your session has ended. Sign in again to continue.'
         : auth.notice === 'sign-in-failed'
           ? 'Sign-in failed. Check your username and password, or try again later.'
           : auth.notice === 'offline'
