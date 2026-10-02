@@ -4,6 +4,7 @@ import {
   processClipJobForWorker,
   processCompilationJobForWorker,
   PROCESSING_CLAIM_LEASE_MS,
+  ACCEPTED_CLIP_AUTOMATIC_ATTEMPTS,
 } from './index';
 import { QUEUE_MAX_FILM_ATTEMPTS, type QueueJobKind } from './queue';
 
@@ -18,7 +19,7 @@ import { QUEUE_MAX_FILM_ATTEMPTS, type QueueJobKind } from './queue';
  */
 
 /** Automatic clip attempts stop here; request-driven retries remain available. */
-export const WORKER_MAX_CLIP_ATTEMPTS = 3;
+export const WORKER_MAX_CLIP_ATTEMPTS = ACCEPTED_CLIP_AUTOMATIC_ATTEMPTS;
 
 /** A failed film at its durable cap is terminal and is never reclaimed. */
 export const WORKER_MAX_FILM_ATTEMPTS = QUEUE_MAX_FILM_ATTEMPTS;
@@ -284,6 +285,7 @@ export async function runWorkerTick(
           ffmpegBin: options.ffmpegBin,
           mediaStore: options.mediaStore,
           mediaEnvironment: options.mediaEnvironment,
+          clipAttemptCap: resolveCap(options, 'clip'),
           outputDir: options.outputDir,
           actorMemberId: options.actorMemberId ?? null,
         },

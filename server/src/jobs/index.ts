@@ -173,13 +173,16 @@ export type CompilationJobClaimResult =
       action: 'claimed' | 'already_processing' | 'already_ready';
       job: CompilationJobRecord;
     }
-  | { ok: false; reason: 'not_found' | 'invalid_state' | 'retry_exhausted' };
+  | { ok: false; reason: 'not_found' | 'invalid_state' | 'retry_exhausted' | 'waiting_for_inputs' };
 
 export interface ClaimCompilationJobInput {
   jobId: string;
   groupId?: string;
   now?: Date | string;
   leaseMs?: number;
+  /** Processing entry points settle/freeze accepted inputs; low-level lease callers retain their contract. */
+  requireSettledInputs?: boolean;
+  clipAttemptCap?: number;
 }
 
 export interface UpdateCompilationProgressInput {
@@ -374,31 +377,10 @@ export function reconcileCompilationJobInputs(
   }
 }
 
-/**
- * Create the one cycle-scoped film job and snapshot only processed clip job
- * ids. This helper deliberately assumes that its caller already owns the
- * SQLite writer transaction; the public createCompilationJob wrapper below
- * supplies that transaction for standalone callers and lifecycle uses this
- * helper to keep cycle transition + job creation atomic.
- */
-export function ensureCompilationJob(
+function eligibleCompilationInputs(
   database: RewindDatabase,
   input: CompilationJobInput,
-): CompilationJobRecord | null {
-  const cycle = database
-    .prepare('SELECT id, group_id AS groupId, status FROM cycles WHERE id = ? AND group_id = ?')
-    .get(input.cycleId, input.groupId) as
-    { id: string; groupId: string; status: string } | undefined;
-  if (!cycle || !['revealing', 'archived'].includes(cycle.status)) return null;
-
-  const existingId = database
-    .prepare(
-      `SELECT id FROM media_jobs
-       WHERE kind = 'film' AND cycle_id = ? AND group_id = ? LIMIT 1`,
-    )
-    .get(input.cycleId, input.groupId) as { id?: string } | undefined;
-  if (existingId?.id) return readCompilationJob(database, existingId.id, input.groupId);
-
+): { clipJobId: string; contributionId: string }[] {
   const currentCycleClips = database
     .prepare(
       `SELECT clip.id AS clipJobId, c.id AS contributionId
@@ -442,7 +424,106 @@ export function ensureCompilationJob(
           .get(input.groupId, input.cycleId) as
           { clipJobId: string; contributionId: string } | undefined)
       : undefined;
-  const eligible = archiveFiller ? [...currentCycleClips, archiveFiller] : currentCycleClips;
+  return archiveFiller ? [...currentCycleClips, archiveFiller] : currentCycleClips;
+}
+
+export const ACCEPTED_CLIP_AUTOMATIC_ATTEMPTS = 3;
+
+function acceptedCompilationInputs(
+  database: RewindDatabase,
+  job: CompilationJobRecord,
+  clipAttemptCap = ACCEPTED_CLIP_AUTOMATIC_ATTEMPTS,
+): { state: 'waiting' | 'ready' | 'unavailable'; clipJobIds: string[] } {
+  const rows = database
+    .prepare(
+      `SELECT clip.id, clip.status, clip.attempt_count AS attempts,
+    clip.source_path AS sourcePath, clip.output_path AS outputPath
+    FROM contributions c JOIN cycles cy ON cy.id = c.cycle_id AND cy.group_id = ?
+    LEFT JOIN media_jobs clip ON clip.contribution_id = c.id AND clip.kind = 'clip'
+      AND clip.group_id = cy.group_id AND clip.deleted_at IS NULL
+    WHERE c.cycle_id = ? AND c.deleted_at IS NULL
+    ORDER BY c.created_at, c.id, clip.id`,
+    )
+    .all(job.groupId, job.cycleId) as {
+    id: string | null;
+    status: string | null;
+    attempts: number;
+    sourcePath: string | null;
+    outputPath: string | null;
+  }[];
+  // A missing/exhausted accepted input takes precedence over ordinary queue wait.
+  if (
+    rows.some(
+      (row) =>
+        !row.id ||
+        !['ready', 'pending', 'processing', 'failed'].includes(row.status ?? '') ||
+        (row.status === 'failed' && row.attempts >= clipAttemptCap) ||
+        (row.status === 'ready' && (row.sourcePath !== null || !row.outputPath)),
+    )
+  )
+    return { state: 'unavailable', clipJobIds: [] };
+  if (rows.some((row) => row.status !== 'ready')) return { state: 'waiting', clipJobIds: [] };
+  return { state: 'ready', clipJobIds: rows.map((row) => row.id!) };
+}
+
+function frozenCompilationInputsComplete(
+  database: RewindDatabase,
+  job: CompilationJobRecord,
+): boolean {
+  const accepted = acceptedCompilationInputs(database, job);
+  return (
+    accepted.state === 'ready' && accepted.clipJobIds.every((id) => job.clipJobIds.includes(id))
+  );
+}
+
+function freezeSettledCompilationInputsLocked(
+  database: RewindDatabase,
+  job: CompilationJobRecord,
+): void {
+  const inputs = eligibleCompilationInputs(database, {
+    groupId: job.groupId,
+    cycleId: job.cycleId,
+  });
+  database.prepare('DELETE FROM compilation_job_inputs WHERE job_id = ?').run(job.id);
+  const insert = database.prepare(
+    'INSERT INTO compilation_job_inputs (job_id, clip_job_id, contribution_id, position) VALUES (?, ?, ?, ?)',
+  );
+  inputs.forEach((clip, position) =>
+    insert.run(job.id, clip.clipJobId, clip.contributionId, position),
+  );
+  database
+    .prepare(
+      'UPDATE media_jobs SET input_count = ?, completed_count = 0, progress = 0 WHERE id = ?',
+    )
+    .run(inputs.length, job.id);
+}
+
+/**
+ * Create the one cycle-scoped film job and snapshot only processed clip job
+ * ids. This helper deliberately assumes that its caller already owns the
+ * SQLite writer transaction; the public createCompilationJob wrapper below
+ * supplies that transaction for standalone callers and lifecycle uses this
+ * helper to keep cycle transition + job creation atomic.
+ */
+export function ensureCompilationJob(
+  database: RewindDatabase,
+  input: CompilationJobInput,
+): CompilationJobRecord | null {
+  const cycle = database
+    .prepare('SELECT id, group_id AS groupId, status FROM cycles WHERE id = ? AND group_id = ?')
+    .get(input.cycleId, input.groupId) as
+    { id: string; groupId: string; status: string } | undefined;
+  if (!cycle || !['revealing', 'archived'].includes(cycle.status)) return null;
+
+  const existingId = database
+    .prepare(
+      `SELECT id FROM media_jobs
+       WHERE kind = 'film' AND cycle_id = ? AND group_id = ? LIMIT 1`,
+    )
+    .get(input.cycleId, input.groupId) as { id?: string } | undefined;
+  if (existingId?.id) return readCompilationJob(database, existingId.id, input.groupId);
+
+  const eligible = eligibleCompilationInputs(database, input);
   const createdAt = new Date(input.createdAt ?? new Date());
   if (!Number.isFinite(createdAt.getTime())) return null;
   const jobId = compilationJobId(input.groupId, input.cycleId);
@@ -529,6 +610,15 @@ export function claimCompilationJob(
     if (!job) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'not_found' };
+    }
+    if (input.requireSettledInputs && job.status !== 'ready') {
+      const accepted = acceptedCompilationInputs(database, job, input.clipAttemptCap);
+      if (accepted.state === 'waiting') {
+        database.exec('COMMIT');
+        return { ok: false, reason: 'waiting_for_inputs' };
+      }
+      if (accepted.state === 'ready' && job.claimGeneration === 0)
+        freezeSettledCompilationInputsLocked(database, job);
     }
     job = reconcileCompilationJobInputsLocked(database, job.id);
     if (!job) {
@@ -660,11 +750,17 @@ export type ProcessCompilationJobResult =
       ok: false;
       jobId: string;
       status: 'failed' | 'processing' | 'not_found';
-      reason: 'not_found' | 'already_processing' | 'processing_failed' | 'retry_exhausted';
+      reason:
+        | 'not_found'
+        | 'already_processing'
+        | 'processing_failed'
+        | 'retry_exhausted'
+        | 'waiting_for_inputs';
       message: string;
     };
 
 export interface ProcessCompilationJobOptions extends StoredJobOptions {
+  clipAttemptCap?: number;
   jobId: string;
   ffmpegBin: string;
   groupId?: string;
@@ -822,6 +918,7 @@ async function publishCompilationOutput(
       current.status !== 'processing' ||
       current.claimGeneration !== job.claimGeneration ||
       current.inputCount === 0 ||
+      !frozenCompilationInputsComplete(database, current) ||
       current.clipJobIds.length !== expectedClipJobIds.length ||
       current.clipJobIds.some((id, index) => id !== expectedClipJobIds[index])
     ) {
@@ -885,8 +982,21 @@ async function processCompilationJobInternal(
   options: ProcessCompilationJobOptions,
   onWorkerWork?: WorkerWorkObserver,
 ): Promise<ProcessCompilationJobResult> {
-  const claim = claimCompilationJob(database, { jobId: options.jobId, groupId: options.groupId });
+  const claim = claimCompilationJob(database, {
+    jobId: options.jobId,
+    groupId: options.groupId,
+    requireSettledInputs: true,
+    clipAttemptCap: options.clipAttemptCap,
+  });
   if (!claim.ok) {
+    if (claim.reason === 'waiting_for_inputs')
+      return {
+        ok: false,
+        jobId: options.jobId,
+        status: 'processing',
+        reason: 'waiting_for_inputs',
+        message: 'The film is waiting for accepted clips to settle.',
+      };
     const exhausted = claim.reason === 'retry_exhausted';
     return {
       ok: false,
@@ -932,6 +1042,11 @@ async function processCompilationJobInternal(
   let storedOutput: MediaObjectRef | undefined;
   let published = false;
   try {
+    if (!frozenCompilationInputsComplete(database, claim.job))
+      throw new FfmpegProcessingError(
+        'source_unavailable',
+        'An accepted clip is unavailable or absent from the frozen film inputs.',
+      );
     if (claim.job.inputCount === 0) {
       throw new FfmpegProcessingError(
         'invalid_metadata',

@@ -5,7 +5,7 @@ import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import test from 'node:test';
 import { parseConfig } from '../dist/config.js';
-import { openDatabase } from '../dist/db.js';
+import { openDatabase, openDatabaseAt } from '../dist/db.js';
 import { createClipUpload } from '../dist/media/index.js';
 import { decodeMediaRef, encodeMediaRef } from '../dist/media/store.js';
 import {
@@ -32,10 +32,11 @@ async function scenario(run) {
     mediaStore: store,
     mediaEnvironment: 'test',
   };
+  const context = { database, double, store, root, options, databasePath: config.databasePath };
   try {
-    await run({ database, double, store, root, options });
+    await run(context);
   } finally {
-    database.close();
+    context.database.close();
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -301,3 +302,102 @@ test('remote input without adapter fails closed; local adapter processes indepen
     assert.equal(await verifyReadyJobOutput(context.database, id, options), true);
     await assert.rejects(local.head(scope, localRef), { code: 'missing' });
   }));
+
+test('film waits across restart without attempts, freezes all settled accepted clips once', async () =>
+  scenario(async (context) => {
+    const first = await enqueue(context, 'settled-first');
+    const second = await enqueue(context, 'pending-at-close');
+    assert.equal(
+      (await processClipJob(context.database, { ...context.options, jobId: first.id })).ok,
+      true,
+    );
+    context.database
+      .prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'")
+      .run();
+    const film = createCompilationJob(context.database, {
+      groupId: 'demo-group',
+      cycleId: 'demo-cycle',
+    });
+    assert.equal(film.job.inputCount, 1);
+    for (let repeat = 0; repeat < 2; repeat++) {
+      context.database.close();
+      context.database = openDatabaseAt(context.databasePath);
+      const waiting = await processCompilationJob(context.database, {
+        ...context.options,
+        jobId: film.job.id,
+      });
+      assert.equal(waiting.reason, 'waiting_for_inputs');
+      assert.equal(job(context.database, film.job.id).attempts, 0);
+      assert.equal(job(context.database, film.job.id).status, 'pending');
+    }
+    assert.equal(
+      (await processClipJob(context.database, { ...context.options, jobId: second.id })).ok,
+      true,
+    );
+    assert.equal(
+      (await processCompilationJob(context.database, { ...context.options, jobId: film.job.id }))
+        .ok,
+      true,
+    );
+    assert.deepEqual(
+      context.database
+        .prepare(
+          'SELECT clip_job_id AS id FROM compilation_job_inputs WHERE job_id = ? ORDER BY position',
+        )
+        .all(film.job.id)
+        .map((row) => row.id),
+      [first.id, second.id],
+    );
+    assert.equal(job(context.database, film.job.id).attempts, 1);
+  }));
+
+for (const state of ['missing', 'exhausted', 'corrupt']) {
+  test(`film cannot silently omit ${state} accepted contribution`, async () =>
+    scenario(async (context) => {
+      const first = await enqueue(context, 'film-first');
+      const second = await enqueue(context, 'film-second');
+      assert.equal(
+        (await processClipJob(context.database, { ...context.options, jobId: first.id })).ok,
+        true,
+      );
+      if (state === 'missing')
+        context.database.prepare('DELETE FROM media_jobs WHERE id = ?').run(second.id);
+      if (state === 'exhausted')
+        context.database
+          .prepare("UPDATE media_jobs SET status = 'failed', attempt_count = 3 WHERE id = ?")
+          .run(second.id);
+      if (state === 'corrupt') {
+        assert.equal(
+          (await processClipJob(context.database, { ...context.options, jobId: second.id })).ok,
+          true,
+        );
+        const ref = decodeMediaRef(job(context.database, second.id).outputPath);
+        context.double.versions.get(`${ref.key}:${ref.versionId}`).bytes.fill(0);
+      }
+      context.database
+        .prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'")
+        .run();
+      const film = createCompilationJob(context.database, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+      });
+      for (let index = 0; index < 3; index++)
+        assert.equal(
+          (
+            await processCompilationJob(context.database, {
+              ...context.options,
+              jobId: film.job.id,
+            })
+          ).ok,
+          false,
+        );
+      assert.equal(job(context.database, film.job.id).status, 'failed');
+      assert.equal(job(context.database, film.job.id).attempts, 3);
+      assert.equal(job(context.database, film.job.id).outputPath, null);
+      assert.equal(
+        (await processCompilationJob(context.database, { ...context.options, jobId: film.job.id }))
+          .reason,
+        'retry_exhausted',
+      );
+    }));
+}
