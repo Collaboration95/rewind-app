@@ -60,7 +60,9 @@ describe('real account video runtime', () => {
       .fn()
       .mockResolvedValueOnce(response(ledger))
       .mockResolvedValueOnce(response({ deleted: true }));
-    const client = createRealAccountVideoRuntimeClient(authenticatedRequest);
+    const client = createRealAccountVideoRuntimeClient(authenticatedRequest, {
+      transferMode: 'server',
+    });
 
     await expect(client.getContributionLedger('real/group-1')).resolves.toEqual(ledger);
     await expect(
@@ -79,7 +81,9 @@ describe('real account video runtime', () => {
       .mockResolvedValueOnce(response({ upload: pending }, 201))
       .mockResolvedValueOnce(response({ job: { ...pending.job, status: 'ready' } }))
       .mockResolvedValueOnce(response({ cancelled: true }));
-    const client = createRealAccountVideoRuntimeClient(authenticatedRequest);
+    const client = createRealAccountVideoRuntimeClient(authenticatedRequest, {
+      transferMode: 'server',
+    });
 
     await expect(
       client.stageClipSource?.('ignored-session', 'real/group-1', input.idempotencyKey, 'AQID'),
@@ -114,7 +118,9 @@ describe('real account video runtime', () => {
         .fn()
         .mockResolvedValueOnce(response({ error: 'media_processing' }, 409))
         .mockResolvedValue(response({ clip: processing }));
-      const client = createRealAccountVideoRuntimeClient(authenticatedRequest);
+      const client = createRealAccountVideoRuntimeClient(authenticatedRequest, {
+        transferMode: 'server',
+      });
       const result = client.processClipJob?.('ignored-session', 'real/group-1', pending.job.id);
       await jest.runAllTimersAsync();
       await expect(result).resolves.toMatchObject({ status: 'processing' });
@@ -135,7 +141,9 @@ describe('real account video runtime', () => {
       .fn()
       .mockResolvedValueOnce(response({ error: 'media_processing' }, 409))
       .mockResolvedValueOnce(response({ clip: { id: pending.job.id, status: 'failed' } }));
-    const client = createRealAccountVideoRuntimeClient(authenticatedRequest);
+    const client = createRealAccountVideoRuntimeClient(authenticatedRequest, {
+      transferMode: 'server',
+    });
 
     await expect(
       client.processClipJob?.('ignored-session', 'real/group-1', pending.job.id),
