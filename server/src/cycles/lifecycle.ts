@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { RewindDatabase } from '../db';
 import { hashFileSync } from '../media/integrity';
 import type { CycleClock } from './engine';
-import { ensureCompilationJob } from '../jobs';
+import { ensureCompilationJob, verifyReadyJobOutput, type StoredJobOptions } from '../jobs';
 
 type StoredCycle = {
   id: string;
@@ -134,41 +134,65 @@ function currentCycleId(database: RewindDatabase, groupId: string): string | nul
   return row?.currentCycleId ? String(row.currentCycleId) : null;
 }
 
-/** A release is only safe once the durable film job has committed its output. */
+type OutputRow = {
+  id: string;
+  status: string;
+  outputPath: string;
+  sha256: string;
+  byteLength: number;
+  verifiedAt: string;
+};
+interface VerifiedOutputProof {
+  database: RewindDatabase;
+  row: OutputRow;
+}
+function compilationOutput(
+  database: RewindDatabase,
+  groupId: string,
+  cycleId: string,
+): OutputRow | undefined {
+  return database
+    .prepare(
+      `SELECT id, status, output_path AS outputPath, output_sha256 AS sha256,
+    output_bytes AS byteLength, output_verified_at AS verifiedAt FROM media_jobs
+    WHERE kind = 'film' AND cycle_id = ? AND group_id = ? ORDER BY id ASC LIMIT 1`,
+    )
+    .get(cycleId, groupId) as OutputRow | undefined;
+}
+/** Proofs are constructed only here after a pinned verified read. They never cross the public API. */
+async function verifyCompilationOutput(
+  database: RewindDatabase,
+  groupId: string,
+  cycleId: string,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<VerifiedOutputProof | undefined> {
+  const row = compilationOutput(database, groupId, cycleId);
+  if (!row || !(await verifyReadyJobOutput(database, row.id, options))) return undefined;
+  const current = compilationOutput(database, groupId, cycleId);
+  return JSON.stringify(row) === JSON.stringify(current) ? { database, row } : undefined;
+}
+/** A release is only safe once the durable film job has committed its exact output. */
 function hasReadyCompilationOutput(
   database: RewindDatabase,
   groupId: string,
   cycleId: string,
   verifyBytes = true,
+  proof?: VerifiedOutputProof,
 ): boolean {
-  const job = database
-    .prepare(
-      `SELECT status, output_path AS outputPath, output_sha256 AS sha256,
-              output_bytes AS byteLength, output_verified_at AS verifiedAt
-       FROM media_jobs
-       WHERE kind = 'film' AND cycle_id = ? AND group_id = ?
-       ORDER BY id ASC LIMIT 1`,
-    )
-    .get(cycleId, groupId) as
-    | {
-        status?: string;
-        outputPath?: string | null;
-        sha256?: string;
-        byteLength?: number;
-        verifiedAt?: string;
-      }
-    | undefined;
+  const job = compilationOutput(database, groupId, cycleId);
   if (
     job?.status !== 'ready' ||
     !job.outputPath ||
     !job.verifiedAt ||
-    !job.sha256 ||
-    !/^[a-f0-9]{64}$/.test(job.sha256) ||
+    !Number.isFinite(Date.parse(job.verifiedAt)) ||
+    !/^[a-f0-9]{64}$/.test(job.sha256 ?? '') ||
     !Number.isSafeInteger(job.byteLength) ||
-    Number(job.byteLength) <= 0
+    job.byteLength <= 0
   )
     return false;
   if (!verifyBytes) return true;
+  if (proof)
+    return proof.database === database && JSON.stringify(proof.row) === JSON.stringify(job);
   const observed = hashFileSync(job.outputPath);
   return observed?.sha256 === job.sha256 && observed.byteLength === job.byteLength;
 }
@@ -189,9 +213,10 @@ function addEvent(
     .run(`cycle-lifecycle-${randomUUID()}`, cycleId, groupId, transition, occurredAt);
 }
 
-export function publishCycleRelease(
+function publishCycleReleaseVerified(
   database: RewindDatabase,
   input: PublishCycleReleaseInput,
+  proof?: VerifiedOutputProof,
 ): PublishCycleReleaseResult {
   let publishedAt: Date;
   try {
@@ -211,7 +236,7 @@ export function publishCycleRelease(
       return { ok: false, reason: 'not_found' };
     }
     if (cycle.releaseStatus === 'published') {
-      if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId)) {
+      if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId, true, proof)) {
         database.exec('ROLLBACK');
         return { ok: false, reason: 'not_ready' };
       }
@@ -226,7 +251,7 @@ export function publishCycleRelease(
       database.exec('ROLLBACK');
       return { ok: false, reason: 'too_early' };
     }
-    if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId)) {
+    if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId, true, proof)) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'not_ready' };
     }
@@ -284,9 +309,10 @@ function ensureSuccessor(database: RewindDatabase, cycle: StoredCycle): StoredCy
   return successor;
 }
 
-export function advanceCycleLifecycle(
+function advanceCycleLifecycleVerified(
   database: RewindDatabase,
   input: AdvanceCycleLifecycleInput,
+  proof?: VerifiedOutputProof,
 ): AdvanceCycleLifecycleResult {
   let now: Date;
   try {
@@ -349,7 +375,7 @@ export function advanceCycleLifecycle(
       instant(cycle.releasePublishedAt!, 'invalid_state').getTime() + PREMIERE_DURATION_MS
     )
       action = 'premiere';
-    else if (!hasReadyCompilationOutput(database, input.groupId, cycle.id)) {
+    else if (!hasReadyCompilationOutput(database, input.groupId, cycle.id, true, proof)) {
       action = 'waiting_for_release';
     } else {
       action = 'archived';
@@ -382,6 +408,51 @@ export function advanceCycleLifecycle(
       return { ok: false, reason: 'invalid_state' };
     throw error;
   }
+}
+
+export function publishCycleRelease(
+  database: RewindDatabase,
+  input: PublishCycleReleaseInput,
+): PublishCycleReleaseResult {
+  return publishCycleReleaseVerified(database, input);
+}
+export function advanceCycleLifecycle(
+  database: RewindDatabase,
+  input: AdvanceCycleLifecycleInput,
+): AdvanceCycleLifecycleResult {
+  return advanceCycleLifecycleVerified(database, input);
+}
+/** Network/storage reads occur before the short transaction, then every persisted field is compared under its fence. */
+export async function publishCycleReleaseWithStore(
+  database: RewindDatabase,
+  input: PublishCycleReleaseInput,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<PublishCycleReleaseResult> {
+  const proof = await verifyCompilationOutput(database, input.groupId, input.cycleId, options);
+  if (!proof) return { ok: false, reason: 'not_ready' };
+  return publishCycleReleaseVerified(database, input, proof);
+}
+export async function advanceCycleLifecycleWithStore(
+  database: RewindDatabase,
+  input: AdvanceCycleLifecycleInput,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<AdvanceCycleLifecycleResult> {
+  const cycleId = input.cycleId ?? currentCycleId(database, input.groupId);
+  const row = cycleId
+    ? (database
+        .prepare(
+          'SELECT status, release_published_at AS publishedAt FROM cycles WHERE id = ? AND group_id = ?',
+        )
+        .get(cycleId, input.groupId) as { status: string; publishedAt: string | null } | undefined)
+    : undefined;
+  const now = (input.clock ?? (() => new Date()))();
+  const proof =
+    row?.status === 'revealing' &&
+    row.publishedAt &&
+    now.getTime() >= Date.parse(row.publishedAt) + PREMIERE_DURATION_MS
+      ? await verifyCompilationOutput(database, input.groupId, cycleId!, options)
+      : undefined;
+  return advanceCycleLifecycleVerified(database, { ...input, clock: () => now }, proof);
 }
 
 export const transitionCycleLifecycle = advanceCycleLifecycle;

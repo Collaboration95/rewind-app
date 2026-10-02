@@ -82,7 +82,16 @@ import {
   recordIntegrityFailure,
   verifyMediaIntegrity,
 } from './media/integrity';
-import { getCompilationJob, processClipJob, processCompilationJob } from './jobs';
+import {
+  getCompilationJob,
+  processClipJob,
+  processCompilationJob,
+  verifyReadyJobOutput,
+  type StoredJobOptions,
+} from './jobs';
+import { MediaCapabilities } from './archive/capabilities';
+import { openStoredServingFile } from './archive/store-serving';
+import { isMediaRef, decodeMediaRef } from './media/store';
 import { maybeCleanupOrphanedStagedSources } from './jobs/staged-cleanup-scheduler';
 import {
   listQueueJobs,
@@ -152,9 +161,10 @@ function sendJson(
 ): void {
   const encoded = JSON.stringify(body);
   response.writeHead(status, {
-    'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Origin': config.allowOrigin,
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range, Last-Event-ID',
+    'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Origin':
+      response.getHeader('Access-Control-Allow-Origin') ?? config.allowOrigin,
     'Cache-Control': 'no-store',
     'Content-Type': 'application/json; charset=utf-8',
   });
@@ -228,7 +238,7 @@ function sendRealtimeAccessDenied(
     ...(hasAuthCredential
       ? authCorsHeaders(request, config)
       : { 'Access-Control-Allow-Origin': config.allowOrigin }),
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, Last-Event-ID',
     'Cache-Control': 'no-cache, no-store',
     Connection: 'keep-alive',
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -378,6 +388,8 @@ function requireAuthorisedMediaGroup(
     sendDenied(response, config);
     return null;
   }
+  for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
+    response.setHeader(name, value);
   return { accountId: session.account.id, groupId, memberId: membership.profileId };
 }
 
@@ -480,6 +492,8 @@ function requireAuthorisedChatGroup(
   ) {
     return deny();
   }
+  for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
+    response.setHeader(name, value);
   return { accountId: session.account.id, groupId, memberId: membership.profileId };
 }
 
@@ -540,6 +554,44 @@ function requireAuthorisedOwner(
 
 type PremiereState = 'locked' | 'processing' | 'delayed' | 'ready';
 
+function protectedAssetPath(
+  database: RewindDatabase,
+  request: IncomingMessage,
+  identity: AuthorisedMediaIdentity,
+  jobId: string,
+  kind: 'film' | 'clip',
+  purpose: 'play' | 'download',
+  options: RuntimeServerOptions,
+  now: Date,
+): string | null {
+  if (identity.sessionId)
+    return `/${kind}s/${encodeURIComponent(jobId)}/${purpose}?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`;
+  const sessionToken = authToken(request);
+  if (!sessionToken || !identity.accountId || !options.mediaCapabilities) return null;
+  const row = database
+    .prepare(
+      `SELECT output_path AS outputPath, output_sha256 AS sha256,
+    output_bytes AS byteLength FROM media_jobs WHERE id = ? AND group_id = ? AND kind = ?
+    AND status = 'ready' AND output_verified_at IS NOT NULL`,
+    )
+    .get(jobId, identity.groupId, kind) as
+    { outputPath: string; sha256: string; byteLength: number } | undefined;
+  if (!row?.outputPath || !row.sha256 || !row.byteLength) return null;
+  return options.mediaCapabilities.issue(
+    {
+      sessionToken,
+      accountId: identity.accountId,
+      groupId: identity.groupId,
+      memberId: identity.memberId,
+      jobId,
+      kind,
+      purpose,
+      ...row,
+    },
+    now,
+  );
+}
+
 function premiereState(film: ReturnType<typeof getPremiereFilm>): PremiereState {
   if (!film) return 'locked';
   if (film.filmStatus === 'failed' && film.attemptCount >= 3) return 'delayed';
@@ -596,11 +648,23 @@ async function openVerifiedServingFile(
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
+  storage: StoredJobOptions = {},
 ): Promise<
   | { path: string; handle: FileHandle; size: number; releaseBudget: () => void }
   | { capacityExceeded: true; reason: 'size_policy' | 'busy' }
   | null
 > {
+  if (isMediaRef(outputPath))
+    return openStoredServingFile(
+      database,
+      jobId,
+      kind,
+      outputPath,
+      dataDir,
+      actorMemberId,
+      now,
+      storage,
+    );
   const path = await resolveOwnedProcessedPath(outputPath, dataDir);
   if (!path) return null;
   const sourceDetails = await stat(path).catch(() => null);
@@ -658,7 +722,18 @@ async function verifiedServingPath(
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
+  storage: StoredJobOptions = {},
 ): Promise<{ path: string; size: number } | null> {
+  if (isMediaRef(outputPath)) {
+    if (
+      !(await verifyReadyJobOutput(database, jobId, {
+        ...storage,
+        outputDir: resolve(dataDir, 'media/processed'),
+      }))
+    )
+      return null;
+    return { path: outputPath, size: decodeMediaRef(outputPath).byteLength };
+  }
   const path = await resolveOwnedProcessedPath(outputPath, dataDir);
   const result = await verifyMediaIntegrity(database, jobId, path);
   if (integrityBlocksServing(result)) {
@@ -685,7 +760,18 @@ async function verifiedArchiveListingPath(
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
+  storage: StoredJobOptions = {},
 ): Promise<{ path: string; size: number } | null> {
+  if (isMediaRef(outputPath)) {
+    if (
+      !(await verifyReadyJobOutput(database, jobId, {
+        ...storage,
+        outputDir: resolve(dataDir, 'media/processed'),
+      }))
+    )
+      return null;
+    return { path: outputPath, size: decodeMediaRef(outputPath).byteLength };
+  }
   const path = await resolveOwnedProcessedPath(outputPath, dataDir);
   const result = await verifyArchiveListingIntegrity(database, jobId, path);
   if (integrityBlocksServing(result)) {
@@ -715,6 +801,7 @@ async function filterServableArchive<T extends { id: string; outputPath: string 
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
+  storage: StoredJobOptions = {},
 ): Promise<Omit<T, 'outputPath'>[]> {
   const safeEntries: Omit<T, 'outputPath'>[] = [];
   // Process at most three hashes at once. Archive calls await the film batch
@@ -730,6 +817,7 @@ async function filterServableArchive<T extends { id: string; outputPath: string 
           dataDir,
           actorMemberId,
           now,
+          storage,
         );
         if (!served) return null;
         const { outputPath, ...safe } = entry;
@@ -799,7 +887,8 @@ function streamMp4(
   try {
     response.writeHead(status, {
       'Accept-Ranges': 'bytes',
-      'Access-Control-Allow-Origin': config.allowOrigin,
+      'Access-Control-Allow-Origin':
+        response.getHeader('Access-Control-Allow-Origin') ?? config.allowOrigin,
       'Cache-Control': 'no-store',
       'Content-Length': String(end - start + 1),
       'Content-Type': 'video/mp4',
@@ -812,6 +901,11 @@ function streamMp4(
     void handle.close().finally(releaseBudget);
     return;
   }
+  if (request.method === 'HEAD') {
+    response.end();
+    void handle.close().finally(releaseBudget);
+    return;
+  }
   const stream = handle.createReadStream({ start, end, autoClose: true });
   releaseBudgetWhenSnapshotCloses({ release: releaseBudget }, stream, response);
   stream
@@ -821,7 +915,8 @@ function streamMp4(
     .pipe(response);
 }
 
-export interface RuntimeServerOptions {
+export interface RuntimeServerOptions extends StoredJobOptions {
+  mediaCapabilities?: MediaCapabilities;
   now?: () => Date;
   realtimeHub?: RealtimeHub;
   realtimeHeartbeatIntervalMs?: number;
@@ -1278,27 +1373,36 @@ export async function handleRequest(
     if (
       url.pathname.startsWith('/auth/') ||
       url.pathname.startsWith('/real/') ||
-      url.pathname.startsWith('/realtime/groups/')
+      url.pathname.startsWith('/realtime/groups/') ||
+      /^\/(?:archive$|media\/access\/|cycles\/[^/]+\/premiere$|films\/|clips\/|contributions\/)/.test(
+        url.pathname,
+      )
     ) {
       const corsHeaders = authCorsHeaders(request, config);
       response.writeHead(204, {
         ...corsHeaders,
-        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
-        'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, Last-Event-ID',
+        'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
         'Cache-Control': 'no-store',
       });
       response.end();
       return;
     }
     response.writeHead(204, {
-      'Access-Control-Allow-Headers': 'Content-Type, Last-Event-ID',
-      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-      'Access-Control-Allow-Origin': config.allowOrigin,
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range, Last-Event-ID',
+      'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Origin':
+        response.getHeader('Access-Control-Allow-Origin') ?? config.allowOrigin,
     });
     response.end();
     return;
   }
-  if (!['GET', 'POST', 'DELETE'].includes(request.method ?? '')) {
+  const mediaHead =
+    request.method === 'HEAD' &&
+    /^\/(?:media\/access\/|films\/[^/]+\/(?:play|download)$|clips\/[^/]+\/download$)/.test(
+      url.pathname,
+    );
+  if (!mediaHead && !['GET', 'POST', 'DELETE'].includes(request.method ?? '')) {
     const send =
       url.pathname.startsWith('/auth/') || url.pathname.startsWith('/real/')
         ? authJson.bind(null, request, response, config)
@@ -1307,6 +1411,65 @@ export async function handleRequest(
       error: 'method_not_allowed',
       message: 'Only GET, POST, and DELETE are supported.',
     });
+    return;
+  }
+
+  const mediaAccessMatch = url.pathname.match(/^\/media\/access\/([A-Za-z0-9_-]{43})$/);
+  if (mediaAccessMatch && (request.method === 'GET' || request.method === 'HEAD')) {
+    if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config))
+      return sendDenied(response, config);
+    const presented = authToken(request);
+    if (
+      (request.headers.authorization ||
+        (request.headers.cookie ?? '').includes(`${REAL_SESSION_COOKIE}=`)) &&
+      !presented
+    )
+      return sendDenied(response, config);
+    const grant = options.mediaCapabilities?.resolve(
+      database,
+      mediaAccessMatch[1],
+      now(),
+      presented,
+    );
+    if (!grant) return sendNotFound(response, config);
+    for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
+      response.setHeader(name, value);
+    const served = await openVerifiedServingFile(
+      database,
+      grant.jobId,
+      grant.kind,
+      grant.outputPath,
+      config.dataDir,
+      grant.memberId,
+      now(),
+      options,
+    );
+    if (!served) return sendNotFound(response, config);
+    if ('capacityExceeded' in served) {
+      sendJson(response, config, served.reason === 'size_policy' ? 413 : 429, {
+        error: 'media_unavailable',
+        message: 'Media delivery is unavailable. Retry shortly.',
+      });
+      return;
+    }
+    if (!options.mediaCapabilities?.resolve(database, mediaAccessMatch[1], now(), presented)) {
+      await served.handle.close();
+      served.releaseBudget();
+      return sendNotFound(response, config);
+    }
+    streamMp4(
+      request,
+      response,
+      config,
+      served.handle,
+      served.size,
+      grant.purpose === 'download'
+        ? grant.kind === 'film'
+          ? 'rewind-group-film.mp4'
+          : 'rewind-my-clip.mp4'
+        : undefined,
+      served.releaseBudget,
+    );
     return;
   }
 
@@ -1510,7 +1673,7 @@ export async function handleRequest(
       ...(identity.accountId && (request.headers.authorization || request.headers.cookie)
         ? authCorsHeaders(request, config)
         : { 'Access-Control-Allow-Origin': config.allowOrigin }),
-      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Last-Event-ID',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, Last-Event-ID',
       'Cache-Control': 'no-cache, no-store',
       Connection: 'keep-alive',
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -2799,7 +2962,8 @@ export async function handleRequest(
     const cycleId = decodePathSegment(premiereMatch[1], response, config);
     if (cycleId === null) return;
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2824,9 +2988,20 @@ export async function handleRequest(
         config.dataDir,
         identity.memberId,
         now(),
+        options,
       );
       if (!served) state = 'delayed';
     }
+    if (!mediaIdentityIsCurrent(request, database, identity, now()))
+      return sendDenied(response, config);
+    const currentFilm = getPremiereFilm(database, identity.groupId, cycleId);
+    if (
+      state === 'ready' &&
+      (currentFilm?.filmId !== film.filmId ||
+        currentFilm.outputPath !== film.outputPath ||
+        premiereState(currentFilm) !== 'ready')
+    )
+      state = 'delayed';
     sendJson(response, config, 200, {
       premiere:
         state === 'ready'
@@ -2834,7 +3009,16 @@ export async function handleRequest(
               state,
               cycleId,
               filmId: film.filmId,
-              playbackPath: `/films/${encodeURIComponent(film.filmId!)}/play?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+              playbackPath: protectedAssetPath(
+                database,
+                request,
+                identity,
+                film.filmId!,
+                'film',
+                'play',
+                options,
+                now(),
+              ),
             }
           : { state, cycleId },
     });
@@ -2842,11 +3026,12 @@ export async function handleRequest(
   }
 
   const playbackMatch = url.pathname.match(/^\/films\/([^/]+)\/play$/);
-  if (playbackMatch && request.method === 'GET') {
+  if (playbackMatch && (request.method === 'GET' || request.method === 'HEAD')) {
     const filmId = decodePathSegment(playbackMatch[1], response, config);
     if (filmId === null) return;
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2880,6 +3065,7 @@ export async function handleRequest(
       config.dataDir,
       identity.memberId,
       now(),
+      options,
     );
     if (!served) return sendNotFound(response, config);
     if ('capacityExceeded' in served) {
@@ -2899,6 +3085,17 @@ export async function handleRequest(
       );
       return;
     }
+    const currentPremiere = getPremiereFilm(database, identity.groupId, film.cycleId);
+    if (
+      !mediaIdentityIsCurrent(request, database, identity, now()) ||
+      currentPremiere?.filmId !== filmId ||
+      currentPremiere.outputPath !== premiere.outputPath ||
+      premiereState(currentPremiere) !== 'ready'
+    ) {
+      await served.handle.close();
+      served.releaseBudget();
+      return sendNotFound(response, config);
+    }
     streamMp4(
       request,
       response,
@@ -2913,7 +3110,8 @@ export async function handleRequest(
 
   if (url.pathname === '/archive' && request.method === 'GET') {
     const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
+    const identity = requireAuthorisedMediaGroup(
+      request,
       database,
       url,
       response,
@@ -2962,6 +3160,7 @@ export async function handleRequest(
         config.dataDir,
         identity.memberId,
         now(),
+        options,
       );
       const clips = await filterServableArchive(
         database,
@@ -2970,16 +3169,47 @@ export async function handleRequest(
         config.dataDir,
         identity.memberId,
         now(),
+        options,
       );
+      if (!mediaIdentityIsCurrent(request, database, identity, now()))
+        return sendDenied(response, config);
       sendJson(response, config, 200, {
         archive: {
           films: films.map((film) => ({
             ...film,
-            downloadPath: `/films/${encodeURIComponent(film.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+            downloadPath: protectedAssetPath(
+              database,
+              request,
+              identity,
+              film.id,
+              'film',
+              'download',
+              options,
+              now(),
+            ),
+            playbackPath: protectedAssetPath(
+              database,
+              request,
+              identity,
+              film.id,
+              'film',
+              'play',
+              options,
+              now(),
+            ),
           })),
           clips: clips.map((clip) => ({
             ...clip,
-            downloadPath: `/clips/${encodeURIComponent(clip.id)}/download?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`,
+            downloadPath: protectedAssetPath(
+              database,
+              request,
+              identity,
+              clip.id,
+              'clip',
+              'download',
+              options,
+              now(),
+            ),
           })),
         },
         pagination: {
@@ -2997,7 +3227,10 @@ export async function handleRequest(
 
   const filmDownloadMatch = url.pathname.match(/^\/films\/([^/]+)\/download$/);
   const clipDownloadMatch = url.pathname.match(/^\/clips\/([^/]+)\/download$/);
-  if ((filmDownloadMatch || clipDownloadMatch) && request.method === 'GET') {
+  if (
+    (filmDownloadMatch || clipDownloadMatch) &&
+    (request.method === 'GET' || request.method === 'HEAD')
+  ) {
     const resourceId = decodePathSegment(
       (filmDownloadMatch ?? clipDownloadMatch)![1],
       response,
@@ -3028,6 +3261,7 @@ export async function handleRequest(
       config.dataDir,
       identity.memberId,
       now(),
+      options,
     );
     if (!served) return sendNotFound(response, config);
     if ('capacityExceeded' in served) {
@@ -3046,6 +3280,17 @@ export async function handleRequest(
             },
       );
       return;
+    }
+    const currentMedia = filmDownloadMatch
+      ? getReleasedFilmDownload(database, identity.groupId, resourceId)
+      : getReleasedOwnClipDownload(database, identity.groupId, identity.memberId, resourceId);
+    if (
+      !mediaIdentityIsCurrent(request, database, identity, now()) ||
+      currentMedia?.outputPath !== media.outputPath
+    ) {
+      await served.handle.close();
+      served.releaseBudget();
+      return sendNotFound(response, config);
     }
     streamMp4(
       request,
@@ -3076,6 +3321,34 @@ export async function handleRequest(
         resource,
       );
       if (!identity) return;
+      if (identity.accountId) {
+        const released =
+          resource === 'film'
+            ? getReleasedFilmDownload(database, identity.groupId, resourceId)
+            : resource === 'clip'
+              ? getReleasedOwnClipDownload(
+                  database,
+                  identity.groupId,
+                  identity.memberId,
+                  resourceId,
+                )
+              : null;
+        if (
+          !released ||
+          !(await verifiedServingPath(
+            database,
+            resourceId,
+            resource,
+            released.outputPath,
+            config.dataDir,
+            identity.memberId,
+            now(),
+            options,
+          )) ||
+          !mediaIdentityIsCurrent(request, database, identity, now())
+        )
+          return sendNotFound(response, config);
+      }
       const job = getMediaJob(database, identity.groupId, resourceId, resource);
       if (!job) return sendNotFound(response, config);
       sendJson(response, config, 200, { [resource]: job });
@@ -3729,11 +4002,13 @@ export function createRuntimeServer(
   options: RuntimeServerOptions = {},
 ): Server {
   const realtimeHub = options.realtimeHub ?? new RealtimeHub();
+  const mediaCapabilities = options.mediaCapabilities ?? new MediaCapabilities();
   const requestLimiters = options.requestLimiters ?? createRequestLimiters(config);
   return createServer((request, response) => {
     void handleRequest(request, response, config, database, {
       ...options,
       realtimeHub,
+      mediaCapabilities,
       requestLimiters,
     }).catch((error: unknown) => {
       const authRequest = (request.url ?? '').split('?', 1)[0].startsWith('/auth/');

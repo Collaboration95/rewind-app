@@ -11,6 +11,8 @@ export {
   transitionCycleLifecycle,
   processCycleLifecycle,
   publishCycleRelease,
+  publishCycleReleaseWithStore,
+  advanceCycleLifecycleWithStore,
   PREMIERE_DURATION_MS,
 } from './lifecycle';
 export type {

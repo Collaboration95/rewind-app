@@ -1,6 +1,6 @@
 import type { RewindDatabase } from '../db';
 import { runWorkerTick, type WorkerOptions, type WorkerTickResult } from '../jobs/worker';
-import { advanceCycleLifecycle, publishCycleRelease } from './lifecycle';
+import { advanceCycleLifecycleWithStore, publishCycleReleaseWithStore } from './lifecycle';
 
 export const CYCLE_SCAN_DEFAULT_LIMIT = 16;
 export const CYCLE_SCAN_MAX_LIMIT = 100;
@@ -13,7 +13,7 @@ export interface CycleScanCursor {
 
 export interface CycleSchedulerOptions extends Pick<
   WorkerOptions,
-  'ffmpegBin' | 'stagingDir' | 'outputDir'
+  'ffmpegBin' | 'stagingDir' | 'outputDir' | 'mediaStore' | 'mediaEnvironment'
 > {
   now?: () => Date;
   limit?: number;
@@ -66,14 +66,14 @@ export async function runCycleSchedulerTick(
   for (const candidate of candidates) {
     if (options.shouldStop?.()) break;
     const input = { ...candidate, clock: () => now };
-    const advanced = advanceCycleLifecycle(database, input);
+    const advanced = await advanceCycleLifecycleWithStore(database, input, options);
     if (!advanced.ok) {
       transitions.push({ ...candidate, action: advanced.reason });
       continue;
     }
     let action: string = advanced.action;
     if (advanced.cycle.status === 'revealing' && advanced.cycle.releaseStatus !== 'published') {
-      const publication = publishCycleRelease(database, input);
+      const publication = await publishCycleReleaseWithStore(database, input, options);
       if (publication.ok) action = publication.action;
       else if (publication.reason !== 'not_ready') action = publication.reason;
     }
