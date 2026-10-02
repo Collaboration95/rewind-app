@@ -1305,7 +1305,16 @@ async function stageSourceBody(
     if (!committed) {
       // Keep the error listener attached while destroying a failed stream;
       // destroy() may report its filesystem error on a later turn.
-      output?.destroy();
+      if (output && !output.closed) {
+        // destroy() can run before the asynchronous open has created the leaf.
+        // Wait for close before unlinking, otherwise that late open can leave
+        // a .part file after the claim has already become retryable.
+        const stream = output;
+        await new Promise<void>((resolveClosed) => {
+          stream.once('close', resolveClosed);
+          stream.destroy();
+        });
+      }
       cleanupStagedSourcePath(partialPath, stagingDir);
       await rm(partialPath, { force: true }).catch(() => undefined);
     } else {

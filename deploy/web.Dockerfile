@@ -10,6 +10,7 @@ COPY app.json tsconfig.json ./
 COPY App.tsx .
 COPY src ./src
 COPY public ./public
+COPY scripts/stamp-pwa-build.mjs ./scripts/stamp-pwa-build.mjs
 RUN EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
 
 FROM nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 AS runtime
