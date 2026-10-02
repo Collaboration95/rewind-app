@@ -89,6 +89,14 @@ import {
   verifyReadyJobOutput,
   type StoredJobOptions,
 } from './jobs';
+import {
+  requestUploadIntent,
+  getUploadIntentStatus,
+  completeUploadIntent,
+  type UploadIntentDependencies,
+  type UploadIntentRequest,
+  type UploadIntentFailure,
+} from './media/upload-intents';
 import { MediaCapabilities } from './archive/capabilities';
 import { openStoredServingFile } from './archive/store-serving';
 import { isMediaRef, decodeMediaRef } from './media/store';
@@ -916,6 +924,7 @@ function streamMp4(
 }
 
 export interface RuntimeServerOptions extends StoredJobOptions {
+  uploadIntents?: Omit<UploadIntentDependencies, 'now'>;
   mediaCapabilities?: MediaCapabilities;
   now?: () => Date;
   realtimeHub?: RealtimeHub;
@@ -1487,7 +1496,7 @@ export async function handleRequest(
   }
 
   if (url.pathname.startsWith('/real/')) {
-    await handleRealGroupRequest(request, response, config, database, url, now(), now);
+    await handleRealGroupRequest(request, response, config, database, url, now(), now, options);
     return;
   }
 
@@ -2512,6 +2521,8 @@ export async function handleRequest(
     let result: Awaited<ReturnType<typeof processClipJob>>;
     try {
       result = await processClipJob(database, {
+        mediaStore: options.mediaStore,
+        mediaEnvironment: options.mediaEnvironment,
         jobId,
         groupId: identity.groupId,
         ffmpegBin: config.ffmpegBin,
@@ -2706,6 +2717,8 @@ export async function handleRequest(
     let compiled: Awaited<ReturnType<typeof processCompilationJob>>;
     try {
       compiled = await processCompilationJob(database, {
+        mediaStore: options.mediaStore,
+        mediaEnvironment: options.mediaEnvironment,
         jobId: job.id,
         groupId: identity.groupId,
         ffmpegBin: config.ffmpegBin,
@@ -3486,6 +3499,7 @@ async function handleRealGroupRequest(
   url: URL,
   now: Date,
   currentClock: () => Date = () => now,
+  options: RuntimeServerOptions = {},
 ): Promise<void> {
   if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
     authJson(request, response, config, 403, {
@@ -3503,6 +3517,121 @@ async function handleRealGroupRequest(
       error: 'session_required',
       message: 'A valid sign-in is required.',
     });
+    return;
+  }
+
+  const uploadIntentMatch = url.pathname.match(
+    /^\/real\/groups\/([^/]+)\/upload-intents(?:\/([^/]+)(\/complete)?)?$/,
+  );
+  if (uploadIntentMatch) {
+    const groupId = decodePathSegment(uploadIntentMatch[1], response, config);
+    const intentId = uploadIntentMatch[2]
+      ? decodePathSegment(uploadIntentMatch[2], response, config)
+      : null;
+    if (groupId === null || (uploadIntentMatch[2] && intentId === null)) return;
+    if (url.searchParams.has('sessionId')) return sendDenied(response, config);
+    const actor = { sessionToken: token!, groupId };
+    if (
+      !getRealGroup(database, session.account.id, groupId) ||
+      getCurrentRealGroup(database, session.account.id)?.group.id !== groupId
+    )
+      return sendDenied(response, config);
+    const deps = options.uploadIntents ? { ...options.uploadIntents, now: currentClock } : null;
+    if (!deps) {
+      authJson(request, response, config, 503, {
+        error: 'upload_intents_unavailable',
+        message: 'Direct transfer is unavailable. Use the existing upload option.',
+      });
+      return;
+    }
+    const failed = (reason: UploadIntentFailure) => {
+      const status =
+        reason === 'session_required'
+          ? 401
+          : reason === 'forbidden'
+            ? 403
+            : reason === 'not_found'
+              ? 404
+              : reason === 'storage_failed'
+                ? 503
+                : [
+                      'closed_cycle',
+                      'quota_exceeded',
+                      'idempotency_conflict',
+                      'expired',
+                      'version_conflict',
+                      'replacement_conflict',
+                    ].includes(reason)
+                  ? 409
+                  : 400;
+      authJson(request, response, config, status, {
+        error: `upload_intent_${reason}`,
+        message:
+          reason === 'quota_exceeded'
+            ? 'This week has no remaining contribution allowance.'
+            : 'This transfer cannot be completed. Check your connection and capture allowance.',
+      });
+    };
+    if (intentId && !uploadIntentMatch[3] && request.method === 'GET') {
+      const result = getUploadIntentStatus(database, actor, intentId, deps);
+      if (!result.ok) return failed(result.reason);
+      authJson(request, response, config, 200, { intent: result.value });
+      return;
+    }
+    if (request.method !== 'POST' || (intentId && !uploadIntentMatch[3])) {
+      authJson(request, response, config, 405, {
+        error: 'method_not_allowed',
+        message: 'Use the supported intent request, status or completion action.',
+      });
+      return;
+    }
+    const body = await requestBody(request, config, 8 * 1024);
+    const keys = intentId
+      ? ['versionId']
+      : [
+          'idempotencyKey',
+          'mediaType',
+          'contentType',
+          'byteLength',
+          'sha256',
+          'durationSeconds',
+          'trimStartSeconds',
+          'trimEndSeconds',
+          'mode',
+          'replacesContributionId',
+        ];
+    if (!body || Object.keys(body).some((key) => !keys.includes(key)))
+      return failed('invalid_request');
+    const release = acquireRequestCapacity(
+      (options.requestLimiters ?? createRequestLimiters(config)).processing,
+      request,
+      response,
+      config,
+    );
+    if (!release) return;
+    try {
+      if (intentId) {
+        const result = await completeUploadIntent(
+          database,
+          actor,
+          { intentId, versionId: typeof body.versionId === 'string' ? body.versionId : '' },
+          deps,
+        );
+        if (!result.ok) return failed(result.reason);
+        authJson(request, response, config, 200, { intent: result.value });
+      } else {
+        const result = await requestUploadIntent(
+          database,
+          actor,
+          body as unknown as UploadIntentRequest,
+          deps,
+        );
+        if (!result.ok) return failed(result.reason);
+        authJson(request, response, config, 200, result.value);
+      }
+    } finally {
+      release();
+    }
     return;
   }
 

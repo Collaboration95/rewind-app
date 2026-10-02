@@ -57,7 +57,7 @@ test('real invite and media migrations 020–024 apply once and participate in s
 
     assertChainReceipts();
     assertInviteSchema();
-    assert.equal(schemaReadiness(database).expectedMigrationVersion, 25);
+    assert.equal(schemaReadiness(database).expectedMigrationVersion, 26);
     assert.deepEqual(schemaReadiness(database).missingMigrationKeys, []);
     assert.ok(
       database

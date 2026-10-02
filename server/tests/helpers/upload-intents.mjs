@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { parseConfig } from '../../dist/config.js';
 import { openDatabase, openDatabaseAt } from '../../dist/db.js';
@@ -8,40 +9,11 @@ import { createRealGroup } from '../../dist/groups/real.js';
 import { PrivateS3MediaStore } from '../../dist/media/s3-store.js';
 import { s3Double } from './private-media-store.mjs';
 
-/** Disposable SQL proposal fixture; canonical migration 026 remains lead-owned. */
-export const INTENT_SCHEMA_SQL = `
-CREATE TABLE upload_intents (
-  id TEXT PRIMARY KEY,
-  environment TEXT NOT NULL,
-  group_id TEXT NOT NULL REFERENCES real_group_metadata(group_id),
-  account_id TEXT NOT NULL REFERENCES real_accounts(id),
-  profile_id TEXT NOT NULL REFERENCES real_profiles(id),
-  cycle_id TEXT NOT NULL REFERENCES cycles(id),
-  quota_window_start_at TEXT NOT NULL,
-  idempotency_hash TEXT NOT NULL,
-  request_hash TEXT NOT NULL,
-  request_json TEXT NOT NULL,
-  target_json TEXT NOT NULL,
-  reserved_seconds REAL NOT NULL CHECK (reserved_seconds > 0 AND reserved_seconds <= 15),
-  state TEXT NOT NULL CHECK (state IN ('open','pinned','completed','expired')),
-  pinned_ref TEXT,
-  contribution_id TEXT UNIQUE REFERENCES contributions(id),
-  job_id TEXT UNIQUE REFERENCES media_jobs(id),
-  created_at TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  cleanup_cursor TEXT,
-  cleanup_complete INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_complete IN (0,1)),
-  UNIQUE (environment, group_id, profile_id, idempotency_hash),
-  CHECK ((state = 'open' AND pinned_ref IS NULL)
-      OR state = 'expired'
-      OR (state IN ('pinned','completed') AND pinned_ref IS NOT NULL)),
-  CHECK ((state = 'completed' AND contribution_id IS NOT NULL AND job_id IS NOT NULL)
-      OR (state <> 'completed' AND contribution_id IS NULL AND job_id IS NULL))
+/** Tests share the canonical migration; no duplicate schema contract. */
+export const INTENT_SCHEMA_SQL = readFileSync(
+  new URL('../../migrations/026-upload-intents.sql', import.meta.url),
+  'utf8',
 );
-CREATE INDEX upload_intents_expiry_idx ON upload_intents(environment, cleanup_complete, expires_at, id);
-CREATE INDEX upload_intents_quota_idx ON upload_intents(cycle_id, profile_id, quota_window_start_at, state, expires_at);
-`;
 
 export function accountFixture(database, id, now) {
   const token = randomBytes(32).toString('base64url');
