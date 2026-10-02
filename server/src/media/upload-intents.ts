@@ -22,7 +22,9 @@ import {
   encodeMediaRef,
   MediaStoreError,
   putRef,
+  sameMediaRef,
   validateRef,
+  verifiedBody,
   type MediaObjectRef,
   type MediaScope,
   type MediaStore,
@@ -30,6 +32,8 @@ import {
 import { materializeStoredMedia } from './store-files';
 
 export const UPLOAD_INTENT_TTL_MS = 15 * 60 * 1000;
+/** Reconciliation never follows cursors or assumes that a truncated page is complete. */
+export const UPLOAD_INTENT_RECONCILE_VERSION_LIMIT = 8;
 export type UploadTarget = Omit<MediaObjectRef, 'versionId'>;
 export interface UploadCapability {
   method: 'PUT';
@@ -497,6 +501,104 @@ export function getUploadIntentStatus(
     const now = clock(deps);
     const authority = authorize(database, actor, now);
     return { ok: true, value: status(owned(database, intentId, authority, deps.environment), now) };
+  } catch (error) {
+    return errorResult(error);
+  }
+}
+
+/** Recover a lost PUT receipt without choosing latest or issuing another PUT.
+ * Storage I/O stays outside transactions; completion owns the final CAS,
+ * actual media validation, quota reservation and exactly-once registration. */
+export async function reconcileUploadIntent(
+  database: RewindDatabase,
+  actor: UploadIntentActor,
+  input: { intentId: string },
+  deps: UploadIntentDependencies,
+): Promise<UploadIntentResult<UploadIntentStatus>> {
+  try {
+    if (
+      !input ||
+      typeof input.intentId !== 'string' ||
+      !input.intentId ||
+      input.intentId.length > 128
+    )
+      fail('invalid_request');
+    function guarded(): IntentRow {
+      return transaction(database, () => {
+        const now = clock(deps);
+        const authority = authorize(database, actor, now);
+        const row = owned(database, input.intentId, authority, deps.environment);
+        // Completed replay preserves the existing receipt after rollover/expiry.
+        if (row.state !== 'completed') currentIntent(row, authority, now);
+        return row;
+      });
+    }
+    async function finish(row: IntentRow, versionId: string) {
+      return completeUploadIntent(database, actor, { intentId: row.id, versionId }, deps);
+    }
+    const row = guarded();
+    if (row.pinned_ref) return await finish(row, decodeMediaRef(row.pinned_ref).versionId);
+    const expected = target(row, deps);
+    const page = await deps.transport.listVersions(
+      scope(row),
+      expected,
+      null,
+      UPLOAD_INTENT_RECONCILE_VERSION_LIMIT,
+    );
+    let fresh = guarded();
+    if (fresh.pinned_ref) return await finish(fresh, decodeMediaRef(fresh.pinned_ref).versionId);
+    if (
+      !page ||
+      !Array.isArray(page.refs) ||
+      page.refs.length > UPLOAD_INTENT_RECONCILE_VERSION_LIMIT ||
+      page.nextCursor !== null
+    )
+      fail('storage_failed');
+    const identities = new Set<string>();
+    // Validate the complete inventory before any candidate is read or pinned.
+    for (const ref of page.refs) {
+      validateRef(scope(row), ref, expected.backend, expected.storeId, clock(deps));
+      if (
+        ref.versionId === 'pending' ||
+        /[\s\x00-\x1f\x7f]/.test(ref.versionId) ||
+        !sameMediaRef(ref, { ...expected, versionId: ref.versionId }) ||
+        identities.has(ref.versionId)
+      )
+        fail('storage_failed');
+      identities.add(ref.versionId);
+    }
+    let matching: string | null = null;
+    for (const versionId of identities) {
+      const ref = { ...expected, versionId };
+      try {
+        const observed = await deps.store.head(scope(row), ref);
+        fresh = guarded();
+        if (fresh.pinned_ref)
+          return await finish(fresh, decodeMediaRef(fresh.pinned_ref).versionId);
+        if (!sameMediaRef(ref, observed)) throw new MediaStoreError('integrity_mismatch');
+        // Hash bytes ourselves as well as requiring the store's pinned read.
+        // Inventory/HEAD metadata alone cannot establish an exact byte match.
+        for await (const bytes of verifiedBody(deps.store.read(scope(row), ref), ref)) void bytes;
+      } catch (error) {
+        // A conclusively absent/different version is not a match. Unexpected
+        // storage errors cannot establish uniqueness and must fail closed.
+        if (
+          !(error instanceof MediaStoreError) ||
+          !['missing', 'integrity_mismatch'].includes(error.code)
+        )
+          throw error;
+        guarded();
+        continue;
+      }
+      fresh = guarded();
+      if (fresh.pinned_ref) return await finish(fresh, decodeMediaRef(fresh.pinned_ref).versionId);
+      if (matching !== null) fail('version_conflict');
+      matching = versionId;
+    }
+    fresh = guarded();
+    if (fresh.pinned_ref) return await finish(fresh, decodeMediaRef(fresh.pinned_ref).versionId);
+    if (matching === null) fail('source_unavailable');
+    return await finish(fresh, matching);
   } catch (error) {
     return errorResult(error);
   }

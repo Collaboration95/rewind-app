@@ -7,11 +7,315 @@ import {
   cleanupUploadIntents,
   completeUploadIntent,
   getUploadIntentStatus,
+  reconcileUploadIntent,
   requestUploadIntent,
+  UPLOAD_INTENT_RECONCILE_VERSION_LIMIT,
 } from '../dist/media/upload-intents.js';
 import { decodeMediaRef } from '../dist/media/store.js';
 import { runWorkerTick } from '../dist/jobs/worker.js';
 import { withIntentFixture } from './helpers/upload-intents.mjs';
+
+function reconciled(c, intent) {
+  return reconcileUploadIntent(c.database, c.actor, { intentId: intent.id }, c.deps);
+}
+
+function noRegistration(c, intent) {
+  assert.equal(
+    c.database.prepare('SELECT state,pinned_ref FROM upload_intents WHERE id=?').get(intent.id)
+      .state,
+    'open',
+  );
+  assert.equal(
+    c.database.prepare('SELECT pinned_ref FROM upload_intents WHERE id=?').get(intent.id)
+      .pinned_ref,
+    null,
+  );
+  assert.equal(
+    c.database
+      .prepare('SELECT count(*) AS n FROM contributions WHERE cycle_id=?')
+      .get(intent.cycleId).n,
+    0,
+  );
+  assert.equal(
+    c.database
+      .prepare('SELECT count_used FROM contribution_quota_windows WHERE member_id=?')
+      .get(intent.profileId).count_used,
+    0,
+  );
+}
+
+test('lost PUT reconciliation verifies one immutable version, survives reopen and registers/processes exactly once', async () =>
+  withIntentFixture(async (c) => {
+    const request = await requested(c, 'reconcile-lost-put');
+    const version = await c.put(request.upload);
+    const list = c.deps.transport.listVersions;
+    let lists = 0;
+    c.deps.transport.listVersions = async (...args) => {
+      lists++;
+      assert.equal(args[1].key, `test/${c.actor.groupId}/incoming/${request.intent.id}`);
+      assert.equal(args[2], null);
+      assert.equal(args[3], UPLOAD_INTENT_RECONCILE_VERSION_LIMIT);
+      return list(...args);
+    };
+    c.reopen();
+    const [first, second] = await Promise.all([
+      reconciled(c, request.intent),
+      reconciled(c, request.intent),
+    ]);
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.deepEqual(second, first);
+    assert.equal(first.value.versionId, version);
+    assert.equal(
+      c.database
+        .prepare('SELECT count_used FROM contribution_quota_windows WHERE member_id=?')
+        .get(request.intent.profileId).count_used,
+      1,
+    );
+    assert.equal(c.double.calls.filter(([kind]) => kind === 'put').length, 1);
+    const tick = await runWorkerTick(c.database, {
+      ffmpegBin: 'ffmpeg',
+      stagingDir: c.root + '/staging',
+      outputDir: c.root + '/processed',
+      mediaStore: c.deps.store,
+      mediaEnvironment: 'test',
+      groupId: c.actor.groupId,
+    });
+    assert.equal(tick.record.status, 'ready');
+    const count = lists;
+    c.now = new Date(c.now.getTime() + 16 * 60000);
+    assert.deepEqual(await reconciled(c, request.intent), first);
+    assert.equal(lists, count); // receipt replay never inventories disposed source
+  }));
+
+for (const kind of [
+  'empty',
+  'two_matching',
+  'foreign',
+  'adjacent_key',
+  'wrong_store',
+  'pending',
+  'duplicate',
+  'truncated',
+  'oversize_page',
+  'malformed_page',
+  'malformed_ref',
+  'metadata_changed',
+  'provider_error',
+]) {
+  test(`reconciliation rejects ${kind} inventory without guessing or pinning`, async () =>
+    withIntentFixture(async (c) => {
+      const request = await requested(c, 'reconcile-inventory');
+      await c.put(request.upload);
+      if (kind === 'two_matching') await c.put(request.upload);
+      const list = c.deps.transport.listVersions;
+      let lists = 0;
+      c.deps.transport.listVersions = async (...args) => {
+        lists++;
+        const page = await list(...args);
+        const ref = page.refs[0];
+        switch (kind) {
+          case 'empty':
+            return { refs: [], nextCursor: null };
+          case 'foreign':
+            return {
+              refs: [{ ...ref, groupId: 'foreign', key: 'test/foreign/incoming/object' }],
+              nextCursor: null,
+            };
+          case 'adjacent_key':
+            return { refs: [{ ...ref, key: ref.key + '-adjacent' }], nextCursor: null };
+          case 'wrong_store':
+            return { refs: [{ ...ref, storeId: 'other-private-bucket' }], nextCursor: null };
+          case 'pending':
+            return { refs: [{ ...ref, versionId: 'pending' }], nextCursor: null };
+          case 'duplicate':
+            return { refs: [ref, ref], nextCursor: null };
+          case 'truncated':
+            return { ...page, nextCursor: 'another-page' };
+          case 'oversize_page':
+            return {
+              refs: Array.from(
+                { length: UPLOAD_INTENT_RECONCILE_VERSION_LIMIT + 1 },
+                (_, index) => ({ ...ref, versionId: String(index + 1) }),
+              ),
+              nextCursor: null,
+            };
+          case 'malformed_page':
+            return { refs: null, nextCursor: null };
+          case 'malformed_ref':
+            return { refs: [{ ...ref, sha256: 'not-a-checksum' }], nextCursor: null };
+          case 'metadata_changed':
+            return { refs: [{ ...ref, byteLength: ref.byteLength + 1 }], nextCursor: null };
+          case 'provider_error':
+            throw new Error('private provider details');
+          default:
+            return page;
+        }
+      };
+      const result = await reconciled(c, request.intent);
+      assert.equal(result.ok, false);
+      assert.equal(lists, 1);
+      if (kind === 'two_matching') assert.equal(result.reason, 'version_conflict');
+      else
+        assert.equal(
+          c.double.calls.some(([kind]) => kind === 'get'),
+          false,
+        );
+      assert.equal(JSON.stringify(result).includes('private provider'), false);
+      noRegistration(c, request.intent);
+    }));
+}
+
+test('reconciliation ignores conclusively nonmatching bytes and selects the only verified version, not latest', async () =>
+  withIntentFixture(async (c) => {
+    const request = await requested(c, 'reconcile-exact-bytes');
+    const good = await c.put(request.upload);
+    const bad = Buffer.from(c.bytes);
+    bad[0] ^= 255;
+    await c.put(request.upload, bad); // latest HEAD/checksum does not match
+    const result = await reconciled(c, request.intent);
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.value.versionId, good);
+    assert.equal(c.double.calls.filter(([kind]) => kind === 'put').length, 2);
+  }));
+
+test('reconciliation hashes actual GET bytes even when HEAD advertises the requested checksum', async () =>
+  withIntentFixture(async (c) => {
+    const request = await requested(c, 'reconcile-corrupt-get');
+    await c.put(request.upload);
+    [...c.double.versions.values()][0].bytes[0] ^= 255;
+    assert.deepEqual(await reconciled(c, request.intent), {
+      ok: false,
+      reason: 'source_unavailable',
+    });
+    noRegistration(c, request.intent);
+  }));
+
+for (const kind of [
+  'session',
+  'selection',
+  'membership',
+  'expiry',
+  'closure',
+  'rollover',
+  'quota',
+  'cleanup',
+]) {
+  test(`reconciliation fences ${kind} changing during asynchronous inventory/read`, async () =>
+    withIntentFixture(async (c) => {
+      const request = await requested(c, 'reconcile-race');
+      await c.put(request.upload);
+      const mutate = () => {
+        switch (kind) {
+          case 'session':
+            c.database
+              .prepare('DELETE FROM real_account_sessions WHERE account_id=?')
+              .run('intent-owner');
+            break;
+          case 'selection':
+            c.database
+              .prepare('DELETE FROM real_account_group_selections WHERE account_id=?')
+              .run('intent-owner');
+            break;
+          case 'membership':
+            c.database
+              .prepare('DELETE FROM real_group_memberships WHERE account_id=?')
+              .run('intent-owner');
+            break;
+          case 'expiry':
+          case 'cleanup':
+            c.now = new Date(c.now.getTime() + 16 * 60000);
+            break;
+          case 'closure':
+            c.database
+              .prepare("UPDATE cycles SET status='revealing' WHERE id=?")
+              .run(c.group.cycle.id);
+            break;
+          case 'rollover':
+            c.database
+              .prepare(
+                `INSERT INTO cycles (id,group_id,prompt,starts_at,ends_at,status,lock_state,max_count,max_seconds,count_used,seconds_used,previous_cycle_id)
+              SELECT 'reconcile-successor',group_id,prompt,starts_at,ends_at,'collecting',lock_state,max_count,max_seconds,0,0,id FROM cycles WHERE id=?`,
+              )
+              .run(request.intent.cycleId);
+            c.database
+              .prepare("UPDATE groups SET current_cycle_id='reconcile-successor' WHERE id=?")
+              .run(c.actor.groupId);
+            break;
+          case 'quota':
+            c.database
+              .prepare(
+                'UPDATE contribution_quota_windows SET count_used=max_count WHERE member_id=?',
+              )
+              .run(request.intent.profileId);
+            break;
+        }
+      };
+      const read = c.deps.store.read.bind(c.deps.store);
+      c.deps.store.read = async function* (...args) {
+        for await (const bytes of read(...args)) {
+          yield bytes;
+          mutate();
+          if (kind === 'cleanup') await cleanupUploadIntents(c.database, c.deps);
+        }
+      };
+      const result = await reconciled(c, request.intent);
+      assert.equal(result.ok, false, kind);
+      assert.equal(
+        c.database
+          .prepare('SELECT count(*) AS n FROM contributions WHERE cycle_id=?')
+          .get(request.intent.cycleId).n,
+        0,
+      );
+      const row = c.database
+        .prepare('SELECT state,pinned_ref FROM upload_intents WHERE id=?')
+        .get(request.intent.id);
+      if (kind === 'quota') {
+        assert.equal(result.reason, 'quota_exceeded');
+        assert.equal(row.state, 'pinned');
+        assert.equal(decodeMediaRef(row.pinned_ref).versionId, '1');
+      } else assert.equal(row.pinned_ref, null);
+    }));
+}
+
+test('an independently CAS-pinned version wins during reconciliation; replay never substitutes discovered identity', async () =>
+  withIntentFixture(async (c) => {
+    const request = await requested(c, 'reconcile-cas-race');
+    await c.put(request.upload);
+    const list = c.deps.transport.listVersions;
+    c.deps.transport.listVersions = async (...args) => {
+      const page = await list(...args);
+      const winning = await c.put(request.upload);
+      const result = await completed(c, request.intent, winning);
+      assert.equal(result.ok, true);
+      return page;
+    };
+    const result = await reconciled(c, request.intent);
+    assert.equal(result.ok, true);
+    assert.equal(result.value.versionId, '2');
+    assert.equal(
+      c.database
+        .prepare('SELECT count_used FROM contribution_quota_windows WHERE member_id=?')
+        .get(request.intent.profileId).count_used,
+      1,
+    );
+  }));
+
+test('pinned retry uses the existing verifier/quota transaction without inventing an inventory winner', async () =>
+  withIntentFixture(async (c) => {
+    const request = await requested(c, 'reconcile-pinned-retry');
+    const version = await c.put(request.upload);
+    c.deps.probe = async () => {
+      throw new Error('interrupted verification');
+    };
+    assert.equal((await completed(c, request.intent, version)).ok, false);
+    delete c.deps.probe;
+    c.deps.transport.listVersions = async () => {
+      throw new Error('must not inventory pinned source');
+    };
+    const result = await reconciled(c, request.intent);
+    assert.equal(result.ok, true);
+    assert.equal(result.value.versionId, version);
+  }));
 
 async function requested(context, key = 'intent-upload-1', extra = {}) {
   const result = await requestUploadIntent(
