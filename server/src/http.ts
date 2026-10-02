@@ -2482,7 +2482,18 @@ export async function handleRequest(
     const identity = requireAuthorisedOwner(database, url, response, config, now(), groupId);
     if (!identity) return;
 
-    const lifecycle = advanceCycleLifecycle(database, { groupId: identity.groupId, clock: now });
+    // Demo controls follow the older release independently of the current capture cycle.
+    const pendingRelease = database
+      .prepare(
+        `SELECT id FROM cycles WHERE group_id = ? AND status = 'revealing'
+       ORDER BY ends_at ASC, id ASC LIMIT 1`,
+      )
+      .get(identity.groupId) as { id: string } | undefined;
+    const lifecycle = advanceCycleLifecycle(database, {
+      groupId: identity.groupId,
+      ...(pendingRelease ? { cycleId: pendingRelease.id } : {}),
+      clock: now,
+    });
     if (!lifecycle.ok) return sendNotFound(response, config);
     if (lifecycle.action === 'waiting_for_boundary') {
       sendJson(response, config, 200, {
@@ -2498,7 +2509,11 @@ export async function handleRequest(
       });
       return;
     }
-    if (lifecycle.action === 'archived' || lifecycle.action === 'already_archived') {
+    if (
+      lifecycle.action === 'premiere' ||
+      lifecycle.action === 'archived' ||
+      lifecycle.action === 'already_archived'
+    ) {
       sendJson(response, config, 200, {
         reveal: { state: 'released', cycleId: lifecycle.cycle.id },
       });

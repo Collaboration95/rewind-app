@@ -126,7 +126,42 @@ export function getRealGroup(database: RewindDatabase, accountId: string, groupI
        WHERE member.account_id = ? AND g.id = ?`,
     )
     .get(accountId, groupId) as Record<string, unknown> | undefined;
-  return mapRealGroup(row);
+  const result = mapRealGroup(row);
+  if (!result) return null;
+  const releases = database
+    .prepare(
+      `SELECT c.id AS cycleId, c.status, c.ends_at AS endsAt,
+            c.release_status AS releaseStatus, c.release_published_at AS publishedAt,
+            job.status AS jobStatus
+     FROM cycles c LEFT JOIN media_jobs job
+       ON job.cycle_id = c.id AND job.group_id = c.group_id AND job.kind = 'film'
+     WHERE c.group_id = ? AND c.status IN ('revealing', 'archived')
+     ORDER BY c.ends_at DESC, c.id DESC LIMIT 20`,
+    )
+    .all(groupId) as {
+    cycleId: string;
+    status: string;
+    endsAt: string;
+    releaseStatus: string;
+    publishedAt: string | null;
+    jobStatus: string | null;
+  }[];
+  return {
+    ...result,
+    releases: releases.map((release) => ({
+      cycleId: release.cycleId,
+      endsAt: release.endsAt,
+      publishedAt: release.publishedAt,
+      state:
+        release.releaseStatus === 'published'
+          ? release.status === 'archived'
+            ? 'archived'
+            : 'premiere'
+          : release.jobStatus === 'failed'
+            ? 'delayed'
+            : 'processing',
+    })),
+  };
 }
 
 function mapRealGroup(row: Record<string, unknown> | undefined) {

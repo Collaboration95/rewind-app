@@ -11,6 +11,7 @@ export {
   transitionCycleLifecycle,
   processCycleLifecycle,
   publishCycleRelease,
+  PREMIERE_DURATION_MS,
 } from './lifecycle';
 export type {
   AdvanceCycleLifecycleInput,
