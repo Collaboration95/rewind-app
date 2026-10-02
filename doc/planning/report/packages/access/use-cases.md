@@ -4,13 +4,13 @@
 
 ## Scope and actors
 
-| Actor | Responsibility |
-|---|---|
-| Account holder | Registers, signs in, restores or ends an account session; creates or selects groups. |
-| Group owner | The account holder recorded with the owner role; may issue and revoke invitations. |
-| Invited account holder | An authenticated account that submits an invitation code and joins a group. |
-| Non-member / unauthenticated visitor | May attempt a protected operation but receives no account or group authority. |
-| Identity provider (target) | Managed OIDC/Cognito in Sprint 3; not active in this code snapshot. |
+| Actor                                | Responsibility                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------ |
+| Account holder                       | Registers, signs in, restores or ends an account session; creates or selects groups. |
+| Group owner                          | The account holder recorded with the owner role; may issue and revoke invitations.   |
+| Invited account holder               | An authenticated account that submits an invitation code and joins a group.          |
+| Non-member / unauthenticated visitor | May attempt a protected operation but receives no account or group authority.        |
+| Identity provider (target)           | Managed OIDC/Cognito in Sprint 3; not active in this code snapshot.                  |
 
 The model covers the access slice of proposal FR-01 (identity and private groups) and FR-02 (group creation and invitations). The proposal calls its combined entry journey UC-01; this report follows issue #357's expanded UC01 authentication/session, UC02 group, and UC03 invitation boundaries so that each has a usable model. Issue #357 cites `R01–R03,R22`; the execution-plan-derived bounded trace is in [README.md](README.md), with its source limitation stated there.
 
@@ -112,20 +112,20 @@ The same accept boundary rejects malformed or unknown codes, exhausted account/s
 
 Each row has a separate analysis sequence and design sequence in [models.md](models.md). The flow families group branch outcomes only where they share the same initiating interaction; each relevant exception remains named above and appears in that flow's sequence diagram.
 
-| Flow | Normal path | Exceptional branches included |
-|---|---|---|
-| UC01-F1 | New account persisted | Invalid/oversized input, duplicate name, rate limit, store failure |
-| UC01-F2 | Password accepted and browser/native session issued | Invalid fields/type, bad credentials, throttling/cooldown, service error |
-| UC01-F3 | Valid browser/native session restored | Missing, expired/revoked token, transport failure |
-| UC01-F4 | Session revoked and client signs out | Remote failure/pending state |
-| UC02-F1 | Group, cycle, owner membership, selection committed | Invalid fields, no session, transaction rollback |
-| UC02-F2 | Member lists/selects own group | Null selection, malformed/unknown/non-member group, stale session |
-| UC02-F3 | Owner updates collecting-cycle prompt and group timezone | Non-owner, invalid prompt/zone, closed cycle, rollback |
-| UC02-F4 | Member saves personal group reminder preference | Non-member, invalid/snooze boundary, persistence/schedule failure; delivery unconfigured |
-| UC03-F1 | Owner creates unique expiring invitation | Missing group, non-owner, invalid expiry, persistence/allocation failure |
-| UC03-F2 | Owner revokes active invite | Missing, inactive, used, cross-group, non-owner |
-| UC03-F3 | Invitee joins and group becomes selected | Existing/new profile branches within successful transaction |
-| UC03-F4 | No membership mutation | Missing session, malformed/unknown/throttled, expired, replayed/duplicate, cross-group, full, rollback |
+| Flow    | Normal path                                              | Exceptional branches included                                                                          |
+| ------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| UC01-F1 | New account persisted                                    | Invalid/oversized input, duplicate name, rate limit, store failure                                     |
+| UC01-F2 | Password accepted and browser/native session issued      | Invalid fields/type, bad credentials, throttling/cooldown, service error                               |
+| UC01-F3 | Valid browser/native session restored                    | Missing, expired/revoked token, transport failure                                                      |
+| UC01-F4 | Session revoked and client signs out                     | Remote failure/pending state                                                                           |
+| UC02-F1 | Group, cycle, owner membership, selection committed      | Invalid fields, no session, transaction rollback                                                       |
+| UC02-F2 | Member lists/selects own group                           | Null selection, malformed/unknown/non-member group, stale session                                      |
+| UC02-F3 | Owner updates collecting-cycle prompt and group timezone | Non-owner, invalid prompt/zone, closed cycle, rollback                                                 |
+| UC02-F4 | Member saves personal group reminder preference          | Non-member, invalid/snooze boundary, persistence/schedule failure; delivery unconfigured               |
+| UC03-F1 | Owner creates unique expiring invitation                 | Missing group, non-owner, invalid expiry, persistence/allocation failure                               |
+| UC03-F2 | Owner revokes active invite                              | Missing, inactive, used, cross-group, non-owner                                                        |
+| UC03-F3 | Invitee joins and group becomes selected                 | Existing/new profile branches within successful transaction                                            |
+| UC03-F4 | No membership mutation                                   | Missing session, malformed/unknown/throttled, expired, replayed/duplicate, cross-group, full, rollback |
 
 ## Explicit exclusions and target cases
 

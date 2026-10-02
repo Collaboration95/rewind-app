@@ -2,7 +2,7 @@
 
 **Status:** implementation-grounded, open package draft; fixed evidence cut `a6b6b312f219c268a16401f64efe6c3b8f808a54` (published PR #368 source snapshot), refreshed 2 October 2026. **Not final report assembly or acceptance evidence.**
 
-This package models UC01 account authentication and sessions, UC02 real-group create/select, and UC03 invitation issue/revoke/accept. It follows issue [#357](https://github.com/Collaboration95/rewind-app/issues/357), the submitted *Rewind Project Proposal* §§4.1, 5.1–5.2 and 7.1, and the supplied Practice Module Report Template §§3.3.2, 3.4.1 and 3.5.1. Those sources require analysis and design class models, normal and relevant exceptional flows, one analysis and one design sequence for every major flow, and before/after class and sequence views for a real design problem.
+This package models UC01 account authentication and sessions, UC02 real-group create/select, and UC03 invitation issue/revoke/accept. It follows issue [#357](https://github.com/Collaboration95/rewind-app/issues/357), the submitted _Rewind Project Proposal_ §§4.1, 5.1–5.2 and 7.1, and the supplied Practice Module Report Template §§3.3.2, 3.4.1 and 3.5.1. Those sources require analysis and design class models, normal and relevant exceptional flows, one analysis and one design sequence for every major flow, and before/after class and sequence views for a real design problem.
 
 ## Evidence boundary
 
@@ -17,24 +17,24 @@ This package models UC01 account authentication and sessions, UC02 real-group cr
 
 The flow catalogue declares twelve major flow families. Each has a separately identified analysis sequence and design sequence, with exceptional branches enumerated in its flow description and diagram. UC01–UC03 each have one analysis and one design class diagram. The central authorization problem has before/after static and dynamic diagrams. All 35 vector sources are in [`diagrams/`](diagrams/); links below embed those figures.
 
-| Report item | Draft location | State |
-|---|---|---|
-| Overall use-case view and explicit exclusions | [use-cases.md](use-cases.md) | Drafted |
-| Normal and exceptional flow descriptions | [use-cases.md](use-cases.md) | Twelve flow families, with branches enumerated |
-| Per-use-case analysis/design classes and per-flow sequences | [models.md](models.md) | Drafted for the current pilot; see Sprint 3 boundary |
-| Design problem, candidates, rationale, implementation decision | [design-problem.md](design-problem.md) | Drafted against current source |
-| Code and source traceability | All three files | Exact commit and line anchors at the captured code SHA |
+| Report item                                                    | Draft location                         | State                                                  |
+| -------------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------ |
+| Overall use-case view and explicit exclusions                  | [use-cases.md](use-cases.md)           | Drafted                                                |
+| Normal and exceptional flow descriptions                       | [use-cases.md](use-cases.md)           | Twelve flow families, with branches enumerated         |
+| Per-use-case analysis/design classes and per-flow sequences    | [models.md](models.md)                 | Drafted for the current pilot; see Sprint 3 boundary   |
+| Design problem, candidates, rationale, implementation decision | [design-problem.md](design-problem.md) | Drafted against current source                         |
+| Code and source traceability                                   | All three files                        | Exact commit and line anchors at the captured code SHA |
 
 ## Issue requirement trace (bounded)
 
 Issue #357 names `R01–R03,R22` but does not include their canonical wording or a requirement-to-use-case crosswalk. This bounded trace uses the supplied Sprint 2 execution plan §§3 and 13; it is not presented as the canonical crosswalk. The execution-plan file is a local submission source and is not present in the published `a6b6b31` tree.
 
-| ID | Grounded summary from supplied execution plan | Evidence in this package | Boundary |
-|---|---|---|---|
-| R01 | Managed OIDC/auth-session target and signup/authentication journey | UC01 models the implemented local-password account/session pilot and labels managed OIDC as Sprint 3 target | OIDC/provider callback is not implemented at this cut |
-| R02 | Invite-only private groups, 2–10 capacity, and membership privacy | UC02 group creation/selection plus UC03 invite acceptance and member checks | Models only the cited code paths; no public discovery or membership removal implied |
-| R03 | Expiring native/web invitations | UC03 issue/revoke/accept flows and bounded expiry/deep-link trace | Device/provider acceptance has not been verified here |
-| R22 | Final report template, proposal presentation, and Agile evidence | This is the ACCESS model package input to the eventual report | Does not assemble the report/presentation or assert team contributions/effort |
+| ID  | Grounded summary from supplied execution plan                      | Evidence in this package                                                                                    | Boundary                                                                            |
+| --- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| R01 | Managed OIDC/auth-session target and signup/authentication journey | UC01 models the implemented local-password account/session pilot and labels managed OIDC as Sprint 3 target | OIDC/provider callback is not implemented at this cut                               |
+| R02 | Invite-only private groups, 2–10 capacity, and membership privacy  | UC02 group creation/selection plus UC03 invite acceptance and member checks                                 | Models only the cited code paths; no public discovery or membership removal implied |
+| R03 | Expiring native/web invitations                                    | UC03 issue/revoke/accept flows and bounded expiry/deep-link trace                                           | Device/provider acceptance has not been verified here                               |
+| R22 | Final report template, proposal presentation, and Agile evidence   | This is the ACCESS model package input to the eventual report                                               | Does not assemble the report/presentation or assert team contributions/effort       |
 
 The plan-level summary is enough to orient this package, but exact canonical R wording and an approved R-to-UC mapping remain unavailable from the #357 issue body and committed `a6b6b31` source. Keep this limitation explicit until the canonical crosswalk is supplied.
 
