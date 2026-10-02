@@ -208,6 +208,7 @@ npm run server:preflight  # local runtime, SQLite, LAN, and FFmpeg readiness
 
 ## Further reading
 
+- [External-provider agentic scan trial](docs/vigolium-agentic.md)
 - [Local-first boundary](docs/architecture/ADR-0001-local-first-sprint-0.md)
 - [Camera capture boundary](docs/architecture/ADR-0002-camera-capture-boundary.md)
 - [Domain contracts](docs/domain/contracts.md)
