@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import test from 'node:test';
+import { uploadFixture } from './helpers/fixture-upload.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
@@ -29,7 +30,7 @@ async function withRuntime(run) {
   await once(server, 'listening');
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   try {
-    await run({ baseUrl, config, database, dataDir });
+    await run({ baseUrl, config, database, dataDir, server });
   } finally {
     await new Promise((resolve) => server.close(resolve));
     database.close();
@@ -75,7 +76,7 @@ async function createGroup(baseUrl, authorization) {
 }
 
 test('real photo upload is idempotent, private, and processed as a three-second silent portrait MP4', async () => {
-  await withRuntime(async ({ baseUrl, config, database, dataDir }) => {
+  await withRuntime(async ({ baseUrl, config, database, dataDir, server }) => {
     const owner = await account(baseUrl, database, 'photo-owner');
     const outsider = await account(baseUrl, database, 'photo-outsider');
     const group = await createGroup(baseUrl, owner.authorization);
@@ -97,12 +98,13 @@ test('real photo upload is idempotent, private, and processed as a three-second 
     const groupId = group.group.id;
     const key = 'real-photo-upload-248';
     const scoped = (path, id = groupId) => `${baseUrl}${path}?groupId=${encodeURIComponent(id)}`;
-    const stagedResponse = await fetch(
+    const stagedResponse = await uploadFixture(
+      server,
       `${scoped('/contributions/upload/source')}&idempotencyKey=${key}`,
       {
-        method: 'POST',
-        headers: { Authorization: owner.authorization, 'Content-Type': 'image/png' },
-        body: bytes,
+        authorization: owner.authorization,
+        mimeType: 'image/png',
+        bytes,
       },
     );
     assert.equal(stagedResponse.status, 201);
