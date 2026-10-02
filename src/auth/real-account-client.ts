@@ -332,33 +332,32 @@ export interface RealAccountArchiveClient {
 /** Resolve a server-issued capability at the configured public API origin. */
 export function resolvePublicMediaPath(baseUrl: string, capabilityPath: string): string {
   let base: URL;
+  let capability: URL;
   let target: URL;
   try {
     base = new URL(baseUrl);
-    target = new URL(capabilityPath, base.origin);
+    capability = new URL(capabilityPath, 'https://rewind-capability.invalid');
+    const basePath = base.pathname.replace(/\/+$/, '');
+    target = new URL(`${basePath}${capabilityPath}`, base.origin);
   } catch {
     throw new AuthRequestError(502, 'response');
   }
 
-  const hasAppCredentialQuery = [...target.searchParams.keys()].some((key) =>
-    [
-      'token',
-      'session',
-      'sessionid',
-      'appsession',
-      'app_session',
-      'session_token',
-      'authorization',
-      'access_token',
-    ].includes(key.toLowerCase()),
-  );
   if (
+    base.protocol !== 'https:' ||
+    base.username.length > 0 ||
+    base.password.length > 0 ||
+    base.search.length > 0 ||
+    base.hash.length > 0 ||
+    capability.origin !== 'https://rewind-capability.invalid' ||
+    capability.pathname !== capabilityPath ||
+    capability.search.length > 0 ||
+    capability.hash.length > 0 ||
+    !/^\/media\/access\/[A-Za-z0-9_-]{43}$/.test(capability.pathname) ||
     target.origin !== base.origin ||
     target.protocol !== 'https:' ||
-    target.username.length > 0 ||
-    target.password.length > 0 ||
-    target.hash.length > 0 ||
-    hasAppCredentialQuery
+    target.search.length > 0 ||
+    target.hash.length > 0
   ) {
     throw new AuthRequestError(502, 'response');
   }
@@ -456,7 +455,7 @@ function mapRealPremiere(baseUrl: string, value: unknown, cycleId: string): Prem
   if (state === 'processing' || state === 'delayed' || state === 'locked' || state === 'failed') {
     return { state, cycleId: responseCycleId };
   }
-  if (state === 'premiere' || state === 'archived') {
+  if (state === 'ready') {
     const filmId =
       requiredString(metadata?.filmId) ?? requiredString(film?.id) ?? requiredString(metadata?.id);
     const playbackUrl = optionalCapabilityUrl(

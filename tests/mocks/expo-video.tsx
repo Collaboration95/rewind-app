@@ -18,6 +18,7 @@ export class MockVideoPlayer {
   muted = false;
   timeUpdateEventInterval = 0;
   currentTime = 0;
+  duration = 60;
   playing = false;
   released = false;
   private readonly listeners = new Map<string, Set<MockListener>>();
@@ -52,6 +53,7 @@ export class MockVideoPlayer {
 
   async replaceAsync(source: VideoSource): Promise<void> {
     this.replacements.push(source);
+    this.currentTime = 0;
   }
 
   seekBy(seconds: number) {

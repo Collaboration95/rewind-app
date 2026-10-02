@@ -14,7 +14,11 @@ function jsonResponse(body: unknown, status = 200): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 }
 
-function archiveBody(downloadCapability = 'stale') {
+function mediaCapability(seed: string): string {
+  return `/media/access/${seed.repeat(43).slice(0, 43)}`;
+}
+
+function archiveBody(downloadCapability = 's') {
   return {
     archive: {
       films: [
@@ -22,8 +26,8 @@ function archiveBody(downloadCapability = 'stale') {
           id: 'film-old',
           cycleId: 'cycle-old',
           publishedAt: '2026-09-01T00:00:00.000Z',
-          downloadPath: `/private-media/film?cap=${downloadCapability}`,
-          playbackPath: '/private-media/film?cap=old-play',
+          downloadPath: mediaCapability(downloadCapability),
+          playbackPath: mediaCapability('o'),
         },
       ],
       clips: [
@@ -32,7 +36,7 @@ function archiveBody(downloadCapability = 'stale') {
           contributionId: 'contribution-own',
           cycleId: 'cycle-old',
           createdAt: '2026-09-02T00:00:00.000Z',
-          downloadPath: `/private-media/clip?cap=${downloadCapability}`,
+          downloadPath: mediaCapability(downloadCapability),
         },
       ],
     },
@@ -91,10 +95,10 @@ it('renews playback capabilities before playing with audio and when the app resu
       premiereRead += 1;
       return jsonResponse({
         premiere: {
-          state: 'premiere',
+          state: 'ready',
           cycleId: 'cycle-current',
           filmId: 'film-current',
-          playbackPath: `/private-media/current?cap=play-${premiereRead}`,
+          playbackPath: mediaCapability(String(premiereRead)),
         },
       });
     }
@@ -109,19 +113,17 @@ it('renews playback capabilities before playing with audio and when the app resu
     await fireEvent.press(play);
     await waitFor(() => expect(player?.playing).toBe(true));
     expect(player?.muted).toBe(false);
-    expect(player?.replacements).toEqual([
-      'https://api.example.test/private-media/current?cap=play-2',
-    ]);
+    expect(player?.replacements).toEqual([`https://api.example.test${mediaCapability('2')}`]);
+    if (player) player.currentTime = 12.5;
 
     await act(async () => {
       appState.emit('background');
       appState.emit('active');
     });
     await waitFor(() => expect(player?.replacements).toHaveLength(2));
-    expect(player?.replacements[1]).toBe(
-      'https://api.example.test/private-media/current?cap=play-3',
-    );
+    expect(player?.replacements[1]).toBe(`https://api.example.test${mediaCapability('3')}`);
     expect(player?.playing).toBe(true);
+    expect(player?.currentTime).toBe(12.5);
     expect(
       authenticatedRequest.mock.calls.filter(([path]) => path.startsWith('/cycles/')),
     ).toHaveLength(3);
@@ -143,7 +145,7 @@ it('refreshes the selected own-clip capability before downloading', async () => 
   const authenticatedRequest = jest.fn(async (path: string) => {
     if (path.startsWith('/archive?')) {
       archiveRead += 1;
-      return jsonResponse(archiveBody(archiveRead === 1 ? 'old' : 'fresh'));
+      return jsonResponse(archiveBody(archiveRead === 1 ? 'o' : 'f'));
     }
     if (path.startsWith('/cycles/')) {
       return jsonResponse({ premiere: { state: 'processing', cycleId: 'cycle-current' } });
@@ -158,7 +160,7 @@ it('refreshes the selected own-clip capability before downloading', async () => 
     expect(downloaded[0]).toMatchObject({
       id: 'clip-own',
       contributionId: 'contribution-own',
-      downloadUrl: 'https://api.example.test/private-media/clip?cap=fresh',
+      downloadUrl: `https://api.example.test${mediaCapability('f')}`,
     });
     expect(archiveRead).toBe(2);
     expect(result.getByText('Saved to this device.')).toBeTruthy();
@@ -211,10 +213,10 @@ it('removes playback controls and explains an expired session after renewal fail
     if (premiereRead === 1) {
       return jsonResponse({
         premiere: {
-          state: 'premiere',
+          state: 'ready',
           cycleId: 'cycle-current',
           filmId: 'film-current',
-          playbackPath: '/private-media/current?cap=initial',
+          playbackPath: mediaCapability('i'),
         },
       });
     }
@@ -251,7 +253,7 @@ it('releases the old group player and archive items when the selected group chan
   const authenticatedRequest = jest.fn(async (path: string) => {
     if (path.startsWith('/archive?')) {
       if (path.includes('groupId=group-two')) {
-        const body = archiveBody('group-two-capability');
+        const body = archiveBody('g');
         body.archive.films[0].id = 'film-group-two';
         body.archive.films[0].cycleId = 'cycle-group-two';
         return jsonResponse(body);
@@ -261,10 +263,10 @@ it('releases the old group player and archive items when the selected group chan
     const cycleId = path.includes('cycle-group-two') ? 'cycle-group-two' : 'cycle-current';
     return jsonResponse({
       premiere: {
-        state: 'premiere',
+        state: 'ready',
         cycleId,
         filmId: `film-${cycleId}`,
-        playbackPath: `/private-media/${cycleId}?cap=play`,
+        playbackPath: mediaCapability('p'),
       },
     });
   });

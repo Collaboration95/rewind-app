@@ -519,6 +519,7 @@ function RealCapabilityPlayer({
   const renewAndPlay = useCallback(
     async (shouldPlay: boolean) => {
       const sequence = ++renewSequence.current;
+      const previousPosition = player.currentTime;
       setNotice('Refreshing this film’s playback access…');
       try {
         const fresh = await client.getPremiere(groupId, cycleId);
@@ -533,6 +534,14 @@ function RealCapabilityPlayer({
         if (player.playing) player.pause();
         await player.replaceAsync(fresh.playbackUrl);
         if (!alive.current || sequence !== renewSequence.current) return;
+        if (
+          previousPosition > 0 &&
+          (!Number.isFinite(player.duration) ||
+            player.duration <= 0 ||
+            previousPosition < player.duration)
+        ) {
+          player.seekBy(previousPosition - player.currentTime);
+        }
         setRenewalError(null);
         setNotice(null);
         if (shouldPlay) {

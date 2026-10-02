@@ -8,6 +8,10 @@ function response(body: unknown, status = 200): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
 }
 
+function mediaCapability(seed: string): string {
+  return `/media/access/${seed.repeat(43).slice(0, 43)}`;
+}
+
 const page = (filmCursor: string | null, clipCursor: string | null, clips: unknown[] = []) => ({
   archive: { films: [], clips },
   pagination: {
@@ -19,23 +23,32 @@ const page = (filmCursor: string | null, clipCursor: string | null, clips: unkno
 });
 
 it('resolves only same-origin HTTPS capability paths without application credentials', () => {
-  expect(resolvePublicMediaPath('https://api.example.test/v1', '/media/cap?key=opaque')).toBe(
-    'https://api.example.test/media/cap?key=opaque',
+  const path = mediaCapability('a');
+  expect(resolvePublicMediaPath('https://site.example/api', path)).toBe(
+    `https://site.example/api${path}`,
+  );
+  expect(resolvePublicMediaPath('https://api.example.test', path)).toBe(
+    `https://api.example.test${path}`,
   );
   for (const path of [
-    'http://api.example.test/media/cap',
-    'https://other.example.test/media/cap',
-    '/media/cap?appsession=secret',
-    '/media/cap?token=secret',
-    '/media/cap#secret',
+    'http://api.example.test/media/access/' + 'a'.repeat(43),
+    'https://other.example.test/media/access/' + 'a'.repeat(43),
+    mediaCapability('a') + '?appsession=secret',
+    mediaCapability('a') + '?token=secret',
+    mediaCapability('a') + '#secret',
+    '/media/access/short',
+    `/media/access/${'a'.repeat(42)}`,
+    `${mediaCapability('a')}/download`,
+    `/media/access/${'a'.repeat(42)}%2Fprivate`,
+    '/clips/private/download',
   ]) {
-    expect(() => resolvePublicMediaPath('https://api.example.test', path)).toThrow(
+    expect(() => resolvePublicMediaPath('https://api.example.test/api', path)).toThrow(
       AuthRequestError,
     );
   }
 });
 
-it('requests scoped archive and premiere metadata without a session query', async () => {
+it('maps the server-shaped ready premiere response and scoped archive capabilities', async () => {
   const request = jest.fn(async (path: string) => {
     if (path.startsWith('/archive?'))
       return response({
@@ -45,8 +58,8 @@ it('requests scoped archive and premiere metadata without a session query', asyn
               id: 'film-1',
               cycleId: 'cycle-1',
               publishedAt: '2026-10-01T00:00:00Z',
-              downloadPath: '/private-media/film?cap=download',
-              playbackPath: '/private-media/film?cap=play',
+              downloadPath: mediaCapability('d'),
+              playbackPath: mediaCapability('p'),
             },
           ],
           clips: [],
@@ -60,26 +73,26 @@ it('requests scoped archive and premiere metadata without a session query', asyn
       });
     return response({
       premiere: {
-        state: 'premiere',
+        state: 'ready',
         cycleId: 'cycle/one',
         filmId: 'film-1',
-        playbackPath: '/private-media/film?cap=fresh',
+        playbackPath: mediaCapability('r'),
       },
     });
   });
-  const client = createRealAccountArchiveClient('https://api.example.test', request);
+  const client = createRealAccountArchiveClient('https://site.example/api', request);
 
   const archive = await client.getArchivePage('group one');
   expect(archive.archive.films[0]).toMatchObject({
     id: 'film-1',
-    playbackUrl: 'https://api.example.test/private-media/film?cap=play',
-    downloadUrl: 'https://api.example.test/private-media/film?cap=download',
+    playbackUrl: `https://site.example/api${mediaCapability('p')}`,
+    downloadUrl: `https://site.example/api${mediaCapability('d')}`,
   });
   expect(await client.getPremiere('group one', 'cycle/one')).toMatchObject({
     state: 'ready',
     cycleId: 'cycle/one',
     filmId: 'film-1',
-    playbackUrl: 'https://api.example.test/private-media/film?cap=fresh',
+    playbackUrl: `https://site.example/api${mediaCapability('r')}`,
   });
   expect(request.mock.calls).toEqual([
     ['/archive?groupId=group+one&limit=50'],
@@ -102,7 +115,7 @@ it('renews older paged clip capabilities by stable owned asset identity', async 
           contributionId: 'contribution-2',
           cycleId: 'cycle-2',
           createdAt: '2026-09-01T00:00:00Z',
-          downloadPath: '/private-media/clip?cap=renewed',
+          downloadPath: mediaCapability('n'),
         },
       ]),
     );
@@ -114,7 +127,7 @@ it('renews older paged clip capabilities by stable owned asset identity', async 
   ).resolves.toMatchObject({
     id: 'clip-2',
     contributionId: 'contribution-2',
-    downloadUrl: 'https://api.example.test/private-media/clip?cap=renewed',
+    downloadUrl: `https://api.example.test${mediaCapability('n')}`,
   });
   expect(calls).toHaveLength(2);
   expect(calls[1]).toContain('filmCursor=film-next');
