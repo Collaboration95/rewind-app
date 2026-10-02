@@ -121,6 +121,7 @@ async function waitForHealth(processHandle, runtimeOrigin) {
 
 async function runPlaywright(runNumber, fixtureDir, profileDir, webOrigin) {
   const { runtimePort } = portsForRealAccountRun(runNumber);
+  const screenshotPath = join(tmpdir(), `rewind-real-account-${process.pid}-run-${runNumber}.png`);
   const env = cleanFixtureEnv(process.env, {
     REWIND_REAL_ACCOUNT_RUN: String(runNumber),
     REWIND_REAL_ACCOUNT_PROFILE: profileDir,
@@ -128,7 +129,7 @@ async function runPlaywright(runNumber, fixtureDir, profileDir, webOrigin) {
     REWIND_REAL_ACCOUNT_WEB_ORIGIN: webOrigin,
     REWIND_REAL_ACCOUNT_OUTPUT_DIR: join(fixtureDir, 'playwright-output'),
     REWIND_REAL_ACCOUNT_RUNTIME_PORT: String(runtimePort),
-    REWIND_REAL_ACCOUNT_SCREENSHOT: join(tmpdir(), 'rewind-s2-real-account-journey.png'),
+    REWIND_REAL_ACCOUNT_SCREENSHOT: screenshotPath,
   });
   const playwrightCli = join(projectRoot, 'node_modules/@playwright/test/cli.js');
   const result = startOwnedProcess(
@@ -142,6 +143,7 @@ async function runPlaywright(runNumber, fixtureDir, profileDir, webOrigin) {
   if (exit.code !== 0) {
     throw new Error(`Real-account Playwright run ${runNumber} exited with code ${exit.code}.`);
   }
+  console.log(`Real-account UI screenshot (run ${runNumber}): ${screenshotPath}`);
 }
 
 async function startFixtureRun(staticDir, rootDir, runNumber) {
