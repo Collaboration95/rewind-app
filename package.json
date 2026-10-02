@@ -51,6 +51,8 @@
     "test:focused": "node scripts/focused-test.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1145.0",
+    "@aws-sdk/s3-request-presigner": "3.1145.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.21",
     "expo-camera": "~57.0.4",
