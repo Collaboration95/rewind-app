@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="930" viewBox="0 0 1660 930">
+<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#147d83"/></marker><marker id="rel" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#5c7082"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/><rect width="100%" height="12" fill="#147d83"/>
+<text x="36" y="52" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700" fill="#17324d">After · Persisted transition and durable worker queue</text>
+<text x="36" y="80" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#5c7082">Current code at pinned accepted source; periodic scan triggers durable operations</text>
+<rect x="1410" y="28" width="214" height="31" rx="15" fill="#e8f1f8"/><text x="1517" y="49" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700" fill="#17324d">AFTER</text>
+<polyline points="315.0,194.56204379562044 352.5,194.56204379562044 352.5,197.2992700729927 390.0,197.2992700729927" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="284.5" y="170.93065693430657" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="352.5" y="187.93065693430657" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">tick</text>
+<polyline points="675.0,195.6206896551724 717.5,195.6206896551724 717.5,191.51724137931035 760.0,191.51724137931035" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="649.5" y="168.5689655172414" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="717.5" y="185.5689655172414" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">writer transaction</text>
+<polyline points="668.4375,300.0 731.1778846153846,300.0 731.1778846153846,390.0 793.9182692307693,390.0" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="663.1778846153846" y="320.0" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="731.1778846153846" y="337.0" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">unique event</text>
+<polyline points="675.0,203.98954703832752 892.5,203.98954703832752 892.5,208.53658536585365 1110.0,208.53658536585365" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="824.5" y="181.26306620209058" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="892.5" y="198.26306620209058" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">ensure job</text>
+<polyline points="1250.0,320.0 1250.0,372.5 1250.0,372.5 1250.0,425.0" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="1182.0" y="347.5" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="1250.0" y="364.5" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">claimable durable work</text>
+<polyline points="1250.0,425.0 1250.0,372.5 1250.0,372.5 1250.0,320.0" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="1182.0" y="347.5" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="1250.0" y="364.5" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">verified ready</text>
+<polyline points="1030.0,222.05882352941177 1230.0,222.05882352941177 1230.0,331.8627450980392 1430.0,331.8627450980392" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="1162.0" y="251.96078431372553" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="1230.0" y="268.9607843137255" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">release state</text>
+<polyline points="1390.0,284.3362831858407 1410.0,284.3362831858407 1410.0,305.57522123893807 1430.0,305.57522123893807" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="1342.0" y="269.95575221238937" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="1410.0" y="286.95575221238937" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">integrity proof</text>
+<rect x="65" y="110" width="250" height="160" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M66,156 H314" stroke="#147d83" stroke-width="2"/>
+<text x="190.0" y="140" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Cycle scheduler</text>
+<text x="79" y="178" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">bounded due scan</text>
+<text x="79" y="196" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">worker wake  /  round robin</text>
+<rect x="390" y="105" width="285" height="195" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M391,151 H674" stroke="#147d83" stroke-width="2"/>
+<text x="532.5" y="135" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Lifecycle functions</text>
+<text x="404" y="173" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">transactional transition</text>
+<text x="404" y="191" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">ensure successor / job</text>
+<text x="404" y="209" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">publish / archive guards</text>
+<rect x="760" y="90" width="270" height="190" rx="12" fill="#e7f4ef" stroke="#147d83" stroke-width="2"/>
+<path d="M761,136 H1029" stroke="#147d83" stroke-width="2"/>
+<text x="895.0" y="120" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">groups + cycles</text>
+<text x="774" y="158" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">current pointer + status</text>
+<text x="774" y="176" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">end  /  publication times</text>
+<text x="774" y="194" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">locked media state</text>
+<rect x="760" y="390" width="270" height="145" rx="12" fill="#e7f4ef" stroke="#147d83" stroke-width="2"/>
+<path d="M761,436 H1029" stroke="#147d83" stroke-width="2"/>
+<text x="895.0" y="420" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">cycle_lifecycle_events</text>
+<text x="774" y="458" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">unique per transition</text>
+<text x="774" y="476" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">durable occurrence time</text>
+<rect x="1110" y="100" width="280" height="220" rx="12" fill="#fff2d8" stroke="#147d83" stroke-width="2"/>
+<path d="M1111,146 H1389" stroke="#147d83" stroke-width="2"/>
+<text x="1250.0" y="130" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">media_jobs + inputs</text>
+<text x="1124" y="168" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">persistent one-per-cycle</text>
+<text x="1124" y="186" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">job</text>
+<text x="1124" y="204" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">ordered input snapshot</text>
+<text x="1124" y="222" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">lease  /  attempt  /</text>
+<text x="1124" y="240" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">generation</text>
+<text x="1124" y="258" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">output proof</text>
+<rect x="1110" y="425" width="280" height="175" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M1111,471 H1389" stroke="#147d83" stroke-width="2"/>
+<text x="1250.0" y="455" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Worker + FFmpeg</text>
+<text x="1124" y="493" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">settle + verify inputs</text>
+<text x="1124" y="511" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">compile / probe temp file</text>
+<text x="1124" y="529" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">fenced finalization</text>
+<rect x="1430" y="255" width="205" height="210" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M1431,301 H1634" stroke="#147d83" stroke-width="2"/>
+<text x="1532.5" y="285" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Premiere + archive APIs</text>
+<text x="1444" y="323" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">server-derived state</text>
+<text x="1444" y="341" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">membership-gated access</text>
+<text x="1444" y="359" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">ready-only media URL</text>
+<text x="36" y="906" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">Analysis shows responsibilities and concepts; design shows only implementation-evidenced components and records at fc2b8c811e9c13b176113fa0bdb2c015798990b4.</text></svg>
