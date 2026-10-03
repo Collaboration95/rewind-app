@@ -2,6 +2,8 @@
 
 **Fixed source pin:** [accepted `dev` snapshot `1128b6a68985cf68215beb4a7a80fd00ec4242fa`](https://github.com/Collaboration95/rewind-app/commit/1128b6a68985cf68215beb4a7a80fd00ec4242fa). Analysis diagrams express domain responsibilities without implementation class claims. Design diagrams use actual component, function, transport and persisted-record names at this cut. Flow inventory: [use cases](use-cases.md).
 
+**Post-pin chat transport correction:** accepted `dev` later advanced to [`da96b2444e7fb1f7ff2867c6b003a88eccba2f9d`](https://github.com/Collaboration95/rewind-app/commit/da96b2444e7fb1f7ff2867c6b003a88eccba2f9d), which includes [#388](https://github.com/Collaboration95/rewind-app/pull/388). In `RealAccountChatScreen`, authenticated chat writes now pass the API-relative path to `authenticatedRequest`, which adds the configured base path once; this fixes prefixed `/api` bases while preserving the full SSE URL and its credential boundary. The UC11 design figure below remains explicitly pinned to `1128b6a`; read it as the earlier cut, with this later correction as a documented delta rather than silently attributing it to the pinned snapshot.
+
 ## UC09 — Owner prompt and timezone
 
 ### Analysis classes
