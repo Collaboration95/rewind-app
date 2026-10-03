@@ -1,0 +1,6 @@
+# Public placeholders only; choose the approved exact origin before planning.
+account_id  = "330599756236"
+aws_region  = "ap-southeast-1"
+cors_origin = "https://dev.example.invalid"
+# Placeholder only: inventory/review an existing customer-managed key before planning.
+kms_key_arn = "arn:aws:kms:ap-southeast-1:330599756236:key/00000000-0000-0000-0000-000000000000"

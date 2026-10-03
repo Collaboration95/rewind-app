@@ -264,7 +264,7 @@ function capability(
     if (
       typeof value !== 'string' ||
       /[\r\n]/.test(value) ||
-      !/^(?:content-type|cache-control|x-amz-(?:checksum-sha256|expected-bucket-owner|meta-media-ref|server-side-encryption(?:-aws-kms-key-id)?))$/.test(
+      !/^(?:content-type|cache-control|x-amz-(?:checksum-sha256|expected-bucket-owner|meta-media-ref|tagging|server-side-encryption(?:-aws-kms-key-id)?))$/.test(
         lower,
       ) ||
       checked[lower] !== undefined
@@ -272,6 +272,11 @@ function capability(
       throw failure('invalid_response', 'The private upload headers could not be verified.', false);
     checked[lower] = value;
   }
+  if (
+    checked['x-amz-tagging'] !== undefined &&
+    checked['x-amz-tagging'] !== 'rewind-media-class=incoming'
+  )
+    throw failure('invalid_response', 'The private upload lifecycle could not be verified.', false);
   if (
     checked['content-type'] !== request.contentType ||
     checked['x-amz-checksum-sha256'] !== checksumHeader(request.sha256)

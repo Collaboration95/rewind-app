@@ -80,7 +80,7 @@ async function apiFixture(run) {
 test('real HTTPS-policy JSON request→direct PUT→complete→process is idempotent and denies outsider/forged identity', async () =>
   apiFixture(async (c) => {
     const input = c.input('http-intent-key');
-    const mediaConfig = await fetch(c.base + '/real/media/config', {
+    const mediaConfig = await fetch(c.base + '/real/media/config?uploadProtocol=2', {
       headers: { ...c.proxy, Authorization: `Bearer ${c.owner.token}` },
     });
     assert.equal(mediaConfig.status, 200);
@@ -90,6 +90,19 @@ test('real HTTPS-policy JSON request→direct PUT→complete→process is idempo
       maxVideoBytes: 50 * 1024 * 1024,
       maxPhotoBytes: 10 * 1024 * 1024,
     });
+    for (const query of [
+      '',
+      '?uploadProtocol=1',
+      '?uploadProtocol=unknown',
+      '?uploadProtocol=2&uploadProtocol=2',
+    ]) {
+      const olderClient = await fetch(c.base + '/real/media/config' + query, {
+        headers: { ...c.proxy, Authorization: `Bearer ${c.owner.token}` },
+      });
+      assert.equal(olderClient.status, 200);
+      assert.equal(olderClient.headers.get('cache-control'), 'no-store');
+      assert.equal((await olderClient.json()).directTransfer, false);
+    }
     assert.equal((await fetch(c.base + '/real/media/config', { headers: c.proxy })).status, 401);
     assert.equal((await c.request(c.outsider, '', 'POST', input)).status, 403);
     assert.equal(

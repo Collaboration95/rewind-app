@@ -48,7 +48,8 @@ describe('real account group journey', () => {
       ],
     };
     const authenticatedRequest = jest.fn(async (path: string) => {
-      if (path === '/real/media/config') return jsonResponse({ directTransfer: false });
+      if (path === '/real/media/config?uploadProtocol=2')
+        return jsonResponse({ directTransfer: false });
       if (path === '/real/groups/current') return jsonResponse({ group: activeGroup });
       if (path === '/real/groups') return jsonResponse({ groups: [activeGroup] });
       if (path.endsWith('/members'))
@@ -117,7 +118,8 @@ describe('real account group journey', () => {
   it('joins an invited group with a six-letter code without a group ID', async () => {
     let joined = false;
     const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
-      if (path === '/real/media/config') return jsonResponse({ directTransfer: false });
+      if (path === '/real/media/config?uploadProtocol=2')
+        return jsonResponse({ directTransfer: false });
       if (path === '/real/groups/current') return jsonResponse({ group: null });
       if (path === '/real/groups') return jsonResponse({ groups: [] });
       if (path === '/real/invites/accept') {
@@ -165,7 +167,8 @@ describe('real account group journey', () => {
     const activeGroup = { ...persistedGroup, memberId: 'real-member-1' };
     let ledgerRead = 0;
     const authenticatedRequest = jest.fn(async (path: string) => {
-      if (path === '/real/media/config') return jsonResponse({ directTransfer: false });
+      if (path === '/real/media/config?uploadProtocol=2')
+        return jsonResponse({ directTransfer: false });
       if (path === '/real/groups/current') return jsonResponse({ group: activeGroup });
       if (path === '/real/groups') return jsonResponse({ groups: [activeGroup] });
       if (path.endsWith('/members'))
@@ -249,7 +252,8 @@ describe('real account group journey', () => {
   it('creates from the first-run choice and restores persisted group Home after remount', async () => {
     let saved: typeof persistedGroup | null = null;
     const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
-      if (path === '/real/media/config') return jsonResponse({ directTransfer: false });
+      if (path === '/real/media/config?uploadProtocol=2')
+        return jsonResponse({ directTransfer: false });
       if (path === '/real/groups/current') return jsonResponse({ group: saved });
       if (path === '/real/groups' && init?.method !== 'POST')
         return jsonResponse({ groups: saved ? [saved] : [] });
