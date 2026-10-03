@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::330599756236:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:Collaboration95@68595032/rewind-app@1354608509:environment:terraform-${environment}-${operation}",
+          "token.actions.githubusercontent.com:repository": "Collaboration95/rewind-app",
+          "token.actions.githubusercontent.com:repository_id": "1354608509",
+          "token.actions.githubusercontent.com:repository_owner_id": "68595032",
+          "token.actions.githubusercontent.com:ref": "refs/heads/${branch}",
+          "token.actions.githubusercontent.com:environment": "terraform-${environment}-${operation}"
+        }
+      }
+    }
+  ]
+}
