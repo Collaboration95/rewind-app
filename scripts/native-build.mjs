@@ -166,6 +166,23 @@ export async function prepareNativeBuild({
     git(root, 'status', '--porcelain', '--untracked-files=all') !== dirty
   )
     throw new Error('Native build inputs changed during staging.');
+  // Expo's default AppEntry resolves ../../App from its real node_modules
+  // location. A shared dependency symlink can therefore bundle another tree.
+  // Generate only a disposable entrypoint and record the effective build inputs.
+  const entrypoint = 'rewind-native-entry.js';
+  if (paths.includes(entrypoint))
+    throw new Error('Disposable native entrypoint collides with source.');
+  await writeFile(
+    join(source, entrypoint),
+    "import { registerRootComponent } from 'expo';\nimport App from './App';\nregisterRootComponent(App);\n",
+    { flag: 'wx' },
+  );
+  const effectivePackage = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'));
+  const originalMain = effectivePackage.main ?? null;
+  effectivePackage.main = entrypoint;
+  await writeFile(join(source, 'package.json'), JSON.stringify(effectivePackage, null, 2) + '\n');
+  const buildSourcePaths = [...paths, entrypoint].sort();
+  const buildSourceDigest = await snapshot(source, buildSourcePaths);
   const expoPackage = JSON.parse(
     await readFile(join(root, 'node_modules/expo/package.json'), 'utf8'),
   );
@@ -180,6 +197,9 @@ export async function prepareNativeBuild({
     sourceCommit: head,
     sourceDigest,
     sourcePaths: paths,
+    buildSourcePaths,
+    buildSourceDigest,
+    generatedBuildInputs: { entrypoint, originalMain, effectiveMain: entrypoint },
     configDigest,
     originDigest,
     publicEnvironment,
@@ -199,9 +219,9 @@ export async function prepareNativeBuild({
     outputStatus: 'prepared-not-built',
     acceptance: 'pending-review-install-and-native-smoke',
     rebuildFor: [
-      'Sprint 3 OIDC',
-      'remote push',
-      'client-retro',
+      'Sprint 2 reminders/remote push (#347/#348)',
+      'Sprint 3 managed OIDC',
+      'Sprint 3 client-retro',
       'native/config/API-origin changes',
     ],
   };
@@ -216,6 +236,44 @@ export async function prepareNativeBuild({
   });
   return { outputRoot: output, source, provenance };
 }
+/** Reconcile bundled application text with the staged tree, not merely its
+ * unchanged files on disk. Dependency modules/assets are outside this check.
+ * Metro prefixes project-relative paths with '/', including '../' for foreign
+ * files reached through a shared node_modules symlink. */
+export async function verifyAndroidBundleSources(source) {
+  const path = join(
+    source,
+    'android/app/build/intermediates/sourcemaps/react/release/index.android.bundle.packager.map',
+  );
+  const map = JSON.parse(await readFile(path, 'utf8'));
+  if (
+    !Array.isArray(map.sources) ||
+    !Array.isArray(map.sourcesContent) ||
+    map.sources.length !== map.sourcesContent.length
+  )
+    throw new Error('Missing native bundle source provenance.');
+  let verified = 0;
+  for (const [index, name] of map.sources.entries()) {
+    if (typeof name !== 'string') throw new Error('Invalid native bundle source provenance.');
+    if (name.includes('node_modules/') || !/\.[jt]sx?$/.test(name)) continue;
+    const candidate = resolve(source, name.replace(/^\//, ''));
+    const child = relative(source, candidate);
+    if (!child || child.startsWith('..') || isAbsolute(child))
+      throw new Error('Native bundle includes application source outside the staged snapshot.');
+    const content = map.sourcesContent[index];
+    const stat = await lstat(candidate);
+    if (
+      !stat.isFile() ||
+      stat.isSymbolicLink() ||
+      typeof content !== 'string' ||
+      sha256(content) !== sha256(await readFile(candidate))
+    )
+      throw new Error('Native bundle application source differs from the staged snapshot.');
+    verified++;
+  }
+  if (!verified) throw new Error('Missing native application sources.');
+  return { verifiedApplicationFiles: verified, sourceMapSha256: sha256(await readFile(path)) };
+}
 /** Attach bytes only after a successful compile; checksum and source/config
  * provenance must travel together. This does not claim install/signing smoke. */
 export async function recordNativeArtifact(outputRoot, artifactPath) {
@@ -223,8 +281,10 @@ export async function recordNativeArtifact(outputRoot, artifactPath) {
   if (provenance.schema !== 1 || provenance.outputStatus !== 'prepared-not-built')
     throw new Error('Invalid prepared native provenance.');
   if (
-    (await snapshot(join(outputRoot, 'source'), provenance.sourcePaths)) !==
-      provenance.sourceDigest ||
+    (await snapshot(
+      join(outputRoot, 'source'),
+      provenance.buildSourcePaths ?? provenance.sourcePaths,
+    )) !== (provenance.buildSourceDigest ?? provenance.sourceDigest) ||
     sha256(canonical(JSON.parse(await readFile(join(outputRoot, 'public-env.json'), 'utf8')))) !==
       provenance.originDigest
   )
@@ -233,6 +293,10 @@ export async function recordNativeArtifact(outputRoot, artifactPath) {
   const eas = JSON.parse(await readFile(join(outputRoot, 'source/eas.json'), 'utf8'));
   if (sha256(canonical({ app, eas })) !== provenance.configDigest)
     throw new Error('Native configuration changed after preparation.');
+  const bundleSources =
+    provenance.platform === 'android'
+      ? await verifyAndroidBundleSources(join(outputRoot, 'source'))
+      : null;
   const handle = await open(artifactPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const before = await handle.stat();
@@ -249,6 +313,7 @@ export async function recordNativeArtifact(outputRoot, artifactPath) {
     const value = {
       ...provenance,
       outputStatus: 'compiled-unverified-preview',
+      bundleSources,
       artifact: { path: resolve(artifactPath), byteLength: after.size, sha256: hash.digest('hex') },
     };
     await writeFile(join(outputRoot, 'artifact.json'), canonical(value) + '\n', {

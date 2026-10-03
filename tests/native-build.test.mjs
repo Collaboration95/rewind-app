@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
@@ -9,6 +10,7 @@ import {
   prepareNativeBuild,
   recordNativeArtifact,
   validateProfiles,
+  verifyAndroidBundleSources,
 } from '../scripts/native-build.mjs';
 
 const app = JSON.parse(await readFile(new URL('../app.json', import.meta.url), 'utf8'));
@@ -104,6 +106,12 @@ test('staging pins accepted base, source/config/origin and excludes ambient cred
     assert.equal(result.provenance.sourceCommit, c.base);
     assert.equal(result.provenance.sourceStatus, 'accepted-base');
     assert.equal(result.provenance.outputStatus, 'prepared-not-built');
+    assert.equal(
+      createRequire(join(result.source, 'package.json')).resolve(result.source),
+      join(result.source, result.provenance.generatedBuildInputs.entrypoint),
+    );
+    assert.equal(JSON.parse(await readFile(join(c.root, 'package.json'))).main, undefined);
+    assert.match(result.provenance.buildSourceDigest, /^[a-f0-9]{64}$/);
     for (const digest of ['sourceDigest', 'configDigest', 'originDigest'])
       assert.match(result.provenance[digest], /^[a-f0-9]{64}$/);
     await assert.rejects(readFile(join(result.source, '.env')), { code: 'ENOENT' });
@@ -146,6 +154,15 @@ test('unmerged config overlays are labelled preview; unrelated dirty code/depend
 test('artifact receipt binds checksum to unchanged source and origins without native acceptance claims', async () =>
   fixture(async (c) => {
     const result = await prepareNativeBuild(c.options);
+    const maps = join(result.source, 'android/app/build/intermediates/sourcemaps/react/release');
+    await mkdir(maps, { recursive: true });
+    await writeFile(
+      join(maps, 'index.android.bundle.packager.map'),
+      JSON.stringify({
+        sources: ['/App.tsx'],
+        sourcesContent: [await readFile(join(result.source, 'App.tsx'), 'utf8')],
+      }),
+    );
     const artifact = join(result.outputRoot, 'fixture.apk');
     await writeFile(artifact, Buffer.from('disposable artifact checksum fixture'));
     const recorded = await recordNativeArtifact(result.outputRoot, artifact);
@@ -177,5 +194,37 @@ test('staging rejects source symlinks, unsafe destinations and wrong base', asyn
     await assert.rejects(
       prepareNativeBuild({ ...c.options }),
       /Native source inputs|Unreviewed changes/,
+    );
+  }));
+
+test('bundle receipt refuses foreign shared-tree code and changed staged application content', async () =>
+  fixture(async (c) => {
+    const result = await prepareNativeBuild(c.options);
+    const maps = join(result.source, 'android/app/build/intermediates/sourcemaps/react/release');
+    await mkdir(maps, { recursive: true });
+    const mapPath = join(maps, 'index.android.bundle.packager.map');
+    await writeFile(
+      mapPath,
+      JSON.stringify({ sources: ['/../../shared-fixture/App.tsx'], sourcesContent: ['foreign'] }),
+    );
+    await assert.rejects(verifyAndroidBundleSources(result.source), /outside the staged snapshot/);
+    await writeFile(
+      mapPath,
+      JSON.stringify({ sources: ['/App.tsx'], sourcesContent: ['foreign'] }),
+    );
+    await assert.rejects(
+      verifyAndroidBundleSources(result.source),
+      /differs from the staged snapshot/,
+    );
+    await writeFile(
+      mapPath,
+      JSON.stringify({
+        sources: ['/node_modules/expo/AppEntry.js'],
+        sourcesContent: ['dependency'],
+      }),
+    );
+    await assert.rejects(
+      verifyAndroidBundleSources(result.source),
+      /Missing native application sources/,
     );
   }));

@@ -38,8 +38,8 @@ is initially an unmerged preview and is not native acceptance evidence.
 | `preview-ios-device`    | Internal iOS device build     | Existing local certificate/provisioning and registered device required |
 
 `expo-dev-client` is not installed. These are embedded preview builds, not final
-OIDC/remote-push development builds. EAS CLI is not a project dependency and was
-not installed or invoked. A local Expo session was observed without inspecting
+managed OIDC or completed reminder/push acceptance builds. EAS CLI is not a
+project dependency and was not installed or invoked. A local Expo session was observed without inspecting
 or printing its tokens; project ownership, usable EAS permissions and signing
 credentials remain unverified. Do not run `eas build:configure`, login, credential
 creation, remote builds or submissions as part of this preparation.
@@ -75,7 +75,12 @@ packages/lockfiles to fix a native toolchain problem without coordination.
 
    `provenance.json` records accepted base, source commit and file digest,
    app/EAS config digest, origin digest, identifiers/versions, actual JS tool
-   versions and the installed-dependency limitation. `public-env.json` contains
+   versions and the installed-dependency limitation. Preparation generates
+   `rewind-native-entry.js` and changes `main` only in the disposable package
+   copy. The entry imports that snapshot's `App`, avoiding Expo AppEntry's
+   `../../App` resolution through a shared dependency symlink. The original
+   source digest and effective build-input digest are both recorded, together
+   with the generated entry and package-main transformation. `public-env.json` contains
    only the three approved public values. Keep these with the build logs and
    eventual APK checksum; a prepared manifest does not prove a binary exists.
 
@@ -111,12 +116,18 @@ packages/lockfiles to fix a native toolchain problem without coordination.
 
    This receipt still says `compiled-unverified-preview`: signing, installed
    behavior and member acceptance require independent verification. A source,
-   config or origin change after staging is rejected. Do not overwrite an
+   config or origin change after staging is rejected. Android recording also
+   reconciles application source text in the packager sourcemap with the
+   disposable snapshot and rejects application paths outside that snapshot.
+   Retain the generated packager sourcemap with the build output. Do not overwrite an
    existing installed application without explicit device-owner authorization.
 
-Stop after the first diagnosed native toolchain retry. Do not download large
-SDKs, create signing credentials, dispatch paid/remote builds, or remove checks
-to make the build pass. An unavailable toolchain leaves the APK deliverable open.
+Stop after the first diagnosed native toolchain retry unless the user grants
+new bounded scope. The 3 October follow-up authorized exactly one additional
+network-enabled dependency-resolution/compile attempt, not an unbounded retry
+loop. Do not download large SDKs, create signing credentials, dispatch
+paid/remote builds, delete caches, or remove checks to make the build pass. A
+missing toolchain or unresolved source provenance leaves the APK deliverable open.
 
 ## iOS and lead-owned native acceptance
 
@@ -144,23 +155,69 @@ chat, reveal and archive playback/download on Android and supported iOS. Check
 prove OIDC. Record actual device/runtime/build IDs and limits, without member
 secrets or media. The shared app code was not changed in this task.
 
-Sprint 3 OIDC, remote push and client-retro/native changes require a rebuild and
-renewed native acceptance. Expo Go is insufficient for final OAuth/OIDC redirect
-behavior and Android remote push. Review the future development-build dependency
-and configuration changes then; no final OIDC/push acceptance is claimed now.
+Reminder/remote-push acceptance belongs to #347/#348 in Sprint 2. Rebuild and
+verify the affected native clients when those changes land; do not defer that
+acceptance to Sprint 3. Only managed OIDC and client-retro are reserved for
+Sprint 3. Expo Go is insufficient for final OAuth/OIDC redirect behavior and
+Android remote push. Review development-build dependencies and configuration
+when each feature requires them. No final OIDC or reminder/push acceptance is
+claimed by this build preparation.
 
 ## Current compile disposition
 
-The local Android template prebuild succeeded. The first offline Gradle attempt
-was blocked by the sandbox's lock-file permission. Its single diagnosed retry
-used existing host caches and reached native configuration, then stopped because
-AsyncStorage needs an uncached
+The initial local Android template prebuild succeeded. The first offline Gradle
+attempt was blocked by the sandbox's lock-file permission. Its single diagnosed
+retry reached configuration, then stopped on an uncached AsyncStorage dependency:
 `com.google.devtools.ksp:symbol-processing-gradle-plugin:1.9.24-1.0.20`.
-No APK was produced and no further native compile retry or dependency download
-was attempted. Resolve the missing native dependency cache in separately
-approved scope, then build from accepted code/config/real preview origins and
-perform Android/iOS acceptance. The reserved `.invalid` origins used for this
-compile rehearsal cannot support live sign-in or invite smoke.
+
+The explicitly authorized network-enabled follow-up resolved that dependency
+and compiled successfully in 171.98 seconds, with a 900-second timeout. In the
+same disposable `source/android/` preview, after replacing all ambient public
+Expo variables with the three recorded preview values, the actual command was:
+
+```sh
+CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 ./gradlew --no-daemon --max-workers=2 -Pandroid.builder.sdkDownload=false -Dorg.gradle.java.installations.auto-download=false :app:assembleRelease
+```
+
+Gradle dependency network access was enabled; Expo remained offline. SDK/JDK
+auto-downloads were disabled. Existing caches were preserved with normal
+additions, and no SDK/toolchain, credentials, remote EAS build or device install
+was created. No second network-enabled compile was attempted.
+
+Read-only inspection commands run on the produced `app-release.apk` were
+`apksigner verify --verbose --print-certs`, `aapt2 dump badging`,
+`aapt2 dump xmltree --file AndroidManifest.xml`, and `shasum -a 256`.
+
+- APK size: 98,446,191 bytes.
+- APK SHA-256:
+  `b27c529c7d16609e42981a82e46e10cd3b22351962ed0f17623a496a2b1de7ef`.
+- Package: `com.anonymous.rewindapp`; version `0.1.0`, code `1`; min SDK `24`,
+  target/compile SDK `36`; manifest retains the `rewind` scheme.
+- APK v2 signing verifies with the standard Expo-template Android Debug test
+  key; certificate SHA-256:
+  `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`.
+  This is not an approved production signing identity.
+
+**New blocker: application source provenance.** The old disposable preparation
+used Expo's default AppEntry through the shared `node_modules` symlink. Metro
+read the fixture checkout's application files; bundled
+`src/reminders/RealGroupSettings.tsx` differs from the pinned disposable source.
+The APK is labelled `compiled-source-unreconciled-preview-do-not-install`, with
+an inspection receipt rather than a normal provenance receipt. The strengthened
+recorder rejects it. Shared reminder/group/service-worker code was not changed.
+
+The owned preparation script now generates a snapshot-local entrypoint, pins
+both original and effective build inputs, and checks Android bundle sources
+before recording an artifact. Seven focused tests, scoped ESLint and formatting
+checks passed. The previous full `npm run check` pass is retained; it was not
+repeated for this follow-up. Verify the fix with a separately authorized next
+compile from reviewed code/config and approved origins before native acceptance.
+
+Reserved `.invalid` API/website origins remain embedded in this rehearsal. They
+cannot smoke a real sign-in/invite journey. No real hosted data or source was
+activated. Android installation/journey smoke, iPhone preview and device signing,
+and Sprint 2 reminder/push acceptance remain open; only managed OIDC/client-retro
+are reserved for Sprint 3.
 
 ## Official references
 
@@ -171,3 +228,5 @@ compile rehearsal cannot support live sign-in or invite smoke.
 - [Local production signing](https://docs.expo.dev/guides/local-app-production/)
 - [OAuth/OIDC native authentication](https://docs.expo.dev/guides/authentication/)
 - [Native notification limitations](https://docs.expo.dev/versions/latest/sdk/notifications/)
+- [Disable Android SDK auto-downloads](https://developer.android.com/studio/intro/update)
+- [Disable Gradle JDK auto-provisioning](https://docs.gradle.org/current/userguide/toolchains.html)
