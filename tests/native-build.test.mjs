@@ -174,6 +174,8 @@ test('artifact receipt binds checksum to unchanged source and origins without na
     await mkdir(generated, { recursive: true });
     await writeFile(join(generated, 'index.android.bundle'), 'synthetic generated bundle');
     await assert.rejects(recordNativeArtifact(result.outputRoot, artifact), /embedded bundle/);
+    await writeFile(artifact, Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    await assert.rejects(recordNativeArtifact(result.outputRoot, artifact), /embedded bundle/);
     const assets = join(result.outputRoot, 'assets');
     await mkdir(assets);
     await writeFile(join(assets, 'index.android.bundle'), 'unrelated bundle');

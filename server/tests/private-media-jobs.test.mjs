@@ -284,7 +284,10 @@ test('remote input without adapter fails closed; local adapter processes indepen
     );
     await context.store.head(scope, ref);
     const { LocalMediaStore } = await import('../dist/media/local-store.js');
-    const local = new LocalMediaStore(context.root + '/local');
+    const local = new LocalMediaStore(
+      context.root + '/local',
+      () => new Date('2026-10-02T12:00:00Z'),
+    );
     const bytes = await readFile(new URL('../fixtures/demo-media.mp4', import.meta.url));
     const localRef = await local.put(scope, {
       prefix: 'incoming',

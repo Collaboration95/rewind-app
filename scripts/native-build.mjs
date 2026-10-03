@@ -321,6 +321,16 @@ export async function recordNativeArtifact(outputRoot, artifactPath) {
     const before = await handle.stat();
     if (!before.isFile() || !before.size) throw new Error('Native artifact is missing or empty.');
     if (provenance.platform === 'android') {
+      const signature = new Uint8Array(4);
+      const { bytesRead } = await handle.read(signature, 0, signature.length, 0);
+      if (
+        bytesRead !== 4 ||
+        signature[0] !== 0x50 ||
+        signature[1] !== 0x4b ||
+        signature[2] !== 0x03 ||
+        signature[3] !== 0x04
+      )
+        throw new Error('Native APK embedded bundle is missing or invalid.');
       const generated = await readStableFile(
         join(
           outputRoot,
@@ -333,6 +343,8 @@ export async function recordNativeArtifact(outputRoot, artifactPath) {
         embedded = execFileSync('unzip', ['-p', '/dev/fd/3', 'assets/index.android.bundle'], {
           stdio: ['ignore', 'pipe', 'pipe', handle.fd],
           maxBuffer: generated.length + 1,
+          timeout: 10_000,
+          killSignal: 'SIGKILL',
         });
       } catch {
         throw new Error('Native APK embedded bundle is missing or invalid.');
