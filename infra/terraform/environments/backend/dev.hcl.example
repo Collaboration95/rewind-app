@@ -1,0 +1,7 @@
+# Reserved for the future rewind-dev Terraform root.
+# Do not initialize this backend until remote state-key inventory confirms it is unused.
+bucket       = "rewind-terraform-state-330599756236"
+key          = "rewind/dev/terraform.tfstate"
+region       = "ap-southeast-1"
+encrypt      = true
+use_lockfile = true
