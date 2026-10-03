@@ -287,3 +287,36 @@ test('records from browser camera and microphone after the member action and upl
   expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
   await expect(page.getByText('Upload queued as one pending contribution.')).toBeVisible();
 });
+
+test('portrait guidance and video fallback controls stay reachable through short landscape rotation', async ({
+  page,
+}) => {
+  // Layout and file-choice only: no camera grant, recording or actual Safari lock evidence.
+  await page.setViewportSize({ width: 393, height: 852 });
+  await openVideoFallback(page);
+  const guidance = page.getByTestId('video-portrait-guidance');
+  await expect(guidance).toContainText('Keep your device upright for portrait video');
+  await expect(guidance).toContainText('If the page rotates, scroll to reach the controls.');
+  await page.setViewportSize({ width: 852, height: 300 });
+  const navigation = page.getByTestId('main-navigation');
+  const choose = page.getByRole('button', { name: 'Choose a video file', exact: true });
+  const back = page.getByRole('button', { name: 'Back', exact: true });
+  for (const control of [guidance, choose, back]) {
+    await control.scrollIntoViewIfNeeded();
+    await expect(control).toBeInViewport({ ratio: 1 });
+    const bounds = await control.boundingBox();
+    const navigationBounds = await navigation.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(navigationBounds).not.toBeNull();
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(navigationBounds!.y + 1);
+    expect(navigationBounds!.y + navigationBounds!.height).toBeLessThanOrEqual(301);
+  }
+  await choose.click({ trial: true });
+  await back.click();
+  await expect(page.getByTestId('camera-screen')).toBeVisible();
+  await page.setViewportSize({ width: 393, height: 852 });
+  await page.getByTestId('camera-record-clip').click();
+  await expect(guidance).toBeVisible();
+  await expect(choose).toBeVisible();
+});
