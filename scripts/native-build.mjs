@@ -1,13 +1,35 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, open, readFile, symlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { lstat, mkdir, open, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import process from 'node:process';
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const canonical = (value) => JSON.stringify(value);
+async function readStableFile(path) {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()) throw new Error('Native source inputs must be regular files.');
+    const bytes = await handle.readFile();
+    const after = await handle.stat();
+    const current = await lstat(path);
+    if (
+      !current.isFile() ||
+      current.dev !== before.dev ||
+      current.ino !== before.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs
+    )
+      throw new Error('Native source changed while reading.');
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
 export function buildEnvironment(apiUrl, inviteUrl) {
   const parse = (value, originOnly) => {
     const url = new URL(value);
@@ -44,11 +66,8 @@ async function snapshot(root, paths) {
   const hash = createHash('sha256');
   for (const path of paths) {
     safeInput(path);
-    const stat = await lstat(join(root, path));
-    if (!stat.isFile() || stat.isSymbolicLink())
-      throw new Error('Native source inputs must be regular files.');
     hash.update(path + '\0');
-    hash.update(await readFile(join(root, path)));
+    hash.update(await readStableFile(join(root, path)));
     hash.update('\0');
   }
   return hash.digest('hex');
@@ -104,8 +123,8 @@ export async function prepareNativeBuild({
   inviteUrl,
   platform = 'android',
 }) {
-  const root = resolve(projectRoot),
-    output = resolve(outputRoot);
+  const root = await realpath(resolve(projectRoot)),
+    output = join(await realpath(dirname(resolve(outputRoot))), basename(outputRoot));
   const outputRelative = relative(root, output);
   if (
     !['android', 'ios'].includes(platform) ||
@@ -162,7 +181,7 @@ export async function prepareNativeBuild({
   await mkdir(source, { mode: 0o700 });
   for (const path of paths) {
     await mkdir(dirname(join(source, path)), { recursive: true });
-    await copyFile(join(root, path), join(source, path), constants.COPYFILE_EXCL);
+    await writeFile(join(source, path), await readStableFile(join(root, path)), { flag: 'wx' });
   }
   if (
     (await snapshot(source, paths)) !== sourceDigest ||
@@ -250,7 +269,8 @@ export async function verifyAndroidBundleSources(source) {
     source,
     'android/app/build/intermediates/sourcemaps/react/release/index.android.bundle.packager.map',
   );
-  const map = JSON.parse(await readFile(path, 'utf8'));
+  const mapBytes = await readStableFile(path);
+  const map = JSON.parse(mapBytes.toString('utf8'));
   if (
     !Array.isArray(map.sources) ||
     !Array.isArray(map.sourcesContent) ||
@@ -266,18 +286,12 @@ export async function verifyAndroidBundleSources(source) {
     if (!child || child.startsWith('..') || isAbsolute(child))
       throw new Error('Native bundle includes application source outside the staged snapshot.');
     const content = map.sourcesContent[index];
-    const stat = await lstat(candidate);
-    if (
-      !stat.isFile() ||
-      stat.isSymbolicLink() ||
-      typeof content !== 'string' ||
-      sha256(content) !== sha256(await readFile(candidate))
-    )
+    if (typeof content !== 'string' || sha256(content) !== sha256(await readStableFile(candidate)))
       throw new Error('Native bundle application source differs from the staged snapshot.');
     verified++;
   }
   if (!verified) throw new Error('Missing native application sources.');
-  return { verifiedApplicationFiles: verified, sourceMapSha256: sha256(await readFile(path)) };
+  return { verifiedApplicationFiles: verified, sourceMapSha256: sha256(mapBytes) };
 }
 /** Attach bytes only after a successful compile; checksum and source/config
  * provenance must travel together. This does not claim install/signing smoke. */
@@ -306,8 +320,30 @@ export async function recordNativeArtifact(outputRoot, artifactPath) {
   try {
     const before = await handle.stat();
     if (!before.isFile() || !before.size) throw new Error('Native artifact is missing or empty.');
+    if (provenance.platform === 'android') {
+      const generated = await readStableFile(
+        join(
+          outputRoot,
+          'source/android/app/build/generated/assets/react/release/index.android.bundle',
+        ),
+      );
+      let embedded;
+      try {
+        // Read the already-open APK descriptor, so path swaps cannot redirect unzip.
+        embedded = execFileSync('unzip', ['-p', '/dev/fd/3', 'assets/index.android.bundle'], {
+          stdio: ['ignore', 'pipe', 'pipe', handle.fd],
+          maxBuffer: generated.length + 1,
+        });
+      } catch {
+        throw new Error('Native APK embedded bundle is missing or invalid.');
+      }
+      if (!generated.length || sha256(embedded) !== sha256(generated))
+        throw new Error('Native APK embedded bundle differs from the verified build.');
+      bundleSources.embeddedBundleSha256 = sha256(embedded);
+    }
     const hash = createHash('sha256');
-    for await (const bytes of handle.createReadStream({ autoClose: false })) hash.update(bytes);
+    for await (const bytes of handle.createReadStream({ start: 0, autoClose: false }))
+      hash.update(bytes);
     const after = await handle.stat();
     if (
       before.size !== after.size ||

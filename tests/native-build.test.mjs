@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath } from 'node:fs/promises';
+import fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -169,6 +170,22 @@ test('artifact receipt binds checksum to unchanged source and origins without na
     );
     const artifact = join(result.outputRoot, 'fixture.apk');
     await writeFile(artifact, Buffer.from('disposable artifact checksum fixture'));
+    const generated = join(result.source, 'android/app/build/generated/assets/react/release');
+    await mkdir(generated, { recursive: true });
+    await writeFile(join(generated, 'index.android.bundle'), 'synthetic generated bundle');
+    await assert.rejects(recordNativeArtifact(result.outputRoot, artifact), /embedded bundle/);
+    const assets = join(result.outputRoot, 'assets');
+    await mkdir(assets);
+    await writeFile(join(assets, 'index.android.bundle'), 'unrelated bundle');
+    await rm(artifact);
+    execFileSync('zip', ['-q', artifact, 'assets/index.android.bundle'], {
+      cwd: result.outputRoot,
+    });
+    await assert.rejects(recordNativeArtifact(result.outputRoot, artifact), /differs from/);
+    await writeFile(join(assets, 'index.android.bundle'), 'synthetic generated bundle');
+    execFileSync('zip', ['-q', artifact, 'assets/index.android.bundle'], {
+      cwd: result.outputRoot,
+    });
     const recorded = await recordNativeArtifact(result.outputRoot, artifact);
     assert.equal(recorded.outputStatus, 'compiled-unverified-preview');
     assert.equal(recorded.acceptance, 'pending-review-install-and-native-smoke');
@@ -190,6 +207,12 @@ test('staging rejects source symlinks, unsafe destinations and wrong base', asyn
     );
     await assert.rejects(
       prepareNativeBuild({ ...c.options, outputRoot: join(c.root, '..preview') }),
+      /external disposable/,
+    );
+    const link = join(c.temp, 'inside-link');
+    await symlink(c.root, link);
+    await assert.rejects(
+      prepareNativeBuild({ ...c.options, outputRoot: join(link, 'preview') }),
       /external disposable/,
     );
     await assert.rejects(
@@ -235,4 +258,40 @@ test('bundle receipt refuses foreign shared-tree code and changed staged applica
       verifyAndroidBundleSources(result.source),
       /Missing native application sources/,
     );
+  }));
+
+test('bundle verification refuses a source replaced by a symlink after its descriptor opens', async () =>
+  fixture(async (c) => {
+    const result = await prepareNativeBuild(c.options);
+    const candidate = join(result.source, 'App.tsx');
+    const maps = join(result.source, 'android/app/build/intermediates/sourcemaps/react/release');
+    await mkdir(maps, { recursive: true });
+    await writeFile(
+      join(maps, 'index.android.bundle.packager.map'),
+      JSON.stringify({
+        sources: ['/App.tsx'],
+        sourcesContent: [await readFile(candidate, 'utf8')],
+      }),
+    );
+    const foreign = join(c.temp, 'foreign.tsx');
+    await writeFile(foreign, 'outside snapshot');
+    const originalOpen = fsPromises.open;
+    let swapped = false;
+    fsPromises.open = async (...args) => {
+      const handle = await originalOpen(...args);
+      if (args[0] === candidate && !swapped) {
+        swapped = true;
+        await rm(candidate);
+        await symlink(foreign, candidate);
+      }
+      return handle;
+    };
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(verifyAndroidBundleSources(result.source), /changed while reading/);
+      assert.equal(swapped, true);
+    } finally {
+      fsPromises.open = originalOpen;
+      syncBuiltinESMExports();
+    }
   }));
