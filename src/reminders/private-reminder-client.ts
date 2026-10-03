@@ -152,7 +152,7 @@ export function createPrivateReminderClient({
 
   async function cleanup(): Promise<boolean> {
     cleanupPending = true;
-    if (destinationId || registrationUncertain) {
+    if ((destinationId || registrationUncertain) && isCurrentContext()) {
       try {
         await storage.setItem(
           key,

@@ -271,6 +271,25 @@ it('recovers an unconfirmed removal after recreating the client without reportin
   expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(false);
 });
 
+it('stale cleanup cannot overwrite the newer scoped association metadata for the same account', async () => {
+  const f = fixture();
+  let current = true;
+  const old = createPrivateReminderClient({ ...f.options, isCurrentContext: () => current });
+  await old.load();
+  await old.enable();
+  current = false;
+  const key = '@rewind/private-reminder-association:account-one';
+  const newer = JSON.stringify({ id: 'newer-destination' });
+  f.values.set(key, newer);
+  f.storage.setItem.mockClear();
+  f.request.mockClear();
+  expect((await old.revoke()).state).toBe('cleanup-pending');
+  expect(f.values.get(key)).toBe(newer);
+  expect(f.storage.setItem).not.toHaveBeenCalled();
+  expect(f.request).not.toHaveBeenCalled();
+  expect(f.prepared.unsubscribe).not.toHaveBeenCalled();
+});
+
 it('reconciles OS permission revocation without requesting permission or leaving the server association enabled', async () => {
   const f = fixture();
   await f.client.load();
