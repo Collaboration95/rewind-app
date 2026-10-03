@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -7,7 +8,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { parseConfig } from '../dist/config.js';
 import { openDatabase } from '../dist/db.js';
-import { createRealGroup } from '../dist/groups/real.js';
+import { createRealGroup, selectRealGroup } from '../dist/groups/real.js';
 import { updateRealGroupSettings, updateRealReminderPreference } from '../dist/groups/settings.js';
 import { revokeRealSession } from '../dist/auth/index.js';
 import { createRuntimeServer } from '../dist/http.js';
@@ -28,6 +29,66 @@ const token = 'ExpoPushToken[synthetic_reminder_token]';
 const token2 = 'ExpoPushToken[synthetic_second_token]';
 const deviceId = 'synthetic_device_0001';
 const registration = { deviceId, provider: 'expo', destination: { token } };
+
+test('re-registration in another group cannot revive old-group reminders at scan or send', async () => {
+  await fixture(async (c) => {
+    const other = createRealGroup(
+      c.db,
+      { id: 'reminder-owner', displayName: 'Owner' },
+      { name: 'Other owned group', prompt: 'Another prompt', maxMembers: 5 },
+      c.now,
+    );
+    updateRealReminderPreference(
+      c.db,
+      'reminder-owner',
+      other.group.id,
+      { enabled: true, snoozedUntil: null },
+      c.now,
+    );
+    selectRealGroup(c.db, 'reminder-owner', c.actor.groupId);
+    c.now = new Date(c.due);
+    assert.equal(scanDueReminderJobs(c.db, c.now).queued, 1);
+    selectRealGroup(c.db, 'reminder-owner', other.group.id);
+    const newActor = { ...c.actor, groupId: other.group.id };
+    registerReminderDestination(c.db, newActor, registration, c.now);
+    assert.equal(scanDueReminderJobs(c.db, c.now).queued, 1);
+    for (let index = 0; index < 3; index++) await c.tick();
+    assert.equal(c.sent.length, 1);
+    assert.equal(c.sent[0].payload.data.groupId, other.group.id);
+    assert.equal(listReminderOutbox(c.db, c.actor, c.now), null);
+    selectRealGroup(c.db, 'reminder-owner', c.actor.groupId);
+    assert.equal(listReminderOutbox(c.db, c.actor, c.now)[0].state, 'cancelled');
+  });
+});
+
+test('a new login does not mistake the previous session device registration for an active association', async () => {
+  await fixture(async (c) => {
+    const registered = registerReminderDestination(c.db, c.actor, registration, c.now);
+    const newToken = randomBytes(32).toString('base64url');
+    c.db
+      .prepare(
+        `INSERT INTO real_account_sessions (token_hash,account_id,created_at,last_seen_at,idle_expires_at,absolute_expires_at)
+      SELECT ?,account_id,created_at,last_seen_at,idle_expires_at,absolute_expires_at FROM real_account_sessions WHERE token_hash = ?`,
+      )
+      .run(
+        createHash('sha256').update(newToken).digest('hex'),
+        createHash('sha256').update(c.session).digest('hex'),
+      );
+    revokeRealSession(c.db, c.session, c.now);
+    const newActor = { ...c.actor, sessionToken: newToken };
+    const rows = listReminderDestinations(c.db, newActor, c.now, deviceId);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].id, registered.destination.id);
+    assert.equal(rows[0].enabled, false);
+    assert.doesNotMatch(
+      JSON.stringify(rows),
+      /session_token_hash|synthetic_reminder_token|device_key/,
+    );
+    const refreshed = registerReminderDestination(c.db, newActor, registration, c.now);
+    assert.equal(refreshed.ok, true);
+    assert.equal(listReminderDestinations(c.db, newActor, c.now, deviceId)[0].enabled, true);
+  });
+});
 async function fixture(run, { zone = 'UTC' } = {}) {
   const root = await mkdtemp(`${tmpdir()}/rewind-reminder-outbox-`);
   const config = parseConfig({
@@ -210,7 +271,14 @@ test('duplicate destinations collapse; outsider, foreign endpoint and arbitrary 
   });
 });
 
-for (const change of ['disabled', 'snoozed', 'signed-out', 'expired', 'rotated']) {
+for (const change of [
+  'disabled',
+  'snoozed',
+  'signed-out',
+  'expired',
+  'rotated',
+  'group-switched',
+]) {
   test(`${change} before send cancels the queued reminder without provider traffic`, async () => {
     await fixture(async (c) => {
       c.now = new Date(c.due);
@@ -232,6 +300,13 @@ for (const change of ['disabled', 'snoozed', 'signed-out', 'expired', 'rotated']
           c.now,
         );
       if (change === 'signed-out') revokeRealSession(c.db, c.session, c.now);
+      if (change === 'group-switched')
+        createRealGroup(
+          c.db,
+          { id: 'reminder-owner', displayName: 'Owner' },
+          { name: 'New current group', prompt: 'New group', maxMembers: 5 },
+          c.now,
+        );
       if (change === 'expired') c.now = new Date('2026-10-04T21:00:00Z');
       if (change === 'rotated')
         assert.equal(
@@ -465,6 +540,40 @@ test('HTTPS-policy API binds registration/status/disable to the current real mem
         /synthetic_reminder_token|session|device_key|destination_json/,
       );
       assert.equal(
+        registerReminderDestination(
+          c.db,
+          c.actor,
+          { deviceId: 'synthetic_device_0002', provider: 'expo', destination: { token: token2 } },
+          c.now,
+        ).ok,
+        true,
+      );
+      const recovered = await (
+        await fetch(`${base}${path}?deviceId=${deviceId}`, { headers: headers() })
+      ).json();
+      assert.deepEqual(recovered.destinations, [body.destination]);
+      assert.doesNotMatch(
+        JSON.stringify(recovered),
+        /synthetic_reminder_token|synthetic_device|session|device_key|destination_json/,
+      );
+      assert.deepEqual(
+        await (
+          await fetch(`${base}${path}?deviceId=unregistered_device_1`, { headers: headers() })
+        ).json(),
+        { destinations: [] },
+      );
+      for (const query of [
+        'deviceId=short',
+        `deviceId=${deviceId}&deviceId=${deviceId}`,
+        'deviceId=',
+      ])
+        assert.equal((await fetch(`${base}${path}?${query}`, { headers: headers() })).status, 400);
+      assert.equal(
+        (await fetch(`${base}${path}?deviceId=${deviceId}`, { headers: headers(c.otherSession) }))
+          .status,
+        403,
+      );
+      assert.equal(
         (await fetch(`${base}${path}`, { headers: headers(c.otherSession) })).status,
         403,
       );
@@ -503,7 +612,7 @@ test('HTTPS-policy API binds registration/status/disable to the current real mem
         200,
       );
       const rows = await (await fetch(`${base}${path}`, { headers: headers() })).json();
-      assert.equal(rows.destinations[0].enabled, false);
+      assert.equal(rows.destinations.find((row) => row.id === body.destination.id).enabled, false);
       const outbox = await (
         await fetch(`${base}/real/groups/${c.actor.groupId}/reminders/outbox`, {
           headers: headers(),
