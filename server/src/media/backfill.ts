@@ -237,7 +237,7 @@ async function inventory(options: InventoryOptions): Promise<Inventory> {
     let contentType =
       prefix === 'incoming' && typeof metadata?.mime_type === 'string'
         ? metadata.mime_type
-        : row.media_type === 'photo'
+        : prefix === 'incoming' && row.media_type === 'photo'
           ? 'image/jpeg'
           : 'video/mp4';
     let expiresAt = prefix === 'incoming' ? (options.incomingExpiresAt ?? null) : null;

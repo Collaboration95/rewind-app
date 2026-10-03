@@ -465,3 +465,23 @@ test('staged source MIME follows persisted metadata including PNG', async () =>
     );
     await backfillRetainedMedia(c.invocation(manifest));
   }));
+
+test('processed photo contributions retain MP4 output MIME during legacy backfill', async () =>
+  fixture(async (c) => {
+    const changed = c.database
+      .prepare(
+        "UPDATE media_jobs SET media_type='photo' WHERE kind='clip' AND output_path IS NOT NULL",
+      )
+      .run();
+    assert.ok(Number(changed.changes) > 0);
+    const manifest = await createBackfillManifest(c.options, c.manifestPath);
+    const processed = manifest.inventory.references.filter((ref) => ref.prefix === 'processed');
+    assert.ok(processed.length > 0);
+    assert.ok(processed.every((ref) => ref.contentType === 'video/mp4'));
+    await backfillRetainedMedia(c.invocation(manifest));
+    assert.ok(
+      journalRecords(c.journalPath)
+        .filter((row) => row.destination.prefix === 'processed')
+        .every((row) => row.destination.contentType === 'video/mp4'),
+    );
+  }));
