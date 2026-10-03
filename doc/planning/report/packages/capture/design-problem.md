@@ -9,27 +9,31 @@ The “before” diagrams are **problem-pressure models**, not a historical clai
 ## Before: variation concentrated at the capture workflow
 
 ### Problem class view
+
 ![Problem pressure class diagram](diagrams/problem-before-class.svg)
 
 ### Problem sequence view
+
 ![Problem pressure sequence](diagrams/problem-before-sequence.svg)
 
 The diagrams show the coupling pressure when one workflow owns browser/native capture details, direct/staged transport protocol, quota decisions and FFmpeg mode execution. That is the design problem being evaluated, not a claim about the code at the pinned SHA.
 
 ## Candidate patterns
 
-| Candidate | Fit to the observed problem | Decision |
-| --- | --- | --- |
-| Adapter | Fits concrete platform capture behind `CameraPlatform`, transfer APIs behind the real-account runtime, and storage implementations behind `MediaStore`. Those boundaries already exist in source. | Use to describe actual platform/storage/transport seams. |
-| Strategy | Fits a selectable algorithm only where implementations are interchangeable. Current FFmpeg mode choice selects a filter branch inside one processor; direct versus staged transfer is configuration routing inside one runtime adapter. | Mention as a useful conceptual lens, but do not claim separate Strategy classes or force a new abstraction. |
-| Template Method | Requires a shared base algorithm with overridable steps. The accepted capture and server code has no such superclass lifecycle; async functions and explicit sessions coordinate the work. | Reject as an implementation claim; it would require invented hierarchy/refactor. |
+| Candidate       | Fit to the observed problem                                                                                                                                                                                                             | Decision                                                                                                    |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Adapter         | Fits concrete platform capture behind `CameraPlatform`, transfer APIs behind the real-account runtime, and storage implementations behind `MediaStore`. Those boundaries already exist in source.                                       | Use to describe actual platform/storage/transport seams.                                                    |
+| Strategy        | Fits a selectable algorithm only where implementations are interchangeable. Current FFmpeg mode choice selects a filter branch inside one processor; direct versus staged transfer is configuration routing inside one runtime adapter. | Mention as a useful conceptual lens, but do not claim separate Strategy classes or force a new abstraction. |
+| Template Method | Requires a shared base algorithm with overridable steps. The accepted capture and server code has no such superclass lifecycle; async functions and explicit sessions coordinate the work.                                              | Reject as an implementation claim; it would require invented hierarchy/refactor.                            |
 
 ## After: actual accepted design
 
 ### Implemented class view
+
 ![Implemented class diagram](diagrams/problem-after-class.svg)
 
 ### Implemented sequence view
+
 ![Implemented transfer and processing sequence](diagrams/problem-after-sequence.svg)
 
 The after view names the implemented seams: `CameraPlatform` adapters, `ClipUploadSession` and `createRealAccountVideoRuntimeClient`, the direct-transfer workflow and server upload-intent service, the staged intake fallback, contribution quota/ledger operations, private `MediaStore`, and FFmpeg processing. It distinguishes both configured transfer branches. Direct transfer obtains a capability through the authenticated application API, sends media bytes to that signed target without application credentials, pins a storage version, and completes through the application API. Staged mode sends the bytes to the authenticated intake service. The server remains responsible for authorization, idempotency, quota, job creation and processing in either branch.

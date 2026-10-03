@@ -5,12 +5,15 @@
 ## UC04 — Video capture and submission
 
 ### Analysis class diagram
+
 ![UC04 analysis classes](diagrams/uc04-analysis-class.svg)
 
 ### Design class diagram
+
 ![UC04 design classes](diagrams/uc04-design-class.svg)
 
 #### UC04-F1 — Acquire access and record
+
 **Analysis sequence**
 ![UC04-F1 analysis sequence](diagrams/uc04-f1-analysis-sequence.svg)
 
@@ -18,6 +21,7 @@
 ![UC04-F1 design sequence](diagrams/uc04-f1-design-sequence.svg)
 
 #### UC04-F2 — Review, trim, choose mode or retake
+
 **Analysis sequence**
 ![UC04-F2 analysis sequence](diagrams/uc04-f2-analysis-sequence.svg)
 
@@ -25,6 +29,7 @@
 ![UC04-F2 design sequence](diagrams/uc04-f2-design-sequence.svg)
 
 #### UC04-F3 — Transfer, accept and process video
+
 **Analysis sequence**
 ![UC04-F3 analysis sequence](diagrams/uc04-f3-analysis-sequence.svg)
 
@@ -34,12 +39,15 @@
 ## UC05 — Photo contribution
 
 ### Analysis class diagram
+
 ![UC05 analysis classes](diagrams/uc05-analysis-class.svg)
 
 ### Design class diagram
+
 ![UC05 design classes](diagrams/uc05-design-class.svg)
 
 #### UC05-F1 — Capture and review a photo
+
 **Analysis sequence**
 ![UC05-F1 analysis sequence](diagrams/uc05-f1-analysis-sequence.svg)
 
@@ -47,6 +55,7 @@
 ![UC05-F1 design sequence](diagrams/uc05-f1-design-sequence.svg)
 
 #### UC05-F2 — Transfer, accept and process a photo
+
 **Analysis sequence**
 ![UC05-F2 analysis sequence](diagrams/uc05-f2-analysis-sequence.svg)
 
@@ -56,12 +65,15 @@
 ## UC06 — Allowance and correction
 
 ### Analysis class diagram
+
 ![UC06 analysis classes](diagrams/uc06-analysis-class.svg)
 
 ### Design class diagram
+
 ![UC06 design classes](diagrams/uc06-design-class.svg)
 
 #### UC06-F1 — Read allowance and reserve contribution
+
 **Analysis sequence**
 ![UC06-F1 analysis sequence](diagrams/uc06-f1-analysis-sequence.svg)
 
@@ -69,6 +81,7 @@
 ![UC06-F1 design sequence](diagrams/uc06-f1-design-sequence.svg)
 
 #### UC06-F2 — Delete and replace once
+
 **Analysis sequence**
 ![UC06-F2 analysis sequence](diagrams/uc06-f2-analysis-sequence.svg)
 

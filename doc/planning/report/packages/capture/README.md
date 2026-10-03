@@ -14,25 +14,25 @@ This package models UC04 video capture/submission, UC05 photo contribution, and 
 
 ## Package map
 
-| Deliverable | Location | Coverage |
-| --- | --- | --- |
-| Use cases, branches, requirements, and evidence limits | [use-cases.md](use-cases.md) | Seven major flows and their normal/relevant exceptional branches |
-| Analysis/design classes and paired sequences | [models.md](models.md) | One class pair per UC and one sequence pair per major flow |
-| Pattern comparison and decision | [design-problem.md](design-problem.md) | Before/after class and sequence views; Adapter, Strategy and Template Method evaluated |
-| Editable diagrams | [diagrams/](diagrams/) | 24 SVG figures, rendered and checked for layout/readability |
+| Deliverable                                            | Location                               | Coverage                                                                               |
+| ------------------------------------------------------ | -------------------------------------- | -------------------------------------------------------------------------------------- |
+| Use cases, branches, requirements, and evidence limits | [use-cases.md](use-cases.md)           | Seven major flows and their normal/relevant exceptional branches                       |
+| Analysis/design classes and paired sequences           | [models.md](models.md)                 | One class pair per UC and one sequence pair per major flow                             |
+| Pattern comparison and decision                        | [design-problem.md](design-problem.md) | Before/after class and sequence views; Adapter, Strategy and Template Method evaluated |
+| Editable diagrams                                      | [diagrams/](diagrams/)                 | 24 SVG figures, rendered and checked for layout/readability                            |
 
 ## Requirement trace
 
 The summary wording below is a bounded mapping to the requirements named by #358. It preserves the requirement IDs and connects each one to modeled flows and exact source links in [use-cases.md](use-cases.md). It does not replace the submitted proposal's canonical wording.
 
-| Requirement | Use cases | Package evidence | Limit |
-| --- | --- | --- | --- |
-| R04 — short portrait video capture, audio, review/trim and contribution | UC04-F1–F3 | Platform boundary, review session, upload and processing paths | This source walkthrough is not a physical-device acceptance run or proof of final encoding quality. |
-| R05 — retro treatment before final upload | UC04-F2/F3; UC05-F2 | Current two-mode server processing is shown after upload; future pre-upload work is called out separately. | The required four original pre-upload treatments are future work (#365–#367). |
-| R06 — photo contribution | UC05-F1/F2 | Managed still capture, validation, one-item/three-second contribution and server processing | No hosted-phone acceptance is asserted. |
-| R07 — bounded allowance and one correction | UC06-F1/F2 | Server quota window, atomic reservation, idempotency, deletion eligibility and replacement link | Concurrency behavior is represented from code, not newly tested here. |
-| R16 — private media transfer | UC04-F3; UC05-F2 | Configured direct upload intent to private storage and the authenticated staged-source fallback | No live provider/storage acceptance is claimed. |
-| R22 — report inputs and design evidence | UC04–UC06 | Flow catalogue, crosswalk, models and pattern analysis | This package does not assemble the final report or assign member contributions, hours or approvals. |
+| Requirement                                                             | Use cases           | Package evidence                                                                                           | Limit                                                                                               |
+| ----------------------------------------------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| R04 — short portrait video capture, audio, review/trim and contribution | UC04-F1–F3          | Platform boundary, review session, upload and processing paths                                             | This source walkthrough is not a physical-device acceptance run or proof of final encoding quality. |
+| R05 — retro treatment before final upload                               | UC04-F2/F3; UC05-F2 | Current two-mode server processing is shown after upload; future pre-upload work is called out separately. | The required four original pre-upload treatments are future work (#365–#367).                       |
+| R06 — photo contribution                                                | UC05-F1/F2          | Managed still capture, validation, one-item/three-second contribution and server processing                | No hosted-phone acceptance is asserted.                                                             |
+| R07 — bounded allowance and one correction                              | UC06-F1/F2          | Server quota window, atomic reservation, idempotency, deletion eligibility and replacement link            | Concurrency behavior is represented from code, not newly tested here.                               |
+| R16 — private media transfer                                            | UC04-F3; UC05-F2    | Configured direct upload intent to private storage and the authenticated staged-source fallback            | No live provider/storage acceptance is claimed.                                                     |
+| R22 — report inputs and design evidence                                 | UC04–UC06           | Flow catalogue, crosswalk, models and pattern analysis                                                     | This package does not assemble the final report or assign member contributions, hours or approvals. |
 
 ## Assembly handoff
 
