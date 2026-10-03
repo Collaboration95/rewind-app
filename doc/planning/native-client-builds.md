@@ -94,8 +94,8 @@ packages/lockfiles to fix a native toolchain problem without coordination.
    Substitute the actual disposable directory in the absolute template path.
    Expo 57 interprets bare `node_modules/expo/template.tgz` as GitHub shorthand;
    an existing file at that relative path does not prevent this interpretation.
-   The absolute-path form was checked with the installed CLI's option parser,
-   but a successful prebuild using it is still pending in this corrected preview.
+   The absolute-path form was checked with the installed CLI's option parser
+   and succeeded in the corrected preview below.
 
    Use only existing installed SDK/Gradle tools. Set the three public values
    exactly as recorded in `public-env.json`, clear any additional
@@ -129,10 +129,10 @@ packages/lockfiles to fix a native toolchain problem without coordination.
    existing installed application without explicit device-owner authorization.
 
 Stop after the first diagnosed native toolchain retry unless the user grants
-new bounded scope. The 3 October follow-ups separately authorized one
-network-enabled dependency-resolution/compile attempt and one corrected-source
-build attempt. The corrected-source attempt must stop at its next distinct
-diagnosed blocker. Do not download large SDKs, create signing credentials, dispatch
+new bounded scope. The 3 October follow-ups authorized dependency resolution and
+corrected-source validation, including routine invocation corrections. Stop on
+an unavailable toolchain/access or a new material code problem needing review.
+Do not download large SDKs, create signing credentials, dispatch
 paid/remote builds, delete caches, or remove checks to make the build pass. A
 missing toolchain or unresolved source provenance leaves the APK deliverable open.
 
@@ -219,8 +219,7 @@ before recording an artifact. Seven focused tests, scoped ESLint and formatting
 checks passed. The previous full `npm run check` pass is retained; it was not
 repeated for this follow-up.
 
-**Latest corrected-source attempt: blocked before Gradle.** The separately
-authorized build ran in
+**Corrected-source preview: compiled and reconciled.** The authorized build ran in
 `/private/tmp/rewind-351-android-entry-fixed-preview-20261003/source`, with source
 commit `d77ecc2af5a5a77f192efa265495ae8d7cadb032` and accepted base
 `b43b8982a3668cc1ef6e5295bfdbde7f2cd588c9`. It remains an `unmerged-preview`.
@@ -246,24 +245,79 @@ Prebuild exited `1` in 0.28 seconds with
 The installed Expo CLI's `resolveTemplateOption` expands the bare relative path
 to GitHub shorthand before checking whether the file exists; its repository
 parser rejects this URL locally before repository lookup. The existing template
-is present. Read-only parser validation confirms that its absolute path resolves
-as a local file. The runbook command above is corrected, but was not retried.
+is present. Read-only parser validation confirmed that its absolute path resolves
+as a local file; the subsequent authorized invocation is recorded below.
 
-The next distinct diagnosed blocker ended the authorized attempt. Gradle never
-started, no Android directory or new APK was produced, and actual bundle-source,
-package and signature verification and an artifact receipt remain pending. The
-effective staged source digest is unchanged. No source/config/script changes
-were made in this follow-up, so `npm run check` was not repeated; documentation
-formatting and diff checks were run.
+That invocation error initially stopped the attempt before Gradle. The user
+then authorized correcting the invocation in the same owned preview. The
+absolute local template command succeeded in 0.32 seconds:
 
-The exact command, timing and result are retained in
-`/private/tmp/rewind-351-logs-20261003/entry-fixed-build-result.json`; diagnostics
-are in `entry-fixed-prebuild.log` and `entry-fixed-template-parser.json` in that
-directory. The prepared source/provenance remain at the disposable path above.
-The old source-unreconciled APK remains quarantined and cannot substitute for a
-successful corrected-source build. A new bounded attempt is needed to complete
-APK compilation and actual bundle reconciliation; reviewed accepted source and
-approved origins are still required before native acceptance.
+```sh
+CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 node node_modules/expo/bin/cli prebuild --platform android --no-install --template /private/tmp/rewind-351-android-entry-fixed-preview-20261003/source/node_modules/expo/template.tgz
+```
+
+Prebuild changed none of the pinned inputs. With the same scrubbed environment,
+existing Java/Android SDK paths and SDK/JDK auto-downloads disabled, Gradle ran
+from that preview's `source/android/`:
+
+```sh
+CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 ./gradlew --offline --no-daemon --max-workers=2 -Pandroid.builder.sdkDownload=false -Dorg.gradle.java.installations.auto-download=false :app:assembleRelease
+```
+
+It exited `0` in 66.48 seconds, within a 900-second timeout; 328 tasks, 300
+executed and 28 up-to-date. Existing caches sufficed: no network dependency
+resolution, SDK/toolchain installation or cache deletion was needed. Expo used
+only its existing local template, without GitHub network access.
+
+The actual packager sourcemap passed `verifyAndroidBundleSources`: all 63
+application source files matched the staged tree, with no foreign application
+paths. Sourcemap SHA-256:
+`669d0ce66c9f2730bce42579dd37940ad0258d9e93c5b89f45676e2b0c63f43b`.
+The APK's embedded `assets/index.android.bundle` exactly matches the generated
+bundle; SHA-256:
+`9e1b9641ff1bc2cd625dcd4d11f1254e901ce65e3990c84702997d28bda6c84c`.
+Both reserved preview origins are present in that bundle.
+
+Installed `apksigner verify --verbose --print-certs`, `aapt2 dump badging` and
+`aapt2 dump xmltree --file AndroidManifest.xml` commands all passed:
+
+- APK size: 98,446,407 bytes; SHA-256:
+  `cae5479f3c73b1637014a48fd373be493f72bf553a463fb28c6c2f534cddd3d6`.
+- Package `com.anonymous.rewindapp`, version `0.1.0`, code `1`; min SDK `24`,
+  target/compile SDK `36`; callback scheme `rewind` retained.
+- APK v2 signature verifies with the same standard Expo-template Android Debug
+  test key; certificate SHA-256:
+  `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`.
+  This remains a test signing identity, not an approved production identity.
+
+The recorder rechecked unchanged source/config/origins and bundle provenance,
+then exclusively created `artifact.json` beside `provenance.json`:
+
+```sh
+node scripts/native-build.mjs record /private/tmp/rewind-351-android-entry-fixed-preview-20261003 /private/tmp/rewind-351-android-entry-fixed-preview-20261003/source/android/app/build/outputs/apk/release/app-release.apk
+```
+
+The artifact is at that final command's APK path. Its receipt remains
+`compiled-unverified-preview`, source status `unmerged-preview`, acceptance
+`pending-review-install-and-native-smoke`. The package/signature/embedded-bundle
+checks are recorded separately in `verified-apk-inspection.json`; the latest
+summary is `current-disposition.json`, both in the preview directory. The old
+source-unreconciled APK remains quarantined and must not be installed.
+
+All attempt logs remain in `/private/tmp/rewind-351-logs-20261003`. The latest
+exact commands, durations and results are in
+`entry-fixed-corrected-invocation-result.json`; raw logs are
+`entry-fixed-absolute-prebuild.log`, `entry-fixed-cached-gradle-attempt1.log`,
+`entry-fixed-bundle-source-reconciliation.json`, `entry-fixed-apk-signing.txt`,
+`entry-fixed-apk-package.txt`, `entry-fixed-apk-manifest.txt` and
+`entry-fixed-artifact-record.log`. Earlier invocation/parser logs and the old
+blocker receipt were preserved as history.
+
+No tracked source/config/script changes were made during this validation.
+Documentation formatting and diff checks passed; `npm run check` was not
+repeated for the disposition-only update. This resolves the corrected-source
+compile/provenance check, while reviewed accepted source, approved origins,
+Android installation/journeys and iOS preview/signing remain acceptance gates.
 
 Reserved `.invalid` API/website origins remain embedded in this rehearsal. They
 cannot smoke a real sign-in/invite journey. No real hosted data or source was
