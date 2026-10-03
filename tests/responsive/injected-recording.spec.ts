@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import {
   allowInjectedSource,
+  expectInjectedSourceInstalled,
   expectRevoked,
   expectSourceStopped,
   injectRecordingSource,
@@ -20,13 +21,12 @@ test.afterEach(async ({ page }) => {
     const state = window.__injectedCapture;
     if (!state) return;
     for (const source of state.sources) {
-      source.stream
-        .getTracks()
-        .filter((track) => track.readyState === 'live')
-        .forEach((track) => track.stop());
+      source.tracks.filter((track) => track.readyState === 'live').forEach((track) => track.stop());
     }
     await Promise.all(
-      state.playbackAudio.filter((audio) => audio.state !== 'closed').map((audio) => audio.close()),
+      [...state.sources.map((source) => source.audio), ...state.playbackAudio]
+        .filter((audio) => audio.state !== 'closed')
+        .map((audio) => audio.close()),
     );
   });
 });
@@ -37,6 +37,7 @@ test('reports real MP4 recorder support without granting device permissions', as
   await injectRecordingSource(page);
   const supported = await recordingSupport(page, info);
   await openInjectedCapture(page);
+  await expectInjectedSourceInstalled(page);
   expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
   if (supported) {
     await expect(page.getByTestId('video-permission')).toBeVisible();
@@ -49,6 +50,24 @@ test('reports real MP4 recorder support without granting device permissions', as
     ).toBeVisible();
     await expect(page.getByTestId('video-record')).toHaveCount(0);
   }
+});
+
+test('synthetic device guard fails closed and reinstalls after navigation', async ({
+  page,
+}, info) => {
+  await injectRecordingSource(page);
+  await recordingSupport(page, info);
+  await openInjectedCapture(page);
+  await page.evaluate(() => {
+    window.__injectedCapture.installation = null;
+  });
+  await expect(allowInjectedSource(page)).rejects.toThrow(
+    'Synthetic device injection is absent; refusing native device access',
+  );
+  expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
+  await page.reload();
+  await expectInjectedSourceInstalled(page);
+  expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
 });
 
 test('real injected recording preserves moving video, decoded tone, trim, retake and submission disposal', async ({
@@ -83,6 +102,17 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
   await review.locator('input').nth(1).fill('4.5');
   await page.getByRole('button', { name: 'Save trim and mode', exact: true }).click();
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime)).toBeCloseTo(1, 2);
+  // Attach the observer while paused. Inserting Web Audio during playback can
+  // switch WebKit's media clock and disturb an otherwise valid pause assertion.
+  await video.evaluate(async (v: HTMLVideoElement) => {
+    const audio = new AudioContext();
+    window.__injectedCapture.playbackAudio.push(audio);
+    await audio.resume();
+    const source = audio.createMediaElementSource(v);
+    const analyser = audio.createAnalyser();
+    source.connect(analyser).connect(audio.destination);
+    window.__injectedCapture.playbackProbe = { source, analyser };
+  });
   await page.getByRole('button', { name: 'Play preview', exact: true }).click();
   await expect
     .poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime))
@@ -101,17 +131,17 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
   await page.waitForTimeout(400);
   expect(await samplePixel()).not.toEqual(firstPixel);
   // Observe audio DECODED BY THE REAL REVIEW PLAYER, in addition to FFmpeg PCM.
-  const playerRms = await video.evaluate(async (v: HTMLVideoElement) => {
-    const audio = new AudioContext();
-    window.__injectedCapture.playbackAudio.push(audio);
-    await audio.resume();
-    const source = audio.createMediaElementSource(v);
-    const analyser = audio.createAnalyser();
-    source.connect(analyser).connect(audio.destination);
+  const playerRms = await page.evaluate(async () => {
+    const analyser = window.__injectedCapture.playbackProbe!.analyser;
     const samples = new Float32Array(analyser.fftSize);
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    analyser.getFloatTimeDomainData(samples);
-    const rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+    // WebKit's output graph can need more than 200ms to start. Observe actual
+    // decoded PCM until it is audible, rather than sampling one startup frame.
+    let rms = 0;
+    for (let attempt = 0; attempt < 30 && rms <= 0.05; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      analyser.getFloatTimeDomainData(samples);
+      rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length);
+    }
     // Keep the graph audible through playback; close only after player disposal.
     return rms;
   });

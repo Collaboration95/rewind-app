@@ -6,10 +6,23 @@ import { expect, type Page, type TestInfo } from '@playwright/test';
 declare global {
   interface Window {
     __injectedCapture: {
+      installation: {
+        devices: MediaDevices;
+        getUserMedia: MediaDevices['getUserMedia'];
+      } | null;
       shape: 'portrait' | 'landscape';
       delayDurationStop: boolean;
       playbackAudio: AudioContext[];
-      sources: { stream: MediaStream; audio: AudioContext; frames: number }[];
+      playbackProbe: {
+        source: MediaElementAudioSourceNode;
+        analyser: AnalyserNode;
+      } | null;
+      sources: {
+        stream: MediaStream;
+        tracks: MediaStreamTrack[];
+        audio: AudioContext;
+        frames: number;
+      }[];
       blobs: {
         url: string;
         blob: Blob | null;
@@ -24,9 +37,11 @@ declare global {
 export async function injectRecordingSource(page: Page) {
   await page.addInitScript(() => {
     const state: Window['__injectedCapture'] = {
+      installation: null,
       shape: 'portrait',
       delayDurationStop: false,
       playbackAudio: [],
+      playbackProbe: null,
       sources: [],
       blobs: [],
     };
@@ -59,58 +74,93 @@ export async function injectRecordingSource(page: Page) {
         state.delayDurationStop && delay === 15_000 ? 16_500 : delay,
         ...args,
       )) as typeof window.setTimeout;
-    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
-      configurable: true,
-      value: async (constraints: MediaStreamConstraints) => {
-        if (!constraints.audio || !constraints.video) throw new Error('Expected audio + video');
-        const canvas = document.createElement('canvas');
-        canvas.width = state.shape === 'portrait' ? 360 : 640;
-        canvas.height = state.shape === 'portrait' ? 640 : 360;
-        const drawing = canvas.getContext('2d')!;
-        const audio = new AudioContext();
-        await audio.resume();
-        const oscillator = audio.createOscillator();
-        oscillator.frequency.value = 440;
-        const gain = audio.createGain();
-        gain.gain.value = 0.25;
-        const destination = audio.createMediaStreamDestination();
-        oscillator.connect(gain).connect(destination);
-        oscillator.start();
-        // The generator has no connection to hardware audio output.
-        const stream = new MediaStream([
-          ...canvas.captureStream(30).getVideoTracks(),
-          ...destination.stream.getAudioTracks(),
-        ]);
-        const source = { stream, audio, frames: 0 };
-        state.sources.push(source);
-        const draw = () => {
-          source.frames++;
-          drawing.fillStyle = `hsl(${(source.frames * 7) % 360}, 90%, 50%)`;
-          drawing.fillRect(0, 0, canvas.width, canvas.height);
-          drawing.fillStyle = 'white';
-          drawing.fillRect((source.frames * 9) % canvas.width, 40, 40, 120);
+    // WebKit can discard expandos on an unretained native MediaDevices wrapper.
+    // Pin the patched object on navigator so every application lookup uses it.
+    const devices = navigator.mediaDevices;
+    Object.defineProperty(navigator, 'mediaDevices', { value: devices });
+    const getUserMedia = async (constraints: MediaStreamConstraints) => {
+      if (!constraints.audio || !constraints.video) throw new Error('Expected audio + video');
+      const canvas = document.createElement('canvas');
+      canvas.width = state.shape === 'portrait' ? 360 : 640;
+      canvas.height = state.shape === 'portrait' ? 640 : 360;
+      const drawing = canvas.getContext('2d')!;
+      const audio = new AudioContext();
+      await audio.resume();
+      const oscillator = audio.createOscillator();
+      oscillator.frequency.value = 440;
+      const gain = audio.createGain();
+      gain.gain.value = 0.25;
+      const destination = audio.createMediaStreamDestination();
+      oscillator.connect(gain).connect(destination);
+      oscillator.start();
+      // The generator has no connection to hardware audio output.
+      const stream = new MediaStream([
+        ...canvas.captureStream(30).getVideoTracks(),
+        ...destination.stream.getAudioTracks(),
+      ]);
+      // Retain native track wrappers for the lifetime of the source too. WebKit
+      // can otherwise discard their stop observers during a longer recording.
+      const tracks = stream.getTracks();
+      const source = { stream, tracks, audio, frames: 0 };
+      state.sources.push(source);
+      const draw = () => {
+        source.frames++;
+        drawing.fillStyle = `hsl(${(source.frames * 7) % 360}, 90%, 50%)`;
+        drawing.fillRect(0, 0, canvas.width, canvas.height);
+        drawing.fillStyle = 'white';
+        drawing.fillRect((source.frames * 9) % canvas.width, 40, 40, 120);
+      };
+      draw();
+      const interval = setInterval(draw, 1000 / 30);
+      for (const track of tracks) {
+        const stop = track.stop.bind(track);
+        track.stop = () => {
+          stop();
+          if (tracks.every((item) => item.readyState === 'ended') && audio.state !== 'closed') {
+            clearInterval(interval);
+            oscillator.stop();
+            void audio.close();
+          }
         };
-        draw();
-        const interval = setInterval(draw, 1000 / 30);
-        for (const track of stream.getTracks()) {
-          const stop = track.stop.bind(track);
-          track.stop = () => {
-            stop();
-            if (stream.getTracks().every((item) => item.readyState === 'ended')) {
-              clearInterval(interval);
-              oscillator.stop();
-              void audio.close();
-            }
-          };
-        }
-        return stream;
-      },
-    });
+      }
+      // A running WebKit context can still have an unstarted audio clock.
+      // Make the synthetic device provide rendered audio before returning it,
+      // so a short recovery recording does not lose its tone to fixture startup.
+      const readyDeadline = performance.now() + 3000;
+      while (audio.currentTime < 0.2 && performance.now() < readyDeadline) {
+        await new Promise((resolve) => schedule(resolve, 50));
+      }
+      if (audio.currentTime < 0.2) {
+        tracks.forEach((track) => track.stop());
+        throw new Error('The synthetic audio source did not start');
+      }
+      return stream;
+    };
+    Object.defineProperty(devices, 'getUserMedia', { value: getUserMedia });
+    // Publish the marker only after both immutable overrides have succeeded.
+    state.installation = { devices, getUserMedia };
   });
+}
+
+export async function expectInjectedSourceInstalled(page: Page) {
+  const installed = await page.evaluate(() => {
+    const installation = window.__injectedCapture?.installation;
+    return !!(
+      installation &&
+      navigator.mediaDevices === installation.devices &&
+      navigator.mediaDevices.getUserMedia === installation.getUserMedia &&
+      Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')?.configurable === false &&
+      Object.getOwnPropertyDescriptor(installation.devices, 'getUserMedia')?.writable === false
+    );
+  });
+  expect(installed, 'Synthetic device injection is absent; refusing native device access').toBe(
+    true,
+  );
 }
 
 export async function recordingSupport(page: Page, testInfo: TestInfo) {
   await page.goto('/');
+  await expectInjectedSourceInstalled(page);
   const support = await page.evaluate(() => ({
     agent: navigator.userAgent,
     types: [
@@ -141,6 +191,7 @@ export async function openInjectedCapture(page: Page) {
 }
 
 export async function allowInjectedSource(page: Page) {
+  await expectInjectedSourceInstalled(page);
   await expect(page.getByTestId('video-permission')).toBeVisible();
   expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
   await page.getByRole('button', { name: 'Allow camera and microphone', exact: true }).click();
@@ -162,6 +213,7 @@ export async function recordFor(page: Page, seconds = 6) {
 }
 
 export async function restoreInjectedPreview(page: Page) {
+  await expectInjectedSourceInstalled(page);
   await page.getByTestId('video-preview-recovery').click();
   await expect
     .poll(() =>
