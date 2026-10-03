@@ -238,6 +238,12 @@ test('real Archive seals media until release and scopes films/own clips to live 
         (await request(null, play, { headers: { Range: 'bytes=999999999-' } })).status,
         416,
       );
+      const filmDownload = await request(person, body.archive.films[0].downloadPath);
+      assert.equal(filmDownload.status, 200);
+      assert.match(filmDownload.headers.get('content-disposition'), /rewind-group-film/);
+      assert.equal(filmDownload.headers.get('content-length'), String(bytes.length));
+      assert.equal(filmDownload.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(Buffer.from(await filmDownload.arrayBuffer()), bytes);
       const download = await request(person, body.archive.clips[0].downloadPath);
       assert.equal(download.status, 200);
       assert.match(download.headers.get('content-disposition'), /rewind-my-clip/);
