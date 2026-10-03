@@ -35,6 +35,23 @@ export function operationalSnapshot(database: RewindDatabase, now = new Date()) 
     const row = database.prepare(sql).get(...parameters) as { value: number | null };
     return Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.round(Number(row.value ?? 0))));
   };
+  // Terminal jobs clear their processing timestamp. The existing audit pairs
+  // retain start/end times without requiring a schema change or private fields.
+  const recordedDuration = (event: 'job.completed' | 'job.failed') =>
+    count(
+      `SELECT MAX(MAX(0, (julianday(terminal.occurred_at) - julianday(
+        (SELECT MAX(started.occurred_at) FROM audit_events started
+         WHERE started.event_type = 'job.started'
+           AND started.resource_id = terminal.resource_id
+           AND started.occurred_at <= terminal.occurred_at)
+      )) * 86400000)) AS value
+       FROM audit_events terminal
+       WHERE terminal.event_type = ? AND terminal.resource_id IS NOT NULL
+         AND terminal.occurred_at >= ? AND terminal.occurred_at <= ?`,
+      event,
+      since,
+      at,
+    );
   const jobs = {
     pending: count(
       "SELECT COUNT(*) AS value FROM media_jobs WHERE kind IN ('clip','film') AND status = 'pending'",
@@ -53,11 +70,8 @@ export function operationalSnapshot(database: RewindDatabase, now = new Date()) 
       "SELECT MAX(MAX(0, (julianday(?) - julianday(created_at)) * 86400)) AS value FROM media_jobs WHERE kind IN ('clip','film') AND status IN ('pending','processing')",
       at,
     ),
-    longestRecordedFailedAttemptMs: count(
-      "SELECT MAX(MAX(0, (julianday(failed_at) - julianday(processing_started_at)) * 86400000)) AS value FROM media_jobs WHERE kind IN ('clip','film') AND status = 'failed' AND failed_at >= ? AND failed_at <= ?",
-      since,
-      at,
-    ),
+    longestRecordedFailedAttemptMs: recordedDuration('job.failed'),
+    longestRecordedCompletedAttemptMs: recordedDuration('job.completed'),
   };
   const auditCount = (event: string) =>
     count(

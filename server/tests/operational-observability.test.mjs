@@ -9,7 +9,7 @@ import test from 'node:test';
 import { parseConfig } from '../dist/config.js';
 import { openDatabase } from '../dist/db.js';
 import { createRuntimeServer } from '../dist/http.js';
-import { processClipJob } from '../dist/jobs/index.js';
+import { processClipJob, runAuditedJob } from '../dist/jobs/index.js';
 import { verifyMediaIntegrity, recordIntegrityFailure } from '../dist/media/integrity.js';
 import { operationalSnapshot } from '../dist/observability/index.js';
 import { accountFixture } from './helpers/upload-intents.mjs';
@@ -175,7 +175,8 @@ test('readonly CLI reports numeric queue, reminder and scheduled state without c
     );
     const snapshot = operationalSnapshot(database, now);
     assert.equal(snapshot.jobs.exhaustedFilms, 1);
-    assert.equal(snapshot.jobs.longestRecordedFailedAttemptMs, 2000);
+    // A retained job timestamp is not an audited attempt duration.
+    assert.equal(snapshot.jobs.longestRecordedFailedAttemptMs, 0);
     assert.ok(snapshot.jobs.oldestActiveAgeSeconds >= 3600);
     assert.equal(snapshot.reminders.failed, 1);
     assert.equal(snapshot.scheduler.overdueCollecting, 1);
@@ -204,5 +205,37 @@ test('readonly CLI reports numeric queue, reminder and scheduled state without c
         return true;
       },
     );
+  });
+});
+
+test('completed and failed attempt durations survive terminal processing timestamp cleanup', async (t) => {
+  await fixture(async ({ database }) => {
+    t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-03T12:00:00Z') });
+    assert.equal(
+      await runAuditedJob(database, {
+        jobId: 'owned-duration-completed',
+        run: () => {
+          t.mock.timers.tick(1250);
+          return 'completed';
+        },
+      }),
+      'completed',
+    );
+    await assert.rejects(
+      runAuditedJob(database, {
+        jobId: 'owned-duration-failed',
+        run: () => {
+          t.mock.timers.tick(500);
+          throw new Error('/private/owned-error?token=never-log');
+        },
+      }),
+    );
+    const snapshot = operationalSnapshot(database);
+    assert.equal(snapshot.jobs.longestRecordedCompletedAttemptMs, 1250);
+    assert.equal(snapshot.jobs.longestRecordedFailedAttemptMs, 500);
+    assert.doesNotMatch(JSON.stringify(snapshot), /owned-duration|private|never-log/);
+    const outsideWindow = operationalSnapshot(database, new Date('2026-10-05T12:00:00Z'));
+    assert.equal(outsideWindow.jobs.longestRecordedCompletedAttemptMs, 0);
+    assert.equal(outsideWindow.jobs.longestRecordedFailedAttemptMs, 0);
   });
 });
