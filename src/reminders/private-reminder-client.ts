@@ -192,6 +192,9 @@ export function createPrivateReminderClient({
     } catch {
       confirmed = false;
     }
+    // Unsubscribe can yield while the active account/group client changes.
+    // The old cleanup must not delete metadata written by that newer context.
+    if (!isCurrentContext()) confirmed = false;
     if (confirmed) {
       try {
         await storage.removeItem(key);

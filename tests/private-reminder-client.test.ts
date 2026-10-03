@@ -290,6 +290,28 @@ it('stale cleanup cannot overwrite the newer scoped association metadata for the
   expect(f.prepared.unsubscribe).not.toHaveBeenCalled();
 });
 
+it('cleanup fenced during unsubscribe cannot delete a newer same-account association', async () => {
+  const f = fixture();
+  let current = true;
+  const old = createPrivateReminderClient({ ...f.options, isCurrentContext: () => current });
+  await old.load();
+  await old.enable();
+  const unsubscribing = deferred<void>();
+  f.prepared.unsubscribe = jest.fn(() => unsubscribing.promise);
+  const removal = old.revoke();
+  for (let step = 0; step < 30; step++) await Promise.resolve();
+  expect(f.prepared.unsubscribe).toHaveBeenCalledTimes(1);
+  current = false;
+  const key = '@rewind/private-reminder-association:account-one';
+  const newer = JSON.stringify({ id: 'newer-destination' });
+  f.values.set(key, newer);
+  f.storage.removeItem.mockClear();
+  unsubscribing.resolve();
+  expect((await removal).state).toBe('cleanup-pending');
+  expect(f.values.get(key)).toBe(newer);
+  expect(f.storage.removeItem).not.toHaveBeenCalled();
+});
+
 it('reconciles OS permission revocation without requesting permission or leaving the server association enabled', async () => {
   const f = fixture();
   await f.client.load();
