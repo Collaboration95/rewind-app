@@ -39,7 +39,15 @@
       "expo-secure-store"
     ],
     "ios": {
-      "bundleIdentifier": "com.anonymous.rewind-app"
+      "bundleIdentifier": "com.anonymous.rewind-app",
+      "buildNumber": "1"
+    },
+    "android": {
+      "package": "com.anonymous.rewindapp",
+      "versionCode": 1
+    },
+    "updates": {
+      "enabled": false
     }
   }
 }

@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  AppState,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { COLORS } from '../theme';
 import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
@@ -545,7 +554,7 @@ export function CameraCaptureScreen({
         </>
       ) : null}
       {!showingViewfinder ? (
-        <>
+        <ScrollView style={styles.panelScroll} contentContainerStyle={styles.panelContent}>
           {onBack ? (
             <Pressable accessibilityRole="button" onPress={onBack}>
               <Text style={styles.backText}>Back to group</Text>
@@ -738,7 +747,7 @@ export function CameraCaptureScreen({
               {settingsError ? <Text style={styles.errorText}>{settingsError}</Text> : null}
             </View>
           )}
-        </>
+        </ScrollView>
       ) : null}
     </View>
   );
@@ -881,7 +890,9 @@ function PreviewPanel({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 18, padding: 24 },
+  screen: { flex: 1, minHeight: 0 },
+  panelScroll: { flex: 1, minHeight: 0 },
+  panelContent: { flexGrow: 1, gap: 18, padding: 24 },
   viewfinderScreen: { backgroundColor: '#080808', gap: 0, padding: 0, position: 'relative' },
   fullScreenPreview: { ...StyleSheet.absoluteFill, backgroundColor: '#080808' },
   fullScreenFixture: {

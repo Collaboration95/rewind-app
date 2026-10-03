@@ -49,7 +49,9 @@
     "test:real-account-e2e": "node scripts/run-real-account-e2e.mjs",
     "test:responsive": "npm run build:web && playwright test",
     "check": "npm run format:check && npm run lint && npm run architecture:check && npm run typecheck && npm test && npm run test:a11y",
-    "test:focused": "node scripts/focused-test.mjs"
+    "test:focused": "node scripts/focused-test.mjs",
+    "client:prepare": "node scripts/native-build.mjs prepare",
+    "test:native-build": "node --test tests/native-build.test.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1145.0",

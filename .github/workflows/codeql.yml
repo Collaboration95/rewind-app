@@ -3,28 +3,42 @@ name: CodeQL
 on:
   push:
     branches: [main, dev]
-    paths-ignore:
-      - 'docs/**'
-      - 'doc/**'
-      - 'skills/**'
-      - '*.md'
-      - '.github/*.md'
+
   pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - 'doc/**'
-      - 'skills/**'
-      - '*.md'
-      - '.github/*.md'
+
   schedule:
     - cron: '23 3 * * 1'
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
+  changes:
+    name: Classify change scope
+    runs-on: ubuntu-24.04
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Classify the exact checked change
+        id: scope
+        env:
+          REWIND_CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          REWIND_CHANGE_HEAD: ${{ github.sha }}
+        run: node scripts/classify-quality-changes.mjs
+
   analyze:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    permissions:
+      contents: read
+      security-events: write
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
