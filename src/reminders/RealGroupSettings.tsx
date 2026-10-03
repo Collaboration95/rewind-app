@@ -32,29 +32,43 @@ export function RealGroupSettings<T extends SettingsGroup>({
   const [preference, setPreference] = useState<Preference | null>(null);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const mounted = useRef(true);
+  const contextVersion = useRef(0);
   const path = `/real/groups/${encodeURIComponent(group.group.id)}`;
 
+  const [context, setContext] = useState({ path, authenticatedRequest });
+  // Reset during rendering so another group's controls are never committed
+  // with the previous account's preferences or unfinished edits.
+  if (context.path !== path || context.authenticatedRequest !== authenticatedRequest) {
+    setContext({ path, authenticatedRequest });
+    setPrompt(group.cycle.prompt);
+    setTimeZone(group.group.timeZone ?? 'UTC');
+    setPreference(null);
+    setPending(false);
+    setMessage(null);
+  }
+
   useEffect(() => {
+    const context = ++contextVersion.current;
     if (!expanded) return;
-    mounted.current = true;
     let active = true;
     void authenticatedRequest(`${path}/reminders`)
       .then(async (response) => {
         if (!response.ok) throw new Error('unavailable');
         const body = (await response.json()) as { preference: Preference };
-        if (active) setPreference(body.preference);
+        if (active && context === contextVersion.current) setPreference(body.preference);
       })
       .catch(() => {
-        if (active) setMessage('Reminder preferences could not be loaded. Retry when connected.');
+        if (active && context === contextVersion.current)
+          setMessage('Reminder preferences could not be loaded. Retry when connected.');
       });
     return () => {
       active = false;
-      mounted.current = false;
+      contextVersion.current += 1;
     };
   }, [authenticatedRequest, path, expanded]);
 
   const mutate = async (kind: 'settings' | 'reminders', body: object) => {
+    const context = contextVersion.current;
     setPending(true);
     setMessage(null);
     try {
@@ -76,7 +90,7 @@ export function RealGroupSettings<T extends SettingsGroup>({
         );
       }
       const result = (await response.json()) as { group?: T; preference?: Preference };
-      if (!mounted.current) return;
+      if (context !== contextVersion.current) return;
       if (result.group) onUpdated(result.group);
       if (result.preference) setPreference(result.preference);
       setMessage(
@@ -85,14 +99,14 @@ export function RealGroupSettings<T extends SettingsGroup>({
           : 'Your group reminder preference is saved.',
       );
     } catch (error) {
-      if (mounted.current)
+      if (context === contextVersion.current)
         setMessage(
           error instanceof Error
             ? error.message
             : 'Settings could not be saved. Retry when connected.',
         );
     } finally {
-      if (mounted.current) setPending(false);
+      if (context === contextVersion.current) setPending(false);
     }
   };
 
