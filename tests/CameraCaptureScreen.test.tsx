@@ -87,6 +87,65 @@ function stubAppState(): { emit: (state: string) => void; restore: () => void } 
 }
 
 describe('CameraCaptureScreen', () => {
+  it.each([
+    ['unsupported', 'granted', 'camera-unsupported'],
+    ['supported', 'undetermined', 'camera-permission-undecided'],
+    ['supported', 'denied', 'camera-permission-denied'],
+  ] as const)(
+    'keeps the group visible when camera capability is %s and permission is %s',
+    async (capability, permission, panel) => {
+      const platform: CameraPlatform = {
+        kind: 'expo',
+        getCapabilities: jest
+          .fn()
+          .mockResolvedValue({ camera: capability, microphone: 'supported' }),
+        getPermissions: jest.fn().mockResolvedValue({ camera: permission, microphone: 'granted' }),
+        requestPermissions: jest.fn(),
+        captureStill: jest.fn(),
+        openSettings: jest.fn(),
+        supportsLivePreview: true,
+      };
+      const result = await render(
+        <CameraCaptureScreen
+          groupName="Garden circle"
+          platform={platform}
+          fileStore={new InMemoryCaptureFileStore()}
+          metadataStore={new InMemoryImageMetadataStore()}
+        />,
+      );
+      await result.findByTestId(panel);
+      expect(result.getByText('Group · Garden circle')).toBeTruthy();
+      expect(result.getByTestId('camera-group-context').props.accessibilityLiveRegion).toBe(
+        'polite',
+      );
+      expect(platform.requestPermissions).not.toHaveBeenCalled();
+      expect(platform.captureStill).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps selected-group context in the viewfinder and owned photo review', async () => {
+    const platform = new DemoCameraPlatform();
+    const files = new InMemoryCaptureFileStore();
+    const metadata = new InMemoryImageMetadataStore();
+    const result = await render(
+      <CameraCaptureScreen
+        groupName="Garden circle"
+        platform={platform}
+        fileStore={files}
+        metadataStore={metadata}
+      />,
+    );
+    await result.findByTestId('camera-capture');
+    expect(result.getByText('Group · Garden circle')).toBeTruthy();
+    await fireEvent.press(result.getByTestId('camera-capture'));
+    await result.findByTestId('camera-preview-panel');
+    expect(result.getByText('Group · Garden circle')).toBeTruthy();
+    expect(files.size).toBe(1);
+    await fireEvent.press(result.getByRole('button', { name: 'Retake' }));
+    expect(result.getByText('Group · Garden circle')).toBeTruthy();
+    expect(files.size).toBe(0);
+  });
+
   it('offers a labelled image file fallback when live camera support is unavailable', async () => {
     const platform: CameraPlatform = {
       captureStill: jest.fn(),
