@@ -7,6 +7,12 @@ import { dirname, join } from 'node:path';
 
 import { expect, firefox, test } from '@playwright/test';
 
+import {
+  installChatResponseLoss,
+  verifyMemberChat,
+  verifyOwnerChat,
+} from './chat-verification.mjs';
+
 import { redactRealAccountDiagnostic } from '../../scripts/real-account-e2e-utils.mjs';
 
 const password = 'Fixture-Only-Password-2026!';
@@ -317,6 +323,7 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
   const diagnostics = [];
   try {
     const page = context.pages()[0] ?? (await context.newPage());
+    await page.addInitScript(installChatResponseLoss);
     page.on('pageerror', (error) => diagnostics.push(`pageerror:${error.name}`));
     page.on('requestfailed', (request) => {
       const url = new URL(request.url());
@@ -353,6 +360,7 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     if (screenshotPath) await page.screenshot({ path: screenshotPath, fullPage: true });
     const ownerGroup = await readCurrentGroup(page);
     const ownerGroupId = ownerGroup.group.id;
+    const ownerChatEvent = await verifyOwnerChat(page, ownerGroupId, suffix);
 
     await page.getByTestId('real-group-open-archive').click();
     await expect(page.getByTestId('route-heading-archive')).toBeVisible();
@@ -401,6 +409,8 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     } finally {
       membershipDb.close();
     }
+
+    await verifyMemberChat(page, ownerGroupId, ownerChatEvent, suffix);
 
     await contributeFixtureMedia(page, databasePath, ownerGroupId, `${suffix}-photo`);
     await contributeFixtureMedia(page, databasePath, ownerGroupId, `${suffix}-video`, true);

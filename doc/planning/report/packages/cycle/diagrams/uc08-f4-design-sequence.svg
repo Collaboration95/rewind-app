@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1455" height="964" viewBox="0 0 1455 964">
+<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#147d83"/></marker><marker id="rel" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#5c7082"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/><rect width="100%" height="12" fill="#147d83"/>
+<text x="36" y="52" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700" fill="#17324d">UC08-F4 · Design sequence</text>
+<text x="36" y="80" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#5c7082">Archive after 24 hours from persisted publication; authorization remains server-side</text>
+<rect x="1205" y="28" width="214" height="31" rx="15" fill="#e8f1f8"/><text x="1312" y="49" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700" fill="#17324d">DESIGN</text>
+<rect x="52.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="150.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">scheduler tick</text>
+<line x1="150.0" y1="188" x2="150.0" y2="916" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="283.0" y="140" width="196" height="62" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="381.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">advance Cycle</text>
+<text x="381.0" y="186" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">Lifecycle…</text>
+<line x1="381.0" y1="202" x2="381.0" y2="916" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="514.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="612.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">cycles + events</text>
+<line x1="612.0" y1="188" x2="612.0" y2="916" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="745.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="843.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">ready output</text>
+<line x1="843.0" y1="188" x2="843.0" y2="916" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="976.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="1074.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">archive route</text>
+<line x1="1074.0" y1="188" x2="1074.0" y2="916" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="1207.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="1305.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">member identity</text>
+<line x1="1305.0" y1="188" x2="1305.0" y2="916" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<line x1="150.0" y1="210" x2="381.0" y2="210" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="265.5" y="228" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">select revealing / archived</text>
+<text x="265.5" y="245" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">cycle candidate</text>
+<line x1="381.0" y1="280" x2="612.0" y2="280" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="298" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">BEGIN IMMEDIATE; read</text>
+<text x="496.5" y="315" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">release status / published</text>
+<text x="496.5" y="332" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">at</text>
+<rect x="55" y="339.5" width="1345" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="727.5" y="367" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Unpublished or before publication + 24h → wait / premiere</text>
+<line x1="381.0" y1="432" x2="843.0" y2="432" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="612.0" y="450" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">verify ready job bytes after deadline</text>
+<rect x="55" y="479.5" width="1345" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="727.5" y="507" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Integrity mismatch → rollback / wait; no archive transition</text>
+<line x1="381.0" y1="572" x2="612.0" y2="572" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="590" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">UPDATE status=archived;</text>
+<text x="496.5" y="607" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">insert unique event at</text>
+<text x="496.5" y="624" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">deadline</text>
+<path d="M381.0,646 h70 v24 h-70" fill="none" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="416.0" y="672" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">COMMIT or already</text>
+<text x="416.0" y="689" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">archived on replay</text>
+<line x1="1074.0" y1="724" x2="1305.0" y2="724" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1189.5" y="742" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">authorize group / member</text>
+<text x="1189.5" y="759" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">before listing or serving</text>
+<rect x="55" y="771.5" width="1345" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="727.5" y="799" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Successor may already be current / collecting while old release is archived</text>
+<text x="36" y="942" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">The diagram covers the normal path and named relevant branches; implementation names appear only in the design view.</text></svg>

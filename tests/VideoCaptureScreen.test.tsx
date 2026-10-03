@@ -196,6 +196,36 @@ async function renderReviewWithRuntime(videoPlatform: TestVideoPlatform, client:
 }
 
 describe('VideoCaptureScreen', () => {
+  it.each(['web', 'ios'] as const)(
+    'gives truthful %s portrait guidance without requesting access',
+    async (os) => {
+      const platformOs = jest.replaceProperty(Platform, 'OS', os);
+      const permissions = { camera: 'denied' as const, microphone: 'denied' as const };
+      const platform = videoPlatform(permissions);
+      platform.getVideoPermissions = jest.fn().mockResolvedValue(permissions);
+      try {
+        const result = await render(<VideoCaptureScreen platform={platform} />);
+        const guidance = result.getByTestId('video-portrait-guidance');
+        if (os === 'web') {
+          expect(guidance.props.children).toContain('Keep your device upright for portrait video');
+          expect(guidance.props.children).toContain(
+            'If the page rotates, scroll to reach the controls.',
+          );
+        } else {
+          expect(guidance.props.children).toBe(
+            'Portrait video with microphone audio. Maximum duration: 15 seconds.',
+          );
+        }
+        await result.findByTestId('video-permission-denied');
+        expect(result.getByTestId('video-portrait-guidance')).toBeTruthy();
+        expect(platform.requestPermissions).not.toHaveBeenCalled();
+        expect(platform.recordClip).not.toHaveBeenCalled();
+      } finally {
+        platformOs.restore();
+      }
+    },
+  );
+
   it('distinguishes denied access from a temporary capability outage', async () => {
     const denied = await render(
       <VideoCaptureScreen platform={videoPlatform({ camera: 'denied', microphone: 'granted' })} />,
