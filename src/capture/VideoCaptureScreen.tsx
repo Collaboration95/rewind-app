@@ -1272,8 +1272,10 @@ export function VideoCaptureScreen({
         <Text accessibilityRole="header" style={styles.title}>
           Record a contribution
         </Text>
-        <Text style={styles.body}>
-          Portrait video with microphone audio. Maximum duration: 15 seconds.
+        <Text style={styles.body} testID="video-portrait-guidance">
+          {Platform.OS === 'web'
+            ? 'Keep your device upright for portrait video with microphone audio. If the page rotates, scroll to reach the controls. Maximum duration: 15 seconds.'
+            : 'Portrait video with microphone audio. Maximum duration: 15 seconds.'}
         </Text>
       </View>
       {access === 'checking' ? (
