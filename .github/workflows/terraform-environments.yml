@@ -1,7 +1,7 @@
 name: Reviewed media Terraform
 
 # Preparation only: environments and identities are NOT provisioned by this file.
-# Public repository operations fail before AWS credentials: saved plans include state.
+# Saved plans stay in the existing private S3 state bucket; no GitHub artifacts.
 # No pull_request trigger: untrusted code must never receive state credentials.
 on:
   workflow_dispatch:
@@ -26,7 +26,14 @@ on:
         description: For apply, reviewed plan run attempt
         type: string
       reviewed_plan_sha256:
-        description: For apply, SHA-256 of the reviewed binary media.tfplan
+        description: For apply, SHA-256 of the reviewed binary plan.tfplan
+        type: string
+
+      reviewed_metadata_sha256:
+        description: For apply, SHA-256 of the human-reviewed private metadata.json
+        type: string
+      reviewed_metadata_version_id:
+        description: For apply, exact S3 version of the reviewed private metadata.json
         type: string
 
 permissions:
@@ -57,6 +64,8 @@ jobs:
       PLAN_RUN_ID: ${{ inputs.plan_run_id }}
       PLAN_RUN_ATTEMPT: ${{ inputs.plan_run_attempt }}
       REVIEWED_PLAN_SHA256: ${{ inputs.reviewed_plan_sha256 }}
+      REVIEWED_METADATA_SHA256: ${{ inputs.reviewed_metadata_sha256 }}
+      REVIEWED_METADATA_VERSION_ID: ${{ inputs.reviewed_metadata_version_id }}
       TF_IN_AUTOMATION: 'true'
       AWS_EC2_METADATA_DISABLED: 'true'
     steps:
@@ -72,11 +81,11 @@ jobs:
           TARGET_ENVIRONMENT: ${{ inputs.environment }}
           OPERATION: ${{ inputs.operation }}
         run: node infra/scripts/terraform-environment.mjs preflight "$TARGET_ENVIRONMENT" "$OPERATION"
-      - name: Download and verify human-reviewed saved plan before AWS credentials
+      - name: Verify approval inputs and source workflow run before AWS credentials
         if: ${{ inputs.operation == 'apply' }}
         env:
           TARGET_ENVIRONMENT: ${{ inputs.environment }}
-        run: node infra/scripts/terraform-environment.mjs download "$TARGET_ENVIRONMENT" apply
+        run: node infra/scripts/terraform-environment.mjs source "$TARGET_ENVIRONMENT" apply
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.16.0
@@ -88,15 +97,13 @@ jobs:
           allowed-account-ids: '330599756236'
           role-duration-seconds: 900
           unset-current-credentials: true
+      - name: Retrieve exact human-reviewed private S3 plan
+        if: ${{ inputs.operation == 'apply' }}
+        env:
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: node infra/scripts/terraform-environment.mjs download "$TARGET_ENVIRONMENT" apply
       - name: Execute scoped media operation
         env:
           TARGET_ENVIRONMENT: ${{ inputs.environment }}
           OPERATION: ${{ inputs.operation }}
         run: node infra/scripts/terraform-environment.mjs run "$TARGET_ENVIRONMENT" "$OPERATION"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: ${{ inputs.operation == 'plan' }}
-        with:
-          name: media-plan-${{ inputs.environment }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/reviewed-media-plan/
-          if-no-files-found: error
-          retention-days: 1

@@ -138,6 +138,25 @@
           "s3:LocationConstraint": "ap-southeast-1"
         }
       }
+    },
+    {
+      "Sid": "ReadPinnedPrivateSavedPlan",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObjectVersion"
+      ],
+      "Resource": [
+        "arn:aws:s3:::rewind-terraform-state-330599756236/rewind/${environment}/reviewed-plans/*/*/plan.tfplan",
+        "arn:aws:s3:::rewind-terraform-state-330599756236/rewind/${environment}/reviewed-plans/*/*/metadata.json"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "330599756236"
+        },
+        "Bool": {
+          "aws:SecureTransport": "true"
+        }
+      }
     }
   ]
 }

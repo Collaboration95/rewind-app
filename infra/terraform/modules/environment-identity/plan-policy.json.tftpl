@@ -84,6 +84,27 @@
         "kms:DescribeKey"
       ],
       "Resource": "${kms_key_arn}"
+    },
+    {
+      "Sid": "PublishPrivateSavedPlan",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::rewind-terraform-state-330599756236/rewind/${environment}/reviewed-plans/*/*/plan.tfplan",
+        "arn:aws:s3:::rewind-terraform-state-330599756236/rewind/${environment}/reviewed-plans/*/*/metadata.json"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "330599756236",
+          "s3:x-amz-server-side-encryption": "AES256",
+          "s3:if-none-match": "*"
+        },
+        "Bool": {
+          "aws:SecureTransport": "true"
+        }
+      }
     }
   ]
 }
