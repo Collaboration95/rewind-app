@@ -3,7 +3,7 @@
 <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#334155"/></marker><marker id="arrowleft" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto"><path d="M8,0 L0,4 L8,8 z" fill="#334155"/></marker></defs>
 <rect width="100%" height="100%" fill="#ffffff"/>
 <text class="title" x="32" y="38">UC14-F3 — Create and open a cross-client invite link</text>
-<text class="sub" x="32" y="62">Design interaction grounded in accepted code</text>
+<text class="sub" x="32" y="62">App URL consumer and invite parser are implemented at the source cut</text>
 <rect class="actor" x="60" y="120" width="180" height="56" rx="9"/>
 <text class="head" x="150" y="154" text-anchor="middle">Owner UI</text>
 <line class="lifeline" x1="150" y1="176" x2="150" y2="735"/>
@@ -31,11 +31,11 @@
 <line class="msg" x1="390" y1="569" x2="650" y2="569" marker-end="url(#arrow)"/>
 <text class="label" x="520.0" y="534" text-anchor="middle">parseInviteLink validates route,</text>
 <text class="label" x="520.0" y="551" text-anchor="middle">duplicates, code and expiry</text>
-<line class="ret" x1="650" y1="655" x2="890" y2="655" marker-end="url(#arrow)"/>
-<text class="label" x="770.0" y="620" text-anchor="middle">Return parsed fields; app-level</text>
-<text class="label" x="770.0" y="637" text-anchor="middle">URL consumer is absent</text>
+<line class="msg" x1="650" y1="655" x2="890" y2="655" marker-end="url(#arrow)"/>
+<text class="label" x="770.0" y="620" text-anchor="middle">Pass valid parsed intent to group</text>
+<text class="label" x="770.0" y="637" text-anchor="middle">UI; web HTTPS path is E2E-covered</text>
 <rect class="note" x="32" y="755" width="976" height="70" rx="8"/>
 <text class="small" x="48" y="778" >Alternate / exception: Expired/revoked/malformed links are rejected. Current builder returns null for real-group</text>
 <text class="small" x="48" y="795" >invite on native custom-scheme path; app.json declares scheme rewind but physical universal-link association remains</text>
-<text class="small" x="48" y="812" >unverified.</text>
+<text class="small" x="48" y="812" >unverified. Browser HTTPS registration and acceptance are fixture-covered.</text>
 </svg>
