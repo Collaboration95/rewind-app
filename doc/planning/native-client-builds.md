@@ -2,8 +2,9 @@
 
 Website delivery stays first. Android APK delivery is still required; build
 preparation and an Expo Go preview do not discharge the APK/install obligation.
-Run from a clean reviewed `dev` commit after website checks. This configuration
-is initially an unmerged preview and is not native acceptance evidence.
+Run from a clean reviewed `dev` commit after website checks. The build
+configuration is integrated into `dev` through PR #379; the earlier compilation
+rehearsal below remains unmerged preview evidence, not installed-client acceptance.
 
 ## Identity, environment and version policy
 
@@ -67,9 +68,9 @@ packages/lockfiles to fix a native toolchain problem without coordination.
    npm run client:prepare -- /private/tmp/rewind-native-preview BASE_SHA android HTTPS_API_URL HTTPS_WEBSITE_ORIGIN
    ```
 
-   Use `ios` for the simulator profile. To rehearse this unmerged #351 slice,
-   pass explicit `app.json eas.json package.json scripts/native-build.mjs`
-   overlays. Package overlays may change scripts only. Other dirty tracked
+   Use `ios` for the simulator profile. To rehearse an unmerged configuration
+   change, pass explicit `app.json eas.json package.json scripts/native-build.mjs`
+   overlays. Accepted source needs no overlays. Package overlays may change scripts only. Other dirty tracked
    source is refused. Any unmerged overlay or source commit different from the
    accepted base is labelled `unmerged-preview`.
 
