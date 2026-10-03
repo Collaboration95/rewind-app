@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -127,24 +127,27 @@ async function waitForSchedulerAdvance(databasePath, groupId, oldCycleId) {
   );
 }
 
-async function contributeFixturePhoto(page, databasePath, groupId, suffix) {
-  const photoPath = join(dirname(databasePath), 'archive-fixture.png');
-  execFileSync('ffmpeg', [
-    '-v',
-    'error',
-    '-y',
-    '-f',
-    'lavfi',
-    '-i',
-    'color=c=navy:s=128x256',
-    '-frames:v',
-    '1',
-    '-threads',
-    '1',
-    photoPath,
-  ]);
+async function contributeFixtureMedia(page, databasePath, groupId, suffix, video = false) {
+  const photoPath = video
+    ? join(process.cwd(), 'tests/fixtures/portrait-h264-aac.mp4')
+    : join(dirname(databasePath), 'archive-fixture.png');
+  if (!video)
+    execFileSync('ffmpeg', [
+      '-v',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=navy:s=128x256',
+      '-frames:v',
+      '1',
+      '-threads',
+      '1',
+      photoPath,
+    ]);
   const result = await page.evaluate(
-    async ({ base64, groupId, key }) => {
+    async ({ base64, groupId, key, video }) => {
       const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
       const query = `groupId=${encodeURIComponent(groupId)}`;
       const staged = await fetch(
@@ -152,7 +155,7 @@ async function contributeFixturePhoto(page, databasePath, groupId, suffix) {
         {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'image/png' },
+          headers: { 'Content-Type': video ? 'video/mp4' : 'image/png' },
           body: bytes,
         },
       );
@@ -163,18 +166,18 @@ async function contributeFixturePhoto(page, databasePath, groupId, suffix) {
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          mediaType: 'photo',
+          mediaType: video ? 'video' : 'photo',
           idempotencyKey: key,
           sourceUri: source.uri,
-          mimeType: 'image/png',
+          mimeType: video ? 'video/mp4' : 'image/png',
           byteLength: source.byteLength,
-          durationSeconds: 3,
-          width: 128,
-          height: 256,
+          durationSeconds: video ? 2 : 3,
+          width: video ? 720 : 128,
+          height: video ? 1280 : 256,
           hasAudio: true,
           mode: 'soft-focus',
           trimStartSeconds: 0,
-          trimEndSeconds: 3,
+          trimEndSeconds: video ? 2 : 3,
         }),
       });
       if (!upload.ok) return { stageStatus: staged.status, uploadStatus: upload.status };
@@ -190,7 +193,12 @@ async function contributeFixturePhoto(page, databasePath, groupId, suffix) {
         result: await processed.json(),
       };
     },
-    { base64: readFileSync(photoPath).toString('base64'), groupId, key: `archive-photo-${suffix}` },
+    {
+      base64: readFileSync(photoPath).toString('base64'),
+      groupId,
+      key: `archive-media-${suffix}`,
+      video,
+    },
   );
   expect(result.stageStatus).toBe(201);
   expect(result.uploadStatus).toBe(201);
@@ -212,6 +220,81 @@ async function waitForPublication(databasePath, cycleId) {
   } finally {
     database.close();
   }
+}
+
+async function verifyReleasedDownloads(page, databasePath, groupId, suffix) {
+  let audibleClip = false;
+  for (const label of ['Download released group film', 'Download your released clip']) {
+    const buttons = page.getByRole('button', { name: label, exact: true });
+    expect(await buttons.count()).toBeGreaterThan(0);
+    for (let index = 0; index < (await buttons.count()); index++) {
+      const responsePromise = page.waitForResponse(
+        (response) =>
+          response.status() === 200 && Boolean(response.headers()['content-disposition']),
+      );
+      const downloaded = page.waitForEvent('download');
+      await buttons.nth(index).click();
+      const download = await downloaded;
+      expect(await download.failure()).toBeNull();
+      const path = join(
+        dirname(databasePath),
+        `download-${suffix}-${label.includes('group') ? 'film' : 'clip'}-${index}.mp4`,
+      );
+      await download.saveAs(path);
+      const bytes = readFileSync(path);
+      const response = await responsePromise;
+      expect(response.headers()['content-type']).toMatch(/^video\/mp4/);
+      expect(Number(response.headers()['content-length'])).toBe(bytes.length);
+      expect(response.headers()['cache-control']).toBe('no-store');
+      const database = new DatabaseSync(databasePath);
+      try {
+        const output = database
+          .prepare(
+            "SELECT output_bytes AS bytes FROM media_jobs WHERE group_id = ? AND kind = ? AND status = 'ready' AND output_sha256 = ?",
+          )
+          .get(
+            groupId,
+            label.includes('group') ? 'film' : 'clip',
+            createHash('sha256').update(bytes).digest('hex'),
+          );
+        expect(output?.bytes).toBe(bytes.length);
+      } finally {
+        database.close();
+      }
+      expect(bytes.length).toBeGreaterThan(1000);
+      expect(bytes.subarray(4, 8).toString()).toBe('ftyp');
+      const probe = JSON.parse(
+        execFileSync(
+          'ffprobe',
+          ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', path],
+          { encoding: 'utf8' },
+        ),
+      );
+      expect(probe.streams.some((stream) => stream.codec_type === 'video')).toBe(true);
+      expect(probe.streams.some((stream) => stream.codec_type === 'audio')).toBe(true);
+      const pcm = execFileSync('ffmpeg', [
+        '-v',
+        'error',
+        '-i',
+        path,
+        '-vn',
+        '-ac',
+        '1',
+        '-ar',
+        '8000',
+        '-f',
+        's16le',
+        'pipe:1',
+      ]);
+      let energy = 0;
+      for (let sample = 0; sample + 1 < pcm.length; sample += 2)
+        energy += (pcm.readInt16LE(sample) / 32768) ** 2;
+      const rms = Math.sqrt(energy / (pcm.length / 2));
+      if (label.includes('group')) expect(rms).toBeGreaterThan(0.001);
+      else audibleClip ||= rms > 0.001;
+    }
+  }
+  expect(audibleClip).toBe(true);
 }
 
 test('real owner, invited member, outsider, strict local HTTPS, and automatic next cycle', async () => {
@@ -319,7 +402,8 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
       membershipDb.close();
     }
 
-    await contributeFixturePhoto(page, databasePath, ownerGroupId, suffix);
+    await contributeFixtureMedia(page, databasePath, ownerGroupId, `${suffix}-photo`);
+    await contributeFixtureMedia(page, databasePath, ownerGroupId, `${suffix}-video`, true);
     const oldCycleId = seedCurrentCycleDue(databasePath, ownerGroupId);
     await waitForSchedulerAdvance(databasePath, ownerGroupId, oldCycleId);
     await waitForPublication(databasePath, oldCycleId);
@@ -349,6 +433,8 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
       )
       .toBeGreaterThanOrEqual(2);
     const video = page.locator('video').first();
+    await expect(video).toHaveJSProperty('muted', false);
+    expect(await video.evaluate((element) => element.volume)).toBeGreaterThan(0);
     if (await video.evaluate((element) => element.paused)) {
       const bounds = await video.boundingBox();
       expect(bounds).not.toBeNull();
@@ -357,6 +443,23 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     await expect.poll(() => video.evaluate((element) => element.currentTime)).toBeGreaterThan(0.1);
     if (screenshotPath)
       await page.screenshot({ path: `${screenshotPath}.archive.png`, fullPage: true });
+    await verifyReleasedDownloads(page, databasePath, ownerGroupId, `first-${suffix}`);
+    await page.getByRole('button', { name: 'Back to group', exact: true }).click();
+
+    await contributeFixtureMedia(page, databasePath, ownerGroupId, `${suffix}-second-video`, true);
+    const secondCycleId = seedCurrentCycleDue(databasePath, ownerGroupId);
+    expect(secondCycleId).not.toBe(oldCycleId);
+    await waitForSchedulerAdvance(databasePath, ownerGroupId, secondCycleId);
+    await waitForPublication(databasePath, secondCycleId);
+    await page.reload();
+    expect((await readCurrentGroup(page)).group.id).toBe(ownerGroupId);
+    await page.getByTestId('real-group-open-archive').click();
+    await expect(page.getByTestId(/^archive-play-film-/)).toHaveCount(2);
+    await verifyReleasedDownloads(page, databasePath, ownerGroupId, `second-${suffix}`);
+    await page.reload();
+    await page.getByTestId('real-group-open-archive').click();
+    await expect(page.getByTestId(/^archive-play-film-/)).toHaveCount(2);
+    expect((await readCurrentGroup(page)).group.id).toBe(ownerGroupId);
     await page.getByRole('button', { name: 'Back to group', exact: true }).click();
 
     await page.getByTestId('real-group-sign-out').click();
