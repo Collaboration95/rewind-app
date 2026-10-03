@@ -1,0 +1,273 @@
+import { execFileSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+
+import { expect, type Page, type TestInfo } from '@playwright/test';
+
+declare global {
+  interface Window {
+    __injectedCapture: {
+      shape: 'portrait' | 'landscape';
+      delayDurationStop: boolean;
+      playbackAudio: AudioContext[];
+      sources: { stream: MediaStream; audio: AudioContext; frames: number }[];
+      blobs: {
+        url: string;
+        blob: Blob | null;
+        revoked: boolean;
+        playerAttachedAtRevoke: boolean;
+      }[];
+    };
+  }
+}
+
+/** Inject the device boundary only. Never replace MediaRecorder, metadata or playback. */
+export async function injectRecordingSource(page: Page) {
+  await page.addInitScript(() => {
+    const state: Window['__injectedCapture'] = {
+      shape: 'portrait',
+      delayDurationStop: false,
+      playbackAudio: [],
+      sources: [],
+      blobs: [],
+    };
+    window.__injectedCapture = state;
+    const create = URL.createObjectURL.bind(URL);
+    const revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = (object) => {
+      const url = create(object);
+      if (object instanceof Blob && object.type.startsWith('video/')) {
+        state.blobs.push({ url, blob: object, revoked: false, playerAttachedAtRevoke: false });
+      }
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      const entry = state.blobs.find((item) => item.url === url);
+      if (entry) {
+        entry.revoked = true;
+        entry.playerAttachedAtRevoke = Array.from(document.querySelectorAll('video')).some(
+          (video) => video.currentSrc === url || video.src === url,
+        );
+      }
+      revoke(url);
+    };
+    // Fault injection: let the REAL recording exceed 15s, as a late event-loop timer
+    // could. Date, intervals, metadata, encoded duration and all other timers stay real.
+    const schedule = window.setTimeout.bind(window);
+    window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) =>
+      schedule(
+        handler,
+        state.delayDurationStop && delay === 15_000 ? 16_500 : delay,
+        ...args,
+      )) as typeof window.setTimeout;
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+      configurable: true,
+      value: async (constraints: MediaStreamConstraints) => {
+        if (!constraints.audio || !constraints.video) throw new Error('Expected audio + video');
+        const canvas = document.createElement('canvas');
+        canvas.width = state.shape === 'portrait' ? 360 : 640;
+        canvas.height = state.shape === 'portrait' ? 640 : 360;
+        const drawing = canvas.getContext('2d')!;
+        const audio = new AudioContext();
+        await audio.resume();
+        const oscillator = audio.createOscillator();
+        oscillator.frequency.value = 440;
+        const gain = audio.createGain();
+        gain.gain.value = 0.25;
+        const destination = audio.createMediaStreamDestination();
+        oscillator.connect(gain).connect(destination);
+        oscillator.start();
+        // The generator has no connection to hardware audio output.
+        const stream = new MediaStream([
+          ...canvas.captureStream(30).getVideoTracks(),
+          ...destination.stream.getAudioTracks(),
+        ]);
+        const source = { stream, audio, frames: 0 };
+        state.sources.push(source);
+        const draw = () => {
+          source.frames++;
+          drawing.fillStyle = `hsl(${(source.frames * 7) % 360}, 90%, 50%)`;
+          drawing.fillRect(0, 0, canvas.width, canvas.height);
+          drawing.fillStyle = 'white';
+          drawing.fillRect((source.frames * 9) % canvas.width, 40, 40, 120);
+        };
+        draw();
+        const interval = setInterval(draw, 1000 / 30);
+        for (const track of stream.getTracks()) {
+          const stop = track.stop.bind(track);
+          track.stop = () => {
+            stop();
+            if (stream.getTracks().every((item) => item.readyState === 'ended')) {
+              clearInterval(interval);
+              oscillator.stop();
+              void audio.close();
+            }
+          };
+        }
+        return stream;
+      },
+    });
+  });
+}
+
+export async function recordingSupport(page: Page, testInfo: TestInfo) {
+  await page.goto('/');
+  const support = await page.evaluate(() => ({
+    agent: navigator.userAgent,
+    types: [
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+      'video/mp4',
+    ].filter((type) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)),
+  }));
+  await testInfo.attach('real-recorder-capability', {
+    body: JSON.stringify(support, null, 2),
+    contentType: 'application/json',
+  });
+  return support.types.length > 0;
+}
+
+export async function openInjectedCapture(page: Page) {
+  const entry = page.getByTestId('demo-entry-demo-1');
+  await expect(
+    page.getByTestId('main-navigation').or(entry).or(page.getByTestId('welcome-entry')),
+  ).toBeVisible();
+  if (!(await entry.isVisible())) {
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByRole('button', { name: 'Try Demo', exact: true }).click();
+  }
+  await entry.click();
+  await page.getByTestId('nav-camera').click();
+  await page.getByTestId('camera-record-clip').click();
+}
+
+export async function allowInjectedSource(page: Page) {
+  await expect(page.getByTestId('video-permission')).toBeVisible();
+  expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
+  await page.getByRole('button', { name: 'Allow camera and microphone', exact: true }).click();
+  await expect(page.getByTestId('video-live-preview')).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId('video-live-preview')
+        .evaluate((video: HTMLVideoElement) => video.readyState),
+    )
+    .toBeGreaterThanOrEqual(2);
+}
+
+export async function recordFor(page: Page, seconds = 6) {
+  await page.getByTestId('video-record').click();
+  await expect(page.getByTestId('video-recording')).toBeVisible();
+  await page.waitForTimeout(seconds * 1000);
+  await page.getByRole('button', { name: 'Stop and review', exact: true }).click();
+}
+
+export async function restoreInjectedPreview(page: Page) {
+  await page.getByTestId('video-preview-recovery').click();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId('video-live-preview')
+        .evaluate(
+          (video: HTMLVideoElement) =>
+            video.srcObject instanceof MediaStream &&
+            video.srcObject.getTracks().every((track) => track.readyState === 'live') &&
+            video.readyState >= 2,
+        ),
+    )
+    .toBe(true);
+  await expect(page.getByTestId('video-record')).toBeVisible();
+}
+
+export async function expectSourceStopped(page: Page, index: number) {
+  await expect
+    .poll(() =>
+      page.evaluate((sourceIndex) => {
+        const source = window.__injectedCapture.sources[sourceIndex];
+        return (
+          source.stream.getTracks().every((track) => track.readyState === 'ended') &&
+          source.audio.state === 'closed'
+        );
+      }, index),
+    )
+    .toBe(true);
+  const frames = await page.evaluate((i) => window.__injectedCapture.sources[i].frames, index);
+  await page.waitForTimeout(120);
+  expect(await page.evaluate((i) => window.__injectedCapture.sources[i].frames, index)).toBe(
+    frames,
+  );
+}
+
+/** Inspect actual recorder bytes independently of app metadata and browser playback. */
+export async function inspectRecording(page: Page, testInfo: TestInfo, index: number) {
+  const dataUrl = await page.evaluate(async (i) => {
+    const entry = window.__injectedCapture.blobs[i];
+    if (!entry?.blob) throw new Error('No encoded recorder blob');
+    const data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(entry.blob!);
+    });
+    // Observer releases its own reference; the application owns the live blob URL.
+    entry.blob = null;
+    return data;
+  }, index);
+  const path = testInfo.outputPath(`recording-${index}.mp4`);
+  // MediaRecorder MIME types can contain commas in their codec list.
+  writeFileSync(path, Buffer.from(dataUrl.slice(dataUrl.indexOf(';base64,') + 8), 'base64'));
+  const metadata = JSON.parse(
+    execFileSync('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', path], {
+      encoding: 'utf8',
+    }),
+  ) as {
+    streams: { codec_type: string; codec_name: string; width?: number; height?: number }[];
+    format: { duration: string };
+  };
+  const pcm = execFileSync(
+    'ffmpeg',
+    ['-v', 'error', '-i', path, '-vn', '-ac', '1', '-ar', '48000', '-f', 'f32le', 'pipe:1'],
+    { maxBuffer: 8 * 1024 * 1024 },
+  );
+  // Avoid codec priming: measure 0.5..1.5s and count positive zero crossings.
+  let squares = 0;
+  let crossings = 0;
+  expect(pcm.byteLength).toBeGreaterThanOrEqual(72_000 * 4);
+  for (let i = 24_000; i < 72_000; i++) {
+    const value = pcm.readFloatLE(i * 4);
+    squares += value * value;
+    if (value >= 0 && pcm.readFloatLE((i - 1) * 4) < 0) crossings++;
+  }
+  const rms = Math.sqrt(squares / 48_000);
+  expect(rms).toBeGreaterThan(0.1);
+  expect(rms).toBeLessThan(0.3);
+  expect(crossings).toBeGreaterThan(430);
+  expect(crossings).toBeLessThan(450);
+  expect(metadata.streams.find((stream) => stream.codec_type === 'audio')?.codec_name).toBe('aac');
+  expect(metadata.streams.find((stream) => stream.codec_type === 'video')?.codec_name).toBe('h264');
+  const evidence = { ...metadata, decodedAudio: { rms, positiveCrossingsPerSecond: crossings } };
+  await testInfo.attach(`encoded-media-${index}`, {
+    body: JSON.stringify(evidence, null, 2),
+    contentType: 'application/json',
+  });
+  await testInfo.attach(`recording-${index}`, { path, contentType: 'video/mp4' });
+  return metadata;
+}
+
+export async function expectRevoked(page: Page, index: number) {
+  await expect
+    .poll(() => page.evaluate((i) => window.__injectedCapture.blobs[i].revoked, index))
+    .toBe(true);
+  expect(
+    await page.evaluate((i) => window.__injectedCapture.blobs[i].playerAttachedAtRevoke, index),
+  ).toBe(false);
+  expect(
+    await page.evaluate(async (i) => {
+      try {
+        await fetch(window.__injectedCapture.blobs[i].url);
+        return true;
+      } catch {
+        return false;
+      }
+    }, index),
+  ).toBe(false);
+}
