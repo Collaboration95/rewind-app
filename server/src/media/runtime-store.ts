@@ -228,6 +228,7 @@ function uploadTransport(
         'x-amz-meta-media-ref': metadata,
         'x-amz-expected-bucket-owner': config.expectedBucketOwner,
         'x-amz-server-side-encryption': encryption,
+        'x-amz-tagging': 'rewind-media-class=incoming',
         ...(config.kmsKeyId
           ? { 'x-amz-server-side-encryption-aws-kms-key-id': config.kmsKeyId }
           : {}),
@@ -241,6 +242,7 @@ function uploadTransport(
         CacheControl: headers['cache-control'],
         ChecksumSHA256: checksum,
         Metadata: { 'media-ref': metadata },
+        Tagging: headers['x-amz-tagging'],
         ServerSideEncryption: encryption,
         ...(config.kmsKeyId ? { SSEKMSKeyId: config.kmsKeyId } : {}),
       });

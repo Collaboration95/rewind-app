@@ -35,6 +35,7 @@ export interface PrivateS3Transport {
       ContentType: string;
       ChecksumSHA256: string;
       Metadata: Record<string, string>;
+      Tagging: string;
       ServerSideEncryption: 'AES256' | 'aws:kms';
       SSEKMSKeyId?: string;
       CacheControl: string;
@@ -120,6 +121,7 @@ export class PrivateS3MediaStore implements MediaStore {
         ContentType: ref.contentType,
         ChecksumSHA256: Buffer.from(ref.sha256, 'hex').toString('base64'),
         Metadata: { 'media-ref': JSON.stringify(ref) },
+        Tagging: `rewind-media-class=${ref.prefix}`,
         ServerSideEncryption: this.options.kmsKeyId ? 'aws:kms' : 'AES256',
         ...(this.options.kmsKeyId ? { SSEKMSKeyId: this.options.kmsKeyId } : {}),
         CacheControl: 'private, no-store',

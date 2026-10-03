@@ -1,0 +1,95 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyInsecureTransport",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "${bucket_arn}",
+        "${bucket_arn}/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DenyOtherAccounts",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "${bucket_arn}",
+        "${bucket_arn}/*"
+      ],
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "RequireExplicitEncryption",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "${bucket_arn}/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:x-amz-server-side-encryption": "AES256"
+        }
+      }
+    },
+    {
+      "Sid": "RequireIncomingClassTag",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+      ],
+      "Resource": "${bucket_arn}/${environment}/*/incoming/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:RequestObjectTag/rewind-media-class": "incoming"
+        }
+      }
+    },
+    {
+      "Sid": "RequireProcessedClassTag",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+      ],
+      "Resource": "${bucket_arn}/${environment}/*/processed/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:RequestObjectTag/rewind-media-class": "processed"
+        }
+      }
+    },
+    {
+      "Sid": "RequireFilmsClassTag",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectTagging",
+        "s3:PutObjectVersionTagging"
+      ],
+      "Resource": "${bucket_arn}/${environment}/*/films/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:RequestObjectTag/rewind-media-class": "films"
+        }
+      }
+    }
+  ]
+}

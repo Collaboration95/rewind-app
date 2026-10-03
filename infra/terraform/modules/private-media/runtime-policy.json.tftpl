@@ -1,0 +1,55 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListOnlyEnvironmentMedia",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": "${bucket_arn}",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": "${environment}/*"
+        },
+        "StringEquals": {
+          "aws:ResourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "WriteTaggedMedia",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectTagging"
+      ],
+      "Resource": [
+        "${bucket_arn}/${environment}/*/incoming/*",
+        "${bucket_arn}/${environment}/*/processed/*",
+        "${bucket_arn}/${environment}/*/films/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "${account_id}"
+        }
+      }
+    },
+    {
+      "Sid": "ReadAndDeletePinnedVersions",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:DeleteObjectVersion"
+      ],
+      "Resource": "${bucket_arn}/${environment}/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "${account_id}"
+        }
+      }
+    }
+  ]
+}

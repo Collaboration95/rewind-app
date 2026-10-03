@@ -170,6 +170,40 @@ function deferred<T>() {
 }
 
 describe('direct private transfer', () => {
+  it('passes the signed incoming lifecycle tag unchanged to private storage', async () => {
+    const c = fixture();
+    const original = c.api.getMockImplementation()!;
+    c.api.mockImplementationOnce(async (path, init) => {
+      const body = await (await original(path, init)).json();
+      body.upload.headers['x-amz-tagging'] = 'rewind-media-class=incoming';
+      return response(body);
+    });
+    await c.client.transferContribution('group-1', input, c.source());
+    expect(c.storageFetch.mock.calls[0][1]?.headers).toMatchObject({
+      'x-amz-tagging': 'rewind-media-class=incoming',
+    });
+    expect(c.contributions).toBe(1);
+  });
+
+  it.each(['rewind-media-class=films', 'rewind-media-class=incoming&other=value'])(
+    'rejects an unexpected lifecycle tag %s before upload',
+    async (tagging) => {
+      const c = fixture();
+      const original = c.api.getMockImplementation()!;
+      c.api.mockImplementationOnce(async (path, init) => {
+        const body = await (await original(path, init)).json();
+        body.upload.headers['x-amz-tagging'] = tagging;
+        return response(body);
+      });
+      await expect(
+        c.client.transferContribution('group-1', input, c.source()),
+      ).rejects.toMatchObject({
+        code: 'invalid_response',
+      });
+      expect(c.storageFetch).not.toHaveBeenCalled();
+    },
+  );
+
   it('default native file reader and durable checkpoint adapter preserve binary identity across client reconstruction', async () => {
     await AsyncStorage.clear();
     jest.mocked(FileSystem.getInfoAsync).mockResolvedValue({

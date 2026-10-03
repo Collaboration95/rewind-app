@@ -183,6 +183,7 @@ export async function s3ProtocolFixture(root, now) {
           assert.equal(req.headers['x-amz-server-side-encryption'], 'AES256');
           assert.equal(req.headers['cache-control'], 'private, no-store');
           const metadata = JSON.parse(req.headers['x-amz-meta-media-ref']);
+          assert.equal(req.headers['x-amz-tagging'], `rewind-media-class=${metadata.prefix}`);
           assert.equal(metadata.key, key);
           assert.equal(metadata.byteLength, body.length);
           assert.equal(metadata.sha256, hash(body));

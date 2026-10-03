@@ -147,6 +147,7 @@ async function scenario(run) {
           ChecksumSHA256: Buffer.from(sha256, 'hex').toString('base64'),
           ExpectedBucketOwner: storage.config.expectedBucketOwner,
           ServerSideEncryption: 'AES256',
+          Tagging: `rewind-media-class=${metadata.prefix}`,
           CacheControl: 'private, no-store',
         }),
       );
@@ -231,6 +232,18 @@ test('signed SDK HTTP: immutable versions survive overwrite around HEAD, API/DB 
       403,
     );
     assert.equal((await c.storage.put(first.upload, Buffer.from('wrong bytes'))).status, 403);
+    assert.equal(
+      (
+        await c.storage.put(
+          {
+            ...first.upload,
+            headers: { ...first.upload.headers, 'x-amz-tagging': 'rewind-media-class=films' },
+          },
+          c.bytes,
+        )
+      ).status,
+      403,
+    );
     assert.equal(c.storage.versions.size, before);
     const receipt = await c.storage.put(first.upload, c.bytes);
     assert.equal(receipt.status, 200);

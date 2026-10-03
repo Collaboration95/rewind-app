@@ -191,6 +191,13 @@ test('SDK bridge streams verified bytes, pins every command and deletes only exa
   const puts = calls.filter((command) => command.operation === 'PutObject');
   assert.ok(puts.every((command) => command.input.Body instanceof Readable));
   assert.ok(puts.every((command) => command.input.Body.destroyed));
+  assert.ok(
+    puts.every(
+      (command) =>
+        command.input.Tagging ===
+        `rewind-media-class=${JSON.parse(command.input.Metadata['media-ref']).prefix}`,
+    ),
+  );
   for (const command of calls) {
     assert.equal(command.input.Bucket, config.bucket);
     assert.equal(command.input.ExpectedBucketOwner, config.expectedBucketOwner);
@@ -258,6 +265,8 @@ for (const kmsKeyId of [undefined, 'arn:aws:kms:ap-southeast-1:123456789012:key/
     assert.equal(command.input.ExpectedBucketOwner, config.expectedBucketOwner);
     assert.equal(command.input.ServerSideEncryption, kmsKeyId ? 'aws:kms' : 'AES256');
     assert.equal(command.input.SSEKMSKeyId, kmsKeyId);
+    assert.equal(command.input.Tagging, 'rewind-media-class=incoming');
+    assert.equal(capability.headers['x-amz-tagging'], 'rewind-media-class=incoming');
     assert.deepEqual(JSON.parse(command.input.Metadata['media-ref']), {
       ...allocated,
       versionId: 'pending',
