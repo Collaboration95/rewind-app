@@ -170,160 +170,35 @@ Android remote push. Review development-build dependencies and configuration
 when each feature requires them. No final OIDC or reminder/push acceptance is
 claimed by this build preparation.
 
-## Current compile disposition
+## Current validation and acceptance limits
 
-The initial local Android template prebuild succeeded. The first offline Gradle
-attempt was blocked by the sandbox's lock-file permission. Its single diagnosed
-retry reached configuration, then stopped on an uncached AsyncStorage dependency:
-`com.google.devtools.ksp:symbol-processing-gradle-plugin:1.9.24-1.0.20`.
+A disposable Android Release rehearsal compiled offline on 3 October 2026
+using the existing SDK/Gradle cache. It used unmerged source commit
+`d77ecc2af5a5a77f192efa265495ae8d7cadb032` based on accepted dev
+`b43b8982a3668cc1ef6e5295bfdbde7f2cd588c9` and reserved `.invalid` origins.
+Its snapshot-local entrypoint bundled 63 application source files matching
+the staged tree. Package/version, `rewind` scheme, APK v2 debug signature and
+embedded bundle were inspected successfully. This proves the local compile
+route; it does not satisfy accepted-source or installed journey acceptance.
 
-The explicitly authorized network-enabled follow-up resolved that dependency
-and compiled successfully in 171.98 seconds, with a 900-second timeout. In the
-same disposable `source/android/` preview, after replacing all ambient public
-Expo variables with the three recorded preview values, the actual command was:
+The APK checksum was
+`cae5479f3c73b1637014a48fd373be493f72bf553a463fb28c6c2f534cddd3d6`.
+The standard Expo-template Android Debug signing certificate checksum was
+`fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`;
+this is a test identity. Build receipts and attempt logs remain in the
+disposable `/private/tmp/rewind-351-android-entry-fixed-preview-20261003`
+and `/private/tmp/rewind-351-logs-20261003` directories. They are temporary
+local artifacts and are not reproducible repository inputs.
 
-```sh
-CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 ./gradlew --no-daemon --max-workers=2 -Pandroid.builder.sdkDownload=false -Dorg.gradle.java.installations.auto-download=false :app:assembleRelease
-```
+An earlier shared-node_modules AppEntry rehearsal bundled foreign application
+source and is quarantined. The recorder rejects that provenance. The local
+entrypoint and application-source checks address the diagnosed cause.
 
-Gradle dependency network access was enabled; Expo remained offline. SDK/JDK
-auto-downloads were disabled. Existing caches were preserved with normal
-additions, and no SDK/toolchain, credentials, remote EAS build or device install
-was created. That preparation had one network-enabled Gradle attempt.
-
-Read-only inspection commands run on the produced `app-release.apk` were
-`apksigner verify --verbose --print-certs`, `aapt2 dump badging`,
-`aapt2 dump xmltree --file AndroidManifest.xml`, and `shasum -a 256`.
-
-- APK size: 98,446,191 bytes.
-- APK SHA-256:
-  `b27c529c7d16609e42981a82e46e10cd3b22351962ed0f17623a496a2b1de7ef`.
-- Package: `com.anonymous.rewindapp`; version `0.1.0`, code `1`; min SDK `24`,
-  target/compile SDK `36`; manifest retains the `rewind` scheme.
-- APK v2 signing verifies with the standard Expo-template Android Debug test
-  key; certificate SHA-256:
-  `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`.
-  This is not an approved production signing identity.
-
-**Previous artifact blocker: application source provenance.** The old disposable preparation
-used Expo's default AppEntry through the shared `node_modules` symlink. Metro
-read the fixture checkout's application files; bundled
-`src/reminders/RealGroupSettings.tsx` differs from the pinned disposable source.
-The APK is labelled `compiled-source-unreconciled-preview-do-not-install`, with
-an inspection receipt rather than a normal provenance receipt. The strengthened
-recorder rejects it. Shared reminder/group/service-worker code was not changed.
-
-The owned preparation script now generates a snapshot-local entrypoint, pins
-both original and effective build inputs, and checks Android bundle sources
-before recording an artifact. Seven focused tests, scoped ESLint and formatting
-checks passed. The previous full `npm run check` pass is retained; it was not
-repeated for this follow-up.
-
-**Corrected-source preview: compiled and reconciled.** The authorized build ran in
-`/private/tmp/rewind-351-android-entry-fixed-preview-20261003/source`, with source
-commit `d77ecc2af5a5a77f192efa265495ae8d7cadb032` and accepted base
-`b43b8982a3668cc1ef6e5295bfdbde7f2cd588c9`. It remains an `unmerged-preview`.
-Precheck verified the snapshot-local entrypoint, profiles and unchanged pinned
-inputs:
-
-- Effective build-source SHA-256:
-  `ad768762b19183a1c02e19e58f6522232185befb4a7a2eea509e7e13abe96193`.
-- App/EAS config SHA-256:
-  `522be98a75be5491a05cf8fb72e1979f50934457022ce25652d00ad7a0ad0566`.
-- Public-origin/environment SHA-256:
-  `021f5a9bb16b524cba9971fcd86dd612f2b3cfcc3ba89b3b88f543b96da485b1`.
-
-After clearing ambient public Expo variables and loading the recorded public
-environment, the actual attempted command was:
-
-```sh
-CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 node node_modules/expo/bin/cli prebuild --platform android --no-install --template node_modules/expo/template.tgz
-```
-
-Prebuild exited `1` in 0.28 seconds with
-`Found invalid GitHub URL: "https://github.com/node_modules/expo/template.tgz"`.
-The installed Expo CLI's `resolveTemplateOption` expands the bare relative path
-to GitHub shorthand before checking whether the file exists; its repository
-parser rejects this URL locally before repository lookup. The existing template
-is present. Read-only parser validation confirmed that its absolute path resolves
-as a local file; the subsequent authorized invocation is recorded below.
-
-That invocation error initially stopped the attempt before Gradle. The user
-then authorized correcting the invocation in the same owned preview. The
-absolute local template command succeeded in 0.32 seconds:
-
-```sh
-CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 node node_modules/expo/bin/cli prebuild --platform android --no-install --template /private/tmp/rewind-351-android-entry-fixed-preview-20261003/source/node_modules/expo/template.tgz
-```
-
-Prebuild changed none of the pinned inputs. With the same scrubbed environment,
-existing Java/Android SDK paths and SDK/JDK auto-downloads disabled, Gradle ran
-from that preview's `source/android/`:
-
-```sh
-CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 ./gradlew --offline --no-daemon --max-workers=2 -Pandroid.builder.sdkDownload=false -Dorg.gradle.java.installations.auto-download=false :app:assembleRelease
-```
-
-It exited `0` in 66.48 seconds, within a 900-second timeout; 328 tasks, 300
-executed and 28 up-to-date. Existing caches sufficed: no network dependency
-resolution, SDK/toolchain installation or cache deletion was needed. Expo used
-only its existing local template, without GitHub network access.
-
-The actual packager sourcemap passed `verifyAndroidBundleSources`: all 63
-application source files matched the staged tree, with no foreign application
-paths. Sourcemap SHA-256:
-`669d0ce66c9f2730bce42579dd37940ad0258d9e93c5b89f45676e2b0c63f43b`.
-The APK's embedded `assets/index.android.bundle` exactly matches the generated
-bundle; SHA-256:
-`9e1b9641ff1bc2cd625dcd4d11f1254e901ce65e3990c84702997d28bda6c84c`.
-Both reserved preview origins are present in that bundle.
-
-Installed `apksigner verify --verbose --print-certs`, `aapt2 dump badging` and
-`aapt2 dump xmltree --file AndroidManifest.xml` commands all passed:
-
-- APK size: 98,446,407 bytes; SHA-256:
-  `cae5479f3c73b1637014a48fd373be493f72bf553a463fb28c6c2f534cddd3d6`.
-- Package `com.anonymous.rewindapp`, version `0.1.0`, code `1`; min SDK `24`,
-  target/compile SDK `36`; callback scheme `rewind` retained.
-- APK v2 signature verifies with the same standard Expo-template Android Debug
-  test key; certificate SHA-256:
-  `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`.
-  This remains a test signing identity, not an approved production identity.
-
-The recorder rechecked unchanged source/config/origins and bundle provenance,
-then exclusively created `artifact.json` beside `provenance.json`:
-
-```sh
-node scripts/native-build.mjs record /private/tmp/rewind-351-android-entry-fixed-preview-20261003 /private/tmp/rewind-351-android-entry-fixed-preview-20261003/source/android/app/build/outputs/apk/release/app-release.apk
-```
-
-The artifact is at that final command's APK path. Its receipt remains
-`compiled-unverified-preview`, source status `unmerged-preview`, acceptance
-`pending-review-install-and-native-smoke`. The package/signature/embedded-bundle
-checks are recorded separately in `verified-apk-inspection.json`; the latest
-summary is `current-disposition.json`, both in the preview directory. The old
-source-unreconciled APK remains quarantined and must not be installed.
-
-All attempt logs remain in `/private/tmp/rewind-351-logs-20261003`. The latest
-exact commands, durations and results are in
-`entry-fixed-corrected-invocation-result.json`; raw logs are
-`entry-fixed-absolute-prebuild.log`, `entry-fixed-cached-gradle-attempt1.log`,
-`entry-fixed-bundle-source-reconciliation.json`, `entry-fixed-apk-signing.txt`,
-`entry-fixed-apk-package.txt`, `entry-fixed-apk-manifest.txt` and
-`entry-fixed-artifact-record.log`. Earlier invocation/parser logs and the old
-blocker receipt were preserved as history.
-
-No tracked source/config/script changes were made during this validation.
-Documentation formatting and diff checks passed; `npm run check` was not
-repeated for the disposition-only update. This resolves the corrected-source
-compile/provenance check, while reviewed accepted source, approved origins,
-Android installation/journeys and iOS preview/signing remain acceptance gates.
-
-Reserved `.invalid` API/website origins remain embedded in this rehearsal. They
-cannot smoke a real sign-in/invite journey. No real hosted data or source was
-activated. Android installation/journey smoke, iPhone preview and device signing,
-and Sprint 2 reminder/push acceptance remain open; only managed OIDC/client-retro
-are reserved for Sprint 3.
+Before closing #351, rebuild the reviewed accepted dev source with explicitly
+approved preview origins, verify and install the resulting APK on Android,
+and complete the native sign-in/invite/capture/chat/reveal/archive checks. Run
+the iPhone 14+ preview and record signing limits. Sprint 2 reminder/push
+acceptance remains with #347/#348; managed OIDC/client-retro remain Sprint 3.
 
 ## Official references
 

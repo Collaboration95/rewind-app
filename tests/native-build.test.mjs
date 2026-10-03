@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, realpath } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
   buildEnvironment,
@@ -15,12 +17,12 @@ import {
 
 const app = JSON.parse(await readFile(new URL('../app.json', import.meta.url), 'utf8'));
 const eas = JSON.parse(await readFile(new URL('../eas.json', import.meta.url), 'utf8'));
-const projectRoot = resolve(new URL('..', import.meta.url).pathname);
+const projectRoot = fileURLToPath(new URL('..', import.meta.url));
 function git(root, ...args) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 }
 async function fixture(run) {
-  const temp = await mkdtemp('/private/tmp/rewind-native-build-test-');
+  const temp = await realpath(await mkdtemp(join(tmpdir(), 'rewind-native-build-test-')));
   const root = join(temp, 'repo');
   await mkdir(root);
   await writeFile(join(root, 'app.json'), JSON.stringify(app));
@@ -40,6 +42,8 @@ async function fixture(run) {
     'user.email=fixture@example.invalid',
     '-c',
     'commit.gpgsign=false',
+    '-c',
+    'core.hooksPath=/dev/null',
     'commit',
     '-qm',
     'fixture',
@@ -182,6 +186,10 @@ test('staging rejects source symlinks, unsafe destinations and wrong base', asyn
   fixture(async (c) => {
     await assert.rejects(
       prepareNativeBuild({ ...c.options, outputRoot: join(c.root, 'output') }),
+      /external disposable/,
+    );
+    await assert.rejects(
+      prepareNativeBuild({ ...c.options, outputRoot: join(c.root, '..preview') }),
       /external disposable/,
     );
     await assert.rejects(

@@ -4,6 +4,7 @@ import test from 'node:test';
 // The static Quality job runs this root entry point explicitly.
 import './node-forge-security.test.mjs';
 import './braces-security.test.mjs';
+import './native-build.test.mjs';
 
 const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const appJson = JSON.parse(await readFile(new URL('../app.json', import.meta.url), 'utf8'));

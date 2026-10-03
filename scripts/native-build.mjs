@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, open, readFile, symlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import process from 'node:process';
 
@@ -106,11 +106,16 @@ export async function prepareNativeBuild({
 }) {
   const root = resolve(projectRoot),
     output = resolve(outputRoot);
+  const outputRelative = relative(root, output);
   if (
     !['android', 'ios'].includes(platform) ||
     !isAbsolute(outputRoot) ||
     output === root ||
-    !relative(root, output).startsWith('..') ||
+    !(
+      outputRelative === '..' ||
+      outputRelative.startsWith(`..${sep}`) ||
+      isAbsolute(outputRelative)
+    ) ||
     !/^[a-f0-9]{40}$/.test(acceptedBase)
   )
     throw new Error('Use an external disposable output directory and exact accepted base SHA.');
