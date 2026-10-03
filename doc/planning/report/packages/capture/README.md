@@ -40,4 +40,4 @@ The lead can link [models.md](models.md) as the UC04–UC06 model catalogue. Inc
 
 ## Verification record
 
-The exact source links and pinned line anchors appear in [use-cases.md](use-cases.md) and [models.md](models.md). The diagrams are editable SVG. Package and supporting-document links are relative; implementation references pin the accepted code SHA. No product tests were run for this prose/model change. Diagram rendering and visual inspection, flow-to-sequence coverage, local-link validation, and a pinned-source walkthrough are the relevant checks.
+The exact source links and pinned line anchors appear in [use-cases.md](use-cases.md) and [models.md](models.md). The diagrams are editable SVG. Package and supporting-document links are relative; implementation references pin the accepted code SHA. No product tests were run for this prose/model change. Diagram rendering and visual inspection, flow-to-sequence coverage, local-link validation, and a pinned-source walkthrough are the relevant checks. All eight class figures were rerendered at native dimensions; their associations and arrowheads were visually checked in the card gutters.
