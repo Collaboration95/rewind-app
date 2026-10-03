@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -86,4 +86,28 @@ test('unavailable, invalid, initial-push and empty comparisons conservatively re
   const f = await fixture(t);
   for (const base of [undefined, '', '0'.repeat(40), 'f'.repeat(40), 'HEAD; false', f.base])
     assert.equal(classifyChanges({ cwd: f.cwd, base, head: f.base }).docsOnly, false);
+});
+
+test('deployment stays on its classified commit when dev advances to a documentation-only commit', async (t) => {
+  const f = await fixture(t);
+  await f.write('App.tsx', 'code change\n');
+  const eventCommit = f.commit();
+  assert.equal(f.classify(eventCommit).docsOnly, false);
+  await f.write('README.md', 'later documentation change\n');
+  const branchTip = f.commit();
+  f.git('branch', 'dev', branchTip);
+  assert.equal(classifyChanges({ cwd: f.cwd, base: eventCommit, head: branchTip }).docsOnly, true);
+  const workflow = await readFile(
+    new URL('../.github/workflows/deploy-dev.yml', import.meta.url),
+    'utf8',
+  );
+  const deployRef = workflow
+    .split('  deploy:')[1]
+    .match(/ref: ([^\n]+)/)?.[1]
+    .trim();
+  // Resolve the checkout input as Actions would after the later push advanced dev.
+  const selectedRef = deployRef === '${{ github.sha }}' ? eventCommit : deployRef;
+  f.git('checkout', '-q', '--detach', selectedRef);
+  assert.equal(f.git('rev-parse', 'HEAD'), eventCommit);
+  assert.notEqual(f.git('rev-parse', 'HEAD'), f.git('rev-parse', 'dev'));
 });

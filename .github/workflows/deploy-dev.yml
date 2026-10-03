@@ -1,6 +1,6 @@
 name: Deploy dev
 
-# Deploys the dev branch tip to the hosted Rewind Lightsail host. This replaces
+# Deploys the checked event commit to the hosted Rewind Lightsail host. This replaces
 # the manual operator flow of building a bundle on an operator machine and
 # running deploy/release-host.sh install over SSH: merging to dev now does it
 # from CI, against a host that already exists.
@@ -78,7 +78,7 @@ jobs:
       - name: Check out the dev commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: dev
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
