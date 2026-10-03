@@ -30,6 +30,34 @@ export function redact(text, secrets) {
   return text;
 }
 
+export function summarizeFindings(jsonl) {
+  const findings = jsonl
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((row) => row.type === 'finding')
+    .map(({ data }) => ({
+      module: data.module_id,
+      title: data.module_name,
+      severity: data.severity,
+      confidence: data.confidence,
+      status: data.status,
+      tags: data.tags || [],
+      explanation: data.description,
+    }));
+  return {
+    findingCount: findings.length,
+    vulnerabilityCount: findings.filter((finding) => finding.severity !== 'info').length,
+    informationalCount: findings.filter((finding) => finding.severity === 'info').length,
+    sqlInjectionReported: findings.some(
+      (finding) =>
+        (finding.module?.startsWith('sqli-') || finding.tags.includes('sqli')) &&
+        finding.severity !== 'info',
+    ),
+    findings,
+  };
+}
+
 export function summaryHtml(report) {
   const escape = (value) =>
     String(value).replace(

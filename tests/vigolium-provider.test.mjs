@@ -8,8 +8,30 @@ import {
   providerSettings,
   redact,
   scopedProxy,
+  summarizeFindings,
   summaryHtml,
 } from '../scripts/vigolium-provider.mjs';
+
+test('informational authentication findings do not establish SQL injection detection', () => {
+  const info = { type: 'finding', data: { module_id: 'auth-headers-detect', severity: 'info' } };
+  const sql = { type: 'finding', data: { module_id: 'sqli-error-based', severity: 'critical' } };
+  assert.equal(summarizeFindings(JSON.stringify(info)).sqlInjectionReported, false);
+  assert.equal(summarizeFindings(JSON.stringify(info)).vulnerabilityCount, 0);
+  const summary = summarizeFindings([info, sql].map(JSON.stringify).join('\n'));
+  assert.equal(summary.sqlInjectionReported, true);
+  assert.equal(summary.informationalCount, 1);
+  assert.equal(summary.vulnerabilityCount, 1);
+  assert.equal(summarizeFindings('').findingCount, 0);
+  assert.equal(
+    summarizeFindings(
+      JSON.stringify({
+        type: 'finding',
+        data: { module_id: 'generated-fixture-probe', tags: ['sqli'], severity: 'high' },
+      }),
+    ).sqlInjectionReported,
+    true,
+  );
+});
 
 test('live provider requires explicit data approval, model and matching key', () => {
   assert.throws(

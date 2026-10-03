@@ -6,7 +6,13 @@ import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { providerSettings, redact, scopedProxy, summaryHtml } from './vigolium-provider.mjs';
+import {
+  providerSettings,
+  redact,
+  scopedProxy,
+  summarizeFindings,
+  summaryHtml,
+} from './vigolium-provider.mjs';
 import { createScanFixture } from './vigolium-fixture.mjs';
 
 const mode = process.argv[2];
@@ -81,6 +87,13 @@ async function runCli(args, input) {
         `Scanner exited with code ${code}; no completed scan claimed${errors ? `: ${errors}` : ''}`,
       );
     }
+    return redact(diagnostic, secrets)
+      .replace(/\u001b\[[0-9;]*m/g, '')
+      .split(/\r?\n/)
+      .filter((line) =>
+        /Scanning with modules:|Phase \[|scan error \(non-fatal\)|warning\(s\)/.test(line),
+      )
+      .slice(-12);
   } finally {
     clearTimeout(timer);
   }
@@ -204,6 +217,12 @@ try {
       await writeFile(
         configPath,
         JSON.stringify({
+          'dynamic-assessment': {
+            enabled_modules: {
+              active_modules: ['sqli-error-based'],
+              passive_modules: ['auth-headers-detect'],
+            },
+          },
           agent: {
             sessions_dir: join(temporary, 'sessions'),
             olium: { provider: settings.provider, model: settings.model },
@@ -217,8 +236,9 @@ try {
         join(temporary, 'scan.sqlite'),
         '--skip-dependency-check',
       ];
-      const raw = `POST ${path} HTTP/1.1\r\nHost: ${new URL(proxy.origin).host}\r\nAuthorization: Bearer ${token}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
-      await runCli(
+      // Vigolium otherwise infers HTTPS for raw requests on a nonstandard port.
+      const raw = `POST ${path} HTTP/1.1\r\nHost: ${new URL(proxy.origin).host}\r\nOrigin: ${proxy.origin}\r\nAuthorization: Bearer ${token}\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+      report.scannerDiagnostics = await runCli(
         [
           'agent',
           'swarm',
@@ -233,7 +253,10 @@ try {
           '--header',
           `Authorization: Bearer ${token}`,
           '--prompt',
-          'Assess the supplied disposable chat request for SQL injection and authorization issues. Stay on the supplied endpoint. Do not read source files or contact other targets. Treat denied scope requests as scope controls, not vulnerabilities. Explain evidence and uncertainty.',
+          'Assess the supplied disposable chat POST JSON body for SQL injection. This synthetic endpoint uses SQLite and returns messages matching body. Select sqli-error-based and generate a small custom extension to test the JSON body for SQL injection using paired true/false controls when built-in error signatures are insufficient. Limit the extension to 12 requests. Preserve the Authorization header, HTTP origin and endpoint path. Do not read source files or contact other targets. Treat denied scope requests as scope controls, not vulnerabilities. Explain evidence and uncertainty.',
+          '--modules',
+          'sqli-error-based',
+          '--with-extensions',
           '--intensity',
           'quick',
           '--discover=false',
@@ -287,9 +310,13 @@ try {
         await writeFile(join(output, `report.${extension}`), redact(content, secrets));
       }
       report.status = 'scanner-completed';
+      report.assessment = summarizeFindings(await readFile(join(output, 'report.jsonl'), 'utf8'));
       report.message =
-        'Provider-backed scanner exited successfully and target traffic was observed. Review exported findings and their evidence; this does not establish complete application coverage.';
+        fixtureMode && !report.assessment.sqlInjectionReported
+          ? 'Scanner completed with authenticated target traffic, but did not report the expected SQL injection. The detection trial has not passed.'
+          : 'Provider-backed scanner completed with authenticated target traffic. Review exported findings and their evidence; this does not establish complete application coverage.';
       report.scannerRequests = proxy.evidence.forwarded - before;
+      report.requestLimitReached = proxy.evidence.forwarded >= 120;
     }
   }
 } catch (error) {

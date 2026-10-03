@@ -110,6 +110,8 @@ npm run security:agentic:run
 The scanner receives a disposable authenticated HTTP request through stdin.
 The runner uses `--input -`: Vigolium 0.5.1 skips automatic stdin detection when
 `--target` is present, which would lose the supplied POST body and authorization.
+The request also declares its same-origin HTTP `Origin`; otherwise Vigolium
+assumes HTTPS on the fixture's nonstandard loopback port.
 No `--source`, personal OAuth credentials, or repository source context is
 provided. Requests and responses, including the disposable bearer token, may be
 sent to the model. This is a data-sharing approval switch, not a complete
@@ -127,17 +129,26 @@ paths and methods, caps bodies at 64 KiB, caps admitted requests at 120, spaces
 forwards by 550 ms and times out upstream requests after five seconds. The agent
 has a five-minute budget with a six-minute process deadline. Broad discovery,
 source audit and rescan phases are disabled. AI planning and triage remain enabled.
+The trial selects the error-based SQL injection module and asks the AI to generate
+a small custom extension using paired controls. Broad native boolean SQL injection
+testing exhausted the 120-request gate in the trial, so it is excluded.
 The agent can choose modules and generate extensions; prompt instructions are
 guidance, not an execution sandbox.
 
 On successful execution with an observed accepted authenticated POST, the report says
-`scanner-completed` and exports HTML/JSONL findings with response bodies omitted
-and known credentials redacted. AI conclusions require reviewing evidence.
+`scanner-completed` and exports HTML/JSONL findings with known credentials redacted.
+The runner requests `--omit-response`, but Vigolium 0.5.1 can still include response
+bodies in JSONL finding evidence. Treat exports as synthetic data, not as guaranteed
+body-free reports. AI conclusions require reviewing evidence.
 A failure is `incomplete`, never a clean result. Raw agent logs and the raw scan
 database are not published. Exports can still contain synthetic request data;
 review before sharing. This trial does not yet compare owner/member/outsider
 identities, cover every route, or establish that AI finds issues the native scan
 misses. The native scan retains its separate role checks.
+The summary separates informational observations from vulnerability findings and
+explicitly states whether SQL injection was reported. `scanner-completed` describes
+execution; it does not mean the detection trial passed. `requestLimitReached`
+flags exhaustion of the request allowance.
 
 Next validation is a real provider-backed finding on the prepared vulnerable
 fixture, followed by expanding approved endpoint coverage. Do
