@@ -353,3 +353,80 @@ machine, so recreated hosts do not need to inherit AWS CLI credentials.
 Terraform recreates cloud infrastructure. Cloud-init installs host
 prerequisites. S3 backups restore database/media data. Keep these three layers
 separate when recovering into a replacement account.
+
+## Bounded environment identity preparation (#174)
+
+`bootstrap/environment-identity.tf` is disabled by default (`{}`). Its optional
+module prepares distinct `rewind-{dev,prod}-terraform-{plan,apply}` roles and
+permissions boundaries for the accepted **private-media roots only**. Account
+330599756236 and region ap-southeast-1 are fixed. Existing media KMS key ARNs
+must be supplied; these roles only describe those keys. Bucket metadata includes
+`ListBucket`, needed for the provider's `HeadBucket`, and may reveal object names;
+object contents remain inaccessible. State grants use
+`rewind/{dev,prod}/media.tfstate`, with apply-only `.tflock` writes and exact
+resource-account conditions. Only the default Terraform workspace is supported;
+the pinned S3 backend tolerates denied non-default workspace discovery without
+granting access to other environment states. Future hosting
+`terraform.tfstate` keys from #298 are excluded. Hosting permissions, KMS creation,
+IAM roles/pass/attachments, private-object data and Organizations/billing grants
+require separate review. Runtime policy version writes are limited to the exact
+`rewind-{dev,prod}-private-media` policy ARN. This policy is an authority boundary:
+review its content and all attachments before provisioning the apply identity.
+
+Trust requires exact audience, immutable subject, repository/owner IDs,
+repository name, ref (`dev` for dev, `main` for prod), and distinct environment.
+AWS documents the supported GitHub `ref`, `environment` and ID condition keys in
+[the IAM condition-key reference](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_iam-condition-keys.html).
+The recorded immutable subject prefix is
+`repo:Collaboration95@68595032/rewind-app@1354608509`; operations recheck it with
+`gh api` and fail closed if GitHub's subject configuration changes.
+
+The manual `Reviewed media Terraform` workflow is preparatory, **not enabled or
+provisioned evidence**. No PR checkout receives AWS credentials. The repository
+is currently public (verified with `gh api`); the helper therefore refuses all
+operations before AWS assumption to prevent saved-state plan exposure through
+public-repository artifacts. A separately reviewed private plan exchange is an
+activation prerequisite; this patch does not change visibility or introduce
+external storage. The existing workflow is usable only with private repository
+artifact access. Before use:
+
+1. Obtain human IAM/infrastructure review, repeat remote state-key inventory,
+   confirm no collision/migration, existing keys and the existing OIDC provider.
+2. Configure all four `terraform-{dev,prod}-{plan,apply}` GitHub environments with
+   required human reviewers, prevent self review, disable administrator bypass,
+   and permit protected branches only. The existing unprotected `dev` environment
+   and separate `release` environment do not satisfy these gates. This patch does
+   not change GitHub settings. Exact branch head must also have green aggregate
+   Quality. Configure `MEDIA_KMS_KEY_ARN` and `MEDIA_CORS_ORIGIN` identically for
+   the matching plan/apply environments.
+3. Supply `TERRAFORM_GH_READ_TOKEN`, a fine-grained **read-only** GitHub credential
+   for repository metadata/branch protection, environment protection, OIDC
+   customization, checks and Actions artifacts. No AWS static credentials. API
+   denial or absent protections refuses the operation before AWS assumption.
+4. Stop all external writers and affirm quiescence on each dispatch. Both modes
+   share one workflow concurrency group per environment with cancellation off.
+   The read-only plan uses `-lock=false` because its identity cannot write locks.
+   Actions serialization cannot prevent a local or different-workflow writer;
+   quiescence is an operator prerequisite, and apply also acquires the S3 lock.
+5. Manually dispatch `plan` from the exact reviewed protected branch. Review the
+   complete private artifact (`plan.txt`, `plan.json`, binary plan and metadata),
+   including IAM policy contents, resource names and inputs. Plans contain state
+   and may contain sensitive values: restrict repository/artifact access; do not
+   publish them in issue or PR comments. Artifacts expire after one day.
+6. For the separate human-approved `apply` dispatch, supply the plan run ID,
+   attempt and reviewed **binary-plan SHA-256** shown by that plan run. Approvers
+   must verify those dispatch inputs against the reviewed artifact before granting
+   the apply environment approval. The helper downloads only that successful
+   manual workflow run at the unchanged exact branch head, verifies the digest,
+   account, environment, state key, variables and provider lockfile, and applies
+   the saved binary with a lock. It never replans or applies a directory. Terraform
+   rejects a saved plan if remote state changed. Delete/replacement and resources
+   outside the accepted media module fail the operation guard.
+
+Offline verification: `node --test tests/terraform/environment-identity.test.mjs`
+is included by existing root/Quality Terraform test globs. Backend-disabled
+Terraform validation and mocked module tests require no AWS credentials or cloud
+calls. These checks do not prove provisioned trust, provider permission coverage,
+remote state separation or actual environment approval. Human review, provisioning,
+manual operational acceptance and safe read-only PR-plan acceptance remain open
+under #174; this preparation does not close the issue.

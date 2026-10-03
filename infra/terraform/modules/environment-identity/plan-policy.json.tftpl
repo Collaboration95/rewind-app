@@ -1,0 +1,89 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "IdentifyAccount",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ListExactState",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::rewind-terraform-state-330599756236",
+      "Condition": {
+        "StringEquals": {
+          "s3:prefix": "rewind/${environment}/media.tfstate",
+          "aws:ResourceAccount": "330599756236"
+        }
+      }
+    },
+    {
+      "Sid": "ReadExactState",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::rewind-terraform-state-330599756236/rewind/${environment}/media.tfstate",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "330599756236"
+        }
+      }
+    },
+    {
+      "Sid": "MediaConfiguration",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:GetBucketAcl",
+        "s3:GetBucketTagging",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketPolicyStatus",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketOwnershipControls",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetBucketCORS",
+        "s3:GetLifecycleConfiguration",
+        "s3:GetReplicationConfiguration",
+        "s3:GetBucketWebsite",
+        "s3:GetBucketRequestPayment",
+        "s3:GetBucketLogging",
+        "s3:GetBucketObjectLockConfiguration",
+        "s3:GetAccelerateConfiguration",
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::rewind-${environment}-media-330599756236",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "330599756236"
+        }
+      }
+    },
+    {
+      "Sid": "RuntimePolicy",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicyVersions",
+        "iam:ListPolicyTags"
+      ],
+      "Resource": "arn:aws:iam::330599756236:policy/rewind-${environment}-private-media"
+    },
+    {
+      "Sid": "DescribeExistingMediaKey",
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey"
+      ],
+      "Resource": "${kms_key_arn}"
+    }
+  ]
+}
