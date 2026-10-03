@@ -104,7 +104,7 @@ Quality classifies the exact diff and runs relevant format, lint, architecture, 
 
 ### 4.3 Continuous Delivery
 
-Deploy dev requires successful Quality, verifies a release bundle and activates it after runtime/web health checks, with compatible rollback. The last successful run was 37142192598. Later runs 37143129969 and 37143383024 failed with host ENOSPC while staging the verified bundle, before activation. No manual retry or host cleanup was performed. Capacity recovery needs an authorized operator and subsequent deployment/health verification. Prepared dev/release roots and private-storage configuration still require reviewed live plans, inventory and activation. Main promotion, deployment and hosted acceptance remain distinct.
+Deploy dev requires successful Quality, verifies a release bundle and activates it after runtime/web health checks, with compatible rollback. The last successful run was 37142192598. Later runs 37143129969 and 37143383024 failed with host ENOSPC during host-side bundle verification/staging, before activation. No manual retry or host cleanup was performed. Capacity recovery needs an authorized operator and subsequent deployment/health verification. Prepared dev/release roots and private-storage configuration still require reviewed live plans, inventory and activation. Main promotion, deployment and hosted acceptance remain distinct.
 
 ## 5 Individual members activity contribution summary
 

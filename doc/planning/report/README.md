@@ -6,6 +6,7 @@ This workspace holds the Sprint 2 model packages and factual report draft. The r
 - [Template contract](template-contract.md) records retained-source identities, editable slots and fidelity checks.
 - [DOCX draft](exports/rewind-project-report-draft.docx) and [PDF draft](exports/rewind-project-report-draft.pdf) provide the bounded rendered draft. Both remain drafts; final model incorporation, actual member attribution/effort, Scrum records and compliance sign-off remain under [#362](https://github.com/Collaboration95/rewind-app/issues/362).
 - Editable overview figures are in [diagrams](diagrams/). Their captions distinguish current implementation from future targets.
+- The [nine-slide presentation draft](exports/rewind-project-demo-draft.pptx), [slide outline](presentation/presentation-outline.md) and [factual demo script](presentation/demo-script.md) prepare the module-brief story and local proof route. Editable deck text, tables and architecture figures retain source notes. A visible demo rehearsal, real Scrum outcomes and final assessment approval remain pending.
 
 ## Model packages
 
@@ -20,3 +21,5 @@ The following paths are the intended package locations. Their accepted/review st
 | [ARCHIVE](packages/archive/README.md)             | UC12 playback; UC13 download; UC14 client delivery      | [#361](https://github.com/Collaboration95/rewind-app/issues/361) |
 
 Each package enumerates its major flows, pairs analysis and design class/sequence views, records requirement/source crosswalks and compares the actual implemented pattern choice with alternatives. Final assembly must refresh affected source pins and audit all models against the final implementation. At least one use case and one design problem per real team member still requires factual ownership; agent authorship and test counts do not supply it.
+
+The combined draft catalogue has 44 major-flow pairs across UC01–UC14: ACCESS 12, CAPTURE 7, CYCLE 6, PARTICIPATION 10 and ARCHIVE 9. All 137 package SVGs are linked from their package sources; each use case has both class views and each major flow has both sequence views. This structural audit does not establish final model semantics, deployment, device acceptance or human ownership. The four report overview figures supplement the detailed package models; final incorporation of every model into the report remains open under #362.
