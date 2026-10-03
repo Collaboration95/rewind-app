@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import {
   allowInjectedSource,
+  expectInjectedSourceInstalled,
   expectRevoked,
   expectSourceStopped,
   injectRecordingSource,
@@ -37,6 +38,7 @@ test('reports real MP4 recorder support without granting device permissions', as
   await injectRecordingSource(page);
   const supported = await recordingSupport(page, info);
   await openInjectedCapture(page);
+  await expectInjectedSourceInstalled(page);
   expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
   if (supported) {
     await expect(page.getByTestId('video-permission')).toBeVisible();
@@ -49,6 +51,24 @@ test('reports real MP4 recorder support without granting device permissions', as
     ).toBeVisible();
     await expect(page.getByTestId('video-record')).toHaveCount(0);
   }
+});
+
+test('synthetic device guard fails closed and reinstalls after navigation', async ({
+  page,
+}, info) => {
+  await injectRecordingSource(page);
+  await recordingSupport(page, info);
+  await openInjectedCapture(page);
+  await page.evaluate(() => {
+    window.__injectedCapture.installation = null;
+  });
+  await expect(allowInjectedSource(page)).rejects.toThrow(
+    'Synthetic device injection is absent; refusing native device access',
+  );
+  expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
+  await page.reload();
+  await expectInjectedSourceInstalled(page);
+  expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
 });
 
 test('real injected recording preserves moving video, decoded tone, trim, retake and submission disposal', async ({
