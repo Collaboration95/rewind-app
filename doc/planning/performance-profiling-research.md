@@ -1,7 +1,7 @@
 # Local performance profiling and before/after evidence
 
 - **Issue:** [#267 — Research local performance profiling and before/after evidence](https://github.com/Collaboration95/rewind-app/issues/267)
-- **Status:** Research recommendation; no profiling campaign, instrumentation, or optimization was run for this brief.
+- **Status:** Research recommendation; no comparative profiling campaign, instrumentation, or optimization was run for this brief. A later issue comment reports a small set of exploratory checks, recorded below.
 - **Scope:** Rewind's Expo/React Native iOS and web clients, plus the optional local Node service.
 - **Data rule:** Use synthetic accounts, groups, invitations, and media only. Keep raw captures on the profiling Mac unless they have been reviewed for sensitive content.
 
@@ -113,7 +113,16 @@ Use stable names, for example `ios-home-nav-baseline-r03.png`, `ios-home-nav-bas
 - **Local data is still sensitive.** Heap snapshots, DOM/network traces, console logs, source paths, URLs, and screenshots may contain secrets even when the intended fixture is synthetic. Use disposable test accounts, redact tokens and personal values, inspect artifacts before sharing, and delete unneeded captures under the team's retention policy.
 - **Cost.** Xcode, React Native DevTools, Chrome DevTools, Playwright, and Node built-ins are local tools with no per-event hosted charge. They still require developer-machine storage and setup. Expo EAS Observe is hosted and usage-priced under its current documentation; exclude it from this local-only recommendation unless separately approved.
 - **Export compatibility.** Saved trace formats and profiler features vary with Expo/RN/Chrome/Xcode/Node versions. Capture tool versions and test that an artifact can be reopened before relying on it. Do not promise interchangeability between Hermes, Chrome, Instruments, and Node trace formats.
-- **No result yet.** This document contains no measured Rewind performance, baseline, regression, or improvement claim.
+- **No comparative result.** This document contains no baseline/follow-up comparison, regression, or improvement claim. One exploratory J2 profile observation is reported below as a diagnostic lead, not a benchmark.
+
+## Repository-specific observations reported in #267
+
+The following are human-reported checks from #267, not runs repeated for this documentation update. They distinguish exercised behavior from vendor-documented capability and the research recommendation. They do not constitute a profiling campaign or a comparative performance result.
+
+- **React Native DevTools attach behavior and one J2 capture:** Long reports that `/json/list` was empty with `--no-dev --minify` and populated under plain `expo start`. In one captured J2 Home → Archive window, `cycle-time.ts` accounted for 73.3% of scripting time. This is a single diagnostic observation and follow-up lead, not a baseline or general performance finding. ([Long's report](https://github.com/Collaboration95/rewind-app/issues/267#issuecomment-5923261533))
+- **Instruments:** Long reports capturing an Xcode CPU Profiler trace with `xcrun xctrace` attached to Expo Go, observing that the trace includes Expo Go host-process overhead. ([Long's update](https://github.com/Collaboration95/rewind-app/issues/267#issuecomment-5923628080))
+- **Maestro:** Long reports running J2 through Welcome, the same-origin HTTPS sign-in block, Try Demo, Home, and Archive, with four screenshots. He reports visible-text selection failed for member-picker buttons because their accessibility labels were full sentences; the existing `demo-entry-demo-1` test ID worked. This records the reported run and selector behavior; no flow file is claimed to be present on `dev`. ([Long's update](https://github.com/Collaboration95/rewind-app/issues/267#issuecomment-5923628080))
+- **Release build:** Long reports a throwaway-worktree attempt blocked by Xcode 26.3 rejecting Swift/C++ interop annotations in `expo-modules-jsi`'s `RuntimeScheduler.h`; no release-build result was obtained and no dependency change was made. ([Long's update](https://github.com/Collaboration95/rewind-app/issues/267#issuecomment-5923628080))
 
 ## Decisions for the profiling follow-up
 
@@ -136,9 +145,11 @@ Create these as separate issues after the research recommendation is accepted:
 
 ## Research and review provenance
 
-The source links above are vendor or tool-maintainer documentation. The recommended toolchain, scenarios, controls, and evidence protocol are this brief's synthesis for the repository's declared Expo/React Native, web, and Node stack; they have not been validated by a profiling campaign.
+The source links above are vendor or tool-maintainer documentation. The recommended toolchain, scenarios, controls, and evidence protocol are this brief's synthesis for the repository's declared Expo/React Native, web, and Node stack; they have not been validated by a profiling campaign. The repository-specific observations above are attributed to Long's issue comments and were not independently rerun for this update.
 
-**Agent provenance:** Luna subagent Godel drafted this synthesis. Luna subagent Dewey independently checked the tool claims and protocol; the brief was revised to address that critique. No findings are attributed to Jiayu Jiang or Nguyễn Kim Long, and this does not imply that either named researcher reviewed the brief. No performance campaign was run.
+**Agent and human review provenance:** Luna subagent Godel drafted this synthesis. Luna subagent Dewey independently checked the tool claims and protocol; the brief was revised to address that critique. A draft posted by `bibi45c` in #267 states that Jiayu Jiang reviewed most of that report line by line; Long later reported the checks summarized above. These statements document their respective reports and do not attribute this synthesis or recommendation to either researcher, or claim additional approval. ([draft and review note](https://github.com/Collaboration95/rewind-app/issues/267#issuecomment-5912076234))
+
+PR #325 was closed without merging at the repository owner's request. Its reported observations are cited from #267 comments; this update does not imply that PR #325's branch or evidence files landed on `dev`. ([PR #325](https://github.com/Collaboration95/rewind-app/pull/325))
 
 ## Primary references
 

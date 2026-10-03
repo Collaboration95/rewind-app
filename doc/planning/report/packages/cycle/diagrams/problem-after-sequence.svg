@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1455" height="1174" viewBox="0 0 1455 1174">
+<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#147d83"/></marker><marker id="rel" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#5c7082"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/><rect width="100%" height="12" fill="#147d83"/>
+<text x="36" y="52" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700" fill="#17324d">After · Transactional lifecycle and durable compilation</text>
+<text x="36" y="80" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#5c7082">Restart-safe state transitions, claim-generation fencing, verified release</text>
+<rect x="1205" y="28" width="214" height="31" rx="15" fill="#e8f1f8"/><text x="1312" y="49" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700" fill="#17324d">AFTER</text>
+<rect x="52.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="150.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">cycle scheduler</text>
+<line x1="150.0" y1="188" x2="150.0" y2="1126" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="283.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="381.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">lifecycle transaction</text>
+<line x1="381.0" y1="188" x2="381.0" y2="1126" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="514.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="612.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">SQLite records</text>
+<line x1="612.0" y1="188" x2="612.0" y2="1126" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="745.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="843.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">worker loop</text>
+<line x1="843.0" y1="188" x2="843.0" y2="1126" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="976.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="1074.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">FFmpeg  /  store</text>
+<line x1="1074.0" y1="188" x2="1074.0" y2="1126" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="1207.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="1305.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">member API</text>
+<line x1="1305.0" y1="188" x2="1305.0" y2="1126" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<line x1="150.0" y1="210" x2="381.0" y2="210" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="265.5" y="228" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">scan due cycle and fixed</text>
+<text x="265.5" y="245" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">now</text>
+<line x1="381.0" y1="280" x2="612.0" y2="280" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="298" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">BEGIN IMMEDIATE; lock +</text>
+<text x="496.5" y="315" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">re-read</text>
+<line x1="381.0" y1="350" x2="612.0" y2="350" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="368" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">persist event, one film</text>
+<text x="496.5" y="385" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">job, one successor, pointer</text>
+<line x1="381.0" y1="420" x2="150.0" y2="420" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="265.5" y="438" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">COMMIT; successor current</text>
+<text x="265.5" y="455" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">immediately</text>
+<rect x="55" y="467.5" width="1345" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="727.5" y="495" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Duplicate tick / restart resumes by reading unique persisted records</text>
+<line x1="150.0" y1="560" x2="843.0" y2="560" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="578" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">scan persisted queue; claim with lease + generation</text>
+<line x1="843.0" y1="630" x2="1074.0" y2="630" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="958.5" y="648" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">settle and verify ordered</text>
+<text x="958.5" y="665" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">inputs; compile / probe</text>
+<text x="958.5" y="682" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">temp</text>
+<line x1="1074.0" y1="712" x2="612.0" y2="712" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="843.0" y="730" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">finalize only for same generation / snapshot with</text>
+<text x="843.0" y="747" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">digest</text>
+<rect x="55" y="759.5" width="1345" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="727.5" y="787" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Crash / failure is retryable below cap; exhausted work remains delayed / unpublished</text>
+<line x1="150.0" y1="852" x2="381.0" y2="852" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="265.5" y="870" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">publish only at / after end</text>
+<text x="265.5" y="887" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">when output verifies</text>
+<line x1="150.0" y1="922" x2="381.0" y2="922" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="265.5" y="940" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">archive only after</text>
+<text x="265.5" y="957" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">persisted publication + 24h</text>
+<text x="265.5" y="974" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">and another integrity check</text>
+<line x1="381.0" y1="1004" x2="1305.0" y2="1004" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="843.0" y="1022" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">server projects Premiere / archive through group authorization</text>
+<text x="36" y="1152" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">The diagram covers the normal path and named relevant branches; implementation names appear only in the design view.</text></svg>
