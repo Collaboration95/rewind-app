@@ -88,8 +88,14 @@ packages/lockfiles to fix a native toolchain problem without coordination.
    dependencies or querying Expo:
 
    ```sh
-   CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 node node_modules/expo/bin/cli prebuild --platform android --no-install --template node_modules/expo/template.tgz
+   CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 node node_modules/expo/bin/cli prebuild --platform android --no-install --template /private/tmp/rewind-native-preview/source/node_modules/expo/template.tgz
    ```
+
+   Substitute the actual disposable directory in the absolute template path.
+   Expo 57 interprets bare `node_modules/expo/template.tgz` as GitHub shorthand;
+   an existing file at that relative path does not prevent this interpretation.
+   The absolute-path form was checked with the installed CLI's option parser,
+   but a successful prebuild using it is still pending in this corrected preview.
 
    Use only existing installed SDK/Gradle tools. Set the three public values
    exactly as recorded in `public-env.json`, clear any additional
@@ -123,9 +129,10 @@ packages/lockfiles to fix a native toolchain problem without coordination.
    existing installed application without explicit device-owner authorization.
 
 Stop after the first diagnosed native toolchain retry unless the user grants
-new bounded scope. The 3 October follow-up authorized exactly one additional
-network-enabled dependency-resolution/compile attempt, not an unbounded retry
-loop. Do not download large SDKs, create signing credentials, dispatch
+new bounded scope. The 3 October follow-ups separately authorized one
+network-enabled dependency-resolution/compile attempt and one corrected-source
+build attempt. The corrected-source attempt must stop at its next distinct
+diagnosed blocker. Do not download large SDKs, create signing credentials, dispatch
 paid/remote builds, delete caches, or remove checks to make the build pass. A
 missing toolchain or unresolved source provenance leaves the APK deliverable open.
 
@@ -182,7 +189,7 @@ CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 ./gradlew --no-daemon --max-workers=2 -Pand
 Gradle dependency network access was enabled; Expo remained offline. SDK/JDK
 auto-downloads were disabled. Existing caches were preserved with normal
 additions, and no SDK/toolchain, credentials, remote EAS build or device install
-was created. No second network-enabled compile was attempted.
+was created. That preparation had one network-enabled Gradle attempt.
 
 Read-only inspection commands run on the produced `app-release.apk` were
 `apksigner verify --verbose --print-certs`, `aapt2 dump badging`,
@@ -198,7 +205,7 @@ Read-only inspection commands run on the produced `app-release.apk` were
   `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`.
   This is not an approved production signing identity.
 
-**New blocker: application source provenance.** The old disposable preparation
+**Previous artifact blocker: application source provenance.** The old disposable preparation
 used Expo's default AppEntry through the shared `node_modules` symlink. Metro
 read the fixture checkout's application files; bundled
 `src/reminders/RealGroupSettings.tsx` differs from the pinned disposable source.
@@ -210,8 +217,53 @@ The owned preparation script now generates a snapshot-local entrypoint, pins
 both original and effective build inputs, and checks Android bundle sources
 before recording an artifact. Seven focused tests, scoped ESLint and formatting
 checks passed. The previous full `npm run check` pass is retained; it was not
-repeated for this follow-up. Verify the fix with a separately authorized next
-compile from reviewed code/config and approved origins before native acceptance.
+repeated for this follow-up.
+
+**Latest corrected-source attempt: blocked before Gradle.** The separately
+authorized build ran in
+`/private/tmp/rewind-351-android-entry-fixed-preview-20261003/source`, with source
+commit `d77ecc2af5a5a77f192efa265495ae8d7cadb032` and accepted base
+`b43b8982a3668cc1ef6e5295bfdbde7f2cd588c9`. It remains an `unmerged-preview`.
+Precheck verified the snapshot-local entrypoint, profiles and unchanged pinned
+inputs:
+
+- Effective build-source SHA-256:
+  `ad768762b19183a1c02e19e58f6522232185befb4a7a2eea509e7e13abe96193`.
+- App/EAS config SHA-256:
+  `522be98a75be5491a05cf8fb72e1979f50934457022ce25652d00ad7a0ad0566`.
+- Public-origin/environment SHA-256:
+  `021f5a9bb16b524cba9971fcd86dd612f2b3cfcc3ba89b3b88f543b96da485b1`.
+
+After clearing ambient public Expo variables and loading the recorded public
+environment, the actual attempted command was:
+
+```sh
+CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 node node_modules/expo/bin/cli prebuild --platform android --no-install --template node_modules/expo/template.tgz
+```
+
+Prebuild exited `1` in 0.28 seconds with
+`Found invalid GitHub URL: "https://github.com/node_modules/expo/template.tgz"`.
+The installed Expo CLI's `resolveTemplateOption` expands the bare relative path
+to GitHub shorthand before checking whether the file exists; its repository
+parser rejects this URL locally before repository lookup. The existing template
+is present. Read-only parser validation confirms that its absolute path resolves
+as a local file. The runbook command above is corrected, but was not retried.
+
+The next distinct diagnosed blocker ended the authorized attempt. Gradle never
+started, no Android directory or new APK was produced, and actual bundle-source,
+package and signature verification and an artifact receipt remain pending. The
+effective staged source digest is unchanged. No source/config/script changes
+were made in this follow-up, so `npm run check` was not repeated; documentation
+formatting and diff checks were run.
+
+The exact command, timing and result are retained in
+`/private/tmp/rewind-351-logs-20261003/entry-fixed-build-result.json`; diagnostics
+are in `entry-fixed-prebuild.log` and `entry-fixed-template-parser.json` in that
+directory. The prepared source/provenance remain at the disposable path above.
+The old source-unreconciled APK remains quarantined and cannot substitute for a
+successful corrected-source build. A new bounded attempt is needed to complete
+APK compilation and actual bundle reconciliation; reviewed accepted source and
+approved origins are still required before native acceptance.
 
 Reserved `.invalid` API/website origins remain embedded in this rehearsal. They
 cannot smoke a real sign-in/invite journey. No real hosted data or source was
