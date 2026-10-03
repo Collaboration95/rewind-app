@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="850" viewBox="0 0 1040 850">
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#202631}.title{font-size:24px;font-weight:700}.sub{font-size:14px;fill:#4b5563}.actor{fill:#eef3fb;stroke:#3b5b83;stroke-width:2}.box{fill:#fff;stroke:#536579;stroke-width:2}.note{fill:#fff8e7;stroke:#bc8b20;stroke-width:1.5}.lifeline{stroke:#9aa5b1;stroke-width:1.4;stroke-dasharray:6 6}.msg{stroke:#334155;stroke-width:2;fill:none}.ret{stroke:#788493;stroke-width:1.5;stroke-dasharray:5 5;fill:none}.label{font-size:15px}.small{font-size:13px;fill:#46505c}.head{font-size:16px;font-weight:700}.association{stroke:#64748b;stroke-width:2;fill:none}</style>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#334155"/></marker><marker id="arrowleft" markerWidth="8" markerHeight="8" refX="1" refY="4" orient="auto"><path d="M8,0 L0,4 L8,8 z" fill="#334155"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text class="title" x="32" y="38">Pattern comparison — Before sequence</text>
+<text class="sub" x="32" y="62">Analysis responsibility model; platform-neutral concepts</text>
+<rect class="actor" x="60" y="120" width="180" height="56" rx="9"/>
+<text class="head" x="150" y="154" text-anchor="middle">Member</text>
+<line class="lifeline" x1="150" y1="176" x2="150" y2="735"/>
+<rect class="actor" x="300" y="120" width="180" height="56" rx="9"/>
+<text class="head" x="390" y="154" text-anchor="middle">Archive screen</text>
+<line class="lifeline" x1="390" y1="176" x2="390" y2="735"/>
+<rect class="actor" x="560" y="120" width="180" height="56" rx="9"/>
+<text class="head" x="650" y="154" text-anchor="middle">Media route</text>
+<line class="lifeline" x1="650" y1="176" x2="650" y2="735"/>
+<rect class="actor" x="800" y="120" width="180" height="56" rx="9"/>
+<text class="head" x="890" y="154" text-anchor="middle">Platform</text>
+<line class="lifeline" x1="890" y1="176" x2="890" y2="735"/>
+<line class="msg" x1="150" y1="225" x2="390" y2="225" marker-end="url(#arrow)"/>
+<text class="label" x="270.0" y="206" text-anchor="middle">Request item using cached URL</text>
+<line class="msg" x1="390" y1="295" x2="650" y2="295" marker-end="url(#arrow)"/>
+<text class="label" x="520.0" y="260" text-anchor="middle">Forward URL without refreshing</text>
+<text class="label" x="520.0" y="277" text-anchor="middle">membership/release</text>
+<line class="msg" x1="650" y1="381" x2="890" y2="381" marker-end="url(#arrow)"/>
+<text class="label" x="770.0" y="346" text-anchor="middle">Serve via ad-hoc browser/native</text>
+<text class="label" x="770.0" y="363" text-anchor="middle">branch</text>
+<line class="ret" x1="890" y1="467" x2="150" y2="467" marker-end="url(#arrowleft)"/>
+<text class="label" x="520.0" y="432" text-anchor="middle">May fail stale access or expose</text>
+<text class="label" x="520.0" y="449" text-anchor="middle">inconsistent result</text>
+<rect class="note" x="32" y="755" width="976" height="70" rx="8"/>
+<text class="small" x="48" y="778" >Alternate / exception: Comparison only; it is not a claim that production previously served media this way.</text>
+</svg>
