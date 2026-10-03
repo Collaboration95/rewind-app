@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="780" viewBox="0 0 1120 780">
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#202631}.title{font-size:24px;font-weight:700}.sub{font-size:14px;fill:#4b5563}.actor{fill:#eef3fb;stroke:#3b5b83;stroke-width:2}.box{fill:#fff;stroke:#536579;stroke-width:2}.note{fill:#fff8e7;stroke:#bc8b20;stroke-width:1.5}.lifeline{stroke:#9aa5b1;stroke-width:1.4;stroke-dasharray:6 6}.msg{stroke:#334155;stroke-width:2;fill:none}.ret{stroke:#788493;stroke-width:1.5;stroke-dasharray:5 5;fill:none}.label{font-size:15px}.small{font-size:13px;fill:#46505c}.head{font-size:16px;font-weight:700}.association{stroke:#64748b;stroke-width:2;fill:none}</style>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text class="title" x="32" y="38">Pattern comparison — After classes</text>
+<text class="sub" x="32" y="62">Accepted implementation at pinned current dev cut</text>
+<rect class="box" x="48" y="105" width="475" height="131" rx="7"/>
+<text class="head" x="66" y="133">Archive Facade</text>
+<line class="association" x1="48" y1="147" x2="523" y2="147"/>
+<text class="small" x="66" y="171">createRealAccountArchiveClient</text>
+<text class="small" x="66" y="193">Maps premiere, pages and fresh</text>
+<text class="small" x="66" y="215">lookup</text>
+<rect class="box" x="585" y="105" width="475" height="153" rx="7"/>
+<text class="head" x="603" y="133">Access Proxy</text>
+<line class="association" x1="585" y1="147" x2="1060" y2="147"/>
+<text class="small" x="603" y="171">MediaCapabilities + protected</text>
+<text class="small" x="603" y="193">routes</text>
+<text class="small" x="603" y="215">Rechecks current session,</text>
+<text class="small" x="603" y="237">membership, release, output</text>
+<rect class="box" x="48" y="415" width="475" height="153" rx="7"/>
+<text class="head" x="66" y="443">Platform Adapters</text>
+<line class="association" x1="48" y1="457" x2="523" y2="457"/>
+<text class="small" x="66" y="481">Browser fetch/anchor; native</text>
+<text class="small" x="66" y="503">FileSystem</text>
+<text class="small" x="66" y="525">Deep-link parser separates</text>
+<text class="small" x="66" y="547">supported schemes</text>
+<rect class="box" x="585" y="415" width="475" height="153" rx="7"/>
+<text class="head" x="603" y="443">PWA Service Worker</text>
+<line class="association" x1="585" y1="457" x2="1060" y2="457"/>
+<text class="small" x="603" y="481">Public build cache + online-only</text>
+<text class="small" x="603" y="503">API/media</text>
+<text class="small" x="603" y="525">Waits safely for complete new</text>
+<text class="small" x="603" y="547">shell</text>
+<rect class="note" x="48" y="700" width="1010" height="50" rx="7"/>
+<text class="small" x="64" y="722">Associations: Facade coordinates API contract; Proxy guards media access; Adapter handles platform boundaries. These roles map to</text>
+<text class="small" x="64" y="740">actual functions/modules.</text>
+</svg>
