@@ -421,18 +421,24 @@ export async function backfillRetainedMedia(options: BackfillOptions): Promise<{
   const journalPath = options.journalPath;
   if (!isAbsolute(journalPath) || resolve(journalPath) !== journalPath) fail('unsafe_path');
   const sourceOptions = manifest.inventory.options;
-  for (const root of [
-    sourceOptions.stagingRoot,
-    sourceOptions.processedRoot,
-    sourceOptions.privateRoot,
-  ]) {
-    if (!root) continue;
-    const child = relative(root, journalPath);
-    if (!child || (!child.startsWith(`..${sep}`) && child !== '..' && !isAbsolute(child)))
-      fail('journal_overlaps_source');
+  const sqliteSuffixes = ['', '-wal', '-shm', '-journal'];
+  const protectedFiles = new Set([
+    ...sqliteSuffixes.map((suffix) => sourceOptions.databasePath + suffix),
+    options.manifestPath,
+  ]);
+  for (const artifact of sqliteSuffixes.map((suffix) => journalPath + suffix)) {
+    if (protectedFiles.has(artifact)) fail('journal_overlaps_source');
+    for (const root of [
+      sourceOptions.stagingRoot,
+      sourceOptions.processedRoot,
+      sourceOptions.privateRoot,
+    ]) {
+      if (!root) continue;
+      const child = relative(root, artifact);
+      if (!child || (!child.startsWith(`..${sep}`) && child !== '..' && !isAbsolute(child)))
+        fail('journal_overlaps_source');
+    }
   }
-  if (journalPath === sourceOptions.databasePath || journalPath === options.manifestPath)
-    fail('journal_overlaps_source');
   await safePath(dirname(journalPath));
   let created = false;
   try {

@@ -2,8 +2,18 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, chmod } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  writeFile,
+  rm,
+  symlink,
+  chmod,
+  realpath,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { spawn } from 'node:child_process';
 import { openDatabase } from '../dist/db.js';
@@ -26,7 +36,7 @@ function journalRecords(path) {
 }
 const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 async function fixture(run) {
-  const root = await mkdtemp('/private/tmp/rewind-backfill-test-');
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'rewind-backfill-test-')));
   const config = parseConfig({ REWIND_DATA_DIR: root });
   const database = openDatabase(config);
   const stagingRoot = resolve(root, 'media/staging');
@@ -446,6 +456,43 @@ test('journal cannot overlap retained source roots or source database', async ()
         code: 'journal_overlaps_source',
       });
     assert.deepEqual(await readFile(c.sourcePath), c.sourceBytes);
+  }));
+
+test('SQLite journal and sidecar collisions reject before opening a database and preserve source bytes', async () =>
+  fixture(async (c) => {
+    const suffixes = ['', '-wal', '-shm', '-journal'];
+    const manifest = await createBackfillManifest(c.options, c.manifestPath);
+    const before = await readFile(c.options.databasePath);
+    for (const sourceSuffix of suffixes)
+      for (const journalSuffix of suffixes) {
+        const target = c.options.databasePath + sourceSuffix;
+        // Test every combination that can map a journal artifact to a protected
+        // source artifact, including databasePath = journalPath + '-journal'.
+        if (journalSuffix && !target.endsWith(journalSuffix)) continue;
+        const journalPath = journalSuffix ? target.slice(0, -journalSuffix.length) : target;
+        await assert.rejects(backfillRetainedMedia({ ...c.invocation(manifest), journalPath }), {
+          code: 'journal_overlaps_source',
+        });
+        assert.deepEqual(await readFile(c.options.databasePath), before);
+      }
+    const renamed = resolve(c.root, 'collision-journal-journal');
+    // Keep the active connection and original DB intact; use a disposable
+    // checkpointed copy at the exact rollback-journal collision name.
+    c.database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    const sourceBytes = await readFile(c.options.databasePath);
+    await writeFile(renamed, sourceBytes);
+    const options = { ...c.options, databasePath: renamed };
+    const collisionManifest = resolve(c.root, 'collision-manifest.json');
+    const collision = await createBackfillManifest(options, collisionManifest);
+    await assert.rejects(
+      backfillRetainedMedia({
+        ...c.invocation(collision),
+        manifestPath: collisionManifest,
+        journalPath: renamed.slice(0, -'-journal'.length),
+      }),
+      { code: 'journal_overlaps_source' },
+    );
+    assert.deepEqual(await readFile(renamed), sourceBytes);
   }));
 
 test('staged source MIME follows persisted metadata including PNG', async () =>
