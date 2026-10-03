@@ -13,7 +13,16 @@ declare global {
       shape: 'portrait' | 'landscape';
       delayDurationStop: boolean;
       playbackAudio: AudioContext[];
-      sources: { stream: MediaStream; audio: AudioContext; frames: number }[];
+      playbackProbe: {
+        source: MediaElementAudioSourceNode;
+        analyser: AnalyserNode;
+      } | null;
+      sources: {
+        stream: MediaStream;
+        tracks: MediaStreamTrack[];
+        audio: AudioContext;
+        frames: number;
+      }[];
       blobs: {
         url: string;
         blob: Blob | null;
@@ -32,6 +41,7 @@ export async function injectRecordingSource(page: Page) {
       shape: 'portrait',
       delayDurationStop: false,
       playbackAudio: [],
+      playbackProbe: null,
       sources: [],
       blobs: [],
     };
@@ -88,7 +98,10 @@ export async function injectRecordingSource(page: Page) {
         ...canvas.captureStream(30).getVideoTracks(),
         ...destination.stream.getAudioTracks(),
       ]);
-      const source = { stream, audio, frames: 0 };
+      // Retain native track wrappers for the lifetime of the source too. WebKit
+      // can otherwise discard their stop observers during a longer recording.
+      const tracks = stream.getTracks();
+      const source = { stream, tracks, audio, frames: 0 };
       state.sources.push(source);
       const draw = () => {
         source.frames++;
@@ -99,16 +112,27 @@ export async function injectRecordingSource(page: Page) {
       };
       draw();
       const interval = setInterval(draw, 1000 / 30);
-      for (const track of stream.getTracks()) {
+      for (const track of tracks) {
         const stop = track.stop.bind(track);
         track.stop = () => {
           stop();
-          if (stream.getTracks().every((item) => item.readyState === 'ended')) {
+          if (tracks.every((item) => item.readyState === 'ended') && audio.state !== 'closed') {
             clearInterval(interval);
             oscillator.stop();
             void audio.close();
           }
         };
+      }
+      // A running WebKit context can still have an unstarted audio clock.
+      // Make the synthetic device provide rendered audio before returning it,
+      // so a short recovery recording does not lose its tone to fixture startup.
+      const readyDeadline = performance.now() + 3000;
+      while (audio.currentTime < 0.2 && performance.now() < readyDeadline) {
+        await new Promise((resolve) => schedule(resolve, 50));
+      }
+      if (audio.currentTime < 0.2) {
+        tracks.forEach((track) => track.stop());
+        throw new Error('The synthetic audio source did not start');
       }
       return stream;
     };
