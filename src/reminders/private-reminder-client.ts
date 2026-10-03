@@ -39,7 +39,7 @@ const jsonOptions = (body: object): RequestInit => ({
 export function createPrivateReminderClient({
   accountId,
   groupId,
-  authenticatedRequest,
+  authenticatedRequest: sendRequest,
   isCurrentContext,
   platform = defaultPushPlatform(),
   storage = AsyncStorage,
@@ -69,6 +69,16 @@ export function createPrivateReminderClient({
   let enabling: Promise<PrivateReminderSnapshot> | undefined;
   let loading: Promise<PrivateReminderSnapshot> | undefined;
   let cleaning: Promise<PrivateReminderSnapshot> | undefined;
+
+  async function authenticatedRequest(path: string, options: RequestInit = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      return await sendRequest(path, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   const result = (
     state: PrivateReminderSnapshot['state'],

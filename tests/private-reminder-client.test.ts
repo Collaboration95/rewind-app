@@ -93,6 +93,28 @@ it('checks config without subscribing; explicit opt-in registers only the select
   expect(enabled.message).toContain('delivery is not confirmed');
 });
 
+it('bounds a stalled authenticated support request without requesting notification permission', async () => {
+  jest.useFakeTimers();
+  try {
+    const f = fixture();
+    f.request.mockImplementationOnce(
+      (_path, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
+            once: true,
+          });
+        }),
+    );
+    const loading = f.client.load();
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect((await loading).state).toBe('error');
+    expect(f.prepared.subscribe).not.toHaveBeenCalled();
+    expect(f.values.get('@rewind/private-reminder-association:account-one')).toBeUndefined();
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
 it('coalesces concurrent opt-ins and reuses stable device identity and public registration after recreation', async () => {
   const f = fixture();
   await f.client.load();
@@ -438,6 +460,7 @@ it('does not fall back to an older destination when the device-filtered recovery
   expect(await f.client.enable()).toMatchObject({ state: 'cleanup-pending' });
   expect(f.request).toHaveBeenLastCalledWith(
     '/real/groups/group%2Fone/reminders/destinations?deviceId=device-identity-123456',
+    { signal: expect.any(AbortSignal) },
   );
   expect(f.request.mock.calls.some(([path]) => path.endsWith('/older-id'))).toBe(false);
 });
@@ -451,6 +474,7 @@ it('recovers a lost registration reply through the authorized device-filtered GE
   expect(f.request).toHaveBeenNthCalledWith(
     3,
     '/real/groups/group%2Fone/reminders/destinations?deviceId=device-identity-123456',
+    { signal: expect.any(AbortSignal) },
   );
   expect(f.request).toHaveBeenNthCalledWith(
     4,
@@ -469,6 +493,7 @@ it('uses the persisted device identity for recovery before load after a restart'
   expect(f.request).toHaveBeenNthCalledWith(
     1,
     '/real/groups/group%2Fone/reminders/destinations?deviceId=persisted_device_987654',
+    { signal: expect.any(AbortSignal) },
   );
   expect(f.request).toHaveBeenNthCalledWith(
     2,
@@ -505,7 +530,7 @@ it.each([
     f.request.mockResolvedValueOnce(reply(body as object));
     expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending', canEnable: false });
     expect(f.request).toHaveBeenCalledTimes(1);
-    expect(f.request.mock.calls[0][1]).toBeUndefined();
+    expect(f.request.mock.calls[0][1]).toEqual({ signal: expect.any(AbortSignal) });
     expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(true);
   },
 );
@@ -549,7 +574,9 @@ it('waits for the original registration promise before looking up and disabling 
   registration.resolve(reply({ destination: null }));
   await enabling;
   expect(await revoking).toMatchObject({ state: 'revoked' });
-  expect(f.request).toHaveBeenNthCalledWith(3, expect.stringContaining('?deviceId='));
+  expect(f.request).toHaveBeenNthCalledWith(3, expect.stringContaining('?deviceId='), {
+    signal: expect.any(AbortSignal),
+  });
   expect(f.request).toHaveBeenNthCalledWith(
     4,
     expect.stringContaining('/destination-one'),
