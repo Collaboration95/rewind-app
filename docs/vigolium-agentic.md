@@ -108,6 +108,8 @@ npm run security:agentic:run
 ```
 
 The scanner receives a disposable authenticated HTTP request through stdin.
+The runner uses `--input -`: Vigolium 0.5.1 skips automatic stdin detection when
+`--target` is present, which would lose the supplied POST body and authorization.
 No `--source`, personal OAuth credentials, or repository source context is
 provided. Requests and responses, including the disposable bearer token, may be
 sent to the model. This is a data-sharing approval switch, not a complete
@@ -128,7 +130,7 @@ source audit and rescan phases are disabled. AI planning and triage remain enabl
 The agent can choose modules and generate extensions; prompt instructions are
 guidance, not an execution sandbox.
 
-On successful execution with observed scanner traffic, the report says
+On successful execution with an observed accepted authenticated POST, the report says
 `scanner-completed` and exports HTML/JSONL findings with response bodies omitted
 and known credentials redacted. AI conclusions require reviewing evidence.
 A failure is `incomplete`, never a clean result. Raw agent logs and the raw scan

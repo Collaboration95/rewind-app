@@ -199,6 +199,7 @@ try {
         'Disposable backend, authentication, scope gate and reporting verified. No AI provider contacted; no vulnerability findings claimed.';
     } else {
       const before = proxy.evidence.forwarded;
+      const acceptedBefore = proxy.evidence.statuses[201] || 0;
       const configPath = join(temporary, 'vigolium.json');
       await writeFile(
         configPath,
@@ -222,8 +223,9 @@ try {
           'agent',
           'swarm',
           ...flags,
-          '--target',
-          `${proxy.origin}${path}`,
+          // Explicit input is required: --target makes Vigolium ignore piped stdin.
+          '--input',
+          '-',
           '--provider',
           settings.provider,
           '--model',
@@ -266,6 +268,10 @@ try {
       assert.ok(
         proxy.evidence.forwarded > before,
         'No scanner traffic observed; scan completion not established',
+      );
+      assert.ok(
+        (proxy.evidence.statuses[201] || 0) > acceptedBefore,
+        'No accepted authenticated POST observed from scanner; assessment remains incomplete',
       );
       await runCli([
         'export',
