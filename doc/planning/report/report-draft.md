@@ -1,6 +1,6 @@
 # Rewind project report draft
 
-Evidence cut: accepted dev `da96b2444e7fb1f7ff2867c6b003a88eccba2f9d`, 4 October 2026 SGT. This is a Sprint 2 draft; final compliance, team attribution and assessment sign-off remain pending under #362. The supplied Practice Module template defines the section order. The primary workspace's owner plan defines the current Safari/Home Screen release and retains Sprint 3 OIDC, PostgreSQL, managed backups and pre-upload retro obligations.
+Evidence cut: accepted dev `bbcd2bb07179df9313367fd5e1d2afac000af9db`, 4 October 2026 SGT. This is a Sprint 2 draft; final compliance, team attribution and assessment sign-off remain pending under #362. The supplied Practice Module template defines the section order. The primary workspace's owner plan defines the current Safari/Home Screen release and retains Sprint 3 OIDC, PostgreSQL, managed backups and pre-upload retro obligations.
 
 ## 1 Introduction
 
@@ -40,7 +40,7 @@ Sprint names are zero-based: Sprint 0 foundation; Sprint 1 13–26 September; Sp
 
 ### 2.2 Project Status
 
-Accepted dev contains the local-password/SQLite pilot, private groups/invites, capture review, contribution policy, persisted chat, cycle processing, authorized Archive delivery and the public-only PWA shell. PR #387 repairs #384's photo group label. PR #388 repairs chat #385's API prefix; two local HTTPS two-member UI journeys passed retry and retained history. #251/#252 retain broader acceptance. Safari/Home Screen #329/#350, physical orientation #327, hosted/S3 #344 and installed playback/download #345 remain open at their unmet gates. #352 is an aggregate journey outcome, not an extra implementation closure.
+Accepted dev contains the password/SQLite pilot, private groups/invites, capture review, contribution policy, persisted chat, cycle processing, authorized Archive delivery and the public-only PWA shell. PR #387 repairs the photo group label; #388 repairs chat API prefixes; #392 adds web portrait guidance. Two local HTTPS chat journeys and two group-switching journeys under #396 passed. #251/#252 retain broader acceptance. Safari/Home Screen #329/#350, physical orientation #327, hosted/S3 #344 and installed playback/download #345 remain open. #352 aggregates the journey; it is not another implementation closure.
 
 ### 2.3 Project Metrics
 
@@ -104,7 +104,7 @@ Quality classifies the exact diff and runs relevant format, lint, architecture, 
 
 ### 4.3 Continuous Delivery
 
-The accepted Deploy dev workflow runs for dev pushes or manual dispatch, classifies docs-only changes, requires successful dev Quality and uses the existing dev environment/OIDC deployment role to verify a release bundle, activate it after health checks and restore the prior release on failure. This explains accepted automation; this overnight goal does not provision or apply infrastructure. One existing hosted pilot path is evidenced, while two isolated dev/release roots and private storage configuration are prepared but still require reviewed live plans/inventory/activation. main promotion, actual deployment, hosted acceptance and final release approval remain distinct.
+Deploy dev requires successful Quality, verifies a release bundle and activates it after runtime/web health checks, with compatible rollback. The last successful run was 37142192598. Later runs 37143129969 and 37143383024 failed with host ENOSPC while staging the verified bundle, before activation. No manual retry or host cleanup was performed. Capacity recovery needs an authorized operator and subsequent deployment/health verification. Prepared dev/release roots and private-storage configuration still require reviewed live plans, inventory and activation. Main promotion, deployment and hosted acceptance remain distinct.
 
 ## 5 Individual members activity contribution summary
 
