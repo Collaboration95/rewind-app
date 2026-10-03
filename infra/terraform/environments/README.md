@@ -11,7 +11,7 @@ PR #298's whole-environment backend reservation and #174's plan/apply identities
 remain separate work. Existing Demo/backend ownership stays unchanged.
 
 The module blocks public access and ACLs, rejects non-TLS/cross-account access,
-requires explicit AES256 uploads, and checks the signed `rewind-media-class` tag
+requires explicit SSE-KMS uploads with one reviewed customer-managed key ARN, and checks the signed `rewind-media-class` tag
 against the incoming/processed/films key segment. Upload capabilities bind this
 header; the client cannot reclassify an original to escape incoming expiration.
 Incoming current/noncurrent versions expire after one day; processed clips and
@@ -19,11 +19,28 @@ films have no expiration rule. Worker cleanup remains responsible for deleting
 accepted originals promptly; asynchronous S3 lifecycle is a fallback. Immutable
 version/checksum reads remain the application's ownership/integrity boundary.
 
+Direct transfer is negotiated with `GET /real/media/config?uploadProtocol=2`.
+Older/unversioned clients receive `directTransfer: false` and keep the existing
+server-owned staging path, whose S3 writes add the class tag internally. The
+new tag-aware client also accepts earlier untagged capabilities. Before hosted
+storage activation, verify the old-client staged path and new-client direct path
+against the configured store and drain any pre-existing direct capture/upload
+sessions; a stale client holding a tagged capability fails closed and retains its
+source for retry. No hosted S3 mode is activated by this PR.
+
 See [S3 object tagging and lifecycle](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-tagging.html).
 
 The runtime policy permits scoped listing, tagged writes, pinned reads and
-version deletion for only the declared environment bucket/prefix. It creates no
-AWS credentials. Attach it only to the reviewed environment runtime identity
+version deletion for only the declared environment bucket/prefix. It permits
+GenerateDataKey/Decrypt for only the reviewed key, through S3 in the declared
+Region, for the account and object environment prefix. Bucket Keys are disabled
+to retain object-level encryption context; their bucket-level context would not
+match the prefix restriction ([AWS encryption-context guidance](https://docs.aws.amazon.com/AmazonS3/latest/userguide/specifying-kms-encryption.html)).
+The root checks that the supplied key is enabled, symmetric and customer-managed
+in this account/Region. It creates no key, key policy or AWS credentials. The
+example key ARN is nonexistent placeholder data; approved key inventory,
+key-policy/runtime permissions and KMS request cost remain rollout gates.
+Attach the runtime policy only to the reviewed environment runtime identity
 through the #174/#230 credential-delivery design. Lightsail does not receive a
 role merely because an IAM policy exists. Web clients receive short-lived signed
 capabilities, never runtime credentials. Set the exact public HTTPS CORS origin;
@@ -37,6 +54,7 @@ Before live planning/apply, #349/#230 still require:
 - Distinct reviewed plan/apply/runtime identities and account assertions (#174),
   with serialized environment operations and explicit human plan/apply review.
 - Dated total cost for both hosts, HTTPS/distributions, DNS, transfer, S3 versions,
+  approved KMS key allocation and per-object KMS requests,
   shared account services and alerts; the $100 planning ceiling is not a cap.
 - Approved alert owners/recipients and escalation thresholds; preserve current
   $10/$15 alerts until a reviewed change is accepted.

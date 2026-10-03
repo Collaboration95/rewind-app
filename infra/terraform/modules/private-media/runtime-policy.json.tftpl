@@ -2,6 +2,21 @@
   "Version": "2012-10-17",
   "Statement": [
     {
+      "Sid": "UseReviewedKeyOnlyThroughEnvironmentS3",
+      "Effect": "Allow",
+      "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+      "Resource": "${kms_key_arn}",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "s3.${aws_region}.amazonaws.com",
+          "kms:CallerAccount": "${account_id}"
+        },
+        "StringLike": {
+          "kms:EncryptionContext:aws:s3:arn": "${bucket_arn}/${environment}/*"
+        }
+      }
+    },
+    {
       "Sid": "ListOnlyEnvironmentMedia",
       "Effect": "Allow",
       "Action": [

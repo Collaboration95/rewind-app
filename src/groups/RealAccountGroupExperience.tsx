@@ -200,7 +200,7 @@ export function RealAccountGroupExperience({
     setCapturePending(true);
     setMessage(null);
     try {
-      const response = await auth.authenticatedRequest('/real/media/config');
+      const response = await auth.authenticatedRequest('/real/media/config?uploadProtocol=2');
       let mode: 'server' | 'direct' = 'server';
       if (response.status !== 404) {
         if (!response.ok)

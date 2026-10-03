@@ -60,7 +60,8 @@ it('updates group members and active context when switching selected groups', as
   let selected: typeof ownerGroup | typeof joinedGroup = ownerGroup;
   const groups = [ownerGroup, joinedGroup];
   const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
-    if (path === '/real/media/config') return jsonResponse({ directTransfer: false });
+    if (path === '/real/media/config?uploadProtocol=2')
+      return jsonResponse({ directTransfer: false });
     if (path === '/real/groups/current' && init?.method === 'POST') {
       const { groupId } = JSON.parse(String(init.body)) as { groupId: string };
       selected = groups.find((entry) => entry.group.id === groupId)!;
@@ -218,7 +219,8 @@ it('keeps loading summaries honest and ignores a delayed prior-group response af
 
 it('keeps member and invitation counts unknown when the summary request fails', async () => {
   const authenticatedRequest = jest.fn(async (path: string) => {
-    if (path === '/real/media/config') return jsonResponse({ directTransfer: false });
+    if (path === '/real/media/config?uploadProtocol=2')
+      return jsonResponse({ directTransfer: false });
     if (path === '/real/groups/current') return jsonResponse({ group: ownerGroup });
     if (path === '/real/groups') return jsonResponse({ groups: [ownerGroup] });
     if (path === `/real/groups/${ownerGroup.group.id}/members`)

@@ -39,7 +39,19 @@
       "Resource": "${bucket_arn}/*",
       "Condition": {
         "StringNotEquals": {
-          "s3:x-amz-server-side-encryption": "AES256"
+          "s3:x-amz-server-side-encryption": "aws:kms"
+        }
+      }
+    },
+    {
+      "Sid": "RequireReviewedEncryptionKey",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "${bucket_arn}/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:x-amz-server-side-encryption-aws-kms-key-id": "${kms_key_arn}"
         }
       }
     },

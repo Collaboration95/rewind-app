@@ -8,6 +8,9 @@ terraform {
 }
 
 data "aws_caller_identity" "current" {}
+data "aws_kms_key" "media" {
+  key_id = var.kms_key_arn
+}
 
 locals {
   bucket_name = "rewind-${var.environment}-media-${var.account_id}"
@@ -15,6 +18,8 @@ locals {
     bucket_arn  = aws_s3_bucket.media.arn
     environment = var.environment
     account_id  = var.account_id
+    kms_key_arn = data.aws_kms_key.media.arn
+    aws_region  = var.aws_region
   }
 }
 
@@ -32,6 +37,15 @@ resource "aws_s3_bucket" "media" {
     precondition {
       condition     = data.aws_caller_identity.current.account_id == var.account_id
       error_message = "The caller account must match this environment's reviewed account."
+    }
+    precondition {
+      condition = (
+        data.aws_kms_key.media.key_manager == "CUSTOMER" &&
+        data.aws_kms_key.media.key_state == "Enabled" &&
+        data.aws_kms_key.media.key_usage == "ENCRYPT_DECRYPT" &&
+        data.aws_kms_key.media.customer_master_key_spec == "SYMMETRIC_DEFAULT"
+      )
+      error_message = "Media requires an enabled customer-managed symmetric encryption key."
     }
   }
 }
@@ -62,8 +76,11 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "media" {
   bucket = aws_s3_bucket.media.id
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = data.aws_kms_key.media.arn
     }
+    # Object-level KMS context enforces the environment prefix in runtime IAM.
+    bucket_key_enabled = false
   }
 }
 
@@ -76,6 +93,7 @@ resource "aws_s3_bucket_cors_configuration" "media" {
       "content-type", "cache-control", "range",
       "x-amz-checksum-sha256", "x-amz-meta-media-ref",
       "x-amz-expected-bucket-owner", "x-amz-server-side-encryption", "x-amz-tagging",
+      "x-amz-server-side-encryption-aws-kms-key-id",
     ]
     expose_headers  = ["ETag", "x-amz-version-id", "x-amz-checksum-sha256", "Content-Range"]
     max_age_seconds = 300

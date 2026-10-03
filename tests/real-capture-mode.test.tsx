@@ -51,7 +51,7 @@ function setup(discovery: () => Promise<Response>) {
     if (path === '/real/groups') return response({ groups: [group] });
     if (path.endsWith('/members'))
       return response({ group: group.group, members: [], pendingInviteCount: 0 });
-    if (path === '/real/media/config') return discovery();
+    if (path === '/real/media/config?uploadProtocol=2') return discovery();
     return response({}, 404);
   });
   (useRealAccount as jest.Mock).mockReturnValue({
@@ -70,7 +70,9 @@ it.each([true, false])(
     const factory = jest.spyOn(runtime, 'createRealAccountVideoRuntimeClient');
     const view = await render(<RealAccountGroupExperience displayName="Owner" />);
     await view.findByTestId('real-group-home');
-    expect(request.mock.calls.some(([path]) => path === '/real/media/config')).toBe(false);
+    expect(
+      request.mock.calls.some(([path]) => path === '/real/media/config?uploadProtocol=2'),
+    ).toBe(false);
     await fireEvent.press(view.getByTestId('real-group-capture-action'));
     await view.findByTestId('camera-screen');
     const transferMode = directTransfer ? 'direct' : 'server';

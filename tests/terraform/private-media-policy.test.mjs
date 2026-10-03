@@ -9,6 +9,8 @@ function policy(name, environment) {
     bucket_arn: `arn:aws:s3:::rewind-${environment}-media-330599756236`,
     environment,
     account_id: '330599756236',
+    aws_region: 'ap-southeast-1',
+    kms_key_arn: 'arn:aws:kms:ap-southeast-1:330599756236:key/00000000-0000-0000-0000-000000000000',
   };
   return JSON.parse(
     text(name).replace(/\$\{([a-z_]+)\}/g, (_, key) => {
@@ -107,7 +109,9 @@ for (const environment of ['dev', 'prod']) {
     const context = {
       'aws:SecureTransport': 'true',
       'aws:PrincipalAccount': '330599756236',
-      's3:x-amz-server-side-encryption': 'AES256',
+      's3:x-amz-server-side-encryption': 'aws:kms',
+      's3:x-amz-server-side-encryption-aws-kms-key-id':
+        'arn:aws:kms:ap-southeast-1:330599756236:key/00000000-0000-0000-0000-000000000000',
       's3:RequestObjectTag/rewind-media-class': 'incoming',
     };
     const denied = (action, resource, overrides = {}) =>
@@ -120,9 +124,18 @@ for (const environment of ['dev', 'prod']) {
     assert.equal(denied('s3:PutObject', incoming), false);
     assert.equal(denied('s3:GetObjectVersion', incoming, { 'aws:SecureTransport': 'false' }), true);
     assert.equal(denied('s3:ListBucket', bucket, { 'aws:PrincipalAccount': '999999999999' }), true);
-    for (const encryption of [undefined, 'aws:kms', ''])
+    for (const encryption of [undefined, 'AES256', ''])
       assert.equal(
         denied('s3:PutObject', incoming, { 's3:x-amz-server-side-encryption': encryption }),
+        true,
+      );
+    for (const key of [
+      undefined,
+      'alias/mutable',
+      'arn:aws:kms:ap-southeast-1:999999999999:key/other',
+    ])
+      assert.equal(
+        denied('s3:PutObject', incoming, { 's3:x-amz-server-side-encryption-aws-kms-key-id': key }),
         true,
       );
     for (const kind of ['incoming', 'processed', 'films']) {
@@ -149,6 +162,44 @@ for (const environment of ['dev', 'prod']) {
       'Bucket policy must never add public grants',
     );
   });
+
+  test(`${environment} KMS use is bound to the exact key, S3 Region, caller account and media prefix`, () => {
+    const statements = policy('runtime-policy.json.tftpl', environment).Statement;
+    const key = 'arn:aws:kms:ap-southeast-1:330599756236:key/00000000-0000-0000-0000-000000000000';
+    const context = {
+      'kms:ViaService': 's3.ap-southeast-1.amazonaws.com',
+      'kms:CallerAccount': '330599756236',
+      'kms:EncryptionContext:aws:s3:arn': `arn:aws:s3:::rewind-${environment}-media-330599756236/${environment}/group/films/film`,
+    };
+    const allowed = (action, resource = key, overrides = {}) =>
+      statements.some(
+        (statement) =>
+          statement.Effect === 'Allow' &&
+          applicable(statement, action, resource, { ...context, ...overrides }),
+      );
+    for (const action of ['kms:GenerateDataKey', 'kms:Decrypt']) {
+      assert.equal(allowed(action), true);
+      assert.equal(allowed(action, key.replace('00000000-', '11111111-')), false);
+      assert.equal(allowed(action, key, { 'kms:ViaService': undefined }), false);
+      assert.equal(allowed(action, key, { 'kms:ViaService': 's3.us-east-1.amazonaws.com' }), false);
+      assert.equal(allowed(action, key, { 'kms:CallerAccount': '999999999999' }), false);
+      const other = environment === 'dev' ? 'prod' : 'dev';
+      assert.equal(
+        allowed(action, key, {
+          'kms:EncryptionContext:aws:s3:arn': `arn:aws:s3:::rewind-${environment}-media-330599756236/${other}/group/films/film`,
+        }),
+        false,
+      );
+      assert.equal(
+        allowed(action, key, {
+          'kms:EncryptionContext:aws:s3:arn': `arn:aws:s3:::rewind-${environment}-media-330599756236`,
+        }),
+        false,
+      );
+    }
+    assert.equal(allowed('kms:ScheduleKeyDeletion'), false);
+    assert.equal(allowed('kms:CreateGrant'), false);
+  });
 }
 
 test('storage preserves public block, immutable versions and retained output without default deletion', () => {
@@ -164,7 +215,11 @@ test('storage preserves public block, immutable versions and retained output wit
   assert.match(main, /force_destroy\s*=\s*false/);
   assert.match(main, /object_ownership\s*=\s*"BucketOwnerEnforced"/);
   assert.match(main, /status\s*=\s*"Enabled"/);
-  assert.match(main, /sse_algorithm\s*=\s*"AES256"/);
+  assert.match(main, /sse_algorithm\s*=\s*"aws:kms"/);
+  assert.match(main, /kms_master_key_id\s*=\s*data\.aws_kms_key\.media\.arn/);
+  assert.match(main, /bucket_key_enabled\s*=\s*false/);
+  assert.match(main, /key_manager\s*==\s*"CUSTOMER"/);
+  assert.match(main, /key_state\s*==\s*"Enabled"/);
   assert.match(main, /data\.aws_caller_identity\.current\.account_id\s*==\s*var.account_id/);
   assert.equal((main.match(/\n\s+expiration \{/g) ?? []).length, 1);
   assert.equal((main.match(/\n\s+noncurrent_version_expiration \{/g) ?? []).length, 1);
@@ -176,6 +231,7 @@ test('storage preserves public block, immutable versions and retained output wit
     'x-amz-meta-media-ref',
     'x-amz-expected-bucket-owner',
     'x-amz-server-side-encryption',
+    'x-amz-server-side-encryption-aws-kms-key-id',
     'x-amz-version-id',
   ])
     assert.ok(main.includes(`"${header}"`), header);

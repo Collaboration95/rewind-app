@@ -27,11 +27,17 @@ variable "cors_origin" {
   type = string
 }
 
+variable "kms_key_arn" {
+  type = string
+}
+
 module "private_media" {
   source      = "../../modules/private-media"
   environment = "prod"
   account_id  = var.account_id
   cors_origin = var.cors_origin
+  aws_region  = var.aws_region
+  kms_key_arn = var.kms_key_arn
 }
 
 output "private_media" {

@@ -3553,7 +3553,12 @@ async function handleRealGroupRequest(
   }
   if (url.pathname === '/real/media/config' && request.method === 'GET') {
     authJson(request, response, config, 200, {
-      directTransfer: options.uploadIntents?.transport.backend === 's3',
+      // Earlier installed clients reject signed lifecycle-tag headers. Keep
+      // their server-owned staging path until they negotiate tag-aware uploads.
+      directTransfer:
+        options.uploadIntents?.transport.backend === 's3' &&
+        url.searchParams.getAll('uploadProtocol').length === 1 &&
+        url.searchParams.get('uploadProtocol') === '2',
       maxVideoBytes: MAX_STAGED_SOURCE_BYTES,
       maxPhotoBytes: 10 * 1024 * 1024,
     });
