@@ -47,7 +47,7 @@ function fixture() {
     if (options?.method === 'POST' && path.endsWith('/destinations'))
       return reply({ destination: { id: 'destination-one', enabled: true, provider: 'webpush' } });
     if (options?.method === 'POST') return reply({ disabled: true });
-    return reply({ destinations: [{ id: 'destination-one', enabled: true }] });
+    return reply({ destinations: [{ id: 'destination-one', provider: 'webpush', enabled: true }] });
   });
   const createDeviceId = jest.fn(async () => 'device-identity-123456');
   const options = {
@@ -213,8 +213,12 @@ it('rejects outsider registration without displaying server/token material or st
   expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(false);
 });
 
-it('preserves a lost-registration-response gate across restart and revoke', async () => {
+it('preserves a lost-registration-response gate across restart and revoke when lookup is offline', async () => {
   const f = fixture();
+  const original = f.request.getMockImplementation()!;
+  f.request.mockImplementation((path, init) =>
+    path.includes('?deviceId=') ? Promise.reject(new Error('Offline')) : original(path, init),
+  );
   await f.client.load();
   f.request.mockRejectedValueOnce(new Error(secret.endpoint));
   expect(await f.client.enable()).toMatchObject({ state: 'cleanup-pending', canEnable: false });
@@ -421,18 +425,194 @@ it.each(['account', 'group'] as const)(
   },
 );
 
-it('does not use an older destination acknowledgement as proof that a lost new registration was removed', async () => {
+it('does not fall back to an older destination when the device-filtered recovery response is malformed', async () => {
   const f = fixture();
   f.values.set(
     '@rewind/private-reminder-association:account-one',
     JSON.stringify({ id: 'older-id' }),
   );
   await f.client.load();
-  f.request.mockRejectedValueOnce(new Error('Registration response lost'));
+  f.request
+    .mockRejectedValueOnce(new Error('Registration response lost'))
+    .mockResolvedValueOnce(reply({ destinations: [{ id: 'older-id' }] }));
   expect(await f.client.enable()).toMatchObject({ state: 'cleanup-pending' });
   expect(f.request).toHaveBeenLastCalledWith(
-    expect.stringContaining('/older-id'),
+    '/real/groups/group%2Fone/reminders/destinations?deviceId=device-identity-123456',
+  );
+  expect(f.request.mock.calls.some(([path]) => path.endsWith('/older-id'))).toBe(false);
+});
+
+it('recovers a lost registration reply through the authorized device-filtered GET and disables its exact destination', async () => {
+  const f = fixture();
+  await f.client.load();
+  f.request.mockRejectedValueOnce(new Error('Registration response lost'));
+  const result = await f.client.enable();
+  expect(result).toMatchObject({ state: 'error', enabled: false, canDisable: false });
+  expect(f.request).toHaveBeenNthCalledWith(
+    3,
+    '/real/groups/group%2Fone/reminders/destinations?deviceId=device-identity-123456',
+  );
+  expect(f.request).toHaveBeenNthCalledWith(
+    4,
+    '/real/groups/group%2Fone/reminders/destinations/destination-one',
     expect.objectContaining({ body: '{"enabled":false}' }),
   );
-  expect(await f.client.disable()).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(false);
+});
+
+it('uses the persisted device identity for recovery before load after a restart', async () => {
+  const f = fixture();
+  f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+  f.values.set('@rewind/private-reminder-association:account-one', '{"uncertain":true}');
+  const state = await f.client.revoke();
+  expect(state).toMatchObject({ state: 'revoked', enabled: false, canDisable: false });
+  expect(f.request).toHaveBeenNthCalledWith(
+    1,
+    '/real/groups/group%2Fone/reminders/destinations?deviceId=persisted_device_987654',
+  );
+  expect(f.request).toHaveBeenNthCalledWith(
+    2,
+    expect.stringContaining('/destination-one'),
+    expect.objectContaining({ body: '{"enabled":false}' }),
+  );
+  expect(f.options.createDeviceId).not.toHaveBeenCalled();
+});
+
+it.each([
+  null,
+  {},
+  { destinations: null },
+  { destinations: [] },
+  { destinations: [{ id: '../foreign', provider: 'webpush', enabled: true }] },
+  { destinations: [{ id: 'own-id', provider: 'unknown', enabled: true }] },
+  { destinations: [{ id: 'own-id', provider: 'expo', enabled: 'true' }] },
+  { destinations: [{ id: 'own-id', provider: 'expo' }] },
+  {
+    destinations: [
+      { id: 'one', provider: 'expo', enabled: true },
+      { id: 'two', provider: 'expo', enabled: true },
+    ],
+  },
+])(
+  'keeps malformed or empty device lookup pending without disabling a guessed destination: %j',
+  async (body) => {
+    const f = fixture();
+    f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+    f.values.set(
+      '@rewind/private-reminder-association:account-one',
+      '{"id":"older-id","uncertain":true}',
+    );
+    f.request.mockResolvedValueOnce(reply(body as object));
+    expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending', canEnable: false });
+    expect(f.request).toHaveBeenCalledTimes(1);
+    expect(f.request.mock.calls[0][1]).toBeUndefined();
+    expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(true);
+  },
+);
+
+it.each([401, 403, 500])('keeps failed device lookup %s pending for retry', async (status) => {
+  const f = fixture();
+  f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+  f.values.set('@rewind/private-reminder-association:account-one', '{"uncertain":true}');
+  f.request.mockResolvedValueOnce(reply({ destinations: [] }, status));
+  expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(true);
+  expect(await f.client.revoke()).toMatchObject({ state: 'revoked' });
+});
+
+it('keeps failed disable pending and retries the recovered destination without clearing the session marker', async () => {
+  const f = fixture();
+  f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+  f.values.set('@rewind/private-reminder-association:account-one', '{"uncertain":true}');
+  f.request
+    .mockResolvedValueOnce(
+      reply({ destinations: [{ id: 'recovered-id', provider: 'expo', enabled: true }] }),
+    )
+    .mockRejectedValueOnce(new Error('Disable reply lost'));
+  expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.values.get('@rewind/private-reminder-association:account-one')).toContain(
+    'recovered-id',
+  );
+  expect(await f.client.revoke()).toMatchObject({ state: 'revoked', enabled: false });
+});
+
+it('waits for the original registration promise before looking up and disabling its result', async () => {
+  const f = fixture();
+  const registration = deferred<Response>();
+  await f.client.load();
+  f.request.mockImplementationOnce(() => registration.promise);
+  const enabling = f.client.enable();
+  for (let step = 0; step < 8; step++) await Promise.resolve();
+  const revoking = f.client.revoke();
+  for (let step = 0; step < 8; step++) await Promise.resolve();
+  expect(f.request).toHaveBeenCalledTimes(2);
+  registration.resolve(reply({ destination: null }));
+  await enabling;
+  expect(await revoking).toMatchObject({ state: 'revoked' });
+  expect(f.request).toHaveBeenNthCalledWith(3, expect.stringContaining('?deviceId='));
+  expect(f.request).toHaveBeenNthCalledWith(
+    4,
+    expect.stringContaining('/destination-one'),
+    expect.objectContaining({ body: '{"enabled":false}' }),
+  );
+});
+
+it('does not disable a recovered destination after authorization changes during the lookup', async () => {
+  const f = fixture();
+  const lookup = deferred<Response>();
+  let current = true;
+  f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+  f.values.set('@rewind/private-reminder-association:account-one', '{"uncertain":true}');
+  f.request.mockImplementationOnce(() => lookup.promise);
+  const client = createPrivateReminderClient({ ...f.options, isCurrentContext: () => current });
+  const revoking = client.revoke();
+  for (let step = 0; step < 8; step++) await Promise.resolve();
+  expect(f.request).toHaveBeenCalledTimes(1);
+  current = false;
+  lookup.resolve(
+    reply({ destinations: [{ id: 'recovered-id', provider: 'webpush', enabled: true }] }),
+  );
+  expect(await revoking).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.request).toHaveBeenCalledTimes(1);
+  expect(f.prepared.unsubscribe).not.toHaveBeenCalled();
+});
+
+it('never invents a replacement device identity for an uncertain registration with missing persisted identity', async () => {
+  const f = fixture();
+  f.values.set('@rewind/private-reminder-association:account-one', '{"uncertain":true}');
+  expect(await f.client.load()).toMatchObject({ state: 'cleanup-pending' });
+  expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.options.createDeviceId).not.toHaveBeenCalled();
+  expect(f.request).not.toHaveBeenCalled();
+});
+
+it('keeps invalid JSON recovery replies pending and never posts a disable', async () => {
+  const f = fixture();
+  f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+  f.values.set('@rewind/private-reminder-association:account-one', '{"uncertain":true}');
+  const malformed = reply({});
+  malformed.json = async () => {
+    throw new Error('Malformed reply');
+  };
+  f.request.mockResolvedValueOnce(malformed);
+  expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.request).toHaveBeenCalledTimes(1);
+  expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(true);
+});
+
+it('requires a disable acknowledgement even when the device-filtered row is already disabled', async () => {
+  const f = fixture();
+  f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+  f.values.set('@rewind/private-reminder-association:account-one', '{"uncertain":true}');
+  f.request
+    .mockResolvedValueOnce(
+      reply({ destinations: [{ id: 'already-disabled', provider: 'expo', enabled: false }] }),
+    )
+    .mockResolvedValueOnce(reply({ disabled: false }));
+  expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.request).toHaveBeenLastCalledWith(
+    expect.stringContaining('/already-disabled'),
+    expect.objectContaining({ body: '{"enabled":false}' }),
+  );
+  expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(true);
 });

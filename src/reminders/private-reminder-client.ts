@@ -86,17 +86,59 @@ export function createPrivateReminderClient({
       'This reminder context has changed. Open the current group to continue.',
     );
 
+  async function recoverUncertainDestination(): Promise<boolean> {
+    if (!registrationUncertain) return true;
+    if (!isCurrentContext()) return false;
+    try {
+      // Recovery must use the identity that crossed the registration boundary,
+      // including after restart. Never generate a new identity for a lookup.
+      deviceId ??= (await storage.getItem(DEVICE_KEY)) ?? undefined;
+      if (!deviceId || !/^[A-Za-z0-9_-]{16,128}$/.test(deviceId) || !isCurrentContext())
+        return false;
+      const response = await authenticatedRequest(
+        `${path}?deviceId=${encodeURIComponent(deviceId)}`,
+      );
+      if (!response.ok || !isCurrentContext()) return false;
+      const body: unknown = await response.json();
+      if (!isCurrentContext() || !body || typeof body !== 'object' || Array.isArray(body))
+        return false;
+      const rows = (body as { destinations?: unknown }).destinations;
+      // The account/device key is unique. Empty or ambiguous lookup results do
+      // not prove that a lost registration is safe to forget.
+      if (!Array.isArray(rows) || rows.length !== 1) return false;
+      const row: unknown = rows[0];
+      if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+      const candidate = row as { id?: unknown; provider?: unknown; enabled?: unknown };
+      if (
+        typeof candidate.id !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,128}$/.test(candidate.id) ||
+        (candidate.provider !== 'expo' && candidate.provider !== 'webpush') ||
+        typeof candidate.enabled !== 'boolean'
+      )
+        return false;
+      destinationId = candidate.id;
+      // Keep uncertainty durable until the exact recovered row is disabled.
+      await storage.setItem(key, JSON.stringify({ id: destinationId, uncertain: true }));
+      return isCurrentContext();
+    } catch {
+      return false;
+    }
+  }
+
   async function cleanup(): Promise<boolean> {
     cleanupPending = true;
-    let confirmed = !registrationUncertain;
+    const recovered = await recoverUncertainDestination();
+    let confirmed = recovered;
     if (destinationId && !isCurrentContext()) confirmed = false;
-    if (destinationId && isCurrentContext()) {
+    if (recovered && destinationId && isCurrentContext()) {
       try {
         const response = await authenticatedRequest(
           `${path}/${encodeURIComponent(destinationId)}`,
           jsonOptions({ enabled: false }),
         );
-        if (!response.ok || (await response.json()).disabled !== true) confirmed = false;
+        if (!response.ok || (await response.json()).disabled !== true || !isCurrentContext())
+          confirmed = false;
+        else registrationUncertain = false;
       } catch {
         confirmed = false;
       }
@@ -134,7 +176,13 @@ export function createPrivateReminderClient({
         if (typeof metadata.id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(metadata.id))
           destinationId = metadata.id;
       }
-      deviceId = (await storage.getItem(DEVICE_KEY)) ?? (await createDeviceId());
+      deviceId = (await storage.getItem(DEVICE_KEY)) ?? undefined;
+      if (!deviceId && registrationUncertain)
+        return result(
+          'cleanup-pending',
+          'The registered device identity is unavailable. Server removal remains unconfirmed.',
+        );
+      deviceId ??= await createDeviceId();
       if (!active()) return stale();
       if (!/^[A-Za-z0-9_-]{16,128}$/.test(deviceId)) throw new Error('device');
       await storage.setItem(DEVICE_KEY, deviceId);
@@ -142,11 +190,12 @@ export function createPrivateReminderClient({
       if (!active()) return stale();
       if ('unsupported' in capability) return result('unsupported', capability.unsupported);
       prepared = capability;
-      if (registrationUncertain)
+      if (registrationUncertain && !(await cleanup()))
         return result(
           'cleanup-pending',
-          'A registration response was lost. Sign out with confirmed server revocation before using another account.',
+          'A registration response was lost. Device removal is unconfirmed; retry before switching accounts.',
         );
+      if (!active()) return stale();
       const permission = await prepared.permission();
       if (!active()) return stale();
       if (permission === 'denied') {
@@ -216,8 +265,8 @@ export function createPrivateReminderClient({
         await cleanup();
         return stale();
       }
-      // Persist ambiguity before crossing the registration boundary. A lost reply
-      // cannot identify this device through the server's account-wide list.
+      // Persist ambiguity before crossing the registration boundary so a lost
+      // reply can be recovered using the authorized device-filtered GET.
       await storage.setItem(key, JSON.stringify({ id: destinationId, uncertain: true }));
       if (!active()) {
         await cleanup();
