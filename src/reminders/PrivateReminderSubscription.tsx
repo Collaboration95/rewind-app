@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { COLORS } from '../theme';
 import type { PrivateReminderClient, PrivateReminderSnapshot } from './private-reminder-client';
 
 // Lead supplies a client scoped to the authenticated session/current group.
-// A parent lifecycle must await client.revoke() before group switch or logout.
-export function PrivateReminderSubscription({ client }: { client: PrivateReminderClient }) {
-  return <SubscriptionContext key={clientIdentity(client)} client={client} />;
+// Group changes await revoke; logout preserves immediate protected-UI closure.
+export function PrivateReminderSubscription({
+  client,
+  disabled = false,
+}: {
+  client: PrivateReminderClient;
+  disabled?: boolean;
+}) {
+  return <SubscriptionContext key={clientIdentity(client)} client={client} disabled={disabled} />;
 }
 const identities = new WeakMap<PrivateReminderClient, number>();
 let nextIdentity = 0;
@@ -14,7 +20,13 @@ function clientIdentity(client: PrivateReminderClient) {
   if (!identities.has(client)) identities.set(client, ++nextIdentity);
   return identities.get(client)!;
 }
-function SubscriptionContext({ client }: { client: PrivateReminderClient }) {
+function SubscriptionContext({
+  client,
+  disabled,
+}: {
+  client: PrivateReminderClient;
+  disabled: boolean;
+}) {
   const [snapshot, setSnapshot] = useState<PrivateReminderSnapshot | null>(null);
   const [pending, setPending] = useState(false);
   const mounted = useRef(true);
@@ -24,13 +36,21 @@ function SubscriptionContext({ client }: { client: PrivateReminderClient }) {
     void client.load().then((value) => {
       if (active) setSnapshot(value);
     });
+    const foreground = AppState.addEventListener('change', (state) => {
+      if (state === 'active')
+        void client.load().then((value) => {
+          if (active) setSnapshot(value);
+        });
+    });
     return () => {
       active = false;
       mounted.current = false;
+      foreground.remove();
       // Service lifetime belongs to the auth/group owner, including pre-switch revoke.
     };
   }, [client]);
   async function update(action: () => Promise<PrivateReminderSnapshot>) {
+    if (disabled || pending) return;
     setPending(true);
     try {
       const value = await action();
@@ -53,8 +73,8 @@ function SubscriptionContext({ client }: { client: PrivateReminderClient }) {
       </Text>
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ disabled: pending || !snapshot?.canEnable }}
-        disabled={pending || !snapshot?.canEnable}
+        accessibilityState={{ disabled: disabled || pending || !snapshot?.canEnable }}
+        disabled={disabled || pending || !snapshot?.canEnable}
         onPress={() => void update(client.enable)}
         testID="private-reminder-enable"
         style={styles.action}
@@ -63,8 +83,8 @@ function SubscriptionContext({ client }: { client: PrivateReminderClient }) {
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ disabled: pending || !snapshot?.canDisable }}
-        disabled={pending || !snapshot?.canDisable}
+        accessibilityState={{ disabled: disabled || pending || !snapshot?.canDisable }}
+        disabled={disabled || pending || !snapshot?.canDisable}
         onPress={() => void update(client.disable)}
         testID="private-reminder-disable"
         style={styles.action}
@@ -73,8 +93,8 @@ function SubscriptionContext({ client }: { client: PrivateReminderClient }) {
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ disabled: pending }}
-        disabled={pending}
+        accessibilityState={{ disabled: disabled || pending }}
+        disabled={disabled || pending}
         onPress={() => void update(client.load)}
         testID="private-reminder-check"
         style={styles.action}
