@@ -3582,10 +3582,23 @@ async function handleRealGroupRequest(
     const actor = { sessionToken: token!, groupId };
     if (request.method === 'GET' && !id) {
       const kind = reminderDestinationMatch[2];
+      const deviceIds = url.searchParams.getAll('deviceId');
+      if (
+        deviceIds.length > 0 &&
+        (kind !== 'destinations' ||
+          deviceIds.length !== 1 ||
+          !/^[A-Za-z0-9_-]{16,128}$/.test(deviceIds[0]))
+      ) {
+        authJson(request, response, config, 400, {
+          error: 'invalid_destination',
+          message: 'Use a valid reminder device identity.',
+        });
+        return;
+      }
       const rows =
         kind === 'outbox'
           ? listReminderOutbox(database, actor, currentClock())
-          : listReminderDestinations(database, actor, currentClock());
+          : listReminderDestinations(database, actor, currentClock(), deviceIds[0]);
       if (!rows) return sendDenied(response, config);
       authJson(request, response, config, 200, { [kind]: rows });
       return;
