@@ -15,6 +15,13 @@ function passingReport() {
     films: Array.from({ length: 3 }, () => ({
       inputCount: 25,
       inputSeconds: 150,
+      inputs: Array.from({ length: 25 }, (_, index) => ({
+        index,
+        width: 720,
+        height: 1280,
+        frameRates: { nominal: `${index % 2 ? 30 : 24}/1` },
+      })),
+      metadata: { width: 180, height: 320 },
       queueMs: 1,
       workerMs: 5000,
       endToEndMs: 5001,
@@ -38,6 +45,15 @@ test('targets apply per operation and repetition, never hide misses in averages'
   const report = passingReport();
   assert.doesNotThrow(() => assertTargets(report));
   for (const mutation of [
+    (r) => {
+      r.films[0].inputs[0].width = 180;
+    },
+    (r) => {
+      r.films[0].inputs[0].frameRates.nominal = '12/1';
+    },
+    (r) => {
+      r.films[0].metadata.width = 720;
+    },
     (r) => {
       r.api[2].samples
         .filter((s) => s.operation === 'prompt')

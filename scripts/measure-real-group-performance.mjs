@@ -13,6 +13,12 @@ const exec = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const build = (name) => import(join(root, 'server/dist', `${name}.js`));
 export const PROTOCOL = Object.freeze({ runs: 3, clients: 5, warmupMs: 30_000, samples: 100 });
+export const SOURCE_PROFILE = Object.freeze({
+  width: 720,
+  height: 1280,
+  frameRates: [24, 30],
+  seconds: 6,
+});
 
 // Nearest-rank percentiles: retain every observation, including failures.
 export function summarize(samples) {
@@ -43,6 +49,14 @@ export function assertTargets(report) {
   for (const film of report.films) {
     assert.equal(film.inputCount, 25);
     assert.equal(film.inputSeconds, 150);
+    assert.equal(film.inputs.length, 25);
+    for (const input of film.inputs) {
+      assert.equal(input.width, SOURCE_PROFILE.width);
+      assert.equal(input.height, SOURCE_PROFILE.height);
+      assert.equal(input.frameRates.nominal, `${SOURCE_PROFILE.frameRates[input.index % 2]}/1`);
+    }
+    assert.equal(film.metadata.width, 180);
+    assert.equal(film.metadata.height, 320);
     assert.ok(film.queueMs >= 0 && film.workerMs > 0);
     assert.ok(film.endToEndMs >= film.workerMs);
     assert.ok(film.endToEndMs <= 600_000, 'Boundary-to-ready exceeds ten minutes');
@@ -59,6 +73,26 @@ async function ffmpeg(args, options = {}) {
     maxBuffer: 8_000_000,
     ...options,
   });
+}
+
+async function probeFrameRates(path) {
+  const { stdout } = await exec(
+    'ffprobe',
+    [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=avg_frame_rate,r_frame_rate',
+      '-of',
+      'json',
+      path,
+    ],
+    { timeout: 10_000 },
+  );
+  const stream = JSON.parse(stdout).streams[0];
+  return { nominal: stream.r_frame_rate, average: stream.avg_frame_rate };
 }
 
 async function request(origin, actor, path, body, expected = 200) {
@@ -225,7 +259,7 @@ async function prepareFilm({ database, group, members, now }, directory) {
       '-f',
       'lavfi',
       '-i',
-      `color=c=${colors[i % 3]}:size=${i % 2 ? '360x640' : '180x320'}:rate=${i % 2 ? 24 : 12}:duration=6`,
+      `color=c=${colors[i % 3]}:size=${SOURCE_PROFILE.width}x${SOURCE_PROFILE.height}:rate=${SOURCE_PROFILE.frameRates[i % 2]}:duration=${SOURCE_PROFILE.seconds}`,
       '-f',
       'lavfi',
       '-i',
@@ -243,12 +277,17 @@ async function prepareFilm({ database, group, members, now }, directory) {
     ]);
     const metadata = await probeClipWithFfmpeg('ffmpeg', path);
     assert.ok(Math.abs(metadata.durationSeconds - 6) < 0.1 && metadata.hasAudio);
+    assert.equal(metadata.width, SOURCE_PROFILE.width);
+    assert.equal(metadata.height, SOURCE_PROFILE.height);
+    const frameRates = await probeFrameRates(path);
+    assert.equal(frameRates.nominal, `${SOURCE_PROFILE.frameRates[i % 2]}/1`);
     hashes.push({
       index: i,
       sha256: createHash('sha256')
         .update(await readFile(path))
         .digest('hex'),
       ...metadata,
+      frameRates,
     });
     const accepted = new Date(now.getTime() + i * 1000).toISOString();
     database
@@ -385,7 +424,7 @@ async function measureFilm({ database, group }, { outputDir, hashes }) {
     outputSha256: createHash('sha256')
       .update(await readFile(output))
       .digest('hex'),
-    metadata,
+    metadata: { ...metadata, frameRates: await probeFrameRates(output) },
     inputs: hashes,
   };
 }
@@ -433,6 +472,7 @@ export async function main() {
     schema: 1,
     startedAt: new Date().toISOString(),
     protocol: PROTOCOL,
+    sourceProfile: SOURCE_PROFILE,
     host: {
       platform: platform(),
       release: release(),

@@ -53,8 +53,7 @@ share one Node process. It is not a separate-host network measurement or an
 open-loop throughput/SLA claim.
 
 Film: each repetition creates 25 distinct six-second H.264/AAC portrait clips
-(150 seconds nominal total), with alternating 180x320/12fps and 360x640/24fps
-sources, 44.1/48kHz audio, varying sine frequencies and source volumes. Every
+(150 seconds nominal total), with 720x1280 sources at alternating 24/30fps, 44.1/48kHz audio, varying sine frequencies and source volumes. Every
 file is generated and probed; hashes and metadata are retained. Reverse row
 insertion and misleading job creation timestamps exercise accepted-time order.
 The existing durable job is created and immediately dispatched through the
@@ -92,98 +91,150 @@ lead-owned gates. Repeat against the final PostgreSQL/identity/storage setup
 when that reserved work lands. No optimization or instrumentation change is
 justified unless a measured target miss identifies a concrete bottleneck.
 
-## Observed result — 3 October 2026
+## Observed result — 3 October 2026, 720p inputs
 
-Final runner measurement: **exit 0**, 15:56:13–15:58:07 SGT. All three
-normal declared repetitions passed. API results are 1,200 measured requests
-(100 per operation per repetition), excluding warm-up. Films total 75 newly
-generated six-second input files across three independent fixtures.
+Runner measurement: **exit 0**, 16:09:22–16:11:24 SGT. Three independent
+repetitions passed with **25 newly generated 720x1280 clips at alternating
+24/30fps, six seconds each**, five members and 150 seconds input per film.
+API protocol remains unchanged: five concurrent clients, 30-second warm-up,
+100 measured samples per operation per repetition, 1,200 measured requests.
+Audio still varies frequency, volume and 44.1/48kHz sampling. All inputs are
+synthetic solid-color/audio-tone fixtures, not captured camera footage.
+
+**Output limitation:** the unchanged production film compiler scales/pads to
+**180x320**, then encodes H.264/AAC. FFprobe measured nominal **24/1 fps** and
+average **168000000/6264977 fps (26.816)** for this mixed-rate fixture. The
+photo-to-clip path explicitly uses 12fps; the film compiler does not set a
+12fps filter or encoder rate. No production profile was altered. This run
+exercises realistic input dimensions and decode/downscale, while retaining
+low-complexity synthetic content and a low-resolution film. It does **not**
+establish 720p final client-retro/media acceptance, camera bitrate/entropy,
+real-device playback or hosted performance.
+
+Previous 180x320/12fps and 360x640/24fps input results are superseded for the
+submitted 25-clip target. They are not headline acceptance evidence.
 
 | Run | Operation | Samples | Errors | p50 ms | p95 ms | Max ms |
 | --- | --------- | ------: | -----: | -----: | -----: | -----: |
-| 1   | group     |     100 |      0 |  2.894 |  4.254 |  8.108 |
-| 1   | prompt    |     100 |      0 |  3.091 |  4.375 |  8.312 |
-| 1   | budget    |     100 |      0 |  2.846 |  3.349 |  8.105 |
-| 1   | chat      |     100 |      0 |  2.963 |  4.206 |  8.180 |
-| 2   | group     |     100 |      0 |  3.005 |  3.803 |  4.221 |
-| 2   | prompt    |     100 |      0 |  3.215 |  3.979 |  7.039 |
-| 2   | budget    |     100 |      0 |  3.001 |  3.713 |  4.236 |
-| 2   | chat      |     100 |      0 |  3.060 |  3.807 |  4.324 |
-| 3   | group     |     100 |      0 |  3.102 |  4.897 |  6.598 |
-| 3   | prompt    |     100 |      0 |  3.297 |  5.046 |  8.751 |
-| 3   | budget    |     100 |      0 |  3.102 |  4.394 |  6.382 |
-| 3   | chat      |     100 |      0 |  3.183 |  4.845 |  8.632 |
+| 1   | group     |     100 |      0 |  3.136 |  4.804 | 11.334 |
+| 1   | prompt    |     100 |      0 |  3.300 |  5.105 | 11.681 |
+| 1   | budget    |     100 |      0 |  3.134 |  4.820 |  6.264 |
+| 1   | chat      |     100 |      0 |  3.226 |  4.864 | 11.275 |
+| 2   | group     |     100 |      0 |  3.229 |  5.571 | 10.141 |
+| 2   | prompt    |     100 |      0 |  3.414 |  5.659 | 10.426 |
+| 2   | budget    |     100 |      0 |  3.227 |  5.477 |  9.998 |
+| 2   | chat      |     100 |      0 |  3.321 |  5.405 | 10.103 |
+| 3   | group     |     100 |      0 |  3.020 |  4.977 |  8.575 |
+| 3   | prompt    |     100 |      0 |  3.192 |  5.298 |  8.993 |
+| 3   | budget    |     100 |      0 |  3.016 |  4.898 |  8.153 |
+| 3   | chat      |     100 |      0 |  3.128 |  4.870 |  8.335 |
 
 | Run | Warm-up seconds | Warm-up requests | Queue ms | Worker seconds | End-to-end seconds | Output seconds |  LUFS |
 | --- | --------------: | ---------------: | -------: | -------------: | -----------------: | -------------: | ----: |
-| 1   |          30.103 |             1400 |    2.352 |          4.291 |              4.293 |          150.4 | -17.4 |
-| 2   |          30.043 |             1400 |    1.421 |          4.232 |              4.233 |          150.4 | -17.4 |
-| 3   |          30.005 |             1385 |    3.676 |          4.247 |              4.251 |          150.4 | -17.4 |
+| 1   |          30.036 |             1360 |    2.905 |          4.563 |              4.566 |          150.4 | -17.4 |
+| 2   |          30.087 |             1360 |    1.936 |          4.525 |              4.527 |          150.4 | -17.4 |
+| 3   |          30.036 |             1355 |    0.957 |          4.733 |              4.734 |          150.4 | -17.4 |
 
 All films completed 25/25 inputs in one attempt, decoded video/audio fully,
-and passed all 25 chronological frame positions. Production normalization
-yielded -17.4 LUFS in all repetitions. Three repetitions of outsider group
-(404), budget (403), chat (403), and prompt mutation (403) denial passed.
-Non-owner prompt mutation returned 403; the actual seeded clip owner
-received 404 for sealed download before compilation/release.
+passed all 25 chronological frame positions and measured -17.4 LUFS. All
+three repetitions denied outsider group (404), budget (403), chat (403),
+prompt mutation (403), non-owner prompt mutation (403) and the actual seeded
+clip owner's sealed download (404). Input dimensions and nominal frame rates
+are now asserted, independently probed and retained for every clip; output
+dimensions are asserted and its actual frame rates are retained.
 
 ### Host, build and exact configuration
 
 - Host: Apple M5, 10 logical CPUs, arm64, Darwin 25.6.0, 32 GiB RAM.
-- Initial free memory: 1478623232 bytes; load averages: [3.51708984375, 3.591796875, 3.83203125].
-- Power: AC attached was observed with `pmset -g batt` before the final run.
-- Lead reported concurrent WebKit activity on owned port 10894. CPU contention
-  was accepted and may affect these numbers; broad local suites were serialized
-  after the measurement.
-- Runtime: `/opt/homebrew/bin/node`, **v26.3.1**; npm 11.16.0. Node 22 was not
+- Initial free memory: 401096704 bytes; load averages: [1.63232421875, 2.48046875, 3.18212890625].
+- Lead continues independent infrastructure work; other local activity can
+  affect resources. No benchmark claims an otherwise idle host. Broad local
+  suites and braces diagnostics ran after the media measurement.
+- Runtime: `/opt/homebrew/bin/node`, **v26.3.1**, V8 **14.6.202.34-node.20**;
+  npm **11.16.0**. NODE_OPTIONS was unset during diagnosis. Node 22 was not
   used or verified; the usual node@22 path was unavailable per lead context.
 - Encoder: ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers.
-- Application base: `445b56424ad89ff549529dab5729074da3fe0c75`. The standalone runner was
-  uncommitted during measurement; no production application files changed.
-- Runner SHA-256: `4f6d897511f9c700ce8d9ad21fea1e4c5521e52475faa651073248f95c5c9ca5`.
+- Application base: `445b56424ad89ff549529dab5729074da3fe0c75`.
+- Checkout HEAD during the new measurement: `44c6a9a8227833ee22bf7a04e91ddb6db2ed7d19`
+  plus the uncommitted 720p runner/tests patch. Production sources unchanged.
+- Measured runner SHA-256: `3184457245fe448c4e0bc88dadd6f1b943ebd342bd64de74d5deea588ce118fe`.
 - Lockfile SHA-256: `1a236e2911336985fd5b34b123348eb0a4a9429560223fd7bcba0f5c67f4b005`.
-- Final measurement used an owned `npm ci --offline` install, not the original
-  dependency symlink. Install-script warnings for fsevents/unrs-resolver were
-  emitted; no package-script approvals were added.
-- Configuration: loopback-only HTTP, OS-assigned ephemeral ports, local SQLite
-  and retained local processed bytes; native bearer sessions and loopback auth
-  exception. No IdP, object-storage provider, hosted traffic, profiler or
-  external provisioning. One FFmpeg compilation worker; five HTTP clients.
+- Dependencies: owned locked `npm ci --offline` install; no package/lockfile
+  edits or subsequent dependency replacements. The initial shared dependency
+  symlink had failed node-forge provenance and was removed before pinned runs.
+- Configuration: loopback-only HTTP, OS-assigned ephemeral ports, SQLite and
+  retained local processed bytes, native bearer sessions, local-only auth
+  exception, one compilation worker and five HTTP clients. No hosted load,
+  IdP latency, cloud storage, external provisioning or profiler.
 
-Raw final samples, host/configuration, durable timestamps and all input/output
-checksums are retained in [/var/folders/g8/5_hq0kbs4499lmjhph03mvgc0000gn/T/rewind-perf-353-u6YPEv/report.json](/var/folders/g8/5_hq0kbs4499lmjhph03mvgc0000gn/T/rewind-perf-353-u6YPEv/report.json). Fixture database/media
-files were removed, and all owned measurement listeners closed. The runner
-source and report can reproduce the declared workload; the report is local
-temporary output and is not committed as a separate evidence folder.
+Raw samples, durable timestamps, input/output probes and checksums remain in
+the runner's temporary mode-0600 `report.json`; the runner prints its local
+path. Fixture databases/media and listeners were cleaned. Local logs/reports
+remain temporary user-local output and are not linked from committed prose.
+
+### Braces negative-control investigation
+
+The earlier owned-install `test:fast` exited 1 in the existing upstream
+negative control: `tests/braces-security.test.mjs:119` expected exit 1 for
+a 4,800-level nested expansion, but its unpatched child returned 0. Patched
+entry-point guards and provenance checks passed. Tests/assertions, vendor
+files, dependencies and runtime settings were left unchanged.
+
+Comparison with the lead's `rewind-329-webkit-fixture` found byte-for-byte
+identical installed braces (10 files), fill-range (4), to-regex-range (4),
+is-number (4), lockfile, braces test, patch, provenance and vendored tarball.
+Thus no locked installation correction was justified. The test SHA-256 is
+`f22a63da2295e3d4da49422097c259a9e076795acece5cb899ce843d416b78f9`;
+patch SHA-256 is
+`fbe3698e830716a3dab2481f674deaeacaa01e1c48c1c777b3f8084640828cb6`.
+
+A detached checkout of exact parent
+`445b56424ad89ff549529dab5729074da3fe0c75` reused the same owned locked
+dependencies, Node v26.3.1, unset NODE_OPTIONS and test-controlled 128MiB child
+heap. Focused unchanged braces tests passed 7/7 on both parent and runner
+checkout. The exact root phase of `test:fast` passed on the parent three
+times, each 98 passed/0 failed/1 existing nginx skip. Twelve standalone cold
+children using the identical test expression and hash-verified reconstructed
+upstream source also exited 1 with stack overflow under default flags.
+
+Temporary diagnostic-only child invocations demonstrated optimization
+sensitivity: default/`--trace-opt` and `--jitless` overflowed, while
+`--no-concurrent-recompilation` returned 0 for the same original code.
+The trace showed recursive `walk` being optimized by Maglev. This supports
+an optimization/timing-sensitive native-stack negative control rather than
+a patched guard or dependency regression. **The original default-setting
+failure was not reproduced on the parent; its exact initial timing cause
+remains unproven.** Diagnostic flags were never used for project checks,
+measurements or the final aggregate rerun. No assertion was weakened and no
+runtime option was saved to make checks pass.
+
+After comparing source/dependencies and serializing heavy work, the one
+unchanged `npm run test:fast` rerun on the 720p runner patch exited **0**:
+root 98 passed/0 failed/1 existing nginx skip; server 410/410; frontend
+52 suites and 523/523 tests. Historical failures remain part of the record.
+This green rerun does not prove the negative control cannot intermittently
+fail or establish its earlier default-runtime failure cause.
 
 ### Verification commands and exits
 
-| Command                                                                         | Exit | Observed result                                                                                                                                                            |
-| ------------------------------------------------------------------------------- | ---: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm ci --offline`                                                              |    0 | Owned locked install; 1055 packages added                                                                                                                                  |
-| `npm run server:build`                                                          |    0 | Server TypeScript build; rebuilt after owned install                                                                                                                       |
-| `/opt/homebrew/bin/node --test scripts/measure-real-group-performance.test.mjs` |    0 | 3/3 focused runner tests, including refusal of supplied hosted URL                                                                                                         |
-| `node_modules/.bin/eslint scripts/measure-real-group-performance*.mjs`          |    0 | Runner and focused tests                                                                                                                                                   |
-| `/opt/homebrew/bin/node scripts/measure-real-group-performance.mjs`             |    0 | Final exact runner hash above; three target/chronology/audio/privacy repetitions                                                                                           |
-| `npm run test:fast` (shared dependencies)                                       |    1 | Root entry failed node-forge bundle provenance at node-forge-security.test.mjs:46; server/Jest not reached                                                                 |
-| `npm run test:fast` (owned pinned dependencies)                                 |    1 | Root: 97 passed, 1 failed, 1 skipped; braces-security.test.mjs:119 original expand negative control exits 0 instead of expected 1 on Node v26.3.1; server/Jest not reached |
+| Command                                                                                   | Exit | Observed result                                                                          |
+| ----------------------------------------------------------------------------------------- | ---: | ---------------------------------------------------------------------------------------- |
+| `npm ci --offline`                                                                        |    0 | Owned locked install; 1055 packages added; no file changes to package/lockfile           |
+| `npm run server:build`                                                                    |    0 | Existing server build before measurements                                                |
+| `node --test scripts/measure-real-group-performance.test.mjs`                             |    0 | 3/3; includes source-resolution/rate regression checks and hosted-URL refusal            |
+| `node_modules/.bin/eslint scripts/measure-real-group-performance*.mjs`                    |    0 | Runner and tests                                                                         |
+| `node scripts/measure-real-group-performance.mjs` (720p source profile)                   |    0 | Three repetitions; all timing, chronology, audio and privacy assertions pass             |
+| `node --test tests/braces-security.test.mjs` (parent and runner checkout)                 |    0 | 7/7 on each; unchanged test/deps/runtime                                                 |
+| Exact `test:fast` root phase (original parent, three diagnostic runs)                     |    0 | 98 passed, 0 failed, 1 existing skip each                                                |
+| Final `npm run test:fast` (owned locked dependencies, default runtime, 720p runner patch) |    0 | Root 98 passed/1 existing skip; server 410/410; frontend 52 suites, 523/523              |
+| Earlier `npm run test:fast` (shared dependencies)                                         |    1 | Node-forge security provenance failure; shared install replaced                          |
+| Earlier `npm run test:fast` (owned dependencies)                                          |    1 | Braces upstream expand negative control returned 0 instead of 1; server/Jest not reached |
 
-The shared dependency symlink was unsuitable and replaced. Earlier development
-runner attempts exited 1: two sandbox loopback bind denials, one incorrect
-expected outsider-budget status, and one malformed negative settings request
-missing its timezone. These failed attempts are excluded from final statistics.
-The corrected runner retained explicit privacy assertions. Earlier successful
-runs using shared dependencies or the previous runner hash are also excluded.
-
-The existing braces negative-control test and vendor/package/lock files are
-unchanged from the exact base. This is an observed failure with Node v26.3.1;
-its broader runtime cause and a passing aggregate on the CI runtime remain
-unverified. No test assertions or project gates were weakened.
-
-Direct correctness regression command (exit **0**, **71/71 passed**, 16.81s):
+Direct correctness regression command previously passed (exit **0**,
+**71/71**, 16.81 seconds) on the same production sources and owned dependencies:
 
 ```sh
-/opt/homebrew/bin/node --test --test-concurrency=1 \
+node --test --test-concurrency=1 \
   server/tests/film-compilation.test.mjs \
   server/tests/private-media-jobs.test.mjs \
   server/tests/media-integrity.test.mjs \
@@ -194,23 +245,24 @@ Direct correctness regression command (exit **0**, **71/71 passed**, 16.81s):
   server/tests/real-account-video.test.mjs
 ```
 
-This passed actual FFmpeg chronological/audio compilation and visibly labelled
-same-group archive filler, write-then-fail artifact cleanup and three-attempt
-exhaustion, invalid media rejection, missing/corrupt accepted-input failure,
-integrity and stale-generation fencing, restart recovery, and real-account
-sealed/outsider/cross-group authorization. It does not substitute for the
-blocked aggregate fast check or hosted/client acceptance.
+This covered actual FFmpeg chronological/audio compilation and visible
+same-group filler, write-then-fail cleanup and three-attempt exhaustion,
+invalid media, missing/corrupt accepted inputs, stale-generation fencing,
+restart recovery and real-account privacy. The 720p rerun retains the same
+API/privacy protocol; it changes only the synthetic source profile and probes.
 
-Final scoped Prettier check and `git diff --check` both exited **0**. Logs:
+Earlier sandbox/fixture development attempts exited 1 and were excluded from
+measurement statistics. Previous smaller-resolution successful runs are also
+excluded from the new submitted-target summary. All diagnostic code/output
+was temporary; no shared test, dependency or production source changes were
+made for the investigation.
 
-- [Final measurement](/private/tmp/rewind-353-measurement-final.log)
-- [Owned dependency install](/private/tmp/rewind-353-npm-ci.log)
-- [Fast check with shared dependencies](/private/tmp/rewind-353-test-fast.log)
-- [Fast check with owned dependencies](/private/tmp/rewind-353-test-fast-pinned.log)
-- [71 media/privacy regressions](/private/tmp/rewind-353-media-regressions.log)
+No slow/browser/native journeys, coverage campaign, exact-head CI/CodeQL, PR,
+push, merge, deployment, issue closure or Project transition was performed.
+Review/integration, aggregate Quality and hosted/provider/client gates remain
+lead-owned. No measured bottleneck justifies optimization or instrumentation.
 
-No slow/browser/native journeys, coverage campaign, exact-head CI/CodeQL scan,
-PR, push, merge, deployment, issue closure or Project transition was performed.
-The lead owns review/integration and resolving the aggregate check on the
-supported CI runtime. No performance bottleneck was demonstrated by this
-bounded workload, so no performance optimization is proposed.
+Final scoped Prettier, ESLint and `git diff --check` exited **0**. The measured
+runner hash above matches the follow-up patch; final prose changes do not alter
+its execution. Original measurement commit is retained; the 720p and diagnosis
+update is a separate follow-up commit for lead integration.
