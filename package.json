@@ -73,7 +73,8 @@
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-web": "~0.21.0",
-    "web-push": "3.6.7"
+    "web-push": "3.6.7",
+    "braces": "file:vendor/braces/rewind-braces-3.0.3-rewind.1.tgz"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
@@ -90,6 +91,7 @@
   },
   "overrides": {
     "uuid": "11.1.1",
-    "node-forge": "$node-forge"
+    "node-forge": "$node-forge",
+    "braces": "$braces"
   }
 }

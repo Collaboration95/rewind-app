@@ -1645,6 +1645,7 @@ function CapturedVideoReview({
         contentFit="contain"
         nativeControls={false}
         player={player}
+        playsInline
         style={styles.videoReviewPlayer}
         testID="video-review-player"
       />

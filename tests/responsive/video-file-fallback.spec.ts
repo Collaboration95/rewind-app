@@ -103,6 +103,51 @@ test('accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadat
   await expect(page.getByText('Upload queued as one pending contribution.')).toBeVisible();
 });
 
+test('keeps captured review inline with working play, pause, bounded seek and retake', async ({
+  page,
+}) => {
+  await openVideoFallback(page);
+  await chooseVideo(page, 'portrait-h264-aac.mp4', portraitMp4, 'video/mp4');
+
+  const review = page.getByTestId('video-review');
+  const video = review.locator('video');
+  await expect(video).toHaveJSProperty('playsInline', true);
+  await expect(video).toHaveJSProperty('muted', false);
+  await review.locator('input').nth(0).fill('0.3');
+  await review.locator('input').nth(1).fill('1.8');
+
+  await page.getByRole('button', { name: 'Play preview', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+    .toBeGreaterThan(0.5);
+  await expect(page.getByTestId('video-review-time')).not.toHaveText('0.3 / 1.8 seconds');
+  await page.getByRole('button', { name: 'Pause preview', exact: true }).click();
+  await expect(video).toHaveJSProperty('paused', true);
+  const pausedTime = await video.evaluate((element: HTMLVideoElement) => element.currentTime);
+  // Sample the real media clock over time; a label toggle alone cannot prove pause.
+  await page.waitForTimeout(350);
+  expect(await video.evaluate((element: HTMLVideoElement) => element.currentTime)).toBeCloseTo(
+    pausedTime,
+    2,
+  );
+
+  await page.getByRole('button', { name: 'Back 5 seconds', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+    .toBeCloseTo(0.3, 2);
+  await page.getByRole('button', { name: 'Forward 5 seconds', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+    .toBeCloseTo(1.8, 2);
+  await expect(video).toHaveJSProperty('paused', true);
+  await expect(page.getByRole('button', { name: 'Upload clip', exact: true })).toBeEnabled();
+
+  await page.getByRole('button', { name: 'Retake', exact: true }).click();
+  await expect(review).toHaveCount(0);
+  await expect(page.getByTestId('video-review-player')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Choose a video file' })).toBeVisible();
+});
+
 test('rejects a renamed WebM even when its caller-controlled type says video/mp4', async ({
   page,
 }) => {

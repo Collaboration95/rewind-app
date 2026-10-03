@@ -5,6 +5,7 @@ FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY vendor/node-forge ./vendor/node-forge
+COPY vendor/braces ./vendor/braces
 RUN npm ci --ignore-scripts
 
 COPY tsconfig.server.json ./
