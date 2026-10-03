@@ -127,6 +127,13 @@ it('updates group members and active context when switching selected groups', as
     '1 pending invitation',
   );
 
+  await fireEvent.press(screen.getByTestId('real-group-capture-action'));
+  expect(screen.getByTestId('camera-group-context').props.children).toEqual([
+    'Group · ',
+    'Saturday table',
+  ]);
+  await fireEvent.press(screen.getByRole('button', { name: 'Back to group' }));
+
   await fireEvent.press(screen.getByTestId(`switch-real-group-${joinedGroup.group.id}`));
   expect(await screen.findByText('Cy Owner · Owner')).toBeTruthy();
   expect(screen.getByTestId('real-group-active-context').props.children).toBe('Your group');
@@ -144,6 +151,11 @@ it('updates group members and active context when switching selected groups', as
   await fireEvent.press(screen.getByTestId('real-group-chat-back'));
   await fireEvent.press(screen.getByTestId('real-group-capture-action'));
   expect(screen.getByTestId('camera-screen')).toBeTruthy();
+  expect(screen.getByTestId('camera-group-context').props.children).toEqual([
+    'Group · ',
+    'Garden circle',
+  ]);
+  expect(screen.queryByText('Saturday table')).toBeNull();
   await fireEvent.press(screen.getByTestId('camera-record-clip'));
   expect(screen.getByTestId('real-group-capture-context').props.children).toEqual([
     'Group · ',
