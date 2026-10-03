@@ -1,6 +1,6 @@
 # Access use cases
 
-**Evidence cut:** `a6b6b312f219c268a16401f64efe6c3b8f808a54` (published PR #368 head, 2 October 2026; PR remains open/draft). “Account” below means the current local real-account pilot. “Demo” means the separate synthetic session runtime.
+**Evidence cut:** `fc2b8c811e9c13b176113fa0bdb2c015798990b4` (accepted dev, 3 October 2026). “Account” below means the current local real-account pilot. “Demo” means the separate synthetic session runtime.
 
 ## Scope and actors
 
@@ -12,7 +12,7 @@
 | Non-member / unauthenticated visitor | May attempt a protected operation but receives no account or group authority.        |
 | Identity provider (target)           | Managed OIDC/Cognito in Sprint 3; not active in this code snapshot.                  |
 
-The model covers the access slice of proposal FR-01 (identity and private groups) and FR-02 (group creation and invitations). The proposal calls its combined entry journey UC-01; this report follows issue #357's expanded UC01 authentication/session, UC02 group, and UC03 invitation boundaries so that each has a usable model. Issue #357 cites `R01–R03,R22`; the execution-plan-derived bounded trace is in [README.md](README.md), with its source limitation stated there.
+The model covers the access slice of proposal FR-01 (identity and private groups) and FR-02 (group creation and invitations). The proposal calls its combined entry journey UC-01; this report follows issue #357's expanded UC01 authentication/session, UC02 group, and UC03 invitation boundaries so that each has a usable model. Issue #357 cites `R01–R03,R22`; the source requirement crosswalk is in [README.md](README.md), with its source limitation stated there.
 
 ![Overall access use-case view](diagrams/use-case-overview.svg)
 
