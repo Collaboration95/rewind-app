@@ -1,4 +1,7 @@
 import { isAbsolute, parse, resolve } from 'node:path';
+import type { MediaRuntimeConfig } from './media/runtime-store';
+import type { ReminderProviderConfig } from './reminders/providers';
+import { validateReminderVapidConfig } from './reminders/config';
 
 export const SERVICE_VERSION = '0.1.0';
 export const DEFAULT_PORT = 8787;
@@ -21,6 +24,9 @@ export interface RuntimeConfig {
   uploadTimeoutMs: number;
   maxConcurrentIntakes: number;
   maxConcurrentProcessing: number;
+  /** Unset preserves legacy disk paths; opt-in stores use immutable references. */
+  media?: MediaRuntimeConfig | null;
+  reminders?: ReminderProviderConfig | null;
 }
 
 export class ConfigError extends Error {
@@ -129,5 +135,91 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
       DEFAULT_HTTP_MAX_CONCURRENT_PROCESSING,
       64,
     ),
+    media: parseMediaConfig(env, dataDir),
+    reminders: parseReminderConfig(env),
+  };
+}
+
+function parseReminderConfig(env: NodeJS.ProcessEnv): ReminderProviderConfig | null {
+  const config: ReminderProviderConfig = {};
+  const enabled = env.REWIND_REMINDER_EXPO_ENABLED?.trim();
+  if (enabled && !['true', 'false'].includes(enabled))
+    throw new ConfigError(
+      'REWIND_REMINDER_EXPO_ENABLED must be true or false.',
+      'Leave providers unset to disable remote sending.',
+    );
+  if (enabled === 'true') {
+    const accessToken = env.REWIND_REMINDER_EXPO_ACCESS_TOKEN?.trim();
+    if (accessToken && (accessToken.length > 4096 || /\s/.test(accessToken)))
+      throw new ConfigError(
+        'Invalid Expo reminder credential.',
+        'Use an environment-supplied provider access token.',
+      );
+    config.expo = accessToken ? { accessToken } : {};
+  }
+  const subject = env.REWIND_REMINDER_VAPID_SUBJECT?.trim();
+  const publicKey = env.REWIND_REMINDER_VAPID_PUBLIC_KEY?.trim();
+  const privateKey = env.REWIND_REMINDER_VAPID_PRIVATE_KEY?.trim();
+  if (subject || publicKey || privateKey) {
+    let validSubject = false;
+    try {
+      const url = new URL(subject ?? '');
+      validSubject = ['mailto:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+    } catch {
+      /* Invalid provider identity. */
+    }
+    if (
+      !validSubject ||
+      !publicKey ||
+      !privateKey ||
+      !/^[A-Za-z0-9_-]{87}$/.test(publicKey) ||
+      !/^[A-Za-z0-9_-]{43}$/.test(privateKey) ||
+      Buffer.from(publicKey, 'base64url').length !== 65 ||
+      Buffer.from(privateKey, 'base64url').length !== 32
+    )
+      throw new ConfigError(
+        'Invalid Web Push reminder configuration.',
+        'Set the complete environment-supplied VAPID subject/key pair; never use application or account credentials.',
+      );
+    config.webpush = validateReminderVapidConfig({ subject: subject!, publicKey, privateKey });
+  }
+  return Object.keys(config).length ? config : null;
+}
+
+function parseMediaConfig(env: NodeJS.ProcessEnv, dataDir: string): MediaRuntimeConfig | null {
+  const backend = env.REWIND_MEDIA_BACKEND?.trim() || 'disk';
+  if (backend === 'disk') return null;
+  const invalid = (name: string): never => {
+    throw new ConfigError(
+      `${name} is invalid for the configured media backend.`,
+      'Use disk for filesystem rollback, or configure an explicit local/S3 store and namespace.',
+    );
+  };
+  if (backend !== 'local' && backend !== 's3') invalid('REWIND_MEDIA_BACKEND');
+  const environment = env.REWIND_MEDIA_ENVIRONMENT?.trim() || '';
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(environment)) invalid('REWIND_MEDIA_ENVIRONMENT');
+  if (backend === 'local') {
+    // Keep the versioned adapter separate from legacy processed/staged paths.
+    return { backend, environment, root: resolve(dataDir, 'media', 'objects') };
+  }
+  const bucket = env.REWIND_MEDIA_S3_BUCKET?.trim() || '';
+  const expectedBucketOwner = env.REWIND_MEDIA_S3_OWNER?.trim() || '';
+  const region = env.REWIND_MEDIA_S3_REGION?.trim() || '';
+  const kmsKeyId = env.REWIND_MEDIA_S3_KMS_KEY_ARN?.trim();
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket)) invalid('REWIND_MEDIA_S3_BUCKET');
+  if (!/^\d{12}$/.test(expectedBucketOwner)) invalid('REWIND_MEDIA_S3_OWNER');
+  if (!/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region)) invalid('REWIND_MEDIA_S3_REGION');
+  if (
+    kmsKeyId &&
+    !/^arn:aws(?:-cn|-us-gov)?:kms:[a-z0-9-]+:\d{12}:key\/[A-Za-z0-9-]+$/.test(kmsKeyId)
+  )
+    invalid('REWIND_MEDIA_S3_KMS_KEY_ARN');
+  return {
+    backend: 's3',
+    environment,
+    bucket,
+    expectedBucketOwner,
+    region,
+    ...(kmsKeyId ? { kmsKeyId } : {}),
   };
 }

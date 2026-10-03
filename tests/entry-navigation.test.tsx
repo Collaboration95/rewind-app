@@ -1,6 +1,6 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
-import { Platform } from 'react-native';
+import { AccessibilityInfo, Animated, Platform } from 'react-native';
 
 import App from '../App';
 import type { DemoSession, DemoSessionStore } from '../src/domain/session';
@@ -19,6 +19,19 @@ jest.mock('react-native-safe-area-context', () => mockSafeAreaContext);
 
 beforeAll(() => {
   process.env.REWIND_TEST_DEMO_FIXTURE = 'false';
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+let entryTransition: jest.SpyInstance;
+beforeEach(() => {
+  entryTransition = jest.spyOn(Animated, 'timing').mockImplementation(() => ({
+    start: jest.fn(),
+    stop: jest.fn(),
+    reset: jest.fn(),
+  }));
 });
 
 function session(overrides: Partial<DemoSession> = {}): DemoSession {
@@ -49,6 +62,26 @@ function sessionStore(initial: DemoSession | null = null): DemoSessionStore {
 }
 
 describe('first-run and session entry navigation', () => {
+  it('shows the cold-launch screen for at least 600ms after fast session restoration', async () => {
+    jest.useFakeTimers();
+    try {
+      const result = await render(<App sessionStore={sessionStore()} />);
+
+      expect(result.getByLabelText('Rewind')).toBeTruthy();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(599);
+      });
+      expect(result.getByLabelText('Rewind')).toBeTruthy();
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1);
+      });
+      expect(result.getByTestId('welcome-entry')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('shows only Rewind branding while the saved session is being restored', async () => {
     let finishLoad!: (value: DemoSession | null) => void;
     const store: DemoSessionStore = {
@@ -66,7 +99,7 @@ describe('first-run and session entry navigation', () => {
     expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
 
     await act(async () => finishLoad(null));
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Create account' })).toBeTruthy();
   });
 
@@ -74,14 +107,59 @@ describe('first-run and session entry navigation', () => {
     const store = sessionStore();
     const result = await render(<App sessionStore={store} />);
 
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Sign in' })).toBeTruthy();
-    expect(result.getByRole('button', { name: 'Try Demo' })).toBeTruthy();
+    expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
+    expect(result.getAllByText('PRIVATE MOMENTS, SHARED TOGETHER')).toHaveLength(1);
+    expect(result.queryByText(/sample Demo data|Welcome to Rewind/i)).toBeNull();
     expect(result.queryByRole('header', { name: 'Weekend People' })).toBeNull();
     expect(await store.load()).toBeNull();
   });
 
-  it('opens real account sign-in and administrator guidance without creating a Demo session', async () => {
+  it('hides Demo and clears a saved sample session when a release disables Demo access', async () => {
+    const previous = process.env.EXPO_PUBLIC_DEMO_ACCESS;
+    process.env.EXPO_PUBLIC_DEMO_ACCESS = 'disabled';
+    const store = sessionStore(session());
+
+    try {
+      const result = await render(<App sessionStore={store} />);
+      expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+      expect(await store.load()).toBeNull();
+
+      await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+      expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
+    } finally {
+      if (previous === undefined) delete process.env.EXPO_PUBLIC_DEMO_ACCESS;
+      else process.env.EXPO_PUBLIC_DEMO_ACCESS = previous;
+    }
+  });
+
+  it.each([false, true])(
+    'animates entry changes only when reduced motion is disabled (reduce motion: %s)',
+    async (reduceMotion) => {
+      const reducedMotionSetting = jest
+        .spyOn(AccessibilityInfo, 'isReduceMotionEnabled')
+        .mockResolvedValue(reduceMotion);
+      const result = await render(<App sessionStore={sessionStore()} />);
+      expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+      await waitFor(() => expect(reducedMotionSetting).toHaveBeenCalled());
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+      if (reduceMotion) {
+        expect(entryTransition).not.toHaveBeenCalled();
+      } else {
+        expect(entryTransition).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({ duration: 160, toValue: 0 }),
+        );
+      }
+    },
+  );
+
+  it('opens sign-in, account registration, and Demo only through Sign in without creating a real session', async () => {
     const store = sessionStore();
     const result = await render(<App sessionStore={store} />);
 
@@ -92,13 +170,15 @@ describe('first-run and session entry navigation', () => {
     expect(result.getByText(/password will not be sent over an insecure connection/)).toBeTruthy();
     expect(await store.load()).toBeNull();
 
-    await fireEvent.press(result.getByRole('button', { name: 'Back to welcome' }));
-    await fireEvent.press(result.getByRole('button', { name: 'Create account' }));
-    expect(result.getByText(/accounts are created by an administrator/)).toBeTruthy();
+    await fireEvent.press(result.getByTestId('sign-in-create-account'));
+    expect(result.getByLabelText('Confirm password')).toBeTruthy();
     expect(await store.load()).toBeNull();
     await fireEvent.press(result.getByRole('button', { name: 'Back' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+    expect(result.queryByRole('button', { name: 'Try Demo' })).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
     expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Back to sign in' })).toBeTruthy();
     await fireEvent.press(
       result.getByRole('button', { name: 'Enter Demo as Amber, sample member' }),
     );
@@ -107,7 +187,7 @@ describe('first-run and session entry navigation', () => {
     await waitFor(async () => expect((await store.load())?.accessKind).toBe('demo'));
   });
 
-  it('keeps Welcome and Try Demo usable over HTTP while disabling real sign-in', async () => {
+  it('keeps Demo available from Sign in over HTTP while disabling real credentials', async () => {
     const originalPlatform = Platform.OS;
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web', writable: true });
@@ -126,22 +206,23 @@ describe('first-run and session entry navigation', () => {
         />,
       );
 
-      expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+      expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+      expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
       expect(result.queryByText(/sign-in service could not be reached/i)).toBeNull();
       expect(result.queryByText(/secure HTTPS connection/i)).toBeNull();
-      await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
-      expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
-      expect(result.queryByText(/sign-in service could not be reached/i)).toBeNull();
-
-      await fireEvent.press(result.getByRole('button', { name: 'Back to welcome' }));
       await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
       expect(
         result.getByText(/password will not be sent over an insecure connection/i),
       ).toBeTruthy();
-      expect(result.getAllByRole('alert')).toHaveLength(1);
       expect(result.getByTestId('real-account-submit').props.accessibilityState?.disabled).toBe(
         true,
       );
+      await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
+      expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
+      expect(result.queryByText(/sign-in service could not be reached/i)).toBeNull();
+
+      await fireEvent.press(result.getByRole('button', { name: 'Back to sign in' }));
+      expect(result.getAllByRole('alert')).toHaveLength(1);
       expect(await store.load()).toBeNull();
     } finally {
       Object.defineProperty(Platform, 'OS', {
@@ -158,14 +239,16 @@ describe('first-run and session entry navigation', () => {
     const result = await render(<App sessionStore={sessionStore(session())} />);
 
     expect(await result.findByRole('header', { name: 'Weekend People' })).toBeTruthy();
-    expect(result.queryByRole('header', { name: 'Welcome to Rewind' })).toBeNull();
+    expect(result.queryByTestId('welcome-entry')).toBeNull();
   });
 
   it('returns an expired saved session to welcome with an expiry explanation', async () => {
     const expired = session({ expiresAt: new Date(Date.now() - 1_000).toISOString() });
     const result = await render(<App sessionStore={sessionStore(expired)} />);
 
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+    expect(result.queryByText(/Your saved Demo session has expired/)).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
     expect(result.getByText(/Your saved Demo session has expired/)).toBeTruthy();
     expect(result.queryByRole('header', { name: 'Weekend People' })).toBeNull();
   });
@@ -180,7 +263,9 @@ describe('first-run and session entry navigation', () => {
       <App sessionStore={sessionStore(session())} runtimeClient={client} />,
     );
 
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+    expect(result.queryByLabelText('Offline status')).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
     expect(result.getByLabelText('Offline status')).toBeTruthy();
     expect(result.getByText(/The runtime is unreachable/)).toBeTruthy();
     expect(result.queryByRole('header', { name: 'Weekend People' })).toBeNull();

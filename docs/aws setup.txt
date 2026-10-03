@@ -38,6 +38,36 @@ What is live
   actionable.
   It has no start, stop, delete, backup-object-read, or recovery permissions.
 
+Online deployment of the integration branch (code merged, not yet applied)
+-------------------------------------------------------------------------
+- There is no separate integration host. The integration branch deploys to the
+  existing hosted Demo instance, replacing the operator flow of building a
+  bundle locally and running `deploy/release-host.sh install` over SSH.
+- `.github/workflows/deploy-dev.yml` waits for the dev commit's own
+  `Quality checks` push run, builds the same verified bundle with
+  `--branch dev` and `--config-version demo-v1`, then installs it over
+  Lightsail temporary SSH. It never runs Terraform and never powers the host
+  on or off: a stopped instance fails the job with an explicit message.
+- The bootstrap root now creates the account-level GitHub Actions OIDC
+  provider (`output github_oidc_provider_arn`). Set
+  `github_oidc_provider_arn` instead if the account already has one.
+- The Demo root creates `rewind-demo-deploy`, trusting only the dev
+  environment subject for this repository with `ref refs/heads/dev`. GitHub
+  issues the immutable subject
+  `repo:Collaboration95@68595032/rewind-app@1354608509:environment:dev`, so
+  the trust pins that exact subject and the classic
+  `repo:Collaboration95/rewind-app:environment:dev` form, with no wildcard.
+  It may read the instance address and open or close ports on the one Demo
+  host, and nothing else. No AWS key is stored in GitHub.
+- Applying the bootstrap root needs `iam:CreateOpenIDConnectProvider` (already
+  inside the terraform-apply role's allowlist). Applying the Demo root adds
+  only a role and its policy; it does not change the running host.
+
+To activate, a human with `rewind-terraform-apply` applies the bootstrap root
+first (the Demo root resolves the provider by URL), then the Demo root, then
+sets the repository variable `AWS_DEMO_DEPLOY_ROLE_ARN` from the
+`deploy_role_arn` output.
+
 Access model
 ------------
 Local profile names are aliases in each operator's ~/.aws/config; they are not

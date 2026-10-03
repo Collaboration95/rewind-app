@@ -1,27 +1,66 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
-test('fresh web install presents welcome before any Demo member is active', async ({ page }) => {
+test('fresh web install keeps Demo behind Sign in before any member is active', async ({
+  page,
+}) => {
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: 'Welcome to Rewind' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Try Demo' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Weekend People' })).toHaveCount(0);
 
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toBeVisible();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   await page.getByRole('button', { name: 'Enter Demo as Amber, sample member' }).click();
   await expect(page.getByRole('heading', { name: 'Weekend People' })).toBeVisible();
 });
 
-test('web entry explains administrator provisioning and blocks sign-in without HTTPS configuration', async ({
+test('mobile welcome keeps the brand and entry actions together and vertically balanced', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  const brand = await page.getByTestId('entry-brand').boundingBox();
+  const actions = await page.getByTestId('welcome-entry').boundingBox();
+  expect(brand).not.toBeNull();
+  expect(actions).not.toBeNull();
+
+  const gap = actions!.y - (brand!.y + brand!.height);
+  const contentCenter = (brand!.y + actions!.y + actions!.height) / 2;
+  expect(gap).toBeLessThan(96);
+  expect(Math.abs(contentCenter - 844 / 2)).toBeLessThan(88);
+});
+
+test('mobile signup starts close to the brand without a large empty band', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Create account' }).click();
+
+  const brand = await page.getByTestId('entry-brand').boundingBox();
+  const formIntro = await page.getByText('JOIN REWIND').boundingBox();
+  expect(brand).not.toBeNull();
+  expect(formIntro).not.toBeNull();
+  expect(formIntro!.y - (brand!.y + brand!.height)).toBeLessThan(64);
+});
+
+test('web entry opens account registration and blocks credentials without HTTPS configuration', async ({
   page,
 }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Create account' }).click();
   await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
-  await expect(page.getByText(/accounts are created by an administrator/i)).toBeVisible();
-  await expect(page.getByText(/does not create an account/i)).toBeVisible();
+  await expect(page.getByLabel('Username')).toBeVisible();
+  await expect(page.getByTestId('registration-password')).toBeVisible();
+  await expect(page.getByLabel('Confirm password')).toBeVisible();
+  await expect(
+    page.getByText(/account creation requires the same-origin HTTPS service/i),
+  ).toBeVisible();
+  await expect(page.getByTestId('registration-submit')).toBeDisabled();
 
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Sign in' }).click();
@@ -74,7 +113,7 @@ test('the exported shell exposes install metadata and an honest offline API fall
     display: 'standalone',
     name: 'Rewind',
     start_url: '/',
-    theme_color: '#1D1B1E',
+    theme_color: '#252326',
   });
 
   const serviceWorkerResponse = await request.get('/sw.js');

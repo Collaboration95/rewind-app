@@ -60,8 +60,50 @@ describe('real-account client transport and storage', () => {
     await expect(client.login('pilot.user', 'not-a-real-password')).rejects.toMatchObject({
       reason: 'insecure-transport',
     });
+    await expect(client.register('new.user', 'not-a-real-password')).rejects.toMatchObject({
+      reason: 'insecure-transport',
+    });
     expect(fetcher).not.toHaveBeenCalled();
     expect(isSecureAuthUrl('http://api.rewind.example')).toBe(false);
+  });
+
+  it('registers over same-origin HTTPS without retaining password or session credentials', async () => {
+    setPlatform('web');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        location: {
+          href: 'https://rewind.example/',
+          origin: 'https://rewind.example',
+        },
+      },
+      writable: true,
+    });
+    const fetcher = jest.fn().mockResolvedValue(response(201, { account }));
+    const client = new RealAccountClient('https://rewind.example', tokenStore, fetcher);
+
+    await expect(client.register('new.user', 'long correct password')).resolves.toEqual(account);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const [url, init] = fetcher.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://rewind.example/auth/register');
+    expect(init.method).toBe('POST');
+    expect(init.credentials).toBe('include');
+    expect(init.body).toBe(
+      JSON.stringify({ username: 'new.user', password: 'long correct password' }),
+    );
+    expect(new Headers(init.headers).has('Authorization')).toBe(false);
+    expect(storedToken).toBeNull();
+  });
+
+  it('preserves a safe registration error status for accessible form feedback', async () => {
+    const fetcher = jest.fn().mockResolvedValue(response(409, { error: 'username_unavailable' }));
+    const client = new RealAccountClient('https://api.rewind.example', tokenStore, fetcher);
+
+    await expect(client.register('new.user', 'long correct password')).rejects.toMatchObject({
+      status: 409,
+      reason: 'registration',
+    });
+    expect(storedToken).toBeNull();
   });
 
   it('returns only a generic sign-in failure for a rejected username/password', async () => {
@@ -127,6 +169,24 @@ describe('real-account client transport and storage', () => {
     await client.logout(token).catch(() => undefined);
     await client.clearStoredToken();
     expect(storedToken).toBeNull();
+  });
+
+  it('treats a missing browser session as signed out instead of expired', async () => {
+    setPlatform('web');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: {
+        location: {
+          href: 'https://rewind.example/',
+          origin: 'https://rewind.example',
+        },
+      },
+      writable: true,
+    });
+    const fetcher = jest.fn().mockResolvedValue(response(401, { error: 'session_required' }));
+    const client = new RealAccountClient('https://rewind.example', tokenStore, fetcher);
+
+    await expect(client.restore()).resolves.toBeNull();
   });
 
   it('reuses a restored native token for successful logout after app restart', async () => {

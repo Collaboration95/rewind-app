@@ -3,9 +3,23 @@ name: Quality checks
 on:
   push:
     branches: [main, dev]
+    # Documentation-only changes skip CI; a mix with code or workflows still runs.
+    # deploy/README.md and infra/terraform/*.md are read by tests, so they are not listed.
+    paths-ignore:
+      - 'docs/**'
+      - 'doc/**'
+      - 'skills/**'
+      - '*.md'
+      - '.github/*.md'
   # Include stacked PRs; feature-branch pushes do not duplicate PR runs.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - 'docs/**'
+      - 'doc/**'
+      - 'skills/**'
+      - '*.md'
+      - '.github/*.md'
 
 concurrency:
   group: quality-${{ github.event.pull_request.number || github.ref }}
@@ -98,6 +112,8 @@ jobs:
 
   browser:
     name: Web export and browser checks
+    # Keep browser coverage on the reviewed release path, but out of dev PRs.
+    if: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
@@ -158,5 +174,7 @@ jobs:
           test '${{ needs.static.result }}' = success
           test '${{ needs.server.result }}' = success
           test '${{ needs.frontend.result }}' = success
-          test '${{ needs.browser.result }}' = success
           test '${{ needs.fixtures.result }}' = success
+      - name: Require browser checks on main
+        if: ${{ github.ref == 'refs/heads/main' || github.base_ref == 'main' }}
+        run: test '${{ needs.browser.result }}' = success

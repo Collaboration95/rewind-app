@@ -166,7 +166,7 @@ describe('app-wide chat unread indicator', () => {
 
     await fireEvent.press(result.getByTestId('nav-settings'));
     await fireEvent.press(result.getByTestId('sign-out'));
-    await result.findByRole('header', { name: 'Welcome to Rewind' });
+    await result.findByTestId('welcome-entry');
     expect(runtime.streams[0].close).toHaveBeenCalled();
     expect(result.queryByTestId('chat-unread-badge')).toBeNull();
   });

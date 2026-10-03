@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import type { RewindDatabase } from '../db';
+import { hashFileSync } from '../media/integrity';
 import type { CycleClock } from './engine';
-import { ensureCompilationJob } from '../jobs';
+import { ensureCompilationJob, verifyReadyJobOutput, type StoredJobOptions } from '../jobs';
 
 type StoredCycle = {
   id: string;
@@ -27,7 +28,14 @@ class CycleTimeError extends Error {
 }
 
 export type CycleLifecycleAction =
-  'waiting_for_boundary' | 'revealing' | 'waiting_for_release' | 'archived' | 'already_archived';
+  | 'waiting_for_boundary'
+  | 'revealing'
+  | 'waiting_for_release'
+  | 'premiere'
+  | 'archived'
+  | 'already_archived';
+
+export const PREMIERE_DURATION_MS = 24 * 60 * 60 * 1000;
 
 export interface AdvanceCycleLifecycleInput {
   groupId: string;
@@ -126,21 +134,67 @@ function currentCycleId(database: RewindDatabase, groupId: string): string | nul
   return row?.currentCycleId ? String(row.currentCycleId) : null;
 }
 
-/** A release is only safe once the durable film job has committed its output. */
+type OutputRow = {
+  id: string;
+  status: string;
+  outputPath: string;
+  sha256: string;
+  byteLength: number;
+  verifiedAt: string;
+};
+interface VerifiedOutputProof {
+  database: RewindDatabase;
+  row: OutputRow;
+}
+function compilationOutput(
+  database: RewindDatabase,
+  groupId: string,
+  cycleId: string,
+): OutputRow | undefined {
+  return database
+    .prepare(
+      `SELECT id, status, output_path AS outputPath, output_sha256 AS sha256,
+    output_bytes AS byteLength, output_verified_at AS verifiedAt FROM media_jobs
+    WHERE kind = 'film' AND cycle_id = ? AND group_id = ? ORDER BY id ASC LIMIT 1`,
+    )
+    .get(cycleId, groupId) as OutputRow | undefined;
+}
+/** Proofs are constructed only here after a pinned verified read. They never cross the public API. */
+async function verifyCompilationOutput(
+  database: RewindDatabase,
+  groupId: string,
+  cycleId: string,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<VerifiedOutputProof | undefined> {
+  const row = compilationOutput(database, groupId, cycleId);
+  if (!row || !(await verifyReadyJobOutput(database, row.id, options))) return undefined;
+  const current = compilationOutput(database, groupId, cycleId);
+  return JSON.stringify(row) === JSON.stringify(current) ? { database, row } : undefined;
+}
+/** A release is only safe once the durable film job has committed its exact output. */
 function hasReadyCompilationOutput(
   database: RewindDatabase,
   groupId: string,
   cycleId: string,
+  verifyBytes = true,
+  proof?: VerifiedOutputProof,
 ): boolean {
-  const job = database
-    .prepare(
-      `SELECT status, output_path AS outputPath
-       FROM media_jobs
-       WHERE kind = 'film' AND cycle_id = ? AND group_id = ?
-       ORDER BY id ASC LIMIT 1`,
-    )
-    .get(cycleId, groupId) as { status?: string; outputPath?: string | null } | undefined;
-  return job?.status === 'ready' && typeof job.outputPath === 'string' && job.outputPath.length > 0;
+  const job = compilationOutput(database, groupId, cycleId);
+  if (
+    job?.status !== 'ready' ||
+    !job.outputPath ||
+    !job.verifiedAt ||
+    !Number.isFinite(Date.parse(job.verifiedAt)) ||
+    !/^[a-f0-9]{64}$/.test(job.sha256 ?? '') ||
+    !Number.isSafeInteger(job.byteLength) ||
+    job.byteLength <= 0
+  )
+    return false;
+  if (!verifyBytes) return true;
+  if (proof)
+    return proof.database === database && JSON.stringify(proof.row) === JSON.stringify(job);
+  const observed = hashFileSync(job.outputPath);
+  return observed?.sha256 === job.sha256 && observed.byteLength === job.byteLength;
 }
 
 function addEvent(
@@ -159,9 +213,10 @@ function addEvent(
     .run(`cycle-lifecycle-${randomUUID()}`, cycleId, groupId, transition, occurredAt);
 }
 
-export function publishCycleRelease(
+function publishCycleReleaseVerified(
   database: RewindDatabase,
   input: PublishCycleReleaseInput,
+  proof?: VerifiedOutputProof,
 ): PublishCycleReleaseResult {
   let publishedAt: Date;
   try {
@@ -181,7 +236,7 @@ export function publishCycleRelease(
       return { ok: false, reason: 'not_found' };
     }
     if (cycle.releaseStatus === 'published') {
-      if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId)) {
+      if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId, true, proof)) {
         database.exec('ROLLBACK');
         return { ok: false, reason: 'not_ready' };
       }
@@ -196,7 +251,7 @@ export function publishCycleRelease(
       database.exec('ROLLBACK');
       return { ok: false, reason: 'too_early' };
     }
-    if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId)) {
+    if (!hasReadyCompilationOutput(database, input.groupId, input.cycleId, true, proof)) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'not_ready' };
     }
@@ -217,9 +272,47 @@ export function publishCycleRelease(
   return { ok: true, action: 'published', cycle };
 }
 
-export function advanceCycleLifecycle(
+/** Called inside the lifecycle transaction, including for legacy closed rows. */
+function ensureSuccessor(database: RewindDatabase, cycle: StoredCycle): StoredCycle {
+  let successor = readSuccessor(database, cycle.id, cycle.groupId);
+  if (!successor) {
+    const startAt = instant(cycle.endsAt, 'invalid_state');
+    const durationMs = startAt.getTime() - instant(cycle.startsAt, 'invalid_state').getTime();
+    if (!Number.isSafeInteger(durationMs) || durationMs <= 0)
+      throw new CycleTimeError('invalid_state');
+    const nextId = `local-cycle-${randomUUID()}`;
+    const endsAt = new Date(startAt.getTime() + durationMs).toISOString();
+    database
+      .prepare(
+        `INSERT INTO cycles
+        (id, group_id, prompt, starts_at, ends_at, status, lock_state,
+         max_count, max_seconds, count_used, seconds_used, previous_cycle_id)
+       VALUES (?, ?, ?, ?, ?, 'collecting', 'locked', ?, ?, 0, 0, ?)`,
+      )
+      .run(
+        nextId,
+        cycle.groupId,
+        cycle.prompt,
+        startAt.toISOString(),
+        endsAt,
+        cycle.quota.maxCount,
+        cycle.quota.maxSeconds,
+        cycle.id,
+      );
+    successor = readCycle(database, nextId, cycle.groupId)!;
+    addEvent(database, cycle.id, cycle.groupId, 'next_cycle_created', startAt.toISOString());
+  }
+  // Never rewind the group's pointer when replaying an older transition.
+  database
+    .prepare('UPDATE groups SET current_cycle_id = ? WHERE id = ? AND current_cycle_id = ?')
+    .run(successor.id, cycle.groupId, cycle.id);
+  return successor;
+}
+
+function advanceCycleLifecycleVerified(
   database: RewindDatabase,
   input: AdvanceCycleLifecycleInput,
+  proof?: VerifiedOutputProof,
 ): AdvanceCycleLifecycleResult {
   let now: Date;
   try {
@@ -228,139 +321,138 @@ export function advanceCycleLifecycle(
     if (error instanceof CycleTimeError) return { ok: false, reason: 'invalid_request' };
     throw error;
   }
-  const cycleId = input.cycleId ?? currentCycleId(database, input.groupId);
-  if (!cycleId) return { ok: false, reason: 'not_found' };
-
   database.exec('BEGIN IMMEDIATE');
   try {
-    const cycle = readCycle(database, cycleId, input.groupId);
+    // Resolve the pointer under the same writer fence as closure and rollover.
+    const cycleId = input.cycleId ?? currentCycleId(database, input.groupId);
+    const cycle = cycleId ? readCycle(database, cycleId, input.groupId) : null;
     if (!cycle) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'not_found' };
     }
-    if (cycle.status === 'collecting') {
-      if (now.getTime() < instant(cycle.endsAt, 'invalid_state').getTime()) {
-        database.exec('COMMIT');
-        return { ok: true, action: 'waiting_for_boundary', cycle, nextCycle: null };
-      }
+    if (
+      cycle.status === 'collecting' &&
+      now.getTime() < instant(cycle.endsAt, 'invalid_state').getTime()
+    ) {
+      database.exec('COMMIT');
+      return { ok: true, action: 'waiting_for_boundary', cycle, nextCycle: null };
+    }
+    if (!['collecting', 'revealing', 'archived'].includes(cycle.status)) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'invalid_state' };
+    }
+    const closing = cycle.status === 'collecting';
+    if (closing) {
       database
         .prepare(
-          `UPDATE cycles SET status = 'revealing', lock_state = 'locked'
-           WHERE id = ? AND group_id = ? AND status = 'collecting'`,
+          "UPDATE cycles SET status = 'revealing', lock_state = 'locked' WHERE id = ? AND group_id = ?",
         )
         .run(cycle.id, input.groupId);
-      addEvent(database, cycle.id, input.groupId, 'collecting_to_revealing', now.toISOString());
-      // Create the cycle's one persistent film job while the lifecycle writer
-      // transaction is still open. A crash therefore cannot commit the
-      // revealing state without also committing its idempotent job record.
-      if (
-        !ensureCompilationJob(database, {
-          groupId: input.groupId,
-          cycleId: cycle.id,
-          createdAt: now,
-        })
-      ) {
-        database.exec('ROLLBACK');
-        return { ok: false, reason: 'invalid_state' };
-      }
-      database.exec('COMMIT');
-      const revealing = readCycle(database, cycle.id, input.groupId);
-      if (!revealing) return { ok: false, reason: 'not_found' };
-      return { ok: true, action: 'revealing', cycle: revealing, nextCycle: null };
+      addEvent(database, cycle.id, input.groupId, 'collecting_to_revealing', cycle.endsAt);
     }
-
-    if (cycle.status === 'revealing') {
-      if (cycle.releaseStatus !== 'published') {
-        database.exec('COMMIT');
-        return { ok: true, action: 'waiting_for_release', cycle, nextCycle: null };
-      }
-      if (!hasReadyCompilationOutput(database, input.groupId, cycle.id)) {
-        // A stale or externally repaired release marker must not advance the
-        // archive pointer until the durable compilation output is present.
-        database.exec('COMMIT');
-        return { ok: true, action: 'waiting_for_release', cycle, nextCycle: null };
-      }
-      const successor = readSuccessor(database, cycle.id, input.groupId);
-      if (successor) {
-        database
-          .prepare("UPDATE cycles SET status = 'archived', lock_state = 'locked' WHERE id = ?")
-          .run(cycle.id);
-        addEvent(database, cycle.id, input.groupId, 'revealing_to_archived', now.toISOString());
-        database.exec('COMMIT');
-        return {
-          ok: true,
-          action: 'archived',
-          cycle: readCycle(database, cycle.id, input.groupId)!,
-          nextCycle: successor,
-        };
-      }
+    if (
+      cycle.status !== 'archived' &&
+      !ensureCompilationJob(database, {
+        groupId: input.groupId,
+        cycleId: cycle.id,
+        createdAt: instant(cycle.endsAt, 'invalid_state'),
+      })
+    ) {
+      database.exec('ROLLBACK');
+      return { ok: false, reason: 'invalid_state' };
+    }
+    const nextCycle = ensureSuccessor(database, cycle);
+    let action: CycleLifecycleAction;
+    if (closing) action = 'revealing';
+    else if (cycle.status === 'archived') action = 'already_archived';
+    else if (
+      cycle.releaseStatus !== 'published' ||
+      !hasReadyCompilationOutput(database, input.groupId, cycle.id, false)
+    )
+      action = 'waiting_for_release';
+    else if (
+      now.getTime() <
+      instant(cycle.releasePublishedAt!, 'invalid_state').getTime() + PREMIERE_DURATION_MS
+    )
+      action = 'premiere';
+    else if (!hasReadyCompilationOutput(database, input.groupId, cycle.id, true, proof)) {
+      action = 'waiting_for_release';
+    } else {
+      action = 'archived';
       database
         .prepare(
-          "UPDATE cycles SET status = 'archived', lock_state = 'locked' WHERE id = ? AND status = 'revealing'",
+          "UPDATE cycles SET status = 'archived', lock_state = 'locked' WHERE id = ? AND group_id = ?",
         )
-        .run(cycle.id);
-      addEvent(database, cycle.id, input.groupId, 'revealing_to_archived', now.toISOString());
-
-      const publishedAt = cycle.releasePublishedAt
-        ? instant(cycle.releasePublishedAt, 'invalid_state')
-        : now;
-      const startAt = new Date(
-        Math.max(
-          now.getTime(),
-          publishedAt.getTime(),
-          instant(cycle.endsAt, 'invalid_state').getTime(),
-        ),
+        .run(cycle.id, input.groupId);
+      addEvent(
+        database,
+        cycle.id,
+        input.groupId,
+        'revealing_to_archived',
+        new Date(
+          instant(cycle.releasePublishedAt!, 'invalid_state').getTime() + PREMIERE_DURATION_MS,
+        ).toISOString(),
       );
-      const durationMs =
-        instant(cycle.endsAt, 'invalid_state').getTime() -
-        instant(cycle.startsAt, 'invalid_state').getTime();
-      if (!Number.isFinite(durationMs) || durationMs <= 0) {
-        database.exec('ROLLBACK');
-        return { ok: false, reason: 'invalid_state' };
-      }
-      const nextEndsAt = new Date(startAt.getTime() + durationMs).toISOString();
-      const nextId = `local-cycle-${randomUUID()}`;
-      database
-        .prepare(
-          `INSERT INTO cycles
-            (id, group_id, prompt, starts_at, ends_at, status, lock_state,
-             max_count, max_seconds, count_used, seconds_used, previous_cycle_id)
-           VALUES (?, ?, ?, ?, ?, 'collecting', 'locked', ?, ?, 0, 0, ?)`,
-        )
-        .run(
-          nextId,
-          input.groupId,
-          cycle.prompt,
-          startAt.toISOString(),
-          nextEndsAt,
-          cycle.quota.maxCount,
-          cycle.quota.maxSeconds,
-          cycle.id,
-        );
-      database
-        .prepare('UPDATE groups SET current_cycle_id = ? WHERE id = ? AND current_cycle_id = ?')
-        .run(nextId, input.groupId, cycle.id);
-      addEvent(database, cycle.id, input.groupId, 'next_cycle_created', now.toISOString());
-      database.exec('COMMIT');
-      const archived = readCycle(database, cycle.id, input.groupId);
-      const nextCycle = readCycle(database, nextId, input.groupId);
-      if (!archived || !nextCycle) return { ok: false, reason: 'not_found' };
-      return { ok: true, action: 'archived', cycle: archived, nextCycle };
     }
-
-    if (cycle.status === 'archived') {
-      const successor = readSuccessor(database, cycle.id, input.groupId);
-      database.exec('COMMIT');
-      return { ok: true, action: 'already_archived', cycle, nextCycle: successor };
-    }
-
-    database.exec('ROLLBACK');
-    return { ok: false, reason: 'invalid_state' };
+    const result = {
+      ok: true as const,
+      action,
+      cycle: readCycle(database, cycle.id, input.groupId)!,
+      nextCycle,
+    };
+    database.exec('COMMIT');
+    return result;
   } catch (error) {
     database.exec('ROLLBACK');
-    if (error instanceof CycleTimeError) return { ok: false, reason: 'invalid_state' };
+    if (error instanceof CycleTimeError || error instanceof RangeError)
+      return { ok: false, reason: 'invalid_state' };
     throw error;
   }
+}
+
+export function publishCycleRelease(
+  database: RewindDatabase,
+  input: PublishCycleReleaseInput,
+): PublishCycleReleaseResult {
+  return publishCycleReleaseVerified(database, input);
+}
+export function advanceCycleLifecycle(
+  database: RewindDatabase,
+  input: AdvanceCycleLifecycleInput,
+): AdvanceCycleLifecycleResult {
+  return advanceCycleLifecycleVerified(database, input);
+}
+/** Network/storage reads occur before the short transaction, then every persisted field is compared under its fence. */
+export async function publishCycleReleaseWithStore(
+  database: RewindDatabase,
+  input: PublishCycleReleaseInput,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<PublishCycleReleaseResult> {
+  const proof = await verifyCompilationOutput(database, input.groupId, input.cycleId, options);
+  if (!proof) return { ok: false, reason: 'not_ready' };
+  return publishCycleReleaseVerified(database, input, proof);
+}
+export async function advanceCycleLifecycleWithStore(
+  database: RewindDatabase,
+  input: AdvanceCycleLifecycleInput,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<AdvanceCycleLifecycleResult> {
+  const cycleId = input.cycleId ?? currentCycleId(database, input.groupId);
+  const row = cycleId
+    ? (database
+        .prepare(
+          'SELECT status, release_published_at AS publishedAt FROM cycles WHERE id = ? AND group_id = ?',
+        )
+        .get(cycleId, input.groupId) as { status: string; publishedAt: string | null } | undefined)
+    : undefined;
+  const now = (input.clock ?? (() => new Date()))();
+  const proof =
+    row?.status === 'revealing' &&
+    row.publishedAt &&
+    now.getTime() >= Date.parse(row.publishedAt) + PREMIERE_DURATION_MS
+      ? await verifyCompilationOutput(database, input.groupId, cycleId!, options)
+      : undefined;
+  return advanceCycleLifecycleVerified(database, { ...input, clock: () => now }, proof);
 }
 
 export const transitionCycleLifecycle = advanceCycleLifecycle;

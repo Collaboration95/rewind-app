@@ -2,8 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#1D1B1E" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#252326" />
     <title>Rewind is offline</title>
     <style>
       :root {
@@ -12,12 +12,19 @@
         background: #252326;
         color: #f9ebd5;
       }
+      html,
+      body {
+        background: #252326;
+      }
       body {
         box-sizing: border-box;
         display: grid;
         margin: 0;
+        width: 100%;
         min-height: 100vh;
-        padding: 32px;
+        min-height: 100dvh;
+        padding: max(32px, env(safe-area-inset-top)) max(32px, env(safe-area-inset-right))
+          max(32px, env(safe-area-inset-bottom)) max(32px, env(safe-area-inset-left));
         place-items: center;
       }
       main {

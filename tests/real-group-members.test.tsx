@@ -60,6 +60,8 @@ it('updates group members and active context when switching selected groups', as
   let selected: typeof ownerGroup | typeof joinedGroup = ownerGroup;
   const groups = [ownerGroup, joinedGroup];
   const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/real/media/config?uploadProtocol=2')
+      return jsonResponse({ directTransfer: false });
     if (path === '/real/groups/current' && init?.method === 'POST') {
       const { groupId } = JSON.parse(String(init.body)) as { groupId: string };
       selected = groups.find((entry) => entry.group.id === groupId)!;
@@ -127,24 +129,24 @@ it('updates group members and active context when switching selected groups', as
 
   await fireEvent.press(screen.getByTestId(`switch-real-group-${joinedGroup.group.id}`));
   expect(await screen.findByText('Cy Owner · Owner')).toBeTruthy();
-  expect(screen.getByTestId('real-group-active-context').props.children).toEqual([
-    'ACTIVE GROUP · ',
-    'Garden circle',
-  ]);
+  expect(screen.getByTestId('real-group-active-context').props.children).toBe('Your group');
+  expect(screen.getByTestId('real-group-name-heading').props.children).toBe('Garden circle');
   expect(screen.queryByText('Ada Owner · Owner')).toBeNull();
   expect(screen.getByTestId('real-group-pending-invites').props.children).toBe(
     'No pending invitations',
   );
   await fireEvent.press(screen.getByTestId('real-group-chat-action'));
   expect(screen.getByTestId('real-chat-context').props.children).toEqual([
-    'ACTIVE GROUP · ',
+    'Group · ',
     'Garden circle',
   ]);
   expect(await screen.findByTestId('real-chat-empty')).toBeTruthy();
   await fireEvent.press(screen.getByTestId('real-group-chat-back'));
   await fireEvent.press(screen.getByTestId('real-group-capture-action'));
+  expect(screen.getByTestId('camera-screen')).toBeTruthy();
+  await fireEvent.press(screen.getByTestId('camera-record-clip'));
   expect(screen.getByTestId('real-group-capture-context').props.children).toEqual([
-    'ACTIVE GROUP · ',
+    'Group · ',
     'Garden circle',
   ]);
   screen.unmount();
@@ -207,10 +209,8 @@ it('keeps loading summaries honest and ignores a delayed prior-group response af
     );
   });
   await waitFor(() => {
-    expect(screen.getByTestId('real-group-active-context').props.children).toEqual([
-      'ACTIVE GROUP · ',
-      'Garden circle',
-    ]);
+    expect(screen.getByTestId('real-group-active-context').props.children).toBe('Your group');
+    expect(screen.getByTestId('real-group-name-heading').props.children).toBe('Garden circle');
     expect(screen.getByText('Cy Owner · Owner')).toBeTruthy();
     expect(screen.queryByText('Ada Owner · Owner')).toBeNull();
   });
@@ -219,6 +219,8 @@ it('keeps loading summaries honest and ignores a delayed prior-group response af
 
 it('keeps member and invitation counts unknown when the summary request fails', async () => {
   const authenticatedRequest = jest.fn(async (path: string) => {
+    if (path === '/real/media/config?uploadProtocol=2')
+      return jsonResponse({ directTransfer: false });
     if (path === '/real/groups/current') return jsonResponse({ group: ownerGroup });
     if (path === '/real/groups') return jsonResponse({ groups: [ownerGroup] });
     if (path === `/real/groups/${ownerGroup.group.id}/members`)

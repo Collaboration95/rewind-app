@@ -124,6 +124,18 @@ data "aws_iam_policy_document" "terraform_apply" {
       "budgets:*",
       "cloudtrail:*",
       "cloudwatch:*",
+      "cloudfront:CreateDistributionWithTags",
+      "cloudfront:CreateDistribution",
+      "cloudfront:GetCachePolicy",
+      "cloudfront:GetDistribution",
+      "cloudfront:GetDistributionConfig",
+      "cloudfront:GetOriginRequestPolicy",
+      "cloudfront:ListCachePolicies",
+      "cloudfront:ListDistributions",
+      "cloudfront:ListOriginRequestPolicies",
+      "cloudfront:ListTagsForResource",
+      "cloudfront:TagResource",
+      "cloudfront:UntagResource",
       "iam:*",
       "lambda:*",
       "lightsail:*",
@@ -170,3 +182,27 @@ output "terraform_apply_role_arn" {
   description = "Human-only role for reviewed Terraform plans and applies."
   value       = aws_iam_role.terraform_apply.arn
 }
+
+# --- GitHub OIDC for deployment workflows (#230) ---
+#
+# One account-level GitHub Actions OIDC provider. Environment-scoped deploy
+# roles are declared next to the resources they operate: the Demo host's
+# deployment role lives in infra/terraform/demo, where it can reference the
+# exact Lightsail instance ARN.
+
+resource "aws_iam_openid_connect_provider" "github" {
+  count          = var.github_oidc_provider_arn == null ? 1 : 0
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+}
+
+data "aws_iam_openid_connect_provider" "github" {
+  count = var.github_oidc_provider_arn == null ? 0 : 1
+  arn   = var.github_oidc_provider_arn
+}
+
+output "github_oidc_provider_arn" {
+  description = "GitHub Actions OIDC provider ARN referenced by environment-scoped deploy roles."
+  value       = coalesce(var.github_oidc_provider_arn, try(aws_iam_openid_connect_provider.github[0].arn, null))
+}
+

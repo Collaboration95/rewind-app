@@ -1,8 +1,9 @@
 /* global clients */
 
-const CACHE_NAME = 'rewind-shell-v1';
+// The exporter replaces this marker with the public shell's content identity.
+const CACHE_NAME = 'rewind-shell-v3-__BUILD_ID__';
+const CACHE_PREFIX = 'rewind-shell-';
 const CORE_SHELL_FILES = [
-  '/',
   '/index.html',
   '/offline.html',
   '/manifest.json',
@@ -17,15 +18,19 @@ function isApiRequest(url) {
   );
 }
 
+function isPrivateMediaRequest(url) {
+  return (
+    url.origin === self.location.origin &&
+    ['/media/', '/films/', '/clips/'].some((prefix) => url.pathname.startsWith(prefix))
+  );
+}
+
 function isShellAsset(url) {
   return (
     url.origin === self.location.origin &&
-    (url.pathname === '/' ||
-      url.pathname === '/index.html' ||
-      url.pathname === '/offline.html' ||
-      url.pathname === '/manifest.json' ||
-      url.pathname.startsWith('/icons/') ||
-      url.pathname.startsWith('/_expo/'))
+    !url.search &&
+    (CORE_SHELL_FILES.includes(url.pathname) ||
+      /^\/_expo\/static\/(?:js|css)\/[A-Za-z0-9_./-]+-[a-f0-9]{32}\.(?:js|css)$/.test(url.pathname))
   );
 }
 
@@ -47,39 +52,48 @@ function apiUnavailableResponse() {
 }
 
 async function cacheResponse(cache, request, response) {
-  if (response.ok && request.method === 'GET') await cache.put(request, response.clone());
+  if (
+    response.ok &&
+    request.method === 'GET' &&
+    !/no-store|private/i.test(response.headers.get('Cache-Control') ?? '')
+  )
+    await cache.put(request, response.clone());
   return response;
 }
 
 async function warmShell() {
   const cache = await caches.open(CACHE_NAME);
-  const indexResponse = await fetch('/index.html', { cache: 'no-store' });
-  if (indexResponse.ok) {
-    await cache.put('/index.html', indexResponse.clone());
-    const html = await indexResponse.text();
-    const referencedAssets = [...html.matchAll(/(?:src|href)="(\/[^"?#]+)"/g)].map(
-      ([, path]) => path,
+  try {
+    const indexResponse = await fetch('/index.html', { cache: 'no-store', credentials: 'omit' });
+    if (!indexResponse.ok || !/text\/html/i.test(indexResponse.headers.get('Content-Type') ?? ''))
+      throw new Error('Public shell unavailable.');
+    const html = await indexResponse.clone().text();
+    const referencedAssets = [...html.matchAll(/(?:src|href)="(\/[^"?#]+)"/g)]
+      .map(([, path]) => path)
+      .filter((path) => isShellAsset(new URL(path, self.location.origin)));
+    const files = [...new Set([...CORE_SHELL_FILES, ...referencedAssets])].filter(
+      (path) => path !== '/index.html',
     );
-    CORE_SHELL_FILES.push(...referencedAssets);
+    // Installation succeeds only with a complete matching shell. A failed
+    // upgrade leaves the previous controller and its cache usable.
+    await Promise.all(
+      files.map(async (path) => {
+        const response = await fetch(path, { cache: 'no-store', credentials: 'omit' });
+        if (!response.ok) throw new Error('Public shell asset unavailable.');
+        await cache.put(path, response);
+      }),
+    );
+    await cache.put('/index.html', indexResponse);
+  } catch (error) {
+    await caches.delete(CACHE_NAME);
+    throw error;
   }
-  await Promise.all(
-    [...new Set(CORE_SHELL_FILES)].map(async (path) => {
-      try {
-        const response = await fetch(path, { cache: 'no-store' });
-        if (response.ok) await cache.put(path, response);
-      } catch {
-        // A partial cache still provides the explicit offline fallback.
-      }
-    }),
-  );
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    warmShell()
-      .catch(() => undefined)
-      .finally(() => self.skipWaiting()),
-  );
+  // Wait for existing app windows to close before activating another build.
+  // Do not replace an active worker halfway through recording or uploading.
+  event.waitUntil(warmShell());
 });
 
 self.addEventListener('activate', (event) => {
@@ -87,7 +101,11 @@ self.addEventListener('activate', (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
+        Promise.all(
+          keys
+            .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+            .map((key) => caches.delete(key)),
+        ),
       )
       .then(() => clients.claim()),
   );
@@ -95,30 +113,32 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  if (isApiRequest(url)) {
+  if (isApiRequest(url) || isPrivateMediaRequest(url) || event.request.method !== 'GET') {
     // Never cache server-backed responses or queue writes for later sync.
     event.respondWith(fetch(event.request).catch(() => apiUnavailableResponse()));
     return;
   }
 
   if (url.origin === self.location.origin && event.request.mode === 'navigate') {
+    // Navigation may carry invite/capability query strings or return JSON/media.
+    // It never creates a cache entry. Offline entry uses only the public shell
+    // installed with this worker, not another build's global cache.
     event.respondWith(
-      fetch(event.request)
-        .then(async (response) =>
-          cacheResponse(await caches.open(CACHE_NAME), event.request, response),
-        )
-        .catch(async () => (await caches.match('/index.html')) ?? caches.match('/offline.html')),
+      fetch(event.request).catch(async () => {
+        const cache = await caches.open(CACHE_NAME);
+        return (await cache.match('/index.html')) ?? cache.match('/offline.html');
+      }),
     );
     return;
   }
-  if (!isShellAsset(url)) return;
+  if (!isShellAsset(url) || event.request.headers.has('Range')) return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.open(CACHE_NAME).then(async (cache) => {
+      const cached = await cache.match(event.request);
       if (cached) return cached;
-      return fetch(event.request).then((response) =>
-        caches.open(CACHE_NAME).then((cache) => cacheResponse(cache, event.request, response)),
-      );
+      const response = await fetch(event.request, { credentials: 'omit' });
+      return cacheResponse(cache, event.request, response);
     }),
   );
 });

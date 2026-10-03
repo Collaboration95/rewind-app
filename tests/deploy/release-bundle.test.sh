@@ -25,7 +25,7 @@ cat > "$root/bin/gh" <<'GH'
 if [[ "${FIXTURE_CI_FAILED:-0}" == 1 ]]; then
   printf '{"workflow_runs":[]}\n'
 else
-  printf '{"workflow_runs":[{"head_sha":"%s","head_branch":"main","event":"push","conclusion":"success"}]}\n' "$FIXTURE_GREEN_SHA"
+  printf '{"workflow_runs":[{"head_sha":"%s","head_branch":"%s","event":"push","conclusion":"success"}]}\n' "$FIXTURE_GREEN_SHA" "${FIXTURE_CI_BRANCH:-main}"
 fi
 GH
 chmod +x "$root/bin/gh"
@@ -143,6 +143,20 @@ grep -q 'image ID mismatch' "$root/error"
 python3 "$repo/deploy/release.py" verify "$root/release.tar" --extract "$root/extracted" >/dev/null
 [[ -f "$root/extracted/source/deploy/compose.yaml" ]]
 
+# The release branch is an explicit input: a dev release is gated on the dev
+# branch's own Quality run, not on main's.
+git -C "$repo" update-ref refs/remotes/origin/dev "$sha"
+if (cd "$repo" && python3 deploy/release.py build --green-sha "$sha" --config-version dev-v1 --branch dev --output "$root/dev.tar") >"$root/error" 2>&1; then
+  echo 'a main-only Quality run was accepted for the dev branch' >&2; exit 1
+fi
+grep -q 'no successful dev-branch' "$root/error"
+if (cd "$repo" && python3 deploy/release.py build --green-sha "$sha" --config-version dev-v1 --branch missing --output "$root/dev.tar") >"$root/error" 2>&1; then
+  echo 'an unknown release branch was accepted' >&2; exit 1
+fi
+grep -q 'origin/missing is not available' "$root/error"
+(cd "$repo" && FIXTURE_CI_BRANCH=dev python3 deploy/release.py build --green-sha "$sha" --config-version dev-v1 --branch dev --output "$root/dev.tar")
+[[ "$(python3 "$repo/deploy/release.py" verify "$root/dev.tar")" == "$sha" ]]
+
 # A disposable host keeps the first bundle, promotes the second, and refuses
 # rollback once the database schema outruns the prior image's declared range.
 printf 'second release\n' >> "$repo/deploy/compose.yaml"
@@ -182,10 +196,19 @@ if [[ "${1:-}" == compose ]]; then
 elif [[ "${1:-}" == inspect ]]; then
   service="${!#}"
   service="${service#fixture-}"
-  python3 - "$REWIND_HOST_ROOT/releases/$(cat "$REWIND_HOST_ROOT/.active-image")/manifest.json" "$service" <<'PY'
-import json, sys
-print(json.load(open(sys.argv[1]))["images"][sys.argv[2]])
-PY
+  [[ "${FIXTURE_WRONG_RUNNING_IMAGE:-0}" != 1 ]] || { printf 'wrong-image\n'; exit 0; }
+  printf 'normalized-%s-%s\n' "$service" "$(cat "$REWIND_HOST_ROOT/.active-image")"
+elif [[ "${1:-}" == image && "${2:-}" == inspect ]]; then
+  tag="${!#}"
+  sha="${tag##*:}"
+  service=runtime
+  [[ "$tag" != rewind-demo-web:* ]] || service=web
+  if [[ " $* " == *'{{.Id}}'* ]]; then
+    printf 'normalized-%s-%s\n' "$service" "$sha"
+  else
+    [[ "${FIXTURE_WRONG_REVISION:-0}" != 1 ]] || { printf 'wrong-revision\n'; exit 0; }
+    printf '%s\n' "$sha"
+  fi
 elif [[ "${1:-}" == load && " $* " == *"${FIXTURE_LOAD_FAIL_SHA:-never}"* ]]; then
   exit 1
 fi
@@ -198,6 +221,12 @@ touch "$host/rewind.env"
 bash "$repo/deploy/release-host.sh" prepare "$root/release.tar"
 [[ ! -e "$host/current-release" && "$(cat "$host/pending-release")" == "$sha" ]]
 REWIND_RELEASE_SHA="$sha" docker compose up -d
+if FIXTURE_WRONG_RUNNING_IMAGE=1 bash "$repo/deploy/release-host.sh" promote >"$root/error" 2>&1; then
+  echo 'wrong running image was promoted' >&2; exit 1
+fi
+if FIXTURE_WRONG_REVISION=1 bash "$repo/deploy/release-host.sh" promote >"$root/error" 2>&1; then
+  echo 'wrong loaded image revision was promoted' >&2; exit 1
+fi
 bash "$repo/deploy/release-host.sh" promote
 [[ "$(cat "$host/current-release")" == "$sha" ]]
 if FIXTURE_LOAD_FAIL_SHA="$second_sha" bash "$repo/deploy/release-host.sh" install "$root/second.tar" >"$root/error" 2>&1; then

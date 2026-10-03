@@ -26,6 +26,8 @@ import {
 } from '../capture/contribution-status';
 import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
 import type { PendingClipUpload } from '../domain/video';
+import { RealGroupSettings } from '../reminders/RealGroupSettings';
+import { RealAccountArchiveScreen } from '../archive/ArchiveScreen';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -60,9 +62,22 @@ interface RealInvite extends InviteLinkPayload {
   createdAt: string;
 }
 
+function displayInviteCode(code: string): string {
+  const normalized = code.replace(/[\s-]/g, '').toUpperCase();
+  return /^[A-Z]{6}$/.test(normalized)
+    ? `${normalized.slice(0, 3)}-${normalized.slice(3)}`
+    : normalized;
+}
+
 interface RealGroup {
   memberId?: string;
-  group: { id: string; name: string; role: 'owner' | 'member'; maxMembers: number };
+  group: {
+    id: string;
+    name: string;
+    role: 'owner' | 'member';
+    maxMembers: number;
+    timeZone?: string;
+  };
   cycle: {
     id: string;
     prompt: string;
@@ -72,6 +87,14 @@ interface RealGroup {
     contributionUsage: { countUsed: number; secondsUsed: number };
     contributionCount: number;
   };
+  releases?: RealGroupRelease[];
+}
+
+interface RealGroupRelease {
+  cycleId: string;
+  endsAt: string;
+  publishedAt: string | null;
+  state: 'processing' | 'delayed' | 'premiere' | 'archived';
 }
 
 interface RealGroupMembers {
@@ -108,12 +131,13 @@ export function RealAccountGroupExperience({
   inviteWebOrigin?: string;
 }) {
   const auth = useRealAccount();
+  const [group, setGroup] = useState<RealGroup | null>(null);
+  const [transferMode, setTransferMode] = useState<'server' | 'direct'>('server');
   const mediaClient = useMemo(
-    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest),
-    [auth.authenticatedRequest],
+    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest, { transferMode }),
+    [auth.authenticatedRequest, transferMode],
   );
   const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
-  const [group, setGroup] = useState<RealGroup | null>(null);
   const [homeAllowance, setHomeAllowance] = useState<ContributionLedgerAllowance | null>(null);
   const loadContributionLedger = useCallback(
     () =>
@@ -132,7 +156,7 @@ export function RealAccountGroupExperience({
   const groupMembersRequest = useRef(0);
   const selectedGroupId = useRef<string | null>(null);
   const [screen, setScreen] = useState<
-    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'error'
+    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'archive' | 'error'
   >('loading');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState<string>(BUILT_IN_PROMPTS[0]);
@@ -145,6 +169,75 @@ export function RealAccountGroupExperience({
   const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
   const [invitePending, setInvitePending] = useState(false);
   const [acceptPending, setAcceptPending] = useState(false);
+  const [enteredCode, setEnteredCode] = useState('');
+  const [capturePending, setCapturePending] = useState(false);
+  const captureRequest = useRef(0);
+  const captureMounted = useRef(true);
+  const captureAccount = useRef(auth.session?.account.id);
+
+  useEffect(() => {
+    captureMounted.current = true;
+    return () => {
+      captureMounted.current = false;
+      captureRequest.current += 1;
+    };
+  }, []);
+  useEffect(() => {
+    captureAccount.current = auth.session?.account.id;
+  }, [auth.session?.account.id]);
+  useEffect(() => () => mediaClient.dispose(), [mediaClient]);
+  useEffect(() => {
+    if (screen !== 'capture') mediaClient.cancelDirectTransfers();
+    return () => mediaClient.cancelDirectTransfers();
+  }, [mediaClient, screen, group?.group.id, auth.session?.account.id]);
+
+  const openCapture = async () => {
+    if (!group) return;
+    const request = ++captureRequest.current;
+    const context = groupContextVersion.current;
+    const groupId = group.group.id;
+    const accountId = auth.session?.account.id;
+    setCapturePending(true);
+    setMessage(null);
+    try {
+      const response = await auth.authenticatedRequest('/real/media/config?uploadProtocol=2');
+      let mode: 'server' | 'direct' = 'server';
+      if (response.status !== 404) {
+        if (!response.ok)
+          throw new Error(
+            'Capture settings are unavailable. Reconnect or sign in again, then retry.',
+          );
+        const config = (await response.json()) as { directTransfer?: unknown };
+        if (typeof config.directTransfer !== 'boolean')
+          throw new Error('Capture settings could not be verified. Retry when connected.');
+        mode = config.directTransfer ? 'direct' : 'server';
+      }
+      if (
+        !captureMounted.current ||
+        request !== captureRequest.current ||
+        context !== groupContextVersion.current ||
+        selectedGroupId.current !== groupId ||
+        captureAccount.current !== accountId
+      )
+        return;
+      setTransferMode(mode);
+      setHomeAllowance(null);
+      setScreen('capture');
+    } catch (error) {
+      if (
+        captureMounted.current &&
+        request === captureRequest.current &&
+        context === groupContextVersion.current
+      )
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : 'Capture settings are unavailable. Retry when connected.',
+        );
+    } finally {
+      if (captureMounted.current && request === captureRequest.current) setCapturePending(false);
+    }
+  };
 
   const loadGroupMembers = useCallback(
     async (groupId: string, contextVersion: number) => {
@@ -215,33 +308,42 @@ export function RealAccountGroupExperience({
 
   if (screen === 'capture' && group) {
     return (
-      <View style={styles.captureContainer}>
-        <Text style={styles.label} testID="real-group-capture-context">
-          ACTIVE GROUP · {group.group.name}
-        </Text>
-        <View style={styles.captureModes}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setScreen('home')}
-            style={styles.modeButton}
-          >
-            <Text style={styles.modeButtonText}>Back to group</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setCaptureMode('photo')}
-            style={styles.modeButton}
-          >
-            <Text style={styles.modeButtonText}>Photo</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setCaptureMode('video')}
-            style={styles.modeButton}
-          >
-            <Text style={styles.modeButtonText}>Video</Text>
-          </Pressable>
-        </View>
+      <ScrollView
+        contentContainerStyle={
+          captureMode === 'photo' ? styles.photoCaptureContent : styles.captureContent
+        }
+        style={styles.captureContainer}
+      >
+        {captureMode === 'video' ? (
+          <Text style={styles.label} testID="real-group-capture-context">
+            Group · {group.group.name}
+          </Text>
+        ) : null}
+        {captureMode === 'video' ? (
+          <View style={styles.captureModes}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setScreen('home')}
+              style={styles.modeButton}
+            >
+              <Text style={styles.modeButtonText}>Back to group</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setCaptureMode('photo')}
+              style={styles.modeButton}
+            >
+              <Text style={styles.modeButtonText}>Photo</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setCaptureMode('video')}
+              style={styles.modeButton}
+            >
+              <Text style={styles.modeButtonText}>Video</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <ContributionStatusProvider
           scope={{
             sessionId: 'real-account-session',
@@ -252,6 +354,7 @@ export function RealAccountGroupExperience({
         >
           {captureMode === 'photo' ? (
             <CameraCaptureScreen
+              onBack={() => setScreen('home')}
               onRecordClip={() => setCaptureMode('video')}
               onSubmitPhoto={async (metadata, base64, onProgress, replacesContributionId) => {
                 if (!mediaClient.uploadClip || !mediaClient.processClipJob) {
@@ -321,11 +424,12 @@ export function RealAccountGroupExperience({
               realAccount={{
                 groupId: group.group.id,
                 authenticatedRequest: auth.authenticatedRequest,
+                transferMode,
               }}
             />
           )}
         </ContributionStatusProvider>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -334,7 +438,7 @@ export function RealAccountGroupExperience({
       <View style={styles.captureContainer}>
         <View style={styles.brand}>
           <Text style={styles.wordmark}>REWIND</Text>
-          <Text style={styles.label}>REAL ACCOUNT · {displayName}</Text>
+          <Text style={styles.label}>{displayName}</Text>
         </View>
         <RealAccountChatScreen
           key={`${group.group.id}:${group.memberId ?? ''}`}
@@ -343,6 +447,25 @@ export function RealAccountGroupExperience({
           members={groupMembers?.members ?? []}
           memberProfilesError={groupMembersError}
           currentMemberId={group.memberId}
+          onBack={() => setScreen('home')}
+        />
+      </View>
+    );
+  }
+
+  if (screen === 'archive' && group) {
+    return (
+      <View style={styles.captureContainer}>
+        <View style={styles.brand}>
+          <Text style={styles.wordmark}>REWIND</Text>
+          <Text style={styles.label}>{group.group.name}</Text>
+        </View>
+        <RealAccountArchiveScreen
+          key={`${group.group.id}:${auth.session?.account.id ?? ''}`}
+          baseUrl={auth.baseUrl}
+          groupId={group.group.id}
+          cycleId={group.cycle.id}
+          authenticatedRequest={auth.authenticatedRequest}
           onBack={() => setScreen('home')}
         />
       </View>
@@ -389,12 +512,6 @@ export function RealAccountGroupExperience({
 
   const createInvitation = async () => {
     if (!group || group.group.role !== 'owner') return;
-    if (!inviteWebOrigin) {
-      setInviteFeedback(
-        'Invitation links are unavailable because this app has no configured public HTTPS web origin.',
-      );
-      return;
-    }
     setInvitePending(true);
     setInviteFeedback(null);
     try {
@@ -418,6 +535,28 @@ export function RealAccountGroupExperience({
     }
   };
 
+  const revokeInvitation = async () => {
+    if (!group || !invite || group.group.role !== 'owner' || invitePending) return;
+    setInvitePending(true);
+    setInviteFeedback(null);
+    try {
+      const response = await auth.authenticatedRequest(
+        `/real/groups/${encodeURIComponent(group.group.id)}/invites/${encodeURIComponent(invite.id)}`,
+        { method: 'DELETE' },
+      );
+      if (!response.ok) throw new Error('The invitation could not be revoked. Try again.');
+      setInvite(null);
+      setInviteFeedback('Invitation code revoked. Create a new code to invite someone.');
+      await loadGroupMembers(group.group.id, groupContextVersion.current);
+    } catch (error) {
+      setInviteFeedback(
+        error instanceof Error ? error.message : 'The invitation could not be revoked.',
+      );
+    } finally {
+      setInvitePending(false);
+    }
+  };
+
   const inviteLink = invite
     ? createInviteLink(invite, {
         platform: 'web',
@@ -427,37 +566,51 @@ export function RealAccountGroupExperience({
     : null;
 
   const copyInvitation = async () => {
+    if (!invite) return;
+    try {
+      await Clipboard.setStringAsync(displayInviteCode(invite.code));
+      setInviteFeedback('Invitation code copied.');
+    } catch {
+      setInviteFeedback('Copy is unavailable here. Select the invitation code to copy it.');
+    }
+  };
+
+  const copyInvitationLink = async () => {
     if (!inviteLink) return;
     try {
       await Clipboard.setStringAsync(inviteLink);
       setInviteFeedback('Invitation link copied.');
     } catch {
-      setInviteFeedback('Copy is unavailable here. Select the invitation link to copy it.');
+      setInviteFeedback('Copy is unavailable here. Share the invitation code instead.');
     }
   };
 
   const shareInvitation = async () => {
-    if (!inviteLink) return;
+    if (!invite) return;
     try {
       await Share.share({
-        message: `Join my Rewind group with this invitation link: ${inviteLink}`,
-        url: inviteLink,
+        message: `Join my Rewind group with code ${displayInviteCode(invite.code)}. Open Rewind and choose Enter invitation code.`,
       });
-      setInviteFeedback('Invitation link ready to share.');
+      setInviteFeedback('Invitation code ready to share.');
     } catch {
-      setInviteFeedback('Share is unavailable here. Copy the invitation link to share it.');
+      setInviteFeedback('Share is unavailable here. Copy the invitation code to share it.');
     }
   };
 
-  const acceptInvitation = async () => {
-    if (!inviteIntent || acceptPending) return;
+  const acceptInvitation = async (rawCode: string, requestedGroupId?: string) => {
+    if (acceptPending) return;
+    const code = rawCode.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^(?:[A-Z]{6}|[A-Z0-9]{8})$/.test(code)) {
+      setInviteFeedback('Enter the six-letter invitation code, like ABC-DEF.');
+      return;
+    }
     setAcceptPending(true);
     setInviteFeedback(null);
     try {
       const response = await auth.authenticatedRequest('/real/invites/accept', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: inviteIntent.code, groupId: inviteIntent.groupId }),
+        body: JSON.stringify({ code, ...(requestedGroupId ? { groupId: requestedGroupId } : {}) }),
       });
       const body = (await response.json()) as {
         status?: string;
@@ -470,6 +623,7 @@ export function RealAccountGroupExperience({
       const contextVersion = ++groupContextVersion.current;
       selectedGroupId.current = body.group.group.id;
       setGroup(body.group);
+      setInvite(null);
       await loadGroupMembers(body.group.group.id, contextVersion);
       setMemberGroups((current) =>
         current.some((membership) => membership.group.id === body.group?.group.id)
@@ -477,6 +631,7 @@ export function RealAccountGroupExperience({
           : [...current, body.group!],
       );
       setScreen('home');
+      setEnteredCode('');
       setInviteFeedback('Invitation accepted. You joined the group.');
     } catch (error) {
       setInviteFeedback(
@@ -503,6 +658,7 @@ export function RealAccountGroupExperience({
       if (contextVersion !== groupContextVersion.current) return;
       selectedGroupId.current = selected.group.id;
       setGroup(selected);
+      setInvite(null);
       await loadGroupMembers(selected.group.id, contextVersion);
     } catch (error) {
       if (contextVersion !== groupContextVersion.current) return;
@@ -517,12 +673,12 @@ export function RealAccountGroupExperience({
     <ScrollView contentContainerStyle={styles.content} testID="real-group-experience">
       <View style={styles.brand}>
         <Text style={styles.wordmark}>REWIND</Text>
-        <Text style={styles.label}>REAL ACCOUNT · {displayName}</Text>
+        <Text style={styles.label}>{displayName}</Text>
       </View>
       {inviteIntent ? (
         <View style={styles.inviteIntent} testID="real-invite-intent">
           <Text style={styles.panelTitle}>Invitation retained</Text>
-          <Text style={styles.body}>Group {inviteIntent.groupId}</Text>
+          <Text style={styles.body}>Your group invitation is ready.</Text>
           <Text style={styles.body}>
             Expires {new Date(inviteIntent.expiresAt).toLocaleString()}
           </Text>
@@ -532,7 +688,7 @@ export function RealAccountGroupExperience({
           <Action
             title={acceptPending ? 'Joining…' : 'Accept invitation'}
             disabled={acceptPending}
-            onPress={() => void acceptInvitation()}
+            onPress={() => void acceptInvitation(inviteIntent.code, inviteIntent.groupId)}
             testID="real-invite-accept"
           />
           {inviteFeedback ? (
@@ -590,12 +746,30 @@ export function RealAccountGroupExperience({
             }}
             testID="real-group-create-choice"
           />
+          <Text style={styles.body}>Have an invitation code? Enter it to join your group.</Text>
+          <TextInput
+            accessibilityLabel="Invitation code"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            onChangeText={setEnteredCode}
+            placeholder="ABC-DEF"
+            placeholderTextColor={COLORS.muted}
+            style={styles.input}
+            testID="real-group-enter-code"
+            value={enteredCode}
+          />
           <Action
-            title={inviteIntent ? 'Invitation shown above' : 'Open an invitation link to join'}
-            disabled
-            onPress={() => undefined}
+            title={acceptPending ? 'Joining…' : 'Join with code'}
+            disabled={acceptPending}
+            onPress={() => void acceptInvitation(enteredCode)}
             testID="real-group-join-choice"
           />
+          {inviteFeedback ? (
+            <Text accessibilityRole="alert" style={styles.error} testID="real-group-join-feedback">
+              {inviteFeedback}
+            </Text>
+          ) : null}
+          {group ? <Action title="Back to group" onPress={() => setScreen('home')} /> : null}
           <Action
             title={
               auth.pending
@@ -707,13 +881,13 @@ export function RealAccountGroupExperience({
                   : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
             </Text>
           ) : null}
-          <Text style={styles.label}>PRIVATE GROUP · {group.group.role.toUpperCase()}</Text>
           <Text style={styles.label} testID="real-group-active-context">
-            ACTIVE GROUP · {group.group.name}
+            Your group
           </Text>
           <Text accessibilityRole="header" style={styles.title} testID="real-group-name-heading">
             {group.group.name}
           </Text>
+          <Text style={styles.body}>{group.group.role === 'owner' ? 'Owner' : 'Member'}</Text>
           <Text style={styles.body}>Up to {group.group.maxMembers} members</Text>
           <View style={styles.invitationPanel} testID="real-group-members">
             <Text accessibilityRole="header" style={styles.label}>
@@ -770,14 +944,15 @@ export function RealAccountGroupExperience({
                 ))}
             </View>
           ) : null}
+          <Action title="Join another group" onPress={() => setScreen('choices')} />
           {group.group.role === 'owner' ? (
             <View style={styles.invitationPanel} testID="real-group-invitations">
               <Text style={styles.label}>GROUP INVITATION</Text>
               <Text style={styles.body}>
-                Create a private invite link that expires in 24 hours.
+                Create a private invitation code that expires in 24 hours.
               </Text>
               <Action
-                title={invitePending ? 'Creating invitation…' : 'Create invitation link'}
+                title={invitePending ? 'Creating invitation…' : 'Create invitation code'}
                 disabled={invitePending}
                 onPress={() => void createInvitation()}
                 testID="real-group-create-invite"
@@ -787,27 +962,28 @@ export function RealAccountGroupExperience({
                   <Text style={styles.body} testID="real-group-invite-expiry">
                     Expires {new Date(invite.expiresAt).toLocaleString()} · Active
                   </Text>
+                  <Text selectable style={styles.inviteCode} testID="real-group-invite-code">
+                    {displayInviteCode(invite.code)}
+                  </Text>
+                  <Action
+                    title="Copy invitation code"
+                    onPress={() => void copyInvitation()}
+                    testID="real-group-copy-invite"
+                  />
+                  <Action
+                    title="Share invitation code"
+                    onPress={() => void shareInvitation()}
+                    testID="real-group-share-invite"
+                  />
                   {inviteLink ? (
-                    <>
-                      <Text selectable style={styles.body} testID="real-group-invite-link">
-                        {inviteLink}
-                      </Text>
-                      <Action
-                        title="Copy invitation link"
-                        onPress={() => void copyInvitation()}
-                        testID="real-group-copy-invite"
-                      />
-                      <Action
-                        title="Share invitation link"
-                        onPress={() => void shareInvitation()}
-                        testID="real-group-share-invite"
-                      />
-                    </>
-                  ) : (
-                    <Text accessibilityRole="alert" style={styles.error}>
-                      A secure HTTPS link is unavailable. Connect the app to its HTTPS web origin.
-                    </Text>
-                  )}
+                    <Action title="Copy invite link" onPress={() => void copyInvitationLink()} />
+                  ) : null}
+                  <Action
+                    title={invitePending ? 'Revoking invitation…' : 'Revoke invitation code'}
+                    disabled={invitePending}
+                    onPress={() => void revokeInvitation()}
+                    testID="real-group-revoke-invite"
+                  />
                 </>
               ) : null}
               {inviteFeedback ? (
@@ -822,7 +998,10 @@ export function RealAccountGroupExperience({
             </View>
           ) : null}
           <View style={styles.divider} />
-          <Text style={styles.label}>FOUR-WEEK CYCLE</Text>
+          <Text style={styles.label}>CURRENT CAPTURE CYCLE</Text>
+          <Text style={styles.body}>
+            Contributions here are separate from previously released films.
+          </Text>
           <Text style={styles.body} testID="real-group-countdown">
             {remainingLabel(group.cycle.endsAt)}
           </Text>
@@ -830,6 +1009,48 @@ export function RealAccountGroupExperience({
           <Text style={styles.prompt} testID="real-group-cycle-prompt">
             {group.cycle.prompt}
           </Text>
+          <View style={styles.invitationPanel} testID="real-group-releases">
+            <Text style={styles.label}>PREVIOUS RELEASES</Text>
+            {(group.releases ?? []).filter((release) => release.cycleId !== group.cycle.id)
+              .length === 0 ? (
+              <Text style={styles.body} testID="real-group-releases-empty">
+                Earlier group films will remain available in Archive after release.
+              </Text>
+            ) : (
+              (group.releases ?? [])
+                .filter((release) => release.cycleId !== group.cycle.id)
+                .map((release) => (
+                  <View key={release.cycleId} style={styles.releaseRow}>
+                    <Text style={styles.body} testID={`real-group-release-${release.cycleId}`}>
+                      {release.state === 'processing'
+                        ? 'Film processing'
+                        : release.state === 'delayed'
+                          ? 'Release delayed'
+                          : release.state === 'premiere'
+                            ? 'Premiere ready'
+                            : 'Archived film'}
+                      {' · '}
+                      Cycle ended {new Date(release.endsAt).toLocaleDateString()}
+                    </Text>
+                  </View>
+                ))
+            )}
+            <Action
+              title="Open Archive"
+              onPress={() => setScreen('archive')}
+              testID="real-group-open-archive"
+            />
+          </View>
+          <RealGroupSettings
+            key={group.group.id}
+            group={group}
+            authenticatedRequest={auth.authenticatedRequest}
+            onUpdated={(updated) =>
+              setGroup((current) =>
+                current ? { ...updated, releases: updated.releases ?? current.releases } : updated,
+              )
+            }
+          />
           <Text style={styles.label}>MY ALLOWANCE</Text>
           <Text style={styles.body} testID="real-group-allowance">
             {homeAllowance
@@ -858,12 +1079,9 @@ export function RealAccountGroupExperience({
             </View>
           )}
           <Action
-            title="Capture a moment"
-            onPress={() => {
-              setMessage(null);
-              setHomeAllowance(null);
-              setScreen('capture');
-            }}
+            title={capturePending ? 'Checking capture…' : 'Capture a moment'}
+            disabled={capturePending}
+            onPress={() => void openCapture()}
             testID="real-group-capture-action"
           />
           <Action
@@ -919,7 +1137,9 @@ function Action({
 
 const styles = StyleSheet.create({
   content: { gap: 18, padding: 22 },
-  captureContainer: { flex: 1, gap: 12 },
+  captureContainer: { flex: 1 },
+  captureContent: { flexGrow: 1, gap: 12, padding: 22 },
+  photoCaptureContent: { flexGrow: 1 },
   captureModes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   modeButton: { borderColor: COLORS.edge, borderRadius: 8, borderWidth: 1, padding: 10 },
   modeButtonText: { color: COLORS.ink, fontWeight: '700' },
@@ -936,6 +1156,7 @@ const styles = StyleSheet.create({
   },
   title: { color: COLORS.ink, fontSize: 27, fontWeight: '700' },
   panelTitle: { color: COLORS.ink, fontSize: 19, fontWeight: '700' },
+  inviteCode: { color: COLORS.ink, fontSize: 28, fontWeight: '800', letterSpacing: 3 },
   body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
   prompt: { color: COLORS.ink, fontSize: 18, fontWeight: '600' },
   input: {
@@ -978,6 +1199,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     padding: 14,
   },
+  releaseRow: { borderTopColor: COLORS.line, borderTopWidth: 1, paddingTop: 8 },
   inviteIntent: {
     backgroundColor: COLORS.paper,
     borderRadius: 12,

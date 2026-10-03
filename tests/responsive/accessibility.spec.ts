@@ -7,7 +7,7 @@ async function enterDemo(page: Page) {
   await page.goto('/');
   const chooser = page.getByTestId('demo-entry-demo-1');
   const navigation = page.getByTestId('main-navigation');
-  const welcome = page.getByRole('heading', { name: 'Welcome to Rewind' });
+  const welcome = page.getByTestId('welcome-entry');
   await expect
     .poll(
       async () =>
@@ -23,6 +23,10 @@ async function enterDemo(page: Page) {
     const tryDemo = page.getByRole('button', { name: 'Try Demo' });
     if (await tryDemo.isVisible().catch(() => false)) {
       await tryDemo.click();
+      await chooser.click();
+    } else if (await welcome.isVisible().catch(() => false)) {
+      await page.getByRole('button', { name: 'Sign in' }).click();
+      await page.getByRole('button', { name: 'Try Demo' }).click();
       await chooser.click();
     }
   }
@@ -108,12 +112,20 @@ test('Archive loading and Demo access error states have no serious or critical A
     await page.getByTestId('nav-archive').click();
     await expect(page.getByTestId('archive-loading')).toBeVisible({ timeout: 15_000 });
     await expectNoSeriousAxeViolations(page, 'loading');
+    const archiveHeading = page.getByTestId('route-heading-archive');
+    await expect(archiveHeading).toBeFocused();
+    await page.evaluate(() => {
+      document.body.setAttribute('tabindex', '-1');
+      document.body.focus();
+    });
+    await expect(page.locator('body')).toBeFocused();
     releasePremiereRequests.splice(0).forEach((release) => release());
     await expect(page.getByTestId('archive-locked')).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('route-heading-archive')).toBeFocused();
+    await expect(archiveHeading).toBeFocused();
   } finally {
     releasePremiereRequests.splice(0).forEach((release) => release());
     await page.unroute('**/api/cycles/*/premiere**');
+    await page.evaluate(() => document.body.removeAttribute('tabindex')).catch(() => undefined);
   }
 });
 
@@ -127,18 +139,21 @@ test('Demo access error state has no serious or critical Axe violations', async 
     });
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Welcome to Rewind' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
+  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await page.getByTestId('demo-entry-demo-1').click();
   await expect(page.getByRole('alert')).toContainText('local runtime is offline');
-  await expect(page.getByRole('button', { name: 'Retry session check' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry Demo start' })).toBeVisible();
   await expectNoSeriousAxeViolations(page, 'error');
 });
 
 test('entry chooser has no serious or critical Axe violations', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Welcome to Rewind' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
   await expectNoSeriousAxeViolations(page, 'welcome');
+  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   await expectNoSeriousAxeViolations(page, 'Demo chooser');
@@ -152,7 +167,8 @@ test('keyboard navigation keeps focus on visible controls and reaches each main 
   page,
 }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Welcome to Rewind' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
+  await page.getByRole('button', { name: 'Sign in' }).click();
   await tabUntilFocused(page, page.getByRole('button', { name: 'Try Demo' }));
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();

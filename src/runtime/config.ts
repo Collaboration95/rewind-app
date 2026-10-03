@@ -5,6 +5,12 @@ export interface ConfiguredRuntime {
   client: RuntimeClient;
 }
 
+/** Demo access is available by default and can be hidden for a release build. */
+export function isDemoAccessEnabled(): boolean {
+  if (typeof process === 'undefined') return true;
+  return process.env.EXPO_PUBLIC_DEMO_ACCESS !== 'disabled';
+}
+
 function readExpoRuntimeUrl(): string | undefined {
   // Expo replaces EXPO_PUBLIC_* references at bundle time. The guard keeps
   // tests and non-Expo tooling safe when process.env is unavailable.

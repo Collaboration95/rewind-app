@@ -16,13 +16,14 @@ for (const screenSize of screenSizes) {
     const navigation = page.getByTestId('main-navigation');
     const lastHomeContent = page.getByTestId('home-content-end');
     const entryChoice = page.getByTestId('demo-entry-demo-1');
-    const welcome = page.getByRole('heading', { name: 'Welcome to Rewind' });
+    const welcome = page.getByTestId('welcome-entry');
 
-    // A clean browser context starts at Welcome and requires an explicit Demo choice.
+    // A clean browser context starts at Welcome; Demo is available from Sign in.
     await expect(navigation.or(entryChoice).or(welcome)).toBeVisible();
     if (await entryChoice.isVisible()) {
       await entryChoice.click();
     } else {
+      await page.getByRole('button', { name: 'Sign in' }).click();
       await page.getByRole('button', { name: 'Try Demo' }).click();
       await entryChoice.click();
     }

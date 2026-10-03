@@ -17,6 +17,7 @@ import {
   type AuthState,
   type RealAccount,
   type RealAccountSession,
+  type RegistrationOutcome,
 } from './real-account-client';
 import { signOutMarkerStore, type SignOutMarker } from './sign-out-marker';
 
@@ -28,6 +29,7 @@ interface RealAccountContextValue {
   pending: boolean;
   secureTransportAvailable: boolean;
   signIn: (username: string, password: string) => Promise<boolean>;
+  registerAccount: (username: string, password: string) => Promise<RegistrationOutcome>;
   signOut: () => Promise<void>;
   retryLocalCredentialRemoval: () => Promise<void>;
   retryRestore: () => void;
@@ -103,10 +105,12 @@ export function RealAccountProvider({
       if (!restored) {
         setSession(null);
         setState('entry');
+        setNotice(null);
         return;
       }
       setSession(restored);
       setState('active');
+      setNotice(null);
     } catch (error) {
       if (!mounted.current) return;
       if (error instanceof AuthRequestError && error.status === 401) {
@@ -188,6 +192,27 @@ export function RealAccountProvider({
           setNotice(noticeFor(error));
         }
         return false;
+      } finally {
+        if (mounted.current) setPending(false);
+      }
+    },
+    [client],
+  );
+
+  const registerAccount = useCallback(
+    async (username: string, password: string): Promise<RegistrationOutcome> => {
+      if (!client) return 'unavailable';
+      setPending(true);
+      try {
+        await client.register(username, password);
+        return 'created';
+      } catch (error) {
+        if (error instanceof AuthRequestError) {
+          if (error.status === 409) return 'duplicate';
+          if (error.status === 429) return 'rate-limited';
+          if (error.status === 400 || error.status === 422) return 'invalid';
+        }
+        return 'unavailable';
       } finally {
         if (mounted.current) setPending(false);
       }
@@ -372,6 +397,7 @@ export function RealAccountProvider({
       pending,
       secureTransportAvailable: Boolean(client?.canConnectSecurely()),
       signIn,
+      registerAccount,
       signOut,
       retryLocalCredentialRemoval,
       retryRestore: () => {
@@ -390,6 +416,7 @@ export function RealAccountProvider({
       notice,
       pending,
       retryLocalCredentialRemoval,
+      registerAccount,
       session,
       signIn,
       signOut,

@@ -32,11 +32,12 @@ async function openVideoRoute(page: Page) {
   await page.goto('/');
   const navigation = page.getByTestId('main-navigation');
   const entry = page.getByTestId('demo-entry-demo-1');
-  const welcome = page.getByRole('heading', { name: 'Welcome to Rewind' });
+  const welcome = page.getByTestId('welcome-entry');
   await expect(navigation.or(entry).or(welcome)).toBeVisible();
   if (await entry.isVisible()) {
     await entry.click();
   } else {
+    await page.getByRole('button', { name: 'Sign in' }).click();
     await page.getByRole('button', { name: 'Try Demo' }).click();
     await entry.click();
   }
@@ -81,7 +82,14 @@ test('accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadat
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/contributions/upload',
   );
-  await page.getByRole('button', { name: 'Upload clip' }).click();
+  const uploadButton = page.getByRole('button', { name: 'Upload clip' });
+  await uploadButton.scrollIntoViewIfNeeded();
+  const uploadBounds = await uploadButton.boundingBox();
+  const navigationBounds = await page.getByTestId('main-navigation').boundingBox();
+  expect(uploadBounds).not.toBeNull();
+  expect(navigationBounds).not.toBeNull();
+  expect(uploadBounds!.y + uploadBounds!.height).toBeLessThanOrEqual(navigationBounds!.y);
+  await uploadButton.click();
   const uploadRequest = await uploadRequestPromise;
   const uploadBody = JSON.parse(uploadRequest.postData() ?? '{}') as Record<string, unknown>;
   expect(uploadBody.mimeType).toBe('video/mp4');
@@ -93,6 +101,51 @@ test('accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadat
   const uploadResponse = await uploadResponsePromise;
   expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
   await expect(page.getByText('Upload queued as one pending contribution.')).toBeVisible();
+});
+
+test('keeps captured review inline with working play, pause, bounded seek and retake', async ({
+  page,
+}) => {
+  await openVideoFallback(page);
+  await chooseVideo(page, 'portrait-h264-aac.mp4', portraitMp4, 'video/mp4');
+
+  const review = page.getByTestId('video-review');
+  const video = review.locator('video');
+  await expect(video).toHaveJSProperty('playsInline', true);
+  await expect(video).toHaveJSProperty('muted', false);
+  await review.locator('input').nth(0).fill('0.3');
+  await review.locator('input').nth(1).fill('1.8');
+
+  await page.getByRole('button', { name: 'Play preview', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+    .toBeGreaterThan(0.5);
+  await expect(page.getByTestId('video-review-time')).not.toHaveText('0.3 / 1.8 seconds');
+  await page.getByRole('button', { name: 'Pause preview', exact: true }).click();
+  await expect(video).toHaveJSProperty('paused', true);
+  const pausedTime = await video.evaluate((element: HTMLVideoElement) => element.currentTime);
+  // Sample the real media clock over time; a label toggle alone cannot prove pause.
+  await page.waitForTimeout(350);
+  expect(await video.evaluate((element: HTMLVideoElement) => element.currentTime)).toBeCloseTo(
+    pausedTime,
+    2,
+  );
+
+  await page.getByRole('button', { name: 'Back 5 seconds', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+    .toBeCloseTo(0.3, 2);
+  await page.getByRole('button', { name: 'Forward 5 seconds', exact: true }).click();
+  await expect
+    .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+    .toBeCloseTo(1.8, 2);
+  await expect(video).toHaveJSProperty('paused', true);
+  await expect(page.getByRole('button', { name: 'Upload clip', exact: true })).toBeEnabled();
+
+  await page.getByRole('button', { name: 'Retake', exact: true }).click();
+  await expect(review).toHaveCount(0);
+  await expect(page.getByTestId('video-review-player')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Choose a video file' })).toBeVisible();
 });
 
 test('rejects a renamed WebM even when its caller-controlled type says video/mp4', async ({
@@ -108,7 +161,7 @@ test('rejects a renamed WebM even when its caller-controlled type says video/mp4
 test('records from browser camera and microphone after the member action and uploads through the video API', async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.setViewportSize({ width: 390, height: 844 });
   const mp4Bytes = Array.from(portraitMp4);
   await page.addInitScript((fixtureBytes) => {
     const target = window as typeof window & { __capturePromptCount?: number };
@@ -136,6 +189,9 @@ test('records from browser camera and microphone after the member action and upl
         canvas.width = 720;
         canvas.height = 1280;
         const videoTrack = canvas.captureStream(10).getVideoTracks()[0];
+        const drawing = canvas.getContext('2d')!;
+        drawing.fillStyle = 'navy';
+        setInterval(() => drawing.fillRect(0, 0, canvas.width, canvas.height), 100);
         const audioContext = new AudioContext();
         const audioTrack = audioContext.createMediaStreamDestination().stream.getAudioTracks()[0];
         return new MediaStream([videoTrack, audioTrack]);
@@ -175,6 +231,13 @@ test('records from browser camera and microphone after the member action and upl
   ).toBe(0);
   await page.getByRole('button', { name: 'Allow camera and microphone' }).click();
   await expect(page.getByTestId('video-live-preview')).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId('video-live-preview')
+        .evaluate((video: HTMLVideoElement) => video.readyState),
+    )
+    .toBeGreaterThanOrEqual(2);
   expect(
     await page.evaluate(
       () => (window as typeof window & { __capturePromptCount?: number }).__capturePromptCount,
@@ -183,6 +246,14 @@ test('records from browser camera and microphone after the member action and upl
 
   await page.getByTestId('video-record').click();
   await expect(page.getByTestId('video-recording')).toBeVisible();
+  await expect(page.getByTestId('video-live-preview')).toBeVisible();
+  const navigationTop = (await page.getByTestId('main-navigation').boundingBox())!.y;
+  for (const name of ['Cancel recording', 'Stop and review']) {
+    const bounds = await page.getByRole('button', { name }).boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(navigationTop);
+  }
   await page.getByRole('button', { name: 'Stop and review' }).click();
   const review = page.getByTestId('video-review');
   await expect(review).toBeVisible();
@@ -198,7 +269,14 @@ test('records from browser camera and microphone after the member action and upl
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/contributions/upload',
   );
-  await page.getByRole('button', { name: 'Upload clip' }).click();
+  const uploadButton = page.getByRole('button', { name: 'Upload clip' });
+  await uploadButton.scrollIntoViewIfNeeded();
+  const uploadBounds = await uploadButton.boundingBox();
+  const navigationBounds = await page.getByTestId('main-navigation').boundingBox();
+  expect(uploadBounds).not.toBeNull();
+  expect(navigationBounds).not.toBeNull();
+  expect(uploadBounds!.y + uploadBounds!.height).toBeLessThanOrEqual(navigationBounds!.y);
+  await uploadButton.click();
   const uploadRequest = await uploadRequestPromise;
   const uploadBody = JSON.parse(uploadRequest.postData() ?? '{}') as Record<string, unknown>;
   expect(uploadBody.mimeType).toBe('video/mp4');

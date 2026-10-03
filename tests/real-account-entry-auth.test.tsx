@@ -101,12 +101,12 @@ function logoutRequestCount() {
   ).length;
 }
 
-function useWebPlatform() {
+function useWebPlatform(href = 'https://rewind.example/') {
   Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web', writable: true });
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     value: {
-      location: { href: 'https://rewind.example/', origin: 'https://rewind.example' },
+      location: { href, origin: 'https://rewind.example' },
     },
     writable: true,
   });
@@ -141,6 +141,257 @@ afterEach(() => {
 });
 
 describe('real account entry flow', () => {
+  it('keeps a fresh browser entry screen free of a false expired-session message', async () => {
+    useWebPlatform();
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
+    expect(
+      result.queryByText(/session expired or an administrator reset your password/i),
+    ).toBeNull();
+  });
+
+  it('registers a new account and carries the username into its direct sign-in path', async () => {
+    useWebPlatform();
+    const newAccount = { ...apiAccount, username: 'new.member', displayName: 'new.member' };
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(jsonResponse(201, { account: newAccount }))
+      .mockResolvedValueOnce(jsonResponse(200, { account: newAccount, expiresAt }))
+      .mockResolvedValueOnce(jsonResponse(200, { group: null }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [] })) as typeof fetch;
+
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    await waitFor(() => expect(result.getByTestId('welcome-entry')).toBeTruthy(), {
+      timeout: 5000,
+    });
+    expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Create account' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'new.member');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct horse battery staple');
+    await fireEvent.changeText(
+      result.getByLabelText('Confirm password'),
+      'correct horse battery staple',
+    );
+    await fireEvent.press(result.getByTestId('registration-submit'));
+
+    expect(await result.findByTestId('registration-success')).toHaveTextContent(
+      'Your account is ready. Sign in to continue.',
+    );
+    expect(secureStoreMock.token).toBeNull();
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      2,
+      'https://rewind.example/auth/register',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({
+          username: 'new.member',
+          password: 'correct horse battery staple',
+        }),
+      }),
+    );
+
+    await fireEvent.press(result.getByTestId('registration-continue-to-sign-in'));
+    expect(result.getByLabelText('Username').props.value).toBe('new.member');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct horse battery staple');
+    await fireEvent.press(result.getByTestId('real-account-submit'));
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://rewind.example/auth/login',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+    expect(secureStoreMock.token).toBeNull();
+  });
+
+  it('keeps an invitation actionable when the invitee registers before signing in', async () => {
+    useWebPlatform(
+      'https://rewind.example/invite?groupId=real-group-1&code=AB12CD34&expiresAt=2099-09-23T12%3A00%3A00.000Z',
+    );
+    const newAccount = { ...apiAccount, username: 'invitee.user', displayName: 'invitee.user' };
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(jsonResponse(201, { account: newAccount })) as typeof fetch;
+
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    expect(await result.findByTestId('invite-sign-in-intent')).toHaveTextContent(
+      'Invitation for group real-group-1 saved. Sign in to continue.',
+    );
+    await fireEvent.press(result.getByRole('button', { name: 'Create account' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'invitee.user');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct horse battery staple');
+    await fireEvent.changeText(
+      result.getByLabelText('Confirm password'),
+      'correct horse battery staple',
+    );
+    await fireEvent.press(result.getByTestId('registration-submit'));
+
+    expect(await result.findByTestId('registration-success')).toHaveTextContent(
+      'Your account is ready. Sign in to accept the invitation.',
+    );
+    await fireEvent.press(result.getByTestId('registration-continue-to-sign-in'));
+    expect(result.getByTestId('invite-sign-in-intent')).toHaveTextContent(
+      'Invitation for group real-group-1 saved. Sign in to continue.',
+    );
+  });
+
+  it('shows duplicate-name and password-confirmation errors without submitting invalid details', async () => {
+    useWebPlatform();
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(jsonResponse(409, { error: 'username_unavailable' })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Create account' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'existing.member');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct horse battery staple');
+    await fireEvent.changeText(result.getByLabelText('Confirm password'), 'different password');
+    await fireEvent.press(result.getByTestId('registration-submit'));
+    expect(result.getByTestId('registration-error')).toHaveTextContent('Passwords do not match.');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    await fireEvent.changeText(
+      result.getByLabelText('Confirm password'),
+      'correct horse battery staple',
+    );
+    await fireEvent.press(result.getByTestId('registration-submit'));
+    expect(await result.findByTestId('registration-error')).toHaveTextContent(
+      /username is already in use/i,
+    );
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(secureStoreMock.token).toBeNull();
+  });
+
+  it.each([
+    {
+      label: 'weak or invalid details',
+      status: 400,
+      error: 'invalid_registration',
+      message: /Choose a valid username and a stronger password/,
+    },
+    {
+      label: 'rate limiting',
+      status: 429,
+      error: 'rate_limited',
+      message: /Too many account attempts/,
+    },
+    {
+      label: 'service failure',
+      status: 503,
+      error: 'service_unavailable',
+      message: /Account creation is unavailable right now/,
+    },
+  ])('shows recoverable registration feedback for $label', async ({ status, error, message }) => {
+    useWebPlatform();
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(jsonResponse(status, { error })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Create account' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'new.member');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct horse battery staple');
+    await fireEvent.changeText(
+      result.getByLabelText('Confirm password'),
+      'correct horse battery staple',
+    );
+    await fireEvent.press(result.getByTestId('registration-submit'));
+
+    expect(await result.findByTestId('registration-error')).toHaveTextContent(message);
+    expect(result.getByLabelText('Username').props.value).toBe('new.member');
+    expect(result.getByLabelText('Password').props.value).toBe('correct horse battery staple');
+    expect(result.getByLabelText('Confirm password').props.value).toBe(
+      'correct horse battery staple',
+    );
+  });
+
+  it('does not let the native keyboard Go action bypass registration guards', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios', writable: true });
+    globalThis.fetch = jest.fn() as typeof fetch;
+    const result = await render(
+      <App runtimeClient={{ baseUrl: 'http://rewind.example' } as never} />,
+    );
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.press(result.getByTestId('sign-in-create-account'));
+    await fireEvent(result.getByTestId('registration-username'), 'submitEditing');
+    await fireEvent(result.getByTestId('registration-password'), 'submitEditing');
+    const confirmation = result.getByTestId('registration-password-confirmation');
+
+    await fireEvent(confirmation, 'submitEditing');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    await fireEvent.changeText(result.getByLabelText('Username'), 'simulator.test');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'synthetic-password-one');
+    await fireEvent.changeText(confirmation, 'synthetic-password-one');
+    await fireEvent(confirmation, 'submitEditing');
+
+    expect(result.getByText(/requires the same-origin HTTPS service/i)).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Create account', disabled: true })).toBeTruthy();
+    expect(result.queryByTestId('registration-error')).toBeNull();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('keeps registration input after service failure and permits one retry', async () => {
+    useWebPlatform();
+    const newAccount = { ...apiAccount, username: 'new.member', displayName: 'new.member' };
+    let finishFirstRegistration!: (response: Response) => void;
+    const pendingRegistration = new Promise<Response>((resolve) => {
+      finishFirstRegistration = resolve;
+    });
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockImplementationOnce(() => pendingRegistration)
+      .mockResolvedValueOnce(jsonResponse(201, { account: newAccount })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Create account' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'new.member');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'synthetic-test-password');
+    await fireEvent.changeText(
+      result.getByLabelText('Confirm password'),
+      'synthetic-test-password',
+    );
+    await fireEvent.press(result.getByTestId('registration-submit'));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+
+    await fireEvent(result.getByTestId('registration-password-confirmation'), 'submitEditing');
+    expect(
+      (globalThis.fetch as jest.Mock).mock.calls.filter(([url]) =>
+        String(url).endsWith('/auth/register'),
+      ),
+    ).toHaveLength(1);
+
+    await act(async () => {
+      finishFirstRegistration(jsonResponse(503, { error: 'service_unavailable' }));
+      await pendingRegistration;
+    });
+    expect(await result.findByTestId('registration-error')).toHaveTextContent(
+      'Account creation is unavailable right now. Please try again shortly.',
+    );
+    expect(result.getByLabelText('Username').props.value).toBe('new.member');
+    expect(result.getByLabelText('Password').props.value).toBe('synthetic-test-password');
+
+    await fireEvent.press(result.getByTestId('registration-submit'));
+    expect(await result.findByTestId('registration-success')).toHaveTextContent(
+      'Your account is ready. Sign in to continue.',
+    );
+    expect(
+      (globalThis.fetch as jest.Mock).mock.calls.filter(([url]) =>
+        String(url).endsWith('/auth/register'),
+      ),
+    ).toHaveLength(2);
+  });
+
   it('shows generic wrong-password feedback and keeps Demo identity untouched', async () => {
     globalThis.fetch = jest
       .fn()
@@ -187,7 +438,10 @@ describe('real account entry flow', () => {
     await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
     await fireEvent.press(result.getByTestId('real-account-submit'));
 
-    expect(await result.findByTestId('real-invite-intent')).toHaveTextContent(new RegExp(groupId));
+    expect(await result.findByTestId('real-invite-intent')).toHaveTextContent(
+      /Your group invitation is ready/,
+    );
+    expect(result.getByTestId('real-invite-intent')).not.toHaveTextContent(groupId);
     expect(result.getByTestId('real-invite-intent')).toHaveTextContent(/Invitation retained/);
     expect(globalThis.fetch).toHaveBeenCalledTimes(4);
     result.unmount();
@@ -228,7 +482,7 @@ describe('real account entry flow', () => {
         jsonResponse(201, {
           invite: {
             id: 'real-invite-1',
-            code: 'AB12CD34',
+            code: 'ABCDEF',
             groupId,
             status: 'active',
             createdAt: new Date().toISOString(),
@@ -242,19 +496,23 @@ describe('real account entry flow', () => {
     const result = await render(<App runtimeClient={runtimeClient} />);
     await result.findByRole('header', { name: 'Saturday table' });
     await fireEvent.press(result.getByTestId('real-group-create-invite'));
-    const inviteLink = `https://rewind.example/invite?groupId=${groupId}&code=AB12CD34&expiresAt=${encodeURIComponent(expiresAt)}`;
+    const inviteLink = `https://rewind.example/invite?groupId=${groupId}&code=ABCDEF&expiresAt=${encodeURIComponent(expiresAt)}`;
     await waitFor(() =>
-      expect(result.getByTestId('real-group-invite-link').props.children).toBe(inviteLink),
+      expect(result.getByTestId('real-group-invite-code').props.children).toBe('ABC-DEF'),
     );
     expect(result.getByTestId('real-group-invite-expiry')).toHaveTextContent(/Active/);
     expect(inviteLink).not.toMatch(/session|token|password|authorization/i);
 
     await fireEvent.press(result.getByTestId('real-group-copy-invite'));
-    await waitFor(() => expect(copy).toHaveBeenCalledWith(inviteLink));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith('ABC-DEF'));
     await fireEvent.press(result.getByTestId('real-group-share-invite'));
     await waitFor(() =>
-      expect(share).toHaveBeenCalledWith(expect.objectContaining({ url: inviteLink })),
+      expect(share).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining('ABC-DEF') }),
+      ),
     );
+    await fireEvent.press(result.getByRole('button', { name: 'Copy invite link' }));
+    await waitFor(() => expect(copy).toHaveBeenCalledWith(inviteLink));
     expect(globalThis.fetch).toHaveBeenCalledTimes(6);
     result.unmount();
   });
@@ -301,7 +559,7 @@ describe('real account entry flow', () => {
         jsonResponse(201, {
           invite: {
             id: 'real-invite-native-1',
-            code: 'EF56GH78',
+            code: 'EFGHIJ',
             groupId,
             status: 'active',
             createdAt: new Date().toISOString(),
@@ -318,15 +576,48 @@ describe('real account entry flow', () => {
     await result.findByRole('header', { name: 'Sunday walk' });
     await fireEvent.press(result.getByTestId('real-group-create-invite'));
 
-    const inviteLink = `https://share.rewind.example/invite?groupId=${groupId}&code=EF56GH78&expiresAt=${encodeURIComponent(inviteExpiry)}`;
+    const inviteLink = `https://share.rewind.example/invite?groupId=${groupId}&code=EFGHIJ&expiresAt=${encodeURIComponent(inviteExpiry)}`;
     await waitFor(() =>
-      expect(result.getByTestId('real-group-invite-link').props.children).toBe(inviteLink),
+      expect(result.getByTestId('real-group-invite-code').props.children).toBe('EFG-HIJ'),
     );
     expect(new URL(inviteLink).origin).toBe('https://share.rewind.example');
     expect(inviteLink).not.toContain('https://rewind.example');
     expect(inviteLink).not.toMatch(/session|token|password|authorization/i);
     expect(globalThis.fetch).toHaveBeenCalledTimes(6);
     result.unmount();
+  });
+
+  it('clears the web account on confirmed sign-out without claiming an administrator reset', async () => {
+    useWebPlatform();
+    globalThis.fetch = webAccountFetch(() => jsonResponse(200, { signedOut: true }));
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+    expect(result.queryByRole('header', { name: 'Choose a group' })).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+    expect(result.getByTestId('real-account-submit')).toBeTruthy();
+    expect(result.queryByText(/administrator/i)).toBeNull();
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
+    expect(logoutRequestCount()).toBe(1);
+  });
+
+  it('explains a rejected active session without inventing an administrator reset', async () => {
+    useWebPlatform();
+    globalThis.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/auth/session')) return activeSessionResponse();
+      return jsonResponse(401, { error: 'session_required' });
+    }) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+    expect(await result.findByTestId('real-account-session-status')).toHaveTextContent(
+      'Your session has ended. Sign in again to continue.',
+    );
+    expect(result.queryByText(/administrator/i)).toBeNull();
+    expect(result.queryByRole('header', { name: 'Choose a group' })).toBeNull();
   });
 
   it('stores the native token securely, restores the account, and clears it on sign-out', async () => {
@@ -361,7 +652,7 @@ describe('real account entry flow', () => {
 
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
     await waitFor(() => expect(secureStoreMock.token).toBeNull());
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     const [groupUrl] = (globalThis.fetch as jest.Mock).mock.calls[1] as [string, RequestInit];
     expect(groupUrl).toBe('https://rewind.example/real/groups/current');
     const [logoutUrl, logoutInit] = (globalThis.fetch as jest.Mock).mock.calls[3] as [
@@ -370,6 +661,10 @@ describe('real account entry flow', () => {
     ];
     expect(logoutUrl).toBe('https://rewind.example/auth/logout');
     expect(new Headers(logoutInit.headers).get('Authorization')).toBe(`Bearer ${nativeToken}`);
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+    expect(result.getByTestId('real-account-submit')).toBeTruthy();
+    expect(result.queryByText(/administrator/i)).toBeNull();
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
   });
 
   it('keeps entry visible offline, offers retry, then explains expiry or administrator reset', async () => {
@@ -380,8 +675,12 @@ describe('real account entry flow', () => {
       .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' })) as typeof fetch;
     const result = await render(<App runtimeClient={runtimeClient} />);
 
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
     expect(await result.findByTestId('real-account-offline-status')).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Retry session check' }));
+    await waitFor(() => expect(secureStoreMock.token).toBeNull());
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
     expect(
       await result.findByText(/session expired or an administrator reset your password/i),
     ).toBeTruthy();
@@ -398,7 +697,7 @@ describe('real account entry flow', () => {
       .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
     const result = await render(<App runtimeClient={runtimeClient} />);
 
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
       /server says this session has ended.*could not confirm deletion/i,
     );
@@ -450,7 +749,7 @@ describe('real account entry flow', () => {
       expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
       await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
-      expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+      expect(await result.findByTestId('welcome-entry')).toBeTruthy();
       expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
         /server did not confirm revocation.*credential may remain and you may still be signed in/i,
       );
@@ -469,7 +768,7 @@ describe('real account entry flow', () => {
     expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
       /server says this session has ended.*could not confirm deletion.*credential may remain/i,
     );
@@ -508,7 +807,7 @@ describe('real account entry flow', () => {
     expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(result.queryByRole('header', { name: 'Choose a group' })).toBeNull();
     expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
       /could not confirm deletion.*server did not confirm revocation.*credential may remain/i,
@@ -520,7 +819,7 @@ describe('real account entry flow', () => {
     await result.unmount();
     secureStoreMock.failClear = false;
     const restarted = await render(<App runtimeClient={runtimeClient} />);
-    expect(await restarted.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await restarted.findByTestId('welcome-entry')).toBeTruthy();
     expect(restarted.queryByRole('header', { name: 'You’re signed in' })).toBeNull();
     expect(restarted.getByTestId('real-account-session-status')).toHaveTextContent(
       /sign-out recovery is pending.*will not restore.*revocation may still be unconfirmed/i,
@@ -572,7 +871,7 @@ describe('real account entry flow', () => {
       );
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
       /sign-out recovery is pending.*will not restore/i,
     );
@@ -583,7 +882,7 @@ describe('real account entry flow', () => {
 
     await result.unmount();
     const restarted = await render(<App runtimeClient={runtimeClient} />);
-    expect(await restarted.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await restarted.findByTestId('welcome-entry')).toBeTruthy();
     expect(restarted.queryByRole('header', { name: 'You’re signed in' })).toBeNull();
     expect(logoutRequestCount()).toBe(1);
 
@@ -634,7 +933,7 @@ describe('real account entry flow', () => {
       .mockRejectedValueOnce(new Error('AsyncStorage unavailable'));
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
 
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(secureStoreMock.token).toBeNull();
     expect(await AsyncStorage.getItem(signOutMarkerKey)).toBe('remote-revoked');
     expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
@@ -644,7 +943,7 @@ describe('real account entry flow', () => {
 
     await result.unmount();
     const restarted = await render(<App runtimeClient={runtimeClient} />);
-    expect(await restarted.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await restarted.findByTestId('welcome-entry')).toBeTruthy();
     expect(restarted.getByTestId('real-account-session-status')).toHaveTextContent(
       /server says this session has ended.*could not confirm deletion/i,
     );
@@ -667,7 +966,7 @@ describe('real account entry flow', () => {
       .mockResolvedValueOnce(jsonResponse(200, { signedOut: true })) as typeof fetch;
     const result = await render(<App runtimeClient={runtimeClient} />);
 
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(result.getByTestId('real-account-session-status')).toHaveTextContent(
       /could not verify sign-out recovery state.*saved sign-in was not restored/i,
     );
@@ -688,7 +987,7 @@ describe('real account entry flow', () => {
 
     expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
-    expect(await result.findByRole('header', { name: 'Welcome to Rewind' })).toBeTruthy();
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(result.queryByTestId('logout-unconfirmed')).toBeNull();
   });
 });

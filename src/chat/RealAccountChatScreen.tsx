@@ -283,7 +283,7 @@ export function RealAccountChatScreen({
   return (
     <View style={styles.container} testID="real-chat-screen">
       <Text style={styles.group} testID="real-chat-context">
-        ACTIVE GROUP · {groupName}
+        Group · {groupName}
       </Text>
       <Text accessibilityRole="header" style={styles.title}>
         Chat
