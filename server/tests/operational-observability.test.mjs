@@ -205,6 +205,22 @@ test('readonly CLI reports numeric queue, reminder and scheduled state without c
         return true;
       },
     );
+    const unbuiltCli = `${config.dataDir}/secret-unbuilt-cli.mjs`;
+    await writeFile(unbuiltCli, await readFile('scripts/server-operational-metrics.mjs'));
+    await assert.rejects(
+      execFileAsync(process.execPath, [unbuiltCli, config.databasePath]),
+      (error) => {
+        assert.deepEqual(
+          JSON.parse(error.stderr.split('\n').find((line) => line.startsWith('{'))),
+          { event: 'operational.snapshot_unavailable' },
+        );
+        assert.doesNotMatch(
+          error.stderr,
+          /secret-unbuilt|observability\/index|ERR_MODULE_NOT_FOUND/,
+        );
+        return true;
+      },
+    );
   });
 });
 

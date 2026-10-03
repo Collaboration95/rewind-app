@@ -1,10 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
-import { operationalSnapshot } from '../server/dist/observability/index.js';
 
 // Deliberately do not import openDatabase: it creates, migrates and seeds stores.
 let database;
 try {
   if (process.argv.length !== 3) throw new Error();
+  // The compiled server is a runtime prerequisite, not a checked-in source
+  // dependency. Keep missing-build failures inside the same redaction boundary.
+  const { operationalSnapshot } = await import(
+    new URL('../server/dist/observability/index.js', import.meta.url).href
+  );
   database = new DatabaseSync(process.argv[2], { readOnly: true });
   database.exec('PRAGMA query_only = ON; PRAGMA busy_timeout = 1000; BEGIN');
   const snapshot = operationalSnapshot(database);
