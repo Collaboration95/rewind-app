@@ -12,6 +12,12 @@ import {
   verifyMemberChat,
   verifyOwnerChat,
 } from './chat-verification.mjs';
+import {
+  createGroupInvitation,
+  switchGroupThroughUi,
+  verifyForeignGroupDenied,
+  verifySelectedGroupContext,
+} from './group-switch-verification.mjs';
 
 import { redactRealAccountDiagnostic } from '../../scripts/real-account-e2e-utils.mjs';
 
@@ -347,6 +353,7 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
 
     const suffix = `${runNumber}${randomUUID().replaceAll('-', '').slice(0, 8)}`;
     const ownerUsername = `owner${suffix}`;
+    const secondOwnerUsername = `otherowner${suffix}`;
     const memberUsername = `member${suffix}`;
     const outsiderUsername = `outsider${suffix}`;
 
@@ -370,24 +377,31 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     await page.getByRole('button', { name: 'Back to group', exact: true }).click();
     await expect(page.getByTestId('real-group-empty-contributions')).toBeVisible();
 
-    const inviteResponsePromise = page.waitForResponse((response) => {
-      const url = new URL(response.url());
-      return (
-        response.request().method() === 'POST' &&
-        url.pathname === `/api/real/groups/${encodeURIComponent(ownerGroupId)}/invites`
-      );
-    });
-    await page.getByTestId('real-group-create-invite').click();
-    const inviteResponse = await inviteResponsePromise;
-    expect(inviteResponse.status()).toBe(201);
-    const inviteBody = await inviteResponse.json();
-    const invite = inviteBody.invite;
-    expect(invite?.status).toBe('active');
-    expect(invite?.groupId).toBe(ownerGroupId);
-    expect(Date.parse(invite?.expiresAt)).toBeGreaterThan(Date.now());
+    const invite = await createGroupInvitation(page, ownerGroupId);
 
     await page.getByTestId('real-group-sign-out').click();
     await expect(page.getByTestId('welcome-entry')).toBeVisible();
+
+    // A distinct real owner makes stale member/profile context observable.
+    await registerAndSignIn(page, secondOwnerUsername);
+    await expect(page.getByRole('heading', { name: 'Choose a group' })).toBeVisible();
+    await page.getByTestId('real-group-create-choice').click();
+    await page.getByTestId('real-group-name').fill(`Second Group ${suffix}`);
+    await page.getByTestId('real-group-create-submit').click();
+    await expect(page.getByTestId('real-group-empty-contributions')).toBeVisible();
+    const secondGroup = await readCurrentGroup(page);
+    expect(secondGroup.group.id).not.toBe(ownerGroupId);
+    await verifyForeignGroupDenied(page, ownerGroupId);
+    expect((await readCurrentGroup(page)).group.id).toBe(secondGroup.group.id);
+    const secondOwnerChatEvent = await verifyOwnerChat(
+      page,
+      secondGroup.group.id,
+      `${suffix}-second`,
+    );
+    const secondInvite = await createGroupInvitation(page, secondGroup.group.id);
+    await page.getByTestId('real-group-sign-out').click();
+    await expect(page.getByTestId('welcome-entry')).toBeVisible();
+
     const inviteUrl = new URL('/invite', webOrigin);
     inviteUrl.searchParams.set('groupId', ownerGroupId);
     inviteUrl.searchParams.set('code', invite.code);
@@ -411,6 +425,45 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     }
 
     await verifyMemberChat(page, ownerGroupId, ownerChatEvent, suffix);
+
+    // Membership in the first group must not authorize the second group.
+    await verifyForeignGroupDenied(page, secondGroup.group.id);
+    expect((await readCurrentGroup(page)).group.id).toBe(ownerGroupId);
+    const firstContext = {
+      owner: ownerUsername,
+      member: memberUsername,
+      otherOwner: secondOwnerUsername,
+      message: ownerChatEvent.message.body,
+      otherMessage: secondOwnerChatEvent.message.body,
+    };
+    const secondContext = {
+      owner: secondOwnerUsername,
+      member: memberUsername,
+      otherOwner: ownerUsername,
+      message: secondOwnerChatEvent.message.body,
+      otherMessage: ownerChatEvent.message.body,
+    };
+    await verifySelectedGroupContext(page, ownerGroup.group, firstContext);
+    await page.getByRole('button', { name: 'Join another group', exact: true }).click();
+    await page.getByTestId('real-group-enter-code').fill(secondInvite.code);
+    const joinResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname === '/api/real/invites/accept',
+    );
+    await page.getByTestId('real-group-join-choice').click();
+    const joined = await joinResponse;
+    expect(joined.status()).toBe(200);
+    expect((await joined.json()).group.group.id).toBe(secondGroup.group.id);
+    await verifySelectedGroupContext(page, secondGroup.group, secondContext);
+    await switchGroupThroughUi(page, ownerGroup.group);
+    await verifySelectedGroupContext(page, ownerGroup.group, firstContext);
+    await switchGroupThroughUi(page, secondGroup.group);
+    await page.reload();
+    await verifySelectedGroupContext(page, secondGroup.group, secondContext);
+    await switchGroupThroughUi(page, ownerGroup.group);
+    await page.reload();
+    await verifySelectedGroupContext(page, ownerGroup.group, firstContext);
 
     await contributeFixtureMedia(page, databasePath, ownerGroupId, `${suffix}-photo`);
     await contributeFixtureMedia(page, databasePath, ownerGroupId, `${suffix}-video`, true);
@@ -477,6 +530,8 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     await expect(page.getByTestId('welcome-entry')).toBeVisible();
     await registerAndSignIn(page, outsiderUsername);
     await expect(page.getByRole('heading', { name: 'Choose a group' })).toBeVisible();
+    await verifyForeignGroupDenied(page, ownerGroupId);
+    await verifyForeignGroupDenied(page, secondGroup.group.id);
     const forbiddenGroup = await page.evaluate(async (groupId) => {
       const response = await fetch(`/api/real/groups/${encodeURIComponent(groupId)}`, {
         credentials: 'same-origin',
