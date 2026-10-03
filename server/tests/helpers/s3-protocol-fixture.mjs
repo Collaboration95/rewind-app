@@ -43,6 +43,8 @@ export async function s3ProtocolFixture(root, now) {
       '1',
       '-subj',
       '/CN=localhost',
+      '-addext',
+      'subjectAltName=IP:127.0.0.1,DNS:localhost',
       '-keyout',
       root + '/key.pem',
       '-out',
@@ -111,8 +113,9 @@ export async function s3ProtocolFixture(root, now) {
     assert.equal(req.headers['x-amz-expected-bucket-owner'], owner);
     return presigned;
   }
+  const certificate = await readFile(root + '/cert.pem');
   const server = createServer(
-    { key: await readFile(root + '/key.pem'), cert: await readFile(root + '/cert.pem') },
+    { key: await readFile(root + '/key.pem'), cert: certificate },
     async (req, res) => {
       const url = new URL(req.url, 'https://' + req.headers.host);
       const chunks = [];
@@ -230,8 +233,10 @@ export async function s3ProtocolFixture(root, now) {
   );
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  const endpoint = 'https://127.0.0.1:' + server.address().port;
-  const agent = new Agent({ rejectUnauthorized: false }); // Only this owned self-signed endpoint.
+  const port = server.address().port;
+  const endpoint = 'https://127.0.0.1:' + port;
+  // Trust only this disposable fixture certificate; keep chain and SAN checks enabled.
+  const agent = new Agent({ ca: certificate, rejectUnauthorized: true });
   const client = new commands.S3Client({
     region: 'us-east-1',
     endpoint,
@@ -246,6 +251,8 @@ export async function s3ProtocolFixture(root, now) {
     versions,
     calls,
     client,
+    port,
+    certificate,
     config: {
       backend: 's3',
       bucket,
@@ -259,11 +266,18 @@ export async function s3ProtocolFixture(root, now) {
     },
     async put(capability, bytes) {
       const url = new URL(capability.url);
+      assert.equal(url.protocol, 'https:');
+      assert.equal(url.username, '');
+      assert.equal(url.password, '');
+      assert.equal(url.hash, '');
       assert.equal(url.origin, endpoint); // Never send a fixture capability elsewhere.
+      const path = url.pathname + url.search;
       return new Promise((resolve, reject) => {
         const req = request(
-          url,
           {
+            hostname: '127.0.0.1',
+            port,
+            path,
             method: 'PUT',
             headers: { ...capability.headers, 'content-length': bytes.length },
             agent,
@@ -271,7 +285,11 @@ export async function s3ProtocolFixture(root, now) {
           (res) => {
             res.resume();
             res.on('end', () =>
-              resolve({ status: res.statusCode, version: res.headers['x-amz-version-id'] }),
+              resolve({
+                status: res.statusCode,
+                version: res.headers['x-amz-version-id'],
+                tlsAuthorized: res.socket.authorized,
+              }),
             );
           },
         );

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
+import { createHash, X509Certificate } from 'node:crypto';
+import { connect } from 'node:tls';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -183,6 +184,43 @@ test('signed SDK HTTP: immutable versions survive overwrite around HEAD, API/DB 
       401,
     );
     const before = c.storage.versions.size;
+    const callsBeforeRejectedUrls = c.storage.calls.length;
+    for (const invalid of [
+      new URL('/foreign', 'https://foreign.invalid').href,
+      first.upload.url.replace('https:', 'http:'),
+      first.upload.url.replace('https://', 'https://injected:credentials@'),
+    ]) {
+      await assert.rejects(c.storage.put({ ...first.upload, url: invalid }, c.bytes), {
+        code: 'ERR_ASSERTION',
+      });
+    }
+    assert.equal(c.storage.calls.length, callsBeforeRejectedUrls);
+    const certificate = new X509Certificate(c.storage.certificate);
+    assert.equal(certificate.checkIP('127.0.0.1'), '127.0.0.1');
+    assert.equal(certificate.checkHost('localhost'), 'localhost');
+    const handshake = (options) =>
+      new Promise((resolve, reject) => {
+        const socket = connect({
+          host: '127.0.0.1',
+          port: c.storage.port,
+          rejectUnauthorized: true,
+          ...options,
+        });
+        socket.once('secureConnect', () => {
+          const authorized = socket.authorized;
+          socket.destroy();
+          resolve(authorized);
+        });
+        socket.once('error', (error) => {
+          socket.destroy();
+          reject(error);
+        });
+      });
+    await assert.rejects(handshake({}), { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' });
+    await assert.rejects(handshake({ ca: c.storage.certificate, servername: 'wrong.invalid' }), {
+      code: 'ERR_TLS_CERT_ALTNAME_INVALID',
+    });
+
     assert.equal(
       (
         await c.storage.put(
@@ -196,6 +234,7 @@ test('signed SDK HTTP: immutable versions survive overwrite around HEAD, API/DB 
     assert.equal(c.storage.versions.size, before);
     const receipt = await c.storage.put(first.upload, c.bytes);
     assert.equal(receipt.status, 200);
+    assert.equal(receipt.tlsAuthorized, true);
     const key = JSON.parse(first.upload.headers['x-amz-meta-media-ref']).key;
     const pinned = c.storage.versions.get(key + ':' + receipt.version);
     assert.deepEqual(pinned.bytes, c.bytes);
