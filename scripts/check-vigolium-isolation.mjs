@@ -20,6 +20,11 @@ assert.match(status, /^NoNewPrivs:\s+1$/m, 'Privilege escalation is allowed');
 await assert.rejects(writeFile('/opt/scan/write-probe', 'test'), /EROFS|EACCES/);
 await assert.rejects(access('/opt/scan/server'));
 await assert.rejects(access('/opt/scan/.git'));
+assert.match(
+  await readFile('/etc/ssl/certs/ca-certificates.crt', 'utf8'),
+  /BEGIN CERTIFICATE/,
+  'Provider HTTPS trust store is missing',
+);
 // Exercise the npm launcher and binary extraction under the actual memory/tmpfs bounds.
 execFileSync(process.execPath, ['node_modules/@vigolium/vigolium/bin/vigolium.js', '--help'], {
   timeout: 30_000,
@@ -35,6 +40,7 @@ const checks = {
   applicationSourcePresent: false,
   gitDirectoryPresent: false,
   scannerBinaryStarts: true,
+  httpsTrustStorePresent: true,
   providerContacted: false,
 };
 await writeFile(resolve('/reports/isolation.json'), JSON.stringify(checks, null, 2));

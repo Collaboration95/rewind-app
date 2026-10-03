@@ -5,6 +5,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 
 FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/scan
 # Copy only the scanner, harness and synthetic target. No application code or source maps.
 COPY --from=dependencies /build/node_modules/@vigolium ./node_modules/@vigolium

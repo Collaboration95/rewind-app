@@ -55,7 +55,10 @@ async function runCli(args, input) {
   });
   // Never publish raw agent logs: they can contain generated credentials or response data.
   child.stdout.resume();
-  child.stderr.resume();
+  let diagnostic = '';
+  child.stderr.on('data', (chunk) => {
+    diagnostic = (diagnostic + chunk.toString()).slice(-8192);
+  });
   child.stdin.on('error', () => {});
   child.stdin.end(input || '');
   let expired = false;
@@ -66,7 +69,18 @@ async function runCli(args, input) {
   try {
     const [code] = await once(child, 'exit');
     if (expired) throw new Error('Scanner exceeded the six-minute deadline');
-    if (code !== 0) throw new Error(`Scanner exited with code ${code}; no completed scan claimed`);
+    if (code !== 0) {
+      // Only publish bounded error lines, after credential redaction, not agent conversation logs.
+      const errors = redact(diagnostic, secrets)
+        .replace(/\u001b\[[0-9;]*m/g, '')
+        .split(/\r?\n/)
+        .filter((line) => /^(?:Error:|✖ Error:|error:|fatal:)/i.test(line.trim()))
+        .join('\n')
+        .slice(0, 1500);
+      throw new Error(
+        `Scanner exited with code ${code}; no completed scan claimed${errors ? `: ${errors}` : ''}`,
+      );
+    }
   } finally {
     clearTimeout(timer);
   }
