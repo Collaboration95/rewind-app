@@ -513,6 +513,7 @@ export function RealAccountGroupExperience({
         >
           {captureMode === 'photo' ? (
             <CameraCaptureScreen
+              groupName={group.group.name}
               onBack={() => setScreen('home')}
               onRecordClip={() => setCaptureMode('video')}
               onSubmitPhoto={async (metadata, base64, onProgress, replacesContributionId) => {
