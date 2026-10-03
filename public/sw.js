@@ -142,3 +142,63 @@ self.addEventListener('fetch', (event) => {
     }),
   );
 });
+
+function reminderIntent(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const valid = (id) => typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id);
+  return value.kind === 'weekly-reminder' && valid(value.groupId) && valid(value.reminderId)
+    ? { kind: 'weekly-reminder', groupId: value.groupId, reminderId: value.reminderId }
+    : null;
+}
+
+self.addEventListener('push', (event) => {
+  let intent;
+  try {
+    intent = reminderIntent(event.data?.json()?.data);
+  } catch {
+    return;
+  }
+  if (!intent) return;
+  event.waitUntil(
+    (async () => {
+      // Verify the cookie session and selected group without persisting a private
+      // response. Offline or logged-out delivery is intentionally unconfirmed.
+      try {
+        const response = await fetch('/api/real/groups/current', {
+          credentials: 'include',
+          cache: 'no-store',
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!response.ok || (await response.json()).group?.group?.id !== intent.groupId) return;
+        await self.registration.showNotification('Rewind', {
+          body: 'Your weekly reminder is ready. Open Rewind to check your group.',
+          tag: `rewind:${intent.reminderId}`,
+          data: intent,
+        });
+      } catch {
+        /* Revalidate online rather than display stale private context. */
+      }
+    })(),
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const intent = reminderIntent(event.notification.data);
+  if (!intent) return;
+  event.waitUntil(
+    (async () => {
+      const windows = await clients.matchAll({ type: 'window' });
+      const current = windows.find((client) => new URL(client.url).origin === self.location.origin);
+      if (current) {
+        current.postMessage(intent);
+        await current.focus();
+        return;
+      }
+      const url = new URL('/', self.location.origin);
+      url.searchParams.set('rewindReminder', intent.reminderId);
+      url.searchParams.set('rewindGroup', intent.groupId);
+      await clients.openWindow(url.href);
+    })(),
+  );
+});

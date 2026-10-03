@@ -245,16 +245,31 @@ export function listReminderDestinations(
   db: RewindDatabase,
   actor: ReminderActor,
   now = new Date(),
+  deviceId?: string,
 ) {
   const accountId = actorAccount(db, actor, now);
   if (!accountId) return null;
+  // A destination is registered to one exact session. A restored account with
+  // a new session must explicitly re-register, even when the device ID matches.
+  const publicForSession = (row: DestinationRow) => ({
+    ...publicDestination(row),
+    enabled: row.enabled === 1 && row.session_token_hash === digest(actor.sessionToken),
+  });
+  if (deviceId !== undefined) {
+    if (!/^[A-Za-z0-9_-]{16,128}$/.test(deviceId)) return null;
+    return (
+      db
+        .prepare('SELECT * FROM reminder_destinations WHERE account_id = ? AND device_key = ?')
+        .all(accountId, digest(`${accountId}:${deviceId}`)) as unknown as DestinationRow[]
+    ).map(publicForSession);
+  }
   return (
     db
       .prepare(
         'SELECT * FROM reminder_destinations WHERE account_id = ? ORDER BY updated_at DESC,id LIMIT 20',
       )
       .all(accountId) as unknown as DestinationRow[]
-  ).map(publicDestination);
+  ).map(publicForSession);
 }
 export function disableReminderDestination(
   db: RewindDatabase,
@@ -317,6 +332,7 @@ export function scanDueReminderJobs(
     }[];
     let queued = 0;
     for (const row of rows) {
+      if (getCurrentRealGroup(db, row.account_id)?.group.id !== row.group_id) continue;
       const scheduledAt = latestSunday(now, row.time_zone);
       const scheduled = Date.parse(scheduledAt);
       if (
@@ -386,6 +402,7 @@ interface JobRow {
 }
 function eligible(db: RewindDatabase, job: JobRow, now: Date): DestinationRow | null {
   if (now.getTime() - Date.parse(job.scheduled_at) > DAY_MS) return null;
+  if (getCurrentRealGroup(db, job.account_id)?.group.id !== job.group_id) return null;
   return (
     (db
       .prepare(

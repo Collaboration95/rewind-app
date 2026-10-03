@@ -62,7 +62,7 @@ test('the web shell registers a bounded offline fallback without offline sync', 
   assert.match(offline, /margin: 0/);
 });
 
-function workerFixture(source = serviceWorker, stores = new Map()) {
+function workerFixture(source = serviceWorker, stores = new Map(), windows = []) {
   const handlers = new Map();
   const network = new Map();
   const calls = [];
@@ -95,8 +95,15 @@ function workerFixture(source = serviceWorker, stores = new Map()) {
   };
   let claimed = 0;
   let skipped = 0;
+  const notifications = [];
+  const opened = [];
   const self = {
     location: { origin },
+    registration: {
+      async showNotification(title, options) {
+        notifications.push({ title, options });
+      },
+    },
     addEventListener(name, handler) {
       handlers.set(name, handler);
     },
@@ -109,7 +116,14 @@ function workerFixture(source = serviceWorker, stores = new Map()) {
     caches,
     URL,
     Response,
+    AbortSignal,
     clients: {
+      async matchAll() {
+        return windows;
+      },
+      async openWindow(url) {
+        opened.push(url);
+      },
       async claim() {
         claimed++;
       },
@@ -140,6 +154,18 @@ function workerFixture(source = serviceWorker, stores = new Map()) {
     network,
     serve,
     installShell,
+    notifications,
+    opened,
+    async event(name, value) {
+      let pending;
+      handlers.get(name)({
+        ...value,
+        waitUntil(promise) {
+          pending = promise;
+        },
+      });
+      await pending;
+    },
     get claimed() {
       return claimed;
     },
@@ -168,6 +194,101 @@ function workerFixture(source = serviceWorker, stores = new Map()) {
     },
   };
 }
+
+test('push revalidates the cookie session/current group and displays only generic content', async () => {
+  const worker = workerFixture();
+  const data = {
+    kind: 'weekly-reminder',
+    groupId: 'group-one',
+    reminderId: 'reminder-one',
+    url: 'https://evil.invalid/media',
+  };
+  const push = { data: { json: () => ({ title: 'Private prompt', body: 'Member secret', data }) } };
+  worker.serve(
+    '/api/real/groups/current',
+    JSON.stringify({ group: { group: { id: 'group-one' } } }),
+    'application/json',
+  );
+  await worker.event('push', push);
+  assert.equal(worker.notifications.length, 1);
+  assert.equal(worker.notifications[0].title, 'Rewind');
+  assert.equal(worker.notifications[0].options.tag, 'rewind:reminder-one');
+  assert.doesNotMatch(
+    JSON.stringify(worker.notifications),
+    /Private prompt|Member secret|evil|media/,
+  );
+  assert.equal(worker.calls[0].options.credentials, 'include');
+  assert.equal(worker.calls[0].options.cache, 'no-store');
+  assert.equal(worker.stores.size, 0);
+  worker.serve(
+    '/api/real/groups/current',
+    JSON.stringify({ group: { group: { id: 'another-group' } } }),
+    'application/json',
+  );
+  await worker.event('push', push);
+  worker.network.set(
+    'https://rewind.invalid/api/real/groups/current',
+    new Response('{}', { status: 401 }),
+  );
+  await worker.event('push', push);
+  worker.network.clear();
+  await worker.event('push', push);
+  await worker.event('push', {
+    data: {
+      json: () => {
+        throw new Error('malformed');
+      },
+    },
+  });
+  await worker.event('push', {
+    data: { json: () => ({ data: { ...data, groupId: '../foreign' } }) },
+  });
+  assert.equal(worker.notifications.length, 1);
+});
+
+test('notification taps use opaque IDs and focus an existing app without arbitrary navigation', async () => {
+  const received = [];
+  let focused = 0;
+  const window = {
+    url: 'https://rewind.invalid/',
+    postMessage: (value) => received.push(value),
+    async focus() {
+      focused++;
+    },
+  };
+  const worker = workerFixture(serviceWorker, new Map(), [window]);
+  let closed = 0;
+  const data = {
+    kind: 'weekly-reminder',
+    groupId: 'group-one',
+    reminderId: 'reminder-one',
+    url: 'https://evil.invalid',
+  };
+  const notification = {
+    data,
+    close() {
+      closed++;
+    },
+  };
+  await worker.event('notificationclick', { notification });
+  assert.equal(closed, 1);
+  assert.equal(focused, 1);
+  assert.equal(worker.opened.length, 0);
+  assert.equal(
+    JSON.stringify(received),
+    JSON.stringify([{ kind: data.kind, groupId: data.groupId, reminderId: data.reminderId }]),
+  );
+  const cold = workerFixture();
+  await cold.event('notificationclick', { notification });
+  assert.equal(
+    cold.opened[0],
+    'https://rewind.invalid/?rewindReminder=reminder-one&rewindGroup=group-one',
+  );
+  await cold.event('notificationclick', {
+    notification: { ...notification, data: { ...data, reminderId: 'https://evil.invalid' } },
+  });
+  assert.equal(cold.opened.length, 1);
+});
 
 test('private API/media, invite query navigations and writes never enter the shell cache', async () => {
   const worker = workerFixture();
