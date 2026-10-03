@@ -45,6 +45,14 @@ separate reviewed destroy operation. #167 Organizations/SCP work and #261
 database migration are outside this slice. OIDC environment claims must be
 coordinated with #174 without introducing multi-account assumptions.
 
+The inert backend examples under `environments/backend/` reserve distinct
+state keys for future dev and prod roots. They are not environment roots and
+must not be used to initialize Terraform until a read-only inventory confirms
+the keys are unused and the corresponding configurations exist. The offline
+`infra/scripts/check-environment-backends.sh` guard checks the examples against
+each other and the preserved Demo key; it cannot inspect the remote state
+bucket.
+
 The remaining Demo-specific procedures in this README describe the existing
 implementation only. They do not override the dev/prod decisions above or
 authorize applying that legacy lifecycle to either new environment.
