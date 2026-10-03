@@ -264,10 +264,25 @@ export function RealAccountGroupExperience({
       throw new Error('Device reminder removal is unconfirmed. Check reminder support and retry.');
   };
   const signOut = () => {
+    const context = reminderContext.current;
+    const version = groupContextVersion.current;
     // Fence pending opt-ins immediately. Server session revocation stops sends;
     // a network-dependent device cleanup must not delay native privacy closure.
-    void reminderClient?.revoke();
-    void auth.signOut();
+    const removal = reminderClient?.revoke();
+    void Promise.allSettled([removal, auth.signOut()]).then(() => {
+      // Browser revocation or native recovery-marker persistence can fail and
+      // retain this session. Replace its closed client after cleanup settles;
+      // durable unconfirmed-removal metadata is recovered by the new client.
+      if (
+        captureMounted.current &&
+        groupContextVersion.current === version &&
+        reminderContext.current.accountId === context.accountId &&
+        reminderContext.current.request === context.request &&
+        reminderContext.current.groupId === context.groupId &&
+        reminderContext.current.revision === context.revision
+      )
+        setReminderRevision((revision) => revision + 1);
+    });
   };
   const currentMutationAccount = () =>
     captureMounted.current &&

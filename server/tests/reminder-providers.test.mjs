@@ -28,6 +28,11 @@ const payload = {
 };
 const curve = createECDH('prime256v1');
 curve.generateKeys();
+// OpenSSL may omit a leading zero byte when exporting the scalar. VAPID
+// requires the fixed-width 32-byte encoding even for those generated keys.
+const privateScalar = curve.getPrivateKey();
+const privateBytes = Buffer.alloc(32);
+privateScalar.copy(privateBytes, privateBytes.length - privateScalar.length);
 const subscription = {
   endpoint: 'https://web.push.apple.com/fixture',
   keys: {
@@ -38,8 +43,34 @@ const subscription = {
 const config = {
   subject: 'mailto:fixture@example.invalid',
   publicKey: subscription.keys.p256dh,
-  privateKey: curve.getPrivateKey().toString('base64url'),
+  privateKey: privateBytes.toString('base64url'),
 };
+
+test('valid VAPID scalars with leading zero bytes retain their fixed-width encoding', async () => {
+  const privateKey = Buffer.alloc(32);
+  privateKey[31] = 1;
+  const leadingZeroCurve = createECDH('prime256v1');
+  leadingZeroCurve.setPrivateKey(privateKey);
+  assert.ok(leadingZeroCurve.getPrivateKey().length < 32);
+  const fixedWidth = {
+    ...config,
+    publicKey: leadingZeroCurve.getPublicKey().toString('base64url'),
+    privateKey: privateKey.toString('base64url'),
+  };
+  assert.deepEqual(validateReminderVapidConfig(fixedWidth), fixedWidth);
+  let sent = false;
+  const providers = await createConfiguredReminderProviders(
+    { webpush: fixedWidth },
+    {
+      fetcher: async () => {
+        sent = true;
+        return new Response(null, { status: 201 });
+      },
+    },
+  );
+  assert.equal((await providers.webpush.send(subscription, payload)).status, 'accepted');
+  assert.equal(sent, true);
+});
 
 test('VAPID rejects valid-length mismatched keys, invalid points/scalars and noncanonical encodings before SDK work', async () => {
   const other = createECDH('prime256v1');

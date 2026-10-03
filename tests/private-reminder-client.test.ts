@@ -115,6 +115,61 @@ it('bounds a stalled authenticated support request without requesting notificati
   }
 });
 
+it.each(['support', 'registration', 'recovery', 'status', 'disable'])(
+  'bounds a stalled %s JSON body even when body consumption ignores abort',
+  async (stage) => {
+    jest.useFakeTimers();
+    try {
+      const f = fixture();
+      if (stage === 'registration' || stage === 'disable') await f.client.load();
+      if (stage === 'disable') await f.client.enable();
+      if (stage === 'status' || stage === 'recovery') {
+        f.values.set('@rewind/private-reminder-device', 'device-identity-123456');
+        f.values.set(
+          '@rewind/private-reminder-association:account-one',
+          JSON.stringify({ id: 'destination-one', uncertain: stage === 'recovery' }),
+        );
+      }
+      const original = f.request.getMockImplementation()!;
+      let stalledSignal: AbortSignal | null | undefined;
+      f.request.mockImplementation(async (path, options) => {
+        const stall =
+          (stage === 'support' && path === '/real/reminders/config') ||
+          (stage === 'registration' &&
+            options?.method === 'POST' &&
+            path.endsWith('/destinations')) ||
+          (stage === 'recovery' && path.includes('?deviceId=')) ||
+          (stage === 'status' && options?.method !== 'POST' && path.endsWith('/destinations')) ||
+          (stage === 'disable' && path.endsWith('/destination-one'));
+        if (!stall) return original(path, options);
+        stalledSignal = options?.signal;
+        return { ok: true, status: 200, json: () => new Promise(() => {}) } as Response;
+      });
+      const pending =
+        stage === 'registration'
+          ? f.client.enable()
+          : stage === 'disable'
+            ? f.client.revoke()
+            : f.client.load();
+      await jest.advanceTimersByTimeAsync(9_999);
+      expect(stalledSignal?.aborted).toBe(false);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(stalledSignal?.aborted).toBe(true);
+      const result = await pending;
+      expect(result.state).toBe(
+        stage === 'recovery' || stage === 'disable' ? 'cleanup-pending' : 'error',
+      );
+      expect(result.enabled).toBe(stage === 'disable');
+      expect(result.canEnable).toBe(stage === 'registration');
+      if (stage === 'support') expect((await f.client.revoke()).state).toBe('revoked');
+      if (stage === 'recovery' || stage === 'disable')
+        expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  },
+);
+
 it('coalesces concurrent opt-ins and reuses stable device identity and public registration after recreation', async () => {
   const f = fixture();
   await f.client.load();
@@ -193,6 +248,27 @@ it('retains an unconfirmed disable for retry instead of claiming server removal'
   });
   expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(true);
   expect(await f.client.disable()).toMatchObject({ state: 'available', enabled: false });
+});
+
+it('recovers an unconfirmed removal after recreating the client without reporting the old association enabled', async () => {
+  const f = fixture();
+  await f.client.load();
+  await f.client.enable();
+  f.request.mockResolvedValueOnce(reply({}, 503));
+  expect((await f.client.revoke()).state).toBe('cleanup-pending');
+  expect(
+    JSON.parse(f.values.get('@rewind/private-reminder-association:account-one')!),
+  ).toMatchObject({
+    id: 'destination-one',
+    cleanupPending: true,
+  });
+  const restored = createPrivateReminderClient(f.options);
+  expect(await restored.load()).toMatchObject({
+    state: 'available',
+    enabled: false,
+    canEnable: true,
+  });
+  expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(false);
 });
 
 it('reconciles OS permission revocation without requesting permission or leaving the server association enabled', async () => {

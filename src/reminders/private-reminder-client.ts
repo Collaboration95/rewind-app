@@ -72,9 +72,24 @@ export function createPrivateReminderClient({
 
   async function authenticatedRequest(path: string, options: RequestInit = {}) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new Error('Reminder request timed out.'));
+      }, 10_000);
+    });
     try {
-      return await sendRequest(path, { ...options, signal: controller.signal });
+      // The total deadline includes JSON consumption. The race also bounds
+      // transports that do not honor abort after returning response headers.
+      return await Promise.race([
+        (async () => {
+          const response = await sendRequest(path, { ...options, signal: controller.signal });
+          const body: unknown = response.ok ? await response.json() : undefined;
+          return { ok: response.ok, status: response.status, body };
+        })(),
+        deadline,
+      ]);
     } finally {
       clearTimeout(timeout);
     }
@@ -109,7 +124,7 @@ export function createPrivateReminderClient({
         `${path}?deviceId=${encodeURIComponent(deviceId)}`,
       );
       if (!response.ok || !isCurrentContext()) return false;
-      const body: unknown = await response.json();
+      const body = response.body;
       if (!isCurrentContext() || !body || typeof body !== 'object' || Array.isArray(body))
         return false;
       const rows = (body as { destinations?: unknown }).destinations;
@@ -137,6 +152,20 @@ export function createPrivateReminderClient({
 
   async function cleanup(): Promise<boolean> {
     cleanupPending = true;
+    if (destinationId || registrationUncertain) {
+      try {
+        await storage.setItem(
+          key,
+          JSON.stringify({
+            id: destinationId,
+            uncertain: registrationUncertain,
+            cleanupPending: true,
+          }),
+        );
+      } catch {
+        return false;
+      }
+    }
     const recovered = await recoverUncertainDestination();
     let confirmed = recovered;
     if (destinationId && !isCurrentContext()) confirmed = false;
@@ -146,7 +175,11 @@ export function createPrivateReminderClient({
           `${path}/${encodeURIComponent(destinationId)}`,
           jsonOptions({ enabled: false }),
         );
-        if (!response.ok || (await response.json()).disabled !== true || !isCurrentContext())
+        if (
+          !response.ok ||
+          (response.body as { disabled?: boolean } | null)?.disabled !== true ||
+          !isCurrentContext()
+        )
           confirmed = false;
         else registrationUncertain = false;
       } catch {
@@ -180,9 +213,13 @@ export function createPrivateReminderClient({
       const persisted = await storage.getItem(key);
       if (!active()) return stale();
       if (persisted) {
-        const metadata = JSON.parse(persisted) as { id?: unknown; uncertain?: boolean };
+        const metadata = JSON.parse(persisted) as {
+          id?: unknown;
+          uncertain?: boolean;
+          cleanupPending?: boolean;
+        };
         registrationUncertain = metadata.uncertain === true;
-        cleanupPending = registrationUncertain;
+        cleanupPending = registrationUncertain || metadata.cleanupPending === true;
         if (typeof metadata.id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(metadata.id))
           destinationId = metadata.id;
       }
@@ -200,10 +237,10 @@ export function createPrivateReminderClient({
       if (!active()) return stale();
       if ('unsupported' in capability) return result('unsupported', capability.unsupported);
       prepared = capability;
-      if (registrationUncertain && !(await cleanup()))
+      if (cleanupPending && !(await cleanup()))
         return result(
           'cleanup-pending',
-          'A registration response was lost. Device removal is unconfirmed; retry before switching accounts.',
+          'Device removal is unconfirmed; retry before switching accounts.',
         );
       if (!active()) return stale();
       const permission = await prepared.permission();
@@ -222,7 +259,7 @@ export function createPrivateReminderClient({
       }
       const response = await authenticatedRequest('/real/reminders/config');
       if (!response.ok) throw new Error('config');
-      const config = (await response.json()) as {
+      const config = response.body as {
         providers?: string[];
         webPushPublicKey?: string | null;
       };
@@ -240,7 +277,7 @@ export function createPrivateReminderClient({
       if (destinationId) {
         const status = await authenticatedRequest(path);
         if (!status.ok) throw new Error('status');
-        const body = (await status.json()) as { destinations?: { id: string; enabled: boolean }[] };
+        const body = status.body as { destinations?: { id: string; enabled: boolean }[] };
         if (!active()) return stale();
         enabled =
           body.destinations?.some((item) => item.id === destinationId && item.enabled === true) ===
@@ -292,7 +329,7 @@ export function createPrivateReminderClient({
         if ([400, 401, 403, 404, 405, 503].includes(response.status)) registrationUncertain = false;
         throw new Error('registration');
       }
-      const body = (await response.json()) as {
+      const body = response.body as {
         destination?: { id?: string; enabled?: boolean; provider?: string };
       };
       if (

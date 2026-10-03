@@ -187,6 +187,69 @@ it('starts logout immediately while device cleanup is pending', async () => {
   });
 });
 
+it.each([false, true])(
+  'recreates the real reminder client after logout retains the session (initial removal failure: %s)',
+  async (failRemoval) => {
+    const f = fixture();
+    const values = new Map<string, string>();
+    let removalFailed = false;
+    const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (path, init) => {
+      if (path === '/real/reminders/config') return response({ providers: ['expo'] });
+      if (path.endsWith('/reminders/destinations') && init?.method === 'POST')
+        return response({ destination: { id: 'device-one', enabled: true, provider: 'expo' } });
+      if (path.endsWith('/reminders/destinations/device-one')) {
+        if (failRemoval && !removalFailed) {
+          removalFailed = true;
+          return response({}, 503);
+        }
+        return response({ disabled: true });
+      }
+      return original(path, init);
+    });
+    const realFactory = jest.requireActual('../src/reminders/private-reminder-client')
+      .createPrivateReminderClient as typeof createPrivateReminderClient;
+    (createPrivateReminderClient as jest.Mock).mockImplementation((options) =>
+      realFactory({
+        ...options,
+        createDeviceId: async () => 'device-identity-123456',
+        storage: {
+          getItem: async (key: string) => values.get(key) ?? null,
+          setItem: async (key: string, value: string) => {
+            values.set(key, value);
+          },
+          removeItem: async (key: string) => {
+            values.delete(key);
+          },
+        },
+        platform: {
+          prepare: async () => ({
+            provider: 'expo',
+            permission: async () => 'granted',
+            subscribe: async () => ({ token: 'ExpoPushToken[synthetic]' }),
+            unsubscribe: async () => {},
+          }),
+        },
+      }),
+    );
+    const ui = await render(<RealAccountGroupExperience displayName="Owner" />);
+    const enable = await ui.findByTestId('private-reminder-enable');
+    await waitFor(() => expect(enable.props.accessibilityState.disabled).toBe(false));
+    await fireEvent.press(enable);
+    await ui.findByText('This device is registered. Reminder delivery is not confirmed.');
+    await fireEvent.press(ui.getByTestId('real-group-sign-out'));
+    await waitFor(() => expect(createPrivateReminderClient).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(ui.getByTestId('private-reminder-enable').props.accessibilityState.disabled).toBe(
+        false,
+      ),
+    );
+    expect(values.has('@rewind/private-reminder-association:account-one')).toBe(false);
+    expect(f.auth.signOut).toHaveBeenCalledTimes(1);
+    await ui.unmount();
+  },
+);
+
 it('revalidates a tap against the server-selected group without switching to payload context', async () => {
   const f = fixture();
   const ui = await render(<RealAccountGroupExperience displayName="Owner" />);
