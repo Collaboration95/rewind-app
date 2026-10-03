@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1455" height="940" viewBox="0 0 1455 940">
+<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#147d83"/></marker><marker id="rel" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#5c7082"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/><rect width="100%" height="12" fill="#147d83"/>
+<text x="36" y="52" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700" fill="#17324d">UC07-F1 · Analysis sequence</text>
+<text x="36" y="80" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#5c7082">Normal: close at boundary and open successor; exceptions are explicit</text>
+<rect x="1205" y="28" width="214" height="31" rx="15" fill="#e8f1f8"/><text x="1312" y="49" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700" fill="#17324d">ANALYSIS</text>
+<rect x="52.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="150.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">Scheduler</text>
+<line x1="150.0" y1="188" x2="150.0" y2="892" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="283.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="381.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">Lifecycle</text>
+<line x1="381.0" y1="188" x2="381.0" y2="892" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="514.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="612.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">Current cycle</text>
+<line x1="612.0" y1="188" x2="612.0" y2="892" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="745.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="843.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">Film work</text>
+<line x1="843.0" y1="188" x2="843.0" y2="892" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="976.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="1074.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">Successor</text>
+<line x1="1074.0" y1="188" x2="1074.0" y2="892" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="1207.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="1305.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">Group pointer</text>
+<line x1="1305.0" y1="188" x2="1305.0" y2="892" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<line x1="150.0" y1="210" x2="381.0" y2="210" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="265.5" y="228" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">advance due real-group</text>
+<text x="265.5" y="245" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">cycle</text>
+<line x1="381.0" y1="280" x2="612.0" y2="280" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="298" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">read status and end instant</text>
+<text x="496.5" y="315" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">under write boundary</text>
+<rect x="55" y="327.5" width="1345" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="727.5" y="355" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">If early: report waiting for boundary; do not transition</text>
+<line x1="381.0" y1="420" x2="612.0" y2="420" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="438" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">mark closed cycle revealing</text>
+<text x="496.5" y="455" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">and locked</text>
+<line x1="381.0" y1="490" x2="843.0" y2="490" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="612.0" y="508" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">ensure one compilation request and ordered inputs</text>
+<line x1="381.0" y1="560" x2="1074.0" y2="560" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="727.5" y="578" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">create successor at old end with same duration</text>
+<line x1="381.0" y1="630" x2="1305.0" y2="630" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="843.0" y="648" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">select successor only if pointer still targets old cycle</text>
+<path d="M381.0,692 h70 v24 h-70" fill="none" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="416.0" y="718" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">commit transition</text>
+<text x="416.0" y="735" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">and outcome</text>
+<rect x="55" y="737.0" width="1345" height="66" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="727.5" y="765" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Relevant failures: missing cycle; invalid interval / state; write transaction rolls back; unsettled inputs delay film</text>
+<text x="727.5" y="786" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">publication</text>
+<text x="36" y="918" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">The diagram covers the normal path and named relevant branches; implementation names appear only in the design view.</text></svg>
