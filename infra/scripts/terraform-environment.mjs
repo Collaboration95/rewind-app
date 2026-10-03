@@ -362,10 +362,9 @@ function identifyOperation(config, operation) {
   assert.ok(!process.env.AWS_PROFILE, 'Local credential profiles are forbidden');
   const caller = JSON.parse(command('aws', ['sts', 'get-caller-identity', '--output', 'json']));
   assert.equal(caller.Account, account);
-  assert.match(
-    caller.Arn,
-    new RegExp(
-      `^arn:aws:sts::${account}:assumed-role/rewind-${config.environment}-terraform-${operation}/`,
+  assert.ok(
+    caller.Arn.startsWith(
+      `arn:aws:sts::${account}:assumed-role/rewind-${config.environment}-terraform-${operation}/`,
     ),
   );
 }
