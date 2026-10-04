@@ -46,6 +46,13 @@ CONFIGURABLE_KEYS='REWIND_MEDIA_BACKEND REWIND_MEDIA_ENVIRONMENT REWIND_MEDIA_S3
 configure_env() {
   local env_file="$HOST_ROOT/rewind.env" next line key value
   [[ -f "$env_file" ]] || die 'rewind.env is missing'
+  # Never approve an unreviewed manual edit: the file must still match the
+  # digest recorded at the last activation before allowlisted keys change.
+  if [[ -f "$HOST_ROOT/release-config-digest" ]]; then
+    [[ "$(sha256sum "$env_file" | cut -d ' ' -f 1)" == "$(cat "$HOST_ROOT/release-config-digest")" ]] || die 'private configuration changed outside a release; review it before applying hosted settings'
+  fi
+  # Copies of rewind.env hold secrets; keep every intermediate file private.
+  umask 077
   next="$(mktemp "$HOST_ROOT/.rewind.env.XXXXXX")"
   chmod 0600 "$next"
   cp "$env_file" "$next"

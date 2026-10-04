@@ -3,6 +3,7 @@ import { runReminderOutboxTick, scanDueReminderJobs, type ReminderProviders } fr
 
 export const REMINDER_LOOP_INTERVAL_MS = 60_000;
 const MAX_JOBS_PER_TICK = 10;
+const MAX_SCAN_PAGES_PER_TICK = 10;
 
 /**
  * Queue due weekly reminders and send pending ones once a minute while the
@@ -16,6 +17,8 @@ export function startReminderLoop(
   let database: RewindDatabase | null = null;
   let running: Promise<void> | null = null;
   let stopped = false;
+  // Scan pages are bounded; keep the cursor so later preferences are reached.
+  let cursor: string | null = null;
   const now = options.now ?? (() => new Date());
 
   const tick = () => {
@@ -23,7 +26,11 @@ export function startReminderLoop(
     running = (async () => {
       try {
         database ??= await openDatabase();
-        scanDueReminderJobs(database, now());
+        for (let page = 0; page < MAX_SCAN_PAGES_PER_TICK; page++) {
+          const scan = scanDueReminderJobs(database, now(), cursor ? { after: cursor } : {});
+          cursor = scan.nextCursor ?? null;
+          if (!cursor) break;
+        }
         for (let job = 0; job < MAX_JOBS_PER_TICK && !stopped; job++) {
           const result = await runReminderOutboxTick(database, providers, { now });
           if (!result.claimed) break;

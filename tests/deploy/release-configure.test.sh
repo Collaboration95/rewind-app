@@ -25,4 +25,15 @@ if printf 'REWIND_ALLOW_ORIGIN=evil\n' | REWIND_HOST_ROOT="$host" bash "$script"
   echo 'a non-configurable key was accepted' >&2; exit 1
 fi
 [[ "$(cat "$host/rewind.env")" == "$before" ]] || { echo 'a refused change modified rewind.env' >&2; exit 1; }
+mode="$(stat -c %a "$host/rewind.env" 2>/dev/null || stat -f %Lp "$host/rewind.env")"
+[[ "$mode" == 600 ]] || { echo "rewind.env mode is $mode, expected 600" >&2; exit 1; }
+if ls "$host"/.rewind.env.* >/dev/null 2>&1; then echo 'temporary env copies were left behind' >&2; exit 1; fi
+
+# An unreviewed manual edit (digest mismatch) blocks configure without changes.
+printf 'REWIND_ORIGIN_AUTH_SECRET=manual\n' >> "$host/rewind.env"
+edited="$(cat "$host/rewind.env")"
+if printf 'REWIND_MEDIA_BACKEND=disk\n' | REWIND_HOST_ROOT="$host" bash "$script" configure >/dev/null 2>&1; then
+  echo 'configure approved an unreviewed manual edit' >&2; exit 1
+fi
+[[ "$(cat "$host/rewind.env")" == "$edited" ]] || { echo 'a refused configure modified rewind.env' >&2; exit 1; }
 echo 'release configure fixture passed'
