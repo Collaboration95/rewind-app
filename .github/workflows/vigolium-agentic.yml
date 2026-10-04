@@ -10,7 +10,7 @@ on:
       endpoint:
         description: Disposable endpoint to assess
         type: choice
-        options: [all, fixture, chat, groups]
+        options: [all, fixture, chat, groups, access]
         default: all
       model:
         description: OpenAI model available to the configured API account
@@ -50,7 +50,7 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run server:build
       - name: Validate harness and workflow boundaries
-        run: node --test tests/vigolium-rewind.test.mjs tests/vigolium-provider.test.mjs tests/vigolium-fixture.test.mjs tests/vigolium-summary.test.mjs tests/vigolium-workflow.test.mjs
+        run: node --test tests/vigolium-rewind.test.mjs tests/vigolium-provider.test.mjs tests/vigolium-fixture.test.mjs tests/vigolium-summary.test.mjs tests/vigolium-workflow.test.mjs tests/vigolium-access.test.mjs
       - run: node scripts/run-vigolium-rewind.mjs --build
       - name: Verify offline isolation, defect and control
         run: node scripts/run-vigolium-container.mjs --verify
@@ -58,6 +58,7 @@ jobs:
         run: |
           node scripts/run-vigolium-rewind.mjs --verify --endpoint chat
           node scripts/run-vigolium-rewind.mjs --verify --endpoint groups
+          node scripts/run-vigolium-rewind.mjs --verify --endpoint access
       - name: Retain offline evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -79,7 +80,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.endpoint != 'all' && format('["{0}"]', inputs.endpoint) || '["fixture","chat","groups"]') }}
+        target: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.endpoint != 'all' && format('["{0}"]', inputs.endpoint) || '["fixture","chat","groups","access"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -93,7 +94,7 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run server:build
       - name: Validate scanner harness and access checks
-        run: node --test tests/vigolium-rewind.test.mjs tests/vigolium-provider.test.mjs tests/vigolium-fixture.test.mjs tests/vigolium-summary.test.mjs tests/vigolium-workflow.test.mjs
+        run: node --test tests/vigolium-rewind.test.mjs tests/vigolium-provider.test.mjs tests/vigolium-fixture.test.mjs tests/vigolium-summary.test.mjs tests/vigolium-workflow.test.mjs tests/vigolium-access.test.mjs
       - name: Build isolated scanner and disposable backend
         run: node scripts/run-vigolium-rewind.mjs --build
       - name: Run approved OpenAI trial

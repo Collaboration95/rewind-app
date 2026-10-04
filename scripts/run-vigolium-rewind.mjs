@@ -17,7 +17,8 @@ if (!['--build', '--verify', '--run'].includes(mode))
 const live = mode === '--run';
 const endpointIndex = process.argv.indexOf('--endpoint');
 const endpoint = endpointIndex < 0 ? 'chat' : process.argv[endpointIndex + 1];
-if (!['chat', 'groups'].includes(endpoint)) throw new Error('Endpoint must be chat or groups');
+if (!['chat', 'groups', 'access'].includes(endpoint))
+  throw new Error('Endpoint must be chat, groups or access');
 if (live && process.env.REWIND_AGENT_REWIND_DATA_SHARING !== 'approved')
   throw new Error(
     'Live Rewind scanning requires REWIND_AGENT_REWIND_DATA_SHARING=approved in addition to provider approval',
@@ -52,7 +53,9 @@ if (mode === '--build') {
   const output = resolve(
     (endpoint === 'chat'
       ? 'vigolium-result/agentic-rewind-container'
-      : 'vigolium-result/agentic-rewind-groups') + (live ? '' : '-offline'),
+      : endpoint === 'groups'
+        ? 'vigolium-result/agentic-rewind-groups'
+        : 'vigolium-result/agentic-rewind-access') + (live ? '' : '-offline'),
   );
   const name = `rewind-agentic-${randomUUID()}`;
   const appName = `${name}-app`;

@@ -4,6 +4,7 @@ const directories = {
   fixture: 'agentic-container',
   chat: 'agentic-rewind-container',
   groups: 'agentic-rewind-groups',
+  access: 'agentic-rewind-access',
 };
 if (!Object.hasOwn(directories, target)) throw new Error('Unsupported CI target');
 const report = await readFile(`vigolium-result/${directories[target]}/scope.json`, 'utf8')
@@ -21,6 +22,11 @@ else {
   if (target === 'fixture')
     lines.push(
       `Known SQL injection detection gate: ${report.detectionTrialPassed === true ? 'PASS' : 'NOT PASSED'}`,
+    );
+  else if (target === 'access')
+    lines.push(
+      `Access scenario gate: ${report.accessAssessment?.complete ? 'PASS' : 'NOT PASSED'}`,
+      'Scope: two synthetic groups, four disposable identities, invitation creation/acceptance. No whole-app security claim.',
     );
   else
     lines.push(

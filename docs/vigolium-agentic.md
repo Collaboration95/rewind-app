@@ -263,9 +263,8 @@ bodies in JSONL finding evidence. Treat exports as synthetic data, not as guaran
 body-free reports. AI conclusions require reviewing evidence.
 A failure is `incomplete`, never a clean result. Raw agent logs and the raw scan
 database are not published. Exports can still contain synthetic request data;
-review before sharing. This trial does not yet compare owner/member/outsider
-identities, cover every route, or establish that AI finds issues the native scan
-misses. The native scan retains its separate role checks.
+review before sharing. The access trial compares disposable identities on its explicitly scoped routes.
+This trial does not cover every route or establish that AI finds issues the native scan misses. The native scan retains its separate role checks.
 The summary separates informational observations from vulnerability findings and
 explicitly states whether SQL injection was reported. `scanner-completed` describes
 execution; it does not mean the detection trial passed. `requestLimitReached`
@@ -312,8 +311,50 @@ The repaired execution/export path passed with a retained provider-generated
 detector: a high-severity SQL injection finding was exported and independently
 confirmed. Separate offline execution against the parameterized fixture produced
 no SQL injection finding. This is synthetic evidence; a fresh generation can
-still fail the detection gate. Next validation is expanding approved endpoint coverage. Do
-not make live scanning automatic until scope, isolation, cost and evidence are
-validated.
+still fail the detection gate. The workflow runs bounded trials on authorized trial-branch
+and dev pushes; PR validation stays offline.
 
 Reference: [Vigolium swarm documentation](https://docs.vigolium.com/agentic-scan/swarm).
+
+## Agentic access-control and invitations trial
+
+Run `node scripts/run-vigolium-rewind.mjs --verify --endpoint access` to verify
+known local controls without contacting a provider. With the existing live provider
+and disposable-data approvals, `--run --endpoint access` asks Vigolium to generate
+and execute its own permission detector. No local model is required.
+
+The separate backend provisions two private groups and four disposable identities:
+owner, member, outsider (owner of the other group), and a fresh invite recipient.
+Only the two exact message paths, the owner's invitation creation path, and
+invitation acceptance are proxied. Login, arbitrary IDs, other routes, query strings,
+and methods other than GET/POST remain outside this trial's proxy scope.
+
+Sixteen required scenarios cover authorized reads, cross-group ID swaps, outsider
+read/write attempts, member/outsider invitation creation, anonymous acceptance,
+consumed-code replay, wrong-group acceptance, accountId/owner-role spoofing on a
+fresh acceptance, recipient membership, denial of recipient owner permissions,
+and fresh-code replay. A valid bearer invitation legitimately grants member access;
+that alone is not a bypass. The agent may probe additional combinations within scope.
+
+`accessAssessment` records actor labels, methods, paths, response statuses, and each
+scenario as passed, failed, or not-tested. Authorized read controls must expose the
+expected synthetic message, not merely return HTTP 200. Invitation controls also
+check semantic response states and membership role. Coverage does not pass until
+all required scenarios were observed during the agent phase. Failed observations
+cannot be overwritten by a later successful control. Preflight requests are reset
+before the agent begins and cannot satisfy live coverage. The offline scenario
+sequence is never supplied to the scanner as executable code.
+
+The context contains all disposable tokens and invitation codes; it is provided to
+the approved provider, then removed with target.json during cleanup. Tokens and known
+or observed invitation codes are redacted from retained reports/artifacts. Proxy
+probe summaries contain no raw headers, request bodies, or credentials. The agent
+worker still runs untrusted generated code; isolation limits remain those described
+above. Native and agent findings require review; the scenario gate is evidence of
+observed boundaries, not proof against every access-control attack.
+
+CI adds `access` alongside fixture/chat/groups and retains the same redacted report
+file allowlist. Download `vigolium-agentic-access` and open summary.html for the
+scenario matrix; report.html contains scanner findings. Reports persist seven days.
+Whole-app discovery, browser XSS, session revocation and upload scanning remain
+outside this scope.

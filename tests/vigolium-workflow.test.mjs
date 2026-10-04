@@ -15,7 +15,7 @@ test('PR validation excludes credentials and live jobs restrict authorized refs'
   assert.match(workflow, /permissions:\n  contents: read/);
 });
 test('CI includes a positive detection gate and uploads only report files', () => {
-  assert.match(workflow, /\["fixture","chat","groups"\]/);
+  assert.match(workflow, /\["fixture","chat","groups","access"\]/);
   assert.match(workflow, /node scripts\/run-vigolium-container\.mjs --run/);
   assert.ok(!workflow.includes('target.json'));
   const uploads = [...workflow.matchAll(/path: \|\n((?: +[^\n]+\n)+?)(?= +if-no-files-found:)/g)];

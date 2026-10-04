@@ -12,7 +12,7 @@ RUN apt-get update \
 WORKDIR /opt/scan
 # Copy only the scanner, harness and synthetic target. No application code or source maps.
 COPY --from=dependencies /build/node_modules/@vigolium ./node_modules/@vigolium
-COPY scripts/run-vigolium-agentic.mjs scripts/vigolium-provider.mjs scripts/vigolium-fixture.mjs ./scripts/
+COPY scripts/run-vigolium-agentic.mjs scripts/vigolium-provider.mjs scripts/vigolium-fixture.mjs scripts/vigolium-access.mjs ./scripts/
 COPY scripts/check-vigolium-isolation.mjs ./scripts/
 ENV REWIND_AGENT_REPORT_DIR=/reports HOME=/tmp
 USER 1000:1000

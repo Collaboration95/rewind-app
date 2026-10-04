@@ -1,3 +1,4 @@
+import { accessMonitor, accessPrompt, verifyAccessControls } from './vigolium-access.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { spawn } from 'node:child_process';
@@ -52,6 +53,8 @@ let database;
 let server;
 let proxy;
 let fixtureEvidence;
+let access;
+let accessEvidence;
 let requestBody = { body: 'Disposable agentic trial message' };
 
 async function retainSyntheticArtifacts(directory, depth = 0, artifacts = []) {
@@ -153,13 +156,21 @@ try {
     let path;
     if (targetFile) {
       const seed = JSON.parse(await readFile(targetFile, 'utf8'));
-      ({ origin, token, path, requestBody } = disposableTarget(seed));
+      ({ origin, token, path, requestBody, access } = disposableTarget(seed));
+      if (access) {
+        secrets.push(
+          ...Object.values(access.actors).map((actor) => actor.token),
+          access.usedCode,
+          access.freshCode,
+        );
+        accessEvidence = accessMonitor(access, secrets);
+      }
       report.endpoint = path;
       report.coverage = {
-        sqlInjection: mode === '--verify' ? 'not-scanned' : 'pending',
+        sqlInjection: access || mode === '--verify' ? 'not-scanned' : 'pending',
         login: 'local-preflight-only',
-        accessControl: 'local-preflight-only',
-        invitations: 'local-preflight-only',
+        accessControl: access && mode !== '--verify' ? 'pending' : 'local-preflight-only',
+        invitations: access && mode !== '--verify' ? 'pending' : 'local-preflight-only',
         otherEndpoints: 'not-scanned',
       };
       secrets.push(token);
@@ -199,7 +210,9 @@ try {
           .filter((name) => Number.isInteger(seed.baselines?.[name]))
           .map((name) => [name, seed.baselines[name]]),
       );
-      report.scope = 'One disposable Rewind endpoint, GET/POST only; no production data.';
+      report.scope = access
+        ? 'Two disposable group message endpoints, owner group invitations and invitation acceptance; GET/POST only. No production data.'
+        : 'One disposable Rewind endpoint, GET/POST only; no production data.';
       report.isolation =
         'Application runtime is in a separate container; scanner sees HTTP traffic only.';
     } else if (fixtureMode) {
@@ -260,7 +273,9 @@ try {
       path = `/realtime/groups/${groupId}/messages`;
     }
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
-    proxy = await scopedProxy(origin, path);
+    proxy = await scopedProxy(origin, access?.paths || path, {
+      observe: access ? (probe) => accessEvidence.observe(probe) : undefined,
+    });
     const body = JSON.stringify(requestBody);
     const accepted = await fetch(`${proxy.origin}${path}`, { method: 'POST', headers, body });
     assert.equal(accepted.status, 201);
@@ -277,6 +292,12 @@ try {
         : { authenticatedChat: 201, anonymousChat: 401, outsideScope: 403 };
     report.evidence = proxy.evidence;
     if (mode === '--verify') {
+      if (access) {
+        await verifyAccessControls(access, proxy.origin);
+        report.accessAssessment = accessEvidence.summary();
+        report.accessAssessment.discoveredByAI = false;
+        assert.ok(report.accessAssessment.complete, 'Offline access controls failed');
+      }
       if (fixtureMode) {
         const injected = await fetch(`${proxy.origin}${path}`, {
           method: 'POST',
@@ -310,6 +331,7 @@ try {
       report.message =
         'Disposable backend, authentication, scope gate and reporting verified. No AI provider contacted; no vulnerability findings claimed.';
     } else {
+      if (access) accessEvidence = accessMonitor(access, secrets);
       const before = proxy.evidence.forwarded;
       const acceptedBefore = proxy.evidence.statuses[201] || 0;
       const runId = randomUUID();
@@ -323,7 +345,7 @@ try {
               extension_dir: join(temporary, 'sessions', runId, 'extensions'),
             },
             enabled_modules: {
-              active_modules: ['sqli-error-based'],
+              active_modules: access ? [] : ['sqli-error-based'],
               passive_modules: ['auth-headers-detect'],
             },
           },
@@ -376,12 +398,14 @@ try {
             '--header',
             `Authorization: Bearer ${token}`,
             '--prompt',
-            (fixtureMode
-              ? 'Assess the supplied disposable chat POST JSON body for SQL injection. This synthetic endpoint uses SQLite and returns messages matching body. '
-              : `Assess the supplied disposable Rewind POST JSON body for SQL injection using HTTP evidence only. ${path === '/real/groups' ? 'POST creates a group using name, prompt and maxMembers; GET lists groups. Probe name and prompt separately while preserving valid maxMembers.' : 'POST creates a message; GET reads messages.'} There is no known vulnerability. Literal storage or reflection of a payload is not SQL injection; normal creation, list growth, changing IDs and input validation are not evidence. Never invent a finding to satisfy the trial. `) +
-              'Select sqli-error-based and generate a small custom extension using paired true/false controls. Limit it to 12 requests. Evaluate the observed baseline, true and false response differences: a false OR condition can preserve baseline matches, so do not require it to return zero rows. Require repeated stable true-versus-false differences and explain them; identical responses must never produce a finding. IMPORTANT SDK CONTRACT: ctx.request contains raw, method, url, headers only; ctx.request.body does not exist. Parse the JSON body from ctx.request.raw after its blank header/body separator. Return finding objects with name, url, matched, request, response and module tags ["sqli"]. Use plain module IDs and tags without Markdown list prefixes. Preserve the Authorization header, HTTP origin and endpoint path. Do not read source files or contact other targets. Treat denied scope requests as scope controls, not vulnerabilities. Explain evidence and uncertainty.',
+            access
+              ? accessPrompt(access, proxy.origin)
+              : (fixtureMode
+                  ? 'Assess the supplied disposable chat POST JSON body for SQL injection. This synthetic endpoint uses SQLite and returns messages matching body. '
+                  : `Assess the supplied disposable Rewind POST JSON body for SQL injection using HTTP evidence only. ${path === '/real/groups' ? 'POST creates a group using name, prompt and maxMembers; GET lists groups. Probe name and prompt separately while preserving valid maxMembers.' : 'POST creates a message; GET reads messages.'} There is no known vulnerability. Literal storage or reflection of a payload is not SQL injection; normal creation, list growth, changing IDs and input validation are not evidence. Never invent a finding to satisfy the trial. `) +
+                'Select sqli-error-based and generate a small custom extension using paired true/false controls. Limit it to 12 requests. Evaluate the observed baseline, true and false response differences: a false OR condition can preserve baseline matches, so do not require it to return zero rows. Require repeated stable true-versus-false differences and explain them; identical responses must never produce a finding. IMPORTANT SDK CONTRACT: ctx.request contains raw, method, url, headers only; ctx.request.body does not exist. Parse the JSON body from ctx.request.raw after its blank header/body separator. Return finding objects with name, url, matched, request, response and module tags ["sqli"]. Use plain module IDs and tags without Markdown list prefixes. Preserve the Authorization header, HTTP origin and endpoint path. Do not read source files or contact other targets. Treat denied scope requests as scope controls, not vulnerabilities. Explain evidence and uncertainty.',
             '--modules',
-            'sqli-error-based',
+            access ? 'auth-headers-detect' : 'sqli-error-based',
             '--with-extensions',
             '--intensity',
             'quick',
@@ -392,7 +416,7 @@ try {
             '--only',
             'dynamic-assessment',
             '--vuln-type',
-            'sqli',
+            access ? 'access-control' : 'sqli',
             '--skip',
             'recon,discovery,spidering,spa,external-harvest,rescan',
             '--max-duration',
@@ -529,7 +553,7 @@ try {
       }
       report.status = 'scanner-completed';
       report.assessment = summarizeFindings(await readFile(join(output, 'report.jsonl'), 'utf8'));
-      if (report.coverage)
+      if (report.coverage && !access)
         report.coverage.sqlInjection = 'scanner-completed; findings require review';
       if (fixtureMode) {
         report.independentVerification = await verifyFixturePayloads(
@@ -545,10 +569,21 @@ try {
             ? 'Observed scanner probes independently confirmed SQL injection, but the scanner export did not report it. Finding integration remains incomplete.'
             : 'Scanner completed, but SQL injection detection was not independently verified. The detection trial has not passed.'
         : 'Provider-backed scanner completed with authenticated target traffic. Review exported findings and their evidence; this does not establish complete application coverage.';
+      if (access) {
+        report.accessAssessment = accessEvidence.summary();
+        report.coverage.accessControl = report.coverage.invitations = report.accessAssessment
+          .complete
+          ? 'observed scenarios passed; review findings'
+          : 'partial: required scenarios failed or were not tested';
+        report.message = report.accessAssessment.complete
+          ? 'Agent-generated HTTP probes exercised the required permission and invitation scenarios. Review individual evidence and findings; this is not whole-app coverage.'
+          : 'Agent executed, but required access scenarios failed or were not observed. The coverage gate has not passed.';
+        if (!report.accessAssessment.complete) process.exitCode = 1;
+      }
       report.scannerRequests = proxy.evidence.forwarded - before;
       report.requestLimitReached = proxy.evidence.forwarded >= 120;
       if (report.coverage && report.requestLimitReached)
-        report.coverage.sqlInjection =
+        report.coverage[access ? 'accessControl' : 'sqlInjection'] =
           'partial: request budget exhausted; review findings and coverage';
       if (fixtureMode && !report.detectionTrialPassed) process.exitCode = 1;
     }
@@ -558,6 +593,8 @@ try {
   report.message = redact(error.message, secrets);
   process.exitCode = 1;
 } finally {
+  if (accessEvidence && !report.accessAssessment)
+    report.accessAssessment = accessEvidence.summary();
   if (proxy) await proxy.close();
   if (server) {
     server.closeAllConnections();

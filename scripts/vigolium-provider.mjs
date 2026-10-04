@@ -1,3 +1,4 @@
+import { accessContext } from './vigolium-access.mjs';
 import { createServer, request as forward } from 'node:http';
 import { once } from 'node:events';
 import { Buffer } from 'node:buffer';
@@ -64,7 +65,13 @@ export function disposableTarget(value) {
   )
     throw new Error('Group target requires a synthetic group creation seed');
   if (JSON.stringify(requestBody).length > 4096) throw new Error('Seed body exceeds its limit');
-  return { origin: url.origin, path: value.path, token: value.token, requestBody };
+  return {
+    origin: url.origin,
+    path: value.path,
+    token: value.token,
+    requestBody,
+    access: accessContext(value.access, value.path),
+  };
 }
 
 export function summarizeFindings(jsonl) {
@@ -105,8 +112,8 @@ export function summaryHtml(report) {
 }
 
 // This limits traffic through the seed target. It is not an OS sandbox for agent tools.
-export async function scopedProxy(origin, path, { limit = 120, interval = 550 } = {}) {
-  const destination = new URL(path, origin);
+export async function scopedProxy(origin, path, { limit = 120, interval = 550, observe } = {}) {
+  const paths = Array.isArray(path) ? path : [path];
   const evidence = { forwarded: 0, denied: 0, statuses: {}, timestamps: [] };
   const timers = new Set();
   let scheduled = 0;
@@ -115,16 +122,18 @@ export async function scopedProxy(origin, path, { limit = 120, interval = 550 } 
   const server = createServer(async (request, response) => {
     // The JS SDK sends absolute-form request targets. Admit only this proxy's
     // exact origin/path; never turn an arbitrary absolute URL into an upstream.
-    let inScope = request.url === path;
+    let requestedPath = request.url;
+    let inScope = paths.includes(requestedPath);
     if (!inScope && request.url?.startsWith(`${proxyOrigin}/`)) {
       try {
         const requested = new URL(request.url);
         inScope =
           requested.origin === proxyOrigin &&
-          requested.pathname + requested.search === path &&
+          paths.includes(requested.pathname + requested.search) &&
           !requested.hash &&
           !requested.username &&
           !requested.password;
+        if (inScope) requestedPath = requested.pathname;
       } catch {
         /* Invalid request targets remain outside scope. */
       }
@@ -163,7 +172,7 @@ export async function scopedProxy(origin, path, { limit = 120, interval = 550 } 
       evidence.forwarded++;
       evidence.timestamps.push(Date.now());
       const upstream = forward(
-        destination,
+        new URL(requestedPath, origin),
         {
           method: request.method,
           headers: {
@@ -178,7 +187,27 @@ export async function scopedProxy(origin, path, { limit = 120, interval = 550 } 
           evidence.statuses[incoming.statusCode] =
             (evidence.statuses[incoming.statusCode] || 0) + 1;
           response.writeHead(incoming.statusCode, { 'content-type': 'application/json' });
-          incoming.pipe(response);
+          if (!observe) incoming.pipe(response);
+          else {
+            const responseChunks = [];
+            let responseSize = 0;
+            incoming.on('data', (chunk) => {
+              responseSize += chunk.length;
+              if (responseSize <= 65536) responseChunks.push(chunk);
+              response.write(chunk);
+            });
+            incoming.on('end', () => {
+              observe({
+                method: request.method,
+                path: requestedPath,
+                authorization: request.headers.authorization,
+                requestBody: Buffer.concat(chunks).toString(),
+                status: incoming.statusCode,
+                responseBody: responseSize <= 65536 ? Buffer.concat(responseChunks).toString() : '',
+              });
+              response.end();
+            });
+          }
         },
       );
       upstream.on('timeout', () => upstream.destroy());

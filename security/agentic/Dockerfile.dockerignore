@@ -16,3 +16,5 @@
 !security/agentic/
 !security/agentic/Dockerfile
 !security/agentic/Dockerfile.dockerignore
+
+!scripts/vigolium-access.mjs

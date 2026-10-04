@@ -7,7 +7,7 @@ import { join } from 'node:path';
 
 // Application runtime lives in its own container, never in the AI worker.
 export async function createRewindTarget({ endpoint = 'chat' } = {}) {
-  assert.ok(['chat', 'groups'].includes(endpoint), 'Unsupported endpoint');
+  assert.ok(['chat', 'groups', 'access'].includes(endpoint), 'Unsupported endpoint');
   // Built artifacts exist at execution time, not during a clean-checkout lint.
   const runtime = new URL('../server/dist/', import.meta.url);
   const { parseConfig } = await import(new URL('config.js', runtime));
@@ -157,7 +157,48 @@ export async function createRewindTarget({ endpoint = 'chat' } = {}) {
     await memberInvite.text();
     assert.equal(memberInvite.status, 403);
     accessChecks.memberInviteCreation = 403;
+    let access;
+    if (endpoint === 'access') {
+      const invitee = await provision('dast-invitee');
+      const other = await fetch(origin + '/real/groups', {
+        method: 'POST',
+        headers: outsider.headers,
+        body: JSON.stringify({
+          name: 'Disposable outsider group',
+          prompt: 'Synthetic private control',
+          maxMembers: 4,
+        }),
+      });
+      assert.equal(other.status, 201);
+      const otherGroupId = (await other.json()).group.id;
+      const otherMessage = await fetch(`${origin}/realtime/groups/${otherGroupId}/messages`, {
+        method: 'POST',
+        headers: outsider.headers,
+        body: JSON.stringify({ body: 'SYNTHETIC_OUTSIDER_PRIVATE_MESSAGE' }),
+      });
+      assert.equal(otherMessage.status, 201);
+      await otherMessage.text();
+      const fresh = await fetch(origin + invitePath, {
+        method: 'POST',
+        headers: owner.headers,
+        body: '{}',
+      });
+      assert.equal(fresh.status, 201);
+      access = {
+        groupId,
+        otherGroupId,
+        usedCode: invite.code,
+        freshCode: (await fresh.json()).invite.code,
+        actors: Object.fromEntries(
+          Object.entries({ owner, member, outsider, invitee }).map(([role, actor]) => [
+            role,
+            { accountId: actor.accountId, token: actor.token },
+          ]),
+        ),
+      };
+    }
     return {
+      access,
       origin,
       path: endpoint === 'groups' ? '/real/groups' : path,
       requestBody:
@@ -190,6 +231,7 @@ if (process.argv[2] === '--serve') {
       requestBody: target.requestBody,
       baselines: target.baselines,
       accessChecks: target.accessChecks,
+      access: target.access,
     }),
   );
   await writeFile(join(directory, 'app-baselines.json'), JSON.stringify(target.baselines, null, 2));
