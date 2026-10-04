@@ -24,7 +24,7 @@ Complete diagrams retain their whole viewBox and all relationships. The plate sc
 
 ACCESS/CAPTURE/CYCLE retain `fc2b8c811e9c13b176113fa0bdb2c015798990b4`; PARTICIPATION/ARCHIVE retain `1128b6a68985cf68215beb4a7a80fd00ec4242fa`. M001–M137 identifies 28 paired UC class views, 88 paired sequences for 44 major flows, 20 pattern comparison views and the ACCESS overview. Every unchanged SVG SHA256 appears in the Markdown caption. The 117 distinct baseline code references preserve or relocate matching anchors; the refactored invitation fixture now maps to `tests/e2e-real-account/group-switch-verification.mjs:3`. Later #387 photo-label, #388 API-prefix and #392 portrait-guidance changes are factual deltas, not semantic redraws. Historical run counts retain their actual source identity.
 
-#399’s reviewed batch fix `bb3b089` awaits dev integration and hosted acceptance at this report cut; worker test counts are attributed as reported evidence. #267 was independently accepted under authorized substituted agent review; this supplies neither named researcher agreement nor retroactive timeliness. Unknown member ownership, effort and Scrum facts stay pending.
+#399’s reviewed batch fix `bb3b089` awaits dev integration at this report cut; its acceptance uses owned temporary runtimes, and no hosted reset pass is claimed. Worker test counts are attributed as reported evidence. #267 was independently accepted under authorized substituted agent review; this supplies neither named researcher agreement nor retroactive timeliness. Unknown member ownership, effort and Scrum facts stay pending.
 
 ## Final artifact verification
 
