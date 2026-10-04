@@ -25,7 +25,7 @@ import {
   type ContributionStatus,
 } from '../capture/contribution-status';
 import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
-import type { PendingClipUpload } from '../domain/video';
+import { DEFAULT_CAPTURE_MODE, type PendingClipUpload } from '../domain/video';
 import { RealGroupSettings } from '../reminders/RealGroupSettings';
 import { PrivateReminderSubscription } from '../reminders/PrivateReminderSubscription';
 import {
@@ -517,11 +517,21 @@ export function RealAccountGroupExperience({
               groupName={group.group.name}
               onBack={() => setScreen('home')}
               onRecordClip={() => setCaptureMode('video')}
-              onSubmitPhoto={async (metadata, base64, onProgress, replacesContributionId) => {
+              onSubmitPhoto={async (
+                metadata,
+                base64,
+                onProgress,
+                replacesContributionId,
+                look = { mode: DEFAULT_CAPTURE_MODE, clientProcessed: false },
+              ) => {
                 if (!mediaClient.uploadClip || !mediaClient.processClipJob) {
                   throw new Error('Photo contribution upload is unavailable. Retry shortly.');
                 }
-                const { id: idempotencyKey, mimeType } = metadata;
+                const { mimeType } = metadata;
+                // Client-graded bytes differ per look, so each look gets its own key.
+                const idempotencyKey = look.clientProcessed
+                  ? `${metadata.id}-${look.mode}`
+                  : metadata.id;
                 const staged = await mediaClient.stagePhotoSource(
                   'real-account-session',
                   group.group.id,
@@ -542,7 +552,8 @@ export function RealAccountGroupExperience({
                     width: metadata.width,
                     height: metadata.height,
                     hasAudio: true,
-                    mode: 'soft-focus',
+                    mode: look.mode,
+                    ...(look.clientProcessed ? { clientProcessed: true } : {}),
                     trimStartSeconds: 0,
                     trimEndSeconds: 3,
                     ...(replacesContributionId ? { replacesContributionId } : {}),

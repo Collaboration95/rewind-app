@@ -9,7 +9,13 @@ import {
 import { linkContributionReplacement } from '../contributions/ledger';
 import { cyclePhase } from '../cycles/engine';
 import type { RewindDatabase } from '../db';
-import { probeClipWithFfmpeg, probePhotoWithFfmpeg } from '../ffmpeg';
+import {
+  DEFAULT_CAPTURE_MODE,
+  isCaptureMode,
+  probeClipWithFfmpeg,
+  probePhotoWithFfmpeg,
+  processingModeFor,
+} from '../ffmpeg';
 import {
   MAX_CLIP_BYTES,
   recordClipMediaMetadata,
@@ -69,6 +75,8 @@ export interface UploadIntentRequest {
   trimStartSeconds?: number;
   trimEndSeconds?: number;
   mode?: CaptureMode;
+  /** The client already applied `mode`; the worker must not apply it again. */
+  clientProcessed?: boolean;
   replacesContributionId?: string;
 }
 interface NormalizedRequest extends UploadIntentRequest {
@@ -290,9 +298,10 @@ function normalize(input: UploadIntentRequest): NormalizedRequest {
     Math.abs(end - start - duration) > 0.000001
   )
     fail('invalid_request');
-  const mode = input.mode ?? 'soft-focus';
+  const mode = input.mode ?? DEFAULT_CAPTURE_MODE;
   if (
-    !['soft-focus', 'high-contrast'].includes(mode) ||
+    !isCaptureMode(mode) ||
+    (input.clientProcessed !== undefined && typeof input.clientProcessed !== 'boolean') ||
     (input.replacesContributionId !== undefined &&
       !/^[A-Za-z0-9_-]{1,128}$/.test(input.replacesContributionId))
   )
@@ -307,6 +316,7 @@ function normalize(input: UploadIntentRequest): NormalizedRequest {
     trimStartSeconds: start,
     trimEndSeconds: end,
     mode,
+    ...(input.clientProcessed ? { clientProcessed: true } : {}),
     ...(input.replacesContributionId
       ? { replacesContributionId: input.replacesContributionId }
       : {}),
@@ -753,7 +763,7 @@ export async function completeUploadIntent(
           row.pinned_ref,
           request.trimStartSeconds,
           request.trimEndSeconds,
-          request.mode,
+          processingModeFor(request.mode, request.clientProcessed === true),
           now.toISOString(),
           request.mediaType,
         );

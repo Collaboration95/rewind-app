@@ -663,7 +663,7 @@ describe('VideoCaptureScreen', () => {
       const player = getLatestMockVideoPlayer();
       await fireEvent.changeText(result.getByDisplayValue('0'), '1');
       await fireEvent.changeText(result.getByDisplayValue('8'), '5');
-      await fireEvent.press(result.getByRole('radio', { name: 'High Contrast' }));
+      await fireEvent.press(result.getByRole('radio', { name: 'VHS Camcorder' }));
       await fireEvent.press(result.getByRole('button', { name: 'Save trim and mode' }));
       await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
       await result.findByTestId('camera-contribution-status-sealed');
@@ -678,7 +678,7 @@ describe('VideoCaptureScreen', () => {
           hasAudio: true,
           height: 1280,
           mimeType: 'video/mp4',
-          mode: 'high-contrast',
+          mode: 'vhs',
           sourceDurationSeconds: 8,
           trimEndSeconds: 5,
           trimStartSeconds: 1,

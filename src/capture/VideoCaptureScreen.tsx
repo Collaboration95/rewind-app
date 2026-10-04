@@ -21,12 +21,16 @@ import {
 } from './real-account-video-runtime';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 import { COLORS } from '../theme';
-import type {
-  CaptureMode,
-  ClipUploadInput,
-  PendingClipUpload,
-  RecordedClip,
+import {
+  CAPTURE_MODE_LABELS,
+  CAPTURE_MODES,
+  DEFAULT_CAPTURE_MODE,
+  type CaptureMode,
+  type ClipUploadInput,
+  type PendingClipUpload,
+  type RecordedClip,
 } from '../domain/video';
+import { applyRetroLookToVideo, canProcessRetroVideo, RetroProcessingError } from './retro-browser';
 import { ClipUploadError, ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
 import {
   EXHAUSTED_UPLOAD_MESSAGE,
@@ -81,6 +85,9 @@ export interface VideoCaptureScreenProps {
   onBack?: () => void;
   onContributionDeleted?: () => void;
 }
+
+/** The server rejects clips over 15 seconds; keep a processed clip below it. */
+const MAX_PROCESSED_CLIP_SECONDS = 14.9;
 
 function isVideoPlatform(
   platform: CameraPlatform,
@@ -221,7 +228,11 @@ export function VideoCaptureScreen({
   const [reviewPlayerVisible, setReviewPlayerVisible] = useState(true);
   const [startText, setStartText] = useState('0');
   const [endText, setEndText] = useState('0');
-  const [mode, setMode] = useState<CaptureMode>('soft-focus');
+  const [mode, setMode] = useState<CaptureMode>(DEFAULT_CAPTURE_MODE);
+  // Web applies the retro look on this device before upload (null when idle).
+  const [retroPercent, setRetroPercent] = useState<number | null>(null);
+  const retroAbortRef = useRef<AbortController | null>(null);
+  const processedUriRef = useRef<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<ClipUploadProgress>({
     status: 'idle',
     percent: 0,
@@ -353,11 +364,21 @@ export function VideoCaptureScreen({
     contributionWorkRef.current = false;
     activeUploadRef.current = false;
   }, []);
-  const releaseOwnedClip = useCallback(async (ownedClip: RecordedClip | null): Promise<void> => {
-    if (!ownedClip) return;
-    if (clipRef.current?.sourceUri === ownedClip.sourceUri) clipRef.current = null;
-    await removeManagedRecordedClip(ownedClip.sourceUri);
+  const releaseProcessedClip = useCallback(() => {
+    retroAbortRef.current?.abort();
+    const processedUri = processedUriRef.current;
+    processedUriRef.current = null;
+    if (processedUri) URL.revokeObjectURL(processedUri);
   }, []);
+  const releaseOwnedClip = useCallback(
+    async (ownedClip: RecordedClip | null): Promise<void> => {
+      releaseProcessedClip();
+      if (!ownedClip) return;
+      if (clipRef.current?.sourceUri === ownedClip.sourceUri) clipRef.current = null;
+      await removeManagedRecordedClip(ownedClip.sourceUri);
+    },
+    [releaseProcessedClip],
+  );
 
   const onReviewPlayerMounted = useCallback(() => {
     reviewPlayerMountedRef.current = true;
@@ -418,7 +439,7 @@ export function VideoCaptureScreen({
       setReviewPlayerVisible(true);
       setStartText('0');
       setEndText(String(selected.durationSeconds));
-      setMode('soft-focus');
+      setMode(DEFAULT_CAPTURE_MODE);
       return true;
     },
     [isCaptureActive, releaseOwnedClip, reviewStore, unmountReviewPlayer],
@@ -454,6 +475,7 @@ export function VideoCaptureScreen({
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      releaseProcessedClip();
       const currentClip = clipRef.current;
       clipRef.current = null;
       reviewRef.current = null;
@@ -463,7 +485,7 @@ export function VideoCaptureScreen({
           void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
       });
     };
-  }, [cancelActiveWork, waitForReviewPlayerUnmount]);
+  }, [cancelActiveWork, releaseProcessedClip, waitForReviewPlayerUnmount]);
 
   const refresh = useCallback(
     async (videoPermissionSnapshot?: PermissionSnapshot) => {
@@ -690,6 +712,7 @@ export function VideoCaptureScreen({
   };
 
   const retake = async () => {
+    retroAbortRef.current?.abort();
     const currentClip = clip;
     if (contributionWorkRef.current) invalidateContributionWork();
     if (
@@ -879,21 +902,96 @@ export function VideoCaptureScreen({
     ]);
     let pendingInput = pendingUploadInputRef.current;
     if (!pendingInput || pendingInput.signature !== signature) {
+      if (retroAbortRef.current) return;
+      let media = {
+        byteLength: clip.byteLength ?? 0,
+        clientProcessed: false,
+        height: clip.height,
+        sourceDurationSeconds: reviewMetadata.durationSeconds,
+        sourceUri: clip.sourceUri,
+        trimEndSeconds: reviewMetadata.endSeconds,
+        trimStartSeconds: reviewMetadata.startSeconds,
+        width: clip.width,
+      };
+      // Web applies the look here, before upload, and sends the already
+      // trimmed result. Native apps (and browsers that cannot re-encode)
+      // upload the original and the server applies the same look.
+      if (Platform.OS === 'web' && canProcessRetroVideo()) {
+        const controller = new AbortController();
+        retroAbortRef.current = controller;
+        setRetroPercent(0);
+        setError(null);
+        try {
+          const processed = await applyRetroLookToVideo(
+            {
+              capturedAt: new Date(),
+              endSeconds: reviewMetadata.endSeconds,
+              mode: reviewMetadata.mode,
+              sourceUri: clip.sourceUri,
+              startSeconds: reviewMetadata.startSeconds,
+            },
+            {
+              signal: controller.signal,
+              onProgress: (percent) => {
+                if (!controller.signal.aborted) setRetroPercent(percent);
+              },
+            },
+          );
+          if (controller.signal.aborted || !isCaptureActive() || clipRef.current !== clip) {
+            URL.revokeObjectURL(processed.sourceUri);
+            return;
+          }
+          if (processedUriRef.current) URL.revokeObjectURL(processedUriRef.current);
+          processedUriRef.current = processed.sourceUri;
+          const durationSeconds = Math.min(
+            Math.floor(processed.durationSeconds * 100) / 100,
+            MAX_PROCESSED_CLIP_SECONDS,
+          );
+          media = {
+            byteLength: processed.byteLength,
+            clientProcessed: true,
+            height: processed.height,
+            sourceDurationSeconds: processed.durationSeconds,
+            sourceUri: processed.sourceUri,
+            trimEndSeconds: durationSeconds,
+            trimStartSeconds: 0,
+            width: processed.width,
+          };
+        } catch (processingError) {
+          if (!isCaptureActive()) return;
+          const cancelled =
+            processingError instanceof RetroProcessingError && processingError.cancelled;
+          const detail =
+            processingError instanceof Error
+              ? processingError.message
+              : 'The retro look could not be applied.';
+          setError(
+            cancelled
+              ? 'The retro look was cancelled. Your original clip is kept; upload again to retry.'
+              : `${detail} Your original clip is kept; try uploading again.`,
+          );
+          return;
+        } finally {
+          if (retroAbortRef.current === controller) retroAbortRef.current = null;
+          if (isCaptureActive()) setRetroPercent(null);
+        }
+      }
       pendingInput = {
         signature,
         input: {
-          byteLength: clip.byteLength ?? 0,
-          durationSeconds: reviewMetadata.endSeconds - reviewMetadata.startSeconds,
+          byteLength: media.byteLength,
+          durationSeconds: media.trimEndSeconds - media.trimStartSeconds,
           hasAudio: clip.hasAudio,
-          height: clip.height,
+          height: media.height,
           idempotencyKey: `clip-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
           mimeType: clip.mimeType,
           mode: reviewMetadata.mode,
-          sourceUri: clip.sourceUri,
-          sourceDurationSeconds: reviewMetadata.durationSeconds,
-          trimEndSeconds: reviewMetadata.endSeconds,
-          trimStartSeconds: reviewMetadata.startSeconds,
-          width: clip.width,
+          ...(media.clientProcessed ? { clientProcessed: true } : {}),
+          sourceUri: media.sourceUri,
+          sourceDurationSeconds: media.sourceDurationSeconds,
+          trimEndSeconds: media.trimEndSeconds,
+          trimStartSeconds: media.trimStartSeconds,
+          width: media.width,
           ...(replacementTargetRef.current
             ? { replacesContributionId: replacementTargetRef.current }
             : {}),
@@ -908,7 +1006,7 @@ export function VideoCaptureScreen({
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
       if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
-        const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
+        const sourceData = await readManagedRecordedClipBase64(input.sourceUri);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
@@ -1011,7 +1109,7 @@ export function VideoCaptureScreen({
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
       if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
-        const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
+        const sourceData = await readManagedRecordedClipBase64(input.sourceUri);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
@@ -1500,19 +1598,21 @@ export function VideoCaptureScreen({
             style={styles.input}
             value={endText}
           />
-          <Text style={styles.fieldLabel}>Original capture mode</Text>
+          <Text style={styles.fieldLabel}>Retro look</Text>
           <View style={styles.modeRow}>
-            {(['soft-focus', 'high-contrast'] as const).map((option) => (
+            {CAPTURE_MODES.map((option) => (
               <Pressable
                 accessibilityRole="radio"
                 accessibilityState={{ selected: mode === option }}
+                disabled={retroPercent !== null}
                 key={option}
-                onPress={() => setMode(option)}
+                onPress={() => {
+                  setMode(option);
+                  review.setMode(option);
+                }}
                 style={[styles.modeButton, mode === option && styles.modeSelected]}
               >
-                <Text style={styles.outlineText}>
-                  {option === 'soft-focus' ? 'Soft Focus' : 'High Contrast'}
-                </Text>
+                <Text style={styles.outlineText}>{CAPTURE_MODE_LABELS[option]}</Text>
               </Pressable>
             ))}
           </View>
@@ -1526,7 +1626,20 @@ export function VideoCaptureScreen({
           >
             <Text style={styles.outlineText}>Retake</Text>
           </Pressable>
-          {uploadProgress.status === 'complete' && !contributionFailed ? (
+          {retroPercent !== null ? (
+            <View testID="video-retro-processing">
+              <Text accessibilityLiveRegion="polite" style={styles.body}>
+                Applying retro look… {retroPercent}%
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => retroAbortRef.current?.abort()}
+                style={styles.outlineButton}
+              >
+                <Text style={styles.outlineText}>Cancel retro look</Text>
+              </Pressable>
+            </View>
+          ) : uploadProgress.status === 'complete' && !contributionFailed ? (
             <Text style={styles.success}>Upload queued as one pending contribution.</Text>
           ) : uploadProgress.status === 'failed' || contributionFailed ? null : (
             <Pressable

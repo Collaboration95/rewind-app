@@ -204,7 +204,7 @@ async function readImageDimensions(uri: string): Promise<{ height: number; width
   });
 }
 
-async function readVideoMetadata(uri: string): Promise<BrowserVideoMetadata> {
+export async function readVideoMetadata(uri: string): Promise<BrowserVideoMetadata> {
   let protocol: string;
   try {
     protocol = new URL(uri).protocol;
@@ -324,6 +324,17 @@ export async function readManagedRecordedClipBase64(uri: string): Promise<string
   });
 }
 
+/** The uploadable MP4 MediaRecorder type this browser supports, if any. */
+export function supportedMp4Type(MediaRecorderConstructor: typeof MediaRecorder): string | null {
+  return (
+    [
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+      'video/mp4',
+    ].find((type) => MediaRecorderConstructor.isTypeSupported(type)) ?? null
+  );
+}
+
 export function permissionState(response: {
   status: string;
   canAskAgain?: boolean;
@@ -424,13 +435,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   private supportedMp4Type(MediaRecorderConstructor: typeof MediaRecorder): string | null {
-    return (
-      [
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-        'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
-        'video/mp4',
-      ].find((type) => MediaRecorderConstructor.isTypeSupported(type)) ?? null
-    );
+    return supportedMp4Type(MediaRecorderConstructor);
   }
 
   getVideoPreviewStream(): MediaStream | null {
