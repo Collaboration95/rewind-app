@@ -43,6 +43,23 @@ require_disk_for() {
 # rewind.env stays as the operator wrote it.
 CONFIGURABLE_KEYS='REWIND_MEDIA_BACKEND REWIND_MEDIA_ENVIRONMENT REWIND_MEDIA_S3_BUCKET REWIND_MEDIA_S3_OWNER REWIND_MEDIA_S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION REWIND_REMINDER_VAPID_SUBJECT REWIND_REMINDER_VAPID_PUBLIC_KEY REWIND_REMINDER_VAPID_PRIVATE_KEY REWIND_REAL_CYCLE_MINUTES'
 
+# Web push (VAPID) keys are generated here, once, and never leave the host.
+# SEC1 DER for a P-256 key is 121 bytes: private scalar at 7..39, public point last 65.
+generate_vapid_keys() {
+  openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null |
+    openssl ec -outform DER 2>/dev/null |
+    python3 -c '
+import base64, sys
+der = sys.stdin.buffer.read()
+private, public = der[7:39], der[-65:]
+if len(der) != 121 or public[0] != 4:
+    sys.exit("unexpected EC key encoding")
+encode = lambda value: base64.urlsafe_b64encode(value).rstrip(b"=").decode()
+print("REWIND_REMINDER_VAPID_PUBLIC_KEY=" + encode(public))
+print("REWIND_REMINDER_VAPID_PRIVATE_KEY=" + encode(private))
+'
+}
+
 configure_env() {
   local env_file="$HOST_ROOT/rewind.env" next line key value
   [[ -f "$env_file" ]] || die 'rewind.env is missing'
@@ -66,6 +83,9 @@ configure_env() {
     printf '%s=%s\n' "$key" "$value" >> "$next.tmp"
     mv "$next.tmp" "$next"
   done
+  if grep -q '^REWIND_REMINDER_VAPID_SUBJECT=.' "$next" && ! grep -q '^REWIND_REMINDER_VAPID_PRIVATE_KEY=.' "$next"; then
+    generate_vapid_keys >> "$next" || { rm -f -- "$next"; die 'could not generate web push keys'; }
+  fi
   chmod 0600 "$next"
   mv "$next" "$env_file"
   # The release guard compares this digest; refresh it for a delivered change.

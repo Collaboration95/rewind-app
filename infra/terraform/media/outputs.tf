@@ -24,3 +24,8 @@ output "runtime_secret_access_key" {
   value       = aws_iam_access_key.runtime.secret
   sensitive   = true
 }
+
+output "hosted_env_uri" {
+  description = "Settings object the dev deploy streams to the server."
+  value       = "s3://${aws_s3_bucket.media.id}/${aws_s3_object.hosted_env.key}"
+}

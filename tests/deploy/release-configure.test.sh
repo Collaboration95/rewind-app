@@ -25,6 +25,16 @@ if printf 'REWIND_ALLOW_ORIGIN=evil\n' | REWIND_HOST_ROOT="$host" bash "$script"
   echo 'a non-configurable key was accepted' >&2; exit 1
 fi
 [[ "$(cat "$host/rewind.env")" == "$before" ]] || { echo 'a refused change modified rewind.env' >&2; exit 1; }
+# Web push keys are generated on the host once, then kept across deploys.
+printf 'REWIND_REMINDER_VAPID_SUBJECT=https://rewind.example\n' |
+  REWIND_HOST_ROOT="$host" bash "$script" configure >/dev/null
+first_key="$(grep '^REWIND_REMINDER_VAPID_PRIVATE_KEY=' "$host/rewind.env")"
+[[ ${#first_key} -eq $((34 + 43)) ]] || { echo 'web push private key was not generated' >&2; exit 1; }
+grep -Eq '^REWIND_REMINDER_VAPID_PUBLIC_KEY=[A-Za-z0-9_-]{87}$' "$host/rewind.env" || { echo 'web push public key was not generated' >&2; exit 1; }
+printf 'REWIND_REMINDER_VAPID_SUBJECT=https://rewind.example\n' |
+  REWIND_HOST_ROOT="$host" bash "$script" configure >/dev/null
+[[ "$(grep '^REWIND_REMINDER_VAPID_PRIVATE_KEY=' "$host/rewind.env")" == "$first_key" ]] || { echo 'web push keys were rotated' >&2; exit 1; }
+
 mode="$(stat -c %a "$host/rewind.env" 2>/dev/null || stat -f %Lp "$host/rewind.env")"
 [[ "$mode" == 600 ]] || { echo "rewind.env mode is $mode, expected 600" >&2; exit 1; }
 if ls "$host"/.rewind.env.* >/dev/null 2>&1; then echo 'temporary env copies were left behind' >&2; exit 1; fi

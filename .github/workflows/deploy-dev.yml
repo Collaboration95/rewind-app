@@ -233,17 +233,21 @@ jobs:
 
       - name: Apply hosted settings
         env:
-          REWIND_HOSTED_ENV: ${{ secrets.REWIND_HOSTED_ENV }}
+          REWIND_HOSTED_ENV_URI: s3://rewind-dev-media-330599756236/_config/dev.env
         run: |
           set -Eeuo pipefail
-          # Allowlisted settings (media bucket, runtime credentials, web push
-          # keys) from the REWIND_HOSTED_ENV secret; see scripts/set-hosted-secrets.sh.
-          if [ -z "$REWIND_HOSTED_ENV" ]; then
-            echo 'REWIND_HOSTED_ENV is not set; keeping the host settings unchanged.'
+          # Terraform (infra/terraform/media) writes the allowlisted settings,
+          # including the runtime's S3 credentials, to a private object; this
+          # step streams it to the host without printing or storing it.
+          bucket="${REWIND_HOSTED_ENV_URI#s3://}"
+          key="${bucket#*/}"
+          bucket="${bucket%%/*}"
+          if ! aws s3api head-object --bucket "$bucket" --key "$key" >/dev/null 2>&1; then
+            echo 'No hosted settings object; keeping the host settings unchanged.'
             exit 0
           fi
           # shellcheck disable=SC2086
-          printf '%s\n' "$REWIND_HOSTED_ENV" |
+          aws s3 cp "$REWIND_HOSTED_ENV_URI" - |
             ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" 'bash /tmp/release-host.sh configure'
 
       - name: Install the release on the host
