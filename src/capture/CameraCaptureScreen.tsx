@@ -501,8 +501,10 @@ export function CameraCaptureScreen({
               {onBack ? (
                 <Pressable
                   accessibilityRole="button"
+                  hitSlop={12}
                   onPress={onBack}
                   style={styles.viewfinderBack}
+                  testID="capture-back-to-group"
                 >
                   <Text style={styles.viewfinderBackText}>Back to group</Text>
                 </Pressable>
@@ -568,7 +570,13 @@ export function CameraCaptureScreen({
       {!showingViewfinder ? (
         <ScrollView style={styles.panelScroll} contentContainerStyle={styles.panelContent}>
           {onBack ? (
-            <Pressable accessibilityRole="button" onPress={onBack}>
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={12}
+              onPress={onBack}
+              style={styles.back}
+              testID="capture-panel-back-to-group"
+            >
               <Text style={styles.backText}>Back to group</Text>
             </Pressable>
           ) : null}
@@ -930,7 +938,10 @@ const styles = StyleSheet.create({
     paddingTop: 28,
   },
   viewfinderTop: { alignItems: 'center', gap: 8 },
-  viewfinderBack: { alignSelf: 'flex-start' },
+  // Back controls keep a 44pt tap target; on an installed iPhone web app they
+  // sit near the status bar, where a text-height target is easy to miss.
+  viewfinderBack: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: 44 },
+  back: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: 44 },
   viewfinderBackText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   backText: { color: COLORS.accent, fontSize: 16, fontWeight: '700' },
   viewfinderTitle: { color: '#fff', fontSize: 20, fontWeight: '700' },
