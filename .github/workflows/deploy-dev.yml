@@ -244,13 +244,8 @@ jobs:
             echo 'REWIND_HOSTED_ENV_URI is not set; keeping the host settings unchanged.'
             exit 0
           fi
-          bucket="${REWIND_HOSTED_ENV_URI#s3://}"
-          key="${bucket#*/}"
-          bucket="${bucket%%/*}"
-          if ! aws s3api head-object --bucket "$bucket" --key "$key" >/dev/null 2>&1; then
-            echo 'No hosted settings object; keeping the host settings unchanged.'
-            exit 0
-          fi
+          # Once configured, a read failure (access, network, missing object)
+          # fails the deploy instead of shipping stale settings.
           # shellcheck disable=SC2086
           aws s3 cp "$REWIND_HOSTED_ENV_URI" - |
             ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" 'bash /tmp/release-host.sh configure'
