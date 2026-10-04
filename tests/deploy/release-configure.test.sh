@@ -47,3 +47,12 @@ if printf 'REWIND_MEDIA_BACKEND=disk\n' | REWIND_HOST_ROOT="$host" bash "$script
 fi
 [[ "$(cat "$host/rewind.env")" == "$edited" ]] || { echo 'a refused configure modified rewind.env' >&2; exit 1; }
 echo 'release configure fixture passed'
+
+# A brand-new host has no rewind.env yet: configure creates it privately.
+fresh="$root/fresh"
+mkdir -p "$fresh"
+printf 'REWIND_MEDIA_BACKEND=s3\n' | REWIND_HOST_ROOT="$fresh" bash "$script" configure >/dev/null
+grep -qx 'REWIND_MEDIA_BACKEND=s3' "$fresh/rewind.env" || { echo 'fresh host settings were not written' >&2; exit 1; }
+fresh_mode="$(stat -c %a "$fresh/rewind.env" 2>/dev/null || stat -f %Lp "$fresh/rewind.env")"
+[[ "$fresh_mode" == 600 ]] || { echo "fresh rewind.env mode is $fresh_mode" >&2; exit 1; }
+echo 'fresh host configure fixture passed'

@@ -62,7 +62,12 @@ print("REWIND_REMINDER_VAPID_PRIVATE_KEY=" + encode(private))
 
 configure_env() {
   local env_file="$HOST_ROOT/rewind.env" next line key value
-  [[ -f "$env_file" ]] || die 'rewind.env is missing'
+  # A new host gets its settings before the first install, which then keeps
+  # this file instead of copying the dev example.
+  if [[ ! -e "$env_file" ]]; then
+    (umask 077 && : > "$env_file")
+  fi
+  [[ -f "$env_file" ]] || die 'rewind.env is not a regular file'
   # Never approve an unreviewed manual edit: the file must still match the
   # digest recorded at the last activation before allowlisted keys change.
   if [[ -f "$HOST_ROOT/release-config-digest" ]]; then

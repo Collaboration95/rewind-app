@@ -1,0 +1,286 @@
+name: Deploy release
+
+# Deploys the checked main commit to the release Lightsail host (#230), running
+# alongside dev. Same verified path as Deploy dev: only a main commit that
+# passed its own Quality checks is built, verified and installed, and the
+# previous release is restored when health checks fail.
+#
+# Infrastructure: infra/terraform/release. Repository variables:
+#   AWS_RELEASE_DEPLOY_ROLE_ARN    deploy_role_arn output
+#   REWIND_RELEASE_INSTANCE        instance_name output (default rewind-release)
+#   REWIND_RELEASE_HOSTED_ENV_URI  hosted_env_uri output
+#
+# The job declares the release GitHub environment (main only); the deploy role
+# trusts only repo:OWNER/REPO:environment:release with ref refs/heads/main.
+# Human approval is the main branch's required review.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  REWIND_DEPLOY_ROLE_ARN: ${{ vars.AWS_RELEASE_DEPLOY_ROLE_ARN }}
+  REWIND_DEPLOY_INSTANCE: ${{ vars.REWIND_RELEASE_INSTANCE || 'rewind-release' }}
+  REWIND_DEPLOY_CONFIG_VERSION: release-v1
+
+jobs:
+  changes:
+    name: Classify deployment change
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Classify the exact checked change
+        id: scope
+        env:
+          REWIND_CHANGE_BASE: ${{ github.event.before }}
+          REWIND_CHANGE_HEAD: ${{ github.sha }}
+        run: node scripts/classify-quality-changes.mjs
+
+  deploy:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    name: Deploy main to the release host
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: release
+    steps:
+      - name: Check out the main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require the deploy role
+        run: |
+          set -Eeuo pipefail
+          if [ -z "$REWIND_DEPLOY_ROLE_ARN" ]; then
+            echo 'Set the repository variable AWS_RELEASE_DEPLOY_ROLE_ARN to the deploy_role_arn output of infra/terraform/release.' >&2
+            exit 1
+          fi
+
+      - name: Wait for this commit's main Quality checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          sha="$(git rev-parse HEAD)"
+          deadline=$(( SECONDS + 1500 ))
+          while :; do
+            conclusion="$(gh api -X GET \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/quality.yml/runs" \
+              -f "head_sha=${sha}" -f branch=main -f event=push \
+              --jq '[.workflow_runs[] | select(.head_branch == "main" and .event == "push")][0].conclusion // "pending"' 2>/dev/null || echo pending)"
+            case "$conclusion" in
+              success) echo "Quality checks passed for ${sha}."; break ;;
+              failure|cancelled|timed_out|action_required|stale)
+                echo "Quality checks concluded '${conclusion}' for ${sha}; refusing to deploy." >&2
+                exit 1
+                ;;
+            esac
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Quality checks for ${sha} did not succeed within the wait window." >&2
+              exit 1
+            fi
+            sleep 20
+          done
+
+      - name: Build the verified release bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          sha="$(git rev-parse HEAD)"
+          python3 deploy/release.py build \
+            --green-sha "$sha" \
+            --config-version "$REWIND_DEPLOY_CONFIG_VERSION" \
+            --branch main \
+            --output "$RUNNER_TEMP/rewind-release.tar"
+          python3 deploy/release.py verify "$RUNNER_TEMP/rewind-release.tar" >/dev/null
+
+      - name: Assume the deploy role with GitHub OIDC
+        run: |
+          set -Eeuo pipefail
+          id_token="$(curl -fsS \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r .value)"
+          credentials="$(aws sts assume-role-with-web-identity \
+            --role-arn "$REWIND_DEPLOY_ROLE_ARN" \
+            --role-session-name "rewind-demo-deploy-${GITHUB_RUN_ID}" \
+            --web-identity-token "$id_token" \
+            --duration-seconds 3600 \
+            --output json --query Credentials)"
+          for name in AccessKeyId SecretAccessKey SessionToken; do
+            value="$(jq -r ".${name}" <<<"$credentials")"
+            echo "::add-mask::${value}"
+          done
+          {
+            echo "AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId <<<"$credentials")"
+            echo "AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey <<<"$credentials")"
+            echo "AWS_SESSION_TOKEN=$(jq -r .SessionToken <<<"$credentials")"
+            echo "AWS_DEFAULT_REGION=$AWS_REGION"
+          } >> "$GITHUB_ENV"
+          # $GITHUB_ENV only reaches later steps, so verify this session with
+          # the credentials just obtained instead of the ambient environment.
+          AWS_ACCESS_KEY_ID="$(jq -r .AccessKeyId <<<"$credentials")" \
+            AWS_SECRET_ACCESS_KEY="$(jq -r .SecretAccessKey <<<"$credentials")" \
+            AWS_SESSION_TOKEN="$(jq -r .SessionToken <<<"$credentials")" \
+            AWS_DEFAULT_REGION="$AWS_REGION" \
+            aws sts get-caller-identity --output json
+
+      - name: Require a running host
+        run: |
+          set -Eeuo pipefail
+          if ! state="$(aws lightsail get-instance --instance-name "$REWIND_DEPLOY_INSTANCE" \
+            --query 'instance.state.name' --output text 2>/dev/null)"; then
+            echo "$REWIND_DEPLOY_INSTANCE does not exist; apply infra/terraform/demo before deploying." >&2
+            exit 1
+          fi
+          if [ "$state" != running ]; then
+            echo "$REWIND_DEPLOY_INSTANCE is '$state'. Start it, then re-run this workflow; the deploy never powers the host on or off." >&2
+            exit 1
+          fi
+          host_ip="$(aws lightsail get-instance --instance-name "$REWIND_DEPLOY_INSTANCE" \
+            --query 'instance.publicIpAddress' --output text)"
+          echo "REWIND_HOST_IP=$host_ip" >> "$GITHUB_ENV"
+          echo "Deploying to $REWIND_DEPLOY_INSTANCE ($host_ip)."
+
+      - name: Open temporary SSH for this runner
+        run: |
+          set -Eeuo pipefail
+          runner_ip="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
+          [[ "$runner_ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || {
+            echo "Could not determine the runner public address ('$runner_ip')." >&2
+            exit 1
+          }
+          echo "REWIND_RUNNER_CIDR=${runner_ip}/32" >> "$GITHUB_ENV"
+          aws lightsail open-instance-public-ports \
+            --instance-name "$REWIND_DEPLOY_INSTANCE" \
+            --port-info "fromPort=22,toPort=22,protocol=tcp,cidrs=${runner_ip}/32" >/dev/null
+          mkdir -p "$RUNNER_TEMP/rewind-ssh"
+          chmod 0700 "$RUNNER_TEMP/rewind-ssh"
+          aws lightsail get-instance-access-details \
+            --instance-name "$REWIND_DEPLOY_INSTANCE" --protocol ssh \
+            --output json > "$RUNNER_TEMP/rewind-ssh/access.json"
+          jq -r '.accessDetails.privateKey' "$RUNNER_TEMP/rewind-ssh/access.json" \
+            > "$RUNNER_TEMP/rewind-ssh/deploy-key"
+          jq -r '.accessDetails.certKey' "$RUNNER_TEMP/rewind-ssh/access.json" \
+            > "$RUNNER_TEMP/rewind-ssh/deploy-key-cert.pub"
+          chmod 0600 "$RUNNER_TEMP/rewind-ssh/deploy-key" "$RUNNER_TEMP/rewind-ssh/deploy-key-cert.pub"
+          jq -r --arg host "$REWIND_HOST_IP" \
+            '.accessDetails.hostKeys[] | "\($host) \(.algorithm) \(.publicKey)"' \
+            "$RUNNER_TEMP/rewind-ssh/access.json" > "$RUNNER_TEMP/rewind-ssh/known_hosts"
+          test -s "$RUNNER_TEMP/rewind-ssh/known_hosts"
+          ssh_opts="-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes"
+          ssh_opts="$ssh_opts -o UserKnownHostsFile=$RUNNER_TEMP/rewind-ssh/known_hosts"
+          ssh_opts="$ssh_opts -i $RUNNER_TEMP/rewind-ssh/deploy-key"
+          echo "REWIND_SSH_OPTS=$ssh_opts" >> "$GITHUB_ENV"
+
+      - name: Wait for the host bootstrap markers
+        run: |
+          set -Eeuo pipefail
+          # shellcheck disable=SC2086
+          for _ in $(seq 1 60); do
+            if ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" \
+              'test -f /srv/rewind/.host-bootstrap-complete && docker compose version >/dev/null 2>&1' \
+              >/dev/null 2>&1; then
+              echo 'Host is bootstrapped and reachable.'
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'The host did not answer with a completed bootstrap.' >&2
+          exit 1
+
+      - name: Ship the release bundle
+        run: |
+          set -Eeuo pipefail
+          # shellcheck disable=SC2086
+          scp $REWIND_SSH_OPTS \
+            "$RUNNER_TEMP/rewind-release.tar" deploy/release.py deploy/release-host.sh \
+            "ubuntu@$REWIND_HOST_IP:/tmp/"
+
+      - name: Apply hosted settings
+        env:
+          # Repository variable set from `terraform output hosted_env_uri`.
+          REWIND_HOSTED_ENV_URI: ${{ vars.REWIND_RELEASE_HOSTED_ENV_URI }}
+        run: |
+          set -Eeuo pipefail
+          # Terraform (infra/terraform/media) writes the allowlisted settings,
+          # including the runtime's S3 credentials, to a private object; this
+          # step streams it to the host without printing or storing it.
+          if [ -z "$REWIND_HOSTED_ENV_URI" ]; then
+            echo 'REWIND_HOSTED_ENV_URI is not set; keeping the host settings unchanged.'
+            exit 0
+          fi
+          # Once configured, a read failure (access, network, missing object)
+          # fails the deploy instead of shipping stale settings.
+          # Read fully before sending so a partial download is never applied.
+          settings="$(aws s3 cp "$REWIND_HOSTED_ENV_URI" -)"
+          # shellcheck disable=SC2086
+          printf '%s\n' "$settings" |
+            ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" 'bash /tmp/release-host.sh configure'
+
+      - name: Install the release on the host
+        run: |
+          set -Eeuo pipefail
+          # The host keeps its own private /srv/rewind/rewind.env; a deploy
+          # never rewrites it, so the recorded configuration digest must match.
+          # shellcheck disable=SC2086
+          ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" '
+            set -Eeuo pipefail
+            test "$(sha256sum /tmp/rewind-release.tar | cut -d " " -f 1)" = "'"$(sha256sum "$RUNNER_TEMP/rewind-release.tar" | cut -d ' ' -f 1)"'"
+            status=0
+            bash /tmp/release-host.sh install /tmp/rewind-release.tar || status=$?
+            # The installed copy lives under /srv/rewind/releases; drop the upload.
+            rm -f /tmp/rewind-release.tar
+            exit "$status"
+          '
+
+      - name: Verify the public health endpoint
+        run: |
+          set -Eeuo pipefail
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://$REWIND_HOST_IP/api/health" >/dev/null; then
+              echo "Deployed release is healthy at http://$REWIND_HOST_IP/api/health."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo 'The public health endpoint did not answer.' >&2
+          exit 1
+
+      - name: Close temporary SSH and remove key material
+        if: always()
+        continue-on-error: true
+        run: |
+          set -Eeuo pipefail
+          if [ -n "${REWIND_RUNNER_CIDR:-}" ] && [ -n "${REWIND_DEPLOY_INSTANCE:-}" ]; then
+            aws lightsail close-instance-public-ports \
+              --instance-name "$REWIND_DEPLOY_INSTANCE" \
+              --port-info "fromPort=22,toPort=22,protocol=tcp,cidrs=$REWIND_RUNNER_CIDR" >/dev/null || \
+              echo "Warning: could not close $REWIND_RUNNER_CIDR on $REWIND_DEPLOY_INSTANCE; close it manually." >&2
+          fi
+          rm -rf -- "$RUNNER_TEMP/rewind-ssh"

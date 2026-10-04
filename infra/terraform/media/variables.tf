@@ -29,3 +29,10 @@ variable "deploy_role_name" {
   type        = string
   default     = "rewind-demo-deploy"
 }
+
+variable "extra_hosted_settings" {
+  description = "Additional allowlisted KEY=VALUE settings for this environment's host (for example the release origin secret)."
+  type        = list(string)
+  default     = []
+  sensitive   = true
+}

@@ -482,3 +482,15 @@ emailed to `REWIND_ALERT_EMAIL` (AWS sends a one-time verification link).
 Budget alerts stay in `demo/observability.tf`. With `REWIND_REQUEST_TIMING=true`
 the runtime logs one `api.request` JSON line per request (method, route
 template, status, duration) next to the existing `api.failure` lines.
+
+## Release environment (`release/`)
+
+A second, independent environment (#230) next to dev: Lightsail host
+`rewind-release`, its own CloudFront HTTPS URL, its own media bucket and
+runtime user (the `media/` root reused as a module with `environment=release`),
+and a deploy role trusted only for the GitHub `release` environment on `main`.
+`.github/workflows/deploy-release.yml` deploys qualified `main` commits; the
+human gate is `main`'s required review. The release host never receives dev
+backup settings, so it cannot read or restore dev backups. State lives at
+`rewind/release/terraform.tfstate`. Extra cost is about US$7 per month (micro
+instance and static IP) plus CloudFront usage.
