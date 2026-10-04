@@ -95,6 +95,25 @@ describe('real-account client transport and storage', () => {
     expect(storedToken).toBeNull();
   });
 
+  it('accepts same-origin plain-HTTP loopback auth only in dev builds', () => {
+    setPlatform('web');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { href: 'http://localhost:8090/', origin: 'http://localhost:8090' } },
+      writable: true,
+    });
+    expect(isSecureAuthUrl('/api', true)).toBe(true);
+    expect(isSecureAuthUrl('/api', false)).toBe(false);
+    expect(isSecureAuthUrl('http://127.0.0.1:8787', true)).toBe(false);
+
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { href: 'http://rewind.example/', origin: 'http://rewind.example' } },
+      writable: true,
+    });
+    expect(isSecureAuthUrl('/api', true)).toBe(false);
+  });
+
   it('preserves a safe registration error status for accessible form feedback', async () => {
     const fetcher = jest.fn().mockResolvedValue(response(409, { error: 'username_unavailable' }));
     const client = new RealAccountClient('https://api.rewind.example', tokenStore, fetcher);
