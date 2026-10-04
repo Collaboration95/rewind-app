@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
 import type { RewindDatabase } from '../db';
-import { createCycleWindow } from '../cycles/engine';
 import { DEFAULT_GROUP_TIME_ZONE, validateTimeZone } from '../reminders/schedule';
 const GROUP_NAME_MAX_LENGTH = 80;
 const PROMPT_MAX_LENGTH = 160;
@@ -47,7 +46,11 @@ export function createRealGroup(
   account: { id: string; displayName: string },
   rawInput: { name: unknown; prompt: unknown; maxMembers: unknown; timeZone?: unknown },
   now = new Date(),
+  cycleDurationMs = REAL_CYCLE_DURATION_MS,
 ) {
+  if (!Number.isSafeInteger(cycleDurationMs) || cycleDurationMs <= 0) {
+    throw new RangeError('The real cycle duration must be a positive number of milliseconds.');
+  }
   const input = validateRealGroupInput(rawInput);
   if (!input) return null;
 
@@ -55,7 +58,7 @@ export function createRealGroup(
   const profileId = `real-profile-${randomUUID()}`;
   const groupId = `real-group-${randomUUID()}`;
   const cycleId = `real-cycle-${randomUUID()}`;
-  const { endsAt } = createCycleWindow({ preset: 'four-week', startsAt: startedAt });
+  const endsAt = new Date(now.getTime() + cycleDurationMs).toISOString();
 
   database.exec('BEGIN IMMEDIATE');
   try {
@@ -80,6 +83,8 @@ export function createRealGroup(
           (group_id, owner_account_id, max_members, cycle_duration_ms, created_at, time_zone)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
+      // The column is constrained to the product default and is not read; the
+      // actual window is the cycle's ends_at, which successor cycles repeat.
       .run(
         groupId,
         account.id,
