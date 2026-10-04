@@ -1,13 +1,5 @@
-/* 语言切换、底栏的三个页签 */
-/* ============ 侧栏 ============ */
-.seg.lang {
-  align-self: flex-start;
-}
-.seg.lang button {
-  flex: none;
-  min-width: 56px;
-}
-/* ============ 底栏：三个页签一直展开 ============ */
+/* The dock's three tabs */
+/* ============ Dock: three tabs always expanded ============ */
 .screen.nav-g .dock-g .tab {
   display: flex;
   flex: 1;

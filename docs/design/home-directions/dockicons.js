@@ -1,9 +1,9 @@
 'use strict';
 
-/* ---------- 底栏图标：几套图标放进暖光玻璃的底栏里试 ----------
-   只在这个页面画手机时临时换图标（ICON_SET），其他页面不受影响。
-   图标都是 24×24：.f 实心（跟随文字色），.d 实心强调色；
-   iOS 方案里 .o 是线性、.s 是实心，选中的页签显示实心。 */
+/* ---------- Dock icons: icon sets tried in the Warm Glass dock ----------
+   Icons are swapped (ICON_SET) only while this tab draws its phones; other tabs are unaffected.
+   All icons are 24×24: .f filled (text colour), .d filled accent;
+   in the iOS set .o is outline and .s is filled, and the selected tab shows the filled one. */
 const D_HOME = I.home,
   D_CHAT = I.chat,
   D_ARCHIVE = I.archive,
@@ -13,15 +13,15 @@ const DOCK_SETS = [
   {
     id: 'now',
     style: 'line',
-    name: ['Current', '现在的'],
-    note: ['The outline icons from the prototype.', '原型里的线性图标。'],
+    name: 'Current',
+    note: 'The outline icons from the prototype.',
     icons: null,
   },
   {
     id: 'ios',
     style: 'ios',
-    name: ['iOS style', 'iOS 风格'],
-    note: ['Outline when idle, filled when selected.', '未选中是线性，选中变实心。'],
+    name: 'iOS style',
+    note: 'Outline when idle, filled when selected.',
     icons: {
       home: `<g class="o">${D_HOME}</g><g class="s"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></g>`,
       chat: `<g class="o">${D_CHAT}</g><g class="s">${D_CHAT}</g>`,
@@ -34,16 +34,13 @@ const DOCK_SETS = [
   {
     id: 'rewind',
     style: 'line',
-    name: ['Rewind metaphors', 'Rewind 隐喻'],
-    note: [
-      'Home is warm light, Chat is two dots, Archive is a film reel.',
-      '首页是一团暖光，聊天是两个点，档案是一盘胶片。',
-    ],
+    name: 'Rewind metaphors',
+    note: 'Home is warm light, Chat is two dots, Archive is a film reel.',
     icons: {
       home: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.5 1.5M16.9 16.9l1.5 1.5M5.6 18.4l1.5-1.5M16.9 7.1l1.5-1.5"/>',
       chat: '<path d="M20 11.5c0 4-3.6 7-8 7-1 0-1.9-.1-2.7-.4L5 20l1-3.6C4.8 15.1 4 13.4 4 11.5c0-4 3.6-7 8-7s8 3 8 7z"/><circle class="f" cx="9.8" cy="11.5" r="1.15"/><circle class="f" cx="14.2" cy="11.5" r="1.15"/>',
       archive:
-        // 片盘：中间一个轴，四周四个孔（三个点会像一张脸）
+        // Reel: a hub in the middle and four holes around it (three would look like a face)
         '<circle cx="11" cy="12" r="7.5"/><circle class="f" cx="11" cy="12" r="1"/><circle cx="11" cy="8.3" r="1.5"/><circle cx="14.7" cy="12" r="1.5"/><circle cx="11" cy="15.7" r="1.5"/><circle cx="7.3" cy="12" r="1.5"/><path d="M11 19.5h9"/>',
       camera: '<circle cx="12" cy="12" r="7.5"/><circle class="f" cx="12" cy="12" r="3"/>',
     },
@@ -51,8 +48,8 @@ const DOCK_SETS = [
   {
     id: 'duo',
     style: 'line',
-    name: ['Warm duotone', '暖色双色'],
-    note: ['Outline with one warm accent in each icon.', '线性图标，每个加一处暖色。'],
+    name: 'Warm duotone',
+    note: 'Outline with one warm accent in each icon.',
     icons: {
       home: `<rect class="d" x="10" y="14.8" width="4" height="5.2" rx=".8"/>${D_HOME}`,
       chat: `${D_CHAT}<circle class="d" cx="12" cy="12" r="2.3"/>`,
@@ -63,15 +60,15 @@ const DOCK_SETS = [
   {
     id: 'hand',
     style: 'hand',
-    name: ['Hand-drawn', '手绘'],
-    note: ['Wobbly pen lines, like the scratchpad wordmarks.', '手绘线条，和草稿本字标同一风格。'],
+    name: 'Hand-drawn',
+    note: 'Wobbly pen lines, like the scratchpad wordmarks.',
     icons: { home: D_HOME, chat: D_CHAT, archive: D_ARCHIVE, camera: D_CAMERA },
   },
   {
     id: 'min',
     style: 'min',
-    name: ['Minimal', '极简'],
-    note: ['A roof, two dots, three lines, a ring.', '屋顶、两个点、三条线、一个圈。'],
+    name: 'Minimal',
+    note: 'A roof, two dots, three lines, a ring.',
     icons: {
       home: '<path d="M5 19.5v-9L12 5l7 5.5v9"/>',
       chat: '<circle class="f" cx="8.5" cy="12" r="1.7"/><circle class="f" cx="15.5" cy="12" r="1.7"/>',
@@ -83,7 +80,7 @@ const DOCK_SETS = [
 
 let dv = { set: 'ios' };
 
-// 用某套图标、收集中状态画东西，画完恢复
+// Draw with one icon set in the Collecting state, then restore
 function withSet(id, fn) {
   const keep = ICON_SET;
   const s = DOCK_SETS.find((x) => x.id === id);
@@ -125,7 +122,7 @@ function renderDockView() {
     if (document.body.classList.contains('view-dockicons'))
       history.replaceState(null, '', dockHash());
   } catch {
-    /* 受限的框架里改不了地址栏也没关系 */
+    /* sandboxed frames can't change the address bar */
   }
 }
 

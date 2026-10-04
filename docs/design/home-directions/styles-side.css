@@ -1,5 +1,5 @@
-/* 侧栏重排、顶部邀请、手机上的可点提示 */
-/* ============ 侧栏 ============ */
+/* Sidebar layout, top invite, tap hints on the phones */
+/* ============ Sidebar ============ */
 .side .sub {
   display: flex;
   justify-content: space-between;
@@ -37,7 +37,7 @@
 .taps b {
   color: var(--page-ink);
 }
-/* ============ 手机上的可点提示（呼吸光圈） ============ */
+/* ============ Tap hints on the phones (breathing rings) ============ */
 @keyframes tap-hint {
   0% {
     box-shadow: 0 0 0 0 rgba(255, 122, 69, 0.6);
@@ -61,7 +61,7 @@
 .hints .screen .tabs .tab:nth-child(2) {
   animation-delay: 1.2s;
 }
-/* ============ 右上角版本号 ============ */
+/* ============ Version number, top right ============ */
 main {
   position: relative;
 }
@@ -78,7 +78,7 @@ main {
   color: var(--page-muted);
   box-shadow: inset 0 0 0 1px var(--page-line);
 }
-/* 窄屏时侧栏在上面：版本号放在整页右上角（REWIND 标志那一行） */
+/* On narrow screens the sidebar is on top: the version number goes top right of the page (the REWIND logo row) */
 @media (max-width: 860px) {
   .app {
     position: relative;
@@ -91,7 +91,7 @@ main {
     right: 16px;
   }
 }
-/* ============ 页面底部的短提示、主按钮 ============ */
+/* ============ Bottom-of-page toast, primary button ============ */
 .rv-toast {
   position: fixed;
   left: 50%;

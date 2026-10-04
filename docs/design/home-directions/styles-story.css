@@ -1,5 +1,5 @@
-/* 播放 / 重置；朋友加入、揭晓动效 */
-/* ============ 播放 / 重置 ============ */
+/* Play / reset; friend-joins and reveal motion */
+/* ============ Play / reset ============ */
 .card-ctl {
   display: flex;
   align-items: center;
@@ -38,14 +38,14 @@
   font-size: 12px;
   color: var(--page-muted);
 }
-/* 前后两套文案本身不带样式，完全继承所在位置（避免被正文里的 “xx span” 规则误伤） */
+/* The before and after copy carries no styles of its own and fully inherits from where it sits (so body "xx span" rules don't hit it) */
 @keyframes now-in {
   from {
     opacity: 0;
     transform: translateY(6px);
   }
 }
-/* ============ 汇聚：朋友加入的光点、提示 ============ */
+/* ============ Converge: friend-join light dots, hints ============ */
 .toast {
   position: absolute;
   z-index: 9;
@@ -91,7 +91,7 @@
     transform: translate(-50%, 0);
   }
 }
-/* ============ 暖光玻璃 ============ */
+/* ============ Warm Glass ============ */
 .c6 .glow {
   transition:
     transform 1.8s cubic-bezier(0.2, 0.8, 0.2, 1),

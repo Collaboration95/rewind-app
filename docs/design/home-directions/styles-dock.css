@@ -1,5 +1,5 @@
-/* 底栏图标页 + 各套图标的画法 */
-/* ============ 图标方案 ============ */
+/* Dock icons tab and how each set is drawn */
+/* ============ Icon sets ============ */
 .ic .f {
   fill: currentColor;
   stroke: none;
@@ -9,7 +9,7 @@
   stroke: none;
   opacity: 0.9;
 }
-/* iOS：未选中线性，选中（和胶囊、快门）实心 */
+/* iOS: outline when idle, filled when selected (and in the pill and shutter) */
 .ic.set-ios .s {
   display: none;
   fill: currentColor;
@@ -34,7 +34,7 @@
 .ic.set-min {
   stroke-width: 2;
 }
-/* ============ 页面 ============ */
+/* ============ Page ============ */
 body:not(.view-dockicons) #dock-view,
 body.view-dockicons main > .main-h,
 body.view-dockicons #gallery,
@@ -53,7 +53,7 @@ body.view-dockicons main {
   flex-wrap: wrap;
   gap: 26px;
   align-items: flex-start;
-  /* 跟随侧栏的缩放 */
+  /* Follows the sidebar zoom */
   --s: var(--z, 0.6);
 }
 .dv-ph {
@@ -68,7 +68,7 @@ body.view-dockicons main {
   font-size: 13px;
   font-weight: 600;
 }
-/* 特写：原尺寸的手机，只露出底部 */
+/* Close-up: a full-size phone showing only the bottom */
 .dv-zoom {
   --s: 1;
 }

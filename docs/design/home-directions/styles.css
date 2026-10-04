@@ -1,4 +1,4 @@
-/* ============ 页面外壳 ============ */
+/* ============ Page shell ============ */
 :root {
   --page: #e8e5df;
   --page-ink: #1d1b18;
@@ -16,7 +16,6 @@ body {
   color: var(--page-ink);
   font:
     14px/1.55 'Inter',
-    'Noto Sans SC',
     system-ui,
     sans-serif;
 }
@@ -221,7 +220,7 @@ main {
     padding: 28px 16px 48px;
   }
 }
-/* ============ 手机外壳（共用） ============ */
+/* ============ Phone shell (shared) ============ */
 .phone-wrap {
   width: calc(410px * var(--s));
   height: calc(864px * var(--s));
@@ -245,7 +244,7 @@ main {
   height: 844px;
   border-radius: 54px;
   overflow: hidden;
-  /* 正在动画的图层是单独合成的，仅靠圆角 + overflow 有时裁不住 */
+  /* Animating layers are composited separately; rounded corners + overflow alone sometimes fail to clip them */
   clip-path: inset(0 round 54px);
   background: var(--bg);
   color: var(--ink);
@@ -389,7 +388,7 @@ main {
 .av:first-child {
   margin-left: 0;
 }
-/* 底部导航：3 栏 + 独立快门 */
+/* Bottom navigation: 3 tabs + separate shutter */
 .dock {
   position: absolute;
   z-index: 7;
@@ -467,7 +466,7 @@ main {
   width: 26px;
   height: 26px;
 }
-/* 头像 → 个人与设置 */
+/* Avatar → profile and Settings */
 .sheet {
   position: absolute;
   z-index: 9;
@@ -516,7 +515,7 @@ main {
   height: 20px;
   color: var(--muted);
 }
-/* ============ 背景暖光慢慢漂 ============ */
+/* ============ Background warm glow drifts slowly ============ */
 @keyframes drift {
   0%,
   100% {
@@ -526,7 +525,7 @@ main {
     transform: translate(16px, -20px) scale(1.08);
   }
 }
-/* ============ 减少动态效果 ============ */
+/* ============ Reduced motion ============ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

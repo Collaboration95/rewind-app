@@ -1,5 +1,5 @@
-/* App icon 搭配页：顶部切换、选择区、真实场景（启动页、桌面、尺寸、通知、配色）、字标总览 */
-/* ============ 顶部切换：首页 / 搭配 / 状态 / 画面 / 底栏图标 ============ */
+/* App icon tab: page tabs, the picker, real places (launch, home screen, sizes, notification) and all icons */
+/* ============ Page tabs ============ */
 .view-tabs {
   display: inline-flex;
   flex-wrap: wrap;
@@ -30,7 +30,7 @@ body.view-mix #gallery {
 body.view-mix main {
   padding-bottom: 64px;
 }
-/* ============ 图标 ============ */
+/* ============ Icon ============ */
 .mx-icon {
   display: inline-block;
   flex: none;
@@ -46,7 +46,7 @@ body.view-mix main {
   width: 100%;
   height: 100%;
 }
-/* ============ 布局 ============ */
+/* ============ Layout ============ */
 .mix .main-h {
   margin-bottom: 26px;
 }
@@ -64,39 +64,6 @@ body.view-mix main {
 }
 .mx-pick .lbl {
   margin: 10px 0 0;
-}
-.mx-pick .hint {
-  margin: 0;
-}
-.mx-dirs {
-  display: grid;
-  gap: 2px;
-}
-.mx-dirs button {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 7px 10px;
-  border-radius: 9px;
-  font-size: 13px;
-  text-align: left;
-}
-.mx-dirs button span {
-  width: 20px;
-  font:
-    500 11px/1 'DM Mono',
-    monospace;
-  color: var(--page-muted);
-}
-.mx-dirs button:hover {
-  background: rgba(0, 0, 0, 0.04);
-}
-.mx-dirs button[aria-pressed='true'] {
-  color: var(--page);
-  background: var(--page-ink);
-}
-.mx-dirs button[aria-pressed='true'] span {
-  color: rgba(232, 229, 223, 0.7);
 }
 .mx-tiles {
   display: grid;
@@ -117,19 +84,6 @@ body.view-mix main {
     monospace;
   color: var(--page-muted);
 }
-.mx-tile i {
-  position: absolute;
-  top: 0;
-  right: 0;
-  padding: 1px 5px;
-  border-radius: 6px;
-  font:
-    600 9px/1.4 'Inter',
-    sans-serif;
-  font-style: normal;
-  color: #fff;
-  background: #ff7a45;
-}
 .mx-tile:hover {
   background: rgba(0, 0, 0, 0.04);
 }
@@ -137,49 +91,10 @@ body.view-mix main {
   background: #fff;
   box-shadow: inset 0 0 0 2px var(--page-ink);
 }
-.mx-sub {
-  margin: 4px 0 -2px;
-  font-size: 11.5px;
-  color: var(--page-muted);
-}
-.mx-bgs {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-}
-.mx-bgs button {
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  padding: 6px 2px;
-  border-radius: 10px;
-  font-size: 11.5px;
-  color: var(--page-muted);
-}
-.mx-bgs button i {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
-}
-.mx-bgs button[aria-pressed='true'] {
-  color: var(--page-ink);
-  background: #fff;
-  box-shadow: inset 0 0 0 2px var(--page-ink);
-}
-.mx-bgs.off {
-  opacity: 0.45;
-}
-.mx-pick .check {
-  margin-top: 6px;
-}
-.mx-pick .check.off {
-  opacity: 0.5;
-}
 .mx-share {
   margin-top: 6px;
 }
-/* ============ 舞台 ============ */
+/* ============ Stage ============ */
 .mx-now {
   margin: 0 0 16px;
   font-size: 15px;
@@ -191,7 +106,7 @@ body.view-mix main {
   align-items: start;
 }
 .mx-block {
-  /* 跟随侧栏的缩放 */
+  /* Follows the sidebar zoom */
   --s: var(--z, 0.62);
   display: grid;
   gap: 10px;
@@ -220,9 +135,10 @@ body.view-mix main {
 }
 .mx-splash span {
   font:
-    600 28px/1 'Shantell Sans',
-    cursive;
-  letter-spacing: 0.02em;
+    500 30px/1 'Fraunces',
+    serif;
+  font-variation-settings: 'SOFT' 100;
+  letter-spacing: 0.01em;
 }
 .mx-splash .mx-icon {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
@@ -240,17 +156,7 @@ body.view-mix main {
   justify-self: start;
   padding: 7px 12px;
 }
-.mx-anim {
-  width: calc(410px * var(--s));
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--page-muted);
-  border: 1px dashed rgba(29, 27, 24, 0.22);
-}
-/* 手机桌面 */
+/* Home screen */
 .mx-home {
   width: 330px;
   padding: 14px 18px 16px;
@@ -312,7 +218,7 @@ body.view-mix main {
   outline: 2px solid var(--page-ink);
   outline-offset: 2px;
 }
-/* 尺寸、通知、配色 */
+/* Sizes and notification */
 .mx-sizerow {
   display: flex;
   flex-wrap: wrap;
@@ -355,52 +261,9 @@ body.view-mix main {
   font-style: normal;
   color: var(--page-muted);
 }
-.mx-pal {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 28px;
-}
-.mx-pal > div {
-  display: grid;
-  gap: 6px;
-}
-.mx-pal .lbl {
-  margin: 0;
-}
-.sw {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  font-size: 12.5px;
-}
-.sw i {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
-}
-.sw code {
-  font:
-    400 11px/1 'DM Mono',
-    monospace;
-  color: var(--page-muted);
-}
-.mx-hint {
-  max-width: 460px;
-  margin: 4px 0 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  font-size: 12.5px;
-  background: rgba(255, 255, 255, 0.55);
-  box-shadow: inset 0 0 0 1px var(--page-line);
-}
-/* ============ 字标总览 ============ */
+/* ============ All icons ============ */
 .mx-fam-h {
   margin: 56px 0 6px;
-}
-.mx-cat-h {
-  margin: 28px 0 0;
-  font-size: 15px;
 }
 .mx-gallery {
   display: grid;
@@ -453,111 +316,7 @@ body.view-mix main {
   align-items: flex-end;
   margin-top: 4px;
 }
-/* ============ 草稿本皮肤（第 3 部分的界面，按 390 × 844 画） ============ */
-.sp-screen {
-  padding: 22px 24px 18px;
-  font-family: 'Shantell Sans', cursive;
-  color: #111;
-  background: #fff;
-}
-.sp-screen .wob {
-  border: 2.5px solid #111;
-  border-radius: 255px 14px 225px 14px / 14px 225px 14px 255px;
-}
-.sp-screen .sp-top {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 40px;
-}
-.sp-screen .av {
-  display: grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  font-weight: 700;
-}
-.sp-screen .chip {
-  padding: 3px 14px;
-  font-size: 14px;
-}
-.sp-screen h4 {
-  margin: 28px 0 4px;
-  font-size: 32px;
-  line-height: 1.1;
-  font-weight: 700;
-}
-.sp-screen .sub {
-  font-size: 15px;
-  color: #555;
-}
-.sp-screen .count {
-  margin: 18px 0 0;
-  font-size: 78px;
-  line-height: 1;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-}
-.sp-screen .count small {
-  margin-left: 4px;
-  font-size: 19px;
-  font-weight: 500;
-  letter-spacing: 0;
-}
-.sp-screen .q {
-  margin: 24px 0 14px;
-  font-size: 24px;
-  line-height: 1.25;
-  font-weight: 600;
-}
-.sp-screen .row {
-  display: flex;
-  justify-content: space-between;
-  padding: 10px 0;
-  font-size: 16px;
-  border-bottom: 2px dashed #bbb;
-}
-.sp-screen .row i {
-  font-style: normal;
-  font-weight: 700;
-}
-.sp-screen .sp-dock {
-  position: absolute;
-  left: 18px;
-  right: 18px;
-  bottom: 30px;
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-.sp-screen .pill {
-  flex: 1;
-  display: flex;
-  justify-content: space-around;
-  align-items: center;
-  height: 64px;
-  font-size: 15px;
-}
-.sp-screen .pill b {
-  padding: 7px 14px;
-  border-radius: 99px;
-  font-weight: 600;
-  color: #fff;
-  background: #111;
-}
-.sp-screen .shut {
-  display: grid;
-  place-items: center;
-  width: 74px;
-  height: 74px;
-  border-radius: 50%;
-  font-size: 24px;
-  color: #fff;
-  background: #111;
-  outline: 2.5px solid #111;
-  outline-offset: 5px;
-}
-/* ============ 窄屏 ============ */
+/* ============ Narrow screens ============ */
 @media (max-width: 1100px) {
   .mx-row {
     grid-template-columns: 1fr;

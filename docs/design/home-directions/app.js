@@ -1,6 +1,6 @@
 'use strict';
 
-// 纯展示原型：不访问相机，只展示暖光玻璃首页的设计与交互。
+// Display-only prototype: no camera access; it only shows the Warm Glass Home design and interactions.
 const $ = (id) => document.getElementById(id);
 
 const I = {
@@ -20,15 +20,15 @@ const I = {
   check: '<path d="m5.5 12.5 4.2 4.2L18.5 8"/>',
   play: '<path d="M8.5 5.8v12.4a.6.6 0 0 0 .9.5l10-6.2a.6.6 0 0 0 0-1l-10-6.2a.6.6 0 0 0-.9.5Z"/>',
 };
-// 底栏图标方案（底栏图标页临时换用）；null 时用上面的原版
+// Dock icon set (swapped in temporarily by the dock icons page); null uses the originals above
 let ICON_SET = null;
 const ic = (n, cls = '') => {
   const o = ICON_SET?.icons?.[n];
   return `<svg class="ic ${cls}${o ? ' set-' + ICON_SET.style : ''}" viewBox="0 0 24 24" aria-hidden="true">${o || I[n]}</svg>`;
 };
 
-/* ---------- 共享数据：所有数字都从这里算，不写死 ---------- */
-// 成员专属色（借鉴 Reveal：每人一种颜色，贯穿头像、额度环、影片字幕）
+/* ---------- Shared data: every number is derived from here, nothing hard-coded ---------- */
+// Per-member colour (borrowed from Reveal: one colour per person across avatar, quota ring and film captions)
 const COLORS = [
   '#E07A5F',
   '#E9B44C',
@@ -57,7 +57,7 @@ const DEFAULT_C = POOL.map((p) => p.c);
 
 let size = 5;
 const plural = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
-// 你这周的每一段：[类型, 秒数, 哪天]。照片在影片里占 3 秒，也算进 30 秒（Sprint 2 计划）
+// Each of your moments this week: [type, seconds, day]. A photo takes 3 s in the film and counts toward the 30 s (Sprint 2 plan)
 const CLIPS0 = [
   ['video', 4, 'Mon'],
   ['video', 4, 'Tue'],
@@ -76,8 +76,8 @@ function dropClip(x, i) {
   x.c = x.clips.length;
 }
 
-// 当前小组的快照：样例小组用侧栏的样例数据；其他小组、以及刚开始新一期的样例小组，用自己记下的数据。
-// PURE：状态页要画样例小组本来的样子，不受快照影响
+// Snapshot of the current group: the sample group uses the sidebar sample data; other groups, and a sample group that started a new capsule, use their own saved data.
+// PURE: the states page draws the sample group as it originally is, ignoring the snapshot
 let PURE = false;
 function pureIf(on, fn) {
   const keep = PURE;
@@ -92,29 +92,29 @@ const snap = () => {
   const g = typeof grp === 'function' ? grp() : null;
   return g && g.clips && !(g.sample && PURE) ? g : null;
 };
-// 你在这个小组里的记录：封存、删除都改这里
+// Your record in this group: sealing and deleting change this
 const myRec = (id) => snap() || storyPool(id)[0];
 
-// 首页只显示你自己的额度（dev 的首页也是这样）；成员的 c 只用来模拟你的条数和片尾名单
+// Home shows only your own quota (as dev's Home does); members' c only simulates your count and the film credits
 function data(pool = POOL) {
   const g = snap();
   const members = pool.slice(0, g?.n ?? size);
   if (g) members[0] = { ...members[0], clips: g.clips, c: g.clips.length };
-  // 新注册的账号：用自己的名字和颜色
+  // Newly signed-up account: use its own name and colour
   const who = typeof SET !== 'undefined' && SET.who;
   if (who) members[0] = { ...members[0], name: who.name, col: who.col };
   return { members, n: members.length, m: members.reduce((s, x) => s + x.c, 0), me: members[0] };
 }
-// 一期 4 周，从小组开始那天算；额度每 7 天重置（dev 文档）。演示固定在第 2 周。
-// 影片制作中、比平时慢、首映时，下一期已经开始了：第 1 周
+// A capsule lasts 4 weeks from the group's start; quota resets every 7 days (dev docs). The demo is fixed at week 2.
+// While the film is compiling, delayed or premiering, the next capsule has already started: week 1
 const NEW_CYCLE = ['developing', 'delayed', 'released'];
 const cyc = () =>
   NEW_CYCLE.includes(NAV.home)
     ? { week: 1, days: 27, reset: 7 }
     : snap()?.cyc || { week: 2, days: 16, reset: 3 };
 
-/* ---------- 共用部件 ---------- */
-// 5 段额度环：已用的段点亮。
+/* ---------- Shared parts ---------- */
+// 5-moment quota ring: used moments light up.
 const polar = (c, r, deg) => {
   const a = (deg * Math.PI) / 180;
   return `${(c + r * Math.cos(a)).toFixed(2)} ${(c + r * Math.sin(a)).toFixed(2)}`;
@@ -129,7 +129,7 @@ function ring(used = 2, total = 5, r = 35, c = 38, gap = 9) {
   }
   return `<svg class="ring" viewBox="0 0 ${c * 2} ${c * 2}" aria-hidden="true">${segs}</svg>`;
 }
-// 连续弧：首映剩余时间，或封存中的转圈
+// Continuous arc: premiere time left, or the sealing spinner
 function arcRing(frac, spin = false) {
   const end = -90 + 360 * Math.min(frac, 0.999);
   return `<svg class="ring${spin ? ' spin' : ''}" viewBox="0 0 76 76" aria-hidden="true"><circle class="base" cx="38" cy="38" r="35"/><path class="arc" d="M${polar(38, 35, -90)}A35 35 0 ${frac > 0.5 ? 1 : 0} 1 ${polar(38, 35, end)}"/></svg>`;
@@ -142,25 +142,25 @@ const statusBar = () =>
   `<svg viewBox="0 0 27 12"><rect x=".5" y=".5" width="23" height="11" rx="3.2" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="17" height="8" rx="2"/><rect x="24.5" y="4" width="1.8" height="4" rx=".9" opacity=".4"/></svg>` +
   `</span></div>`;
 
-/* ---------- 底栏：玻璃底栏 + 快门状态 + 角标 ---------- */
+/* ---------- Dock: glass dock + shutter state + badges ---------- */
 const NAV = { shutter: 'collect', unread: true, home: 'collect' };
-// 看过的角标：打开聊天后未读消失，打开档案后“新影片”的点消失
+// Seen badges: unread clears after opening Chat; the "new film" dot clears after opening Archive
 const SEEN = { chat: false, archive: false };
-// 未读只在第一个小组（样例对话在那里）；看过就没了
+// Unread only in the first group (where the sample conversation is); gone once seen
 const unreadNow = () => NAV.unread && !SEEN.chat && (typeof isSample === 'undefined' || isSample());
 
 function shutter(d) {
   const reset = plural(cyc().reset, 'day');
-  // 没有这一期、读取失败、不在小组时没有快门（见 states.js）
+  // No shutter when there is no capsule, loading failed or you are not in the group (see states.js)
   if (NAV.home !== 'collect' && window.shutterOff?.()) return '';
-  // 按首页上显示的那一份算：5 段和 30 秒哪个先用完都算用完
+  // Count what Home shows: whichever of 5 moments or 30 s runs out first means used up
   const list = typeof homeClips === 'function' ? homeClips(concepts[0].id, d) : clipsOf(d.me);
   const n = list.length;
   const secs = list.reduce((s, c) => s + c[1], 0);
   const left = 5 - n;
   const full = NAV.shutter === 'quota' || n >= 5 || secs >= 30;
   const secsOut = n < 5 && (NAV.home === 'secs' || secs >= 30);
-  // 第 4 项是点一下才短暂出现的提示，不常驻（常驻会挡住正文）
+  // Item 4 is a tip that appears briefly on tap, not permanently (it would cover the content)
   const s = {
     collect: [ring(n), 'camera', `Add a moment · ${left} of 5 left`, ''],
     quota: [
@@ -179,7 +179,7 @@ function shutter(d) {
 }
 
 function dock(d, at = 'home') {
-  // 不在这个小组里、还没有小组：聊天、档案、快门都属于小组，整个底栏不显示
+  // Not in this group or no group yet: chat, archive and the shutter belong to a group, so hide the whole dock
   if (NAV.home === 'denied' || NAV.home === 'nogroup') return '';
   const unread = unreadNow() && at !== 'chat';
   const film = NAV.home === 'released' && !SEEN.archive && at !== 'archive';
@@ -190,14 +190,14 @@ function dock(d, at = 'home') {
   ];
   const tab = ([k, l, badge, extra]) =>
     `<button type="button" class="tab${k === at ? ' on' : ''}" data-tab-go="${k}" aria-label="${l}${extra}"${k === at ? ' aria-current="page"' : ''}><span class="ico">${ic(k)}${badge}</span><span class="tlbl">${l}</span></button>`;
-  // 三个页签一直展开（Home / Chat / Archive），快门单独一颗，在每一页都在
+  // The three tabs stay expanded (Home / Chat / Archive); the shutter is a separate button on every page
   return `<nav class="dock dock-g open" aria-label="Main navigation"><div class="tabs">${tabs.map(tab).join('')}</div>${shutter(d)}</nav>`;
 }
 
 const acting = () => (typeof SET === 'undefined' ? POOL[0] : SET.who || POOL[SET.me]);
 const me = () =>
   `<button type="button" class="me" aria-label="${acting().name} · settings"><span class="avatar">${acting().name[0]}</span></button>`;
-// 页头：组名在正中，点开切换小组（见 tabs.js）；头像在右上，进设置
+// Header: group name centred, tap to switch groups (see tabs.js); avatar top right opens Settings
 const topBar = () =>
   NAV.home === 'nogroup'
     ? `<header class="top"><span class="top-sp" aria-hidden="true"></span><span class="grp brand">Rewind</span>${me()}</header>`
@@ -206,7 +206,7 @@ const topBar = () =>
 const bars = (cls, used, total = 5) =>
   `<div class="${cls}" aria-hidden="true">${Array.from({ length: total }, (_, i) => `<i${i < used ? ' class="on"' : ''}></i>`).join('')}</div>`;
 
-// 你这周的片段记录：只有类型、哪天、几秒（封存后看不到画面）
+// Your moments this week: only type, day and seconds (media is hidden once sealed)
 const hist = (x) => {
   const list = clipsOf(x);
   if (!list.length) return `<p class="hist none">Nothing sealed yet this week</p>`;
@@ -218,9 +218,9 @@ const hist = (x) => {
     .join('')}</div>`;
 };
 
-/* ---------- 首页正文 ---------- */
+/* ---------- Home body ---------- */
 const bodies = {
-  // o.card：首映、制作中、处理失败时放在页头下面的一张状态卡
+  // o.card: a status card under the header for premiere, compiling or processing failure
   c6: (d, o = {}) => {
     const k = cyc();
     const used = usedSecs(d.me);
@@ -245,31 +245,25 @@ const bodies = {
   },
 };
 
-/* ---------- 首页说明 ---------- */
-// 说明都是 [英文, 中文]
+/* ---------- Home notes ---------- */
 const concepts = [
   {
     id: 'c6',
     no: '06',
-    zh: '暖光玻璃',
     en: 'Warm Glass',
-    key: ['Cream · peach light · soft serif', '奶油底 · 蜜桃暖光 · 软衬线'],
+    key: 'Cream · peach light · soft serif',
     notes: [
-      [
-        'Glass cards and dock over a peach and honey glow',
-        'Light theme, like afternoon sun in a room',
-      ],
-      ['玻璃卡片和底栏，底下一团蜜桃 / 蜂蜜色暖光', '浅色，像午后阳光照进房间'],
+      'Glass cards and dock over a peach and honey glow',
+      'Light theme, like afternoon sun in a room',
     ],
     fonts: 'Fraunces (SOFT) · Geist',
   },
 ];
-const nameOf = (c) => (LANG === 'zh' ? c.zh : c.en);
-const altName = (c) => (LANG === 'zh' ? c.en : c.zh);
+const nameOf = (c) => c.en;
 
-// tab：底栏的哪一页（home | chat | archive，后两页见 tabs.js）；o：这一页的演示参数，画面页用
+// tab: which dock page (home | chat | archive; the last two are in tabs.js); o: this page's demo options, used by the screens page
 const screen = (c, d, tab = 'home', o = {}) => {
-  // 还没有任何小组（刚注册）：只有“没有小组”的首页
+  // No group at all yet (just signed up): only the "no group" Home
   if (typeof grp === 'function' && !grp() && NAV.home !== 'nogroup')
     return withHome('nogroup', () => screen(c, d, 'home', o));
   const body =
@@ -279,7 +273,7 @@ const screen = (c, d, tab = 'home', o = {}) => {
   const menu = o.menu && typeof groupMenu === 'function' ? groupMenu(NAV.home) : '';
   return `<div class="device"><div class="screen ${c.id} gnav nav-g sh-${NAV.shutter} st-${NAV.home} tab-${tab}" data-tab="${tab}" data-home="${NAV.home}" data-o="${encodeURIComponent(JSON.stringify(o))}">${statusBar()}${body}${dock(d, tab)}${menu}<span class="home-ind" aria-hidden="true"></span></div></div>`;
 };
-// 读回这台手机的演示参数
+// Read back this phone's demo options
 const optsOf = (scr) => {
   try {
     return JSON.parse(decodeURIComponent(scr.dataset.o || '%7B%7D'));
@@ -288,19 +282,19 @@ const optsOf = (scr) => {
   }
 };
 
-// 每台手机的演示数据（播放 / 按快门只改这一台；重置即删除）
+// Per-phone demo data (Play / shutter change only this phone; reset deletes it)
 const STORY = {};
 const storyPool = (id) => (STORY[id] ||= POOL.map((p) => ({ ...p })));
 const dataFor = (id) => data(STORY[id] || POOL);
 
 function renderCard(id, from) {
   const c = concepts.find((x) => x.id === id);
-  // from：动画所在的那台手机；状态页里的手机按“收集中”重画
+  // from: the phone being animated; phones on the states page redraw as "Collecting"
   const card = from?.closest('.card') || document.querySelector(`.card[data-id="${id}"]`);
   const wrap = card?.querySelector('.phone-wrap');
   if (c && wrap) {
     const sv = !!card.closest('#states-view');
-    // 刚加入或新建了小组：不再回到“还没有小组”
+    // Just joined or created a group: don't go back to "no group yet"
     if (wrap.dataset.home === 'nogroup' && typeof grp === 'function' && grp())
       delete wrap.dataset.home;
     const home = wrap.dataset.home || (sv ? 'collect' : NAV.home);
@@ -309,7 +303,7 @@ function renderCard(id, from) {
   }
   return wrap?.querySelector('.screen');
 }
-// 同一台手机换页签，或带着新参数重画这一页；这台手机的状态不变
+// Switch tabs on the same phone, or redraw this page with new options; the phone's state is unchanged
 function goTab(scr, tab = scr.dataset.tab, o = {}) {
   if (typeof stopTimers === 'function') stopTimers(scr);
   const wrap = scr.closest('.phone-wrap');
@@ -328,31 +322,31 @@ function render() {
   const c = concepts[0];
   $('gallery').innerHTML =
     `<article class="card show" data-id="${c.id}" aria-label="${nameOf(c)}">` +
-    `<header class="card-h"><div><h2>${nameOf(c)}</h2>${LANG === 'zh' ? `<p>${altName(c)}</p>` : ''}</div></header>` +
+    `<header class="card-h"><div><h2>${nameOf(c)}</h2></div></header>` +
     `<div class="card-ctl"><button type="button" class="ctl" data-play="${c.id}" title="${t('play.title')}">${ic('play')}${t('play')}</button><span class="step" id="step-${c.id}" aria-live="polite"></span></div>` +
     `<div class="phone-wrap">${screen(c, dataFor(c.id))}</div>` +
-    `<div class="notes"><p class="key">${L(c.key)}</p><ul>${L(c.notes)
+    `<div class="notes"><p class="key">${c.key}</p><ul>${c.notes
       .map((n) => `<li>${n}</li>`)
       .join('')}</ul><p class="fonts">${t('fonts')} · ${c.fonts}</p></div>` +
     `</article>`;
 }
 
-// 窄屏时按可用宽度自动缩小手机，避免横向滚动
+// On narrow screens, shrink the phone to the available width to avoid horizontal scroll
 const fitScale = () => Math.min(1, ($('gallery').clientWidth || 410) / 410);
 const setZoom = (v) => {
   $('zoom').value = v;
   $('zoomv').textContent = v + '%';
   document.documentElement.style.setProperty('--s', Math.min(v / 100, fitScale()));
-  // 状态页、搭配页按这个值换算自己的手机大小
+  // The states and mix pages derive their phone size from this value
   document.documentElement.style.setProperty('--z', Math.min(v / 100, fitScale()));
 };
-// 窗口变窄时重新算一次，避免横向滚动
+// Recalculate when the window narrows, to avoid horizontal scroll
 addEventListener('resize', () => setZoom($('zoom').value));
 
-/* ---------- 动效：入场，与按快门的“封存” ---------- */
+/* ---------- Motion: intro, and "sealing" on shutter press ---------- */
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 let introTimer;
-// 只在页面可见时播放（requestAnimationFrame 在隐藏页面不触发），避免缩略图停在动画起点
+// Play only while the page is visible (requestAnimationFrame doesn't fire on hidden pages), so thumbnails don't freeze at the first frame
 function playIntro() {
   requestAnimationFrame(() => {
     const g = $('gallery');
@@ -364,7 +358,7 @@ function playIntro() {
   });
 }
 
-// 页面底部的一条短提示
+// A short toast at the bottom of the page
 let toastTimer;
 function rvToast(text) {
   let el = $('rv-toast');
@@ -387,7 +381,7 @@ async function copyText(text) {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
-    /* 剪贴板接口不可用时退回旧办法 */
+    /* Fall back to the old method when the Clipboard API is unavailable */
   }
   const ta = document.createElement('textarea');
   ta.value = text;
@@ -415,8 +409,8 @@ function flashTip(btn, text) {
   setTimeout(() => tip.remove(), 1900);
 }
 
-/* ---------- 动效：你按快门 ---------- */
-// 给元素挂一个一次性的效果类
+/* ---------- Motion: you press the shutter ---------- */
+// Attach a one-off effect class to an element
 function fx(el, cls, ms = 1000) {
   if (!el) return;
   el.classList.remove(cls);
@@ -425,12 +419,12 @@ function fx(el, cls, ms = 1000) {
   setTimeout(() => el.classList.remove(cls), ms);
 }
 
-// 封存之后：额度那一行跳一下
+// After sealing: the quota row bounces
 const FX = {
   c6: { sealed: (ns) => fx(ns.querySelector('.mine-row'), 'fx-roll', 700) },
 };
 
-// 你按快门：封存一个片段
+// You press the shutter: seal a moment
 async function sealFlight(scr, btn, then) {
   if (NAV.shutter !== 'collect') return then?.();
   const id = scr.classList[1];
@@ -450,7 +444,7 @@ async function sealFlight(scr, btn, then) {
   then?.();
 }
 
-// 揭晓：4 周到了，影片首映 24 小时，下一期马上开始
+// Reveal: the 4 weeks are up, the film premieres for 24 hours, and the next capsule starts right away
 function reveal(scr) {
   const wrap = scr.closest('.phone-wrap');
   const id = scr.classList[1];
@@ -460,7 +454,7 @@ function reveal(scr) {
   wrap.querySelector('.st-card')?.classList.add('fx-in');
 }
 
-// 播放：①你按快门封存 → ②这一期结束，影片首映
+// Play: ① you press the shutter and seal → ② this capsule ends and the film premieres
 const TIMERS = {};
 function setStep(id, text) {
   const el = $('step-' + id);
@@ -502,9 +496,8 @@ function resetCard(id) {
 document.addEventListener('click', (e) => {
   const t = e.target.closest('button');
   if (!t) return;
-  if (t.dataset.lang) return setLang(t.dataset.lang);
   if (t.dataset.play) {
-    // 播放演示的是收集中的一期：先回到正常状态
+    // Play demos a collecting capsule: return to the normal state first
     if (NAV.home !== 'collect') window.setHome?.('collect');
     return playStory(t.dataset.play);
   }
@@ -524,7 +517,7 @@ document.addEventListener('click', (e) => {
       p.c = DEFAULT_C[i];
       delete p.clips;
     });
-    // 样例小组如果开始过新一期，也回到样例
+    // If the sample group started a new capsule, reset it to the sample too
     const s = typeof SET === 'undefined' ? null : SET.list.find((g) => g.sample);
     if (s) {
       delete s.cyc;
@@ -536,19 +529,19 @@ document.addEventListener('click', (e) => {
   }
   const scr = t.closest('.screen');
   if (!scr) return;
-  // 头像 → 设置；揭晓后的“一起看” → 周日影片（见 screens.js）
+  // Avatar → Settings; "Watch together" after the reveal → Sunday film (see screens.js)
   if (t.classList.contains('me')) return openSub(scr, 'settings');
   if (t.classList.contains('wt')) {
     SEEN.archive = true;
     return openSub(scr, 'film');
   }
   if (t.hasAttribute('data-open-mine')) return openSub(scr, 'mine');
-  // 底栏页签：首页、聊天、档案（聊天和档案见 tabs.js）
+  // Dock tabs: Home, Chat, Archive (Chat and Archive are in tabs.js)
   if (t.dataset.tabGo) {
     const k = t.dataset.tabGo;
     if (k === scr.dataset.tab) return;
     const o = {};
-    // 带着未读进聊天：在新消息前面画一条“3 条新消息”
+    // Entering Chat with unread: draw a "3 new messages" divider before the new messages
     if (k === 'chat' && unreadNow()) {
       o.fresh = true;
       SEEN.chat = true;
@@ -557,14 +550,14 @@ document.addEventListener('click', (e) => {
     return goTab(scr, k, o);
   }
   if (t.classList.contains('shutter')) {
-    // 用不了的快门：轻晃一下表示“不行”，再在快门上方短暂说明原因
+    // Unavailable shutter: a small shake for "no", then briefly explain why above the shutter
     if (t.getAttribute('aria-disabled') === 'true') {
       t.classList.remove('nope');
       void t.offsetWidth;
       t.classList.add('nope');
       return t.dataset.tip && flashTip(t, t.dataset.tip);
     }
-    // 快门 → 相机（拍照 / 录视频），封存后回到首页
+    // Shutter → camera (photo / video); returns to Home after sealing
     openSub(scr, 'camera');
   }
 });
@@ -572,7 +565,7 @@ $('zoom').addEventListener('input', (e) => setZoom(e.target.value));
 $('hints').addEventListener('change', (e) =>
   $('gallery').classList.toggle('hints', e.target.checked),
 );
-// 小组人数：首页不显示人数，所以连当前页签（状态、画面）一起重画
+// Group size: Home doesn't show it, so redraw the current tab (states, screens) too
 $('members').addEventListener('input', (e) => {
   size = Number(e.target.value);
   $('membersv').textContent = t('members.unit', { n: size });
@@ -580,19 +573,6 @@ $('members').addEventListener('input', (e) => {
   render();
   window.relangMix?.();
 });
-
-function setLang(l) {
-  LANG = l === 'zh' ? 'zh' : 'en';
-  try {
-    localStorage.setItem('rewind-lang', LANG);
-  } catch {
-    /* 存不了也没关系 */
-  }
-  applyI18n();
-  $('membersv').textContent = t('members.unit', { n: size });
-  render();
-  window.relangMix?.();
-}
 
 applyI18n();
 $('membersv').textContent = t('members.unit', { n: size });

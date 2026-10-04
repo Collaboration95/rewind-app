@@ -1,5 +1,5 @@
-/* 首页状态：沿用暖光玻璃的变量（--bg --ink --muted --line --accent --f-serif --f-body） */
-/* ============ 通用 ============ */
+/* Home states: reuse the Warm Glass variables (--bg --ink --muted --line --accent --f-serif --f-body) */
+/* ============ General ============ */
 .st {
   display: grid;
   justify-items: center;
@@ -42,7 +42,7 @@
   background: var(--accent);
   box-shadow: 0 10px 24px -10px var(--accent);
 }
-/* 第二个按钮（没有小组时的“新建小组”）：在主按钮下面 */
+/* Second button ("Create group" when there's no group): below the primary button */
 .st-btn.st-alt {
   margin-top: 0;
 }
@@ -79,8 +79,8 @@
   animation-duration: 3.6s;
   opacity: 0.6;
 }
-/* 进入这个状态时说一遍（flare），点快门时再说一遍（go） */
-/* 灰快门被点：左右轻晃，像 iOS 输错密码 */
+/* Announce once on entering this state (flare), again on shutter tap (go) */
+/* Tapping the grey shutter: a small side-to-side shake, like a wrong iOS passcode */
 .shutter.nope {
   animation: nope 0.42s ease;
 }
@@ -98,7 +98,7 @@
     transform: translateX(3px);
   }
 }
-/* ============ 插图 ============ */
+/* ============ Illustrations ============ */
 .mo {
   display: block;
   width: 200px;
@@ -106,7 +106,7 @@
   margin: 4px auto 0;
   overflow: visible;
 }
-/* 暖光玻璃：一团暖光 */
+/* Warm Glass: a warm glow */
 @keyframes mo-breathe {
   0%,
   100% {
@@ -164,7 +164,7 @@
   opacity: 0.35;
   filter: grayscale(0.6);
 }
-/* ============ 状态页 ============ */
+/* ============ States page ============ */
 body:not(.view-states) #states-view,
 body.view-states main > .main-h,
 body.view-states #gallery,
@@ -205,7 +205,7 @@ body.view-states main {
   background: var(--page-ink);
   box-shadow: none;
 }
-/* 所有状态排成网格：手机按侧栏缩放再小一点，说明不撑宽手机那一栏 */
+/* All states in a grid: phones a bit smaller than the sidebar zoom, and notes don't widen the phone column */
 .sv-grid {
   --s: calc(var(--z, 0.62) * 0.7);
   display: flex;

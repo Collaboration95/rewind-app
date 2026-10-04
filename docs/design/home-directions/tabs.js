@@ -1,22 +1,22 @@
 'use strict';
 
-/* ---------- 底栏的另外两页：聊天、档案；页头的组名菜单 ----------
-   按 dev 的 ChatScreen / ArchiveScreen 和文档（proposal-rewind、Sprint 2 用户流程）：
-   · 聊天：一个小组一个群聊，只有文字，可以回复、加 ✨；最长 2000 字。
-     没有附件、已读、正在输入、编辑和删除（proposal 里明确不做）。
-     重新连接、离线、读取失败、发送失败、还没有消息，都有自己的样子。
-   · 档案：最上面是这一期（还在收集 / 制作中 / 比平时慢 / 首映中），下面是以前每一期的影片：
-     能播放、保存影片，也能保存自己在那一期的片段；没有影片的一期只剩题目和日期。
-   · 聊天、档案、首页都只属于当前小组；点组名切换小组，整台手机换成那个小组。
-   画面里没有真实媒体：影片封面是抽象的暖色光斑。 */
+/* ---------- The dock's other two pages: Chat and Archive; the header group-name menu ----------
+   Follows dev's ChatScreen / ArchiveScreen and the docs (proposal-rewind, Sprint 2 user journey):
+   · Chat: one group chat per group, text only; reply and add ✨; up to 2000 characters.
+     No attachments, read receipts, typing indicators, editing or deleting (the proposal rules them out).
+     Reconnecting, offline, load failure, send failure and no messages yet each have their own look.
+   · Archive: the current capsule on top (collecting / compiling / delayed / premiering), then each past capsule's film:
+     play and save the film, and save your own moments from that capsule; a capsule without a film shows only its prompt and dates.
+   · Chat, Archive and Home all belong to the current group; tap the group name to switch, and the whole phone switches to that group.
+   No real media on screen: film covers are abstract warm light blobs. */
 
 Object.assign(I, { expand: '<path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15"/>' });
 
-// 放进一行小字里的组名：太长就截短
+// Group name inside a line of small text: truncate if too long
 const short = (s, n) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s);
 
-/* ---------- 组名菜单 ---------- */
-// home：这台手机的状态；不在这个小组时，这一行不能选，写明已经不在
+/* ---------- Group-name menu ---------- */
+// home: this phone's state; when you're not in this group, the row is disabled and says you've left
 function groupMenu(home = NAV.home) {
   const out = home === 'denied';
   return (
@@ -48,10 +48,10 @@ function toggleMenu(scr, open) {
   }
 }
 
-/* ---------- 聊天 ---------- */
-// 发出去的消息、你加的 ✨，按小组记；第一个小组有一段样例对话
+/* ---------- Chat ---------- */
+// Sent messages and your ✨, stored per group; the first group has a sample conversation
 const CHAT = { sent: {}, mine: {}, older: false, n: 0 };
-// 封存后谁都看不到画面：大家聊的是“拍了什么，不剧透”
+// Once sealed nobody can see the media: people chat about "what I shot, no spoilers"
 const SEED_OLD = [
   { id: 'o1', who: 2, day: 'Sunday', at: '7:04 PM', text: 'New prompt is up 👀' },
   { id: 'o2', who: 4, day: 'Sunday', at: '7:10 PM', text: 'Already have an idea for this one' },
@@ -92,7 +92,7 @@ const SEED = [
   },
   { id: 'm6', who: 2, day: 'Today', at: '9:30 AM', text: 'Who’s hosting this time?' },
 ];
-// 首映那天，大家在聊影片
+// On premiere day, everyone is talking about the film
 const SEED_FILM = [
   { id: 'f1', who: 2, day: 'Today', at: '9:20 AM', text: 'Okay, the ending got me 😭', sp: 3 },
   { id: 'f2', who: 1, day: 'Today', at: '9:24 AM', text: 'Whose was the rain at the bus stop??' },
@@ -115,7 +115,7 @@ function chatList(o) {
   if (!isSample()) return sent;
   const seed = NAV.home === 'released' ? [...SEED.slice(0, 3), ...SEED_FILM] : SEED;
   const list = [...(CHAT.older ? SEED_OLD : []), ...seed, ...sent];
-  // 画面页“没发出去”那台：最后一条是你的、失败了
+  // The screens page "didn't send" phone: the last message is yours and failed
   if (o.failed)
     list.push({
       id: 'x1',
@@ -152,7 +152,7 @@ function bubble(m, prev, o) {
     (n
       ? `<button type="button" class="rx${CHAT.mine[m.id] ? ' on' : ''}" data-msg-sp="${m.id}" aria-pressed="${!!CHAT.mine[m.id]}" aria-label="${n} sparkles${CHAT.mine[m.id] ? ', remove yours' : ', add yours'}">✨ ${n}</button>`
       : '') +
-    // 点一下消息：加 ✨ 或回复（回复只能回原消息，dev 也是这样）
+    // Tap a message: add ✨ or reply (replies quote only the original message, as in dev)
     (m.st
       ? ''
       : `<div class="macts" role="group" aria-label="Message actions"><button type="button" data-msg-sp="${m.id}" aria-pressed="${!!CHAT.mine[m.id]}">✨ ${CHAT.mine[m.id] ? 'Reacted' : 'React'}</button>` +
@@ -169,7 +169,7 @@ function bubble(m, prev, o) {
 function chatBody(d, o) {
   const conn = o.conn || 'ready';
   const list = conn === 'error' ? [] : chatList(o);
-  // 带着未读进来：最后 3 条前面一条“新消息”
+  // Entering with unread: a "new messages" divider before the last 3
   const freshAt = o.fresh && isSample() && !o.empty ? list.length - 3 - (o.failed ? 1 : 0) : -1;
   let rows = '';
   list.forEach((m, i) => {
@@ -200,7 +200,7 @@ function chatBody(d, o) {
     `<div class="c-bg" aria-hidden="true"><div class="glow"><i></i><i></i><i></i></div></div>` +
     `<div class="scroll"><div class="c-list${banner ? ' conn' : ''}${re ? ' re' : ''}" aria-label="Messages">${older}${rows}${state}</div></div>` +
     `<div class="c-head">${topBar()}${banner || ''}</div>` +
-    // 读取失败时先重试，不显示输入框
+    // On load failure, retry first and hide the composer
     (conn === 'error'
       ? ''
       : `<div class="cmp">` +
@@ -214,7 +214,7 @@ function chatBody(d, o) {
   );
 }
 
-// 带着当前的草稿重画聊天
+// Redraw the chat keeping the current draft
 function chatRedraw(scr, patch = {}) {
   const draft = scr.querySelector('[data-chat-input]')?.value || '';
   return goTab(scr, 'chat', { ...optsOf(scr), draft, ...patch });
@@ -235,7 +235,7 @@ function sendMsg(scr, text, reply) {
   };
   const wrap = scr.closest('.phone-wrap');
   goTab(scr, 'chat', o);
-  // 发出去了：去掉“发送中”
+  // Sent: drop "sending"
   setTimeout(
     () => {
       delete m.st;
@@ -246,8 +246,8 @@ function sendMsg(scr, text, reply) {
   );
 }
 
-/* ---------- 档案 ---------- */
-// 以前的几期（第一个小组）；第 1 期没有人加片段，没有影片
+/* ---------- Archive ---------- */
+// Past capsules (first group); capsule 1 had no moments added, so no film
 const FILMS = [
   {
     n: 3,
@@ -271,14 +271,14 @@ const FILMS = [
 const FILMS_OLD = [{ n: 1, dates: 'Jun 14 – Jul 11', prompt: 0, m: 0 }];
 const NOW = { n: 4, dates: 'Sep 6 – Oct 3' };
 const ARC = { older: false };
-// 影片标题下面的小字（从档案里放以前的一期）
+// Small text under the film title (when playing a past capsule from Archive)
 function filmInfo(n) {
   const f = [...FILMS, ...FILMS_OLD].find((x) => x.n === n);
   return f ? `Cycle ${f.n} · ${f.dates}` : 'Premiere · 18 h left';
 }
 
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
-// 卡片里放的格子：和影片一样，每段一格作者色的光
+// Tiles shown in the card: like the film, one tile of author-coloured light per moment
 const previewFrames = (d, n) => {
   const cast = d.members.filter((x) => x.c > 0);
   return Array.from({ length: n }, (_, i) => cast[i % cast.length]);
@@ -287,7 +287,7 @@ const previewFrames = (d, n) => {
 function filmRow(f, d, o) {
   const prompt = PROMPTS[f.prompt];
   const info = `<div class="a-info"><small>Cycle ${f.n} · ${f.dates}</small><b>${prompt}</b><span>${f.m} moments · ${f.len}</span>`;
-  // 正在放：卡片撑开成一个播放器，可以暂停、全屏
+  // Playing: the card expands into a player with pause and fullscreen
   if (f.m && o.play === f.n) {
     const fr = previewFrames(d, f.m);
     const at = o.at ?? 0;
@@ -314,7 +314,7 @@ function filmRow(f, d, o) {
   );
 }
 
-// 最上面：这一期在哪一步
+// Top: which step the current capsule is at
 function nowCard(d, o = {}) {
   const k = cyc();
   const h = NAV.home;
@@ -322,7 +322,7 @@ function nowCard(d, o = {}) {
     const who = d.members.filter((x) => x.c > 0);
     return (
       `<section class="glass a-prem"><button type="button" class="a-poster" data-arc-full="${NOW.n}" aria-label="Play the film">` +
-      // 封面：每人一格抽象的光，按片段作者的颜色
+      // Cover: one tile of abstract light per person, in each moment author's colour
       who
         .map(
           (x, i) =>
@@ -369,7 +369,7 @@ function archiveBody(d, o) {
   const head =
     topBar() +
     `<section class="a-h"><h1>Archive</h1>${NAV.home === 'error' ? '' : `<p>${count ? `${plural(count, 'film')} so far` : 'Nothing here yet.'}</p>`}</section>`;
-  // 读不出来（首页也读不出来时）：只给重试
+  // Can't load (when Home can't load either): only offer Retry
   if (NAV.home === 'error')
     return (
       `<div class="scroll">${glow}${head}<section class="c-state a-state" role="alert"><h2>Couldn’t load the archive</h2><p>Check your connection and try again.</p>` +
@@ -386,7 +386,7 @@ function archiveBody(d, o) {
   return `<div class="scroll">${glow}${head}${nowCard(d, o)}${list}</div>`;
 }
 
-// 卡片里的播放：一格一格往下走，放完停在最后，给一个重播
+// Playback in the card: steps tile by tile, stops on the last one and offers Replay
 function startPreview(scr) {
   const pv = scr.querySelector('.a-pv');
   if (!pv) return;
@@ -425,20 +425,20 @@ function startPreview(scr) {
   });
 }
 
-// app.js 的 screen() 调这里
+// Called by screen() in app.js
 function tabBody(tab, d, o) {
   return tab === 'chat' ? chatBody(d, o) : archiveBody(d, o);
 }
 
-/* ---------- 点击 ---------- */
+/* ---------- Clicks ---------- */
 document.addEventListener('click', (e) => {
   const scr = e.target.closest('.screen');
   if (!scr) return;
   const b = e.target.closest('button, [data-gm-close]');
-  // 组名菜单
+  // Group-name menu
   if (b?.classList.contains('grp') || b?.hasAttribute('data-gm-open')) return toggleMenu(scr);
   if (b?.hasAttribute('data-gm-close')) return toggleMenu(scr, false);
-  // 点消息以外的地方：收起消息上的操作
+  // Tap outside a message: collapse the message actions
   if (!b?.closest('.msg'))
     scr.querySelectorAll('.msg.open').forEach((m) => m.classList.remove('open'));
   if (!b || b.disabled) return;
@@ -447,13 +447,13 @@ document.addEventListener('click', (e) => {
     const i = Number(d.gmGroup);
     if (i === SET.gi) return toggleMenu(scr, false);
     SET.gi = i;
-    // 从“不在这个小组”换走：换到的小组是正常的
+    // Switching away from "not in this group": the target group is normal
     if (scr.dataset.home === 'denied') scr.dataset.home = 'collect';
     goTab(scr, scr.dataset.tab, {});
     return rvToast(t('scr.toast.switched').replace('{name}', groupName()));
   }
   if (d.gmGo) return openSub(scr, 'settings', { step: d.gmGo, back: 'close' });
-  // 聊天
+  // Chat
   if (d.msg) {
     const m = b.closest('.msg');
     const open = !m.classList.contains('open');
@@ -483,8 +483,8 @@ document.addEventListener('click', (e) => {
       CHAT.older = true;
       chatRedraw(scr);
     });
-  // 档案
-  // 以前的影片：在卡片里放；同一时间只放一部
+  // Archive
+  // Past films: play in the card; only one plays at a time
   if (d.arcPlay) return startPreview(goTab(scr, 'archive', { play: Number(d.arcPlay) }));
   if (d.arcFull) {
     const n = Number(d.arcFull);
@@ -492,7 +492,7 @@ document.addEventListener('click', (e) => {
   }
   if ('arcPause' in d) {
     const pv = b.closest('.a-pv');
-    // 画面页里停着的那台：点一下从这一格接着放
+    // The paused phone on the screens page: tap to resume from this tile
     if (!TIMERS_SUB.has(scr)) {
       pv.classList.remove('paused');
       return startPreview(scr);
@@ -509,7 +509,7 @@ document.addEventListener('click', (e) => {
     });
 });
 
-// 输入：有字才能发，快到 2000 字时显示字数，输入框跟着长高
+// Input: send only with text, show a count near 2000 characters, and the input grows with the text
 document.addEventListener('input', (e) => {
   const el = e.target;
   if (!el.matches('[data-chat-input]')) return;
@@ -522,7 +522,7 @@ document.addEventListener('input', (e) => {
   el.style.height = 'auto';
   el.style.height = Math.min(96, el.scrollHeight) + 'px';
 });
-// 回车发送，Shift + 回车换行
+// Enter sends, Shift + Enter adds a new line
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     const scr =

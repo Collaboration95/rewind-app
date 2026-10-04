@@ -1,12 +1,12 @@
 'use strict';
 
-/* ---------- 首页状态 ----------
-   与 dev 的首页摘要和首映流程对应（collecting 的额度、NotFound / RecoverableFailure / MembershipDenied、
-   片段处理失败、compiling / delayed / released）。文案是草稿。
-   · 额度：5 段或 30 秒，哪个先用完都算用完，每 7 天重置。
-   · 一期结束时下一期马上开始：影片制作中、比平时慢、首映时，首页已经是新一期，快门照常能用，
-     上面多一张状态卡。
-   · 没有这一期：组长能开始，组员只能等组长。 */
+/* ---------- Home states ----------
+   Match dev's Home summary and premiere flow (collecting quota, NotFound / RecoverableFailure / MembershipDenied,
+   moment processing failure, compiling / delayed / released). Copy is draft.
+   · Quota: 5 moments or 30 s, whichever runs out first; resets every 7 days.
+   · When a capsule ends the next starts right away: while the film is compiling, delayed or premiering, Home is already the new capsule, the shutter works as usual,
+     with an extra status card on top.
+   · No capsule: the owner can start one; members can only wait for the owner. */
 const HOME_STATES = [
   'collect',
   'quota',
@@ -21,19 +21,19 @@ const HOME_STATES = [
   'denied',
   'nogroup',
 ];
-// 这些状态下不显示快门（没有这一期、读取失败、不在小组、还没有小组）：用不了的按钮不灰着摆在那里，直接拿掉
+// No shutter in these states (no capsule, loading failed, not in the group, no group yet): rather than a greyed-out button, remove it
 const SHUTTER_OFF = ['empty', 'waiting', 'error', 'denied', 'nogroup'];
 NAV.home = 'collect';
-// 每个状态对应的快门：额度用完就灰掉，其余照常
+// Shutter for each state: greyed out when the quota is used up, otherwise as usual
 const shutterOf = (state) => (state === 'quota' || state === 'secs' ? 'quota' : 'collect');
 
-// 一团会呼吸的暖光，靠状态类名切换动画和显隐
+// A breathing warm glow; state class names switch its animation and visibility
 const motif = () => `<div class="mo mo-glow" aria-hidden="true"><i></i><b></b></div>`;
 
 function stateCopy() {
   const waiting = { title: 'No capsule yet', body: 'Waiting for the owner to start one.' };
   return {
-    // 只有组长能开始；组员看到的是“等组长”
+    // Only the owner can start; members see "waiting for the owner"
     empty:
       typeof isOwner === 'function' && !isOwner()
         ? waiting
@@ -44,7 +44,7 @@ function stateCopy() {
             start: true,
           },
     waiting,
-    // 刚注册、还没有小组：用邀请码加入，或者自己新建
+    // Just signed up, no group yet: join with an invite code or create one
     nogroup: {
       title: 'You’re not in a group yet',
       body: 'Join friends with their invite code, or start a group of your own.',
@@ -65,7 +65,7 @@ function stateCopy() {
       action: 'Choose another group',
       pick: true,
     },
-    // 下面几种是首页上方的一张状态卡
+    // The ones below are a status card at the top of Home
     failed: {
       title: 'A moment didn’t finish',
       body: 'Retry it, or delete it and retake.',
@@ -85,7 +85,7 @@ function stateCopy() {
   }[NAV.home];
 }
 
-// 首页上方的状态卡：首映、制作中、处理失败
+// Status card at the top of Home: premiere, compiling, processing failure
 function stateCard() {
   const s = stateCopy();
   return (
@@ -101,24 +101,24 @@ function stateCard() {
   );
 }
 
-// 3 段就用完了 30 秒
+// 3 moments use up the 30 s
 const SECS_CLIPS = [
   ['video', 15, 'Mon'],
   ['video', 12, 'Wed'],
   ['photo', 3, 'Thu'],
 ];
-// 这个状态下“你这周的片段”：首页和“你的片段”页共用，两边才对得上
+// "Your moments this week" in this state: shared by Home and the "Your moments" page so both match
 function homeClips(id, d) {
   const pool = STORY[id] || POOL;
   if (NAV.home === 'quota') return CLIPS0;
   if (NAV.home === 'secs') return SECS_CLIPS;
-  // 新一期：从 0 段开始；在这台手机上新封存的照样算进去
+  // New capsule: start from 0 moments; moments newly sealed on this phone still count
   if (NEW_CYCLE.includes(NAV.home) && !snap()) return clipsOf(pool[0]).slice(POOL[0].c);
   return clipsOf(d.me);
 }
 
 function stateBody(c, d) {
-  // 换成“你这周的片段是 list”的数据
+  // Swap in data where "your moments this week" is list
   const mine = (list) => {
     const me = { ...d.me, c: list.length, clips: list };
     return { ...d, me, members: [me, ...d.members.slice(1)] };
@@ -127,7 +127,7 @@ function stateBody(c, d) {
   if (NAV.home === 'failed') return bodies[c.id](d, { card: stateCard() });
   if (NEW_CYCLE.includes(NAV.home))
     return bodies[c.id](mine(homeClips(c.id, d)), { card: stateCard() });
-  // 没有这一期 / 读取失败 / 不在小组：换掉正文，保留页头
+  // No capsule / loading failed / not in the group: replace the body, keep the header
   const full = bodies[c.id](d);
   const at = full.indexOf('<header class="top"');
   const end = full.indexOf('</header>', at) + '</header>'.length;
@@ -147,12 +147,12 @@ function stateBody(c, d) {
   );
 }
 
-// 这个状态下有没有快门（函数声明，app.js 经 window 调用）
+// Whether this state has a shutter (function declaration; app.js calls it via window)
 function shutterOff() {
   return SHUTTER_OFF.includes(NAV.home);
 }
 
-// 切换首页状态：顺带把快门状态对上
+// Switch Home state and sync the shutter state with it
 function setHome(v) {
   NAV.home = HOME_STATES.includes(v) ? v : 'collect';
   SEEN.archive = false;
@@ -162,7 +162,7 @@ function setHome(v) {
   window.relangMix?.();
 }
 
-// 开始一期（组长）：这个小组从第 1 周、28 天、0 段开始
+// Start a capsule (owner): this group starts at week 1, 28 days, 0 moments
 document.addEventListener('click', (e) => {
   if (!e.target.closest('[data-st-start]')) return;
   if (e.target.closest('#states-view')) return rvToast(t('sts.startToast'));
@@ -173,14 +173,14 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('click', (e) => {
   if (!e.target.closest('[data-st-retry]')) return;
-  // 状态页里只说明，不改动其他页的状态
+  // On the states page it only explains; it doesn't change other pages' state
   if (e.target.closest('#states-view')) return rvToast(t('sts.retryToast'));
-  // 演示“重试”：直接回到正常的首页
+  // Demo "Retry": go straight back to the normal Home
   setHome('collect');
 });
 
-/* ---------- 状态页：所有状态排在一起 ---------- */
-// 用指定的状态画一台手机，不影响侧栏里选的状态
+/* ---------- States page: all states side by side ---------- */
+// Draw a phone in the given state without affecting the state chosen in the sidebar
 function withHome(state, fn) {
   const keep = { home: NAV.home, shutter: NAV.shutter };
   NAV.home = state;
@@ -209,7 +209,7 @@ function renderStatesView() {
   if (!root) return;
   root.innerHTML =
     `<header class="main-h"><p class="k">${t('sts.k')}</p><h1>${t('sts.h1')}</h1><p>${t('sts.p')}</p></header>` +
-    // 收集中那台可以单独触发几个事件，看动画
+    // The Collecting phone can trigger a few events on its own to show the animations
     `<div class="sv-ev" role="group"><span>${t('sts.ev')}</span>` +
     ['seal', 'reveal', 'reset']
       .map((k) => `<button type="button" data-sv-ev="${k}">${t('sts.ev.' + k)}</button>`)
@@ -220,11 +220,11 @@ function renderStatesView() {
     if (document.body.classList.contains('view-states'))
       history.replaceState(null, '', statesHash());
   } catch {
-    /* 受限的框架里改不了地址栏也没关系 */
+    /* Fine if a sandboxed frame can't change the address bar */
   }
 }
 
-// 事件按钮：作用在状态页里“收集中”那台手机上
+// Event buttons: act on the "Collecting" phone on the states page
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-sv-ev]');
   if (!b) return;
@@ -246,7 +246,7 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// 打开时如果网址是 #states…，直接进状态页
+// If the URL is #states… on load, go straight to the states page
 const openStatesFromHash = () => {
   if (readStatesHash()) setView('states');
 };

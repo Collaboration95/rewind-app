@@ -1,16 +1,16 @@
 'use strict';
 
-/* ---------- 首页以外的画面：登录、设置、你的片段、相机、首映影片 ----------
-   以 dev 上最新的 Sprint 2 用户流程（doc/planning/sprints/sprint-2-user-journey-plan.md，9 月 27 日）为准，
-   其余按 proposal-rewind、UX-CONTRACT：
-   · 一期 4 周，额度每 7 天重置：5 段、共 30 秒；视频单段最长 15 秒；照片算 1 段、在影片里占 3 秒。
-   · 相机有视频和照片；视频录完可以剪、选效果（dev 现有的三种），再提交；每周可以删一段重拍。
-   · 封存后自己也看不到画面，只能看时间和长度。
-   · 一期结束时影片首映 24 小时，各自去看，下一期马上开始；短片可能用标着 From the archive 的旧片段补位。
-   · 组长唯一：改组名、选题目、发会过期的邀请；小组最多 10 人。周日提醒可以改时间、推迟或关闭；可以切换小组。
-   · 登录：管理员预先建好的用户名和密码；欢迎页另有分开的 Try Demo，Demo 身份的控制单独放在设置里。
-   从首页进入：头像 → 设置，快门 → 相机，额度那一行 → 你的片段，首映卡片 → 影片。
-   画面里没有任何真实媒体：取景框和影片都是抽象的暖色光斑。 */
+/* ---------- Screens beyond Home: sign-in, Settings, Your moments, camera, premiere film ----------
+   Based on the latest Sprint 2 user journey on dev (doc/planning/sprints/sprint-2-user-journey-plan.md, 27 Sep),
+   otherwise on proposal-rewind and UX-CONTRACT:
+   · A capsule lasts 4 weeks; quota resets every 7 days: 5 moments, 30 s total; a video moment is at most 15 s; a photo counts as 1 moment and takes 3 s in the film.
+   · The camera does video and photo; after recording a video you can trim it and pick an effect (dev's existing three), then submit; you can delete one moment a week to reshoot.
+   · Once sealed, even you can't see the media, only its time and length.
+   · When a capsule ends the film premieres for 24 hours, everyone watches on their own, and the next capsule starts right away; a short film may be padded with old moments marked From the archive.
+   · One owner: renames the group, picks the prompt, sends invites that expire; up to 10 people per group. The Sunday reminder can be retimed, snoozed or turned off; you can switch groups.
+   · Sign-in: username and password pre-created by an admin; the welcome page has a separate Try Demo, and Demo identity controls live separately in Settings.
+   From Home: avatar → Settings, shutter → camera, quota row → Your moments, premiere card → film.
+   No real media on screen: the viewfinder and film are abstract warm light blobs. */
 
 Object.assign(I, {
   back: '<path d="m14.5 6-6 6 6 6"/>',
@@ -37,14 +37,14 @@ Object.assign(I, {
   video: '<rect x="3.5" y="6.5" width="12" height="11" rx="2"/><path d="m15.5 10.5 5-3v9l-5-3"/>',
 });
 
-// 用户输入放进页面前转义
+// Escape user input before putting it into the page
 const esc = (s) =>
   String(s).replace(
     /[&<>"]/g,
     (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch],
   );
 
-// 取景框里的暖色光斑（虚焦的灯），位置固定，慢慢漂
+// Warm light blobs in the viewfinder (out-of-focus lights), fixed positions, drifting slowly
 const BOKEH = [
   [22, 30, 120, '#ffcf8a'],
   [70, 22, 90, '#ff9f6b'],
@@ -59,7 +59,7 @@ const bokeh = () =>
       `<i style="left:${x}%;top:${y}%;width:${r}px;height:${r}px;background:${c};animation-delay:${-i * 1.7}s"></i>`,
   ).join('')}</div>`;
 
-// 影片里的一格：按片段作者的颜色画一片抽象的光（首映后才知道是谁的）；补位的旧片段是灰调
+// One tile in the film: abstract light in the moment author's colour (who it is is only known after the premiere); padding archive moments are grey-toned
 const frame = (x, i) =>
   x.filler
     ? `<i class="fm-f filler" style="--a:#8a7a6c;--b:#d9cbb8;--x:40%;--y:45%"></i>`
@@ -68,14 +68,14 @@ const frame = (x, i) =>
 const left5 = (d) => Math.max(0, 5 - d.me.c);
 const secLeft = (d) => Math.max(0, 30 - usedSecs(d.me));
 const tm = (s) => `0:${String(Math.floor(s)).padStart(2, '0')}`;
-// 照片在影片里固定占 3 秒
+// A photo always takes 3 s in the film
 const PHOTO_SECS = 3;
 
-/* ---------- 演示状态：当前登录的人、小组、题目、提醒 ---------- */
+/* ---------- Demo state: signed-in person, group, prompt, reminder ---------- */
 const SET = {
   me: 0,
   demo: false,
-  // who：新注册的账号（名字、颜色、邮箱或手机号）；样例账号时为 null
+  // who: a newly signed-up account (name, colour, email or phone); null for the sample account
   who: null,
   list: [],
   gi: 0,
@@ -91,7 +91,7 @@ const PROMPTS = [
   'What would you like to remember about this moment?',
 ];
 const TIMES = ['6 PM', '7 PM', '8 PM', '9 PM'];
-// 自定义时间：'19:30' ↔ '7:30 PM'
+// Custom time: '19:30' ↔ '7:30 PM'
 const to12 = (v) => {
   const [h, m] = v.split(':').map(Number);
   return `${h % 12 || 12}${m ? ':' + String(m).padStart(2, '0') : ''} ${h < 12 ? 'AM' : 'PM'}`;
@@ -100,8 +100,8 @@ const to24 = (v) => {
   const [, h, m = '0', ap] = v.match(/(\d+)(?::(\d+))? (AM|PM)/);
   return `${String((Number(h) % 12) + (ap === 'PM' ? 12 : 0)).padStart(2, '0')}:${m.padStart(2, '0')}`;
 };
-// 每个小组一条记录。样例小组（sample）用侧栏的样例数据；其他小组是固定的快照：
-// n 几个人、no 第几期、cyc 这一期到哪了、clips 你这周的片段、owner 你是不是组长
+// One record per group. The sample group uses the sidebar sample data; other groups are fixed snapshots:
+// n people, no capsule number, cyc where this capsule is, clips your moments this week, owner whether you're the owner
 const GROUPS0 = () => [
   { id: 'g1', name: 'Group name', sample: true },
   {
@@ -119,7 +119,7 @@ const GROUPS0 = () => [
   },
 ];
 SET.list = GROUPS0();
-// 原型里的邀请码：BOOKCLUB 能加入；其余几个演示加入失败
+// Prototype invite codes: BOOKCLUB joins; the others demo join failures
 const INVITES = {
   BOOKCLUB: {
     id: 'g3',
@@ -144,27 +144,28 @@ const JOIN_ERR = {
 const grp = () => SET.list[SET.gi];
 const isSample = () => !!grp()?.sample;
 const groupName = () => grp()?.name ?? '';
-// 样例小组里 Alex 是组长；其他小组看记录
+// In the sample group Alex is the owner; other groups use their record
 const isOwner = () => {
   const g = grp();
   if (!g) return false;
   return g.sample ? SET.me === 0 && !SET.who : !!g.owner;
 };
-// 题目跟着小组走：样例小组记在 SET 上，其他小组记在自己的记录上
+// The prompt follows the group: the sample group stores it on SET, other groups on their own record
 const promptOf = () => (isSample() || !grp() ? SET : grp());
 const promptText = () => {
   const r = promptOf();
   return r.prompt === 'custom' ? r.custom : PROMPTS[r.prompt ?? 0];
 };
-// 换回样例账号（登录、Demo、清空数据）：小组也回到样例
+// Switch back to the sample account (sign-in, Demo, clear data): the group returns to the sample too
 const sampleAccount = () => Object.assign(SET, { who: null, list: GROUPS0(), gi: 0 });
 
-/* ---------- 欢迎和登录 ----------
-   step：welcome | form | wrong | offline | expired | demo
-   正式账号是管理员建好的用户名和密码（原型里密码是 rewind）；Try Demo 是分开的一条路，选一个标明 synthetic 的演示成员 */
+/* ---------- Welcome and sign-in ----------
+   step: welcome | form | wrong | offline | expired | demo
+   Real accounts use an admin-created username and password (the prototype password is rewind); Try Demo is a separate path where you pick a demo member marked synthetic */
 function signinHTML(step) {
   if (/^up/.test(step)) return signupHTML(step);
-  const form = ['form', 'wrong', 'offline'].includes(step);
+  const form = ['form', 'wrong', 'offline', 'forgot'].includes(step);
+  const invite = step === 'invite';
   const errText = {
     wrong: 'Wrong username or password.',
     offline: 'You’re offline. Try again when you’re connected.',
@@ -174,22 +175,33 @@ function signinHTML(step) {
     (step === 'expired'
       ? `<p class="si-alert" role="status">You were signed out. Please sign in again.</p>`
       : '') +
-    `<button type="button" class="set-btn primary si-go" data-si-go="form">Sign in</button>` +
-    `<button type="button" class="set-btn si-up" data-si-go="up">Create an account</button>`;
+    // Opened from an invite link while signed out: the invite is kept through sign-in or sign-up
+    (invite
+      ? `<section class="glass si-inv"><span class="avatar sm" style="--mc:${POOL[1].col}">B</span><div><b>Bea invited you to Book club</b><small>6 of 10 people · expires in 23 h</small></div></section>`
+      : '') +
+    `<button type="button" class="set-btn primary si-go" data-si-go="form">${invite ? 'Sign in to join' : 'Sign in'}</button>` +
+    `<button type="button" class="set-btn si-up" data-si-go="up">${invite ? 'Create an account to join' : 'Create an account'}</button>`;
   const login =
     `<header class="sub-h"><button type="button" class="sub-back" data-si-go="welcome" aria-label="Back">${ic('back')}</button><h1>Sign in</h1><span></span></header>` +
-    `<label class="glass set-field"><span>Email, phone or username</span><input data-si-user autocomplete="username" autocapitalize="none" spellcheck="false" value="${form && step !== 'form' ? 'alex' : ''}" /></label>` +
-    `<label class="glass set-field si-pass"><span>Password</span><input data-si-pass type="password" autocomplete="current-password" value="${form && step !== 'form' ? 'notright' : ''}" /></label>` +
+    `<label class="glass set-field"><span>Email, phone or username</span><input data-si-user autocomplete="username" autocapitalize="none" spellcheck="false" value="${errText ? 'alex' : ''}" /></label>` +
+    `<label class="glass set-field si-pass"><span>Password</span><input data-si-pass type="password" autocomplete="current-password" value="${step === 'offline' ? 'notright' : ''}" /></label>` +
     `<p class="set-err" role="alert">${errText || ''}</p>` +
     `<button type="button" class="set-btn primary" data-si-submit data-busy="Signing in…">Sign in</button>` +
     `<p class="si-note">Forgot your password? <button type="button" class="up-link" data-si-forgot>Reset it</button></p>` +
-    `<p class="si-note">New here? <button type="button" class="up-link" data-si-go="up">Create an account</button></p>`;
+    `<p class="si-note">New here? <button type="button" class="up-link" data-si-go="up">Create an account</button></p>` +
+    (step === 'forgot'
+      ? `<div class="set-dim" data-si-go="form"></div><section class="glass set-dlg" role="dialog" aria-label="Reset your password">` +
+        `<h2>Reset your password</h2><p>We’ll send a 6-digit code to the email or phone on your account. If the Rewind admin made your account, ask them instead.</p>` +
+        `<label class="glass set-field"><span>Email or phone</span><input autocomplete="username" autocapitalize="none" spellcheck="false" /></label>` +
+        `<button type="button" class="set-btn primary" data-si-reset data-busy="Sending…">Send code</button>` +
+        `<button type="button" class="set-btn" data-si-go="form">Cancel</button></section>`
+      : '');
   return (
     `<div class="scroll si-scroll${form ? ' form' : ''}"><div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>` +
     (form ? login : welcome) +
     `</div>` +
-    // Try Demo：和正式登录分开，从底部上拉
-    (form
+    // Try Demo: separate from real sign-in, slides up from the bottom
+    (form || invite
       ? ''
       : `<section class="glass si-sheet${step === 'demo' ? ' open' : ''}" aria-label="Try Demo">` +
         `<button type="button" class="si-grab" data-si-sheet aria-expanded="${step === 'demo'}"><i></i><span>Try Demo</span></button>` +
@@ -203,9 +215,9 @@ function signinHTML(step) {
   );
 }
 
-/* ---------- 注册：邮箱或手机号 → 验证码 → 名字和密码 → 加入或新建小组 ----------
-   step：up | upbad | upcode | upcodebad | upname；注册完回到“还没有小组”的首页
-   原型里验证码是 123456；alex@ 开头的邮箱当作已经注册过 */
+/* ---------- Sign-up: email or phone → code → name and password → join or create a group ----------
+   step: up | upbad | upcode | upcodebad | upname; after sign-up, return to the "no group yet" Home
+   The prototype code is 123456; emails starting with alex@ count as already registered */
 const UP = { via: 'email', to: 'mia@example.com', cc: '+65', name: 'Mia' };
 const upHead = (title, back) =>
   `<header class="sub-h"><button type="button" class="sub-back" data-si-go="${back}" aria-label="Back">${ic('back')}</button><h1>${title}</h1><span></span></header>`;
@@ -265,7 +277,7 @@ function signupHTML(step) {
     `</div>`
   );
 }
-// 重发验证码的倒计时
+// Countdown for resending the code
 function resendTimer(scr) {
   const b = scr.querySelector('[data-up-resend]');
   if (!b) return;
@@ -280,9 +292,9 @@ function resendTimer(scr) {
   });
 }
 
-/* ---------- 设置 ----------
-   step：main | groups | time | invite | join | joined | create | rename | prompt | member | reset
-   组长才能改组名、选题目、发邀请；小组满 10 人时不能邀请；Demo 身份的控制只在用 Demo 登录时出现 */
+/* ---------- Settings ----------
+   step: main | groups | time | invite | join | joined | create | rename | prompt | member | reset
+   Only the owner can rename, pick the prompt and invite; no invites when the group has 10 people; Demo identity controls appear only when signed in with Demo */
 let setUid = 0;
 const setHead = (title, back = 'main') =>
   `<header class="sub-h"><button type="button" class="sub-back" ${back === 'close' ? 'data-sub-back' : `data-set-go="${back}"`} aria-label="Back">${ic('back')}</button><h1>${title}</h1><span></span></header>`;
@@ -290,7 +302,7 @@ const setRow = (icon, label, note, attrs = '', cls = '') =>
   `<li><button type="button" class="set-row${cls}"${attrs}>${ic(icon)}<span>${label}${note ? `<small>${note}</small>` : ''}</span>${attrs.includes('data-set-go') ? ic('chev', 'go') : ''}</button></li>`;
 const avatarOf = (x, cls = '') =>
   `<span class="avatar${cls}" style="--mc:${x.col}">${x.name[0]}</span>`;
-// 题目选择：新建小组和改题目共用
+// Prompt picker: shared by new group and change prompt
 const promptPicker = (sel) => {
   const n = `pr-${++setUid}`;
   return (
@@ -308,7 +320,7 @@ function settingsHTML(d, step, o = {}) {
   const me = acting();
   const full = d.n >= 10;
   const owner = isOwner();
-  // 还没有小组：小组这一块只有加入和新建
+  // No group yet: the group section only has join and create
   const noGroup = () =>
     `<p class="set-k">Group</p><ul class="glass set-list"><li class="set-hint">You’re not in a group yet.</li>` +
     setRow('key', 'Have an invite?', '', ' data-set-go="join"') +
@@ -352,9 +364,15 @@ function settingsHTML(d, step, o = {}) {
         setRow('send', 'Send a test reminder', '', ' data-set-test')
       : '') +
     `</ul><p class="set-k">Account</p><ul class="glass set-list">` +
-    setRow('out', SET.demo ? 'Sign out of Demo' : 'Sign out', '', ' data-set-out', ' out') +
+    setRow(
+      'out',
+      SET.demo ? 'Sign out of Demo' : 'Sign out',
+      '',
+      ' data-set-go="signout"',
+      ' out',
+    ) +
     `</ul>` +
-    // Demo 身份的控制：只在用 Demo 登录时出现，和正式账号分开
+    // Demo identity controls: only when signed in with Demo, kept separate from real accounts
     (SET.demo
       ? `<p class="set-k">Demo</p><ul class="glass set-list set-demo">` +
         setRow('users', 'Switch demo member', me.name, ' data-set-go="member"') +
@@ -365,6 +383,9 @@ function settingsHTML(d, step, o = {}) {
   const pages = {
     main,
     reset: main,
+    signout: main,
+    notify: main,
+    install: main,
     groups: () =>
       setHead('Switch group') +
       `<ul class="glass set-list">` +
@@ -447,26 +468,47 @@ function settingsHTML(d, step, o = {}) {
     `<div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>` +
     (pages[step] || main)() +
     `</div>` +
-    // 清空 Demo 数据：先确认，写明范围（UX-CONTRACT）
+    // Clear Demo data: confirm first and state the scope (UX-CONTRACT)
     (step === 'reset'
       ? `<div class="set-dim" data-set-go="main"></div><section class="glass set-dlg" role="dialog" aria-label="Reset local Demo data confirmation">` +
         `<h2>Reset local Demo data?</h2><p>The Demo session, local groups, your member choice and saved moments on this device are cleared. Real accounts are not touched.</p>` +
         `<button type="button" class="set-btn" data-set-go="main">Keep local data</button>` +
         `<button type="button" class="set-btn danger" data-set-reset data-busy="Resetting…">Reset</button></section>`
+      : '') +
+    (step === 'signout'
+      ? `<div class="set-dim" data-set-go="main"></div><section class="glass set-dlg" role="dialog" aria-label="Sign out confirmation">` +
+        `<h2>${SET.demo ? 'Sign out of Demo?' : 'Sign out?'}</h2><p>Your sealed moments stay with the group. A moment still uploading on this phone stops until you sign in again.</p>` +
+        `<button type="button" class="set-btn" data-set-go="main">Stay signed in</button>` +
+        `<button type="button" class="set-btn danger" data-set-out>Sign out</button></section>`
+      : '') +
+    // Turning the reminder on the first time: say what comes before the browser asks
+    (step === 'notify'
+      ? `<div class="set-dim" data-set-go="main"></div><section class="glass set-dlg" role="dialog" aria-label="Allow notifications">` +
+        `<h2>Get the Sunday reminder?</h2><p>One notification a week, Sundays at ${SET.time}, and one when your film premieres. Your browser asks next.</p>` +
+        `<button type="button" class="set-btn primary" data-set-allow>Continue</button>` +
+        `<button type="button" class="set-btn" data-set-go="main">Not now</button>` +
+        `<button type="button" class="up-link" data-set-go="install">On iPhone? Add Rewind to your Home Screen first</button></section>`
+      : '') +
+    // iPhone Safari only sends web push to the Home Screen app
+    (step === 'install'
+      ? `<div class="set-dim" data-set-go="main"></div><section class="glass set-dlg set-install" role="dialog" aria-label="Add to Home Screen">` +
+        `<h2>Add Rewind to your Home Screen</h2><p>On iPhone, reminders only arrive in the Home Screen app.</p>` +
+        `<ol><li>Tap ${ic('share')} Share in Safari</li><li>Choose <b>Add to Home Screen</b></li><li>Open Rewind from your Home Screen and turn the reminder on</li></ol>` +
+        `<button type="button" class="set-btn primary" data-set-go="main">Got it</button></section>`
       : '')
   );
 }
 
-/* ---------- 你的片段：只有元数据；每周可以删一段重拍 ----------
-   step：list | confirm | done */
-// deleted：这周已经删过的小组（每个小组每周一次）
+/* ---------- Your moments: metadata only; you can delete one a week to reshoot ----------
+   step: list | confirm | done */
+// deleted: groups that already used this week's delete (once per group per week)
 const MINE = { deleted: {}, pick: null, bad: false };
 const usedDelete = () => !!MINE.deleted[grp()?.id];
 function mineHTML(d, step, id) {
   const clips = homeClips(id, d);
   const secs = clips.reduce((s, c) => s + c[1], 0);
   const reset = plural(cyc().reset, 'day');
-  // 处理失败的是最后一段（首页的标签也标在最后一段）
+  // The failed one is the last moment (Home's label also marks the last one)
   const bad = NAV.home === 'failed' ? clips.length - 1 : -1;
   const kindOf = (k) => (k === 'photo' ? 'Photo' : 'Video');
   const rows = clips
@@ -501,8 +543,8 @@ function mineHTML(d, step, id) {
   );
 }
 
-/* ---------- 相机：视频和照片 ----------
-   data-mode：video | photo；data-step：perm | view | rec | review | upload | sealed */
+/* ---------- Camera: video and photo ----------
+   data-mode: video | photo; data-step: perm | view | rec | review | upload | sealed */
 function cameraHTML(d, mode, step, o = {}) {
   const video = mode === 'video';
   const t = o.t ?? 0;
@@ -515,17 +557,20 @@ function cameraHTML(d, mode, step, o = {}) {
     `<span class="cam-pill" data-sec="${secLeft(d)}">${left5(d)} left · ${secLeft(d)} s</span>` +
     `<button type="button" class="cam-ic" aria-label="Flash">${ic('flash')}</button></div>` +
     `<p class="cam-time" aria-live="off"><i></i><span>${tm(t)}</span> / ${tm(Math.min(15, secLeft(d)))}</p>` +
-    // 没给权限：视频要相机和麦克风，照片只要相机
-    `<section class="cam-perm glass"><h2>${video ? 'Allow camera and mic' : 'Allow the camera'}</h2><p>${video ? 'Rewind records short videos with sound.' : 'Rewind needs the camera to take a photo.'}</p>` +
-    `<button type="button" class="cam-allow" data-cam-allow>Allow</button></section>` +
-    // 取景、录制
+    // No permission: video needs camera and microphone, photo only the camera
+    (step === 'denied'
+      ? `<section class="cam-perm glass"><h2>${video ? 'Camera or mic is off' : 'The camera is off'}</h2><p>Turn ${video ? 'Camera and Microphone' : 'Camera'} on for Rewind in your phone’s Settings, then come back. Nothing was recorded.</p>` +
+        `<button type="button" class="cam-allow" data-cam-allow>Try again</button><button type="button" class="cam-fin" data-sub-back>Not now</button></section>`
+      : `<section class="cam-perm glass"><h2>${video ? 'Allow camera and mic' : 'Allow the camera'}</h2><p>${video ? 'Rewind records short videos with sound.' : 'Rewind needs the camera to take a photo.'}</p>` +
+        `<button type="button" class="cam-allow" data-cam-allow>Allow</button></section>`) +
+    // Framing, recording
     `<div class="cam-bottom"><div class="cam-modes" role="tablist" aria-label="Capture mode">` +
     `<button type="button" role="tab" data-cam-mode="video" aria-selected="${video}">Video</button>` +
     `<button type="button" role="tab" data-cam-mode="photo" aria-selected="${!video}">Photo</button></div>` +
     `<div class="cam-row"><button type="button" class="cam-mine" data-cam-mine aria-label="Your moments: ${d.me.c} sealed">${ic('lock')}<b>${d.me.c}</b></button>` +
     `<button type="button" class="cam-shut" data-cam-shoot aria-label="${video ? 'Start recording' : 'Take photo'}">${arcRing(video ? Math.max(0.001, t / 15) : 0.001)}<span class="cam-core"></span></button>` +
     `<button type="button" class="cam-ic" aria-label="Flip camera">${ic('flip')}</button></div></div>` +
-    // 看一眼（视频还能剪、选效果），再封存
+    // Take a look (video can also be trimmed and given an effect), then seal
     (video ? `<div class="cam-play" aria-hidden="true">${ic('play')}</div>` : '') +
     `<section class="cam-rev">` +
     (video
@@ -545,11 +590,16 @@ function cameraHTML(d, mode, step, o = {}) {
       : `<p class="trim-t">Counts as one moment · ${PHOTO_SECS} s in the film</p>`) +
     `<div class="cam-acts"><button type="button" class="cam-retake" data-cam-retake>Retake</button>` +
     `<button type="button" class="cam-seal" data-cam-seal>${ic('lock')}<span>Seal</span></button></div></section>` +
-    // 上传中：可以取消
-    `<section class="cam-up" role="status"><div class="cam-upbar"><i style="width:${pct}%"></i></div>` +
-    `<p><span data-cam-pct>Uploading ${pct}%</span></p>` +
-    `<button type="button" class="cam-retake" data-cam-cancel>Cancel</button></section>` +
-    // 封存好了
+    // Uploading: can cancel
+    (step === 'upfail'
+      ? `<section class="cam-up bad" role="alert"><div class="cam-upbar"><i style="width:${pct}%"></i></div>` +
+        `<p>Couldn’t upload · no connection</p><p class="cam-hint">It’s kept on this phone and doesn’t count until it’s sealed.</p>` +
+        `<button type="button" class="cam-seal" data-cam-seal>${ic('replay')}<span>Retry</span></button>` +
+        `<button type="button" class="cam-retake" data-cam-cancel>Back to review</button></section>`
+      : `<section class="cam-up" role="status"><div class="cam-upbar"><i style="width:${pct}%"></i></div>` +
+        `<p><span data-cam-pct>Uploading ${pct}%</span></p>` +
+        `<button type="button" class="cam-retake" data-cam-cancel>Cancel</button></section>`) +
+    // Sealed
     `<section class="cam-done" role="status"><span class="cam-ok">${ic('check')}</span><h2>Sealed</h2>` +
     `<p>${Math.max(0, left5(d) - 1)} left · finishing in the background</p>` +
     `<div class="cam-tell"><button type="button" class="set-btn primary" data-cam-tell>${ic('chat')}Tell the group</button>` +
@@ -558,34 +608,34 @@ function cameraHTML(d, mode, step, o = {}) {
   );
 }
 
-// 影片长度：每段平均 8 秒，加一段 3 秒的补位
+// Film length: an average of 8 s per moment, plus one 3 s padding moment
 const filmSecs = (n) => n * 8 + 3;
 const filmLen = (n) => {
   const s = filmSecs(n);
   return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`;
 };
 
-/* ---------- 首映影片：直接放，24 小时内各自看 ----------
-   data-step：play | end */
+/* ---------- Premiere film: plays straight away; everyone watches within 24 hours ----------
+   data-step: play | end */
 function filmHTML(d, o = {}) {
   const who = d.members.filter((x) => x.c > 0);
   const moments = who.flatMap((x) => Array.from({ length: x.c }, () => x));
-  // 片子偏短时，第 3 格用一段标着 From the archive 的旧片段补位
+  // When the film runs short, tile 3 is padded with an old moment marked From the archive
   moments.splice(2, 0, { filler: true });
   return (
     `<div class="fm-frames" aria-hidden="true">${moments.map(frame).join('')}</div>` +
-    // 补位的旧片段在放的时候，角上标出来（标签不放在模糊的画面里）
+    // While a padding archive moment plays, mark it in the corner (the label isn't placed over the blurred image)
     `<span class="fm-tag">From the archive</span>` +
     `<div class="fm-top"><button type="button" class="cam-ic" data-sub-back aria-label="Close">${ic('close')}</button>` +
     `<span class="fm-title"><b>${esc(groupName())}</b><small>${o.film && typeof filmInfo === 'function' ? filmInfo(o.film) : 'Premiere · 18 h left'}</small></span><span class="cam-ic cam-ph" aria-hidden="true"></span></div>` +
-    // 放映中
+    // Playing
     `<div class="fm-bar" aria-hidden="true">${moments.map(() => '<i><b></b></i>').join('')}</div>` +
     `<div class="fm-ctl"><button type="button" class="glass-btn" data-fm-chat>${ic('chat')}Talk about it</button>` +
     `<button type="button" class="cam-ic" data-fm-pause aria-label="Pause">${ic('pause')}</button></div>` +
-    // 片尾
+    // End credits
     `<section class="fm-end"><h2>Your film</h2><p>${plural(moments.length - 1, 'moment')} · ${filmLen(moments.length - 1)}</p>` +
     `<div class="fm-cast">${who.map((x) => `<span><i class="av" style="--mc:${x.col}">${x.name[0]}</i>${x.me ? 'You' : x.name}</span>`).join('')}</div>` +
-    // 看完最自然的下一步：去聊天
+    // The most natural next step after watching: go to chat
     `<button type="button" class="set-btn primary fm-chat" data-fm-chat>${ic('chat')}Talk about it in Chat</button>` +
     `<div class="fm-acts"><button type="button" class="glass-btn" data-fm-replay>${ic('replay')}Replay</button>` +
     `<button type="button" class="glass-btn" data-fm-save="film">${ic('save')}Save film</button></div>` +
@@ -594,14 +644,14 @@ function filmHTML(d, o = {}) {
   );
 }
 
-/* ---------- 画一台“子画面”手机 ---------- */
+/* ---------- Draw a "sub-screen" phone ---------- */
 function subScreen(kind, id, o = {}) {
-  // 底栏的三页：按 o.home 的状态画一台完整的手机（画面页用）
+  // The dock's three pages: draw a full phone in the o.home state (used by the screens page)
   if (['home', 'chat', 'archive'].includes(kind)) {
     const c = concepts.find((x) => x.id === id);
     return withHome(o.home || 'collect', () => screen(c, dataFor(id), kind, o));
   }
-  // 其他画面指定了首页状态（画面页用）：在那个状态下画
+  // Other screens that set a Home state (used by the screens page): draw in that state
   if (o.home) return withHome(o.home, () => subScreen(kind, id, { ...o, home: undefined }));
   const d = dataFor(id);
   const step =
@@ -631,12 +681,12 @@ function subScreen(kind, id, o = {}) {
   );
 }
 
-// 在这台手机原来的首页状态下画子画面（状态页里那台“额度用完”点进“你的片段”，看到的也是用完）
+// Draw the sub-screen in this phone's original Home state (on the states page, opening "Your moments" from the "quota used up" phone shows it used up too)
 const subIn = (wrap, kind, id, o) =>
   withHome(wrap.dataset.home || NAV.home, () =>
     pureIf(!!wrap.closest('#states-view'), () => subScreen(kind, id, o)),
   );
-// 从首页那台手机进入：记下是从首页来的，返回时重画首页
+// Entering from the Home phone: remember it came from Home and redraw Home on return
 function openSub(scr, kind, o = {}) {
   const wrap = scr.closest('.phone-wrap');
   const id = scr.classList[1];
@@ -653,7 +703,7 @@ function openSub(scr, kind, o = {}) {
   if (kind === 'film') startFilm(ns);
   return ns;
 }
-// 同一台手机换一步：重画，记得它是不是从首页来的
+// Move this phone to another step: redraw, remembering whether it came from Home
 function redraw(scr, kind, o) {
   const wrap = scr.closest('.phone-wrap');
   const from = wrap.dataset.from;
@@ -666,7 +716,7 @@ function closeSub(scr, sealed) {
   const wrap = scr.closest('.phone-wrap');
   const id = scr.classList[1];
   stopTimers(scr);
-  // 画面页里的手机：回到这一步一开始的样子
+  // Phones on the screens page: return to how this step started
   if (wrap.dataset.from !== 'home') {
     const fig = wrap.closest('[data-sub]');
     wrap.innerHTML = subScreen(fig.dataset.sub, id, JSON.parse(fig.dataset.opts || '{}'));
@@ -682,7 +732,7 @@ function closeSub(scr, sealed) {
   return ns;
 }
 
-/* ---------- 计时器（录制、上传、放映），换画面时一起停掉 ---------- */
+/* ---------- Timers (recording, upload, playback), all stopped when the screen changes ---------- */
 const TIMERS_SUB = new WeakMap();
 function every(scr, ms, fn) {
   const list = TIMERS_SUB.get(scr) || [];
@@ -699,7 +749,7 @@ function stopTimers(scr) {
   TIMERS_SUB.delete(scr);
 }
 const goStep = (scr, step) => (scr.dataset.step = step);
-// 按钮在等结果时：换成“进行中”的字、不能再点（UX-CONTRACT）
+// While a button waits for a result: swap to "in progress" text and disable it (UX-CONTRACT)
 function busy(btn, ms, done) {
   const label = btn.innerHTML;
   btn.disabled = true;
@@ -717,17 +767,17 @@ function busy(btn, ms, done) {
   );
 }
 
-/* ---------- 相机 ---------- */
+/* ---------- Camera ---------- */
 function shoot(scr) {
   const left = Number(scr.querySelector('.cam-pill').dataset.sec);
   if (scr.dataset.mode === 'photo') {
-    // 照片占 3 秒，本周不够 3 秒就拍不了
+    // A photo takes 3 s; you can't take one with less than 3 s left this week
     if (left < PHOTO_SECS) return rvToast(t('scr.toast.photoSecs').replace('{n}', left));
     fx(scr.querySelector('.cam-flashfx'), 'go', 500);
     return later(scr, reduceMotion() ? 0 : 180, () => goStep(scr, 'review'));
   }
   if (scr.dataset.step === 'rec' && TIMERS_SUB.has(scr)) return stopRec(scr);
-  // 最长 15 秒，也不能超过本周剩下的秒数
+  // At most 15 s, and no more than the seconds left this week
   const max = Math.min(15, left);
   const t0 = Date.now() - (scr._t || Number(scr.dataset.t) || 0) * 1000;
   goStep(scr, 'rec');
@@ -741,11 +791,11 @@ function shoot(scr) {
   });
 }
 function stopRec(scr) {
-  // 画面页里停在录制中的那台没有计时器，按它显示的秒数算
+  // The screens page phone paused mid-recording has no timer; use the seconds it shows
   const len = Math.max(1, scr._t || Number(scr.dataset.t) || 0);
   redraw(scr, 'camera', { mode: 'video', step: 'review', len });
 }
-// 上传：进度可以看、可以取消；传完就封存，处理在后台
+// Upload: progress is visible and cancellable; once done it's sealed and processing runs in the background
 function upload(scr) {
   goStep(scr, 'upload');
   let pct = 0;
@@ -767,7 +817,7 @@ function upload(scr) {
   });
 }
 
-// 剪辑：拖两边的把手
+// Trim: drag the handles at either side
 function dragTrim(e) {
   const h = e.target.closest('[data-trim]');
   if (!h) return;
@@ -780,11 +830,11 @@ function dragTrim(e) {
     const p = Math.min(100, Math.max(0, ((ev.clientX - box.left) / box.width) * 100));
     const l = parseFloat(win.style.left);
     const r = parseFloat(win.style.right);
-    // 至少留半秒
+    // Keep at least half a second
     const gap = (0.5 / len) * 100;
     if (h.dataset.trim === 'l') win.style.left = Math.min(p, 100 - r - gap) + '%';
     else win.style.right = Math.min(100 - p, 100 - l - gap) + '%';
-    // 窗口外面压暗的那一层跟着走
+    // The dimmed layer outside the window follows along
     const shade = trim.querySelector('.trim-shade');
     shade.style.left = win.style.left;
     shade.style.right = win.style.right;
@@ -801,7 +851,7 @@ function dragTrim(e) {
 }
 document.addEventListener('pointerdown', dragTrim);
 
-/* ---------- 首映影片 ---------- */
+/* ---------- Premiere film ---------- */
 function startFilm(scr) {
   stopTimers(scr);
   goStep(scr, 'play');
@@ -827,8 +877,8 @@ function startFilm(scr) {
   });
 }
 
-/* ---------- 设置里的小交互 ---------- */
-// 测试提醒：像系统通知一样从顶部落下
+/* ---------- Small interactions in Settings ---------- */
+// Test reminder: drops from the top like a system notification
 function testReminder(scr) {
   scr.querySelector('.set-push')?.remove();
   const n = document.createElement('div');
@@ -839,7 +889,7 @@ function testReminder(scr) {
   setTimeout(() => n.remove(), 3200);
 }
 const normCode = (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '');
-// 题目选择器里选中的题目；自己写但没写时返回 null
+// The prompt chosen in the prompt picker; returns null if "write your own" is chosen but empty
 function pickedPrompt(scr) {
   const custom = scr.querySelector('[data-set-custom]').checked;
   if (!custom) return Number(scr.querySelector('.set-opt input:checked').value);
@@ -847,7 +897,7 @@ function pickedPrompt(scr) {
   return own ? { custom: own } : null;
 }
 const err = (scr, text) => (scr.querySelector('.set-err').textContent = text);
-// 登录后回到首页（画面页里的手机回到这一步开头）
+// After sign-in, return to Home (phones on the screens page return to the start of this step)
 function signedIn(scr, idx, demo, name) {
   Object.assign(SET, { me: idx, demo });
   sampleAccount();
@@ -858,15 +908,15 @@ function signedIn(scr, idx, demo, name) {
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
     '[data-sub-back],[data-set-gojoined],[data-mine-retry],[data-cam-tell],[data-cam-done],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-cam-cancel],[data-cam-mine],[data-look],' +
-      '[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-snooze],[data-set-join],[data-set-create],[data-set-rename],[data-set-prompt],[data-set-group],[data-set-me],[data-set-reset],' +
-      '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-si-forgot],[data-up-via],[data-up-send],[data-up-resend],[data-up-verify],[data-up-create],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
+      '[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-allow],[data-set-snooze],[data-set-join],[data-set-create],[data-set-rename],[data-set-prompt],[data-set-group],[data-set-me],[data-set-reset],' +
+      '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-si-forgot],[data-si-reset],[data-up-via],[data-up-send],[data-up-resend],[data-up-verify],[data-up-create],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
       '[data-fm-pause],[data-fm-replay],[data-fm-save],[data-fm-chat]',
   );
   if (!b || b.disabled) return;
   const scr = b.closest('.screen');
   const d = b.dataset;
   if ('subBack' in d) return closeSub(scr);
-  // 相机
+  // Camera
   if ('camShoot' in d) return shoot(scr);
   if (d.camMode) {
     if (scr.dataset.step === 'rec' || d.camMode === scr.dataset.mode) return;
@@ -877,9 +927,14 @@ document.addEventListener('click', (e) => {
     scr._t = 0;
     return redraw(scr, 'camera', { mode: scr.dataset.mode });
   }
-  if ('camSeal' in d) return upload(scr);
+  if ('camSeal' in d) {
+    // Retry after a failed upload: redraw the normal upload panel first
+    if (scr.dataset.step === 'upfail')
+      return upload(redraw(scr, 'camera', { mode: scr.dataset.mode, step: 'review' }));
+    return upload(scr);
+  }
   if ('camDone' in d) return closeSub(scr, true);
-  // 去聊天：带一句草稿，可以改成“刚拍了午饭”之类
+  // Go to chat: with a draft line, which can be changed to something like "just shot lunch"
   if ('camTell' in d) {
     const kind = scr.dataset.mode === 'photo' ? 'photo' : 'video';
     const wrap = scr.closest('.phone-wrap');
@@ -905,7 +960,7 @@ document.addEventListener('click', (e) => {
     scr.dataset.look = d.look;
     return;
   }
-  // 设置
+  // Settings
   if (d.setGo) return redraw(scr, 'settings', { step: d.setGo });
   if (d.setToast) return rvToast(t('scr.toast.' + d.setToast));
   if ('setTest' in d) return testReminder(scr);
@@ -915,6 +970,12 @@ document.addEventListener('click', (e) => {
     return rvToast(t(SET.snoozed ? 'scr.toast.snoozed' : 'scr.toast.unsnoozed'));
   }
   if ('setOut' in d) return redraw(scr, 'signin', {});
+  if ('setAllow' in d) {
+    SET.reminder = true;
+    SET.asked = true;
+    redraw(scr, 'settings', { step: 'main' });
+    return rvToast(t('scr.toast.remOn'));
+  }
   if ('setGojoined' in d) {
     SET.gi = SET.joined ?? SET.gi;
     rvToast(t('scr.toast.switched').replace('{name}', groupName()));
@@ -956,7 +1017,7 @@ document.addEventListener('click', (e) => {
     if (!name) return err(scr, 'Enter a group name.');
     if (pickedPrompt(scr) === null) return err(scr, 'Write a prompt, or pick one above.');
     return busy(b, 800, () => {
-      // 新建的小组：你是组长，第 1 期第 1 周从今天开始
+      // New group: you're the owner, capsule 1 week 1 starts today
       const p = pickedPrompt(scr);
       SET.list.push({
         id: 'c' + SET.list.length + Date.now(),
@@ -993,10 +1054,15 @@ document.addEventListener('click', (e) => {
       rvToast(t('scr.toast.saved'));
     });
   }
-  // 欢迎和登录
+  // Welcome and sign-in
   if (d.siGo) return redraw(scr, 'signin', { step: d.siGo });
-  if ('siForgot' in d) return rvToast(t('scr.toast.forgot'));
-  // 注册
+  if ('siForgot' in d) return redraw(scr, 'signin', { step: 'forgot' });
+  if ('siReset' in d)
+    return busy(b, 700, () => {
+      redraw(scr, 'signin', { step: 'upcode' });
+      rvToast(t('scr.toast.forgot'));
+    });
+  // Sign-up
   if (d.upVia) {
     UP.via = d.upVia;
     return redraw(scr, 'signin', { step: 'up' }).querySelector('[data-up-to]').focus();
@@ -1063,7 +1129,7 @@ document.addEventListener('click', (e) => {
     const pass = scr.querySelector('[data-si-pass]').value;
     if (!user || !pass) return err(scr, 'Enter your username and password.');
     return busy(b, 700, () => {
-      // 原型里：密码是 rewind；用户名是样例成员的名字就用那个人，其他都当作 Alex
+      // In the prototype the password is rewind; a username matching a sample member signs in as that person, otherwise Alex
       if (pass !== 'rewind') return err(scr, 'Wrong username or password.');
       const i = Math.max(
         0,
@@ -1072,7 +1138,7 @@ document.addEventListener('click', (e) => {
       signedIn(scr, i, false, POOL[i].name);
     });
   }
-  // 你的片段
+  // Your moments
   if ('mineRetry' in d) {
     return busy(b, 700, () => {
       scr.closest('.phone-wrap').dataset.home = 'collect';
@@ -1092,7 +1158,7 @@ document.addEventListener('click', (e) => {
       const id = scr.classList[1];
       const rec = myRec(id);
       const i = MINE.pick ?? 0;
-      // 删的是首页当前显示的那一份：额度用完、处理失败的状态删完回到能拍
+      // Delete from what Home currently shows: in the quota-used-up and processing-failed states, deleting returns to being able to shoot
       if (NEW_CYCLE.includes(wrap.dataset.home) && !snap()) dropClip(rec, POOL[0].c + i);
       else {
         const list = withHome(wrap.dataset.home || NAV.home, () => homeClips(id, dataFor(id)));
@@ -1100,16 +1166,16 @@ document.addEventListener('click', (e) => {
         rec.c = rec.clips.length;
         if (['quota', 'secs', 'failed'].includes(wrap.dataset.home)) wrap.dataset.home = 'collect';
       }
-      // 没传完的那段不算这周的删除次数
+      // The unfinished moment doesn't count toward this week's delete
       if (!MINE.bad) MINE.deleted[grp()?.id] = true;
       redraw(scr, 'mine', { step: 'done' });
       rvToast(t('scr.toast.deleted'));
     });
   }
   if ('mineRetake' in d) return redraw(scr, 'camera', {});
-  // 影片
+  // Film
   if ('fmPause' in d) {
-    // 停着的那台（画面页）：点一下从这一格接着放
+    // The paused phone (screens page): tap to resume from this tile
     if (!TIMERS_SUB.has(scr)) {
       scr.classList.remove('paused');
       b.innerHTML = ic('pause');
@@ -1135,7 +1201,7 @@ document.addEventListener('click', (e) => {
   }
 });
 
-// Try Demo 的面板也可以往上拖开、往下拖收起
+// The Try Demo panel can also be dragged up to open and down to close
 document.addEventListener('pointerdown', (e) => {
   const g = e.target.closest('[data-si-sheet]');
   if (!g) return;
@@ -1153,6 +1219,9 @@ document.addEventListener('pointerdown', (e) => {
 document.addEventListener('change', (e) => {
   const el = e.target;
   if (el.matches('[data-set-rem]')) {
+    // The first time it's turned on, explain before the browser's permission prompt
+    if (el.checked && !SET.asked)
+      return redraw(el.closest('.screen'), 'settings', { step: 'notify' });
     SET.reminder = el.checked;
     if (!el.checked) SET.snoozed = false;
     redraw(el.closest('.screen'), 'settings', { step: 'main' });
@@ -1175,7 +1244,7 @@ document.addEventListener('change', (e) => {
     SET.time = el.value;
     return rvToast(t('scr.toast.time').replace('{time}', SET.time));
   }
-  // 选了“自己写”才出现输入框
+  // The input appears only when "write your own" is chosen
   if (el.matches('.set-opt input')) {
     const ta = el.closest('.set-prompts').querySelector('.set-custom');
     if (!ta) return;
@@ -1186,7 +1255,7 @@ document.addEventListener('change', (e) => {
 document.addEventListener('input', (e) => {
   const scroll = e.target.closest('.scroll');
   const errEl = scroll?.querySelector('.set-err');
-  // 重新输入时先清掉上一次的错误
+  // Clear the previous error when typing again
   if (e.target.matches('input, textarea') && errEl) errEl.textContent = '';
   if (e.target.matches('[data-up-code]'))
     e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
@@ -1195,7 +1264,7 @@ document.addEventListener('input', (e) => {
   e.target.value = v.length > 4 ? v.slice(0, 4) + ' ' + v.slice(4) : v;
 });
 
-/* ---------- “画面”页：每个流程的关键步骤并排 ---------- */
+/* ---------- "Screens" page: each flow's key steps side by side ---------- */
 const FLOWS = [
   [
     'signin',
@@ -1305,7 +1374,7 @@ const FLOWS = [
   ],
 ];
 
-// 展开过的流程（只是这位看的人自己的偏好，存不了也没关系）
+// Expanded flows (just this viewer's preference; fine if it can't be saved)
 const OPEN_KEY = 'rewind-screens-open';
 function openFlows() {
   try {
@@ -1321,10 +1390,10 @@ function saveOpenFlows() {
   try {
     localStorage.setItem(OPEN_KEY, JSON.stringify(open));
   } catch {
-    /* 存不了就算了 */
+    /* Never mind if it can't be saved */
   }
 }
-// 一个流程里的手机：展开时才画
+// A phone in a flow: drawn only when expanded
 function fillFlow(sec) {
   if (sec.dataset.drawn) return;
   const [k, kind, steps] = FLOWS.find((f) => f[0] === sec.dataset.flow);
@@ -1357,10 +1426,10 @@ function renderScreensView() {
     if (document.body.classList.contains('view-screens'))
       history.replaceState(null, '', '#screens');
   } catch {
-    /* 受限的框架里改不了地址栏也没关系 */
+    /* Fine if a sandboxed frame can't change the address bar */
   }
 }
-// 展开 / 收起（toggle 不冒泡，在捕获阶段听）
+// Expand / collapse (toggle doesn't bubble, so listen in the capture phase)
 document.addEventListener(
   'toggle',
   (e) => {
@@ -1382,7 +1451,7 @@ document.addEventListener('click', (e) => {
   saveOpenFlows();
 });
 
-// 放映中的几台停在某一格，点播放键接着放
+// Paused playback phones: tap Play to resume
 function holdFilms(root) {
   root.querySelectorAll('[data-sub="film"]').forEach((fig) => {
     const o = JSON.parse(fig.dataset.opts);

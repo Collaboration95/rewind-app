@@ -1,5 +1,5 @@
-/* 玻璃底栏、快门状态、角标 */
-/* ============ 侧栏控件 ============ */
+/* Glass dock, shutter states, badges */
+/* ============ Sidebar controls ============ */
 .check {
   display: flex;
   gap: 8px;
@@ -13,7 +13,7 @@
   margin: 0;
   accent-color: var(--page-ink);
 }
-/* ============ 底栏页签 ============ */
+/* ============ Dock tabs ============ */
 .screen.gnav .tab {
   font: 500 11px/1 var(--f-body);
   letter-spacing: 0;
@@ -40,7 +40,7 @@
 .shutter {
   transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-/* ============ 快门状态 ============ */
+/* ============ Shutter states ============ */
 .shutter .tip {
   position: absolute;
   right: 0;
@@ -94,7 +94,7 @@
   opacity: 0.45;
   box-shadow: none;
 }
-/* ============ 角标 ============ */
+/* ============ Badges ============ */
 .badge {
   position: absolute;
   top: -6px;
@@ -118,7 +118,7 @@
   height: 9px;
   padding: 0;
 }
-/* 红点按页签定位 */
+/* Red dot positioned per tab */
 .tabs {
   position: relative;
 }

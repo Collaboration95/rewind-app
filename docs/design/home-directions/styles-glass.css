@@ -1,7 +1,7 @@
-/* 暖光玻璃：iOS 新玻璃质感（Liquid Glass）——底栏、快门、题目卡片
-   更通透（轻模糊、高饱和）、边缘一圈亮边（角上最亮）、左上一道高光、胶囊是嵌在底栏里的小镜片 */
-/* 屏幕下方一团暖光，让玻璃有东西可透 */
-/* 选择器要比 .c6 .scroll > *:not(.glow)（会把正文都设成 relative）更具体 */
+/* Warm Glass: iOS's new glass look (Liquid Glass) for the dock, shutter and prompt card
+   More see-through (light blur, high saturation), a bright rim (brightest at corners), a top-left highlight, and the pill is a small lens set into the dock */
+/* A warm glow low on the screen, so the glass has something to show through */
+/* The selector must be more specific than .c6 .scroll > *:not(.glow) (which makes all body content relative) */
 .c6 .scroll > .glow-low {
   position: absolute;
   left: -60px;
@@ -14,7 +14,7 @@
   filter: blur(24px);
   pointer-events: none;
 }
-/* ---------- 共用的玻璃 ---------- */
+/* ---------- Shared glass ---------- */
 .c6 .glass,
 .c6.nav-g .dock-g .tabs,
 .c6.gnav .shutter {
@@ -30,7 +30,7 @@
     0 18px 36px -16px rgba(160, 90, 40, 0.35),
     0 2px 6px -2px rgba(160, 90, 40, 0.14);
 }
-/* 左上一道高光（在文字下面） */
+/* A top-left highlight (beneath the text) */
 .c6 .glass::before,
 .c6.nav-g .dock-g .tabs::before,
 .c6.gnav .shutter::before {
@@ -44,7 +44,7 @@
     linear-gradient(118deg, transparent 58%, rgba(255, 255, 255, 0.2) 64%, transparent 72%);
   pointer-events: none;
 }
-/* 一圈亮边：角上最亮、边中间淡 */
+/* A bright rim: brightest at the corners, faint mid-edge */
 .c6 .glass::after,
 .c6.nav-g .dock-g .tabs::after,
 .c6.gnav .shutter::after {
@@ -68,28 +68,28 @@
   mask-composite: exclude;
   pointer-events: none;
 }
-/* ---------- 题目卡片 ---------- */
+/* ---------- Prompt card ---------- */
 .c6 .glass {
   z-index: 1;
   border-radius: 30px;
 }
-/* ---------- 底栏：三个页签 ---------- */
+/* ---------- Dock: three tabs ---------- */
 .c6.nav-g .dock-g .tabs {
   padding: 6px;
   border-radius: 32px;
 }
-/* 胶囊是嵌在底栏里的一片小镜片 */
+/* The pill is a small lens set into the dock */
 .c6.nav-g .dock-g.open .tab.on {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.28));
   box-shadow:
     inset 0 1px 1px rgba(255, 255, 255, 1),
     0 3px 10px -3px rgba(150, 80, 30, 0.28);
 }
-/* ---------- 快门：同样的玻璃圆，中间仍是暖色按钮 ---------- */
+/* ---------- Shutter: the same glass circle, still a warm button in the middle ---------- */
 .c6.gnav .shutter {
   border-radius: 50%;
 }
-/* ---------- 揭晓后的“一起看”：和底栏同一种玻璃，左边一颗暖色播放钮 ---------- */
+/* ---------- "Watch together" after the reveal: the same glass as the dock, a warm play button on the left ---------- */
 .c6 .wt {
   display: inline-flex;
   align-items: center;
@@ -123,7 +123,7 @@
   margin-left: 2px;
   fill: currentColor;
 }
-/* ---------- 首页：上方的状态卡（首映、制作中、处理失败） ---------- */
+/* ---------- Home: status card on top (premiere, compiling, processing failure) ---------- */
 .c6 .st-card {
   display: flex;
   flex-wrap: wrap;
@@ -182,11 +182,11 @@
     transform: translateY(-10px) scale(0.98);
   }
 }
-/* 有状态卡时，主视觉矮一点 */
+/* With a status card, the hero is a bit shorter */
 .c6 .hero.slim {
   height: 210px;
 }
-/* 额度那一行：点进“你的片段” */
+/* Quota row: opens "Your moments" */
 .c6 .glass .mine-row {
   width: 100%;
   gap: 10px;
@@ -206,7 +206,7 @@
   transform: rotate(-90deg);
 }
 
-/* 你这周的片段记录：一排小标签，只有类型、哪天、几秒 */
+/* Your moments this week: a row of small tags with only type, day and seconds */
 .c6 .hist {
   display: flex;
   flex-wrap: wrap;

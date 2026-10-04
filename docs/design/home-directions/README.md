@@ -8,7 +8,7 @@ The page only shows the design and how it behaves. Feedback goes in the team cha
 
 ## Open it
 
-- Hosted from this branch: https://htmlpreview.github.io/?https://github.com/Collaboration95/rewind-app/blob/ui-concept/bibi45c-warm-glass-cleanup/docs/design/home-directions/index.html
+- Hosted from this branch: https://htmlpreview.github.io/?https://github.com/Collaboration95/rewind-app/blob/ui-concept/final-screens/docs/design/home-directions/index.html#final
 - Or open `index.html` locally in a browser.
 
 ## Follows the product docs on `dev`
@@ -39,6 +39,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 
 ## Tabs
 
+- **Final**: the build spec. A state diagram of every screen group, the rules for moving between screens (push, full screen, tabs, menu, dialog, feedback, launch, Reduce Motion), then one row per flow with every screen as a live phone. Each screen has a code (A1 Launch, H1 Home, V3 Viewfinder…), what leads to it, every action and the code it goes to, and how it behaves at the edges. Tapping a diagram node or an action jumps to that screen. `#final` opens it. Screens only designed here: the launch screen (A1), the invite link (A4), reset password (B4), camera off (V2), upload failed (V7), allow notifications (S10), add to Home Screen on iPhone (S11), sign-out confirmation (S12) and the lock-screen notifications (N1).
 - **Home**: the phone you can tap. The dock switches between Home, Chat and Archive; the group name switches group; the avatar opens Settings, the shutter opens the camera, your allowance opens _Your moments_ and, during the premiere, _Watch_ opens the film. **Play** resets it: ① you add a moment, ② the 4 weeks end and the film premieres.
 - **States**: every Home state side by side, with when it shows and what the dock does. The buttons add a moment and end the cycle on the Collecting phone. `#states` opens it.
 - **Screens**: the flows around the Home, each step side by side and every phone live. Each flow folds away; they start folded and the page remembers which ones you opened. `#screens` opens it.
@@ -51,7 +52,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
   - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast, a main button that opens Chat, and Replay, Save film and Save your own moments.
   - Chat: new messages, tap a message, reply, no messages yet, reconnecting, offline, not sent, couldn't load, and after the premiere.
   - Archive: collecting, the premiere, developing, a film playing in its card, the first cycle and couldn't load.
-- **App icon**: pair Warm Glass (or the scratchpad skin) with an icon and see it on the home screen, the launch screen, in sizes, in a notification and as colours. The default icon is the two dots from the local build. `#mix=c6+r%3Adots` links to a pairing.
+- **App icon**: five icons in the Warm Glass colours (Ember ring, Soft rewind, Time capsule, Soft r., Campfire). See the one you pick on the launch screen opening into Home, the home screen, in sizes and in a notification. `#mix=ember` links to a pick.
 - **Dock icons**: try six icon sets in the dock. `#dock=ios` links to a set.
 
 ## Home states
@@ -75,7 +76,6 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 
 - Drag **group size** (2–10) and **shuffle** contributions. Home only shows your own moments, so the size shows in Settings (no invites at 10), the film's cast and Archive.
 - Every Home state is on the **States** tab, so the sidebar doesn't switch states.
-- Switch the page between **EN** (default) and **中文**; `?lang=zh` opens it in Chinese. The phone stays in English.
 - **Zoom** sets the phone size on every tab.
 
 ## Files
@@ -87,9 +87,10 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 | `states.js`, `styles-states.css`                         | Home states and the States tab                                        |
 | `screens.js`, `styles-screens.css`                       | Sign in, Settings, Your moments, the camera and the film; Screens tab |
 | `tabs.js`, `styles-tabs.css`                             | Chat, Archive and the group menu                                      |
-| `mix.js`, `styles-mix.css`, `icons.js`                   | App icon tab and the icon candidates as SVG                           |
+| `mix.js`, `styles-mix.css`, `icons.js`                   | App icon tab, page tabs, and the five icons as SVG                    |
+| `final.js`, `styles-final.css`                           | Final tab: diagram, transition rules and every screen with its notes  |
 | `dockicons.js`, `styles-dock.css`                        | Dock icons tab                                                        |
-| `i18n.js`                                                | English and Chinese text for the page                                 |
+| `i18n.js`                                                | Page text                                                             |
 | `styles.css`, `styles-r2.css`, `styles-r3.css`           | Page and phone shell, Warm Glass                                      |
 | `styles-glass.css`                                       | iOS glass for the dock, shutter, cards and buttons                    |
 | `styles-nav.css`, `styles-nav2.css`                      | Dock, shutter states and badges                                       |

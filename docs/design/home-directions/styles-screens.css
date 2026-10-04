@@ -1,5 +1,5 @@
-/* 首页以外的画面：设置、相机（拍照 / 录视频）、周日影片，以及“画面”页 */
-/* ============ 子画面通用 ============ */
+/* Screens beyond Home: Settings, camera (photo / video), Sunday film, and the "Screens" page */
+/* ============ Sub-screen shared ============ */
 .screen.sub-in {
   animation: sub-in 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
@@ -9,7 +9,7 @@
     transform: translateX(28px);
   }
 }
-/* 相机和影片是深色的暖黑底，让画面本身最亮 */
+/* Camera and film use a dark warm-black background so the image itself is brightest */
 .screen.c6.dark {
   --bg: #16100c;
   --ink: #f8ece0;
@@ -26,14 +26,14 @@
 .screen.dark::after {
   display: none;
 }
-/* 状态栏压在封存提示的模糊层上面，不被糊掉 */
+/* The status bar sits above the sealing notice's blur layer so it isn't blurred */
 .screen.dark .sb {
   z-index: 8;
 }
 .screen.dark .home-ind {
   background: rgba(255, 255, 255, 0.8);
 }
-/* 深色画面上的玻璃小圆钮、胶囊 */
+/* Small glass round buttons and pills on dark screens */
 .cam-ic,
 .cam-pill,
 .cam-mine,
@@ -62,11 +62,11 @@
 .cam-ic.cam-ph {
   visibility: hidden;
 }
-/* ============ 设置 ============ */
+/* ============ Settings ============ */
 .sub-settings .scroll {
   padding-top: 56px;
 }
-/* 设置页没有底栏，不需要底部的渐隐 */
+/* Settings has no dock, so no bottom fade */
 .sub-settings::after {
   display: none;
 }
@@ -114,7 +114,7 @@
   font: 400 22px/1.15 var(--f-serif);
   font-variation-settings: 'SOFT' 100;
 }
-/* 题目卡片里的 small 是大写小标签，这里换回普通小字 */
+/* small in the prompt card is an uppercase label; switch back to plain small text here */
 .c6 .glass.set-me small,
 .c6 .glass .set-row small,
 .c6 .glass .set-grp small {
@@ -195,14 +195,14 @@
   color: var(--accent);
   stroke-width: 2.4;
 }
-/* 成员头像用各自的专属色 */
+/* Member avatars use each person's colour */
 .sub-settings .avatar[style],
 .sub-signin .avatar[style] {
   color: var(--ink);
   background: color-mix(in srgb, var(--mc) 38%, #fff);
   box-shadow: inset 0 0 0 1.5px var(--mc);
 }
-/* 头像不跟着行里的文字一起拉宽 */
+/* Avatars don't stretch with the row's text */
 .set-row > .avatar {
   flex: none;
 }
@@ -212,7 +212,7 @@
   height: 32px;
   font-size: 13px;
 }
-/* 个人卡片可以点：去切换成员 */
+/* The profile card is tappable: switch member */
 .c6 .set-me {
   width: 100%;
   text-align: left;
@@ -227,7 +227,7 @@
   color: var(--muted);
   transform: rotate(-90deg);
 }
-/* 小组：名字、身份、人数和成员头像 */
+/* Group: name, role, size and member avatars */
 .set-list li.set-grp {
   display: flex;
   align-items: center;
@@ -253,7 +253,7 @@
 .set-grp .av:first-child {
   margin-left: 0;
 }
-/* 子页面的说明、卡片、按钮、输入框 */
+/* Sub-page notes, cards, buttons, inputs */
 .set-lead {
   margin: 0 6px 16px;
   font-size: 14px;
@@ -355,7 +355,7 @@
   font-size: 12.5px;
   color: #8f2615;
 }
-/* 新建小组：三个内置题目，或者自己写 */
+/* New group: three built-in prompts, or write your own */
 .set-prompts {
   padding: 4px 0;
 }
@@ -395,7 +395,7 @@
 .set-custom[hidden] {
   display: none;
 }
-/* 加入成功 */
+/* Joined */
 .set-okic {
   display: grid;
   place-items: center;
@@ -416,7 +416,7 @@
   font: 400 24px/1.15 var(--f-serif);
   font-variation-settings: 'SOFT' 100;
 }
-/* 清空数据的确认框 */
+/* Clear-data confirmation */
 .set-dim {
   position: absolute;
   inset: 0;
@@ -448,7 +448,7 @@
   line-height: 1.45;
   color: var(--muted);
 }
-/* 测试提醒：系统通知从顶部落下 */
+/* Test reminder: a system notification drops from the top */
 .set-push {
   position: absolute;
   z-index: 9;
@@ -507,7 +507,7 @@
     transform: translateY(-120%);
   }
 }
-/* 开关 */
+/* Switch */
 .sw {
   position: relative;
   flex: none;
@@ -544,8 +544,8 @@
   font-size: 12px;
   color: var(--muted);
 }
-/* ============ 相机 ============ */
-/* 取景框：虚焦的暖色灯光，慢慢漂；拍下之后停住 */
+/* ============ Camera ============ */
+/* Viewfinder: out-of-focus warm lights drifting slowly; they freeze after capture */
 .cam-view {
   position: absolute;
   inset: 0;
@@ -580,7 +580,7 @@
 .screen[data-look='contrast'] .cam-view {
   filter: contrast(1.4) saturate(1.25);
 }
-/* 按下快门时一闪 */
+/* Flash on shutter press */
 .cam-top,
 .fm-top {
   position: absolute;
@@ -598,7 +598,7 @@
   font-size: 13.5px;
   font-weight: 500;
 }
-/* 录视频：计时 */
+/* Video recording: timer */
 .cam-time {
   display: none;
   position: absolute;
@@ -639,7 +639,7 @@
     opacity: 0.2;
   }
 }
-/* 底部：模式、快门 */
+/* Bottom: mode, shutter */
 .cam-bottom {
   display: none;
   position: absolute;
@@ -716,7 +716,7 @@
   height: 32px;
   border-radius: 9px;
 }
-/* 没给权限 */
+/* No permission */
 .c6 .cam-perm {
   display: none;
   position: absolute;
@@ -750,7 +750,7 @@
   color: #2a1a10;
   background: #ffd9b0;
 }
-/* 看一眼再封存 */
+/* Take a look, then seal */
 .cam-rev {
   display: none;
   position: absolute;
@@ -827,7 +827,7 @@
   margin-left: 4px;
   fill: currentColor;
 }
-/* 剪辑：一排画面，两边可以拖的把手 */
+/* Trim: a row of frames with draggable handles at either side */
 .trim {
   position: relative;
   height: 56px;
@@ -903,7 +903,7 @@
   color: #2a1a10;
   background: #ffd9b0;
 }
-/* 封存好了 */
+/* Sealed */
 .cam-done {
   display: none;
   position: absolute;
@@ -948,7 +948,7 @@
   margin: 0;
   color: var(--muted);
 }
-/* 封存好了：去聊天说一声，或者完成 */
+/* Sealed: tell the chat, or finish */
 .cam-tell {
   display: grid;
   gap: 10px;
@@ -970,7 +970,7 @@
   font-size: 12.5px;
   line-height: 1.4;
 }
-/* ============ 周日影片 ============ */
+/* ============ Sunday film ============ */
 .fm-frames {
   position: absolute;
   inset: 0;
@@ -981,7 +981,7 @@
   background:
     radial-gradient(circle at 50% 36%, rgba(255, 160, 100, 0.38), transparent 58%), #120b08;
 }
-/* 一格：作者色的一片抽象光，揭晓后才有颜色 */
+/* A tile: abstract light in the author's colour, coloured only after the reveal */
 .fm-f {
   position: absolute;
   inset: -20px;
@@ -1018,7 +1018,7 @@
   text-transform: uppercase;
   color: var(--muted);
 }
-/* 等大家到 */
+/* Waiting for everyone */
 .sub-film .av {
   width: 36px;
   height: 36px;
@@ -1028,7 +1028,7 @@
 .sub-film .av:first-child {
   margin-left: 0;
 }
-/* 放映中 */
+/* Playing */
 .fm-bar {
   display: none;
   position: absolute;
@@ -1085,7 +1085,7 @@
 .fm-ctl .cam-ic .ic {
   fill: currentColor;
 }
-/* 片尾 */
+/* End credits */
 .fm-end {
   display: none;
   position: absolute;
@@ -1157,7 +1157,7 @@
   font-size: 12.5px;
   color: var(--muted);
 }
-/* ============ 登录：一个 Sign in；上拉选测试用户 ============ */
+/* ============ Sign-in: one Sign in; slide up to pick a test user ============ */
 .sub-signin .si-scroll {
   padding-top: 150px;
   text-align: center;
@@ -1233,7 +1233,7 @@
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.55);
 }
-/* ============ 设置：组员看到的、不能点的行 ============ */
+/* ============ Settings: rows members see but can't tap ============ */
 .set-row.off {
   cursor: default;
 }
@@ -1252,7 +1252,7 @@
 .set-row:disabled {
   cursor: default;
 }
-/* ============ 你的片段：只有时间和长度 ============ */
+/* ============ Your moments: only time and length ============ */
 .mine-sum b {
   font: 400 38px/1 var(--f-serif);
   font-variation-settings: 'SOFT' 100;
@@ -1269,7 +1269,7 @@
 .sub-mine .set-btn {
   margin-top: 6px;
 }
-/* ============ 相机：只录视频、上传进度 ============ */
+/* ============ Camera: video only, upload progress ============ */
 .sub-camera .cam-core {
   background: #f0603f;
 }
@@ -1315,7 +1315,7 @@
 .screen[data-step='upload'] .cam-pill {
   visibility: hidden;
 }
-/* ============ 影片：补位的旧片段、去聊天 ============ */
+/* ============ Film: padding archive moments, go to chat ============ */
 .fm-tag {
   position: absolute;
   z-index: 5;
@@ -1350,7 +1350,7 @@
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-/* ============ 相机：视频 / 照片切换、按快门一闪 ============ */
+/* ============ Camera: video / photo switch, shutter flash ============ */
 .cam-modes {
   display: flex;
   gap: 4px;
@@ -1402,7 +1402,7 @@
   }
 }
 
-/* ============ 登录：表单、提示、Try Demo ============ */
+/* ============ Sign-in: form, notices, Try Demo ============ */
 .sub-signin .si-scroll.form {
   padding-top: 56px;
   text-align: left;
@@ -1422,7 +1422,7 @@
   background: rgba(255, 255, 255, 0.6);
   box-shadow: inset 0 0 0 1px rgba(194, 69, 47, 0.35);
 }
-/* 收起时只露出把手和“Try Demo” */
+/* Collapsed: only the handle and "Try Demo" show */
 .si-sheet:not(.open) .si-sub {
   visibility: hidden;
 }
@@ -1433,7 +1433,7 @@
   color: var(--muted);
 }
 
-/* ============ 注册：邮箱 / 手机号 → 验证码 → 名字和密码 ============ */
+/* ============ Sign-up: email / phone → code → name and password ============ */
 .set-btn.si-up {
   margin-top: 12px;
 }
@@ -1471,7 +1471,7 @@
   gap: 10px;
   align-items: center;
 }
-/* 侧栏的 select 样式是整行宽，这里收回来 */
+/* The sidebar select style is full width; pull it back here */
 .up-phone select {
   flex: none;
   width: auto;
@@ -1509,7 +1509,7 @@
   font-weight: 600;
   color: var(--ink);
 }
-/* 提醒时间：自定义 */
+/* Reminder time: custom */
 .set-tm {
   display: flex;
   align-items: center;
@@ -1536,7 +1536,7 @@
   color: var(--muted);
 }
 
-/* 你的片段：没传完的那段，下面是重试和删除 */
+/* Your moments: the unfinished one, with Retry and Delete below */
 .mine-bad .set-row small {
   color: #8f2615;
 }
@@ -1550,13 +1550,13 @@
   height: 40px;
   font-size: 14px;
 }
-/* 还没有小组时，页头中间是 Rewind，不能点 */
+/* With no group yet, the header centre shows Rewind and isn't tappable */
 .gnav .grp.brand {
   font: 400 19px/1 var(--f-serif);
   font-variation-settings: 'SOFT' 100;
 }
 
-/* 影片标题：组名一行，后面省略，不压到进度条 */
+/* Film title: group name on one line with an ellipsis, clear of the progress bar */
 .fm-title {
   min-width: 0;
   max-width: 240px;
@@ -1568,19 +1568,19 @@
   text-overflow: ellipsis;
   font-weight: 400;
 }
-/* 片尾“保存自己的片段”：文字链接，点击区域放大 */
+/* End credits "Save your moments": a text link with an enlarged tap area */
 .fm-link {
   position: relative;
   min-height: 36px;
 }
-/* Try Demo 面板拉开时，后面压暗 */
+/* Dim the background when the Try Demo panel is open */
 .c6 .glass.si-sheet.open {
   box-shadow:
     0 0 0 100vmax rgba(30, 18, 10, 0.4),
     inset 0 1px 1px rgba(255, 255, 255, 0.95);
 }
 
-/* ============ “画面”页 ============ */
+/* ============ "Screens" page ============ */
 body:not(.view-screens) #screens-view,
 body.view-screens main > .main-h,
 body.view-screens #gallery {
@@ -1592,7 +1592,7 @@ body.view-screens main {
 .screens-view .main-h {
   margin-bottom: 10px;
 }
-/* 每个流程可以收起：一行标题、几个画面、箭头 */
+/* Each flow can collapse: a title row, a few screens, an arrow */
 .scr-all {
   margin: 4px 0 6px;
 }
@@ -1640,4 +1640,76 @@ body.view-screens main {
 }
 .scr-flow > .hint {
   margin: -4px 2px 16px;
+}
+
+/* ============ Screens added for the Final map ============ */
+/* Camera: permission blocked, upload failed */
+.screen[data-step='denied'] .cam-perm {
+  display: block;
+}
+.screen[data-step='denied'] .cam-view {
+  filter: blur(14px) brightness(0.45);
+}
+.cam-perm .cam-fin {
+  display: block;
+  margin: 12px auto 0;
+}
+.screen[data-step='upfail'] .cam-up {
+  display: grid;
+}
+.screen[data-step='upfail'] .cam-pill {
+  visibility: hidden;
+}
+.cam-up.bad .cam-upbar i {
+  background: #e0705a;
+}
+.cam-up.bad .cam-hint {
+  margin: -4px 0 4px;
+  text-align: center;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.7);
+}
+/* Welcome from an invite link */
+.c6 .glass.si-inv {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  text-align: left;
+}
+.si-inv div {
+  display: grid;
+  gap: 2px;
+}
+.si-inv b {
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.si-inv small {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+/* Dialogs: a field inside, the iPhone install steps */
+.set-dlg .set-field {
+  margin: 0 0 4px;
+  text-align: left;
+}
+.set-dlg .up-link {
+  justify-self: center;
+  margin-top: 2px;
+  font-size: 13px;
+}
+.set-install ol {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0 0 0 20px;
+  text-align: left;
+  font-size: 13.5px;
+}
+.set-install ol .ic {
+  width: 15px;
+  height: 15px;
+  vertical-align: -2px;
 }

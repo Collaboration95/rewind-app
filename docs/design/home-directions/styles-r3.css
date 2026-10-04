@@ -1,5 +1,5 @@
-/* 分段按钮、成员专属色 */
-/* ============ 分段按钮 ============ */
+/* Segmented buttons, per-member colours */
+/* ============ Segmented buttons ============ */
 .seg {
   display: flex;
   padding: 3px;
@@ -21,7 +21,7 @@
 .main-h {
   max-width: 1200px;
 }
-/* ============ 统一调整：成员专属色 ============ */
+/* ============ Global tweak: per-member colours ============ */
 .screen .av[style] {
   background: color-mix(in srgb, var(--mc) 34%, var(--bg));
   color: var(--ink);

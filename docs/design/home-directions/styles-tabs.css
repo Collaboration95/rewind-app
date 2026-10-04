@@ -1,6 +1,6 @@
-/* ============ 底栏另外两页：聊天、档案；页头的组名菜单（见 tabs.js） ============ */
+/* ============ The dock's other two pages: Chat and Archive; the header group-name menu (see tabs.js) ============ */
 
-/* ---------- 组名菜单：从组名下面落下的一块玻璃 ---------- */
+/* ---------- Group-name menu: a glass panel dropping from under the group name ---------- */
 .gnav .grp .ic {
   transition: transform 0.2s;
 }
@@ -21,7 +21,7 @@
   margin-left: -132px;
   padding: 6px;
   border-radius: 24px;
-  /* 压在大数字上面也要读得清：比别处的玻璃实一些 */
+  /* Must stay readable over the big numbers: more solid than the glass elsewhere */
   background: linear-gradient(170deg, rgba(255, 251, 246, 0.94), rgba(255, 246, 236, 0.84));
   transform-origin: 50% 0;
   animation: gm-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -78,7 +78,7 @@
 .gm-row.off span {
   white-space: normal;
 }
-/* 玻璃卡片里的 small 默认是大写小标签，这里换回普通小字 */
+/* small inside glass cards is an uppercase label by default; switch back to plain small text here */
 .c6 .glass .gm-row small {
   display: block;
   margin-top: 1px;
@@ -87,7 +87,7 @@
   text-transform: none;
   color: #8f2615;
 }
-/* 组名菜单：别的小组有未读 */
+/* Group-name menu: another group has unread */
 .gm-n {
   flex: none;
   min-width: 20px;
@@ -105,8 +105,8 @@
   border-top: 1px solid var(--line);
 }
 
-/* ---------- 聊天 ---------- */
-/* 暖光固定在背后，不跟着消息滚 */
+/* ---------- Chat ---------- */
+/* The warm glow stays fixed behind and doesn't scroll with the messages */
 .c-bg {
   position: absolute;
   inset: 0;
@@ -117,7 +117,7 @@
 .c-bg .glow {
   top: 240px;
 }
-/* 页头固定在上面；消息从底部往上排（column-reverse 让它一打开就停在最新一条） */
+/* Header fixed on top; messages stack from the bottom up (column-reverse opens on the newest one) */
 .c-head {
   position: absolute;
   z-index: 4;
@@ -125,7 +125,7 @@
   left: 0;
   right: 0;
   padding: 56px 22px 14px;
-  /* 消息滚到页头下面时糊掉，边缘渐隐 */
+  /* Messages blur as they scroll under the header, with a faded edge */
   background: rgba(246, 237, 227, 0.78);
   -webkit-backdrop-filter: blur(16px) saturate(140%);
   backdrop-filter: blur(16px) saturate(140%);
@@ -140,7 +140,7 @@
   flex-direction: column-reverse;
   padding: 0 16px;
 }
-/* 上下留白放在里层：倒序滚动的容器不认自己底部的 padding */
+/* Top and bottom spacing goes on the inner layer: a reversed scroll container ignores its own bottom padding */
 .c-list {
   display: flex;
   flex-direction: column;
@@ -148,11 +148,11 @@
   min-height: 100%;
   padding: 122px 0 196px;
 }
-/* 消息多了也不要被压扁 */
+/* Don't squash messages when there are many */
 .c-list > * {
   flex-shrink: 0;
 }
-/* 有连接提示时上面多留一点；回复时输入框上面多一条 */
+/* Extra room on top with a connection notice; an extra row above the input when replying */
 .c-list.conn {
   padding-top: 156px;
 }
@@ -169,7 +169,7 @@
   color: var(--muted);
   background: rgba(255, 255, 255, 0.55);
 }
-/* 带着未读进来：新消息从这里开始 */
+/* Entering with unread: new messages start here */
 .c-new {
   display: flex;
   align-items: center;
@@ -201,7 +201,7 @@
     0 4px 10px -6px rgba(150, 80, 30, 0.4);
 }
 
-/* 一条消息：别人的在左边（同一人连着发只在第一条带头像和名字），你的在右边是蜜桃色 */
+/* A message: others on the left (avatar and name only on the first of a run), yours on the right in peach */
 .msg {
   display: flex;
   align-items: flex-start;
@@ -272,7 +272,7 @@
     0 0 0 2px rgba(224, 112, 58, 0.55),
     0 6px 16px -8px rgba(150, 80, 30, 0.45);
 }
-/* 回复：气泡里先引一小段原消息 */
+/* Reply: the bubble first quotes a snippet of the original */
 .bq {
   display: block;
   margin: 0 0 6px;
@@ -293,7 +293,7 @@
   font-weight: 600;
   color: var(--ink);
 }
-/* ✨ 的数量：贴在气泡下沿，点一下加上 / 去掉你的 */
+/* ✨ count: sits on the bubble's bottom edge; tap to add / remove yours */
 .rx {
   position: relative;
   z-index: 1;
@@ -312,7 +312,7 @@
     inset 0 0 0 1.5px var(--accent),
     0 2px 6px -2px rgba(150, 80, 30, 0.35);
 }
-/* 点一下消息才出现的两个操作 */
+/* The two actions that appear when you tap a message */
 .macts {
   display: none;
   gap: 6px;
@@ -355,7 +355,7 @@
   font-weight: 600;
   color: #8f2615;
 }
-/* 重新连接 / 离线：页头下面一颗小胶囊，不挡消息 */
+/* Reconnecting / offline: a small pill under the header that doesn't cover messages */
 .c-conn {
   display: flex;
   align-items: center;
@@ -391,7 +391,7 @@
     transform: rotate(360deg);
   }
 }
-/* 没有消息 / 读不出来：在中间说一句 */
+/* No messages / can't load: one line in the middle */
 .c-state {
   margin: auto 18px;
   padding-bottom: 30px;
@@ -414,7 +414,7 @@
   margin: 18px auto 0;
   padding: 0 26px;
 }
-/* 输入框：浮在底栏上面的一条玻璃 */
+/* Input: a glass strip floating above the dock */
 .cmp {
   position: absolute;
   z-index: 7;
@@ -516,7 +516,7 @@
   background: rgba(255, 255, 255, 0.8);
 }
 
-/* ---------- 档案 ---------- */
+/* ---------- Archive ---------- */
 .a-h {
   margin: 4px 6px 18px;
 }
@@ -531,7 +531,7 @@
   font-size: 13.5px;
   color: var(--muted);
 }
-/* 这一期在哪一步：一行玻璃 */
+/* Which step the current capsule is at: one glass row */
 .c6 .glass.a-now {
   display: flex;
   align-items: center;
@@ -571,7 +571,7 @@
 .a-now .st-bar {
   width: 100%;
 }
-/* 首映中：一张大卡，封面是每人一格的光 */
+/* Premiering: a big card whose cover is one tile of light per person */
 .c6 .glass.a-prem {
   padding: 10px 10px 14px;
   border-radius: 30px;
@@ -635,7 +635,7 @@
 .a-prem .set-btn {
   height: 48px;
 }
-/* 以前的影片 */
+/* Past films */
 .a-list {
   display: grid;
   gap: 12px;
@@ -748,7 +748,7 @@
   margin-top: 60px;
 }
 
-/* 正在放的那张：撑开成卡片里的播放器（在线播放，不下载） */
+/* The one playing: expands into a player inside the card (streamed, not downloaded) */
 .c6 .glass.a-film.on {
   flex-direction: column;
   gap: 12px;
@@ -833,7 +833,7 @@
   width: 20px;
   height: 20px;
 }
-/* 放完：中间一个重播 */
+/* Finished: a Replay in the middle */
 .a-pvre {
   display: none;
   position: absolute;
@@ -862,7 +862,7 @@
   visibility: hidden;
 }
 
-/* 组名太长：一行，后面省略 */
+/* Group name too long: one line with an ellipsis */
 .gnav .grp {
   min-width: 0;
   max-width: calc(100% - 96px);
@@ -873,7 +873,7 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-/* 小目标放大点击区域，不改变排版 */
+/* Enlarge small targets' tap area without changing layout */
 .rx {
   min-height: 26px;
 }
