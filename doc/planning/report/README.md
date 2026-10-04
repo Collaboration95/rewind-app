@@ -1,5 +1,11 @@
 # Rewind report workspace
 
+> **Agents: do not modify, generate or regenerate anything in this folder**
+> unless the user explicitly names this folder or the report in the request.
+> The report is worked on only near the end of the project (Sprint 3, from
+> about 17 October 2026). Until then it is frozen, including its exports,
+> diagrams, packages and presentation.
+
 This workspace holds the Sprint 2 model packages and factual report draft. The report follows the supplied Practice Module template and retains the proposal's final OIDC, PostgreSQL, managed recovery and pre-upload retro obligations. A source model or green pull request does not establish hosted, provider, physical-device or assessment acceptance.
 
 - [Report draft](report-draft.md) covers all five template chapters, current and future architecture, six transition strategies, UC01–UC14, design problem comparisons, current schema, DevSecOps and contribution fields.
