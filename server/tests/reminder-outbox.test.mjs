@@ -23,6 +23,7 @@ import {
   validReminderDestination,
   reminderDeliveryStatus,
 } from '../dist/reminders/outbox.js';
+import { startReminderLoop } from '../dist/reminders/loop.js';
 
 const execFileAsync = promisify(execFile);
 const token = 'ExpoPushToken[synthetic_reminder_token]';
@@ -704,5 +705,26 @@ test('additive outbox migration repairs an interrupted empty schema without losi
       1,
     );
     assert.equal(c.db.prepare('PRAGMA foreign_key_check').all().length, 0);
+  });
+});
+
+test('the runtime reminder loop queues and sends a due reminder once (#347)', async () => {
+  await fixture(async (c) => {
+    c.now = new Date(c.due);
+    const errors = [];
+    const loop = startReminderLoop(async () => openDatabase(c.config), c.providers, {
+      intervalMs: 60_000,
+      now: () => c.now,
+      onError: (message) => errors.push(message),
+    });
+    try {
+      await loop.tick();
+      await loop.tick();
+      assert.deepEqual(errors, []);
+      assert.equal(c.sent.length, 1);
+      assert.equal(c.sent[0].payload.data.groupId, c.actor.groupId);
+    } finally {
+      await loop.stop();
+    }
   });
 });

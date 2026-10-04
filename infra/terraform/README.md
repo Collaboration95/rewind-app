@@ -452,3 +452,21 @@ trust, bucket privacy/versioning, actual AWS conditional writes, remote-state
 separation, provider permission coverage or real environment approval. Human
 review, provisioning, private-plan operational acceptance and safe read-only
 PR-plan acceptance remain open under #174; this preparation does not close it.
+
+## Media root (`media/`)
+
+Private, versioned, SSE-S3 encrypted media bucket for the hosted server, plus a
+runtime IAM user limited to that bucket (Lightsail cannot use instance roles).
+Browsers upload with signed PUT URLs; CORS allows only the hosted app and
+`make run-real`. State lives at `rewind/media/terraform.tfstate`, separate from
+the live demo root.
+
+```sh
+cd infra/terraform/media && cp backend.hcl.example backend.hcl
+AWS_PROFILE=rewind-terraform-apply terraform init -backend-config=backend.hcl
+AWS_PROFILE=rewind-terraform-apply terraform plan
+```
+
+`scripts/set-hosted-secrets.sh` (owner-run) stores the bucket, runtime
+credentials and web push keys as the `REWIND_HOSTED_ENV` GitHub secret; the dev
+deploy writes them into the server's `rewind.env`.

@@ -1,0 +1,166 @@
+# Private media for the hosted Rewind server (#165, #341). Browsers upload with
+# short-lived signed PUT URLs; reads stay behind the application's own
+# authorization. Lightsail cannot use instance roles, so the runtime uses a
+# dedicated IAM user limited to this bucket.
+
+provider "aws" {
+  region = var.region
+
+  default_tags {
+    tags = {
+      Project     = "rewind"
+      Component   = "media"
+      Environment = var.environment
+    }
+  }
+}
+
+data "aws_caller_identity" "current" {}
+
+locals {
+  name = "rewind-${var.environment}-media"
+}
+
+resource "aws_s3_bucket" "media" {
+  bucket = "${local.name}-${data.aws_caller_identity.current.account_id}"
+}
+
+resource "aws_s3_bucket_ownership_controls" "media" {
+  bucket = aws_s3_bucket.media.id
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "media" {
+  bucket                  = aws_s3_bucket.media.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# The server pins every object to a version and checks its encryption.
+resource "aws_s3_bucket_versioning" "media" {
+  bucket = aws_s3_bucket.media.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "media" {
+  bucket = aws_s3_bucket.media.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "media" {
+  bucket = aws_s3_bucket.media.id
+  cors_rule {
+    allowed_methods = ["PUT"]
+    allowed_origins = var.web_origins
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag", "x-amz-version-id"]
+    max_age_seconds = 3000
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "media" {
+  bucket = aws_s3_bucket.media.id
+
+  # Uploads that were never finalized or processed.
+  rule {
+    id     = "expire-abandoned-incoming"
+    status = "Enabled"
+    filter {
+      tag {
+        key   = "rewind-media-class"
+        value = "incoming"
+      }
+    }
+    expiration {
+      days = 7
+    }
+  }
+
+  rule {
+    id     = "expire-old-versions"
+    status = "Enabled"
+    filter {}
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.media]
+}
+
+data "aws_iam_policy_document" "bucket" {
+  statement {
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.media.arn,
+      "${aws_s3_bucket.media.arn}/*",
+    ]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "media" {
+  bucket     = aws_s3_bucket.media.id
+  policy     = data.aws_iam_policy_document.bucket.json
+  depends_on = [aws_s3_bucket_public_access_block.media]
+}
+
+resource "aws_iam_user" "runtime" {
+  name = "${local.name}-runtime"
+}
+
+data "aws_iam_policy_document" "runtime" {
+  statement {
+    sid = "MediaObjects"
+    actions = [
+      "s3:PutObject",
+      "s3:PutObjectTagging",
+      "s3:GetObject",
+      "s3:GetObjectVersion",
+      "s3:GetObjectTagging",
+      "s3:GetObjectVersionTagging",
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion",
+    ]
+    resources = ["${aws_s3_bucket.media.arn}/*"]
+  }
+
+  statement {
+    sid       = "MediaVersions"
+    actions   = ["s3:ListBucket", "s3:ListBucketVersions"]
+    resources = [aws_s3_bucket.media.arn]
+  }
+}
+
+resource "aws_iam_user_policy" "runtime" {
+  name   = "${local.name}-objects"
+  user   = aws_iam_user.runtime.name
+  policy = data.aws_iam_policy_document.runtime.json
+}
+
+resource "aws_iam_access_key" "runtime" {
+  user = aws_iam_user.runtime.name
+}

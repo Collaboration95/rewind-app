@@ -8,7 +8,7 @@ RELEASE_PY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/release.py"
 
 die() { printf 'Release rejected: %s\n' "$*" >&2; exit 1; }
 valid_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
-[[ $# -ge 1 ]] || die 'usage: release-host.sh prepare BUNDLE | promote | install BUNDLE | rollback | prune'
+[[ $# -ge 1 ]] || die 'usage: release-host.sh prepare BUNDLE | promote | install BUNDLE | rollback | prune | configure'
 
 # Keep only the current, previous (rollback) and pending releases. Older
 # release folders and their image pairs are what filled the host disk.
@@ -36,6 +36,35 @@ require_disk_for() {
   avail="$(df --output=avail -B1 "$HOST_ROOT" 2>/dev/null | tail -n 1 | tr -d ' ' || true)"
   [[ "$avail" =~ ^[0-9]+$ ]] || return 0
   (( avail >= need )) || die "insufficient disk: $(( avail / 1048576 )) MiB free, need about $(( need / 1048576 )) MiB"
+}
+
+# Hosted settings delivered by the deploy workflow (GitHub secret
+# REWIND_HOSTED_ENV). Only these keys may be set; everything else in
+# rewind.env stays as the operator wrote it.
+CONFIGURABLE_KEYS='REWIND_MEDIA_BACKEND REWIND_MEDIA_ENVIRONMENT REWIND_MEDIA_S3_BUCKET REWIND_MEDIA_S3_OWNER REWIND_MEDIA_S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION REWIND_REMINDER_VAPID_SUBJECT REWIND_REMINDER_VAPID_PUBLIC_KEY REWIND_REMINDER_VAPID_PRIVATE_KEY REWIND_REAL_CYCLE_MINUTES'
+
+configure_env() {
+  local env_file="$HOST_ROOT/rewind.env" next line key value
+  [[ -f "$env_file" ]] || die 'rewind.env is missing'
+  next="$(mktemp "$HOST_ROOT/.rewind.env.XXXXXX")"
+  chmod 0600 "$next"
+  cp "$env_file" "$next"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    [[ "$line" == *=* && " $CONFIGURABLE_KEYS " == *" $key "* ]] || { rm -f -- "$next"; die "setting $key is not configurable"; }
+    [[ "$value" != *$'\n'* && "$value" != *"'"* && "$value" != *'"'* ]] || { rm -f -- "$next"; die "setting $key has an unsupported value"; }
+    grep -v -- "^$key=" "$next" > "$next.tmp" || true
+    printf '%s=%s\n' "$key" "$value" >> "$next.tmp"
+    mv "$next.tmp" "$next"
+  done
+  chmod 0600 "$next"
+  mv "$next" "$env_file"
+  # The release guard compares this digest; refresh it for a delivered change.
+  if [[ -f "$HOST_ROOT/release-config-digest" ]]; then
+    sha256sum "$env_file" | cut -d ' ' -f 1 > "$HOST_ROOT/release-config-digest"
+  fi
 }
 
 stage_bundle() {
@@ -202,6 +231,11 @@ case "$1" in
       die 'rollback health failed; current release restored'
     fi
     promote "$sha"
+    ;;
+  configure)
+    [[ $# == 1 ]] || die 'configure reads KEY=VALUE lines from standard input'
+    configure_env
+    printf 'Updated hosted settings.\n'
     ;;
   prune)
     [[ $# == 1 ]] || die 'prune takes no arguments'
