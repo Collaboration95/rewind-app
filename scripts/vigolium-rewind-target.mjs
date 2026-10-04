@@ -4,14 +4,16 @@ import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseConfig } from '../server/dist/config.js';
-import { openDatabase } from '../server/dist/db.js';
-import { createRuntimeServer } from '../server/dist/http.js';
-import { createRealAccount } from '../server/dist/auth/index.js';
 
 // Application runtime lives in its own container, never in the AI worker.
 export async function createRewindTarget({ endpoint = 'chat' } = {}) {
   assert.ok(['chat', 'groups'].includes(endpoint), 'Unsupported endpoint');
+  // Built artifacts exist at execution time, not during a clean-checkout lint.
+  const runtime = new URL('../server/dist/', import.meta.url);
+  const { parseConfig } = await import(new URL('config.js', runtime));
+  const { openDatabase } = await import(new URL('db.js', runtime));
+  const { createRuntimeServer } = await import(new URL('http.js', runtime));
+  const { createRealAccount } = await import(new URL('auth/index.js', runtime));
   const temporary = await mkdtemp(join(tmpdir(), 'rewind-dast-target-'));
   const database = openDatabase(
     parseConfig({
