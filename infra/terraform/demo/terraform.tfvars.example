@@ -13,16 +13,12 @@ cost_safety_audit_notification_topic_arn = null
 ssh_cidr                = "YOUR.PUBLIC.IP.ADDRESS/32"
 # Leave null for manual starts. Example: "cron(0 9 ? * MON-FRI *)"
 automatic_start_schedule_expression = null
-# Keep the distribution allowlist empty while the optional public HTTPS
-# surface is disabled. If it is enabled, use:
-# { "rewind-demo-web" = "rewind-demo" }
+# Keep this empty unless an explicitly approved distribution is provisioned.
 # The audit still checks inventory for unexpected resources.
 cost_safety_expected_snapshot_names = []
 cost_safety_expected_distributions  = {}
 # The lifecycle scripts override this for reviewed hibernation/recovery plans.
 demo_instance_enabled = true
-# Existing public HTTPS Lightsail distribution. Preserve its current setting.
-public_https_distribution_enabled = false
 # Set only when enabling real-auth CloudFront. Generate a random value of at
 # least 32 characters; configure the same value at the origin and inject this
 # via a protected tfvars/secret workflow. Do not commit the real value.

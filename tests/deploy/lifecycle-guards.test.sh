@@ -28,7 +28,6 @@ cat > "$PLAN_JSON" <<'JSON'
   {"address":"aws_lightsail_static_ip.rewind[0]","change":{"actions":["delete"]}},
   {"address":"aws_lightsail_static_ip_attachment.rewind[0]","change":{"actions":["delete"]}},
   {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["delete"]}},
-  {"address":"aws_lightsail_distribution.web[0]","change":{"actions":["delete"]}},
   {"address":"aws_iam_role.power_controller[0]","change":{"actions":["delete"]}},
   {"address":"aws_iam_role_policy.power_controller[0]","change":{"actions":["delete"]}},
   {"address":"aws_iam_role_policy.operator[0]","change":{"actions":["delete"]}},
@@ -190,15 +189,28 @@ grep -Fq 'terraform' "$LOG_FILE"
 ! grep -Eq '^aws (s3|s3api)' "$LOG_FILE"
 ! grep -Eq 'terraform .* apply' "$LOG_FILE"
 
-jq '(.resource_changes[] | select(.address == "aws_lightsail_distribution.web[0]").change.actions) = ["update"]' "$PLAN_JSON" > "$TEST_ROOT/unsafe-plan.json"
+jq '(.resource_changes[] | select(.address == "aws_lightsail_static_ip_attachment.rewind[0]").change.actions) = ["update"]' "$PLAN_JSON" > "$TEST_ROOT/unsafe-plan.json"
 cp "$TEST_ROOT/unsafe-plan.json" "$PLAN_JSON"
 if INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" \
   output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --dry-run 2>&1)"; then
-  printf 'distribution update unexpectedly passed hibernation allowlist\n' >&2
+  printf 'static IP attachment update unexpectedly passed hibernation allowlist\n' >&2
   exit 1
 fi
 [[ "$output" == *'unexpected resource change'* ]]
-jq '(.resource_changes[] | select(.address == "aws_lightsail_distribution.web[0]").change.actions) = ["delete"]' "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
+jq '(.resource_changes[] | select(.address == "aws_lightsail_static_ip_attachment.rewind[0]").change.actions) = ["delete"]' "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
+cp "$TEST_ROOT/safe-plan.json" "$PLAN_JSON"
+
+jq '.resource_changes += [{"address":"aws_s3_bucket.unexpected[0]","change":{"actions":["delete"]}}]' \
+  "$PLAN_JSON" > "$TEST_ROOT/unexpected-resource-plan.json"
+cp "$TEST_ROOT/unexpected-resource-plan.json" "$PLAN_JSON"
+if INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" \
+  output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --dry-run 2>&1)"; then
+  printf 'unexpected resource deletion unexpectedly passed hibernation allowlist\n' >&2
+  exit 1
+fi
+[[ "$output" == *'unexpected resource change'* ]]
+jq 'del(.resource_changes[] | select(.address == "aws_s3_bucket.unexpected[0]"))' \
+  "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
 cp "$TEST_ROOT/safe-plan.json" "$PLAN_JSON"
 
 INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" \
