@@ -207,7 +207,8 @@ export function VideoCaptureScreen({
   const webPreviewHeight = Math.max(
     160,
     Math.min(
-      viewportHeight * 0.6 - (recording ? 96 : 0),
+      // About 45% of the screen keeps the record controls visible below it.
+      viewportHeight * 0.45 - (recording ? 96 : 0),
       Math.max(160, viewportWidth - 48) / previewAspect,
     ),
   );
@@ -1795,7 +1796,15 @@ const styles = StyleSheet.create({
   panelTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
   captureArea: { flex: 1, gap: 14, minHeight: 0 },
   preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 240 },
-  webPreview: { flex: 0, minHeight: 160, maxHeight: 320, overflow: 'hidden' },
+  // Height and width come from the stream's aspect ratio (see webPreviewHeight).
+  // flex: 0 would become flex-basis 0% on web and override the explicit height.
+  webPreview: {
+    flexBasis: 'auto',
+    flexGrow: 0,
+    flexShrink: 0,
+    minHeight: 160,
+    overflow: 'hidden',
+  },
   recordButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,

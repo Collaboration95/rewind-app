@@ -80,6 +80,13 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
   );
   await openInjectedCapture(page);
   await allowInjectedSource(page);
+  // The viewfinder takes the camera's shape (a 360×640 portrait stream here).
+  await expect
+    .poll(async () => {
+      const box = await page.getByTestId('video-live-preview').boundingBox();
+      return box ? Number((box.height / box.width).toFixed(2)) : 0;
+    })
+    .toBeCloseTo(640 / 360, 1);
   await recordFor(page);
   const review = page.getByTestId('video-review');
   await expect(review).toBeVisible();
