@@ -1,8 +1,10 @@
 import type { RewindDatabase } from '../db';
+import type { StoredJobOptions } from './index';
 import {
   processClipJobForWorker,
   processCompilationJobForWorker,
   PROCESSING_CLAIM_LEASE_MS,
+  ACCEPTED_CLIP_AUTOMATIC_ATTEMPTS,
 } from './index';
 import { QUEUE_MAX_FILM_ATTEMPTS, type QueueJobKind } from './queue';
 
@@ -17,7 +19,7 @@ import { QUEUE_MAX_FILM_ATTEMPTS, type QueueJobKind } from './queue';
  */
 
 /** Automatic clip attempts stop here; request-driven retries remain available. */
-export const WORKER_MAX_CLIP_ATTEMPTS = 3;
+export const WORKER_MAX_CLIP_ATTEMPTS = ACCEPTED_CLIP_AUTOMATIC_ATTEMPTS;
 
 /** A failed film at its durable cap is terminal and is never reclaimed. */
 export const WORKER_MAX_FILM_ATTEMPTS = QUEUE_MAX_FILM_ATTEMPTS;
@@ -63,7 +65,7 @@ export interface WorkerRunRecord {
   terminal: boolean;
 }
 
-export interface WorkerOptions {
+export interface WorkerOptions extends StoredJobOptions {
   ffmpegBin: string;
   stagingDir: string;
   outputDir: string;
@@ -281,6 +283,9 @@ export async function runWorkerTick(
           jobId: candidate.id,
           groupId: candidate.groupId || undefined,
           ffmpegBin: options.ffmpegBin,
+          mediaStore: options.mediaStore,
+          mediaEnvironment: options.mediaEnvironment,
+          clipAttemptCap: resolveCap(options, 'clip'),
           outputDir: options.outputDir,
           actorMemberId: options.actorMemberId ?? null,
         },
@@ -293,6 +298,8 @@ export async function runWorkerTick(
           jobId: candidate.id,
           groupId: candidate.groupId || undefined,
           ffmpegBin: options.ffmpegBin,
+          mediaStore: options.mediaStore,
+          mediaEnvironment: options.mediaEnvironment,
           stagingDir: options.stagingDir,
           outputDir: options.outputDir,
           actorMemberId: options.actorMemberId ?? null,

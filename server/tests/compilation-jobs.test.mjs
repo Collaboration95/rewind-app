@@ -94,6 +94,7 @@ test('cycle boundary creates one persistent film job from processed non-raw clip
 
     const repeat = advanceCycleLifecycle(database, {
       groupId: 'demo-group',
+      cycleId: 'demo-cycle',
       clock: () => new Date('2026-09-11T00:01:00.000Z'),
     });
     assert.equal(repeat.action, 'waiting_for_release');

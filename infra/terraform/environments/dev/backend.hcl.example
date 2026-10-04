@@ -1,0 +1,6 @@
+# Reserve only; repeat remote state inventory before initializing this root.
+bucket       = "rewind-terraform-state-330599756236"
+key          = "rewind/dev/media.tfstate"
+region       = "ap-southeast-1"
+encrypt      = true
+use_lockfile = true

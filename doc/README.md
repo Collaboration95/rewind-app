@@ -20,3 +20,16 @@ not the full product commitment.
 - [Sprint 2 user journey and issue map](planning/sprints/sprint-2-user-journey-plan.md) — the draft path from app launch through private group, capture, release, and installable clients.
 - [Earlier hosted Demo proposal](planning/sprints/sprint-1-plan.md) — uses superseded Sprint naming and a narrower synthetic Demo scope.
 - [AWS, IaC, and SCP execution plan](planning/sprints/aws-iac-scp-execution-plan.md) — technical background; its Sprint 1 Demo and Sprint 2 transition labels are superseded by Sprint 2 and Sprint 3, respectively.
+
+## Delivery guides
+
+- [Native client builds](planning/native-client-builds.md) — prepare a pinned Android APK or iOS preview, record its source and public origins, and distinguish compilation from installed-client acceptance.
+
+Documentation-only changes receive a cheap required Quality result without
+running application tests. Code, workflow, executable documentation, mixed
+changes and unavailable comparisons still run the existing checks. Dev pushes
+containing only documentation skip deployment before obtaining AWS credentials
+or waiting for a deployment Quality result. See the current
+[Quality workflow](../.github/workflows/quality.yml) and
+[dev deployment workflow](../.github/workflows/deploy-dev.yml) for the executable
+rules.

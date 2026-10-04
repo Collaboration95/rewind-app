@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import test from 'node:test';
+import { uploadFixture } from './helpers/fixture-upload.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabase } = await import('../dist/db.js');
@@ -28,7 +29,7 @@ async function withRuntime(run) {
   await once(server, 'listening');
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   try {
-    await run({ baseUrl, config, database, dataDir });
+    await run({ baseUrl, config, database, dataDir, server });
   } finally {
     await new Promise((resolve) => server.close(resolve));
     database.close();
@@ -119,7 +120,7 @@ function delayedUploadRequest(baseUrl, authorization, groupId, input) {
 }
 
 test('real account can upload and process a clip only in its selected group', async () => {
-  await withRuntime(async ({ baseUrl, config, database, dataDir }) => {
+  await withRuntime(async ({ baseUrl, config, database, dataDir, server }) => {
     const owner = await account(baseUrl, database, 'video-owner', 'Video Owner');
     const ownerGroup = await createGroup(baseUrl, owner.authorization, 'Owner group');
     const other = await account(baseUrl, database, 'video-other', 'Other member');
@@ -131,13 +132,14 @@ test('real account can upload and process a clip only in its selected group', as
     const idempotencyKey = 'real-video-upload-247';
     const scoped = (path, id = groupId) => `${baseUrl}${path}?groupId=${encodeURIComponent(id)}`;
 
-    const stagedResponse = await fetch(
+    const stagedResponse = await uploadFixture(
+      server,
       scoped(`/contributions/upload/source`) +
         `&idempotencyKey=${encodeURIComponent(idempotencyKey)}`,
       {
-        method: 'POST',
-        headers: { Authorization: owner.authorization, 'Content-Type': 'video/mp4' },
-        body: bytes,
+        authorization: owner.authorization,
+        mimeType: 'video/mp4',
+        bytes,
       },
     );
     assert.equal(stagedResponse.status, 201);
@@ -185,12 +187,13 @@ test('real account can upload and process a clip only in its selected group', as
       headers: { Authorization: other.authorization },
     });
     assert.equal(crossGroupStatus.status, 403);
-    const crossGroupStaging = await fetch(
+    const crossGroupStaging = await uploadFixture(
+      server,
       `${scoped('/contributions/upload/source')}&idempotencyKey=other-video-key-247`,
       {
-        method: 'POST',
-        headers: { Authorization: other.authorization, 'Content-Type': 'video/mp4' },
-        body: bytes,
+        authorization: other.authorization,
+        mimeType: 'video/mp4',
+        bytes,
       },
     );
     assert.equal(crossGroupStaging.status, 403);

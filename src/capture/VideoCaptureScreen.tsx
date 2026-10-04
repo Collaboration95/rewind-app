@@ -1,6 +1,17 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  AppState,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import { VideoView, useVideoPlayer } from 'expo-video';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import {
@@ -34,7 +45,12 @@ import {
   validateRecordedClip,
   type VideoRecordingPlatform,
 } from './video-recording';
-import { ClipReviewSession, InMemoryPendingClipMetadataStore } from './video-review';
+import {
+  clampTrimmedPlaybackTime,
+  ClipReviewSession,
+  InMemoryPendingClipMetadataStore,
+  validateTrimBounds,
+} from './video-review';
 import {
   ExpoCameraPlatform,
   readManagedRecordedClipBase64,
@@ -55,7 +71,11 @@ type AccessStatus =
 export interface VideoCaptureScreenProps {
   platform?: CameraPlatform;
   runtimeClient?: RuntimeClient | null;
-  realAccount?: { groupId: string; authenticatedRequest: AuthenticatedRequest };
+  realAccount?: {
+    groupId: string;
+    authenticatedRequest: AuthenticatedRequest;
+    transferMode?: 'server' | 'direct';
+  };
   onBack?: () => void;
   onContributionDeleted?: () => void;
 }
@@ -155,11 +175,18 @@ export function VideoCaptureScreen({
   const demoSession = useOptionalDemoSession();
   const realGroupId = realAccount?.groupId;
   const authenticatedRequest = realAccount?.authenticatedRequest;
-  const activeRuntimeClient = useMemo(
+  const transferMode = realAccount?.transferMode ?? 'server';
+  const ownedRealRuntimeClient = useMemo(
     () =>
-      runtimeClient ??
-      (authenticatedRequest ? createRealAccountVideoRuntimeClient(authenticatedRequest) : null),
-    [authenticatedRequest, runtimeClient],
+      authenticatedRequest && realGroupId
+        ? createRealAccountVideoRuntimeClient(authenticatedRequest, { transferMode })
+        : null,
+    [authenticatedRequest, realGroupId, transferMode],
+  );
+  useEffect(() => () => ownedRealRuntimeClient?.dispose(), [ownedRealRuntimeClient]);
+  const activeRuntimeClient = useMemo(
+    () => runtimeClient ?? ownedRealRuntimeClient,
+    [ownedRealRuntimeClient, runtimeClient],
   );
   const uploadSessionId = demoSession?.session?.id ?? (realGroupId ? 'real-account-session' : null);
   const uploadGroupId = demoSession?.session?.groupId ?? realGroupId ?? null;
@@ -167,11 +194,17 @@ export function VideoCaptureScreen({
   const [access, setAccess] = useState<AccessStatus>('checking');
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
+  const { height: viewportHeight } = useWindowDimensions();
+  const webPreviewHeight = Math.max(
+    160,
+    Math.min(320, viewportHeight * 0.35) - (recording ? 96 : 0),
+  );
   const [browserPreviewStream, setBrowserPreviewStream] = useState<MediaStream | null>(null);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [clip, setClip] = useState<RecordedClip | null>(null);
   const [review, setReview] = useState<ClipReviewSession | null>(null);
+  const [reviewPlayerVisible, setReviewPlayerVisible] = useState(true);
   const [startText, setStartText] = useState('0');
   const [endText, setEndText] = useState('0');
   const [mode, setMode] = useState<CaptureMode>('soft-focus');
@@ -222,6 +255,8 @@ export function VideoCaptureScreen({
   const uploadSessionRef = useRef(uploadSession);
   const clipRef = useRef<RecordedClip | null>(clip);
   const reviewRef = useRef<ClipReviewSession | null>(review);
+  const reviewPlayerMountedRef = useRef(false);
+  const reviewPlayerUnmountWaitersRef = useRef(new Set<() => void>());
   const activeUploadRef = useRef(false);
   const retryInFlightRef = useRef(false);
   // Contribution work owns its async operations until they finish or a
@@ -310,6 +345,24 @@ export function VideoCaptureScreen({
     await removeManagedRecordedClip(ownedClip.sourceUri);
   }, []);
 
+  const onReviewPlayerMounted = useCallback(() => {
+    reviewPlayerMountedRef.current = true;
+  }, []);
+  const onReviewPlayerUnmounted = useCallback(() => {
+    reviewPlayerMountedRef.current = false;
+    for (const resolve of reviewPlayerUnmountWaitersRef.current) resolve();
+    reviewPlayerUnmountWaitersRef.current.clear();
+  }, []);
+  const waitForReviewPlayerUnmount = useCallback((): Promise<void> => {
+    if (!reviewPlayerMountedRef.current) return Promise.resolve();
+    return new Promise((resolve) => reviewPlayerUnmountWaitersRef.current.add(resolve));
+  }, []);
+  const unmountReviewPlayer = useCallback(async (): Promise<void> => {
+    const unmounted = waitForReviewPlayerUnmount();
+    setReviewPlayerVisible(false);
+    await unmounted;
+  }, [waitForReviewPlayerUnmount]);
+
   const replaceClip = useCallback(
     async (selected: RecordedClip): Promise<boolean> => {
       try {
@@ -325,11 +378,16 @@ export function VideoCaptureScreen({
 
       const previousClip = clipRef.current;
       try {
+        if (previousClip) await unmountReviewPlayer();
         await reviewRef.current?.retake();
         if (previousClip && previousClip.sourceUri !== selected.sourceUri) {
           await releaseOwnedClip(previousClip);
         }
       } catch (cleanupError) {
+        if (previousClip) {
+          clipRef.current = previousClip;
+          setReviewPlayerVisible(true);
+        }
         await removeManagedRecordedClip(selected.sourceUri).catch(() => undefined);
         throw cleanupError;
       }
@@ -343,12 +401,13 @@ export function VideoCaptureScreen({
       reviewRef.current = nextReview;
       setClip(selected);
       setReview(nextReview);
+      setReviewPlayerVisible(true);
       setStartText('0');
       setEndText(String(selected.durationSeconds));
       setMode('soft-focus');
       return true;
     },
-    [isCaptureActive, releaseOwnedClip, reviewStore],
+    [isCaptureActive, releaseOwnedClip, reviewStore, unmountReviewPlayer],
   );
   const cancelActiveWork = useCallback((): Promise<void> => {
     if (captureLeftRef.current) return Promise.resolve();
@@ -384,12 +443,13 @@ export function VideoCaptureScreen({
       const currentClip = clipRef.current;
       clipRef.current = null;
       reviewRef.current = null;
-      void cancelActiveWork().finally(() => {
+      void cancelActiveWork().finally(async () => {
+        await waitForReviewPlayerUnmount();
         if (currentClip)
           void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
       });
     };
-  }, [cancelActiveWork]);
+  }, [cancelActiveWork, waitForReviewPlayerUnmount]);
 
   const refresh = useCallback(
     async (videoPermissionSnapshot?: PermissionSnapshot) => {
@@ -634,19 +694,23 @@ export function VideoCaptureScreen({
         return;
       }
     }
-    await review?.retake();
     if (!isCaptureActive()) return;
+    await unmountReviewPlayer();
     try {
       if (currentClip) await releaseOwnedClip(currentClip);
     } catch {
+      if (currentClip) clipRef.current = currentClip;
+      setReviewPlayerVisible(true);
       setError('The clip could not be removed from local storage. Try again.');
       return;
     }
+    await review?.retake();
     recorder?.reset();
     uploadSession?.forget();
     pendingUploadInputRef.current = null;
     setClip(null);
     setReview(null);
+    setReviewPlayerVisible(true);
     setUploadProgress({ status: 'idle', percent: 0 });
     latestUploadRef.current = null;
     clearContributionStatus();
@@ -738,6 +802,32 @@ export function VideoCaptureScreen({
       uploadGroupId,
       uploadSessionId,
     ],
+  );
+
+  const completeSubmittedReview = useCallback(
+    async (
+      ownedClip: RecordedClip,
+      ownedReview: ClipReviewSession,
+      operation: number,
+      cleanupMessage: string,
+    ): Promise<boolean> => {
+      await unmountReviewPlayer();
+      if (!isContributionWorkActive(operation)) return false;
+      await ownedReview.retake().catch(() => undefined);
+      if (!isContributionWorkActive(operation)) return false;
+
+      clipRef.current = null;
+      reviewRef.current = null;
+      setClip(null);
+      setReview(null);
+      try {
+        await releaseOwnedClip(ownedClip);
+      } catch {
+        if (isContributionWorkActive(operation)) setError(cleanupMessage);
+      }
+      return isContributionWorkActive(operation);
+    },
+    [isContributionWorkActive, releaseOwnedClip, unmountReviewPlayer],
   );
 
   const upload = async () => {
@@ -836,13 +926,14 @@ export function VideoCaptureScreen({
         if (pendingInput.input.replacesContributionId === replacementTargetRef.current) {
           replacementTargetRef.current = null;
         }
-        try {
-          await releaseOwnedClip(clip);
-        } catch {
-          if (isContributionWorkActive(operation))
-            setError('The clip is processed, but its local cache file could not be removed.');
-        }
-        if (isContributionWorkActive(operation)) {
+        if (
+          await completeSubmittedReview(
+            clip,
+            review,
+            operation,
+            'The clip is processed, but its local cache file could not be removed.',
+          )
+        ) {
           pendingUploadInputRef.current = null;
           uploadSession.forget();
         }
@@ -935,15 +1026,16 @@ export function VideoCaptureScreen({
           if (replacedContributionId === replacementTargetRef.current) {
             replacementTargetRef.current = null;
           }
-          if (clip) {
-            try {
-              await releaseOwnedClip(clip);
-            } catch {
-              if (isContributionWorkActive(operation))
-                setError('The clip is sealed, but its local cache file could not be removed.');
-            }
-          }
-          if (isContributionWorkActive(operation)) {
+          if (
+            clip &&
+            review &&
+            (await completeSubmittedReview(
+              clip,
+              review,
+              operation,
+              'The clip is sealed, but its local cache file could not be removed.',
+            ))
+          ) {
             pendingUploadInputRef.current = null;
             uploadSession.forget();
           }
@@ -1064,11 +1156,12 @@ export function VideoCaptureScreen({
     const currentClip = clipRef.current;
     clipRef.current = null;
     reviewRef.current = null;
-    void cancelActiveWork().finally(() => {
+    void cancelActiveWork().finally(async () => {
+      await waitForReviewPlayerUnmount();
       if (currentClip) void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
     });
     onBack?.();
-  }, [cancelActiveWork, onBack]);
+  }, [cancelActiveWork, onBack, waitForReviewPlayerUnmount]);
 
   const contributionFailed = contributionStatus?.state === 'failed';
   const canRetryContribution = contributionFailed && contributionStatus.retryable && !retryInFlight;
@@ -1101,10 +1194,14 @@ export function VideoCaptureScreen({
       );
       replacementTargetRef.current = contributionStatus.contributionId;
       const currentClip = clipRef.current;
-      if (currentClip) await releaseOwnedClip(currentClip);
+      if (currentClip) {
+        await unmountReviewPlayer();
+        await releaseOwnedClip(currentClip);
+      }
       recorder?.reset();
       setClip(null);
       setReview(null);
+      setReviewPlayerVisible(true);
       setUploadProgress({ status: 'idle', percent: 0 });
       latestUploadRef.current = null;
       clearContributionStatus();
@@ -1145,9 +1242,26 @@ export function VideoCaptureScreen({
     statusContext,
     uploadGroupId,
     uploadSessionId,
+    unmountReviewPlayer,
   ]);
+  const playbackBounds =
+    clip && review
+      ? (() => {
+          const draft = validateTrimBounds(
+            Number(startText),
+            Number(endText),
+            clip.durationSeconds,
+          );
+          return draft.ok ? draft.bounds : review.getReview();
+        })()
+      : null;
   return (
-    <View style={styles.screen} testID="video-capture-screen">
+    <ScrollView
+      contentContainerStyle={styles.screenContent}
+      keyboardShouldPersistTaps="handled"
+      style={styles.screen}
+      testID="video-capture-screen"
+    >
       <View style={styles.header}>
         {onBack ? (
           <Pressable accessibilityRole="button" onPress={leaveCapture} style={styles.backButton}>
@@ -1158,8 +1272,10 @@ export function VideoCaptureScreen({
         <Text accessibilityRole="header" style={styles.title}>
           Record a contribution
         </Text>
-        <Text style={styles.body}>
-          Portrait video with microphone audio. Maximum duration: 15 seconds.
+        <Text style={styles.body} testID="video-portrait-guidance">
+          {Platform.OS === 'web'
+            ? 'Keep your device upright for portrait video with microphone audio. If the page rotates, scroll to reach the controls. Maximum duration: 15 seconds.'
+            : 'Portrait video with microphone audio. Maximum duration: 15 seconds.'}
         </Text>
       </View>
       {access === 'checking' ? (
@@ -1266,10 +1382,10 @@ export function VideoCaptureScreen({
           body={error ?? 'Try again.'}
         />
       ) : null}
-      {access === 'ready' && !clip && !recording ? (
+      {access === 'ready' && !clip ? (
         <View style={styles.captureArea}>
           {Platform.OS === 'web' ? (
-            <View style={styles.preview}>
+            <View style={[styles.preview, styles.webPreview, { height: webPreviewHeight }]}>
               <BrowserVideoPreview stream={browserPreviewStream} />
             </View>
           ) : (
@@ -1281,34 +1397,47 @@ export function VideoCaptureScreen({
               testID="video-live-preview"
             />
           )}
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void startRecording()}
-            style={styles.recordButton}
-            testID="video-record"
-          >
-            <Text style={styles.recordButtonText}>Start recording</Text>
-          </Pressable>
-        </View>
-      ) : null}
-      {recording ? (
-        <View style={styles.recordingPanel} testID="video-recording">
-          <Text style={styles.recordingTitle}>Recording…</Text>
-          <Text style={styles.timer}>{Math.floor(elapsedSeconds)} / 15 seconds</Text>
-          <Pressable
-            accessibilityRole="button"
-            onPress={cancelRecording}
-            style={styles.outlineButton}
-          >
-            <Text style={styles.outlineText}>Cancel recording</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => recorder?.stop()}
-            style={styles.recordButton}
-          >
-            <Text style={styles.recordButtonText}>Stop and review</Text>
-          </Pressable>
+          {Platform.OS === 'web' && !browserPreviewStream ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void requestAccess()}
+              style={styles.outlineButton}
+              testID="video-preview-recovery"
+            >
+              <Text style={styles.outlineText}>Restore camera preview</Text>
+            </Pressable>
+          ) : null}
+          {recording ? (
+            <View style={styles.recordingPanel} testID="video-recording">
+              <Text style={styles.recordingTitle}>Recording…</Text>
+              <Text style={styles.timer}>{Math.floor(elapsedSeconds)} / 15 seconds</Text>
+              <View style={styles.recordingActions}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={cancelRecording}
+                  style={styles.outlineButton}
+                >
+                  <Text style={styles.outlineText}>Cancel recording</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => recorder?.stop()}
+                  style={styles.recordButton}
+                >
+                  <Text style={styles.recordButtonText}>Stop and review</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : Platform.OS !== 'web' || browserPreviewStream ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void startRecording()}
+              style={styles.recordButton}
+              testID="video-record"
+            >
+              <Text style={styles.recordButtonText}>Start recording</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
       {review && clip && !recording ? (
@@ -1319,6 +1448,15 @@ export function VideoCaptureScreen({
               ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio track detected; server verifies`
               : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio included`}
           </Text>
+          {reviewPlayerVisible && playbackBounds ? (
+            <CapturedVideoReview
+              clip={clip}
+              endSeconds={playbackBounds.endSeconds}
+              onMounted={onReviewPlayerMounted}
+              onUnmounted={onReviewPlayerUnmounted}
+              startSeconds={playbackBounds.startSeconds}
+            />
+          ) : null}
           {clip.source === 'file' ? (
             <Text style={styles.body}>
               FILE FALLBACK · selected locally, not recorded in Rewind
@@ -1403,6 +1541,141 @@ export function VideoCaptureScreen({
           {error}
         </Text>
       ) : null}
+    </ScrollView>
+  );
+}
+
+function CapturedVideoReview({
+  clip,
+  endSeconds,
+  onMounted,
+  onUnmounted,
+  startSeconds,
+}: {
+  clip: RecordedClip;
+  endSeconds: number;
+  onMounted: () => void;
+  onUnmounted: () => void;
+  startSeconds: number;
+}) {
+  const player = useVideoPlayer(clip.sourceUri, (instance) => {
+    instance.loop = false;
+    instance.muted = false;
+    instance.timeUpdateEventInterval = 0.1;
+  });
+  const [currentTime, setCurrentTime] = useState(startSeconds);
+  const [playing, setPlaying] = useState(false);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onMounted();
+    return onUnmounted;
+  }, [onMounted, onUnmounted]);
+
+  useEffect(() => {
+    player.pause();
+    player.seekBy(startSeconds - player.currentTime);
+  }, [endSeconds, player, startSeconds]);
+
+  useEffect(() => {
+    const timeSubscription = player.addListener('timeUpdate', ({ currentTime: time }) => {
+      const boundedTime = clampTrimmedPlaybackTime(time, startSeconds, endSeconds);
+      if (time >= endSeconds) {
+        if (time > endSeconds) player.seekBy(endSeconds - time);
+        player.pause();
+        setPlaying(false);
+      }
+      setCurrentTime(boundedTime);
+    });
+    const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
+      setPlaying(isPlaying);
+    });
+    const statusSubscription = player.addListener('statusChange', ({ status }) => {
+      if (status === 'error') {
+        setPlaybackError(
+          'This captured video could not be played. Retake it to record another clip.',
+        );
+      }
+    });
+    const endSubscription = player.addListener('playToEnd', () => {
+      player.pause();
+      setPlaying(false);
+      setCurrentTime(endSeconds);
+    });
+    return () => {
+      timeSubscription.remove();
+      playingSubscription.remove();
+      statusSubscription.remove();
+      endSubscription.remove();
+    };
+  }, [endSeconds, player, startSeconds]);
+
+  const seek = (deltaSeconds: number) => {
+    const target = clampTrimmedPlaybackTime(
+      player.currentTime + deltaSeconds,
+      startSeconds,
+      endSeconds,
+    );
+    player.seekBy(target - player.currentTime);
+    setCurrentTime(target);
+    if (target >= endSeconds && playing) {
+      player.pause();
+      setPlaying(false);
+    }
+  };
+
+  const togglePlayback = () => {
+    if (playing) {
+      player.pause();
+      setPlaying(false);
+      return;
+    }
+    if (player.currentTime < startSeconds || player.currentTime >= endSeconds) {
+      player.seekBy(startSeconds - player.currentTime);
+      setCurrentTime(startSeconds);
+    }
+    setPlaybackError(null);
+    player.play();
+    setPlaying(true);
+  };
+
+  return (
+    <View style={styles.videoReview} testID="video-review-playback">
+      <VideoView
+        accessible
+        accessibilityLabel="Captured video preview with audio"
+        contentFit="contain"
+        nativeControls={false}
+        player={player}
+        playsInline
+        style={styles.videoReviewPlayer}
+        testID="video-review-player"
+      />
+      <Text style={styles.body}>Audio enabled · {clip.durationSeconds.toFixed(1)} seconds</Text>
+      <Text style={styles.playbackTime} testID="video-review-time">
+        {currentTime.toFixed(1)} / {endSeconds.toFixed(1)} seconds
+      </Text>
+      <View style={styles.playbackControls}>
+        <Pressable accessibilityRole="button" onPress={() => seek(-5)} style={styles.outlineButton}>
+          <Text style={styles.outlineText}>Back 5 seconds</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={togglePlayback}
+          style={styles.outlineButton}
+          testID="video-review-playback-toggle"
+        >
+          <Text style={styles.outlineText}>{playing ? 'Pause preview' : 'Play preview'}</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={() => seek(5)} style={styles.outlineButton}>
+          <Text style={styles.outlineText}>Forward 5 seconds</Text>
+        </Pressable>
+      </View>
+      {playbackError ? (
+        <Text accessibilityRole="alert" style={styles.error}>
+          {playbackError}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -1465,7 +1738,8 @@ function Panel({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 16, padding: 24 },
+  screen: { backgroundColor: COLORS.background, flex: 1, width: '100%' },
+  screenContent: { flexGrow: 1, gap: 16, padding: 24, paddingBottom: 32 },
   header: { gap: 7 },
   backButton: { alignSelf: 'flex-start', paddingVertical: 4 },
   backText: { color: COLORS.accent, fontSize: 14, fontWeight: '700' },
@@ -1481,8 +1755,9 @@ const styles = StyleSheet.create({
     padding: 18,
   },
   panelTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  captureArea: { flex: 1, gap: 14, minHeight: 440 },
-  preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 320 },
+  captureArea: { flex: 1, gap: 14, minHeight: 0 },
+  preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 240 },
+  webPreview: { flex: 0, minHeight: 160, maxHeight: 320, overflow: 'hidden' },
   recordButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,
@@ -1497,11 +1772,21 @@ const styles = StyleSheet.create({
     borderColor: COLORS.accent,
     borderRadius: 10,
     borderWidth: 1,
-    gap: 14,
-    padding: 20,
+    gap: 8,
+    padding: 12,
   },
   recordingTitle: { color: COLORS.accent, fontSize: 24, fontWeight: '800' },
   timer: { color: COLORS.ink, fontSize: 20, fontVariant: ['tabular-nums'] },
+  recordingActions: { flexDirection: 'row', gap: 8 },
+  videoReview: { gap: 8 },
+  videoReviewPlayer: {
+    backgroundColor: COLORS.deep,
+    borderRadius: 8,
+    height: 220,
+    width: '100%',
+  },
+  playbackControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  playbackTime: { color: COLORS.ink, fontSize: 14, fontVariant: ['tabular-nums'] },
   reviewPanel: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.line,

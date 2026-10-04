@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as Clipboard from 'expo-clipboard';
 import {
   Platform,
@@ -26,6 +26,15 @@ import {
 } from '../capture/contribution-status';
 import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
 import type { PendingClipUpload } from '../domain/video';
+import { RealGroupSettings } from '../reminders/RealGroupSettings';
+import { PrivateReminderSubscription } from '../reminders/PrivateReminderSubscription';
+import {
+  createPrivateReminderClient,
+  type PrivateReminderClient,
+} from '../reminders/private-reminder-client';
+import { subscribeToReminderIntents } from '../reminders/reminder-intents';
+import { RealAccountArchiveScreen } from '../archive/ArchiveScreen';
+import { BuildTag } from '../runtime/BuildTag';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -69,7 +78,13 @@ function displayInviteCode(code: string): string {
 
 interface RealGroup {
   memberId?: string;
-  group: { id: string; name: string; role: 'owner' | 'member'; maxMembers: number };
+  group: {
+    id: string;
+    name: string;
+    role: 'owner' | 'member';
+    maxMembers: number;
+    timeZone?: string;
+  };
   cycle: {
     id: string;
     prompt: string;
@@ -79,6 +94,14 @@ interface RealGroup {
     contributionUsage: { countUsed: number; secondsUsed: number };
     contributionCount: number;
   };
+  releases?: RealGroupRelease[];
+}
+
+interface RealGroupRelease {
+  cycleId: string;
+  endsAt: string;
+  publishedAt: string | null;
+  state: 'processing' | 'delayed' | 'premiere' | 'archived';
 }
 
 interface RealGroupMembers {
@@ -115,12 +138,13 @@ export function RealAccountGroupExperience({
   inviteWebOrigin?: string;
 }) {
   const auth = useRealAccount();
+  const [group, setGroup] = useState<RealGroup | null>(null);
+  const [transferMode, setTransferMode] = useState<'server' | 'direct'>('server');
   const mediaClient = useMemo(
-    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest),
-    [auth.authenticatedRequest],
+    () => createRealAccountVideoRuntimeClient(auth.authenticatedRequest, { transferMode }),
+    [auth.authenticatedRequest, transferMode],
   );
   const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
-  const [group, setGroup] = useState<RealGroup | null>(null);
   const [homeAllowance, setHomeAllowance] = useState<ContributionLedgerAllowance | null>(null);
   const loadContributionLedger = useCallback(
     () =>
@@ -137,9 +161,10 @@ export function RealAccountGroupExperience({
   const [groupMembersError, setGroupMembersError] = useState<string | null>(null);
   const groupContextVersion = useRef(0);
   const groupMembersRequest = useRef(0);
+  const groupMutationPending = useRef(false);
   const selectedGroupId = useRef<string | null>(null);
   const [screen, setScreen] = useState<
-    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'error'
+    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'archive' | 'error'
   >('loading');
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState<string>(BUILT_IN_PROMPTS[0]);
@@ -153,6 +178,226 @@ export function RealAccountGroupExperience({
   const [invitePending, setInvitePending] = useState(false);
   const [acceptPending, setAcceptPending] = useState(false);
   const [enteredCode, setEnteredCode] = useState('');
+  const [capturePending, setCapturePending] = useState(false);
+  const captureRequest = useRef(0);
+  const captureMounted = useRef(true);
+  const captureAccount = useRef(auth.session?.account.id);
+  const [reminderRevision, setReminderRevision] = useState(0);
+  const reminderContext = useRef({
+    accountId: auth.session?.account.id,
+    request: auth.authenticatedRequest,
+    groupId: group?.group.id,
+    revision: reminderRevision,
+  });
+  useLayoutEffect(() => {
+    reminderContext.current = {
+      accountId: auth.session?.account.id,
+      request: auth.authenticatedRequest,
+      groupId: group?.group.id,
+      revision: reminderRevision,
+    };
+  }, [auth.session?.account.id, auth.authenticatedRequest, group?.group.id, reminderRevision]);
+  const [reminderScope, setReminderScope] = useState<{
+    client: PrivateReminderClient;
+    accountId: string;
+    groupId: string;
+    request: typeof auth.authenticatedRequest;
+    revision: number;
+  } | null>(null);
+  const reminderClient =
+    reminderScope &&
+    reminderScope.accountId === auth.session?.account.id &&
+    reminderScope?.groupId === group?.group.id &&
+    reminderScope?.request === auth.authenticatedRequest &&
+    reminderScope?.revision === reminderRevision
+      ? reminderScope.client
+      : null;
+  useEffect(() => {
+    let active = true;
+    const accountId = auth.session?.account.id;
+    const groupId = group?.group.id;
+    if (!accountId || !groupId) return;
+    const request = auth.authenticatedRequest;
+    const version = groupContextVersion.current;
+    const client = createPrivateReminderClient({
+      accountId,
+      groupId,
+      authenticatedRequest: request,
+      isCurrentContext: () =>
+        captureMounted.current &&
+        version === groupContextVersion.current &&
+        reminderContext.current.accountId === accountId &&
+        reminderContext.current.request === request &&
+        reminderContext.current.groupId === groupId &&
+        reminderContext.current.revision === reminderRevision &&
+        selectedGroupId.current === groupId,
+    });
+    void Promise.resolve().then(() => {
+      if (active)
+        setReminderScope({ client, accountId, groupId, request, revision: reminderRevision });
+    });
+    return () => {
+      active = false;
+      void client.revoke();
+    };
+  }, [auth.session?.account.id, auth.authenticatedRequest, group?.group.id, reminderRevision]);
+
+  const revokeReminderBeforeGroupChange = async () => {
+    const accountId = auth.session?.account.id;
+    const request = auth.authenticatedRequest;
+    const groupId = selectedGroupId.current;
+    const version = groupContextVersion.current;
+    if (!reminderClient) {
+      if (auth.session?.account.id && group)
+        throw new Error('Device reminder support is still being checked. Retry shortly.');
+      return;
+    }
+    const result = await reminderClient.revoke();
+    if (
+      !captureMounted.current ||
+      reminderContext.current.accountId !== accountId ||
+      reminderContext.current.request !== request ||
+      selectedGroupId.current !== groupId ||
+      groupContextVersion.current !== version
+    )
+      throw new Error('Your group context changed. Open the current group and retry.');
+    if (result.state !== 'revoked')
+      throw new Error('Device reminder removal is unconfirmed. Check reminder support and retry.');
+  };
+  const signOut = () => {
+    const context = reminderContext.current;
+    const version = groupContextVersion.current;
+    // Fence pending opt-ins immediately. Server session revocation stops sends;
+    // a network-dependent device cleanup must not delay native privacy closure.
+    const removal = reminderClient?.revoke();
+    void Promise.allSettled([removal, auth.signOut()]).then(() => {
+      // Browser revocation or native recovery-marker persistence can fail and
+      // retain this session. Replace its closed client after cleanup settles;
+      // durable unconfirmed-removal metadata is recovered by the new client.
+      if (
+        captureMounted.current &&
+        groupContextVersion.current === version &&
+        reminderContext.current.accountId === context.accountId &&
+        reminderContext.current.request === context.request &&
+        reminderContext.current.groupId === context.groupId &&
+        reminderContext.current.revision === context.revision
+      )
+        setReminderRevision((revision) => revision + 1);
+    });
+  };
+  const currentMutationAccount = () =>
+    captureMounted.current &&
+    reminderContext.current.accountId === auth.session?.account.id &&
+    reminderContext.current.request === auth.authenticatedRequest;
+  useEffect(() => {
+    let active = true;
+    const request = auth.authenticatedRequest;
+    const accountId = auth.session?.account.id;
+    if (!accountId) return;
+    const unsubscribe = subscribeToReminderIntents(async (intent) => {
+      const context = groupContextVersion.current;
+      try {
+        const response = await request('/real/groups/current');
+        const current = await readGroup(response);
+        if (
+          !active ||
+          !captureMounted.current ||
+          context !== groupContextVersion.current ||
+          reminderContext.current.accountId !== accountId ||
+          reminderContext.current.request !== request
+        )
+          return;
+        if (
+          current?.group.id === intent.groupId &&
+          (!selectedGroupId.current || selectedGroupId.current === intent.groupId)
+        ) {
+          selectedGroupId.current = current.group.id;
+          setMessage(null);
+          setGroup(current);
+          setScreen('home');
+        } else {
+          setMessage('This reminder is for another group. Choose a group you belong to.');
+        }
+      } catch {
+        if (
+          active &&
+          captureMounted.current &&
+          context === groupContextVersion.current &&
+          reminderContext.current.accountId === accountId &&
+          reminderContext.current.request === request
+        )
+          setMessage('Your reminder could not be opened. Reconnect and check your current group.');
+      }
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [auth.session?.account.id, auth.authenticatedRequest]);
+
+  useEffect(() => {
+    captureMounted.current = true;
+    return () => {
+      captureMounted.current = false;
+      captureRequest.current += 1;
+    };
+  }, []);
+  useEffect(() => {
+    captureAccount.current = auth.session?.account.id;
+  }, [auth.session?.account.id]);
+  useEffect(() => () => mediaClient.dispose(), [mediaClient]);
+  useEffect(() => {
+    if (screen !== 'capture') mediaClient.cancelDirectTransfers();
+    return () => mediaClient.cancelDirectTransfers();
+  }, [mediaClient, screen, group?.group.id, auth.session?.account.id]);
+
+  const openCapture = async () => {
+    if (!group) return;
+    const request = ++captureRequest.current;
+    const context = groupContextVersion.current;
+    const groupId = group.group.id;
+    const accountId = auth.session?.account.id;
+    setCapturePending(true);
+    setMessage(null);
+    try {
+      const response = await auth.authenticatedRequest('/real/media/config?uploadProtocol=2');
+      let mode: 'server' | 'direct' = 'server';
+      if (response.status !== 404) {
+        if (!response.ok)
+          throw new Error(
+            'Capture settings are unavailable. Reconnect or sign in again, then retry.',
+          );
+        const config = (await response.json()) as { directTransfer?: unknown };
+        if (typeof config.directTransfer !== 'boolean')
+          throw new Error('Capture settings could not be verified. Retry when connected.');
+        mode = config.directTransfer ? 'direct' : 'server';
+      }
+      if (
+        !captureMounted.current ||
+        request !== captureRequest.current ||
+        context !== groupContextVersion.current ||
+        selectedGroupId.current !== groupId ||
+        captureAccount.current !== accountId
+      )
+        return;
+      setTransferMode(mode);
+      setHomeAllowance(null);
+      setScreen('capture');
+    } catch (error) {
+      if (
+        captureMounted.current &&
+        request === captureRequest.current &&
+        context === groupContextVersion.current
+      )
+        setMessage(
+          error instanceof Error
+            ? error.message
+            : 'Capture settings are unavailable. Retry when connected.',
+        );
+    } finally {
+      if (captureMounted.current && request === captureRequest.current) setCapturePending(false);
+    }
+  };
 
   const loadGroupMembers = useCallback(
     async (groupId: string, contextVersion: number) => {
@@ -269,6 +514,7 @@ export function RealAccountGroupExperience({
         >
           {captureMode === 'photo' ? (
             <CameraCaptureScreen
+              groupName={group.group.name}
               onBack={() => setScreen('home')}
               onRecordClip={() => setCaptureMode('video')}
               onSubmitPhoto={async (metadata, base64, onProgress, replacesContributionId) => {
@@ -339,6 +585,7 @@ export function RealAccountGroupExperience({
               realAccount={{
                 groupId: group.group.id,
                 authenticatedRequest: auth.authenticatedRequest,
+                transferMode,
               }}
             />
           )}
@@ -367,7 +614,27 @@ export function RealAccountGroupExperience({
     );
   }
 
+  if (screen === 'archive' && group) {
+    return (
+      <View style={styles.captureContainer}>
+        <View style={styles.brand}>
+          <Text style={styles.wordmark}>REWIND</Text>
+          <Text style={styles.label}>{group.group.name}</Text>
+        </View>
+        <RealAccountArchiveScreen
+          key={`${group.group.id}:${auth.session?.account.id ?? ''}`}
+          baseUrl={auth.baseUrl}
+          groupId={group.group.id}
+          cycleId={group.cycle.id}
+          authenticatedRequest={auth.authenticatedRequest}
+          onBack={() => setScreen('home')}
+        />
+      </View>
+    );
+  }
+
   const create = async () => {
+    if (groupMutationPending.current) return;
     const cleanName = name.trim();
     const cleanPrompt = (useCustomPrompt ? customPrompt : prompt).trim();
     if (!cleanName || cleanName.length > GROUP_NAME_MAX_LENGTH) {
@@ -382,9 +649,11 @@ export function RealAccountGroupExperience({
       setMessage('Choose a member limit from 2 to 10.');
       return;
     }
+    groupMutationPending.current = true;
     setPending(true);
     setMessage(null);
     try {
+      await revokeReminderBeforeGroupChange();
       const response = await auth.authenticatedRequest('/real/groups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -393,15 +662,21 @@ export function RealAccountGroupExperience({
       if (!response.ok)
         throw new Error('The group could not be created. Check the details and retry.');
       const created = (await response.json()) as RealGroup;
+      if (!currentMutationAccount()) return;
       const contextVersion = ++groupContextVersion.current;
       selectedGroupId.current = created.group.id;
       setGroup(created);
       setScreen('home');
       await loadGroupMembers(created.group.id, contextVersion);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'The group could not be created.');
+      if (currentMutationAccount())
+        setMessage(error instanceof Error ? error.message : 'The group could not be created.');
     } finally {
-      setPending(false);
+      groupMutationPending.current = false;
+      if (currentMutationAccount()) {
+        setPending(false);
+        setReminderRevision((value) => value + 1);
+      }
     }
   };
 
@@ -493,15 +768,17 @@ export function RealAccountGroupExperience({
   };
 
   const acceptInvitation = async (rawCode: string, requestedGroupId?: string) => {
-    if (acceptPending) return;
+    if (acceptPending || groupMutationPending.current) return;
     const code = rawCode.replace(/[\s-]/g, '').toUpperCase();
     if (!/^(?:[A-Z]{6}|[A-Z0-9]{8})$/.test(code)) {
       setInviteFeedback('Enter the six-letter invitation code, like ABC-DEF.');
       return;
     }
+    groupMutationPending.current = true;
     setAcceptPending(true);
     setInviteFeedback(null);
     try {
+      await revokeReminderBeforeGroupChange();
       const response = await auth.authenticatedRequest('/real/invites/accept', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -515,6 +792,7 @@ export function RealAccountGroupExperience({
       if (!response.ok || !body.group) {
         throw new Error(body.message ?? 'The invitation could not be accepted.');
       }
+      if (!currentMutationAccount()) return;
       const contextVersion = ++groupContextVersion.current;
       selectedGroupId.current = body.group.group.id;
       setGroup(body.group);
@@ -529,20 +807,29 @@ export function RealAccountGroupExperience({
       setEnteredCode('');
       setInviteFeedback('Invitation accepted. You joined the group.');
     } catch (error) {
-      setInviteFeedback(
-        error instanceof Error ? error.message : 'The invitation could not be accepted.',
-      );
+      if (currentMutationAccount())
+        setInviteFeedback(
+          error instanceof Error ? error.message : 'The invitation could not be accepted.',
+        );
     } finally {
-      setAcceptPending(false);
+      groupMutationPending.current = false;
+      if (currentMutationAccount()) {
+        setAcceptPending(false);
+        setReminderRevision((value) => value + 1);
+      }
     }
   };
 
   const switchGroup = async (groupId: string) => {
+    if (pending || acceptPending || groupMutationPending.current) return;
+    groupMutationPending.current = true;
     const previousGroupId = selectedGroupId.current;
-    const contextVersion = ++groupContextVersion.current;
+    let contextVersion = groupContextVersion.current;
     setPending(true);
     setMessage(null);
     try {
+      await revokeReminderBeforeGroupChange();
+      contextVersion = ++groupContextVersion.current;
       const response = await auth.authenticatedRequest('/real/groups/current', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -550,17 +837,21 @@ export function RealAccountGroupExperience({
       });
       const selected = await readGroup(response);
       if (!selected) throw new Error('That group is not available to this account.');
-      if (contextVersion !== groupContextVersion.current) return;
+      if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return;
       selectedGroupId.current = selected.group.id;
       setGroup(selected);
       setInvite(null);
       await loadGroupMembers(selected.group.id, contextVersion);
     } catch (error) {
-      if (contextVersion !== groupContextVersion.current) return;
+      if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return;
       setMessage(error instanceof Error ? error.message : 'The group could not be selected.');
       if (previousGroupId) await loadGroupMembers(previousGroupId, contextVersion);
     } finally {
-      if (contextVersion === groupContextVersion.current) setPending(false);
+      groupMutationPending.current = false;
+      if (currentMutationAccount()) {
+        if (contextVersion === groupContextVersion.current) setPending(false);
+        setReminderRevision((value) => value + 1);
+      }
     }
   };
 
@@ -675,7 +966,7 @@ export function RealAccountGroupExperience({
                   : 'Sign out'
             }
             disabled={auth.pending}
-            onPress={() => void auth.signOut()}
+            onPress={signOut}
             testID="real-group-sign-out"
           />
         </View>
@@ -766,6 +1057,7 @@ export function RealAccountGroupExperience({
         </View>
       ) : screen === 'home' && group ? (
         <View style={styles.panel} testID="real-group-home">
+          <BuildTag />
           {auth.notice === 'revocation-unconfirmed' ||
           auth.notice === 'sign-out-marker-unavailable' ? (
             <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
@@ -893,7 +1185,10 @@ export function RealAccountGroupExperience({
             </View>
           ) : null}
           <View style={styles.divider} />
-          <Text style={styles.label}>FOUR-WEEK CYCLE</Text>
+          <Text style={styles.label}>CURRENT CAPTURE CYCLE</Text>
+          <Text style={styles.body}>
+            Contributions here are separate from previously released films.
+          </Text>
           <Text style={styles.body} testID="real-group-countdown">
             {remainingLabel(group.cycle.endsAt)}
           </Text>
@@ -901,6 +1196,54 @@ export function RealAccountGroupExperience({
           <Text style={styles.prompt} testID="real-group-cycle-prompt">
             {group.cycle.prompt}
           </Text>
+          <View style={styles.invitationPanel} testID="real-group-releases">
+            <Text style={styles.label}>PREVIOUS RELEASES</Text>
+            {(group.releases ?? []).filter((release) => release.cycleId !== group.cycle.id)
+              .length === 0 ? (
+              <Text style={styles.body} testID="real-group-releases-empty">
+                Earlier group films will remain available in Archive after release.
+              </Text>
+            ) : (
+              (group.releases ?? [])
+                .filter((release) => release.cycleId !== group.cycle.id)
+                .map((release) => (
+                  <View key={release.cycleId} style={styles.releaseRow}>
+                    <Text style={styles.body} testID={`real-group-release-${release.cycleId}`}>
+                      {release.state === 'processing'
+                        ? 'Film processing'
+                        : release.state === 'delayed'
+                          ? 'Release delayed'
+                          : release.state === 'premiere'
+                            ? 'Premiere ready'
+                            : 'Archived film'}
+                      {' · '}
+                      Cycle ended {new Date(release.endsAt).toLocaleDateString()}
+                    </Text>
+                  </View>
+                ))
+            )}
+            <Action
+              title="Open Archive"
+              onPress={() => setScreen('archive')}
+              testID="real-group-open-archive"
+            />
+          </View>
+          <RealGroupSettings
+            key={group.group.id}
+            group={group}
+            authenticatedRequest={auth.authenticatedRequest}
+            onUpdated={(updated) =>
+              setGroup((current) =>
+                current ? { ...updated, releases: updated.releases ?? current.releases } : updated,
+              )
+            }
+          />
+          {reminderClient ? (
+            <PrivateReminderSubscription
+              client={reminderClient}
+              disabled={pending || acceptPending || auth.pending}
+            />
+          ) : null}
           <Text style={styles.label}>MY ALLOWANCE</Text>
           <Text style={styles.body} testID="real-group-allowance">
             {homeAllowance
@@ -929,12 +1272,9 @@ export function RealAccountGroupExperience({
             </View>
           )}
           <Action
-            title="Capture a moment"
-            onPress={() => {
-              setMessage(null);
-              setHomeAllowance(null);
-              setScreen('capture');
-            }}
+            title={capturePending ? 'Checking capture…' : 'Capture a moment'}
+            disabled={capturePending}
+            onPress={() => void openCapture()}
             testID="real-group-capture-action"
           />
           <Action
@@ -955,7 +1295,7 @@ export function RealAccountGroupExperience({
                   : 'Sign out'
             }
             disabled={auth.pending}
-            onPress={() => void auth.signOut()}
+            onPress={signOut}
             testID="real-group-sign-out"
           />
         </View>
@@ -1052,6 +1392,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     padding: 14,
   },
+  releaseRow: { borderTopColor: COLORS.line, borderTopWidth: 1, paddingTop: 8 },
   inviteIntent: {
     backgroundColor: COLORS.paper,
     borderRadius: 12,

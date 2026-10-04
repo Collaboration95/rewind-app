@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1420" height="1010" viewBox="0 0 1420 1010">
+<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#147d83"/></marker><marker id="rel" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#5c7082"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/><rect width="100%" height="12" fill="#147d83"/>
+<text x="36" y="52" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700" fill="#17324d">Before · Candidate polling and ephemeral work</text>
+<text x="36" y="80" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#5c7082">Failure comparison only — the sequence is not historical Rewind behavior</text>
+<rect x="1170" y="28" width="214" height="31" rx="15" fill="#e8f1f8"/><text x="1277" y="49" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700" fill="#17324d">BEFORE</text>
+<rect x="52.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="150.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">timer poll</text>
+<line x1="150.0" y1="188" x2="150.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="332.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="430.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">in-memory state</text>
+<line x1="430.0" y1="188" x2="430.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="612.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="710.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">ephemeral command</text>
+<line x1="710.0" y1="188" x2="710.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="892.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="990.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">film worker</text>
+<line x1="990.0" y1="188" x2="990.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="1172.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="1270.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">client timer</text>
+<line x1="1270.0" y1="188" x2="1270.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<line x1="150.0" y1="210" x2="430.0" y2="210" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="290.0" y="228" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">poll says cycle ended</text>
+<line x1="430.0" y1="280" x2="710.0" y2="280" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="570.0" y="298" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">construct transient close /</text>
+<text x="570.0" y="315" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">compile requests</text>
+<line x1="710.0" y1="350" x2="990.0" y2="350" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="850.0" y="368" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">start work; no durable job</text>
+<text x="850.0" y="385" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">receipt</text>
+<rect x="55" y="397.5" width="1310" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="710.0" y="425" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Process restart loses command and lifecycle intent</text>
+<line x1="150.0" y1="490" x2="430.0" y2="490" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="290.0" y="508" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">next poll repeats close</text>
+<path d="M430.0,552 h70 v24 h-70" fill="none" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="465.0" y="578" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">create another</text>
+<text x="465.0" y="595" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">successor without</text>
+<text x="465.0" y="612" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">unique key</text>
+<line x1="990.0" y1="630" x2="1270.0" y2="630" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1130.0" y="648" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">worker directly writes output</text>
+<rect x="55" y="677.5" width="1310" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="710.0" y="705" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Stale worker can overwrite retry output; partial output may look published</text>
+<line x1="1270.0" y1="770" x2="990.0" y2="770" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="1130.0" y="788" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">client timer reveals based on</text>
+<text x="1130.0" y="805" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">local elapsed time</text>
+<rect x="55" y="817.5" width="1310" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="710.0" y="845" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Publication delay / restart can shift or prematurely end premiere</text>
+<text x="36" y="988" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">The diagram covers the normal path and named relevant branches; implementation names appear only in the design view.</text></svg>

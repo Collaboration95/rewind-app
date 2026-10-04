@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { Buffer } from 'node:buffer';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -150,61 +155,61 @@ test('owner controls reject invalid or excessive advances without changing the c
   });
 });
 
-test('cycle lifecycle transitions wait for release and create one successor idempotently', async () => {
-  await withDatabase(async ({ database }) => {
+function readyFilm(database, config, cycleId) {
+  const path = `${config.dataDir}/${cycleId}.mp4`;
+  const bytes = Buffer.from('synthetic lifecycle integrity fixture');
+  writeFileSync(path, bytes);
+  database
+    .prepare(
+      `UPDATE media_jobs SET status = 'ready', output_path = ?, output_sha256 = ?,
+     output_bytes = ?, output_verified_at = ? WHERE kind = 'film' AND cycle_id = ?`,
+    )
+    .run(
+      path,
+      createHash('sha256').update(bytes).digest('hex'),
+      bytes.length,
+      '2026-09-11T00:01:00.000Z',
+      cycleId,
+    );
+  return path;
+}
+
+test('closure creates one immediate boundary-anchored successor and publication keeps a 24-hour premiere', async () => {
+  await withDatabase(async ({ database, config }) => {
     const boundary = new Date('2026-09-11T00:00:00.000Z');
     database
       .prepare('UPDATE cycles SET starts_at = ?, ends_at = ? WHERE id = ?')
       .run('2026-09-10T00:00:00.000Z', boundary.toISOString(), 'demo-cycle');
-
-    const revealing = advanceCycleLifecycle(database, {
+    const closed = advanceCycleLifecycle(database, {
       groupId: 'demo-group',
       clock: () => boundary,
     });
-    assert.equal(revealing.ok, true);
-    assert.equal(revealing.action, 'revealing');
+    assert.equal(closed.action, 'revealing');
+    assert.equal(closed.cycle.lockState, 'locked');
+    assert.equal(closed.nextCycle.startsAt, boundary.toISOString());
+    assert.equal(closed.nextCycle.endsAt, '2026-09-12T00:00:00.000Z');
+    assert.equal(getCurrentCycle(database, 'demo-group').id, closed.nextCycle.id);
     assert.equal(
       advanceCycleLifecycle(database, {
         groupId: 'demo-group',
-        clock: () => new Date('2026-09-11T00:00:01.000Z'),
+        cycleId: 'demo-cycle',
+        clock: () => boundary,
       }).action,
       'waiting_for_release',
     );
-
-    const filmJob = database
-      .prepare("SELECT id FROM media_jobs WHERE kind = 'film' AND cycle_id = ?")
-      .get('demo-cycle');
-    assert.ok(filmJob);
     assert.equal(
       publishCycleRelease(database, {
         groupId: 'demo-group',
         cycleId: 'demo-cycle',
-        publishedAt: new Date('2026-09-11T00:00:30.000Z'),
+        clock: () => boundary,
       }).reason,
       'not_ready',
     );
-    database
-      .prepare("UPDATE media_jobs SET status = 'failed', output_path = NULL WHERE id = ?")
-      .run(filmJob.id);
-    assert.equal(
-      publishCycleRelease(database, {
-        groupId: 'demo-group',
-        cycleId: 'demo-cycle',
-        publishedAt: new Date('2026-09-11T00:00:45.000Z'),
-      }).reason,
-      'not_ready',
-    );
-    database
-      .prepare("UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = ?")
-      .run('/private/film/demo-cycle.mp4', filmJob.id);
-
+    const path = readyFilm(database, config, 'demo-cycle');
     const publishedAt = new Date('2026-09-11T00:01:00.000Z');
     assert.equal(
-      publishCycleRelease(database, {
-        groupId: 'demo-group',
-        cycleId: 'demo-cycle',
-        publishedAt,
-      }).action,
+      publishCycleRelease(database, { groupId: 'demo-group', cycleId: 'demo-cycle', publishedAt })
+        .action,
       'published',
     );
     assert.equal(
@@ -215,79 +220,141 @@ test('cycle lifecycle transitions wait for release and create one successor idem
       }).action,
       'already_published',
     );
+    assert.equal(
+      advanceCycleLifecycle(database, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+        clock: () => new Date('2026-09-12T00:00:59.999Z'),
+      }).action,
+      'premiere',
+    );
     const archived = advanceCycleLifecycle(database, {
       groupId: 'demo-group',
-      clock: () => publishedAt,
-    });
-    assert.equal(archived.ok, true);
-    assert.equal(archived.action, 'archived');
-    assert.equal(archived.cycle.status, 'archived');
-    assert.equal(archived.nextCycle.previousCycleId, 'demo-cycle');
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM cycles').get().count, 2);
-
-    const replay = advanceCycleLifecycle(database, {
-      groupId: 'demo-group',
       cycleId: 'demo-cycle',
-      clock: () => new Date('2026-09-11T00:02:00.000Z'),
+      clock: () => new Date('2026-09-12T00:01:00.000Z'),
     });
-    assert.equal(replay.ok, true);
-    assert.equal(replay.action, 'already_archived');
-    assert.equal(replay.nextCycle.id, archived.nextCycle.id);
+    assert.equal(archived.action, 'archived');
+    assert.equal(archived.nextCycle.id, closed.nextCycle.id);
+    assert.equal(getCurrentCycle(database, 'demo-group').id, closed.nextCycle.id);
+    assert.equal(readFileSync(path).length > 0, true, 'archiving retains film bytes');
+    assert.equal(
+      advanceCycleLifecycle(database, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+        clock: () => new Date('2026-09-13T00:00:00.000Z'),
+      }).action,
+      'already_archived',
+    );
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM cycles').get().n, 2);
+    assert.equal(
+      database
+        .prepare(
+          "SELECT COUNT(*) AS n FROM media_jobs WHERE kind = 'film' AND cycle_id IS NOT NULL",
+        )
+        .get().n,
+      1,
+    );
   });
 });
 
-test('lifecycle never archives or creates a successor without a ready film output', async () => {
-  await withDatabase(async ({ database }) => {
+test('missing, corrupt or unverified film never publishes or archives; next capture is independent', async () => {
+  await withDatabase(async ({ database, config }) => {
     const boundary = new Date('2026-09-11T00:00:00.000Z');
     database
       .prepare('UPDATE cycles SET starts_at = ?, ends_at = ? WHERE id = ?')
       .run('2026-09-10T00:00:00.000Z', boundary.toISOString(), 'demo-cycle');
-    const revealing = advanceCycleLifecycle(database, {
+    const closed = advanceCycleLifecycle(database, {
       groupId: 'demo-group',
       clock: () => boundary,
     });
-    assert.equal(revealing.action, 'revealing');
-    const filmJob = database
-      .prepare("SELECT id FROM media_jobs WHERE kind = 'film' AND cycle_id = ?")
-      .get('demo-cycle');
-    assert.ok(filmJob);
-
-    // Simulate a stale published marker left by an interrupted release call.
+    database
+      .prepare(
+        "UPDATE media_jobs SET status = 'ready', output_path = '/missing-film.mp4' WHERE cycle_id = ? AND kind = 'film'",
+      )
+      .run('demo-cycle');
+    assert.equal(
+      publishCycleRelease(database, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+        clock: () => boundary,
+      }).reason,
+      'not_ready',
+    );
+    const path = readyFilm(database, config, 'demo-cycle');
+    writeFileSync(path, 'tampered output');
+    assert.equal(
+      publishCycleRelease(database, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+        clock: () => boundary,
+      }).reason,
+      'not_ready',
+    );
     database
       .prepare(
         "UPDATE cycles SET release_status = 'published', release_published_at = ? WHERE id = ?",
       )
-      .run('2026-09-11T00:01:00.000Z', 'demo-cycle');
-    const pending = advanceCycleLifecycle(database, {
-      groupId: 'demo-group',
-      clock: () => new Date('2026-09-11T00:02:00.000Z'),
-    });
-    assert.equal(pending.action, 'waiting_for_release');
-    assert.equal(pending.cycle.status, 'revealing');
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM cycles').get().count, 1);
+      .run(boundary.toISOString(), 'demo-cycle');
+    assert.equal(
+      advanceCycleLifecycle(database, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+        clock: () => new Date('2026-09-12T00:00:00.000Z'),
+      }).action,
+      'waiting_for_release',
+    );
+    assert.equal(getCurrentCycle(database, 'demo-group').id, closed.nextCycle.id);
+    readyFilm(database, config, 'demo-cycle');
+    assert.equal(
+      advanceCycleLifecycle(database, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+        clock: () => new Date('2026-09-12T00:00:00.000Z'),
+      }).action,
+      'archived',
+    );
+  });
+});
 
+test('late restart repairs legacy closure without shifting boundary or rewinding a newer current cycle', async () => {
+  await withDatabase(async ({ database, config }) => {
     database
-      .prepare("UPDATE media_jobs SET status = 'failed', output_path = NULL WHERE id = ?")
-      .run(filmJob.id);
-    const failed = advanceCycleLifecycle(database, {
-      groupId: 'demo-group',
-      clock: () => new Date('2026-09-11T00:03:00.000Z'),
-    });
-    assert.equal(failed.action, 'waiting_for_release');
-    assert.equal(failed.cycle.status, 'revealing');
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM cycles').get().count, 1);
-
-    database
-      .prepare("UPDATE media_jobs SET status = 'ready', output_path = ? WHERE id = ?")
-      .run('/private/film/demo-cycle.mp4', filmJob.id);
-    const archived = advanceCycleLifecycle(database, {
-      groupId: 'demo-group',
-      clock: () => new Date('2026-09-11T00:04:00.000Z'),
-    });
-    assert.equal(archived.action, 'archived');
-    assert.equal(archived.cycle.status, 'archived');
-    assert.equal(archived.nextCycle.previousCycleId, 'demo-cycle');
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM cycles').get().count, 2);
+      .prepare("UPDATE cycles SET starts_at = ?, ends_at = ?, status = 'revealing' WHERE id = ?")
+      .run('2026-09-10T00:00:00.000Z', '2026-09-11T00:00:00.000Z', 'demo-cycle');
+    const second = openDatabaseAt(config.databasePath);
+    try {
+      const repaired = advanceCycleLifecycle(second, {
+        groupId: 'demo-group',
+        cycleId: 'demo-cycle',
+        clock: () => new Date('2026-09-12T01:00:00.000Z'),
+      });
+      assert.equal(repaired.nextCycle.startsAt, '2026-09-11T00:00:00.000Z');
+      const next = advanceCycleLifecycle(database, {
+        groupId: 'demo-group',
+        clock: () => new Date('2026-09-12T01:00:00.000Z'),
+      });
+      assert.equal(next.nextCycle.startsAt, '2026-09-12T00:00:00.000Z');
+      for (const connection of [second, database, second]) {
+        const replay = advanceCycleLifecycle(connection, {
+          groupId: 'demo-group',
+          cycleId: 'demo-cycle',
+          clock: () => new Date('2026-09-13T00:00:00.000Z'),
+        });
+        assert.equal(replay.nextCycle.id, repaired.nextCycle.id);
+        assert.equal(getCurrentCycle(connection, 'demo-group').id, next.nextCycle.id);
+      }
+      assert.equal(database.prepare('SELECT COUNT(*) AS n FROM cycles').get().n, 3);
+      assert.equal(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS n FROM media_jobs WHERE kind = 'film' AND cycle_id IS NOT NULL",
+          )
+          .get().n,
+        2,
+      );
+    } finally {
+      second.close();
+    }
   });
 });
 
@@ -485,5 +552,116 @@ test('HTTP owner control requires a valid session and derives the actor from it'
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
+  });
+});
+
+test('real four-week rollover rejects ended quota and enables next capture while film is pending', async () => {
+  const { createRealAccount } = await import('../dist/auth/index.js');
+  const { createRealGroup, getCurrentRealGroup } = await import('../dist/groups/real.js');
+  const { contributionQuotaWindow } = await import('../dist/contributions/index.js');
+  const { createClipUpload } = await import('../dist/media/index.js');
+  await withDatabase(async ({ database }) => {
+    const start = new Date('2026-09-01T00:00:00.000Z');
+    const account = await createRealAccount(
+      database,
+      'cycle-owner',
+      'Cycle Owner',
+      'synthetic lifecycle test password',
+      start,
+    );
+    assert.equal(account.ok, true);
+    const group = createRealGroup(
+      database,
+      account.account,
+      { name: 'Real cycle', prompt: 'Remember today', maxMembers: 2 },
+      start,
+    );
+    const boundary = new Date(group.cycle.endsAt);
+    assert.equal(boundary.getTime() - start.getTime(), CYCLE_DURATION_MS['four-week']);
+    assert.throws(() => contributionQuotaWindow(group.cycle, boundary), RangeError);
+    const closed = advanceCycleLifecycle(database, {
+      groupId: group.group.id,
+      clock: () => boundary,
+    });
+    assert.equal(closed.nextCycle.startsAt, group.cycle.endsAt);
+    assert.equal(
+      Date.parse(closed.nextCycle.endsAt) - boundary.getTime(),
+      CYCLE_DURATION_MS['four-week'],
+    );
+    const current = getCurrentRealGroup(database, account.account.id);
+    assert.equal(current.cycle.id, closed.nextCycle.id);
+    assert.equal(current.releases[0].state, 'processing');
+    assert.equal(current.releases[0].cycleId, group.cycle.id);
+    const upload = createClipUpload(
+      database,
+      group.group.id,
+      group.memberId,
+      {
+        idempotencyKey: 'real-cycle-upload-1',
+        sourceUri: 'synthetic-cycle-fixture',
+        mimeType: 'video/mp4',
+        byteLength: 100,
+        durationSeconds: 2,
+        width: 720,
+        height: 1280,
+        hasAudio: true,
+      },
+      boundary,
+    );
+    assert.equal(upload.ok, true);
+    assert.equal(upload.upload.contribution.cycleId, closed.nextCycle.id);
+    assert.equal(
+      database
+        .prepare('SELECT COUNT(*) AS n FROM contributions WHERE cycle_id = ?')
+        .get(group.cycle.id).n,
+      0,
+    );
+  });
+});
+
+test('concurrent lifecycle processes persist one successor, job and transition receipt', async () => {
+  await withDatabase(async ({ database, config }) => {
+    database
+      .prepare('UPDATE cycles SET starts_at = ?, ends_at = ? WHERE id = ?')
+      .run('2026-09-10T00:00:00.000Z', '2026-09-11T00:00:00.000Z', 'demo-cycle');
+    const script = `const {openDatabaseAt}=await import(${JSON.stringify(resolve('server/dist/db.js'))});
+      const {advanceCycleLifecycle}=await import(${JSON.stringify(resolve('server/dist/cycles/lifecycle.js'))});
+      const db=openDatabaseAt(process.argv[1]);
+      const result=advanceCycleLifecycle(db,{groupId:'demo-group',cycleId:'demo-cycle',clock:()=>new Date('2026-09-11T00:00:00.000Z')});
+      console.log(JSON.stringify({ok:result.ok,id:result.nextCycle?.id})); db.close();`;
+    const runs = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        promisify(execFile)(process.execPath, [
+          '--input-type=module',
+          '-e',
+          script,
+          config.databasePath,
+        ]),
+      ),
+    );
+    const results = runs.map((run) => JSON.parse(run.stdout));
+    assert.equal(
+      results.every((result) => result.ok),
+      true,
+    );
+    assert.equal(new Set(results.map((result) => result.id)).size, 1);
+    assert.equal(
+      database
+        .prepare('SELECT COUNT(*) AS n FROM cycles WHERE previous_cycle_id = ?')
+        .get('demo-cycle').n,
+      1,
+    );
+    assert.equal(
+      database
+        .prepare("SELECT COUNT(*) AS n FROM media_jobs WHERE cycle_id = ? AND kind = 'film'")
+        .get('demo-cycle').n,
+      1,
+    );
+    assert.equal(
+      database
+        .prepare('SELECT COUNT(*) AS n FROM cycle_lifecycle_events WHERE cycle_id = ?')
+        .get('demo-cycle').n,
+      2,
+    );
   });
 });

@@ -4,11 +4,15 @@ FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057
 
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor/node-forge ./vendor/node-forge
+COPY vendor/braces ./vendor/braces
 RUN npm ci --ignore-scripts
 
 COPY tsconfig.server.json ./
 COPY server ./server
-RUN npm run server:build
+COPY scripts/runtime-dependencies.mjs ./scripts/runtime-dependencies.mjs
+RUN npm run server:build \
+  && node scripts/runtime-dependencies.mjs /app /runtime-dependencies
 
 FROM node:26.10.0-alpine3.24@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime
 
@@ -27,6 +31,7 @@ RUN apk add --no-cache ca-certificates 'ffmpeg=8.1.2-r0' \
   && chown -R rewind:rewind /var/lib/rewind
 
 WORKDIR /app
+COPY --from=build --chown=rewind:rewind /runtime-dependencies/node_modules ./node_modules
 COPY --from=build --chown=rewind:rewind /app/server/dist ./server/dist
 COPY --from=build --chown=rewind:rewind /app/server/migrations ./server/migrations
 COPY --from=build --chown=rewind:rewind /app/server/fixtures ./server/fixtures

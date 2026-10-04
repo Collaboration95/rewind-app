@@ -195,7 +195,9 @@ test('additive auth migration and account reset preserve synthetic Demo data and
     const { migrateDatabase } = await import('../dist/db.js');
     const reopened = new DatabaseSync(`${dataDir}/rewind.sqlite`);
     try {
-      reopened.exec(`DROP TABLE real_account_sessions;
+      reopened.exec(`DROP TABLE reminder_outbox;
+        DROP TABLE reminder_destinations;
+        DROP TABLE real_account_sessions;
         DROP TABLE auth_login_throttles;
         DROP TABLE real_accounts;
         DELETE FROM schema_migration_markers WHERE migration_key = 'real-account-auth-v1';

@@ -45,6 +45,14 @@ separate reviewed destroy operation. #167 Organizations/SCP work and #261
 database migration are outside this slice. OIDC environment claims must be
 coordinated with #174 without introducing multi-account assumptions.
 
+The inert backend examples under `environments/backend/` reserve distinct
+state keys for future dev and prod roots. They are not environment roots and
+must not be used to initialize Terraform until a read-only inventory confirms
+the keys are unused and the corresponding configurations exist. The offline
+`infra/scripts/check-environment-backends.sh` guard checks the examples against
+each other and the preserved Demo key; it cannot inspect the remote state
+bucket.
+
 The remaining Demo-specific procedures in this README describe the existing
 implementation only. They do not override the dev/prod decisions above or
 authorize applying that legacy lifecycle to either new environment.
@@ -323,3 +331,124 @@ machine, so recreated hosts do not need to inherit AWS CLI credentials.
 Terraform recreates cloud infrastructure. Cloud-init installs host
 prerequisites. S3 backups restore database/media data. Keep these three layers
 separate when recovering into a replacement account.
+
+## Bounded environment identity preparation (#174)
+
+`bootstrap/environment-identity.tf` is disabled by default (`{}`). Its optional
+module prepares distinct `rewind-{dev,prod}-terraform-{plan,apply}` roles and
+permissions boundaries for the accepted **private-media roots only**. Account
+330599756236 and region ap-southeast-1 are fixed. Existing media KMS key ARNs
+must be supplied; these roles only describe those keys. Bucket metadata includes
+`ListBucket`, needed for the provider's `HeadBucket`, and may reveal object names;
+private-media object contents remain inaccessible. State grants use
+`rewind/{dev,prod}/media.tfstate`, with apply-only `.tflock` writes and exact
+resource-account conditions. Only the default Terraform workspace is supported;
+the pinned S3 backend tolerates denied non-default workspace discovery without
+granting access to other environment states. Future hosting `terraform.tfstate`
+keys from #298 are excluded. Hosting permissions, KMS creation, IAM roles/pass/
+attachments and Organizations/billing grants require separate review. Runtime
+policy version writes are limited to the exact `rewind-{dev,prod}-private-media`
+policy ARN. Review its content and all attachments before provisioning the apply
+identity. Runtime media permissions grant no state or reviewed-plan access.
+
+Trust requires exact audience, immutable subject, repository/owner IDs,
+repository name, ref (`dev` for dev, `main` for prod), and distinct environment.
+AWS documents the supported GitHub `ref`, `environment` and ID condition keys in
+[the IAM condition-key reference](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_iam-condition-keys.html).
+The recorded immutable subject prefix is
+`repo:Collaboration95@68595032/rewind-app@1354608509`; operations recheck it with
+`gh api` and fail closed if GitHub's subject configuration changes.
+
+The manual `Reviewed media Terraform` workflow is preparatory, **not enabled or
+provisioned evidence**. No PR checkout receives AWS credentials. The repository
+is public, so plans never enter GitHub artifacts, logs, PR comments or summaries.
+Only run/attempt/environment/head coordinates, SHA-256 digests and the metadata
+version ID appear in the summary. Private saved-plan exchange uses the existing
+private bucket `rewind-terraform-state-330599756236` and exactly two object names:
+
+- `rewind/{env}/reviewed-plans/{runId}/{attempt}/plan.tfplan`
+- `rewind/{env}/reviewed-plans/{runId}/{attempt}/metadata.json`
+
+The helper derives these keys from dev/prod and positive numeric GitHub run and
+attempt IDs; it accepts no arbitrary bucket, prefix or object key. These prefixes
+are separate from every backend key: `rewind/bootstrap/terraform.tfstate`, Demo's
+`rewind/demo/terraform.tfstate`, current dev/prod `media.tfstate`, and #298's
+reserved dev/prod `terraform.tfstate`. Plan identity may write only these two
+artifact leaf names in its environment, in addition to its read-only state and
+resource metadata access. Apply identity may read only version-pinned artifact
+objects; it cannot publish, overwrite or delete artifacts. Neither role lists
+artifact prefixes, deletes artifact versions, creates the shared state bucket,
+or changes its policy/lifecycle. Existing runtime identity grants none of these
+artifact or state operations. Plan output writes are separate from infrastructure
+mutation; Terraform planning still uses `-lock=false` and cannot write state.
+
+Uploads use fixed regional HTTPS, expected owner 330599756236, explicit AES256,
+SHA-256 and `If-None-Match: *`. The role policy also requires TLS, the resource
+account, AES256 and the conditional header. Metadata is published last and binds
+source run/attempt, head, environment, exact state key, variables hash, provider
+lock hash, Terraform version and the binary plan's S3 version/ETag/checksum.
+A collision fails; an interrupted metadata upload leaves an orphaned plan.
+Do not overwrite/delete it or reuse that run+attempt. A new reviewed plan must
+use a new attempt. Both objects must return non-null version IDs and checksums.
+[Amazon S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html)
+provide the write precondition; this patch does not introduce a bucket policy,
+Object Lock or lifecycle rule.
+
+Before use:
+
+1. Obtain human IAM/private-plan review and repeat the 3 October inventory of
+   state and artifact keys. Verify bucket ownership, all public-access blocks,
+   bucket policy/ACLs, SSE-AES256 and enabled versioning, existing media keys,
+   OIDC provider and all IAM attachments. No inventory or cloud configuration
+   was performed by this coding slice. Review shared bucket retention/policy
+   separately: there is **no automatic artifact cleanup or expiration** here.
+   The existing shared lifecycle affects historical versions, not live artifact
+   keys. Confirm cost, retention and any future authorized cleanup before use.
+2. Configure all four `terraform-{dev,prod}-{plan,apply}` GitHub environments with
+   required human reviewers, prevent self review, disable administrator bypass,
+   and permit protected branches only. Existing `dev` and `release` environments
+   do not satisfy these distinct gates. Exact branch head must have green
+   aggregate Quality. Set matching `MEDIA_KMS_KEY_ARN` and `MEDIA_CORS_ORIGIN`
+   for each plan/apply pair; missing configuration fails closed.
+3. Supply `TERRAFORM_GH_READ_TOKEN`, a fine-grained **read-only** GitHub credential
+   for repository/branch metadata, environment protection, OIDC customization,
+   checks and Actions run metadata. No AWS static credentials. API denial or
+   absent protections refuses the operation before AWS assumption.
+4. Stop external writers and affirm quiescence on each dispatch. Both modes
+   share one workflow concurrency group per environment with cancellation off.
+   Actions serialization cannot stop a local or different-workflow writer;
+   quiescence is an operator prerequisite, and apply also acquires the state lock.
+5. Dispatch `plan` from the exact reviewed protected branch. An authorized human
+   AWS identity must retrieve and review the private metadata and binary plan;
+   the read-only coding-agent profile has no artifact data access. An explicitly
+   authorized `rewind-terraform-apply` human profile is one existing option, subject
+   to the Rewind AWS workflow and its review requirement. Confirm caller account
+   before retrieving. Use the published metadata version ID, expected bucket
+   owner, fixed HTTPS endpoint and checksum-enabled `s3api get-object`. Verify
+   its SHA-256 against the summary, AES256 and version receipt, then retrieve
+   `plan.tfplan` using the version ID and `If-Match` ETag inside that verified
+   metadata. Check both the returned checksum and binary SHA-256. Do not retrieve
+   state objects or request a public/presigned URL. Keep files in a private local
+   directory (`umask 077`); redirect AWS receipts to private files. Use the pinned
+   Terraform version to render `terraform show -no-color plan.tfplan > plan.txt`
+   and `terraform show -json plan.tfplan > plan.json` locally. Review the complete
+   resource/policy diff and metadata. Never print/upload the plan or JSON to GitHub.
+6. For the separate human-approved `apply` dispatch, supply plan run ID, attempt,
+   binary SHA-256, metadata SHA-256 and exact metadata version ID from that review.
+   Approvers must compare all five inputs with the reviewed private files before
+   granting environment approval. The helper verifies the successful manual source
+   run at the unchanged exact head through `gh`, fetches that exact metadata S3
+   version, checks the approved hash and configuration, then fetches the binary
+   with its pinned version and ETag. All downloads check AES256 and SHA-256.
+   It applies only the saved binary with a lock, never replans. Terraform rejects
+   stale state; destructive or out-of-scope resources fail the operation guard.
+   All subprocess output and CLI errors are withheld from GitHub logs.
+
+Offline verification: `node --test tests/terraform/environment-identity.test.mjs`
+is included by existing root/Quality Terraform test globs. Backend-disabled
+Terraform validation and mocked module tests require no AWS credentials or cloud
+calls. Transport tests use an offline S3 fixture; they do not prove provisioned
+trust, bucket privacy/versioning, actual AWS conditional writes, remote-state
+separation, provider permission coverage or real environment approval. Human
+review, provisioning, private-plan operational acceptance and safe read-only
+PR-plan acceptance remain open under #174; this preparation does not close it.
