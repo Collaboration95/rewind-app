@@ -111,7 +111,8 @@ export function purgeRealAccount(
       }
     }
 
-    // These references to the account do not cascade.
+    // These references to the account do not cascade. Bytes of an unfinished
+    // direct upload stay tagged incoming, so the bucket lifecycle rule expires them.
     database.prepare('DELETE FROM upload_intents WHERE account_id = ?').run(accountId);
     database
       .prepare(

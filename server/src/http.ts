@@ -135,10 +135,10 @@ import {
 import { purgeRealAccount, removeStoredMedia } from './auth/deletion';
 import {
   blockMember,
-  isChatEventHidden,
   listBlockedMembers,
   reportContent,
   unblockMember,
+  visibleChatEvent,
 } from './groups/safety';
 import {
   createRealGroup,
@@ -1692,9 +1692,10 @@ export async function handleRequest(
     });
     const viewer = identity.accountId;
     if (viewer)
-      page.events = page.events.filter(
-        (event) => !isChatEventHidden(database, viewer, event.message),
-      );
+      page.events = page.events.flatMap((event) => {
+        const visible = visibleChatEvent(database, viewer, event);
+        return visible ? [visible] : [];
+      });
     sendJson(response, config, 200, page);
     return;
   }
@@ -1749,9 +1750,10 @@ export async function handleRequest(
 
     const writeEvent = (event: Parameters<typeof encodeSseEvent>[0]) => {
       const viewer = identity.accountId;
-      if (viewer && isChatEventHidden(database, viewer, event.message)) return;
+      const visible = viewer ? visibleChatEvent(database, viewer, event) : event;
+      if (!visible) return;
       if (!response.writableEnded && !response.destroyed) {
-        response.write(encodeSseEvent(event, { metadataOnly }));
+        response.write(encodeSseEvent(visible, { metadataOnly }));
       }
     };
     let unsubscribe = () => {};

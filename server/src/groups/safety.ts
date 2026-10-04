@@ -13,8 +13,10 @@ export function reportContent(
   input: { messageId?: unknown; contributionId?: unknown; reason?: unknown },
   now = new Date(),
 ): 'reported' | 'invalid' | 'not_found' {
-  const messageId = typeof input.messageId === 'string' ? input.messageId : null;
-  const contributionId = typeof input.contributionId === 'string' ? input.contributionId : null;
+  const messageId = typeof input.messageId === 'string' && input.messageId ? input.messageId : null;
+  const contributionId =
+    typeof input.contributionId === 'string' && input.contributionId ? input.contributionId : null;
+  if (input.messageId === '' || input.contributionId === '') return 'invalid';
   const reason = input.reason === undefined ? '' : input.reason;
   if (
     Boolean(messageId) === Boolean(contributionId) ||
@@ -117,4 +119,18 @@ export function isChatEventHidden(
       )
       .get(accountId, message.memberId, accountId, message.id ?? null),
   );
+}
+
+/** The chat event as this viewer may see it: null when the message itself is
+ * hidden, or without its reply preview when the quoted message is hidden. */
+export function visibleChatEvent<
+  E extends {
+    message: { id?: string; memberId: string; replyTo?: { id: string; memberId: string } | null };
+  },
+>(database: RewindDatabase, accountId: string, event: E): E | null {
+  if (isChatEventHidden(database, accountId, event.message)) return null;
+  const replyTo = event.message.replyTo;
+  if (replyTo && isChatEventHidden(database, accountId, replyTo))
+    return { ...event, message: { ...event.message, replyTo: null } };
+  return event;
 }

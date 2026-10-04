@@ -216,6 +216,15 @@ test('members can report and block, which hides that chat from them only', async
     const first = await sendMessage(baseUrl, owner, groupId, 'first');
     await sendMessage(baseUrl, owner, groupId, 'second');
     await sendMessage(baseUrl, member, groupId, 'mine');
+    assert.equal(
+      (
+        await post(baseUrl, `/realtime/groups/${groupId}/messages`, owner, {
+          body: 'reply',
+          replyToMessageId: first,
+        })
+      ).status,
+      201,
+    );
 
     const reports = `/real/groups/${groupId}/reports`;
     assert.equal((await post(baseUrl, reports, member, {})).status, 400);
@@ -225,13 +234,26 @@ test('members can report and block, which hides that chat from them only', async
     );
     assert.equal((await post(baseUrl, reports, outsider, { messageId: first })).status, 404);
     assert.equal(
+      (await post(baseUrl, reports, member, { messageId: first, contributionId: '' })).status,
+      400,
+    );
+    assert.equal(
       (await post(baseUrl, reports, member, { messageId: first, reason: 'rude' })).status,
       201,
     );
     assert.equal((await post(baseUrl, reports, member, { messageId: first })).status, 201);
     assert.equal(database.prepare('SELECT COUNT(*) AS n FROM content_reports').get().n, 1);
-    assert.deepEqual(await chatBodies(baseUrl, member, groupId), ['second', 'mine']);
-    assert.deepEqual(await chatBodies(baseUrl, owner, groupId), ['first', 'second', 'mine']);
+    assert.deepEqual(await chatBodies(baseUrl, member, groupId), ['second', 'mine', 'reply']);
+    assert.deepEqual(await chatBodies(baseUrl, owner, groupId), [
+      'first',
+      'second',
+      'mine',
+      'reply',
+    ]);
+    const history = await fetch(`${baseUrl}/realtime/groups/${groupId}/messages`, {
+      headers: member.headers,
+    }).then((r) => r.json());
+    assert.equal(history.events.at(-1).message.replyTo, null);
 
     const ownerProfile = database
       .prepare('SELECT id FROM real_profiles WHERE account_id = ?')
@@ -261,6 +283,6 @@ test('members can report and block, which hides that chat from them only', async
       headers: member.headers,
     });
     assert.equal(unblocked.status, 200);
-    assert.deepEqual(await chatBodies(baseUrl, member, groupId), ['second', 'mine']);
+    assert.deepEqual(await chatBodies(baseUrl, member, groupId), ['second', 'mine', 'reply']);
   });
 });
