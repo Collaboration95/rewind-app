@@ -510,6 +510,31 @@ describe('Expo camera adapter contract', () => {
     await expect(platform.captureStill()).rejects.toBe(nativeFailure);
   });
 
+  it('retries a still capture while the browser camera has no frame yet (#401)', async () => {
+    const warmingUp = new Error(
+      'HTMLVideoElement does not have enough camera data to construct an image yet.',
+    );
+    const camera = cameraHandle({
+      takePictureAsync: jest
+        .fn()
+        .mockRejectedValueOnce(warmingUp)
+        .mockRejectedValueOnce(warmingUp)
+        .mockResolvedValue({ format: 'jpg', height: 1280, uri: 'blob:still', width: 720 }),
+    });
+    const wait = jest.fn().mockResolvedValue(undefined);
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => camera, wait });
+
+    await expect(platform.captureStill()).resolves.toMatchObject({ sourceUri: 'blob:still' });
+    expect(camera.takePictureAsync).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(2);
+
+    const neverReady = cameraHandle({ takePictureAsync: jest.fn().mockRejectedValue(warmingUp) });
+    const stuck = new ExpoCameraPlatform({ getCameraRef: () => neverReady, wait });
+    await expect(stuck.captureStill()).rejects.toThrow(
+      'The camera is still starting. Wait a moment, then take the photo again.',
+    );
+  });
+
   it('maps video recording options and clamps a native duration above the 15-second limit', async () => {
     const recordAsync = jest.fn().mockResolvedValue({
       duration: MAX_CLIP_DURATION_SECONDS + 4,

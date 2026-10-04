@@ -329,6 +329,17 @@ export interface ExpoCameraPlatformOptions {
   browserMediaRecorder?: typeof MediaRecorder;
   browserSecureContext?: () => boolean;
   browserPermissionReader?: () => Promise<PermissionSnapshot>;
+  /** Waits between still-capture attempts while a browser camera warms up. */
+  wait?: (milliseconds: number) => Promise<void>;
+}
+
+// iPhone Safari can report the camera ready before its video element holds a
+// frame; expo-camera then throws this error. Retry briefly instead of failing.
+const CAMERA_WARMUP_RETRIES = 10;
+const CAMERA_WARMUP_DELAY_MS = 200;
+
+function isCameraWarmingUp(error: unknown): boolean {
+  return error instanceof Error && /enough camera data/i.test(error.message);
 }
 
 /** Expo SDK 57 adapter. No Expo or React Native types cross the capture port. */
@@ -657,12 +668,28 @@ export class ExpoCameraPlatform implements CameraPlatform {
     const camera = this.options.getCameraRef();
     if (!camera) throw new Error('The camera preview is not ready. Try again.');
 
-    const picture: CameraCapturedPicture = await camera.takePictureAsync({
-      base64: Platform.OS === 'web',
-      quality: 0.85,
-      shutterSound: true,
-      skipProcessing: false,
-    });
+    const wait =
+      this.options.wait ??
+      ((milliseconds: number) => new Promise<void>((done) => setTimeout(done, milliseconds)));
+    let picture: CameraCapturedPicture | null = null;
+    for (let attempt = 0; !picture; attempt += 1) {
+      try {
+        picture = await camera.takePictureAsync({
+          base64: Platform.OS === 'web',
+          quality: 0.85,
+          shutterSound: true,
+          skipProcessing: false,
+        });
+      } catch (error) {
+        if (!isCameraWarmingUp(error)) throw error;
+        if (attempt >= CAMERA_WARMUP_RETRIES) {
+          throw new Error(
+            'The camera is still starting. Wait a moment, then take the photo again.',
+          );
+        }
+        await wait(CAMERA_WARMUP_DELAY_MS);
+      }
+    }
     return {
       sourceUri: picture.uri,
       base64: picture.base64,
