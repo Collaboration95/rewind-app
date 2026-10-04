@@ -20,8 +20,12 @@ async function openVideoFallback(page: Page) {
   await openVideoRoute(page);
   const unsupported = page.getByTestId('video-unsupported');
   await expect(unsupported).toBeVisible();
-  // Option 2: the web app records with the phone's own camera sheet.
-  await expect(unsupported).toContainText('Opens your phone camera.');
+  await expect(unsupported).toContainText(
+    'This browser cannot record the MP4 format required for upload.',
+  );
+  await expect(unsupported).toContainText(
+    'Choose an MP4 no longer than 15 seconds with an audio track',
+  );
 }
 
 async function openVideoRoute(page: Page) {
@@ -45,12 +49,12 @@ async function openVideoRoute(page: Page) {
 
 async function chooseVideo(page: Page, name: string, buffer: Buffer, mimeType: string) {
   const chooserPromise = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: 'Record video' }).click();
+  await page.getByRole('button', { name: 'Choose a video file' }).click();
   const chooser = await chooserPromise;
   await chooser.setFiles({ buffer, mimeType, name });
 }
 
-test('accepts a camera-sheet H.264/AAC MP4 and keeps review/upload metadata truthful', async ({
+test('accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadata truthful', async ({
   page,
 }) => {
   await openVideoFallback(page);
@@ -58,8 +62,10 @@ test('accepts a camera-sheet H.264/AAC MP4 and keeps review/upload metadata trut
 
   const review = page.getByTestId('video-review');
   await expect(review).toBeVisible();
-  await expect(review).toContainText(/Recorded 2\.3 seconds · 720 × 1280 · audio included/);
-  await expect(review).not.toContainText('FILE FALLBACK');
+  await expect(review).toContainText(
+    /Selected MP4 2\.3 seconds · 720 × 1280 · audio track detected; server verifies/,
+  );
+  await expect(review).toContainText('FILE FALLBACK · selected locally, not recorded in Rewind');
   await expect(review).not.toContainText('audio verified');
 
   const endSeconds = Number(await review.locator('input').nth(1).inputValue());
@@ -139,7 +145,7 @@ test('keeps captured review inline with working play, pause, bounded seek and re
   await page.getByRole('button', { name: 'Retake', exact: true }).click();
   await expect(review).toHaveCount(0);
   await expect(page.getByTestId('video-review-player')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Record video' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Choose a video file' })).toBeVisible();
 });
 
 test('rejects a renamed WebM even when its caller-controlled type says video/mp4', async ({
@@ -152,7 +158,137 @@ test('rejects a renamed WebM even when its caller-controlled type says video/mp4
   await expect(page.getByTestId('video-review')).toHaveCount(0);
 });
 
-test('orientation guidance and camera controls stay reachable through short landscape rotation', async ({
+test('records from browser camera and microphone after the member action and uploads through the video API', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mp4Bytes = Array.from(portraitMp4);
+  await page.addInitScript((fixtureBytes) => {
+    const target = window as typeof window & { __capturePromptCount?: number };
+    target.__capturePromptCount = 0;
+    let permissionGranted = false;
+    const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+    Object.defineProperty(navigator.permissions, 'query', {
+      configurable: true,
+      value: (descriptor: PermissionDescriptor) => {
+        if (descriptor.name === 'camera' || descriptor.name === 'microphone') {
+          return Promise.resolve({
+            onchange: null,
+            state: permissionGranted ? 'granted' : 'prompt',
+          } as PermissionStatus);
+        }
+        return originalQuery(descriptor);
+      },
+    });
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
+      configurable: true,
+      value: async () => {
+        target.__capturePromptCount = (target.__capturePromptCount ?? 0) + 1;
+        permissionGranted = true;
+        const canvas = document.createElement('canvas');
+        canvas.width = 720;
+        canvas.height = 1280;
+        const videoTrack = canvas.captureStream(10).getVideoTracks()[0];
+        const drawing = canvas.getContext('2d')!;
+        drawing.fillStyle = 'navy';
+        setInterval(() => drawing.fillRect(0, 0, canvas.width, canvas.height), 100);
+        const audioContext = new AudioContext();
+        const audioTrack = audioContext.createMediaStreamDestination().stream.getAudioTracks()[0];
+        return new MediaStream([videoTrack, audioTrack]);
+      },
+    });
+    const bytes = Uint8Array.from(fixtureBytes);
+    class FixtureMediaRecorder {
+      static isTypeSupported(type: string) {
+        return type.startsWith('video/mp4');
+      }
+      state: RecordingState = 'inactive';
+      mimeType = 'video/mp4';
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() {
+        this.state = 'recording';
+      }
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({ data: new Blob([bytes], { type: this.mimeType }) } as BlobEvent);
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(window, 'MediaRecorder', {
+      configurable: true,
+      value: FixtureMediaRecorder,
+    });
+  }, mp4Bytes);
+
+  await openVideoRoute(page);
+  await expect(page.getByTestId('video-permission')).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => (window as typeof window & { __capturePromptCount?: number }).__capturePromptCount,
+    ),
+  ).toBe(0);
+  await page.getByRole('button', { name: 'Allow camera and microphone' }).click();
+  await expect(page.getByTestId('video-live-preview')).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .getByTestId('video-live-preview')
+        .evaluate((video: HTMLVideoElement) => video.readyState),
+    )
+    .toBeGreaterThanOrEqual(2);
+  expect(
+    await page.evaluate(
+      () => (window as typeof window & { __capturePromptCount?: number }).__capturePromptCount,
+    ),
+  ).toBe(1);
+
+  await page.getByTestId('video-record').click();
+  await expect(page.getByTestId('video-recording')).toBeVisible();
+  await expect(page.getByTestId('video-live-preview')).toBeVisible();
+  const navigationTop = (await page.getByTestId('main-navigation').boundingBox())!.y;
+  for (const name of ['Cancel recording', 'Stop and review']) {
+    const bounds = await page.getByRole('button', { name }).boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(navigationTop);
+  }
+  await page.getByRole('button', { name: 'Stop and review' }).click();
+  const review = page.getByTestId('video-review');
+  await expect(review).toBeVisible();
+  await expect(review).toContainText('Recorded 2.3 seconds');
+
+  const uploadRequestPromise = page.waitForRequest(
+    (request) =>
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === '/api/contributions/upload',
+  );
+  const uploadResponsePromise = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/api/contributions/upload',
+  );
+  const uploadButton = page.getByRole('button', { name: 'Upload clip' });
+  await uploadButton.scrollIntoViewIfNeeded();
+  const uploadBounds = await uploadButton.boundingBox();
+  const navigationBounds = await page.getByTestId('main-navigation').boundingBox();
+  expect(uploadBounds).not.toBeNull();
+  expect(navigationBounds).not.toBeNull();
+  expect(uploadBounds!.y + uploadBounds!.height).toBeLessThanOrEqual(navigationBounds!.y);
+  await uploadButton.click();
+  const uploadRequest = await uploadRequestPromise;
+  const uploadBody = JSON.parse(uploadRequest.postData() ?? '{}') as Record<string, unknown>;
+  expect(uploadBody.mimeType).toBe('video/mp4');
+  expect(uploadBody.hasAudio).toBe(true);
+  expect(uploadBody.width).toBe(720);
+  expect(uploadBody.height).toBe(1280);
+  const uploadResponse = await uploadResponsePromise;
+  expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
+  await expect(page.getByText('Upload queued as one pending contribution.')).toBeVisible();
+});
+
+test('orientation guidance and video fallback controls stay reachable through short landscape rotation', async ({
   page,
 }) => {
   // Layout and file-choice only: no camera grant, recording or actual Safari lock evidence.
@@ -162,7 +298,7 @@ test('orientation guidance and camera controls stay reachable through short land
   await expect(guidance).toContainText('Record in portrait or landscape');
   await page.setViewportSize({ width: 852, height: 300 });
   const navigation = page.getByTestId('main-navigation');
-  const choose = page.getByRole('button', { name: 'Record video', exact: true });
+  const choose = page.getByRole('button', { name: 'Choose a video file', exact: true });
   const back = page.getByRole('button', { name: 'Back', exact: true });
   for (const control of [guidance, choose, back]) {
     await control.scrollIntoViewIfNeeded();
