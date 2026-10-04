@@ -8,8 +8,13 @@ import { disposableTarget } from './vigolium-provider.mjs';
 import { fixtureContainerArgs, fixtureImage } from './vigolium-container.mjs';
 
 const mode = process.argv[2];
-if (!['--build', '--verify'].includes(mode))
-  throw new Error('Choose --build or --verify; live Rewind scanning is not enabled yet');
+if (!['--build', '--verify', '--run'].includes(mode))
+  throw new Error('Choose --build, --verify or --run');
+const live = mode === '--run';
+if (live && process.env.REWIND_AGENT_REWIND_DATA_SHARING !== 'approved')
+  throw new Error(
+    'Live Rewind scanning requires REWIND_AGENT_REWIND_DATA_SHARING=approved in addition to provider approval',
+  );
 const docker = process.env.REWIND_DOCKER_BIN || 'docker';
 const image = 'rewind-vigolium-target:trial';
 async function execute(args, deadline = 60_000, quiet = false) {
@@ -44,10 +49,18 @@ if (mode === '--build') {
   await rm(join(output, 'target.json'), { force: true });
   await rm(join(output, 'app-baselines.json'), { force: true });
   const appArgs = fixtureContainerArgs({ output, name: appName }).slice(0, -3);
+  if (live) appArgs[appArgs.indexOf('--network') + 1] = 'bridge';
   appArgs.splice(1, 0, '--detach');
-  const scannerArgs = fixtureContainerArgs({ output, name });
+  const scannerArgs = fixtureContainerArgs({ output, name, live, env: process.env });
   scannerArgs[scannerArgs.indexOf('--network') + 1] = `container:${appName}`;
-  scannerArgs.splice(-3, 3, fixtureImage, '--verify', '--target-file', '/reports/target.json');
+  scannerArgs.splice(
+    -3,
+    3,
+    fixtureImage,
+    live ? '--run' : '--verify',
+    '--target-file',
+    '/reports/target.json',
+  );
   try {
     await execute([...appArgs, image]);
     const deadline = Date.now() + 45_000;
@@ -62,17 +75,19 @@ if (mode === '--build') {
       }
     }
     if (!ready) throw new Error('Disposable Rewind backend did not become ready');
-    await execute(
-      [
-        ...scannerArgs.slice(0, -4),
-        '--entrypoint',
-        'node',
-        fixtureImage,
-        'scripts/check-vigolium-isolation.mjs',
-      ],
-      45_000,
-    );
-    await execute(scannerArgs, 60_000);
+    if (live) await rm(join(output, 'isolation.json'), { force: true });
+    else
+      await execute(
+        [
+          ...scannerArgs.slice(0, -4),
+          '--entrypoint',
+          'node',
+          fixtureImage,
+          'scripts/check-vigolium-isolation.mjs',
+        ],
+        45_000,
+      );
+    await execute(scannerArgs, live ? 420_000 : 60_000);
   } finally {
     // These exact names belong to this invocation; no unrelated containers are touched.
     await execute(['rm', '--force', name, appName], 15_000, true).catch(() => {});

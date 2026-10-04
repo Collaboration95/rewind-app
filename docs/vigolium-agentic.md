@@ -51,9 +51,35 @@ and unrelated-account read/write denial. The scanner independently checks the
 authenticated seed and scope boundary. Reports are under
 `vigolium-result/agentic-rewind-container/`; `summary.html`, `app-baselines.json`
 and `isolation.json` describe setup and isolation, not AI vulnerability findings.
-The wrapper currently supports build and offline verification only. Live Rewind
-provider scanning needs separate data-sharing authorization and the app-specific
-agent execution configuration; synthetic-fixture approval is insufficient.
+After approving disposable Rewind HTTP traffic to the selected provider, set
+`REWIND_AGENT_REWIND_DATA_SHARING=approved` in addition to the provider settings
+below, then run `node scripts/run-vigolium-rewind.mjs --run`. Synthetic-fixture
+approval alone cannot start this mode. The backend receives no provider key;
+the scanner receives only the selected provider key and report/seed mount.
+For live calls their shared network namespace uses Docker bridge egress. This
+allows external networking and is not a provider-only allowlist. No source,
+database, home directory, Docker socket or real accounts are mounted in the AI
+worker. The offline isolation report is removed before live execution so its
+no-network claim cannot be mistaken for the live configuration.
+
+The first live trial covers SQL injection probes against one disposable chat
+endpoint. Its prompt reflects actual POST message-creation behavior: literal
+payload storage, reflected text and changing message IDs are not evidence of
+SQL injection. Repeated evidence is required. Generated extensions execute in
+the same separate native phase validated by the synthetic trial. The combined
+`report.jsonl` preserves native and extension exports, with `native-report.html`
+available separately from the extension HTML report. No findings does not
+establish app security or full coverage. The role/access baselines are local
+preflight checks, not discoveries made by the AI.
+
+The first live Rewind trial completed on 4 October 2026: 67 forwarded scanner
+requests, one generated extension executed, no reported SQL injection, and one
+informational Authorization-header observation. Login/group creation and owner,
+anonymous and unrelated-account chat baselines passed. The report exports were
+checked for the configured provider key and unredacted HTTP bearer token; neither
+was present. The temporary credential seed and backend container were removed.
+This establishes a working bounded trial, not comprehensive coverage or a clean
+security assessment of the whole app.
 
 ### Container and known-vulnerability fixture
 

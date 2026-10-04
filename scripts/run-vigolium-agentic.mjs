@@ -138,7 +138,13 @@ async function runCli(args, input) {
 try {
   await mkdir(output, { recursive: true });
   // Remove previous findings before a new attempt, so failures cannot display stale results.
-  for (const name of ['report.html', 'report.jsonl', 'generated-artifacts.json'])
+  for (const name of [
+    'report.html',
+    'report.jsonl',
+    'native-report.html',
+    'native-report.jsonl',
+    'generated-artifacts.json',
+  ])
     await rm(join(output, name), { force: true });
   if (mode !== '--prepare') {
     let origin;
@@ -335,7 +341,10 @@ try {
             '--header',
             `Authorization: Bearer ${token}`,
             '--prompt',
-            'Assess the supplied disposable chat POST JSON body for SQL injection. This synthetic endpoint uses SQLite and returns messages matching body. Select sqli-error-based and generate a small custom extension using paired true/false controls. Limit it to 12 requests. Evaluate the observed baseline, true and false response differences: a false OR condition can preserve baseline matches, so do not require it to return zero rows. Require repeated stable true-versus-false differences and explain them; identical responses must never produce a finding. IMPORTANT SDK CONTRACT: ctx.request contains raw, method, url, headers only; ctx.request.body does not exist. Parse the JSON body from ctx.request.raw after its blank header/body separator. Return finding objects with name, url, matched, request, response and module tags ["sqli"]. Use plain module IDs and tags without Markdown list prefixes. Preserve the Authorization header, HTTP origin and endpoint path. Do not read source files or contact other targets. Treat denied scope requests as scope controls, not vulnerabilities. Explain evidence and uncertainty.',
+            (fixtureMode
+              ? 'Assess the supplied disposable chat POST JSON body for SQL injection. This synthetic endpoint uses SQLite and returns messages matching body. '
+              : 'Assess the supplied disposable Rewind chat POST JSON body for SQL injection using HTTP evidence only. POST creates a message; GET reads messages. There is no known vulnerability. Literal storage or reflection of a payload is not SQL injection; normal message creation and changing message IDs are not evidence. Never invent a finding to satisfy the trial. ') +
+              'Select sqli-error-based and generate a small custom extension using paired true/false controls. Limit it to 12 requests. Evaluate the observed baseline, true and false response differences: a false OR condition can preserve baseline matches, so do not require it to return zero rows. Require repeated stable true-versus-false differences and explain them; identical responses must never produce a finding. IMPORTANT SDK CONTRACT: ctx.request contains raw, method, url, headers only; ctx.request.body does not exist. Parse the JSON body from ctx.request.raw after its blank header/body separator. Return finding objects with name, url, matched, request, response and module tags ["sqli"]. Use plain module IDs and tags without Markdown list prefixes. Preserve the Authorization header, HTTP origin and endpoint path. Do not read source files or contact other targets. Treat denied scope requests as scope controls, not vulnerabilities. Explain evidence and uncertainty.',
             '--modules',
             'sqli-error-based',
             '--with-extensions',
@@ -370,7 +379,24 @@ try {
           ],
           raw,
         );
-      if (fixtureMode) {
+      if (fixtureMode || targetFile) {
+        // Preserve native findings before the dedicated extension database is used.
+        await runCli([
+          'export',
+          ...flags,
+          '--format',
+          'html,jsonl',
+          '--omit-response',
+          '-o',
+          join(temporary, 'native-report'),
+        ]);
+        for (const extension of ['html', 'jsonl']) {
+          await writeFile(
+            join(output, `native-report.${extension}`),
+            redact(await readFile(join(temporary, `native-report.${extension}`), 'utf8'), secrets),
+          );
+        }
+        report.nativeReport = 'native-report.html';
         const generated = await retainSyntheticArtifacts(join(temporary, 'sessions'));
         const scripts = generated
           .filter((artifact) => artifact.path.endsWith('.js'))
@@ -459,7 +485,11 @@ try {
         join(temporary, 'report'),
       ]);
       for (const extension of ['html', 'jsonl']) {
-        const content = await readFile(join(temporary, `report.${extension}`), 'utf8');
+        let content = await readFile(join(temporary, `report.${extension}`), 'utf8');
+        if (extension === 'jsonl' && report.nativeReport) {
+          const native = await readFile(join(output, 'native-report.jsonl'), 'utf8');
+          content = [native.trim(), content.trim()].filter(Boolean).join('\n') + '\n';
+        }
         await writeFile(join(output, `report.${extension}`), redact(content, secrets));
       }
       report.status = 'scanner-completed';
@@ -494,7 +524,7 @@ try {
     await new Promise((resolve) => server.close(resolve));
   }
   database?.close();
-  if (fixtureMode && ['--run', '--replay'].includes(mode)) {
+  if ((fixtureMode || targetFile) && ['--run', '--replay'].includes(mode)) {
     report.fixtureProbes = fixtureEvidence;
     const artifacts = await retainSyntheticArtifacts(join(temporary, 'sessions'));
     await writeFile(join(output, 'generated-artifacts.json'), JSON.stringify(artifacts, null, 2));

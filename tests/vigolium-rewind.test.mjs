@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
 import { disposableTarget } from '../scripts/vigolium-provider.mjs';
 import { createRewindTarget } from '../scripts/vigolium-rewind-target.mjs';
+
+test('live Rewind wrapper refuses fixture-only sharing approval before starting Docker', () => {
+  assert.throws(
+    () =>
+      execFileSync(process.execPath, ['scripts/run-vigolium-rewind.mjs', '--run'], {
+        env: { REWIND_AGENT_DATA_SHARING: 'approved' },
+        stdio: 'pipe',
+      }),
+    (error) => error.stderr.toString().includes('REWIND_AGENT_REWIND_DATA_SHARING=approved'),
+  );
+});
 
 test('external seed excludes arbitrary origins, endpoints and header injection', () => {
   const seed = {
