@@ -231,6 +231,21 @@ jobs:
             "$RUNNER_TEMP/rewind-release.tar" deploy/release.py deploy/release-host.sh \
             "ubuntu@$REWIND_HOST_IP:/tmp/"
 
+      - name: Apply hosted settings
+        env:
+          REWIND_HOSTED_ENV: ${{ secrets.REWIND_HOSTED_ENV }}
+        run: |
+          set -Eeuo pipefail
+          # Allowlisted settings (media bucket, runtime credentials, web push
+          # keys) from the REWIND_HOSTED_ENV secret; see scripts/set-hosted-secrets.sh.
+          if [ -z "$REWIND_HOSTED_ENV" ]; then
+            echo 'REWIND_HOSTED_ENV is not set; keeping the host settings unchanged.'
+            exit 0
+          fi
+          # shellcheck disable=SC2086
+          printf '%s\n' "$REWIND_HOSTED_ENV" |
+            ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" 'bash /tmp/release-host.sh configure'
+
       - name: Install the release on the host
         run: |
           set -Eeuo pipefail
