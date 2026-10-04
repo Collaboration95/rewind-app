@@ -17,3 +17,15 @@ variable "web_origins" {
   # a server-signed URL; CORS only controls which pages may send them.
   default = ["https://d2m6kz76y4kuvm.cloudfront.net", "http://localhost:8090"]
 }
+
+variable "web_push_subject" {
+  description = "VAPID subject the server sends with web push (an https: or mailto: contact)."
+  type        = string
+  default     = "https://d2m6kz76y4kuvm.cloudfront.net"
+}
+
+variable "deploy_role_name" {
+  description = "GitHub Actions deploy role that streams the hosted settings to the server."
+  type        = string
+  default     = "rewind-demo-deploy"
+}

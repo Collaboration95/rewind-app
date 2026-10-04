@@ -164,3 +164,39 @@ resource "aws_iam_user_policy" "runtime" {
 resource "aws_iam_access_key" "runtime" {
   user = aws_iam_user.runtime.name
 }
+
+# Hosted settings for the dev deploy. Terraform writes them here and the deploy
+# workflow streams them to the server (deploy/release-host.sh configure), so
+# no person or agent copies the runtime credentials anywhere. Web push keys are
+# generated on the server itself and never leave it.
+resource "aws_s3_object" "hosted_env" {
+  bucket                 = aws_s3_bucket.media.id
+  key                    = "_config/${var.environment}.env"
+  content_type           = "text/plain"
+  server_side_encryption = "AES256"
+  content = sensitive(join("\n", [
+    "REWIND_MEDIA_BACKEND=s3",
+    "REWIND_MEDIA_ENVIRONMENT=${var.environment}",
+    "REWIND_MEDIA_S3_BUCKET=${aws_s3_bucket.media.id}",
+    "REWIND_MEDIA_S3_OWNER=${data.aws_caller_identity.current.account_id}",
+    "REWIND_MEDIA_S3_REGION=${var.region}",
+    "AWS_REGION=${var.region}",
+    "AWS_ACCESS_KEY_ID=${aws_iam_access_key.runtime.id}",
+    "AWS_SECRET_ACCESS_KEY=${aws_iam_access_key.runtime.secret}",
+    "REWIND_REMINDER_VAPID_SUBJECT=${var.web_push_subject}",
+    "",
+  ]))
+}
+
+data "aws_iam_policy_document" "deploy_reads_hosted_env" {
+  statement {
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.media.arn}/${aws_s3_object.hosted_env.key}"]
+  }
+}
+
+resource "aws_iam_role_policy" "deploy_reads_hosted_env" {
+  name   = "rewind-${var.environment}-read-hosted-env"
+  role   = var.deploy_role_name
+  policy = data.aws_iam_policy_document.deploy_reads_hosted_env.json
+}

@@ -467,6 +467,8 @@ AWS_PROFILE=rewind-terraform-apply terraform init -backend-config=backend.hcl
 AWS_PROFILE=rewind-terraform-apply terraform plan
 ```
 
-`scripts/set-hosted-secrets.sh` (owner-run) stores the bucket, runtime
-credentials and web push keys as the `REWIND_HOSTED_ENV` GitHub secret; the dev
-deploy writes them into the server's `rewind.env`.
+Terraform also writes the hosted settings (bucket, runtime credentials, web push
+subject) to the private object `s3://<bucket>/_config/dev.env`, which only the
+dev deploy role may read. Each dev deploy streams it to
+`deploy/release-host.sh configure`; the server generates its own web push keys
+once and keeps them. No one copies credentials by hand.
