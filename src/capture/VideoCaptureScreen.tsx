@@ -165,9 +165,9 @@ export function VideoCaptureScreen({
   const platform = useMemo(
     () =>
       platformProp ??
-      // eslint-disable-next-line react-hooks/refs
       // Video keeps the in-page recorder: the phone camera sheet records web
       // video at a low preset (about 480p) that a page cannot raise.
+      // eslint-disable-next-line react-hooks/refs
       new ExpoCameraPlatform({
         getCameraRef,
       }),
