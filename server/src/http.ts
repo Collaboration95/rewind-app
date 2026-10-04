@@ -4333,6 +4333,8 @@ export function createRuntimeServer(
     response.setHeader('X-Request-Id', observation.requestId);
     response.once('finish', () => {
       if (response.statusCode >= 500) observation.failure(response.statusCode);
+      if (config.requestTiming)
+        observation.timing(request.method, request.url, response.statusCode);
     });
     void handleRequest(request, response, config, database, {
       ...options,

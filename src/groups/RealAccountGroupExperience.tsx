@@ -35,6 +35,7 @@ import {
 import { subscribeToReminderIntents } from '../reminders/reminder-intents';
 import { RealAccountArchiveScreen } from '../archive/ArchiveScreen';
 import { BuildTag } from '../runtime/BuildTag';
+import { markEnd, markLaunchReady, markStart } from '../runtime/timing';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -435,6 +436,7 @@ export function RealAccountGroupExperience({
 
   const load = useCallback(async () => {
     const contextVersion = groupContextVersion.current;
+    markStart('home-load');
     try {
       const [currentResponse, membershipsResponse] = await Promise.all([
         auth.authenticatedRequest('/real/groups/current'),
@@ -449,6 +451,8 @@ export function RealAccountGroupExperience({
       selectedGroupId.current = result?.group.id ?? null;
       setGroup(result);
       setScreen(result ? 'home' : 'choices');
+      markEnd('home-load');
+      markLaunchReady();
       if (result) await loadGroupMembers(result.group.id, contextVersion);
       else {
         groupMembersRequest.current += 1;
