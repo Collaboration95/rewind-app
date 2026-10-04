@@ -22,6 +22,19 @@ const page = (filmCursor: string | null, clipCursor: string | null, clips: unkno
   },
 });
 
+it('accepts plain-HTTP loopback media paths only in dev builds', () => {
+  const path = mediaCapability('a');
+  expect(resolvePublicMediaPath('http://localhost:8090/api', path, true)).toBe(
+    `http://localhost:8090/api${path}`,
+  );
+  expect(() => resolvePublicMediaPath('http://localhost:8090/api', path, false)).toThrow(
+    AuthRequestError,
+  );
+  expect(() => resolvePublicMediaPath('http://api.example.test/api', path, true)).toThrow(
+    AuthRequestError,
+  );
+});
+
 it('resolves only same-origin HTTPS capability paths without application credentials', () => {
   const path = mediaCapability('a');
   expect(resolvePublicMediaPath('https://site.example/api', path)).toBe(
