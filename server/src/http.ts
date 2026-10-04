@@ -130,7 +130,16 @@ import {
   REAL_SESSION_COOKIE,
   revokeRealSession,
   validateRealSession,
+  verifyRealAccountPassword,
 } from './auth';
+import { purgeRealAccount, removeStoredMedia } from './auth/deletion';
+import {
+  blockMember,
+  isChatEventHidden,
+  listBlockedMembers,
+  reportContent,
+  unblockMember,
+} from './groups/safety';
 import {
   createRealGroup,
   getCurrentRealGroup,
@@ -1513,6 +1522,7 @@ export async function handleRequest(
       requestLimiters.registration,
       url,
       now(),
+      options,
     );
     return;
   }
@@ -1676,12 +1686,16 @@ export async function handleRequest(
       });
       return;
     }
-    sendJson(
-      response,
-      config,
-      200,
-      listChatHistoryPage(database, identity.groupId, { beforeEventId, limit: parsedLimit }),
-    );
+    const page = listChatHistoryPage(database, identity.groupId, {
+      beforeEventId,
+      limit: parsedLimit,
+    });
+    const viewer = identity.accountId;
+    if (viewer)
+      page.events = page.events.filter(
+        (event) => !isChatEventHidden(database, viewer, event.message),
+      );
+    sendJson(response, config, 200, page);
     return;
   }
 
@@ -1734,6 +1748,8 @@ export async function handleRequest(
     response.write(': connected\n\n');
 
     const writeEvent = (event: Parameters<typeof encodeSseEvent>[0]) => {
+      const viewer = identity.accountId;
+      if (viewer && isChatEventHidden(database, viewer, event.message)) return;
       if (!response.writableEnded && !response.destroyed) {
         response.write(encodeSseEvent(event, { metadataOnly }));
       }
@@ -3947,6 +3963,60 @@ async function handleRealGroupRequest(
     return;
   }
 
+  const reportMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/reports$/);
+  if (reportMatch && request.method === 'POST') {
+    const groupId = decodePathSegment(reportMatch[1], response, config);
+    if (groupId === null) return;
+    const body = await requestBody(request, config, 8 * 1024);
+    const result = reportContent(database, session.account.id, groupId, body ?? {}, now);
+    if (result === 'invalid') {
+      authJson(request, response, config, 400, {
+        error: 'invalid_report',
+        message: 'Report one message or one moment, with a reason of up to 500 characters.',
+      });
+      return;
+    }
+    if (result === 'not_found') {
+      authJson(request, response, config, 404, {
+        error: 'not_found',
+        message: 'That content was not found in this group.',
+      });
+      return;
+    }
+    authJson(request, response, config, 201, { reported: true });
+    return;
+  }
+
+  if (url.pathname === '/real/blocks' && request.method === 'GET') {
+    authJson(request, response, config, 200, {
+      blocked: listBlockedMembers(database, session.account.id),
+    });
+    return;
+  }
+
+  if (url.pathname === '/real/blocks' && request.method === 'POST') {
+    const body = await requestBody(request, config, 8 * 1024);
+    const profileId = typeof body?.profileId === 'string' ? body.profileId : '';
+    if (!profileId || blockMember(database, session.account.id, profileId, now) !== 'blocked') {
+      authJson(request, response, config, 404, {
+        error: 'not_found',
+        message: 'That member was not found in your groups.',
+      });
+      return;
+    }
+    authJson(request, response, config, 201, { blocked: true });
+    return;
+  }
+
+  const unblockMatch = url.pathname.match(/^\/real\/blocks\/([^/]+)$/);
+  if (unblockMatch && request.method === 'DELETE') {
+    const profileId = decodePathSegment(unblockMatch[1], response, config);
+    if (profileId === null) return;
+    unblockMember(database, session.account.id, profileId);
+    authJson(request, response, config, 200, { blocked: false });
+    return;
+  }
+
   const realGroupMembersMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/members$/);
   if (realGroupMembersMatch && request.method === 'GET') {
     const groupId = decodePathSegment(realGroupMembersMatch[1], response, config);
@@ -4153,6 +4223,7 @@ async function handleRealAuthRequest(
   registrationRateLimiter: RegistrationRateLimiter,
   url: URL,
   now: Date,
+  options: RuntimeServerOptions = {},
 ): Promise<void> {
   if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
     authJson(request, response, config, 403, {
@@ -4296,6 +4367,51 @@ async function handleRealAuthRequest(
             'Set-Cookie': `${REAL_SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.max(0, Math.floor((Date.parse(session.idleExpiresAt) - now.getTime()) / 1000))}`,
           }
         : {},
+    );
+    return;
+  }
+
+  if (url.pathname === '/auth/account/delete' && request.method === 'POST') {
+    const token = authToken(request);
+    const session = token ? validateRealSession(database, token, now) : null;
+    if (session?.status !== 'valid') {
+      authJson(request, response, config, 401, {
+        error: 'session_required',
+        message: 'A valid sign-in is required.',
+      });
+      return;
+    }
+    const body = await requestBody(request, config, 8 * 1024);
+    const password = typeof body?.password === 'string' ? body.password : '';
+    const check = password
+      ? await verifyRealAccountPassword(database, session.account.id, password, now)
+      : 'invalid';
+    if (check !== 'ok') {
+      authJson(request, response, config, check === 'throttled' ? 429 : 403, {
+        error: check === 'throttled' ? 'password_check_throttled' : 'password_incorrect',
+        message:
+          check === 'throttled'
+            ? 'Too many attempts. Try again later.'
+            : 'The password is incorrect.',
+      });
+      return;
+    }
+    const media = purgeRealAccount(database, session.account.id, now);
+    await removeStoredMedia(media, {
+      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      stagingDir: resolve(config.dataDir, 'media', 'staging'),
+      mediaStore: options.mediaStore,
+      mediaEnvironment: options.mediaEnvironment,
+    });
+    authJson(
+      request,
+      response,
+      config,
+      200,
+      { deleted: true },
+      {
+        'Set-Cookie': `${REAL_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+      },
     );
     return;
   }
