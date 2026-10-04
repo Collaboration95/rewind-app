@@ -53,12 +53,14 @@ export async function createRewindTarget({ endpoint = 'chat' } = {}) {
       const token = (await login.json()).token;
       assert.equal(typeof token, 'string');
       return {
+        accountId: account.account.id,
         token,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       };
     };
     const owner = await provision('dast-owner');
     const outsider = await provision('dast-outsider');
+    const member = await provision('dast-member');
     const group = await fetch(`${origin}/real/groups`, {
       method: 'POST',
       headers: owner.headers,
@@ -90,6 +92,69 @@ export async function createRewindTarget({ endpoint = 'chat' } = {}) {
       outsiderRead: await check('GET', outsider.headers, 403),
       outsiderPost: await check('POST', outsider.headers, 403),
     };
+    const accessChecks = {
+      memberReadBeforeJoining: await check('GET', member.headers, 403),
+      memberPostBeforeJoining: await check('POST', member.headers, 403),
+    };
+    const groupId = path.split('/')[3];
+    const invitePath = `/real/groups/${groupId}/invites`;
+    const unauthorizedInvite = await fetch(origin + invitePath, {
+      method: 'POST',
+      headers: outsider.headers,
+      body: '{}',
+    });
+    await unauthorizedInvite.text();
+    assert.ok([403, 404].includes(unauthorizedInvite.status));
+    accessChecks.outsiderInviteCreation = unauthorizedInvite.status;
+    const inviteResponse = await fetch(origin + invitePath, {
+      method: 'POST',
+      headers: owner.headers,
+      body: '{}',
+    });
+    assert.equal(inviteResponse.status, 201);
+    const invite = (await inviteResponse.json()).invite;
+    accessChecks.ownerInviteCreation = 201;
+    const accept = async (headers, code) =>
+      fetch(`${origin}/real/invites/accept`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ code, accountId: owner.accountId }),
+      });
+    const anonymousAccept = await accept({ 'Content-Type': 'application/json' }, invite.code);
+    await anonymousAccept.text();
+    assert.equal(anonymousAccept.status, 401);
+    accessChecks.anonymousInviteAcceptance = 401;
+    const accepted = await accept(member.headers, invite.code);
+    assert.equal(accepted.status, 200);
+    const joined = await accepted.json();
+    assert.equal(joined.status, 'accepted');
+    assert.equal(joined.group.group.role, 'member');
+    assert.equal(
+      database
+        .prepare(
+          "SELECT account_id AS accountId FROM real_group_memberships WHERE group_id = ? AND role = 'member'",
+        )
+        .get(groupId).accountId,
+      member.accountId,
+    );
+    accessChecks.memberInviteAcceptance = 200;
+    accessChecks.sessionAccountJoinedDespiteSpoofedAccountId = true;
+    accessChecks.memberReadAfterJoining = await check('GET', member.headers, 200);
+    accessChecks.memberPostAfterJoining = await check('POST', member.headers, 201);
+    accessChecks.outsiderReadAfterJoining = await check('GET', outsider.headers, 403);
+    accessChecks.outsiderPostAfterJoining = await check('POST', outsider.headers, 403);
+    const replay = await accept(member.headers, invite.code);
+    assert.equal(replay.status, 400);
+    assert.equal((await replay.json()).status, 'replayed');
+    accessChecks.inviteReplay = 400;
+    const memberInvite = await fetch(origin + invitePath, {
+      method: 'POST',
+      headers: member.headers,
+      body: '{}',
+    });
+    await memberInvite.text();
+    assert.equal(memberInvite.status, 403);
+    accessChecks.memberInviteCreation = 403;
     return {
       origin,
       path: endpoint === 'groups' ? '/real/groups' : path,
@@ -99,6 +164,7 @@ export async function createRewindTarget({ endpoint = 'chat' } = {}) {
           : { body: 'Disposable agentic trial message' },
       token: owner.token,
       baselines,
+      accessChecks,
       close,
     };
   } catch (error) {
@@ -121,6 +187,7 @@ if (process.argv[2] === '--serve') {
       disposable: true,
       requestBody: target.requestBody,
       baselines: target.baselines,
+      accessChecks: target.accessChecks,
     }),
   );
   await writeFile(join(directory, 'app-baselines.json'), JSON.stringify(target.baselines, null, 2));

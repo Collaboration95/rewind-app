@@ -30,6 +30,24 @@ removed at the end. Previous exported findings are removed before a new attempt.
 
 ## Live trial on a disposable worker
 
+### Manual GitHub Actions preparation
+
+`.github/workflows/vigolium-agentic.yml` is a manual `workflow_dispatch` trial.
+It does not run on pushes or pull requests and does not change the existing
+automatic native workflow. The dispatch chooses chat or groups, an OpenAI model,
+and an explicit disposable-data sharing checkbox (false by default). The job
+has read-only repository permissions and a 25-minute timeout. It builds the
+runtime, runs harness/access tests, builds both isolated images, verifies the
+offline connection, then runs the approved provider trial.
+
+The live step alone receives the repository's `OPENAI_API_KEY` secret; the key
+is passed by environment variable name to the scanner container. Report uploads
+use an explicit file allowlist excluding `target.json`, databases and generated
+session files, with seven-day retention. Publishing this workflow and configuring
+the GitHub secret require separately authorized GitHub changes. It has been
+parsed locally and its container path exercised locally; no GitHub run has been
+performed. Automatic dev agentic scans remain deferred until CI is validated.
+
 ### Offline connection to the real Rewind backend
 
 ```sh
@@ -51,6 +69,14 @@ and unrelated-account read/write denial. The scanner independently checks the
 authenticated seed and scope boundary. Reports are under
 `vigolium-result/agentic-rewind-container/`; `summary.html`, `app-baselines.json`
 and `isolation.json` describe setup and isolation, not AI vulnerability findings.
+Offline results now use the corresponding `-offline` directory suffix, preserving
+previous live reports. The local access checks also create an invitation, reject
+anonymous acceptance, verify a member cannot read/post before joining, verify
+read/post after acceptance, reject replay, and keep an unrelated account denied.
+The acceptance request deliberately includes the owner's account ID; the check
+confirms that only the signed-in recipient becomes a member, with member role.
+Members and outsiders cannot create owner-only invitations. These deterministic
+checks are reported under `localAccessChecks`; they are not AI findings.
 After approving disposable Rewind HTTP traffic to the selected provider, set
 `REWIND_AGENT_REWIND_DATA_SHARING=approved` in addition to the provider settings
 below, then run `node scripts/run-vigolium-rewind.mjs --run`. Synthetic-fixture

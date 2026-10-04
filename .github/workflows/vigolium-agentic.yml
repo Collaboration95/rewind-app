@@ -1,0 +1,74 @@
+name: Vigolium agentic trial
+
+on:
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: Disposable endpoint to assess
+        type: choice
+        options: [chat, groups]
+        default: chat
+      model:
+        description: OpenAI model available to the configured API account
+        type: string
+        default: gpt-6.1-sol
+        required: true
+      allow_ai_data:
+        description: Allow disposable HTTP requests, responses and temporary auth tokens to OpenAI
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vigolium-agentic-${{ github.ref }}-${{ inputs.endpoint }}
+  cancel-in-progress: true
+
+jobs:
+  trial:
+    if: inputs.allow_ai_data
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run server:build
+      - name: Validate scanner harness and access checks
+        run: node --test tests/vigolium-rewind.test.mjs tests/vigolium-provider.test.mjs tests/vigolium-fixture.test.mjs tests/vigolium-summary.test.mjs
+      - name: Build isolated scanner and disposable backend
+        run: node scripts/run-vigolium-rewind.mjs --build
+      - name: Verify offline isolation and authentication
+        env:
+          REWIND_AGENT_ENDPOINT: ${{ inputs.endpoint }}
+        run: node scripts/run-vigolium-rewind.mjs --verify --endpoint "$REWIND_AGENT_ENDPOINT"
+      - name: Run approved OpenAI trial
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REWIND_AGENT_MODEL: ${{ inputs.model }}
+          REWIND_AGENT_ENDPOINT: ${{ inputs.endpoint }}
+          REWIND_AGENT_PROVIDER: openai-responses
+          REWIND_AGENT_DATA_SHARING: approved
+          REWIND_AGENT_REWIND_DATA_SHARING: approved
+        run: node scripts/run-vigolium-rewind.mjs --run --endpoint "$REWIND_AGENT_ENDPOINT"
+      - name: Retain redacted reports only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vigolium-agentic-${{ inputs.endpoint }}
+          path: |
+            vigolium-result/agentic-rewind*/summary.html
+            vigolium-result/agentic-rewind*/report.html
+            vigolium-result/agentic-rewind*/report.jsonl
+            vigolium-result/agentic-rewind*/native-report.html
+            vigolium-result/agentic-rewind*/scope.json
+            vigolium-result/agentic-rewind*/app-baselines.json
+          if-no-files-found: warn
+          retention-days: 7

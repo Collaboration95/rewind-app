@@ -48,6 +48,22 @@ test('disposable real backend validates owner, anonymous and outsider boundaries
       outsiderPost: 403,
     });
     assert.ok(!JSON.stringify(target.baselines).includes(target.token));
+    assert.deepEqual(target.accessChecks, {
+      memberReadBeforeJoining: 403,
+      memberPostBeforeJoining: 403,
+      outsiderInviteCreation: 404,
+      ownerInviteCreation: 201,
+      anonymousInviteAcceptance: 401,
+      memberInviteAcceptance: 200,
+      sessionAccountJoinedDespiteSpoofedAccountId: true,
+      memberReadAfterJoining: 200,
+      memberPostAfterJoining: 201,
+      outsiderReadAfterJoining: 403,
+      outsiderPostAfterJoining: 403,
+      inviteReplay: 400,
+      memberInviteCreation: 403,
+    });
+    assert.ok(!JSON.stringify(target.accessChecks).includes(target.token));
     const response = await fetch(target.origin + target.path, {
       headers: { Authorization: `Bearer ${target.token}` },
     });

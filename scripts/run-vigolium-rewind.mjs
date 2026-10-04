@@ -46,9 +46,9 @@ if (mode === '--build') {
   );
 } else {
   const output = resolve(
-    endpoint === 'chat'
+    (endpoint === 'chat'
       ? 'vigolium-result/agentic-rewind-container'
-      : 'vigolium-result/agentic-rewind-groups',
+      : 'vigolium-result/agentic-rewind-groups') + (live ? '' : '-offline'),
   );
   const name = `rewind-agentic-${randomUUID()}`;
   const appName = `${name}-app`;

@@ -156,12 +156,36 @@ try {
       ({ origin, token, path, requestBody } = disposableTarget(seed));
       report.endpoint = path;
       report.coverage = {
-        sqlInjection: 'pending',
+        sqlInjection: mode === '--verify' ? 'not-scanned' : 'pending',
         login: 'local-preflight-only',
         accessControl: 'local-preflight-only',
+        invitations: 'local-preflight-only',
         otherEndpoints: 'not-scanned',
       };
       secrets.push(token);
+      report.localAccessChecks = Object.fromEntries(
+        [
+          'memberReadBeforeJoining',
+          'memberPostBeforeJoining',
+          'outsiderInviteCreation',
+          'ownerInviteCreation',
+          'anonymousInviteAcceptance',
+          'memberInviteAcceptance',
+          'sessionAccountJoinedDespiteSpoofedAccountId',
+          'memberReadAfterJoining',
+          'memberPostAfterJoining',
+          'outsiderReadAfterJoining',
+          'outsiderPostAfterJoining',
+          'inviteReplay',
+          'memberInviteCreation',
+        ]
+          .filter(
+            (name) =>
+              Number.isInteger(seed.accessChecks?.[name]) ||
+              typeof seed.accessChecks?.[name] === 'boolean',
+          )
+          .map((name) => [name, seed.accessChecks[name]]),
+      );
       report.preflightBaselines = Object.fromEntries(
         [
           'login',
