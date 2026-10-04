@@ -174,7 +174,7 @@ resource "aws_s3_object" "hosted_env" {
   key                    = "_config/${var.environment}.env"
   content_type           = "text/plain"
   server_side_encryption = "AES256"
-  content = sensitive(join("\n", [
+  content = sensitive(join("\n", concat([
     "REWIND_MEDIA_BACKEND=s3",
     "REWIND_MEDIA_ENVIRONMENT=${var.environment}",
     "REWIND_MEDIA_S3_BUCKET=${aws_s3_bucket.media.id}",
@@ -185,8 +185,7 @@ resource "aws_s3_object" "hosted_env" {
     "AWS_SECRET_ACCESS_KEY=${aws_iam_access_key.runtime.secret}",
     "REWIND_REMINDER_VAPID_SUBJECT=${var.web_push_subject}",
     "REWIND_REQUEST_TIMING=true",
-    "",
-  ]))
+  ], var.extra_hosted_settings, [""])))
 }
 
 data "aws_iam_policy_document" "deploy_reads_hosted_env" {

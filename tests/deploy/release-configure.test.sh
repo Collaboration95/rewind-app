@@ -21,7 +21,7 @@ if command -v sha256sum >/dev/null; then digest="$(sha256sum "$host/rewind.env" 
 [[ "$(cat "$host/release-config-digest")" == "$digest" ]] || { echo 'digest was not refreshed' >&2; exit 1; }
 
 before="$(cat "$host/rewind.env")"
-if printf 'REWIND_ALLOW_ORIGIN=evil\n' | REWIND_HOST_ROOT="$host" bash "$script" configure >/dev/null 2>&1; then
+if printf 'REWIND_BACKUP_BUCKET=evil\n' | REWIND_HOST_ROOT="$host" bash "$script" configure >/dev/null 2>&1; then
   echo 'a non-configurable key was accepted' >&2; exit 1
 fi
 [[ "$(cat "$host/rewind.env")" == "$before" ]] || { echo 'a refused change modified rewind.env' >&2; exit 1; }
@@ -47,3 +47,13 @@ if printf 'REWIND_MEDIA_BACKEND=disk\n' | REWIND_HOST_ROOT="$host" bash "$script
 fi
 [[ "$(cat "$host/rewind.env")" == "$edited" ]] || { echo 'a refused configure modified rewind.env' >&2; exit 1; }
 echo 'release configure fixture passed'
+
+# A brand-new host has no rewind.env yet: configure creates it privately.
+fresh="$root/fresh"
+mkdir -p "$fresh"
+printf 'REWIND_MEDIA_BACKEND=s3\nREWIND_WEB_BIND_ADDRESS=0.0.0.0\nREWIND_WEB_PORT=80\nREWIND_ALLOW_ORIGIN=https://release.example\nREWIND_ORIGIN_AUTH_SECRET=fixture-origin-secret\n' | REWIND_HOST_ROOT="$fresh" bash "$script" configure >/dev/null
+grep -qx 'REWIND_ORIGIN_AUTH_SECRET=fixture-origin-secret' "$fresh/rewind.env" || { echo 'release settings were refused' >&2; exit 1; }
+grep -qx 'REWIND_MEDIA_BACKEND=s3' "$fresh/rewind.env" || { echo 'fresh host settings were not written' >&2; exit 1; }
+fresh_mode="$(stat -c %a "$fresh/rewind.env" 2>/dev/null || stat -f %Lp "$fresh/rewind.env")"
+[[ "$fresh_mode" == 600 ]] || { echo "fresh rewind.env mode is $fresh_mode" >&2; exit 1; }
+echo 'fresh host configure fixture passed'
