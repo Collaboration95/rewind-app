@@ -1,5 +1,6 @@
 import { CAPTURE_MODES, type RecordedClip } from '../src/domain/video';
 import {
+  clampTrimmedPlaybackTime,
   ClipReviewSession,
   InMemoryPendingClipMetadataStore,
   validateTrimBounds,
@@ -21,6 +22,15 @@ const clip: RecordedClip = {
 };
 
 describe('video review and trim', () => {
+  it.each([
+    [-3, 1, 5, 1],
+    [3, 1, 5, 3],
+    [8, 1, 5, 5],
+    [Number.NaN, 1, 5, 1],
+  ])('clamps playback time %s to the selected trim range', (time, start, end, expected) => {
+    expect(clampTrimmedPlaybackTime(time, start, end)).toBe(expected);
+  });
+
   it.each([
     [0, 10, 12, true],
     [-1, 10, 12, false],

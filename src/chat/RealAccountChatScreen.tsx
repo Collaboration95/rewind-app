@@ -70,11 +70,13 @@ export function RealAccountChatScreen({
   );
   const client = useMemo(() => {
     if (!baseUrl) return null;
+    const realtimeBaseUrl = baseUrl.trim().replace(/\/$/, '');
     return new RealtimeChatClient(
-      baseUrl,
+      realtimeBaseUrl,
       async (input, init) => {
-        const url = new URL(String(input), baseUrl);
-        return authenticatedRequest(`${url.pathname}${url.search}`, init);
+        // Realtime supplies its full base; authenticatedRequest adds that base
+        // itself. Pass only the generated API-relative path, also for /api bases.
+        return authenticatedRequest(String(input).slice(realtimeBaseUrl.length), init);
       },
       {
         sessionIdInQuery: false,

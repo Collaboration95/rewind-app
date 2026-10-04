@@ -98,9 +98,23 @@ the misleading Expo Go error “Could not connect to the server.” The LAN laun
 advertises the Mac's reachable address and has been verified to start the app
 on an iPhone simulator.
 
-For a local feedback loop, run `npm run test:fast` after a code change. Run
-`npm run test:slow` for web export, browser behavior, and production-shaped
-journeys. Use `npm run test:coverage:frontend` and
+For local diagnosis, select one exact test file with the existing runner:
+
+```sh
+npm run test:focused -- frontend tests/VideoCaptureScreen.test.tsx
+npm run test:focused -- server server/tests/cycles.test.mjs
+npm run test:focused -- root tests/architecture.test.mjs
+```
+
+Use a focused command to diagnose a change, then run `npm run test:fast` after
+code changes. Focused passes do not replace `npm run test:slow` for web export,
+browser behavior, and production-shaped journeys, either coverage command,
+`npm run check`, or the aggregate PR Quality check. Limit focused diagnosis to
+two attempts per issue; after that, report the blocker instead of removing
+assertions or broadening scope. Clean up only temporary data and processes owned
+by the current run; do not stop unrelated processes.
+
+Use `npm run test:coverage:frontend` and
 `npm run test:coverage:server` to inspect separate frontend and server coverage;
 the frontend has a 70% statement gate, while server coverage is measured but
 has no percentage gate yet. For a PR, verify the relevant checks and the

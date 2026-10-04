@@ -116,7 +116,10 @@ def build(output, green_sha, config_version, branch):
         with open(temp / "source.tar", "wb") as stream:
             subprocess.run(("git", "archive", sha, "deploy", "infra/terraform/demo/cloud-init.sh"), cwd=ROOT, check=True, stdout=stream)
         for name, dockerfile, image in (("runtime", "deploy/Dockerfile", "rewind-demo"), ("web", "deploy/web.Dockerfile", "rewind-demo-web")):
-            run("docker", "build", "--label", f"org.opencontainers.image.revision={sha}", "-f", dockerfile, "-t", f"{image}:{sha}", ".")
+            build_args = ("--build-arg", f"REWIND_BUILD_SHA={sha}",
+                          "--build-arg", f"REWIND_BUILD_BRANCH={branch}") if name == "web" else ()
+            run("docker", "build", "--label", f"org.opencontainers.image.revision={sha}",
+                *build_args, "-f", dockerfile, "-t", f"{image}:{sha}", ".")
             run("docker", "save", "-o", str(temp / f"{name}.tar"), f"{image}:{sha}")
         migration_source = (ROOT / "server/src/db.ts").read_text()
         versions = [int(number) for number in re.findall(r"\{\s*version:\s*(\d+)\s*,\s*key:", migration_source)]

@@ -2,6 +2,7 @@
 FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS dependencies
 WORKDIR /build
 COPY package.json package-lock.json ./
+COPY vendor/ ./vendor/
 RUN npm ci --ignore-scripts --no-audit --no-fund
 
 FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2

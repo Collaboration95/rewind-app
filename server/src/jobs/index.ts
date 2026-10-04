@@ -4,6 +4,17 @@ import { mkdir, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { relative, resolve, isAbsolute } from 'node:path';
 
 import type { RewindDatabase } from '../db';
+import {
+  decodeMediaRef,
+  encodeMediaRef,
+  isMediaRef,
+  MediaStoreError,
+  verifyStoredMedia,
+  type MediaObjectRef,
+  type MediaScope,
+  type MediaStore,
+} from '../media/store';
+import { materializeStoredMedia, putProcessedFile } from '../media/store-files';
 import { recordAuditEvent } from '../audit';
 import {
   cleanupStagedSource,
@@ -94,7 +105,13 @@ export async function runAuditedJob<T>(
   }
 }
 
-export interface ProcessClipJobOptions {
+export interface StoredJobOptions {
+  /** Explicit injection: absence keeps disk rollback, remote refs fail closed. */
+  mediaStore?: MediaStore;
+  mediaEnvironment?: string;
+}
+
+export interface ProcessClipJobOptions extends StoredJobOptions {
   jobId: string;
   ffmpegBin: string;
   groupId?: string;
@@ -156,13 +173,16 @@ export type CompilationJobClaimResult =
       action: 'claimed' | 'already_processing' | 'already_ready';
       job: CompilationJobRecord;
     }
-  | { ok: false; reason: 'not_found' | 'invalid_state' | 'retry_exhausted' };
+  | { ok: false; reason: 'not_found' | 'invalid_state' | 'retry_exhausted' | 'waiting_for_inputs' };
 
 export interface ClaimCompilationJobInput {
   jobId: string;
   groupId?: string;
   now?: Date | string;
   leaseMs?: number;
+  /** Processing entry points settle/freeze accepted inputs; low-level lease callers retain their contract. */
+  requireSettledInputs?: boolean;
+  clipAttemptCap?: number;
 }
 
 export interface UpdateCompilationProgressInput {
@@ -357,31 +377,10 @@ export function reconcileCompilationJobInputs(
   }
 }
 
-/**
- * Create the one cycle-scoped film job and snapshot only processed clip job
- * ids. This helper deliberately assumes that its caller already owns the
- * SQLite writer transaction; the public createCompilationJob wrapper below
- * supplies that transaction for standalone callers and lifecycle uses this
- * helper to keep cycle transition + job creation atomic.
- */
-export function ensureCompilationJob(
+function eligibleCompilationInputs(
   database: RewindDatabase,
   input: CompilationJobInput,
-): CompilationJobRecord | null {
-  const cycle = database
-    .prepare('SELECT id, group_id AS groupId, status FROM cycles WHERE id = ? AND group_id = ?')
-    .get(input.cycleId, input.groupId) as
-    { id: string; groupId: string; status: string } | undefined;
-  if (!cycle || !['revealing', 'archived'].includes(cycle.status)) return null;
-
-  const existingId = database
-    .prepare(
-      `SELECT id FROM media_jobs
-       WHERE kind = 'film' AND cycle_id = ? AND group_id = ? LIMIT 1`,
-    )
-    .get(input.cycleId, input.groupId) as { id?: string } | undefined;
-  if (existingId?.id) return readCompilationJob(database, existingId.id, input.groupId);
-
+): { clipJobId: string; contributionId: string }[] {
   const currentCycleClips = database
     .prepare(
       `SELECT clip.id AS clipJobId, c.id AS contributionId
@@ -425,7 +424,106 @@ export function ensureCompilationJob(
           .get(input.groupId, input.cycleId) as
           { clipJobId: string; contributionId: string } | undefined)
       : undefined;
-  const eligible = archiveFiller ? [...currentCycleClips, archiveFiller] : currentCycleClips;
+  return archiveFiller ? [...currentCycleClips, archiveFiller] : currentCycleClips;
+}
+
+export const ACCEPTED_CLIP_AUTOMATIC_ATTEMPTS = 3;
+
+function acceptedCompilationInputs(
+  database: RewindDatabase,
+  job: CompilationJobRecord,
+  clipAttemptCap = ACCEPTED_CLIP_AUTOMATIC_ATTEMPTS,
+): { state: 'waiting' | 'ready' | 'unavailable'; clipJobIds: string[] } {
+  const rows = database
+    .prepare(
+      `SELECT clip.id, clip.status, clip.attempt_count AS attempts,
+    clip.source_path AS sourcePath, clip.output_path AS outputPath
+    FROM contributions c JOIN cycles cy ON cy.id = c.cycle_id AND cy.group_id = ?
+    LEFT JOIN media_jobs clip ON clip.contribution_id = c.id AND clip.kind = 'clip'
+      AND clip.group_id = cy.group_id AND clip.deleted_at IS NULL
+    WHERE c.cycle_id = ? AND c.deleted_at IS NULL
+    ORDER BY c.created_at, c.id, clip.id`,
+    )
+    .all(job.groupId, job.cycleId) as {
+    id: string | null;
+    status: string | null;
+    attempts: number;
+    sourcePath: string | null;
+    outputPath: string | null;
+  }[];
+  // A missing/exhausted accepted input takes precedence over ordinary queue wait.
+  if (
+    rows.some(
+      (row) =>
+        !row.id ||
+        !['ready', 'pending', 'processing', 'failed'].includes(row.status ?? '') ||
+        (row.status === 'failed' && row.attempts >= clipAttemptCap) ||
+        (row.status === 'ready' && (row.sourcePath !== null || !row.outputPath)),
+    )
+  )
+    return { state: 'unavailable', clipJobIds: [] };
+  if (rows.some((row) => row.status !== 'ready')) return { state: 'waiting', clipJobIds: [] };
+  return { state: 'ready', clipJobIds: rows.map((row) => row.id!) };
+}
+
+function frozenCompilationInputsComplete(
+  database: RewindDatabase,
+  job: CompilationJobRecord,
+): boolean {
+  const accepted = acceptedCompilationInputs(database, job);
+  return (
+    accepted.state === 'ready' && accepted.clipJobIds.every((id) => job.clipJobIds.includes(id))
+  );
+}
+
+function freezeSettledCompilationInputsLocked(
+  database: RewindDatabase,
+  job: CompilationJobRecord,
+): void {
+  const inputs = eligibleCompilationInputs(database, {
+    groupId: job.groupId,
+    cycleId: job.cycleId,
+  });
+  database.prepare('DELETE FROM compilation_job_inputs WHERE job_id = ?').run(job.id);
+  const insert = database.prepare(
+    'INSERT INTO compilation_job_inputs (job_id, clip_job_id, contribution_id, position) VALUES (?, ?, ?, ?)',
+  );
+  inputs.forEach((clip, position) =>
+    insert.run(job.id, clip.clipJobId, clip.contributionId, position),
+  );
+  database
+    .prepare(
+      'UPDATE media_jobs SET input_count = ?, completed_count = 0, progress = 0 WHERE id = ?',
+    )
+    .run(inputs.length, job.id);
+}
+
+/**
+ * Create the one cycle-scoped film job and snapshot only processed clip job
+ * ids. This helper deliberately assumes that its caller already owns the
+ * SQLite writer transaction; the public createCompilationJob wrapper below
+ * supplies that transaction for standalone callers and lifecycle uses this
+ * helper to keep cycle transition + job creation atomic.
+ */
+export function ensureCompilationJob(
+  database: RewindDatabase,
+  input: CompilationJobInput,
+): CompilationJobRecord | null {
+  const cycle = database
+    .prepare('SELECT id, group_id AS groupId, status FROM cycles WHERE id = ? AND group_id = ?')
+    .get(input.cycleId, input.groupId) as
+    { id: string; groupId: string; status: string } | undefined;
+  if (!cycle || !['revealing', 'archived'].includes(cycle.status)) return null;
+
+  const existingId = database
+    .prepare(
+      `SELECT id FROM media_jobs
+       WHERE kind = 'film' AND cycle_id = ? AND group_id = ? LIMIT 1`,
+    )
+    .get(input.cycleId, input.groupId) as { id?: string } | undefined;
+  if (existingId?.id) return readCompilationJob(database, existingId.id, input.groupId);
+
+  const eligible = eligibleCompilationInputs(database, input);
   const createdAt = new Date(input.createdAt ?? new Date());
   if (!Number.isFinite(createdAt.getTime())) return null;
   const jobId = compilationJobId(input.groupId, input.cycleId);
@@ -512,6 +610,15 @@ export function claimCompilationJob(
     if (!job) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'not_found' };
+    }
+    if (input.requireSettledInputs && job.status !== 'ready') {
+      const accepted = acceptedCompilationInputs(database, job, input.clipAttemptCap);
+      if (accepted.state === 'waiting') {
+        database.exec('COMMIT');
+        return { ok: false, reason: 'waiting_for_inputs' };
+      }
+      if (accepted.state === 'ready' && job.claimGeneration === 0)
+        freezeSettledCompilationInputsLocked(database, job);
     }
     job = reconcileCompilationJobInputsLocked(database, job.id);
     if (!job) {
@@ -643,11 +750,17 @@ export type ProcessCompilationJobResult =
       ok: false;
       jobId: string;
       status: 'failed' | 'processing' | 'not_found';
-      reason: 'not_found' | 'already_processing' | 'processing_failed' | 'retry_exhausted';
+      reason:
+        | 'not_found'
+        | 'already_processing'
+        | 'processing_failed'
+        | 'retry_exhausted'
+        | 'waiting_for_inputs';
       message: string;
     };
 
-export interface ProcessCompilationJobOptions {
+export interface ProcessCompilationJobOptions extends StoredJobOptions {
+  clipAttemptCap?: number;
   jobId: string;
   ffmpegBin: string;
   groupId?: string;
@@ -789,12 +902,14 @@ async function publishCompilationOutput(
   expectedClipJobIds: string[],
   temporaryOutputPath: string,
   finalOutputPath: string,
+  stored?: { ref: MediaObjectRef; store: MediaStore; scope: MediaScope },
 ): Promise<boolean> {
   // FFmpeg has closed this unique temp file. Hash it before taking SQLite's
   // writer lock; the short publication transaction checks the same inode and
   // atomically renames it while applying the job-generation fence.
   const integrity = await hashFileWithIdentity(temporaryOutputPath);
   if (!integrity) return false;
+  if (stored) await verifyStoredMedia(stored.store, stored.scope, stored.ref, integrity);
   beginJobTransaction(database);
   try {
     const current = reconcileCompilationJobInputsLocked(database, job.id);
@@ -803,6 +918,7 @@ async function publishCompilationOutput(
       current.status !== 'processing' ||
       current.claimGeneration !== job.claimGeneration ||
       current.inputCount === 0 ||
+      !frozenCompilationInputsComplete(database, current) ||
       current.clipJobIds.length !== expectedClipJobIds.length ||
       current.clipJobIds.some((id, index) => id !== expectedClipJobIds[index])
     ) {
@@ -813,7 +929,7 @@ async function publishCompilationOutput(
       database.exec('ROLLBACK');
       return false;
     }
-    renameSync(temporaryOutputPath, finalOutputPath);
+    if (!stored) renameSync(temporaryOutputPath, finalOutputPath);
     const finalizedAt = new Date().toISOString();
     const result = database
       .prepare(
@@ -824,7 +940,7 @@ async function publishCompilationOutput(
          WHERE id = ? AND kind = 'film' AND status = 'processing' AND claim_generation = ?`,
       )
       .run(
-        finalOutputPath,
+        stored ? encodeMediaRef(stored.ref) : finalOutputPath,
         finalizedAt,
         integrity.sha256,
         integrity.byteLength,
@@ -866,8 +982,21 @@ async function processCompilationJobInternal(
   options: ProcessCompilationJobOptions,
   onWorkerWork?: WorkerWorkObserver,
 ): Promise<ProcessCompilationJobResult> {
-  const claim = claimCompilationJob(database, { jobId: options.jobId, groupId: options.groupId });
+  const claim = claimCompilationJob(database, {
+    jobId: options.jobId,
+    groupId: options.groupId,
+    requireSettledInputs: true,
+    clipAttemptCap: options.clipAttemptCap,
+  });
   if (!claim.ok) {
+    if (claim.reason === 'waiting_for_inputs')
+      return {
+        ok: false,
+        jobId: options.jobId,
+        status: 'processing',
+        reason: 'waiting_for_inputs',
+        message: 'The film is waiting for accepted clips to settle.',
+      };
     const exhausted = claim.reason === 'retry_exhausted';
     return {
       ok: false,
@@ -909,7 +1038,15 @@ async function processCompilationJobInternal(
     outputDir,
     `.${filmOutputName(claim.job.id, claim.job.claimGeneration)}.${randomUUID()}.part.mp4`,
   );
+  const snapshots: { dispose: () => Promise<void> }[] = [];
+  let storedOutput: MediaObjectRef | undefined;
+  let published = false;
   try {
+    if (!frozenCompilationInputsComplete(database, claim.job))
+      throw new FfmpegProcessingError(
+        'source_unavailable',
+        'An accepted clip is unavailable or absent from the frozen film inputs.',
+      );
     if (claim.job.inputCount === 0) {
       throw new FfmpegProcessingError(
         'invalid_metadata',
@@ -927,9 +1064,26 @@ async function processCompilationJobInternal(
       );
     }
     await mkdir(outputDir, { recursive: true });
-    const inputPaths = await Promise.all(
-      inputs.map((input) => resolveProcessedMediaPath(input.outputPath, outputDir)),
-    );
+    const inputPaths: string[] = [];
+    for (const input of inputs) {
+      inputPaths.push(
+        await (async () => {
+          if (!isMediaRef(input.outputPath))
+            return resolveProcessedMediaPath(input.outputPath, outputDir);
+          const { store, scope } = storedContext(options, claim.job.groupId);
+          const ref = decodeMediaRef(input.outputPath);
+          if (
+            ref.prefix !== 'processed' ||
+            input.sha256 !== ref.sha256 ||
+            input.byteLength !== ref.byteLength
+          )
+            throw new MediaStoreError('integrity_mismatch');
+          const snapshot = await materializeStoredMedia(store, scope, ref, outputDir);
+          snapshots.push(snapshot);
+          return snapshot.path;
+        })(),
+      );
+    }
     // A film is only as trustworthy as the clips it joins. Verify each
     // retained input against the digest persisted when that clip finalized,
     // so a tampered or truncated clip cannot be compiled into a "verified"
@@ -966,6 +1120,14 @@ async function processCompilationJobInternal(
           outputPath: temporaryOutputPath,
         });
         await probeClipWithFfmpeg(options.ffmpegBin, temporaryOutputPath);
+        const context = options.mediaStore ? storedContext(options, claim.job.groupId) : undefined;
+        if (context)
+          storedOutput = await putProcessedFile(
+            context.store,
+            context.scope,
+            temporaryOutputPath,
+            'films',
+          );
         if (
           !(await publishCompilationOutput(
             database,
@@ -973,6 +1135,7 @@ async function processCompilationJobInternal(
             claim.job.clipJobIds,
             temporaryOutputPath,
             finalOutputPath,
+            context && storedOutput ? { ...context, ref: storedOutput } : undefined,
           ))
         ) {
           throw new FfmpegProcessingError(
@@ -980,6 +1143,7 @@ async function processCompilationJobInternal(
             'The film inputs changed while finalizing.',
           );
         }
+        published = true;
       },
     });
     return { ok: true, jobId: claim.job.id, status: 'ready' };
@@ -1002,6 +1166,13 @@ async function processCompilationJobInternal(
         ? 'The film is delayed after the maximum number of compile attempts.'
         : 'The film could not be compiled. Retry the job.',
     };
+  } finally {
+    for (const snapshot of snapshots) await snapshot.dispose();
+    await rm(temporaryOutputPath, { force: true });
+    if (storedOutput && !published) {
+      const { store, scope } = storedContext(options, claim.job.groupId);
+      await store.delete(scope, storedOutput).catch(() => undefined);
+    }
   }
 }
 
@@ -1020,6 +1191,7 @@ export type ProcessClipJobResult =
 
 interface ClipJobRow {
   id: string;
+  groupId: string;
   status: string;
   claimGeneration: number;
   outputPath: string | null;
@@ -1044,7 +1216,7 @@ type ClipJobClaimResult =
 function readClipJob(database: RewindDatabase, jobId: string, groupId?: string): ClipJobRow | null {
   const row = database
     .prepare(
-      `SELECT id, status, claim_generation AS claimGeneration,
+      `SELECT id, group_id AS groupId, status, claim_generation AS claimGeneration,
               output_path AS outputPath, source_uri AS sourceUri,
               source_generation AS sourceGeneration, source_path AS sourcePath,
               trim_start_seconds AS trimStartSeconds,
@@ -1425,6 +1597,8 @@ async function processClipJobInternal(
     options.outputDir ?? resolve(process.cwd(), '.local-data', 'media', 'processed');
   const stagingDir =
     options.stagingDir ?? resolve(process.cwd(), '.local-data', 'media', 'staging');
+  if (row.sourcePath && isMediaRef(row.sourcePath))
+    return processStoredClip(database, row, options, outputDir, onWorkerWork);
   let finalOutputPath = resolve(outputDir, safeOutputName(row.id, row.claimGeneration));
   // A stale worker may have already persisted the output marker. Finish that
   // hand-off first; rerunning FFmpeg would risk replacing a file while another
@@ -1684,4 +1858,248 @@ export async function cleanupOrphanedStagedSources(
     if (!findStagedSource(database, row.sourceUri) && before) removed += 1;
   }
   return removed;
+}
+
+function storedContext(
+  options: StoredJobOptions,
+  groupId: string,
+): { store: MediaStore; scope: MediaScope } {
+  if (!options.mediaStore || !options.mediaEnvironment) throw new MediaStoreError('scope_mismatch');
+  return { store: options.mediaStore, scope: { environment: options.mediaEnvironment, groupId } };
+}
+
+/** Async publication guard for lifecycle and authorized retrieval. Always requires
+ * the persisted output digest/size/verified timestamp, including legacy disk. */
+export async function verifyReadyJobOutput(
+  database: RewindDatabase,
+  jobId: string,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<boolean> {
+  const row = database
+    .prepare(
+      `SELECT group_id AS groupId, status, output_path AS path,
+    output_sha256 AS sha256, output_bytes AS byteLength, output_verified_at AS verifiedAt
+    FROM media_jobs WHERE id = ?`,
+    )
+    .get(jobId) as
+    | {
+        groupId: string;
+        status: string;
+        path: string | null;
+        sha256: string | null;
+        byteLength: number | null;
+        verifiedAt: string | null;
+      }
+    | undefined;
+  if (
+    !row ||
+    row.status !== 'ready' ||
+    !row.path ||
+    !row.sha256 ||
+    !/^[a-f0-9]{64}$/.test(row.sha256) ||
+    !row.byteLength ||
+    !row.verifiedAt ||
+    !Number.isFinite(Date.parse(row.verifiedAt))
+  )
+    return false;
+  try {
+    if (isMediaRef(row.path)) {
+      const ref = decodeMediaRef(row.path);
+      if (ref.prefix === 'incoming') return false;
+      const { store, scope } = storedContext(options, row.groupId);
+      await verifyStoredMedia(store, scope, ref, {
+        sha256: row.sha256,
+        byteLength: row.byteLength,
+      });
+    } else {
+      const path = await resolveProcessedMediaPath(row.path, options.outputDir);
+      const observed = await hashFile(path);
+      if (!observed || observed.sha256 !== row.sha256 || observed.byteLength !== row.byteLength)
+        return false;
+    }
+    // A concurrent deletion/replacement must not be mistaken for this verified output.
+    const current = database
+      .prepare(
+        'SELECT status, output_path AS path, output_sha256 AS sha256, output_bytes AS byteLength, output_verified_at AS verifiedAt FROM media_jobs WHERE id = ?',
+      )
+      .get(jobId) as typeof row;
+    return Boolean(
+      current &&
+      current.status === 'ready' &&
+      current.path === row.path &&
+      current.sha256 === row.sha256 &&
+      current.byteLength === row.byteLength &&
+      current.verifiedAt === row.verifiedAt,
+    );
+  } catch {
+    return false;
+  }
+}
+
+function storedClipFence(database: RewindDatabase, row: ClipJobRow, output: string): boolean {
+  const current = readClipJob(database, row.id);
+  return Boolean(
+    current &&
+    current.status === 'processing' &&
+    current.claimGeneration === row.claimGeneration &&
+    current.processingStartedAt === row.processingStartedAt &&
+    current.sourcePath === row.sourcePath &&
+    current.sourceUri === row.sourceUri &&
+    current.sourceGeneration === row.sourceGeneration &&
+    current.outputPath === output &&
+    stagedBindingMatches(database, current),
+  );
+}
+
+/** A committed prepared ref survives deletion/COMMIT crashes. Cleanup retries
+ * verify that output first, and never fall back to the current object version. */
+async function finalizeStoredClip(
+  database: RewindDatabase,
+  row: ClipJobRow,
+  options: StoredJobOptions,
+  output: MediaObjectRef,
+): Promise<boolean> {
+  const context = storedContext(options, row.groupId);
+  if (output.prefix !== 'processed') throw new MediaStoreError('invalid_ref');
+  await verifyStoredMedia(context.store, context.scope, output, output);
+  const encoded = encodeMediaRef(output);
+  if (!storedClipFence(database, row, encoded)) return false;
+  const source = decodeMediaRef(row.sourcePath ?? '');
+  if (source.prefix !== 'incoming') throw new MediaStoreError('invalid_ref');
+  // No SQLite transaction is held over network I/O. A stale invocation can only
+  // delete this exact accepted version, with its verified output already durable.
+  await context.store.delete(context.scope, source);
+  beginJobTransaction(database);
+  try {
+    if (!storedClipFence(database, row, encoded)) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    const now = new Date().toISOString();
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'ready', source_path = NULL,
+      output_sha256 = ?, output_bytes = ?, output_verified_at = ?, error_code = NULL,
+      processing_started_at = NULL, updated_at = ?, failed_at = NULL WHERE id = ?`,
+      )
+      .run(output.sha256, output.byteLength, now, now, row.id);
+    if (row.sourceUri) {
+      database.prepare('DELETE FROM media_metadata WHERE source_uri = ?').run(row.sourceUri);
+      database
+        .prepare(
+          'DELETE FROM staged_sources WHERE source_uri = ? AND claim_generation = ? AND source_path IS ?',
+        )
+        .run(row.sourceUri, row.sourceGeneration, row.sourcePath);
+    }
+    database.exec('COMMIT');
+    return true;
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+async function processStoredClip(
+  database: RewindDatabase,
+  row: ClipJobRow,
+  options: ProcessClipJobOptions,
+  outputDir: string,
+  onWorkerWork?: WorkerWorkObserver,
+): Promise<ProcessClipJobResult> {
+  const claim = claimClipJob(database, row, options.workerAttemptCap);
+  if (!claim.claimed)
+    return {
+      ok: false,
+      jobId: row.id,
+      status: claim.reason === 'already_processing' ? 'processing' : 'failed',
+      reason:
+        claim.reason === 'retry_exhausted'
+          ? 'retry_exhausted'
+          : claim.reason === 'already_processing'
+            ? 'already_processing'
+            : 'processing_failed',
+      message: 'The media job cannot be claimed.',
+    };
+  row = claim.row;
+  onWorkerWork?.();
+  let output: MediaObjectRef | undefined;
+  let prepared = Boolean(row.outputPath && isMediaRef(row.outputPath));
+  let snapshot: { dispose: () => Promise<void> } | undefined;
+  const temp = resolve(
+    outputDir,
+    `.${safeOutputName(row.id, row.claimGeneration)}.${randomUUID()}.part.mp4`,
+  );
+  recordJobStarted(database, row.id, options.actorMemberId);
+  try {
+    const { store, scope } = storedContext(options, row.groupId);
+    if (prepared) output = decodeMediaRef(row.outputPath!);
+    else {
+      if (row.trimStartSeconds === null || row.trimEndSeconds === null)
+        throw new FfmpegProcessingError('invalid_metadata', 'Invalid processing metadata.');
+      const source = decodeMediaRef(row.sourcePath!);
+      if (source.prefix !== 'incoming') throw new MediaStoreError('invalid_ref');
+      const materialized = await materializeStoredMedia(store, scope, source, outputDir);
+      snapshot = materialized;
+      if (row.mediaType === 'photo')
+        await processPhotoWithFfmpeg(options.ffmpegBin, {
+          inputPath: materialized.path,
+          outputPath: temp,
+          mode: row.mode as CaptureMode,
+        });
+      else
+        await processClipWithFfmpeg(options.ffmpegBin, {
+          inputPath: materialized.path,
+          outputPath: temp,
+          trimStartSeconds: row.trimStartSeconds!,
+          trimEndSeconds: row.trimEndSeconds!,
+          mode: row.mode as CaptureMode,
+        });
+      await probeClipWithFfmpeg(options.ffmpegBin, temp);
+      output = await putProcessedFile(store, scope, temp, 'processed');
+      prepared = markOutputPrepared(database, row, encodeMediaRef(output));
+      if (!prepared) throw new MediaStoreError('scope_mismatch');
+    }
+    if (!output || !(await finalizeStoredClip(database, row, options, output)))
+      throw new MediaStoreError('scope_mismatch');
+    recordJobCompleted(database, row.id, options.actorMemberId);
+    return { ok: true, jobId: row.id, status: 'ready' };
+  } catch (error) {
+    const code =
+      error instanceof FfmpegProcessingError
+        ? error.code
+        : error instanceof MediaStoreError && error.code !== 'cleanup_failed'
+          ? 'source_unavailable'
+          : 'cleanup_failed';
+    // Keep the prepared output for bounded cleanup/restart recovery, even when
+    // the raw version was already deleted before a failed database COMMIT.
+    database
+      .prepare(
+        `UPDATE media_jobs SET status = 'failed', error_code = ?,
+      processing_started_at = NULL, failed_at = ?, updated_at = ?
+      WHERE id = ? AND status = 'processing' AND claim_generation = ? AND processing_started_at IS ?`,
+      )
+      .run(
+        code,
+        new Date().toISOString(),
+        new Date().toISOString(),
+        row.id,
+        row.claimGeneration,
+        row.processingStartedAt,
+      );
+    recordJobFailed(database, row.id, options.actorMemberId);
+    if (output && !prepared) {
+      const { store, scope } = storedContext(options, row.groupId);
+      await store.delete(scope, output).catch(() => undefined);
+    }
+    return {
+      ok: false,
+      jobId: row.id,
+      status: 'failed',
+      reason: 'processing_failed',
+      message: 'The private media job could not be processed.',
+    };
+  } finally {
+    await snapshot?.dispose();
+    await rm(temp, { force: true });
+  }
 }

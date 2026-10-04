@@ -189,6 +189,50 @@ Slow or aborted bodies use a deterministic 408 response when the connection
 is still writable, oversized bodies use 413, and capacity rejections use 429;
 there is no distributed rate limiter.
 
+Media defaults to `REWIND_MEDIA_BACKEND=disk`, preserving the staged intake and
+filesystem rollback. `local` enables immutable private object references under
+the data directory; it requires `REWIND_MEDIA_ENVIRONMENT` (for example, `test`).
+The same configured store is used by HTTP retrieval, clip workers and the cycle
+scheduler. Local stores retain the authenticated staged-upload path.
+
+The opt-in `s3` backend additionally requires `REWIND_MEDIA_S3_BUCKET`,
+`REWIND_MEDIA_S3_OWNER` (12-digit expected owner) and `REWIND_MEDIA_S3_REGION`.
+Optional `REWIND_MEDIA_S3_KMS_KEY_ARN` must be a canonical key ARN. The SDK uses
+its standard credential provider chain; credentials are not application settings.
+Construction sends no cloud requests. Signed PUT intents bind incoming bytes,
+checksum and version; retrieval stays behind the application's authorization
+boundary. A provider environment still needs separately verified private bucket
+versioning, encryption, lifecycle and browser CORS before this mode is usable.
+Local tests do not establish those provider guarantees.
+
+Weekly reminders are opt-in and have no automatic service or timer. Configure
+`REWIND_REMINDER_EXPO_ENABLED=true` (optionally
+`REWIND_REMINDER_EXPO_ACCESS_TOKEN`) and/or the complete
+`REWIND_REMINDER_VAPID_SUBJECT`, `REWIND_REMINDER_VAPID_PUBLIC_KEY`, and
+`REWIND_REMINDER_VAPID_PRIVATE_KEY` set. Provider construction sends no requests;
+an explicit bounded pass runs with:
+
+```sh
+npm run server:build
+node server/dist/cli.js reminders --once --json
+```
+
+An unconfigured pass is a no-op. The API registers a device destination against
+its authenticated real-account session; it never returns the destination or
+provider credentials in status responses. Only enabled, unsnoozed members with
+an active registration session are eligible at Sunday 19:00 in the group's
+timezone, with a 24-hour catch-up limit. Logout, session expiry, membership
+changes, and destination rotation fence queued work. Registrations therefore
+require a current session and must be renewed after session expiry.
+
+One outbox job is created per group/member/local Sunday. Sends retry at most
+three times; Expo tickets are polled separately without resending accepted
+tickets. A crash after provider acceptance can still cause a retry, so provider
+sends are at-least-once. Provider acceptance does not establish phone delivery.
+Web Push currently accepts Apple, Mozilla, and Google push endpoints. Client
+permission/registration, actual provider delivery, and hosted acceptance remain
+separate prerequisites; this command does not provision or schedule a worker.
+
 ## Current scope and limits
 
 - The Demo has five synthetic members and local-only session state.

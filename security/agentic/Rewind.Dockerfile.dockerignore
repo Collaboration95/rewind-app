@@ -1,4 +1,11 @@
 **
+!package.json
+!package-lock.json
+!vendor/
+!vendor/node-forge/
+!vendor/node-forge/*.tgz
+!vendor/braces/
+!vendor/braces/*.tgz
 !server/
 !server/dist/
 !server/dist/**/*.js

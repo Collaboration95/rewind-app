@@ -587,6 +587,39 @@ describe('real account entry flow', () => {
     result.unmount();
   });
 
+  it('clears the web account on confirmed sign-out without claiming an administrator reset', async () => {
+    useWebPlatform();
+    globalThis.fetch = webAccountFetch(() => jsonResponse(200, { signedOut: true }));
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByRole('header', { name: 'Choose a group' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign out' }));
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+    expect(result.queryByRole('header', { name: 'Choose a group' })).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+    expect(result.getByTestId('real-account-submit')).toBeTruthy();
+    expect(result.queryByText(/administrator/i)).toBeNull();
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
+    expect(logoutRequestCount()).toBe(1);
+  });
+
+  it('explains a rejected active session without inventing an administrator reset', async () => {
+    useWebPlatform();
+    globalThis.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/auth/session')) return activeSessionResponse();
+      return jsonResponse(401, { error: 'session_required' });
+    }) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+    expect(await result.findByTestId('real-account-session-status')).toHaveTextContent(
+      'Your session has ended. Sign in again to continue.',
+    );
+    expect(result.queryByText(/administrator/i)).toBeNull();
+    expect(result.queryByRole('header', { name: 'Choose a group' })).toBeNull();
+  });
+
   it('stores the native token securely, restores the account, and clears it on sign-out', async () => {
     globalThis.fetch = jest
       .fn()
@@ -628,6 +661,10 @@ describe('real account entry flow', () => {
     ];
     expect(logoutUrl).toBe('https://rewind.example/auth/logout');
     expect(new Headers(logoutInit.headers).get('Authorization')).toBe(`Bearer ${nativeToken}`);
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+    expect(result.getByTestId('real-account-submit')).toBeTruthy();
+    expect(result.queryByText(/administrator/i)).toBeNull();
+    expect(result.queryByTestId('real-account-session-status')).toBeNull();
   });
 
   it('keeps entry visible offline, offers retry, then explains expiry or administrator reset', async () => {

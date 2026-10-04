@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CameraView } from 'expo-camera';
-import { AppState, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  AppState,
+  Image,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { COLORS } from '../theme';
 import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
@@ -27,6 +36,8 @@ import { decideInterruption } from './capture-interruption';
 import { runCaptureRestartRecovery } from './reset';
 
 export interface CameraCaptureScreenProps {
+  /** Display context only; group authorization belongs to the caller. */
+  groupName?: string;
   platform?: CameraPlatform;
   fileStore?: CaptureFileStore;
   metadataStore?: ImageMetadataStore;
@@ -50,11 +61,12 @@ export interface CameraCaptureScreenProps {
 
 /**
  * Camera route UI with honest capability/permission states and a local-only
- * still-image preview. It does not know about identity, groups, or reveal.
+ * still-image preview. Group names are presentation context, never authority.
  */
 export function CameraCaptureScreen({
   createCaptureId,
   fileStore,
+  groupName,
   metadataStore,
   now,
   onAccepted,
@@ -495,6 +507,15 @@ export function CameraCaptureScreen({
                   <Text style={styles.viewfinderBackText}>Back to group</Text>
                 </Pressable>
               ) : null}
+              {groupName ? (
+                <Text
+                  accessibilityLiveRegion="polite"
+                  style={styles.viewfinderHint}
+                  testID="camera-group-context"
+                >
+                  Group · {groupName}
+                </Text>
+              ) : null}
               <Text accessibilityRole="header" style={styles.viewfinderTitle}>
                 Photo
               </Text>
@@ -545,7 +566,7 @@ export function CameraCaptureScreen({
         </>
       ) : null}
       {!showingViewfinder ? (
-        <>
+        <ScrollView style={styles.panelScroll} contentContainerStyle={styles.panelContent}>
           {onBack ? (
             <Pressable accessibilityRole="button" onPress={onBack}>
               <Text style={styles.backText}>Back to group</Text>
@@ -553,6 +574,15 @@ export function CameraCaptureScreen({
           ) : null}
           <View style={styles.heading}>
             <Text style={styles.eyebrow}>CAPTURE</Text>
+            {groupName ? (
+              <Text
+                accessibilityLiveRegion="polite"
+                style={styles.groupContext}
+                testID="camera-group-context"
+              >
+                Group · {groupName}
+              </Text>
+            ) : null}
             <Text accessibilityRole="header" style={styles.title} testID="route-heading-camera">
               Add a still moment
             </Text>
@@ -738,7 +768,7 @@ export function CameraCaptureScreen({
               {settingsError ? <Text style={styles.errorText}>{settingsError}</Text> : null}
             </View>
           )}
-        </>
+        </ScrollView>
       ) : null}
     </View>
   );
@@ -881,7 +911,9 @@ function PreviewPanel({
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 18, padding: 24 },
+  screen: { flex: 1, minHeight: 0 },
+  panelScroll: { flex: 1, minHeight: 0 },
+  panelContent: { flexGrow: 1, gap: 18, padding: 24 },
   viewfinderScreen: { backgroundColor: '#080808', gap: 0, padding: 0, position: 'relative' },
   fullScreenPreview: { ...StyleSheet.absoluteFill, backgroundColor: '#080808' },
   fullScreenFixture: {
@@ -913,6 +945,7 @@ const styles = StyleSheet.create({
   viewfinderControls: { alignItems: 'center', gap: 12 },
   shutterCaption: { color: '#fff', fontSize: 13, textShadowColor: '#000', textShadowRadius: 5 },
   heading: { gap: 7 },
+  groupContext: { color: COLORS.ink, fontSize: 16, fontWeight: '700' },
   eyebrow: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
   title: { color: COLORS.ink, fontSize: 30, fontWeight: '700' },
   intro: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },

@@ -11,15 +11,18 @@ import test from 'node:test';
 import { clearDemoMedia } from './helpers/demo-media.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { fixtureSummary, getCurrentCycle, openDatabase, resetDatabase } =
+const { fixtureSummary, getCurrentCycle, openDatabase, resetDatabase, restoreFixture } =
   await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createGroup } = await import('../dist/groups/index.js');
+const { createRealGroup } = await import('../dist/groups/real.js');
+const { createRealAccount } = await import('../dist/auth/index.js');
 const { planConsistencyRepair } = await import('../dist/jobs/consistency.js');
 const { runWorkerTick } = await import('../dist/jobs/worker.js');
 const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
 const { claimStagedSource, markStagedSourceReady, recordClipMediaMetadata, stagedSourceId } =
   await import('../dist/media/index.js');
+const { acquireStagedSourceLock } = await import('../dist/media/index.js');
 
 async function withRuntime(run, options = {}) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-runtime-test-`);
@@ -28,6 +31,7 @@ async function withRuntime(run, options = {}) {
     REWIND_HOST: '127.0.0.1',
     REWIND_PORT: '0',
     REWIND_FFMPEG_BIN: 'ffmpeg',
+    REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   });
   const { seedNow, ...serverOptions } = options;
   const database = openDatabase(config, seedNow === undefined ? undefined : { seedNow });
@@ -37,7 +41,7 @@ async function withRuntime(run, options = {}) {
   const address = server.address();
   const baseUrl = `http://127.0.0.1:${address.port}`;
   try {
-    return await run({ baseUrl, config, database });
+    return await run({ baseUrl, config, database, server });
   } finally {
     await new Promise((resolve) => server.close(resolve));
     database.close();
@@ -265,7 +269,7 @@ test('health and typed fixture endpoints are reachable over the local service', 
     assert.equal(health.service, 'rewind-local-runtime');
     assert.equal(health.ready, true);
     assert.equal(health.checks.schema.ready, true);
-    assert.equal(health.checks.schema.expectedMigrationVersion, 24);
+    assert.equal(health.checks.schema.expectedMigrationVersion, 27);
 
     const profiles = await fetch(`${baseUrl}/profiles`).then((response) => response.json());
     assert.equal(profiles.profiles.length, 5);
@@ -1199,4 +1203,281 @@ test('local Demo reset endpoint refuses a valid non-owner session', async () => 
     });
     assert.equal(fixtureSummary(database).groups, 1);
   });
+});
+
+function databaseSnapshot(database) {
+  const tables = database
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    )
+    .all();
+  return Object.fromEntries(
+    tables.map(({ name }) => [
+      name,
+      database.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all(),
+    ]),
+  );
+}
+
+async function mediaSnapshot(directory) {
+  const files = {};
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = resolve(directory, entry.name);
+    files[entry.name] = entry.isDirectory()
+      ? await mediaSnapshot(path)
+      : createHash('sha256')
+          .update(await readFile(path))
+          .digest('hex');
+  }
+  return files;
+}
+
+async function resetOwnerSession(baseUrl) {
+  const response = await fetch(`${baseUrl}/sessions/demo`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberId: 'demo-1' }),
+  });
+  assert.equal(response.status, 201);
+  return (await response.json()).session;
+}
+
+const RESET_TEST_NOW = new Date('2026-10-04T00:00:00.000Z');
+const RESET_TEST_PASSWORD = 'synthetic reset regression password';
+
+test('Demo reset preserves mixed-account database, media hashes, and private group access', async () => {
+  await withRuntime(
+    async ({ baseUrl, config, database }) => {
+      const created = await createRealAccount(
+        database,
+        'synthetic-reset-owner',
+        'Synthetic reset owner',
+        RESET_TEST_PASSWORD,
+        RESET_TEST_NOW,
+      );
+      assert.equal(created.ok, true);
+      const group = createRealGroup(
+        database,
+        created.account,
+        {
+          name: 'Synthetic private reset regression',
+          prompt: 'Synthetic data only',
+          maxMembers: 2,
+        },
+        RESET_TEST_NOW,
+      );
+      assert.ok(group);
+      const profile = database
+        .prepare('SELECT id FROM real_profiles WHERE account_id = ?')
+        .get(created.account.id);
+      const mediaDir = resolve(config.dataDir, 'media');
+      const processedFile = resolve(mediaDir, 'processed', 'synthetic-real-account.mp4');
+      const stagedFile = resolve(mediaDir, 'staging', 'synthetic-real-account.part');
+      await writeFile(processedFile, 'labelled synthetic private processed bytes');
+      await writeFile(stagedFile, 'labelled synthetic private staged bytes');
+      database
+        .prepare(
+          `INSERT INTO contributions
+      (id, cycle_id, member_id, media_job_id, duration_seconds, created_at)
+      VALUES ('synthetic-real-contribution', ?, ?, 'synthetic-real-job', 3, ?)`,
+        )
+        .run(group.cycle.id, profile.id, RESET_TEST_NOW.toISOString());
+      database
+        .prepare(
+          `INSERT INTO media_jobs
+      (id, group_id, contribution_id, kind, status, output_path, created_at)
+      VALUES ('synthetic-real-job', ?, 'synthetic-real-contribution', 'clip', 'ready', ?, ?)`,
+        )
+        .run(group.group.id, processedFile, RESET_TEST_NOW.toISOString());
+      const login = await fetch(`${baseUrl}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: created.account.username,
+          password: RESET_TEST_PASSWORD,
+          clientType: 'native',
+        }),
+      });
+      assert.equal(login.status, 200);
+      const authorization = `Bearer ${(await login.json()).token}`;
+      const session = await resetOwnerSession(baseUrl);
+      const ledgerUrl = `${baseUrl}/contributions?groupId=${group.group.id}`;
+      const assertPrivateAccess = async () => {
+        const own = await fetch(ledgerUrl, { headers: { Authorization: authorization } });
+        assert.equal(own.status, 200);
+        const ledger = await own.json();
+        assert.equal(ledger.entries[0].contributionId, 'synthetic-real-contribution');
+        assert.equal(ledger.entries[0].state, 'sealed');
+        const demo = await fetch(`${ledgerUrl}&sessionId=${session.id}`);
+        assert.equal(demo.status, 403);
+        assert.equal((await fetch(ledgerUrl)).status, 401);
+        return ledger;
+      };
+      const ledgerBefore = await assertPrivateAccess();
+      const before = databaseSnapshot(database);
+      const mediaBefore = await mediaSnapshot(mediaDir);
+      const reset = await fetch(`${baseUrl}/demo/reset?sessionId=${session.id}`, {
+        method: 'POST',
+      });
+      assert.equal(
+        reset.status,
+        409,
+        JSON.stringify({
+          status: reset.status,
+          processedPreserved: existsSync(processedFile),
+          stagedPreserved: existsSync(stagedFile),
+          realGroupsRemaining: database
+            .prepare('SELECT COUNT(*) AS count FROM real_group_metadata')
+            .get().count,
+          realContributionsRemaining: database
+            .prepare(
+              "SELECT COUNT(*) AS count FROM contributions WHERE id = 'synthetic-real-contribution'",
+            )
+            .get().count,
+        }),
+      );
+      assert.deepEqual(await reset.json(), {
+        error: 'demo_reset_unavailable',
+        message: 'Demo reset is unavailable while non-Demo data is present.',
+      });
+      assert.deepEqual(databaseSnapshot(database), before);
+      assert.deepEqual(await mediaSnapshot(mediaDir), mediaBefore);
+      assert.equal(restoreFixture(database, RESET_TEST_NOW, mediaDir), false);
+      assert.deepEqual(databaseSnapshot(database), before);
+      assert.deepEqual(await mediaSnapshot(mediaDir), mediaBefore);
+      assert.deepEqual(await assertPrivateAccess(), ledgerBefore);
+    },
+    { now: () => RESET_TEST_NOW },
+  );
+});
+
+test('Demo reset rechecks accounts registered while waiting for the staging lock', async () => {
+  await withRuntime(
+    async ({ baseUrl, config, database, server }) => {
+      const session = await resetOwnerSession(baseUrl);
+      const release = await acquireStagedSourceLock(resolve(config.dataDir, 'media', 'staging'));
+      let reset;
+      try {
+        const requested = once(server, 'request');
+        reset = fetch(`${baseUrl}/demo/reset?sessionId=${session.id}`, { method: 'POST' });
+        await requested;
+        const registration = await fetch(`${baseUrl}/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: 'synthetic-queued-reset',
+            password: RESET_TEST_PASSWORD,
+          }),
+        });
+        assert.equal(registration.status, 201);
+        assert.equal(
+          database.prepare('SELECT COUNT(*) AS count FROM real_profiles').get().count,
+          0,
+        );
+        const before = databaseSnapshot(database);
+        const mediaBefore = await mediaSnapshot(resolve(config.dataDir, 'media'));
+        release();
+        assert.equal((await reset).status, 409);
+        assert.deepEqual(databaseSnapshot(database), before);
+        assert.deepEqual(await mediaSnapshot(resolve(config.dataDir, 'media')), mediaBefore);
+      } finally {
+        release();
+        if (reset) await reset;
+      }
+    },
+    { now: () => RESET_TEST_NOW },
+  );
+});
+
+test('registration after an isolated Demo reset succeeds and makes further resets unavailable', async () => {
+  await withRuntime(
+    async ({ baseUrl, config, database }) => {
+      let session = await resetOwnerSession(baseUrl);
+      assert.equal(
+        (await fetch(`${baseUrl}/demo/reset?sessionId=${session.id}`, { method: 'POST' })).status,
+        200,
+      );
+      const registration = await fetch(`${baseUrl}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'synthetic-after-reset', password: RESET_TEST_PASSWORD }),
+      });
+      assert.equal(registration.status, 201);
+      session = await resetOwnerSession(baseUrl);
+      const before = databaseSnapshot(database);
+      const mediaBefore = await mediaSnapshot(resolve(config.dataDir, 'media'));
+      assert.equal(
+        (await fetch(`${baseUrl}/demo/reset?sessionId=${session.id}`, { method: 'POST' })).status,
+        409,
+      );
+      assert.deepEqual(databaseSnapshot(database), before);
+      assert.deepEqual(await mediaSnapshot(resolve(config.dataDir, 'media')), mediaBefore);
+    },
+    { now: () => RESET_TEST_NOW },
+  );
+});
+
+test('Demo reset refuses a non-synthetic shared profile even without a registered account', async () => {
+  await withRuntime(
+    async ({ baseUrl, config, database }) => {
+      const session = await resetOwnerSession(baseUrl);
+      database.exec(
+        "INSERT INTO profiles (id, display_name, avatar_label, is_synthetic) VALUES ('synthetic-foreign-actor', 'Synthetic foreign actor', 'PRIVATE', 0)",
+      );
+      const before = databaseSnapshot(database);
+      const mediaBefore = await mediaSnapshot(resolve(config.dataDir, 'media'));
+      assert.equal(
+        (await fetch(`${baseUrl}/demo/reset?sessionId=${session.id}`, { method: 'POST' })).status,
+        409,
+      );
+      assert.deepEqual(databaseSnapshot(database), before);
+      assert.deepEqual(await mediaSnapshot(resolve(config.dataDir, 'media')), mediaBefore);
+    },
+    { now: () => RESET_TEST_NOW },
+  );
+});
+
+test('Demo reset requires an active persisted owner and rechecks revocation after waiting', async () => {
+  await withRuntime(
+    async ({ baseUrl, config, database, server }) => {
+      const session = await resetOwnerSession(baseUrl);
+      const before = databaseSnapshot(database);
+      const mediaBefore = await mediaSnapshot(resolve(config.dataDir, 'media'));
+      for (const query of ['', '?sessionId=missing-synthetic-session', '?memberId=demo-1']) {
+        assert.equal(
+          (await fetch(`${baseUrl}/demo/reset${query}`, { method: 'POST' })).status,
+          401,
+        );
+      }
+      assert.deepEqual(databaseSnapshot(database), before);
+      const release = await acquireStagedSourceLock(resolve(config.dataDir, 'media', 'staging'));
+      let reset;
+      try {
+        const requested = once(server, 'request');
+        reset = fetch(`${baseUrl}/demo/reset?sessionId=${session.id}`, { method: 'POST' });
+        await requested;
+        database
+          .prepare('UPDATE sessions SET invalidated_at = ? WHERE id = ?')
+          .run(RESET_TEST_NOW.toISOString(), session.id);
+        const revokedSnapshot = databaseSnapshot(database);
+        release();
+        assert.equal((await reset).status, 401);
+        assert.deepEqual(databaseSnapshot(database), revokedSnapshot);
+      } finally {
+        release();
+        if (reset) await reset;
+      }
+      database
+        .prepare('UPDATE sessions SET invalidated_at = NULL, expires_at = ? WHERE id = ?')
+        .run(RESET_TEST_NOW.toISOString(), session.id);
+      const expiredSnapshot = databaseSnapshot(database);
+      assert.equal(
+        (await fetch(`${baseUrl}/demo/reset?sessionId=${session.id}`, { method: 'POST' })).status,
+        401,
+      );
+      assert.deepEqual(databaseSnapshot(database), expiredSnapshot);
+      assert.deepEqual(await mediaSnapshot(resolve(config.dataDir, 'media')), mediaBefore);
+    },
+    { now: () => RESET_TEST_NOW },
+  );
 });

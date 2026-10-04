@@ -44,6 +44,7 @@ import {
 import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
+import { BuildTag } from './src/runtime/BuildTag';
 import { DemoSessionProvider, useDemoSession } from './src/session/DemoSessionProvider';
 import type { DemoSessionStore } from './src/domain/session';
 import {
@@ -645,7 +646,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     auth.notice === 'expired'
       ? 'Your session expired or an administrator reset your password. Sign in again to continue.'
       : auth.notice === 'revoked'
-        ? 'Your account session was reset by an administrator. Sign in again to continue.'
+        ? 'Your session has ended. Sign in again to continue.'
         : auth.notice === 'sign-in-failed'
           ? 'Sign-in failed. Check your username and password, or try again later.'
           : auth.notice === 'offline'
@@ -2014,6 +2015,7 @@ function HomeScreen({
       testID="home-scroll"
     >
       <AppHeader />
+      <BuildTag />
 
       <CapsuleSummary
         clock={clock}

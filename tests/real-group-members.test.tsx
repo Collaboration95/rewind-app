@@ -60,6 +60,8 @@ it('updates group members and active context when switching selected groups', as
   let selected: typeof ownerGroup | typeof joinedGroup = ownerGroup;
   const groups = [ownerGroup, joinedGroup];
   const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
+    if (path === '/real/media/config?uploadProtocol=2')
+      return jsonResponse({ directTransfer: false });
     if (path === '/real/groups/current' && init?.method === 'POST') {
       const { groupId } = JSON.parse(String(init.body)) as { groupId: string };
       selected = groups.find((entry) => entry.group.id === groupId)!;
@@ -125,6 +127,13 @@ it('updates group members and active context when switching selected groups', as
     '1 pending invitation',
   );
 
+  await fireEvent.press(screen.getByTestId('real-group-capture-action'));
+  expect(screen.getByTestId('camera-group-context').props.children).toEqual([
+    'Group · ',
+    'Saturday table',
+  ]);
+  await fireEvent.press(screen.getByRole('button', { name: 'Back to group' }));
+
   await fireEvent.press(screen.getByTestId(`switch-real-group-${joinedGroup.group.id}`));
   expect(await screen.findByText('Cy Owner · Owner')).toBeTruthy();
   expect(screen.getByTestId('real-group-active-context').props.children).toBe('Your group');
@@ -142,6 +151,11 @@ it('updates group members and active context when switching selected groups', as
   await fireEvent.press(screen.getByTestId('real-group-chat-back'));
   await fireEvent.press(screen.getByTestId('real-group-capture-action'));
   expect(screen.getByTestId('camera-screen')).toBeTruthy();
+  expect(screen.getByTestId('camera-group-context').props.children).toEqual([
+    'Group · ',
+    'Garden circle',
+  ]);
+  expect(screen.queryByText('Saturday table')).toBeNull();
   await fireEvent.press(screen.getByTestId('camera-record-clip'));
   expect(screen.getByTestId('real-group-capture-context').props.children).toEqual([
     'Group · ',
@@ -217,6 +231,8 @@ it('keeps loading summaries honest and ignores a delayed prior-group response af
 
 it('keeps member and invitation counts unknown when the summary request fails', async () => {
   const authenticatedRequest = jest.fn(async (path: string) => {
+    if (path === '/real/media/config?uploadProtocol=2')
+      return jsonResponse({ directTransfer: false });
     if (path === '/real/groups/current') return jsonResponse({ group: ownerGroup });
     if (path === '/real/groups') return jsonResponse({ groups: [ownerGroup] });
     if (path === `/real/groups/${ownerGroup.group.id}/members`)

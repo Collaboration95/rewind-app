@@ -23,7 +23,7 @@
     "start": "expo start",
     "dev:lan": "node scripts/run-local-dev.mjs",
     "web": "expo start --web",
-    "build:web": "expo export --clear --platform web --output-dir dist",
+    "build:web": "expo export --clear --platform web --output-dir dist && node scripts/stamp-pwa-build.mjs dist",
     "test:pwa": "npm run build:web && node scripts/check-pwa.mjs dist",
     "web:smoke-server": "node scripts/web-smoke-server.mjs",
     "server:build": "tsc -p tsconfig.server.json",
@@ -50,7 +50,7 @@
     "format:write": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs && npm run server:test && jest --runInBand",
+    "test": "node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs scripts/focused-test.test.mjs scripts/real-account-e2e-utils.test.mjs scripts/build-artifact.test.mjs scripts/production-e2e-runner.test.mjs && npm run server:test && jest --runInBand",
     "test:fast": "npm test",
     "test:slow": "npm run build:web && node scripts/check-pwa.mjs dist && playwright test && npm run test:production-e2e",
     "test:coverage:frontend": "jest --runInBand --coverage",
@@ -58,17 +58,24 @@
     "test:a11y": "npm run build:web && playwright test --config=playwright.config.ts tests/responsive/accessibility.spec.ts",
     "test:web-smoke": "playwright test tests/responsive/production-web-routing.spec.ts",
     "test:production-e2e": "node scripts/run-production-e2e.mjs",
+    "test:real-account-e2e": "node scripts/run-real-account-e2e.mjs",
     "test:responsive": "npm run build:web && playwright test",
     "check": "npm run format:check && npm run lint && npm run architecture:check && npm run typecheck && npm test && npm run test:a11y",
     "security:report": "vigolium export --db vigolium-result/http.sqlite --format html -o vigolium-result/http-report.html",
-    "postsecurity:scan": "npm run security:report"
+    "postsecurity:scan": "npm run security:report",
+    "test:focused": "node scripts/focused-test.mjs",
+    "client:prepare": "node scripts/native-build.mjs prepare",
+    "test:native-build": "node --test tests/native-build.test.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1145.0",
+    "@aws-sdk/s3-request-presigner": "3.1145.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~57.0.21",
     "expo-camera": "~57.0.4",
     "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.19",
+    "expo-crypto": "~57.0.3",
     "expo-device": "~57.0.2",
     "expo-file-system": "~57.0.6",
     "expo-network": "~57.0.2",
@@ -76,11 +83,14 @@
     "expo-secure-store": "~57.0.4",
     "expo-status-bar": "~57.0.1",
     "expo-video": "~57.0.5",
+    "node-forge": "file:vendor/node-forge/rewind-node-forge-1.4.0-rewind.1.tgz",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-web": "~0.21.0"
+    "react-native-web": "~0.21.0",
+    "web-push": "3.6.7",
+    "braces": "file:vendor/braces/rewind-braces-3.0.3-rewind.1.tgz"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
@@ -97,6 +107,8 @@
     "typescript": "~6.0.3"
   },
   "overrides": {
-    "uuid": "11.1.1"
+    "uuid": "11.1.1",
+    "node-forge": "$node-forge",
+    "braces": "$braces"
   }
 }
