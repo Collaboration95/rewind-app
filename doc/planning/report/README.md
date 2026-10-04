@@ -26,7 +26,7 @@ The combined draft catalogue has 44 major-flow pairs across UC01–UC14: ACCESS 
 
 ## Intentional template extension
 
-The cover and all ordinary body sections retain the supplied A4 portrait geometry, styles, numbering, logo and header/footer. The user authorized landscape/foldout sections for readable complete diagrams: 119 plates use A3 landscape (16.54 × 11.69 inches), and 18 dense/tall plates use a custom 22 × 16.54 inch landscape foldout. These custom plates are not standard A2. All retain one-inch margins and the template header/footer; the original A4 body geometry resumes between package blocks and after System Design. There are no fragmented model crops or repeated locator pages. Captions use 9 pt; principal 14 px SVG labels print at least 8.4 pt and 12 px annotations at least 7.2 pt. A few original 11 px notes print at least 6.6 pt.
+The cover and all ordinary body sections retain the supplied A4 portrait geometry, styles, numbering, logo and header/footer. The batch lead selected complete readable foldouts under owner authority: 119 plates use A3 landscape (16.54 × 11.69 inches), and 18 dense/tall plates use a custom 22 × 16.54 inch landscape foldout. These custom plates are not standard A2. All retain one-inch margins and the template header/footer; the original A4 body geometry resumes between package blocks and after System Design. There are no fragmented model crops or repeated locator pages. Captions use 9 pt; principal 14 px SVG labels print at least 8.4 pt and 12 px annotations at least 7.2 pt. A few original 11 px notes print at least 6.6 pt.
 
 ## Current evidence boundary
 
