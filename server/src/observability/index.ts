@@ -3,6 +3,75 @@ import { performance } from 'node:perf_hooks';
 import type { RewindDatabase } from '../db';
 import { QUEUE_MAX_FILM_ATTEMPTS } from '../jobs/queue';
 
+// Fixed words that appear in server routes. Any other segment (identifiers,
+// usernames, emails, capabilities, unknown paths) is logged as ':id', so a
+// timing line can never carry identity or content.
+const ROUTE_WORDS = new Set([
+  'accept',
+  'access',
+  'advance',
+  'allowance',
+  'api',
+  'archive',
+  'auth',
+  'clips',
+  'complete',
+  'config',
+  'contributions',
+  'current',
+  'cycles',
+  'delete',
+  'demo',
+  'destinations',
+  'download',
+  'films',
+  'groups',
+  'health',
+  'history',
+  'intents',
+  'invites',
+  'jobs',
+  'ledger',
+  'login',
+  'logout',
+  'media',
+  'members',
+  'messages',
+  'premiere',
+  'process',
+  'profiles',
+  'prompt',
+  'reactions',
+  'real',
+  'realtime',
+  'reconcile',
+  'register',
+  'reminders',
+  'replace',
+  'reset',
+  'reveal',
+  'session',
+  'sessions',
+  'settings',
+  'source',
+  'status',
+  'synthetic-clip',
+  'upload',
+  'upload-intents',
+  'version',
+  'webpush',
+]);
+
+/** Route template for timing logs: no query, only known route words. */
+export function requestRoute(url: string | undefined): string {
+  const path = (url ?? '/').split('?', 1)[0] || '/';
+  return path
+    .split('/')
+    .slice(0, 12)
+    .map((segment) => (segment === '' || ROUTE_WORDS.has(segment) ? segment : ':id'))
+    .join('/');
+}
+
 /** No request data or exception object enters this projection. */
 export function requestObservation() {
   const requestId = randomUUID();
@@ -10,6 +79,19 @@ export function requestObservation() {
   let emitted = false;
   return {
     requestId,
+    /** Opt-in (REWIND_REQUEST_TIMING) latency line for every finished request (#321). */
+    timing(method: string | undefined, url: string | undefined, status: number): void {
+      console.log(
+        JSON.stringify({
+          event: 'api.request',
+          requestId,
+          method: /^[A-Z]{3,7}$/.test(method ?? '') ? method : 'OTHER',
+          route: requestRoute(url),
+          statusCode: Number.isInteger(status) ? status : 0,
+          durationMs: Math.min(86_400_000, Math.max(0, Math.round(performance.now() - started))),
+        }),
+      );
+    },
     failure(status: number): void {
       if (emitted) return;
       emitted = true;

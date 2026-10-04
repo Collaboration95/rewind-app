@@ -22,6 +22,8 @@ export interface RuntimeConfig {
   allowOrigin: string;
   originAuthSecret: string | null;
   allowInsecureLocalAuth: boolean;
+  /** Log one JSON timing line per request (REWIND_REQUEST_TIMING). */
+  requestTiming?: boolean;
   /** Length of a new real group's first cycle; successors repeat it. */
   realCycleDurationMs?: number;
   httpIdleTimeoutMs: number;
@@ -115,6 +117,7 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
     allowInsecureLocalAuth: ['1', 'true'].includes(
       env.REWIND_ALLOW_INSECURE_LOCAL_AUTH?.trim().toLowerCase() ?? '',
     ),
+    requestTiming: ['1', 'true'].includes(env.REWIND_REQUEST_TIMING?.trim().toLowerCase() ?? ''),
     // The product default is four weeks; a short value supports demo and
     // local reveal testing (for example 1440 for a one-day cycle).
     realCycleDurationMs:

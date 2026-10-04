@@ -184,6 +184,7 @@ resource "aws_s3_object" "hosted_env" {
     "AWS_ACCESS_KEY_ID=${aws_iam_access_key.runtime.id}",
     "AWS_SECRET_ACCESS_KEY=${aws_iam_access_key.runtime.secret}",
     "REWIND_REMINDER_VAPID_SUBJECT=${var.web_push_subject}",
+    "REWIND_REQUEST_TIMING=true",
     "",
   ]))
 }

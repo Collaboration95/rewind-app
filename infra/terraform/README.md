@@ -472,3 +472,13 @@ subject) to the private object `s3://<bucket>/_config/dev.env`, which only the
 dev deploy role may read. Each dev deploy streams it to
 `deploy/release-host.sh configure`; the server generates its own web push keys
 once and keeps them. No one copies credentials by hand.
+
+## Host alarms (`infra/scripts/lightsail-alarms.sh`)
+
+Terraform's AWS provider has no Lightsail contact-method or alarm resources, so
+this idempotent script is the source of truth for the dev host's alarms:
+failed status checks, sustained CPU above 90% and burst capacity below 10%,
+emailed to `REWIND_ALERT_EMAIL` (AWS sends a one-time verification link).
+Budget alerts stay in `demo/observability.tf`. With `REWIND_REQUEST_TIMING=true`
+the runtime logs one `api.request` JSON line per request (method, route
+template, status, duration) next to the existing `api.failure` lines.
