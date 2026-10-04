@@ -30,6 +30,31 @@ removed at the end. Previous exported findings are removed before a new attempt.
 
 ## Live trial on a disposable worker
 
+### Offline connection to the real Rewind backend
+
+```sh
+npm run server:build
+node scripts/run-vigolium-rewind.mjs --build
+node scripts/run-vigolium-rewind.mjs --verify
+```
+
+Set `REWIND_DOCKER_BIN` if Docker is not on PATH. This creates a separate backend
+image with compiled runtime, migrations and synthetic demo fixtures. The scanner
+image contains no Rewind runtime or source. The two disposable containers share
+only a network namespace and the report directory, with external networking
+disabled, no published ports and no provider key. Temporary databases live in
+the backend's tmpfs. A short-lived `target.json` provides only the loopback chat
+URL, disposable bearer token and baseline statuses; it is removed during cleanup.
+
+The setup checks login, group creation, owner chat read/write, anonymous denial,
+and unrelated-account read/write denial. The scanner independently checks the
+authenticated seed and scope boundary. Reports are under
+`vigolium-result/agentic-rewind-container/`; `summary.html`, `app-baselines.json`
+and `isolation.json` describe setup and isolation, not AI vulnerability findings.
+The wrapper currently supports build and offline verification only. Live Rewind
+provider scanning needs separate data-sharing authorization and the app-specific
+agent execution configuration; synthetic-fixture approval is insufficient.
+
 ### Container and known-vulnerability fixture
 
 The isolated evaluation image contains only Vigolium and the synthetic fixture

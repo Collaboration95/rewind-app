@@ -30,6 +30,31 @@ export function redact(text, secrets) {
   return text;
 }
 
+export function disposableTarget(value) {
+  if (!value || value.disposable !== true || typeof value.origin !== 'string')
+    throw new Error('Only a disposable Rewind target is supported');
+  const url = new URL(value.origin);
+  if (
+    url.protocol !== 'http:' ||
+    url.hostname !== '127.0.0.1' ||
+    !url.port ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  )
+    throw new Error('Target must be a loopback HTTP origin with an explicit port');
+  if (
+    !/^\/realtime\/groups\/[a-zA-Z0-9-]+\/messages$/.test(value.path) ||
+    typeof value.token !== 'string' ||
+    !value.token ||
+    /[\r\n]/.test(value.token)
+  )
+    throw new Error('Target must contain one chat endpoint and a temporary token');
+  return { origin: url.origin, path: value.path, token: value.token };
+}
+
 export function summarizeFindings(jsonl) {
   const findings = jsonl
     .split(/\r?\n/)

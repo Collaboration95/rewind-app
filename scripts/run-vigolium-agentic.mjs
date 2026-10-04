@@ -12,6 +12,7 @@ import {
   scopedProxy,
   summarizeFindings,
   summaryHtml,
+  disposableTarget,
 } from './vigolium-provider.mjs';
 import { createScanFixture, verifyFixturePayloads } from './vigolium-fixture.mjs';
 
@@ -21,6 +22,10 @@ if (!['--prepare', '--verify', '--run', '--replay'].includes(mode))
 // Fail before starting the backend or scanner when live configuration is missing.
 const settings = providerSettings(process.env, mode === '--run');
 const fixtureMode = process.argv.includes('--fixture');
+const targetFileIndex = process.argv.indexOf('--target-file');
+const targetFile = targetFileIndex < 0 ? undefined : process.argv[targetFileIndex + 1];
+if (targetFileIndex >= 0 && (!targetFile || fixtureMode))
+  throw new Error('Choose either a target file or a synthetic fixture');
 const output = resolve(
   process.env.REWIND_AGENT_REPORT_DIR ||
     (fixtureMode ? 'vigolium-result/agentic-fixture' : 'vigolium-result/agentic'),
@@ -139,7 +144,27 @@ try {
     let origin;
     let token;
     let path;
-    if (fixtureMode) {
+    if (targetFile) {
+      const seed = JSON.parse(await readFile(targetFile, 'utf8'));
+      ({ origin, token, path } = disposableTarget(seed));
+      secrets.push(token);
+      report.preflightBaselines = Object.fromEntries(
+        [
+          'login',
+          'groupCreation',
+          'ownerPost',
+          'ownerRead',
+          'anonymousRead',
+          'outsiderRead',
+          'outsiderPost',
+        ]
+          .filter((name) => Number.isInteger(seed.baselines?.[name]))
+          .map((name) => [name, seed.baselines[name]]),
+      );
+      report.scope = 'Disposable Rewind chat endpoint, GET/POST only; no production data.';
+      report.isolation =
+        'Application runtime is in a separate container; scanner sees HTTP traffic only.';
+    } else if (fixtureMode) {
       const fixture = await createScanFixture();
       ({ origin, token, path, server, database } = fixture);
       fixtureEvidence = fixture.evidence;
