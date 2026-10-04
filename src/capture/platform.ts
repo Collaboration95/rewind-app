@@ -12,6 +12,7 @@ import type {
   PlatformStillImage,
 } from './contracts';
 import type { RecordedClip } from '../domain/video';
+import { MAX_CLIP_BYTES } from './clip-uploader';
 
 export const VIDEO_CACHE_FOLDER = 'rewind-clips';
 
@@ -55,6 +56,8 @@ const MP4_BRANDS = new Set([
   'mp41',
   'mp42',
   'MSNV',
+  // iPhone camera recordings are QuickTime; the server verifies and re-encodes.
+  'qt  ',
 ]);
 
 function ascii(bytes: Uint8Array, start: number, length: number): string {
@@ -149,7 +152,19 @@ async function readMp4Container(file: Blob): Promise<BrowserVideoContainerMetada
   return parseMp4Container(new Uint8Array(await file.arrayBuffer()));
 }
 
-async function chooseBrowserFile(accept: string): Promise<File> {
+/** The person closed the file chooser or camera sheet without choosing anything. */
+export class CaptureCancelledError extends Error {
+  constructor() {
+    super('Nothing was captured.');
+    this.name = 'CaptureCancelledError';
+  }
+}
+
+export function isCaptureCancelled(error: unknown): boolean {
+  return error instanceof CaptureCancelledError;
+}
+
+async function chooseBrowserFile(accept: string, capture?: 'environment'): Promise<File> {
   if (Platform.OS !== 'web' || typeof document === 'undefined') {
     throw new Error('File fallback is available in a browser only.');
   }
@@ -157,11 +172,15 @@ async function chooseBrowserFile(accept: string): Promise<File> {
     const input = document.createElement('input');
     input.accept = accept;
     input.type = 'file';
+    // On phones this opens the system camera directly, without the library.
+    if (capture) input.setAttribute('capture', capture);
     input.onchange = () => {
       const file = input.files?.[0];
       if (file) resolve(file);
-      else reject(new Error('No file was selected.'));
+      else reject(new CaptureCancelledError());
     };
+    // Safari 16.4+ and current Chromium report a dismissed chooser or camera.
+    input.addEventListener('cancel', () => reject(new CaptureCancelledError()));
     input.click();
   });
 }
@@ -320,7 +339,12 @@ export interface ExpoCameraPlatformOptions {
   /** Allows deterministic capability responses for simulator/device probes. */
   capabilityProbe?: () => Promise<CapabilitySnapshot>;
   /** Browser media seams keep file validation deterministic in adapter tests. */
-  browserFilePicker?: (accept: string) => Promise<File>;
+  browserFilePicker?: (accept: string, capture?: 'environment') => Promise<File>;
+  /**
+   * Web only: take photos and videos with the phone's own camera sheet (full
+   * native quality and orientation) instead of an in-page viewfinder.
+   */
+  browserSystemCamera?: boolean;
   browserImageDimensionsReader?: (uri: string) => Promise<{ height: number; width: number }>;
   browserObjectUrlFactory?: (file: File) => string;
   browserVideoContainerReader?: (file: File) => Promise<BrowserVideoContainerMetadata>;
@@ -345,11 +369,17 @@ function isCameraWarmingUp(error: unknown): boolean {
 /** Expo SDK 57 adapter. No Expo or React Native types cross the capture port. */
 export class ExpoCameraPlatform implements CameraPlatform {
   readonly kind = 'expo' as const;
-  readonly supportsLivePreview = true;
+  get supportsLivePreview(): boolean {
+    return !this.fileFallbackIsCamera;
+  }
   get supportsVideoRecording(): boolean {
+    if (this.fileFallbackIsCamera) return false;
     return Platform.OS !== 'web' || this.browserRecordingSupport().supported;
   }
   readonly supportsFileFallback = Platform.OS === 'web';
+  get fileFallbackIsCamera(): boolean {
+    return Platform.OS === 'web' && this.options.browserSystemCamera === true;
+  }
   private browserStream: MediaStream | null = null;
   private browserRecorder: MediaRecorder | null = null;
   private browserChunks: BlobPart[] = [];
@@ -387,7 +417,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
       return {
         supported: false,
         reason:
-          'This browser cannot record the MP4 format required for upload. Choose a portrait MP4 video instead.',
+          'This browser cannot record the MP4 format required for upload. Choose an MP4 video instead.',
       };
     }
     return { supported: true, reason: null };
@@ -408,6 +438,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   getVideoCaptureUnavailableReason(): string | null {
+    if (this.fileFallbackIsCamera) return null;
     return this.browserRecordingSupport().reason;
   }
 
@@ -434,8 +465,10 @@ export class ExpoCameraPlatform implements CameraPlatform {
       audio: true,
       video: {
         facingMode: { ideal: 'environment' },
-        height: { ideal: 1280 },
-        width: { ideal: 720 },
+        // Ask for 1080p; the browser picks the closest supported size and
+        // rotates frames to match how the phone is held.
+        height: { ideal: 1080 },
+        width: { ideal: 1920 },
       },
     });
     if (!stream.getAudioTracks().length || !stream.getVideoTracks().length) {
@@ -498,15 +531,16 @@ export class ExpoCameraPlatform implements CameraPlatform {
           if (metadata.durationSeconds > durationLimit || metadata.durationSeconds > 15) {
             throw new Error('Recordings must be 15 seconds or shorter.');
           }
+          // Portrait and landscape are both accepted; the film letterboxes
+          // landscape clips. iPhone recordings may also store landscape
+          // frames with a rotation flag, so frame shape is not orientation.
           if (
             !Number.isInteger(metadata.width) ||
             !Number.isInteger(metadata.height) ||
             metadata.width <= 0 ||
-            metadata.height <= metadata.width
+            metadata.height <= 0
           ) {
-            throw new Error(
-              'The browser recording must be portrait video. Turn your phone upright and try again.',
-            );
+            throw new Error('The browser recording has no usable video. Try recording again.');
           }
           resolve({
             byteLength: blob.size,
@@ -557,6 +591,9 @@ export class ExpoCameraPlatform implements CameraPlatform {
     if (this.options.capabilityProbe) return this.options.capabilityProbe();
 
     if (Platform.OS === 'web') {
+      // The system camera sheet replaces the in-page camera; the screens then
+      // offer it through their single fallback action.
+      if (this.fileFallbackIsCamera) return { camera: 'unsupported', microphone: 'unsupported' };
       const supported = this.browserRecordingSupport().supported;
       return {
         camera: supported ? 'supported' : 'unsupported',
@@ -701,8 +738,10 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async pickStillFile(): Promise<PlatformStillImage> {
+    const camera = this.fileFallbackIsCamera;
     const file = await (this.options.browserFilePicker ?? chooseBrowserFile)(
-      '.jpg,.jpeg,.png,image/jpeg,image/png',
+      camera ? 'image/jpeg,image/png' : '.jpg,.jpeg,.png,image/jpeg,image/png',
+      camera ? 'environment' : undefined,
     );
     if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
       throw new Error('Choose a JPEG or PNG image file.');
@@ -715,7 +754,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
       return {
         format: file.type === 'image/png' ? 'png' : 'jpg',
         height: dimensions.height,
-        source: 'file',
+        source: camera ? 'camera' : 'file',
         sourceUri,
         width: dimensions.width,
       };
@@ -726,7 +765,16 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async pickVideoFile(): Promise<RecordedClip> {
-    const file = await (this.options.browserFilePicker ?? chooseBrowserFile)('.mp4,video/mp4');
+    const camera = this.fileFallbackIsCamera;
+    const file = await (this.options.browserFilePicker ?? chooseBrowserFile)(
+      camera ? 'video/*' : '.mp4,video/mp4',
+      camera ? 'environment' : undefined,
+    );
+    if (camera && file.size > MAX_CLIP_BYTES) {
+      throw new Error(
+        'This video is over 50 MB. Record a shorter clip, or set the camera to 1080p in Settings.',
+      );
+    }
     const container = await (this.options.browserVideoContainerReader ?? readMp4Container)(file);
     if (!container.isMp4 || !container.hasVideo) {
       throw new Error('Choose an MP4 video file.');
@@ -737,16 +785,19 @@ export class ExpoCameraPlatform implements CameraPlatform {
         sourceUri,
       );
       if (metadata.durationSeconds > 15) {
-        throw new Error('Choose an MP4 video that is 15 seconds or shorter.');
+        throw new Error(
+          camera
+            ? 'Videos can be up to 15 seconds. Record a shorter clip.'
+            : 'Choose an MP4 video that is 15 seconds or shorter.',
+        );
       }
       if (
         !Number.isInteger(metadata.width) ||
         !Number.isInteger(metadata.height) ||
         metadata.width <= 0 ||
-        metadata.height <= 0 ||
-        metadata.width >= metadata.height
+        metadata.height <= 0
       ) {
-        throw new Error('Choose a portrait MP4 video.');
+        throw new Error('Choose an MP4 video.');
       }
       // Chromium's webkitAudioDecodedByteCount is a post-decode counter and
       // is commonly zero at loadedmetadata. Treat null as unknown here and
@@ -763,7 +814,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
         hasAudio: true,
         height: metadata.height,
         mimeType: 'video/mp4',
-        source: 'file',
+        source: camera ? 'camera' : 'file',
         sourceUri,
         width: metadata.width,
       };

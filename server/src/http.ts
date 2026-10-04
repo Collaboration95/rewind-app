@@ -2503,7 +2503,7 @@ export async function handleRequest(
                   ? 'Provide a retryable upload key.'
                   : result.reason === 'invalid_mode'
                     ? 'Choose a supported original capture mode.'
-                    : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
+                    : 'The clip must be an MP4 video with audio, within 15 seconds and 50 MB.',
       });
       return;
     }

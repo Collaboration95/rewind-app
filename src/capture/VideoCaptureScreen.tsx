@@ -1,4 +1,5 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAllowLandscape } from '../runtime/PortraitGuard';
 import { CameraView } from 'expo-camera';
 import {
   AppState,
@@ -55,6 +56,7 @@ import {
   ExpoCameraPlatform,
   readManagedRecordedClipBase64,
   removeManagedRecordedClip,
+  isCaptureCancelled,
 } from './platform';
 import type { CameraPlatform, PermissionSnapshot } from './contracts';
 
@@ -157,6 +159,7 @@ export function VideoCaptureScreen({
   runtimeClient = null,
   realAccount,
 }: VideoCaptureScreenProps = {}) {
+  useAllowLandscape();
   const cameraRef = useRef<CameraView>(null);
   const getCameraRef = useCallback(() => cameraRef.current, []);
   const platform = useMemo(
@@ -164,6 +167,7 @@ export function VideoCaptureScreen({
       platformProp ??
       // eslint-disable-next-line react-hooks/refs
       new ExpoCameraPlatform({
+        browserSystemCamera: true,
         getCameraRef,
       }),
     [getCameraRef, platformProp],
@@ -172,6 +176,7 @@ export function VideoCaptureScreen({
     () => (isVideoPlatform(platform) ? new BoundedVideoRecordingSession(platform) : null),
     [platform],
   );
+  const fileFallbackLabel = platform.fileFallbackIsCamera ? 'Record video' : 'Choose a video file';
   const demoSession = useOptionalDemoSession();
   const realGroupId = realAccount?.groupId;
   const authenticatedRequest = realAccount?.authenticatedRequest;
@@ -659,7 +664,7 @@ export function VideoCaptureScreen({
       const selected = await platform.pickVideoFile();
       await replaceClip(selected);
     } catch (fileError) {
-      if (!isCaptureActive()) return;
+      if (!isCaptureActive() || isCaptureCancelled(fileError)) return;
       setError(
         fileError instanceof Error ? fileError.message : 'The video file could not be used.',
       );
@@ -1274,7 +1279,7 @@ export function VideoCaptureScreen({
         </Text>
         <Text style={styles.body} testID="video-portrait-guidance">
           {Platform.OS === 'web'
-            ? 'Keep your device upright for portrait video with microphone audio. If the page rotates, scroll to reach the controls. Maximum duration: 15 seconds.'
+            ? 'Record in portrait or landscape, with microphone audio. Maximum duration: 15 seconds.'
             : 'Portrait video with microphone audio. Maximum duration: 15 seconds.'}
         </Text>
       </View>
@@ -1291,7 +1296,7 @@ export function VideoCaptureScreen({
                 ? 'Preparing synthetic Demo clip…'
                 : 'Create synthetic Demo clip'
               : platform.supportsFileFallback && platform.pickVideoFile
-                ? 'Choose a video file'
+                ? fileFallbackLabel
                 : undefined
           }
           disabled={creatingSyntheticClip}
@@ -1305,7 +1310,9 @@ export function VideoCaptureScreen({
                 : undefined
           }
           testID="video-unsupported"
-          title="Recording is not supported here"
+          title={
+            platform.fileFallbackIsCamera ? 'Record a video' : 'Recording is not supported here'
+          }
           body={[
             platform.getVideoCaptureUnavailableReason?.(),
             platform.kind === 'demo' &&
@@ -1313,7 +1320,9 @@ export function VideoCaptureScreen({
             demoSession?.session
               ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
               : platform.supportsFileFallback && platform.pickVideoFile
-                ? 'Live recording is not supported here. Choose a portrait MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
+                ? platform.fileFallbackIsCamera
+                  ? 'Opens your phone camera. Record up to 15 seconds in portrait or landscape; the video comes back here so you can review it before you submit.'
+                  : 'Live recording is not supported here. Choose an MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
                 : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.',
           ]
             .filter((message): message is string => Boolean(message))
@@ -1324,7 +1333,7 @@ export function VideoCaptureScreen({
         <Panel
           actionLabel={
             platform.supportsFileFallback && platform.pickVideoFile
-              ? 'Choose a video file'
+              ? fileFallbackLabel
               : 'Check again'
           }
           onAction={
@@ -1348,7 +1357,7 @@ export function VideoCaptureScreen({
         <Panel
           actionLabel={
             platform.supportsFileFallback && platform.pickVideoFile
-              ? 'Choose a video file'
+              ? fileFallbackLabel
               : 'Try again'
           }
           onAction={
@@ -1445,8 +1454,8 @@ export function VideoCaptureScreen({
           <Text style={styles.panelTitle}>Review your clip</Text>
           <Text style={styles.body}>
             {clip.source === 'file'
-              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio track detected; server verifies`
-              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio included`}
+              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio track detected; server verifies`
+              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio included`}
           </Text>
           {reviewPlayerVisible && playbackBounds ? (
             <CapturedVideoReview

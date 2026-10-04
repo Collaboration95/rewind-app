@@ -242,9 +242,9 @@ describe('Expo camera adapter contract', () => {
 
   it.each([
     [
-      'portrait orientation',
-      { durationSeconds: 4, hasAudio: true, height: 720, width: 1280 },
-      'portrait video',
+      'missing video dimensions',
+      { durationSeconds: 4, hasAudio: true, height: 0, width: 1280 },
+      'no usable video',
     ],
     [
       'duration limit',
@@ -680,6 +680,57 @@ describe('Expo camera adapter contract', () => {
     });
   });
 
+  it('uses the phone camera sheet on web for photos and videos (option 2)', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    try {
+      const picker = jest
+        .fn()
+        .mockResolvedValueOnce({ size: 3_000_000, type: 'image/jpeg' } as File)
+        .mockResolvedValueOnce({ size: 9_000_000, type: 'video/quicktime' } as File)
+        .mockResolvedValueOnce({ size: 60 * 1024 * 1024, type: 'video/quicktime' } as File);
+      const platform = new ExpoCameraPlatform({
+        browserSystemCamera: true,
+        browserFilePicker: picker,
+        browserImageDimensionsReader: jest.fn().mockResolvedValue({ height: 4032, width: 3024 }),
+        browserObjectUrlFactory: jest.fn().mockReturnValue('blob:camera'),
+        browserVideoContainerReader: jest
+          .fn()
+          .mockResolvedValue({ hasAudio: true, hasVideo: true, isMp4: true }),
+        browserVideoMetadataReader: jest
+          .fn()
+          .mockResolvedValue({ durationSeconds: 6, hasAudio: true, height: 1080, width: 1920 }),
+        getCameraRef: () => null,
+      });
+
+      expect(platform.fileFallbackIsCamera).toBe(true);
+      expect(platform.supportsLivePreview).toBe(false);
+      expect(platform.supportsVideoRecording).toBe(false);
+      await expect(platform.getCapabilities()).resolves.toEqual({
+        camera: 'unsupported',
+        microphone: 'unsupported',
+      });
+
+      await expect(platform.pickStillFile()).resolves.toMatchObject({
+        height: 4032,
+        source: 'camera',
+        width: 3024,
+      });
+      expect(picker).toHaveBeenNthCalledWith(1, 'image/jpeg,image/png', 'environment');
+
+      // A landscape camera recording is accepted; the film letterboxes it.
+      await expect(platform.pickVideoFile()).resolves.toMatchObject({
+        height: 1080,
+        source: 'camera',
+        width: 1920,
+      });
+      expect(picker).toHaveBeenNthCalledWith(2, 'video/*', 'environment');
+
+      await expect(platform.pickVideoFile()).rejects.toThrow('over 50 MB');
+    } finally {
+      platformOs.restore();
+    }
+  });
+
   it('rejects non-blob preview schemes before assigning a video source', async () => {
     const createElement = jest.fn();
     const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
@@ -777,9 +828,9 @@ describe('Expo camera adapter contract', () => {
       '15 seconds or shorter',
     ],
     [
-      'landscape',
-      { durationSeconds: 10, hasAudio: true, height: 720, width: 1280 },
-      'portrait MP4',
+      'without video dimensions',
+      { durationSeconds: 10, hasAudio: true, height: 0, width: 1280 },
+      'Choose an MP4 video',
     ],
     [
       'without audio',

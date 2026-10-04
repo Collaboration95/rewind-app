@@ -207,10 +207,7 @@ describe('VideoCaptureScreen', () => {
         const result = await render(<VideoCaptureScreen platform={platform} />);
         const guidance = result.getByTestId('video-portrait-guidance');
         if (os === 'web') {
-          expect(guidance.props.children).toContain('Keep your device upright for portrait video');
-          expect(guidance.props.children).toContain(
-            'If the page rotates, scroll to reach the controls.',
-          );
+          expect(guidance.props.children).toContain('Record in portrait or landscape');
         } else {
           expect(guidance.props.children).toBe(
             'Portrait video with microphone audio. Maximum duration: 15 seconds.',
@@ -254,7 +251,7 @@ describe('VideoCaptureScreen', () => {
     expect(result.queryByTestId('video-record')).toBeNull();
     expect(
       result.getByText(
-        /This browser cannot record the MP4 format required for upload\. Live recording is not supported here\. Choose a portrait MP4 no longer than 15 seconds/,
+        /This browser cannot record the MP4 format required for upload\. Live recording is not supported here\. Choose an MP4 no longer than 15 seconds/,
       ),
     ).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
@@ -263,16 +260,13 @@ describe('VideoCaptureScreen', () => {
     expect(result.getByText(/FILE FALLBACK · selected locally/)).toBeTruthy();
     expect(
       result.getByText(
-        /Selected MP4 8.0 seconds · 720 × 1280 portrait · audio track detected; server verifies/,
+        /Selected MP4 8.0 seconds · 720 × 1280 · audio track detected; server verifies/,
       ),
     ).toBeTruthy();
   });
 
   it.each([
-    [
-      'portrait rejection',
-      'The browser recording must be portrait video. Turn your phone upright and try again.',
-    ],
+    ['unusable video rejection', 'The browser recording has no usable video. Try recording again.'],
     ['duration rejection', 'Recordings must be 15 seconds or shorter.'],
   ])('restores the browser preview after a %s', async (_label, failureMessage) => {
     const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
@@ -586,9 +580,7 @@ describe('VideoCaptureScreen', () => {
     resolveRecording(clip);
 
     await result.findByTestId('video-review');
-    expect(
-      result.getByText('Recorded 8.0 seconds · 720 × 1280 portrait · audio included'),
-    ).toBeTruthy();
+    expect(result.getByText('Recorded 8.0 seconds · 720 × 1280 · audio included')).toBeTruthy();
     expect(platform.recordClip).toHaveBeenCalledWith(15);
   });
 

@@ -11,6 +11,9 @@ precedence over `AGENTS.md` where they differ.
   action that does not permanently lose data. That covers closing, labelling,
   commenting, milestones and merged-branch deletion. Never delete issues,
   unmerged branches, releases or tags, and never force-push protected branches.
+- **One PR per batch.** Bundle all the issues and fixes worked on together into
+  a single PR (one branch, one review pass, one merge). Split only when part
+  of the batch is blocked or unrelated enough to need a separate rollback.
 - **Review agent.** Every PR gets one Codex review pass before merge, run from
   a worktree of the PR head:
   - Large or sensitive work: GPT-6.1 Sol, medium effort.
