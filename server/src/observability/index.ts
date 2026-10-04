@@ -3,17 +3,73 @@ import { performance } from 'node:perf_hooks';
 import type { RewindDatabase } from '../db';
 import { QUEUE_MAX_FILM_ATTEMPTS } from '../jobs/queue';
 
-// Route template for timing logs: drop the query and replace identifier-like
-// segments, so no group, account, token or media capability is logged.
+// Fixed words that appear in server routes. Any other segment (identifiers,
+// usernames, emails, capabilities, unknown paths) is logged as ':id', so a
+// timing line can never carry identity or content.
+const ROUTE_WORDS = new Set([
+  'accept',
+  'access',
+  'advance',
+  'allowance',
+  'api',
+  'archive',
+  'auth',
+  'clips',
+  'complete',
+  'config',
+  'contributions',
+  'current',
+  'cycles',
+  'delete',
+  'demo',
+  'destinations',
+  'download',
+  'films',
+  'groups',
+  'health',
+  'history',
+  'intents',
+  'invites',
+  'jobs',
+  'ledger',
+  'login',
+  'logout',
+  'media',
+  'members',
+  'messages',
+  'premiere',
+  'process',
+  'profiles',
+  'prompt',
+  'reactions',
+  'real',
+  'realtime',
+  'reconcile',
+  'register',
+  'reminders',
+  'replace',
+  'reset',
+  'reveal',
+  'session',
+  'sessions',
+  'settings',
+  'source',
+  'status',
+  'synthetic-clip',
+  'upload',
+  'upload-intents',
+  'version',
+  'webpush',
+]);
+
+/** Route template for timing logs: no query, only known route words. */
 export function requestRoute(url: string | undefined): string {
   const path = (url ?? '/').split('?', 1)[0] || '/';
   return path
     .split('/')
-    .map((segment) =>
-      segment.length >= 20 || (/\d/.test(segment) && segment.length >= 8) ? ':id' : segment,
-    )
-    .join('/')
-    .slice(0, 200);
+    .slice(0, 12)
+    .map((segment) => (segment === '' || ROUTE_WORDS.has(segment) ? segment : ':id'))
+    .join('/');
 }
 
 /** No request data or exception object enters this projection. */

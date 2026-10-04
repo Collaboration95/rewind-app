@@ -35,7 +35,7 @@ import {
 import { subscribeToReminderIntents } from '../reminders/reminder-intents';
 import { RealAccountArchiveScreen } from '../archive/ArchiveScreen';
 import { BuildTag } from '../runtime/BuildTag';
-import { markEnd, markStart } from '../runtime/timing';
+import { markEnd, markLaunchReady, markStart } from '../runtime/timing';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -452,6 +452,7 @@ export function RealAccountGroupExperience({
       setGroup(result);
       setScreen(result ? 'home' : 'choices');
       markEnd('home-load');
+      markLaunchReady();
       if (result) await loadGroupMembers(result.group.id, contextVersion);
       else {
         groupMembersRequest.current += 1;

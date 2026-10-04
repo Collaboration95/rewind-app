@@ -228,9 +228,12 @@ function SessionGate({
   );
   const launchReady =
     coldLaunchMinimumElapsed && realAccount.state !== 'loading' && status !== 'loading';
+  const realAccountActive = realAccount.state === 'active' && Boolean(realAccount.session);
   useEffect(() => {
-    if (launchReady) markLaunchReady();
-  }, [launchReady]);
+    // A signed-in member is ready once the group screen loads (see
+    // RealAccountGroupExperience); other entry screens are ready here.
+    if (launchReady && !realAccountActive) markLaunchReady();
+  }, [launchReady, realAccountActive]);
   if (!launchReady) {
     return <SessionLoadingScreen />;
   }

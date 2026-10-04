@@ -17,6 +17,9 @@ test('request routes drop queries and identifier-like segments (#321)', () => {
   assert.equal(requestRoute(`/media/access/${'a'.repeat(43)}`), '/media/access/:id');
   assert.equal(requestRoute('/contributions?groupId=secret'), '/contributions');
   assert.equal(requestRoute('/health'), '/health');
+  assert.equal(requestRoute('/groups/demo-group'), '/groups/:id');
+  assert.equal(requestRoute('/alice@example.com'), '/:id');
+  assert.equal(requestRoute('/real/groups/current'), '/real/groups/current');
 });
 
 async function serve(env, run) {
