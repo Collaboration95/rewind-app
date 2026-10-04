@@ -489,7 +489,10 @@ export async function compileFilmWithFfmpeg(
     const labelInputIndex = input.inputPaths.length;
     return (
       `${normalized}[archiveBase];` +
-      `[archiveBase][${labelInputIndex}:v:0]overlay=4:4:shortest=1,` +
+      // The 172×48 label is drawn for a 180-wide frame; scale it 4× (crisp
+      // pixels) so it stays readable on the 720-wide film.
+      `[${labelInputIndex}:v:0]scale=iw*4:ih*4:flags=neighbor[archiveLabel];` +
+      `[archiveBase][archiveLabel]overlay=16:16:shortest=1,` +
       `setpts=PTS-STARTPTS[v${index}]`
     );
   });

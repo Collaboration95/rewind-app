@@ -401,8 +401,13 @@ test('production selection appends and visibly labels same-group archive filler'
       'selected archive filler was not the same-group purple fixture',
     );
 
-    const plainLabelRegion = await frameCrop(archiveClip, 0.25, 'crop=172:48:4:4');
-    const fillerLabelRegion = await frameCrop(film.outputPath, 1.25, 'crop=172:48:4:4');
+    // The label is scaled 4× and placed at 16,16 on the 720-wide film.
+    const plainLabelRegion = await frameCrop(
+      archiveClip,
+      0.25,
+      'scale=720:1280,crop=688:192:16:16',
+    );
+    const fillerLabelRegion = await frameCrop(film.outputPath, 1.25, 'crop=688:192:16:16');
     assert.equal(ARCHIVE_FILLER_LABEL, 'From the archive');
     assert.ok(
       changedPixelFraction(plainLabelRegion, fillerLabelRegion) > 0.08,
