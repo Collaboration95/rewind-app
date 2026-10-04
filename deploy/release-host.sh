@@ -8,11 +8,41 @@ RELEASE_PY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/release.py"
 
 die() { printf 'Release rejected: %s\n' "$*" >&2; exit 1; }
 valid_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
-[[ $# -ge 1 ]] || die 'usage: release-host.sh prepare BUNDLE | promote | install BUNDLE | rollback'
+[[ $# -ge 1 ]] || die 'usage: release-host.sh prepare BUNDLE | promote | install BUNDLE | rollback | prune'
+
+# Keep only the current, previous (rollback) and pending releases. Older
+# release folders and their image pairs are what filled the host disk.
+prune_releases() {
+  local keep="" pointer dir sha
+  for pointer in current-release previous-release pending-release; do
+    [[ -f "$HOST_ROOT/$pointer" ]] && keep="$keep $(cat "$HOST_ROOT/$pointer")"
+  done
+  [[ -d "$RELEASES" ]] || return 0
+  for dir in "$RELEASES"/*/; do
+    sha="$(basename -- "$dir")"
+    valid_sha "$sha" || continue
+    [[ " $keep " == *" $sha "* ]] && continue
+    rm -rf -- "$RELEASES/$sha"
+    docker image rm "rewind-demo:$sha" "rewind-demo-web:$sha" >/dev/null 2>&1 || true
+  done
+  docker image prune -f >/dev/null 2>&1 || true
+}
+
+# Staging briefly holds several copies of the bundle; refuse early with a clear
+# message instead of failing mid-copy with ENOSPC.
+require_disk_for() {
+  local bundle="$1" need avail
+  need=$(( $(wc -c < "$bundle") * 4 ))
+  avail="$(df --output=avail -B1 "$HOST_ROOT" 2>/dev/null | tail -n 1 | tr -d ' ' || true)"
+  [[ "$avail" =~ ^[0-9]+$ ]] || return 0
+  (( avail >= need )) || die "insufficient disk: $(( avail / 1048576 )) MiB free, need about $(( need / 1048576 )) MiB"
+}
 
 stage_bundle() {
   local bundle="$1" stage sha
   [[ -f "$bundle" ]] || die 'bundle file is missing'
+  prune_releases
+  require_disk_for "$bundle"
   stage="$(mktemp -d "$HOST_ROOT/.release-stage.XXXXXX")"
   sha="$(python3 "$RELEASE_PY" verify "$bundle" --extract "$stage/verified")" || {
     rm -rf -- "$stage"
@@ -121,6 +151,7 @@ promote() {
   sha256sum "$HOST_ROOT/rewind.env" | cut -d ' ' -f 1 > "$HOST_ROOT/release-config-digest"
   rm -f -- "$HOST_ROOT/pending-release"
   printf 'Activated release %s after runtime and web health checks.\n' "$sha"
+  prune_releases
 }
 
 case "$1" in
@@ -171,6 +202,11 @@ case "$1" in
       die 'rollback health failed; current release restored'
     fi
     promote "$sha"
+    ;;
+  prune)
+    [[ $# == 1 ]] || die 'prune takes no arguments'
+    prune_releases
+    printf 'Kept the current, previous and pending releases; removed older ones.\n'
     ;;
   *) die 'unknown command' ;;
 esac
