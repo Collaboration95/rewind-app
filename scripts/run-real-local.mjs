@@ -16,6 +16,7 @@ const apiPort = Number(process.env.REWIND_PORT || 8787);
 const metroPort = Number(process.env.REWIND_METRO_PORT || 8081);
 const appPort = Number(process.env.REWIND_WEB_PORT || 8090);
 const runtimeOrigin = `http://127.0.0.1:${apiPort}`;
+const metroOrigin = `http://127.0.0.1:${metroPort}`;
 
 const runtimeEnv = {
   ...process.env,
@@ -84,9 +85,13 @@ function startProxy() {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const isApi = url.pathname === '/api' || url.pathname.startsWith('/api/');
-    const target = isApi
-      ? apiTarget(runtimeOrigin, url)
-      : new URL(url.pathname + url.search, `http://127.0.0.1:${metroPort}`);
+    // Set the path on a fixed origin; resolving a `//host` path as a URL
+    // reference would let a request choose the upstream host.
+    const target = isApi ? apiTarget(runtimeOrigin, url) : new URL(metroOrigin);
+    if (!isApi) {
+      target.pathname = url.pathname;
+      target.search = url.search;
+    }
     const upstream = httpRequest(
       target,
       { method: request.method, headers: request.headers },
