@@ -112,6 +112,14 @@ describe('real account group journey', () => {
     );
     await fireEvent.press(result.getByText('Back to group'));
     await result.findByTestId('real-group-home');
+
+    // #402: the bottom navigation reaches Archive and returns Home.
+    expect(result.getByTestId('real-group-navigation')).toBeTruthy();
+    await fireEvent.press(result.getByTestId('real-group-nav-archive'));
+    await result.findByTestId('archive-empty-films');
+    expect(result.getByTestId('real-group-navigation')).toBeTruthy();
+    await fireEvent.press(result.getByTestId('real-group-nav-home'));
+    await result.findByTestId('real-group-home');
     result.unmount();
   });
 
