@@ -39,7 +39,7 @@ required unless the issue itself makes them the deliverable.
 | UI only (styling, copy, layout)                                          | `npm run web`; inspect in browser                                            | No                |
 | Client logic                                                             | Focused test, then `npm run test:fast`                                       | No                |
 | Server logic                                                             | `make run` (local server + SQLite), exercise in browser; focused server test | No                |
-| Real-account flows (sign-in, groups, capture, Archive)                   | `make run-real`, open `http://localhost:8090`, use local test accounts       | No                |
+| Real-account flows (sign-in, groups, capture, Archive)                   | `make run-real` (10-minute cycles), open `http://localhost:8090`             | No                |
 | HTTPS-only behaviour (iPhone camera, PWA install, web push, S3, Cognito) | Hosted dev URL after normal deploy                                           | Yes               |
 
 Run `npm run test:slow`, coverage, and `npm run test:a11y` for changes touching

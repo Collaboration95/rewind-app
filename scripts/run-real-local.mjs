@@ -25,6 +25,8 @@ const runtimeEnv = {
   REWIND_DATA_DIR: process.env.REWIND_DATA_DIR || resolve(projectRoot, '.local-data/real'),
   REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   REWIND_ALLOW_ORIGIN: `http://localhost:${appPort}`,
+  // New local groups get a short cycle so reveal and Archive can be tested.
+  REWIND_REAL_CYCLE_MINUTES: process.env.REWIND_REAL_CYCLE_MINUTES || '10',
 };
 const expoEnv = {
   ...process.env,
