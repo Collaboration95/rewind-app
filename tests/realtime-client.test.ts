@@ -79,6 +79,22 @@ test('native SSE adapter parses framed events, reports open, and aborts on close
   expect(xhr.aborted).toBe(true);
 });
 
+test('real-account SSE sends native bearer authority in a header and omits it from the URL', () => {
+  const client = new RealtimeChatClient('https://runtime.example', fetch, {
+    sessionIdInQuery: false,
+    eventSourceFactory: (url) =>
+      new NativeEventSource(url, FakeXhr, { Authorization: 'Bearer opaque-private-token' }),
+  });
+  const subscription = client.subscribe('', 'real-group', { onEvent: () => {} });
+  const xhr = FakeXhr.last;
+
+  expect(xhr.opened?.[1]).toBe('https://runtime.example/realtime/groups/real-group/events');
+  expect(xhr.opened?.[1]).not.toContain('opaque-private-token');
+  expect(xhr.opened?.[1]).not.toContain('sessionId');
+  expect(xhr.headers).toContainEqual(['Authorization', 'Bearer opaque-private-token']);
+  subscription.close();
+});
+
 test('native SSE adapter dispatches a terminal double LF without waiting for another chunk', () => {
   const source = new NativeEventSource('/events', FakeXhr);
   const received: string[] = [];
@@ -203,7 +219,10 @@ test('runtime EventSource factory preserves browser EventSource and falls back t
   const previousEventSource = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
   const previousXhr = Object.getOwnPropertyDescriptor(globalThis, 'XMLHttpRequest');
   class BrowserEventSource extends FakeEventSource {
-    constructor(readonly url: string) {
+    constructor(
+      readonly url: string,
+      readonly options?: { withCredentials?: boolean },
+    ) {
       super();
     }
   }
@@ -212,7 +231,9 @@ test('runtime EventSource factory preserves browser EventSource and falls back t
       configurable: true,
       value: BrowserEventSource,
     });
-    expect(createRuntimeEventSource('/events')).toBeInstanceOf(BrowserEventSource);
+    const browserSource = createRuntimeEventSource('/events', {}, { withCredentials: true });
+    expect(browserSource).toBeInstanceOf(BrowserEventSource);
+    expect(browserSource).toMatchObject({ url: '/events', options: { withCredentials: true } });
 
     Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: undefined });
     Object.defineProperty(globalThis, 'XMLHttpRequest', { configurable: true, value: FakeXhr });

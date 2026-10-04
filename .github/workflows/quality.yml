@@ -2,7 +2,7 @@ name: Quality checks
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   # Include stacked PRs; feature-branch pushes do not duplicate PR runs.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -15,12 +15,34 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Classify change scope
+    runs-on: ubuntu-24.04
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Classify the exact checked change
+        id: scope
+        env:
+          REWIND_CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          REWIND_CHANGE_HEAD: ${{ github.sha }}
+        run: node scripts/classify-quality-changes.mjs
+
   static:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
     name: Static and root tests
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -41,11 +63,13 @@ jobs:
         run: python3 -m unittest discover -s tests/security -p 'test_*.py'
 
   server:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
     name: Server tests and coverage
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -73,11 +97,13 @@ jobs:
           retention-days: 14
 
   frontend:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
     name: Frontend tests and coverage
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -97,11 +123,14 @@ jobs:
           retention-days: 14
 
   browser:
+    needs: changes
     name: Web export and browser checks
+    # Keep browser coverage on the reviewed release path, but out of dev PRs.
+    if: ${{ needs.changes.outputs.docs_only != 'true' && (github.ref == 'refs/heads/main' || github.base_ref == 'main') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -120,11 +149,13 @@ jobs:
           npx playwright test
 
   fixtures:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
     name: Cloud-free deployment fixtures
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -149,14 +180,28 @@ jobs:
   gate:
     # Keep this name stable for the existing branch-protection requirement.
     name: Format, lint, typecheck, and test
-    needs: [static, server, frontend, browser, fixtures]
+    needs: [changes, static, server, frontend, browser, fixtures]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     steps:
+      - name: Require successful scope classification
+        run: test '${{ needs.changes.result }}' = success
+      - name: Complete documentation-only Quality
+        if: ${{ needs.changes.outputs.docs_only == 'true' }}
+        run: |
+          test '${{ needs.static.result }}' = skipped
+          test '${{ needs.server.result }}' = skipped
+          test '${{ needs.frontend.result }}' = skipped
+          test '${{ needs.browser.result }}' = skipped
+          test '${{ needs.fixtures.result }}' = skipped
+          echo 'Only non-executable documentation changed. No application tests ran.'
       - name: Require every quality job to succeed
+        if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
           test '${{ needs.static.result }}' = success
           test '${{ needs.server.result }}' = success
           test '${{ needs.frontend.result }}' = success
-          test '${{ needs.browser.result }}' = success
           test '${{ needs.fixtures.result }}' = success
+      - name: Require browser checks on main
+        if: ${{ needs.changes.outputs.docs_only != 'true' && (github.ref == 'refs/heads/main' || github.base_ref == 'main') }}
+        run: test '${{ needs.browser.result }}' = success

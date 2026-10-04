@@ -1,0 +1,49 @@
+{
+  "cli": {
+    "appVersionSource": "local",
+    "requireCommit": true
+  },
+  "build": {
+    "preview-apk": {
+      "distribution": "internal",
+      "environment": "preview",
+      "autoIncrement": false,
+      "node": "26.3.1",
+      "env": {
+        "EXPO_PUBLIC_DEMO_ACCESS": "disabled"
+      },
+      "android": {
+        "buildType": "apk",
+        "credentialsSource": "local"
+      }
+    },
+    "preview-ios-simulator": {
+      "distribution": "internal",
+      "environment": "preview",
+      "autoIncrement": false,
+      "node": "26.3.1",
+      "env": {
+        "EXPO_PUBLIC_DEMO_ACCESS": "disabled"
+      },
+      "ios": {
+        "simulator": true,
+        "buildConfiguration": "Release",
+        "withoutCredentials": true
+      }
+    },
+    "preview-ios-device": {
+      "distribution": "internal",
+      "environment": "preview",
+      "autoIncrement": false,
+      "node": "26.3.1",
+      "env": {
+        "EXPO_PUBLIC_DEMO_ACCESS": "disabled"
+      },
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Release",
+        "credentialsSource": "local"
+      }
+    }
+  }
+}

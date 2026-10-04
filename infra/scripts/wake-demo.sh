@@ -185,7 +185,6 @@ validate_recreate_plan() {
             "aws_lightsail_static_ip.rewind[0]",
             "aws_lightsail_static_ip_attachment.rewind[0]",
             "aws_lightsail_instance_public_ports.rewind[0]",
-            "aws_lightsail_distribution.web[0]",
             "aws_iam_role.power_controller[0]",
             "aws_iam_role_policy.power_controller[0]",
             "aws_iam_role_policy.operator[0]",

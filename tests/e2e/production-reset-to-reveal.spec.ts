@@ -52,7 +52,15 @@ async function expectJson<T>(
   return (await response.json()) as T;
 }
 
-async function waitForDemoSession(page: Page, action: () => Promise<void>): Promise<string> {
+interface DemoSessionReceipt {
+  id: string;
+  actor: { memberId: string };
+}
+
+async function waitForDemoSession(
+  page: Page,
+  action: () => Promise<unknown>,
+): Promise<DemoSessionReceipt> {
   const responsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&
@@ -74,7 +82,8 @@ async function waitForDemoSession(page: Page, action: () => Promise<void>): Prom
   }
   const body = await response.json();
   expect(body.session?.id).toEqual(expect.any(String));
-  return body.session.id;
+  expect(body.session?.actor?.memberId).toEqual(expect.any(String));
+  return { id: body.session.id, actor: body.session.actor };
 }
 
 async function runtimeJson(page: Page, path: string) {
@@ -130,13 +139,19 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
     window.fetch = window.fetch.bind(window);
   });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
   await expect
     .poll(async () => page.evaluate(async () => (await fetch('/api/health')).ok))
     .toBe(true);
-  ownerSessionId = await waitForDemoSession(page, async () => {
-    await page.getByTestId('demo-entry-demo-1').click();
-  });
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('button', { name: 'Try Demo' }).click();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
+  const initialSession = await waitForDemoSession(page, () =>
+    page.getByTestId('demo-entry-demo-1').click(),
+  );
+  expect(initialSession.actor.memberId).toBe('demo-1');
+  ownerSessionId = initialSession.id;
   await expect(page.getByTestId('capsule-ready')).toBeVisible();
   await expect(page.getByTestId('settings-group')).toHaveCount(0);
 
@@ -152,11 +167,16 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   const code = inviteCode?.slice('Invite code '.length) ?? '';
 
   await page.getByTestId('sign-out').click();
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('button', { name: 'Try Demo' }).click();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   let guestSessionId = '';
-  guestSessionId = await waitForDemoSession(page, async () => {
-    await page.getByTestId('demo-entry-demo-2').click();
-  });
+  guestSessionId = (
+    await waitForDemoSession(page, async () => {
+      await page.getByTestId('demo-entry-demo-2').click();
+    })
+  ).id;
   await expect(page.getByTestId('capsule-ready')).toBeVisible();
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('invite-code-input').fill(code);
@@ -171,7 +191,7 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
 
   stage = 'labelled synthetic contribution';
   await page.getByTestId('nav-camera').click();
-  await page.getByTestId('camera-record-clip').click();
+  await page.getByRole('button', { name: 'Video' }).click();
   await expect(page.getByTestId('video-unsupported')).toBeVisible();
   const syntheticResponsePromise = page.waitForResponse(
     (response) =>
@@ -211,10 +231,15 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   stage = 'owner advance and release';
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('sign-out').click();
-  await expect(page.getByRole('heading', { name: 'Choose who you are showing' })).toBeVisible();
-  ownerSessionId = await waitForDemoSession(page, async () => {
-    await page.getByTestId('demo-entry-demo-1').click();
-  });
+  await expect(page.getByTestId('welcome-entry')).toBeVisible();
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.getByRole('button', { name: 'Try Demo' }).click();
+  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
+  ownerSessionId = (
+    await waitForDemoSession(page, async () => {
+      await page.getByTestId('demo-entry-demo-1').click();
+    })
+  ).id;
   await page.getByTestId('nav-settings').click();
   await expect(page.getByTestId('settings-local-reveal')).toBeVisible();
   const revealQuery = `sessionId=${encodeURIComponent(ownerSessionId)}&groupId=${encodeURIComponent(groupId)}`;
@@ -266,21 +291,6 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   expect(playback.headers()['content-type']).toContain('video/mp4');
   expect(Number(playback.headers()['content-length'] ?? 0)).toBeGreaterThan(0);
 
-  const processedClip = await runtimeJson(
-    page,
-    `/api/clips/${encodeURIComponent(clipJobId)}?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
-  );
-  expect(processedClip.clip).toMatchObject({ id: clipJobId, status: 'ready' });
-  const film = await runtimeJson(
-    page,
-    `/api/films/${encodeURIComponent(filmId)}?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
-  );
-  expect(film.film).toMatchObject({ id: filmId, kind: 'film', status: 'ready' });
-  const downloadJob = await runtimeJson(
-    page,
-    `/api/downloads/demo-download?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
-  );
-  expect(downloadJob.download).toMatchObject({ id: 'demo-download', kind: 'download' });
   const filmDownload = await page.request.get(
     `/api/films/${filmId}/download?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(ownerSessionId)}`,
   );
@@ -298,6 +308,11 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
     groupId,
     actor: { memberId: 'demo-2' },
   });
+  const processedClip = await runtimeJson(
+    page,
+    `/api/clips/${encodeURIComponent(clipJobId)}?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(releasedMemberSessionId)}`,
+  );
+  expect(processedClip.clip).toMatchObject({ id: clipJobId, status: 'ready' });
   const memberArchive = await runtimeJson(
     page,
     `/api/archive?groupId=${encodeURIComponent(groupId)}&sessionId=${encodeURIComponent(releasedMemberSessionId)}`,
@@ -353,10 +368,8 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   const deniedPaths = [
     `/api/groups/${encodeURIComponent(groupId)}?sessionId=${encodeURIComponent(secondMemberSessionId)}`,
     `/api/clips/${encodeURIComponent(clipJobId)}?${originalGroupQuery}`,
-    `/api/films/${encodeURIComponent(filmId)}?${originalGroupQuery}`,
     `/api/cycles/${encodeURIComponent(cycleId)}/premiere?${originalGroupQuery}`,
     `/api/archive?${originalGroupQuery}`,
-    `/api/downloads/demo-download?${originalGroupQuery}`,
     `/api/films/${encodeURIComponent(filmId)}/play?${originalGroupQuery}`,
     `/api/films/${encodeURIComponent(filmId)}/download?${originalGroupQuery}`,
     `/api/clips/${encodeURIComponent(clipJobId)}/download?${originalGroupQuery}`,

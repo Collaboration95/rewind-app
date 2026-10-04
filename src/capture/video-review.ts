@@ -1,6 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { CAPTURE_MODES, type CaptureMode, type RecordedClip } from '../domain/video';
+import {
+  CAPTURE_MODES,
+  DEFAULT_CAPTURE_MODE,
+  type CaptureMode,
+  type RecordedClip,
+} from '../domain/video';
+
+export { CAPTURE_MODE_LABELS } from '../domain/video';
 
 export interface TrimBounds {
   startSeconds: number;
@@ -22,11 +29,6 @@ export interface PendingClipMetadataStore {
 
 export const PENDING_CLIP_METADATA_KEY = '@rewind/pending-clip-metadata-v1';
 
-export const CAPTURE_MODE_LABELS: Record<CaptureMode, string> = {
-  'high-contrast': 'High Contrast',
-  'soft-focus': 'Soft Focus',
-};
-
 export type TrimValidation =
   | { ok: true; bounds: TrimBounds }
   | { ok: false; reason: 'invalid' | 'outside_clip' | 'too_short' };
@@ -45,6 +47,15 @@ export function validateTrimBounds(
   if (endSeconds <= startSeconds) return { ok: false, reason: 'invalid' };
   if (endSeconds - startSeconds < 0.5) return { ok: false, reason: 'too_short' };
   return { ok: true, bounds: { startSeconds, endSeconds } };
+}
+
+export function clampTrimmedPlaybackTime(
+  seconds: number,
+  startSeconds: number,
+  endSeconds: number,
+): number {
+  if (!Number.isFinite(seconds)) return startSeconds;
+  return Math.min(endSeconds, Math.max(startSeconds, seconds));
 }
 
 function isPendingMetadata(value: unknown): value is PendingClipMetadata {
@@ -119,7 +130,7 @@ export class ClipReviewSession {
   private readonly defaultClipId: string;
   private pendingClipId: string | null = null;
   private bounds: TrimBounds;
-  private mode: CaptureMode = 'soft-focus';
+  private mode: CaptureMode = DEFAULT_CAPTURE_MODE;
 
   constructor(clip: RecordedClip, metadataStore: PendingClipMetadataStore, now = () => new Date()) {
     this.clip = { ...clip };

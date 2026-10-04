@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState, type ElementRef, type ReactNode }
 import { StatusBar } from 'expo-status-bar';
 import * as Clipboard from 'expo-clipboard';
 import {
+  AccessibilityInfo,
+  Animated,
   Linking,
+  Image,
   Modal,
   Platform,
   Pressable,
@@ -11,6 +14,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -32,11 +36,17 @@ import type {
   GroupRepository,
 } from './src/domain/profiles';
 import { COLORS } from './src/theme';
-import { createConfiguredRuntime } from './src/runtime/config';
+import {
+  createConfiguredRuntime,
+  getConfiguredInviteWebOrigin,
+  isDemoAccessEnabled,
+} from './src/runtime/config';
 import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
+import { BuildTag } from './src/runtime/BuildTag';
 import { DemoSessionProvider, useDemoSession } from './src/session/DemoSessionProvider';
+import type { DemoSessionStore } from './src/domain/session';
 import {
   CameraCaptureScreen,
   ContributionStatusProvider,
@@ -69,8 +79,17 @@ import { ChatScreen } from './src/chat/ChatScreen';
 import { ChatUnreadProvider, useChatUnread } from './src/chat/unread';
 import { ArchiveScreen } from './src/archive/ArchiveScreen';
 import { ReminderSettings } from './src/reminders/ReminderSettings';
+import { RealAccountProvider, useRealAccount } from './src/auth/RealAccountProvider';
+import { RealAccountGroupExperience } from './src/groups/RealAccountGroupExperience';
+import { PortraitGuard } from './src/runtime/PortraitGuard';
+import { markLaunchReady } from './src/runtime/timing';
 
 const lockedMoments = [1, 2, 3];
+const COLD_LAUNCH_MINIMUM_MS = 600;
+
+function interactionFeedback({ pressed }: { pressed: boolean }) {
+  return [pressed && styles.pressedControl];
+}
 
 const ROUTES = [
   { key: 'home', label: 'Home' },
@@ -98,6 +117,8 @@ export interface AppProps {
   runtimeClient?: RuntimeClient | null;
   /** Inject a deterministic fixture platform for simulator evidence/tests. */
   cameraPlatform?: CameraPlatform;
+  /** Session persistence adapter for deterministic restoration and entry flows. */
+  sessionStore?: DemoSessionStore;
 }
 
 export default function App({
@@ -106,6 +127,7 @@ export default function App({
   groupRepository,
   runtimeClient,
   cameraPlatform,
+  sessionStore,
 }: AppProps = {}) {
   const inviteLink = useInviteLinkIntent();
   const configuredRuntime = useMemo(
@@ -119,18 +141,25 @@ export default function App({
   );
   return (
     <SafeAreaProvider>
-      <DemoSessionProvider runtimeClient={configuredRuntime?.client ?? null}>
-        <DemoProfileProvider>
-          <SessionGate
-            clock={clock}
-            cycleRepository={cycleRepository}
-            groupRepository={groupRepository}
-            inviteLink={inviteLink}
-            runtimeClient={configuredRuntime?.client ?? null}
-            cameraPlatform={cameraPlatform}
-          />
-        </DemoProfileProvider>
-      </DemoSessionProvider>
+      <RealAccountProvider baseUrl={configuredRuntime?.baseUrl ?? null}>
+        <DemoSessionProvider
+          runtimeClient={configuredRuntime?.client ?? null}
+          {...(sessionStore ? { store: sessionStore } : {})}
+        >
+          <DemoProfileProvider>
+            <PortraitGuard>
+              <SessionGate
+                clock={clock}
+                cycleRepository={cycleRepository}
+                groupRepository={groupRepository}
+                inviteLink={inviteLink}
+                runtimeClient={configuredRuntime?.client ?? null}
+                cameraPlatform={cameraPlatform}
+              />
+            </PortraitGuard>
+          </DemoProfileProvider>
+        </DemoSessionProvider>
+      </RealAccountProvider>
     </SafeAreaProvider>
   );
 }
@@ -185,11 +214,54 @@ function SessionGate({
   cameraPlatform?: CameraPlatform;
 }) {
   const { status, session } = useDemoSession();
+  const realAccount = useRealAccount();
+  const [coldLaunchMinimumElapsed, setColdLaunchMinimumElapsed] = useState(false);
+  useEffect(() => {
+    // SessionGate stays mounted while the app is backgrounded, so this minimum
+    // applies to process startup and does not delay a warm foreground resume.
+    const timeout = setTimeout(() => setColdLaunchMinimumElapsed(true), COLD_LAUNCH_MINIMUM_MS);
+    return () => clearTimeout(timeout);
+  }, []);
   const sessionRepositories = useMemo(
     () => (runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null),
     [runtimeClient, session],
   );
-  if (status === 'loading') return <SessionLoadingScreen />;
+  const launchReady =
+    coldLaunchMinimumElapsed && realAccount.state !== 'loading' && status !== 'loading';
+  const realAccountActive = realAccount.state === 'active' && Boolean(realAccount.session);
+  useEffect(() => {
+    // A signed-in member is ready once the group screen loads (see
+    // RealAccountGroupExperience); other entry screens are ready here.
+    if (launchReady && !realAccountActive) markLaunchReady();
+  }, [launchReady, realAccountActive]);
+  if (!launchReady) {
+    return <SessionLoadingScreen />;
+  }
+  if (realAccount.state === 'active' && realAccount.session)
+    return (
+      <SafeAreaFrame>
+        <RealAccountGroupExperience
+          displayName={realAccount.session.account.displayName}
+          inviteIntent={
+            inviteLink?.kind === 'valid' && typeof inviteLink.groupId === 'string'
+              ? {
+                  code: inviteLink.code,
+                  expiresAt: inviteLink.expiresAt,
+                  groupId: inviteLink.groupId,
+                }
+              : null
+          }
+          inviteWebOrigin={
+            Platform.OS === 'web' && typeof window !== 'undefined'
+              ? window.location.origin
+              : (getConfiguredInviteWebOrigin() ?? undefined)
+          }
+        />
+      </SafeAreaFrame>
+    );
+  if (inviteLink?.kind === 'valid' && inviteLink.groupId)
+    return <DemoAccessEntry key={inviteLink.intentId} inviteGroupId={inviteLink.groupId} />;
+  if (realAccount.state === 'error') return <DemoAccessEntry />;
   if (status === 'entry' || status === 'error' || !session) return <DemoAccessEntry />;
   return (
     <ContributionStatusProvider
@@ -224,29 +296,35 @@ function SessionLoadingScreen() {
   return (
     <SafeAreaFrame>
       <View style={styles.entryContent}>
-        <AppHeader />
-        <Text style={styles.label}>DEMO ACCESS</Text>
-        <Text accessibilityRole="header" style={styles.title}>
-          Restoring local access…
-        </Text>
-        <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
-          Checking the saved synthetic session on this device.
-        </Text>
+        <View
+          accessibilityLabel="Rewind"
+          accessibilityRole="progressbar"
+          style={styles.loadingBrand}
+        >
+          <Image
+            accessibilityLabel="Rewind mark"
+            source={require('./public/icons/rewind-icon-192.png')}
+            style={styles.brandMark}
+          />
+          <Text style={styles.loadingWordmark}>REWIND</Text>
+          <Text style={styles.loadingTagline}>PRIVATE MOMENTS, SHARED TOGETHER</Text>
+        </View>
       </View>
     </SafeAreaFrame>
   );
 }
 
 function SafeAreaFrame({ children }: { children: ReactNode }) {
+  const { width } = useWindowDimensions();
   return (
     <>
-      <StatusBar style="light" />
+      <StatusBar hidden style="light" />
       <SafeAreaView
         edges={['top', 'right', 'bottom', 'left']}
         style={styles.page}
         testID="application-safe-area"
       >
-        <View style={styles.screen}>{children}</View>
+        <View style={[styles.screen, width >= 900 && styles.wideScreen]}>{children}</View>
       </SafeAreaView>
     </>
   );
@@ -266,6 +344,9 @@ function ActiveAppShell({
   const [activeRoute, setActiveRoute] = useState<RouteKey | 'create-group' | 'video'>(() =>
     inviteLink ? 'settings' : 'home',
   );
+  const [routeOffset] = useState(() => new Animated.Value(0));
+  const routeMounted = useRef(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const [confirmResetDialogOpen, setConfirmResetDialogOpen] = useState(false);
   const previousRoute = useRef(activeRoute);
   const initialFocusPending = useRef(true);
@@ -292,6 +373,39 @@ function ActiveAppShell({
       : cycleRevealState;
 
   useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (mounted) setReduceMotion(enabled);
+      })
+      .catch(() => undefined);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!routeMounted.current) {
+      routeMounted.current = true;
+      return;
+    }
+    if (reduceMotion) {
+      routeOffset.setValue(0);
+      return;
+    }
+    routeOffset.setValue(6);
+    const animation = Animated.timing(routeOffset, {
+      toValue: 0,
+      duration: 160,
+      useNativeDriver: Platform.OS !== 'web',
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [activeRoute, reduceMotion, routeOffset]);
+
+  useEffect(() => {
     const shouldFocus = initialFocusPending.current || previousRoute.current !== activeRoute;
     previousRoute.current = activeRoute;
     initialFocusPending.current = false;
@@ -299,33 +413,53 @@ function ActiveAppShell({
     if (typeof document === 'undefined') return;
     const route = document.getElementById(`screen-route-${activeRoute}`);
     if (!route) return;
-    const focusHeading = () => {
-      const heading = route.querySelector<HTMLElement>(
-        `[data-testid="route-heading-${activeRoute}"]`,
-      );
-      if (!heading) return false;
-      heading.tabIndex = -1;
-      heading.focus();
-      return true;
-    };
-    if (focusHeading()) return;
-    let timeout: ReturnType<typeof setTimeout>;
+    const findHeading = () =>
+      route.querySelector<HTMLElement>(`[data-testid="route-heading-${activeRoute}"]`);
+    let focusedHeading = findHeading();
+    if (focusedHeading) {
+      focusedHeading.tabIndex = -1;
+      focusedHeading.focus();
+    }
+
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
     const observer = new MutationObserver(() => {
-      if (focusHeading()) {
-        observer.disconnect();
-        clearTimeout(timeout);
+      const heading = findHeading();
+      if (!heading) return;
+      if (!focusedHeading) {
+        focusedHeading = heading;
+        heading.tabIndex = -1;
+        heading.focus();
+        return;
+      }
+      if (
+        heading !== focusedHeading &&
+        !focusedHeading.isConnected &&
+        document.activeElement === document.body
+      ) {
+        focusedHeading = heading;
+        heading.tabIndex = -1;
+        heading.focus();
+        stopObserving();
       }
     });
-    timeout = setTimeout(() => observer.disconnect(), 5000);
-    observer.observe(route, { childList: true, subtree: true });
-    if (focusHeading()) {
+    const stopObserving = () => {
+      if (stopped) return;
+      stopped = true;
       observer.disconnect();
-      clearTimeout(timeout);
-    }
-    return () => {
-      observer.disconnect();
-      clearTimeout(timeout);
+      document.removeEventListener('focusin', handleFocusIn);
+      if (timeout) clearTimeout(timeout);
     };
+    const handleFocusIn = (event: FocusEvent) => {
+      // A loading route can temporarily return focus to body when its heading
+      // is replaced. Keep observing that transition, but respect focus moving
+      // to another interactive element.
+      if (event.target !== focusedHeading && event.target !== document.body) stopObserving();
+    };
+    timeout = setTimeout(stopObserving, 5000);
+    document.addEventListener('focusin', handleFocusIn);
+    observer.observe(route, { childList: true, subtree: true });
+    return stopObserving;
   }, [activeRoute]);
 
   useEffect(() => {
@@ -373,7 +507,10 @@ function ActiveAppShell({
     >
       <SafeAreaFrame>
         <View style={styles.activeShell}>
-          <View nativeID={`screen-route-${activeRoute}`} style={styles.routeContent}>
+          <Animated.View
+            nativeID={`screen-route-${activeRoute}`}
+            style={[styles.routeContent, { transform: [{ translateY: routeOffset }] }]}
+          >
             {activeRoute === 'home' ? (
               <HomeScreen
                 clock={clock}
@@ -427,7 +564,7 @@ function ActiveAppShell({
             ) : (
               <UnavailableScreen route={activeRoute as UnavailableRouteKey} />
             )}
-          </View>
+          </Animated.View>
           <MainNavigation
             activeRoute={
               activeRoute === 'create-group'
@@ -448,69 +585,652 @@ function ActiveAppShell({
 function AppHeader() {
   return (
     <View style={styles.topBar}>
-      <Text style={styles.wordmark}>REWIND</Text>
-      <View accessibilityLabel="Local demo data" style={styles.demoBadge}>
-        <Text style={styles.demoBadgeText}>LOCAL DEMO</Text>
+      <View style={styles.brandLockup}>
+        <Image
+          accessibilityLabel="Rewind mark"
+          source={require('./public/icons/rewind-icon-192.png')}
+          style={styles.headerMark}
+        />
+        <Text style={styles.wordmark}>REWIND</Text>
       </View>
     </View>
   );
 }
 
-function DemoAccessEntry() {
-  const { profiles, chooseMember, error, pending, retryRestore } = useDemoSession();
+function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
+  const { profiles, chooseMember, error, entryReason, pending, retryRestore } = useDemoSession();
+  const auth = useRealAccount();
+  const [entryOffset] = useState(() => new Animated.Value(0));
+  const entryModeMounted = useRef(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
+  const [mode, setMode] = useState<'welcome' | 'demo' | 'sign-in' | 'create-account'>(
+    inviteGroupId ? 'sign-in' : 'welcome',
+  );
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [passwordConfirmation, setPasswordConfirmation] = useState('');
+  const registrationPasswordRef = useRef<ElementRef<typeof TextInput>>(null);
+  const registrationConfirmationRef = useRef<ElementRef<typeof TextInput>>(null);
+  const [authPending, setAuthPending] = useState(false);
+  const [registrationComplete, setRegistrationComplete] = useState(false);
+  const [registrationError, setRegistrationError] = useState<
+    'invalid' | 'duplicate' | 'rate-limited' | 'unavailable' | 'password-mismatch' | null
+  >(null);
+  const [selectedDemoMemberId, setSelectedDemoMemberId] = useState<string | null>(null);
+  const visibleMode = mode;
+  const demoAccessEnabled = isDemoAccessEnabled();
+  const canRetryDemoStart = visibleMode === 'demo' && selectedDemoMemberId !== null;
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (mounted) setReduceMotion(enabled);
+      })
+      .catch(() => undefined);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!entryModeMounted.current) {
+      entryModeMounted.current = true;
+      return;
+    }
+    if (reduceMotion) {
+      entryOffset.setValue(0);
+      return;
+    }
+    entryOffset.setValue(6);
+    const animation = Animated.timing(entryOffset, {
+      toValue: 0,
+      duration: 160,
+      useNativeDriver: Platform.OS !== 'web',
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [entryOffset, reduceMotion, visibleMode]);
+
+  const authMessage =
+    auth.notice === 'expired'
+      ? 'Your session expired or an administrator reset your password. Sign in again to continue.'
+      : auth.notice === 'revoked'
+        ? 'Your session has ended. Sign in again to continue.'
+        : auth.notice === 'sign-in-failed'
+          ? 'Sign-in failed. Check your username and password, or try again later.'
+          : auth.notice === 'offline'
+            ? 'The sign-in service could not be reached. Please try again shortly.'
+            : auth.notice === 'revocation-unconfirmed'
+              ? Platform.OS === 'web'
+                ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
+                : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'
+              : auth.notice === 'local-credential-removal-failed'
+                ? 'The server says this session has ended, but this device could not confirm deletion of its saved sign-in. The credential may remain in SecureStore; retry local cleanup before treating this device as signed out.'
+                : auth.notice === 'sign-out-incomplete'
+                  ? 'Sign-out is incomplete: this device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in. Retry sign out.'
+                  : auth.notice === 'sign-out-recovery-pending'
+                    ? 'Sign-out recovery is pending. This device will not restore a saved sign-in automatically until recovery finishes. Server revocation may still be unconfirmed.'
+                    : auth.notice === 'sign-out-marker-unavailable'
+                      ? auth.state === 'active'
+                        ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                        : 'This device could not verify sign-out recovery state, so the saved sign-in was not restored. Retry sign out to recover safely.'
+                      : auth.notice === 'sign-out-marker-cleanup-failed'
+                        ? 'The server confirmed sign-out and this device deleted its saved sign-in, but it could not clear the recovery marker. Account restore stays blocked on this device until cleanup is retried.'
+                        : null;
+
+  const submitSignIn = async () => {
+    setAuthPending(true);
+    await auth.signIn(username.trim(), password);
+    setAuthPending(false);
+    setPassword('');
+  };
+
+  const submitRegistration = async () => {
+    if (
+      authPending ||
+      registrationComplete ||
+      !username.trim() ||
+      !password ||
+      !passwordConfirmation ||
+      !auth.secureTransportAvailable
+    ) {
+      return;
+    }
+    setRegistrationError(null);
+    if (password !== passwordConfirmation) {
+      setRegistrationError('password-mismatch');
+      return;
+    }
+    setAuthPending(true);
+    const outcome = await auth.registerAccount(username.trim(), password);
+    setAuthPending(false);
+    if (outcome === 'created') {
+      setPassword('');
+      setPasswordConfirmation('');
+      setRegistrationComplete(true);
+      return;
+    }
+    setRegistrationError(outcome);
+  };
+
+  const startDemo = (memberId: string) => {
+    setSelectedDemoMemberId(memberId);
+    void chooseMember(memberId);
+  };
+
+  const registrationMessage = registrationComplete
+    ? inviteGroupId
+      ? 'Your account is ready. Sign in to accept the invitation.'
+      : 'Your account is ready. Sign in to continue.'
+    : registrationError === 'password-mismatch'
+      ? 'Passwords do not match.'
+      : registrationError === 'duplicate'
+        ? 'That username is already in use. Try another.'
+        : registrationError === 'invalid'
+          ? 'Choose a valid username and a stronger password, then try again.'
+          : registrationError === 'rate-limited'
+            ? 'Too many account attempts. Wait a moment before trying again.'
+            : registrationError === 'unavailable'
+              ? 'Account creation is unavailable right now. Please try again shortly.'
+              : null;
 
   return (
     <SafeAreaFrame>
-      <ScrollView contentContainerStyle={styles.entryContent}>
-        <AppHeader />
-        <View style={styles.entryIntro}>
-          <Text style={styles.label}>DEMO ACCESS</Text>
-          <Text accessibilityRole="header" style={styles.title}>
-            Choose who you are showing
-          </Text>
-          <Text style={styles.bodyText}>
-            Pick a synthetic member to enter the local Demo. This is not a secure account or
-            sign-in.
-          </Text>
+      <Animated.ScrollView
+        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+        contentContainerStyle={[
+          styles.entryContent,
+          visibleMode === 'welcome' && styles.welcomeEntryContent,
+        ]}
+        keyboardShouldPersistTaps="handled"
+        style={{ transform: [{ translateY: entryOffset }] }}
+        testID="entry-mode-content"
+      >
+        <View style={styles.entryBrand} testID="entry-brand">
+          <View style={styles.brandLockup}>
+            <Image
+              accessibilityLabel="Rewind mark"
+              source={require('./public/icons/rewind-icon-192.png')}
+              style={styles.headerMark}
+            />
+            <Text style={styles.wordmark}>REWIND</Text>
+          </View>
+          <Text style={styles.entryTagline}>PRIVATE MOMENTS, SHARED TOGETHER</Text>
         </View>
-        {error ? (
+        {visibleMode === 'welcome' ? (
+          <View style={styles.welcomeActions} testID="welcome-entry">
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('create-account')}
+              style={({ pressed }) => [
+                styles.entryActionButton,
+                ...interactionFeedback({ pressed }),
+              ]}
+            >
+              <Text style={styles.entryActionButtonText}>Create account</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('sign-in')}
+              style={({ pressed }) => [
+                styles.primaryEntryButton,
+                ...interactionFeedback({ pressed }),
+              ]}
+            >
+              <Text style={styles.primaryEntryButtonText}>Sign in</Text>
+            </Pressable>
+          </View>
+        ) : visibleMode === 'create-account' ? (
+          <View style={styles.entryIntro}>
+            <Text style={styles.label}>JOIN REWIND</Text>
+            <Text accessibilityRole="header" style={styles.title}>
+              Create account
+            </Text>
+            <Text style={styles.bodyText}>Choose a username and password for your account.</Text>
+            {registrationComplete ? (
+              <View accessibilityLiveRegion="polite" style={styles.successPanel}>
+                <Text style={styles.successText} testID="registration-success">
+                  {registrationMessage}
+                </Text>
+              </View>
+            ) : null}
+            <Text accessibilityRole="text" style={styles.authFieldLabel}>
+              Username
+            </Text>
+            <TextInput
+              accessibilityLabel="Username"
+              autoCapitalize="none"
+              autoComplete="username"
+              autoCorrect={false}
+              blurOnSubmit={false}
+              editable={!authPending && !registrationComplete}
+              onChangeText={setUsername}
+              onSubmitEditing={() => registrationPasswordRef.current?.focus()}
+              returnKeyType="next"
+              style={styles.authInput}
+              testID="registration-username"
+              textContentType="username"
+              value={username}
+            />
+            <Text accessibilityRole="text" style={styles.authFieldLabel}>
+              Password
+            </Text>
+            <TextInput
+              accessibilityLabel="Password"
+              autoCapitalize="none"
+              autoComplete="new-password"
+              blurOnSubmit={false}
+              editable={!authPending && !registrationComplete}
+              onChangeText={setPassword}
+              onSubmitEditing={() => registrationConfirmationRef.current?.focus()}
+              ref={registrationPasswordRef}
+              returnKeyType="next"
+              secureTextEntry
+              style={styles.authInput}
+              testID="registration-password"
+              textContentType="newPassword"
+              value={password}
+            />
+            <Text accessibilityRole="text" style={styles.authFieldLabel}>
+              Confirm password
+            </Text>
+            <TextInput
+              accessibilityLabel="Confirm password"
+              autoCapitalize="none"
+              autoComplete="new-password"
+              editable={!authPending && !registrationComplete}
+              onChangeText={setPasswordConfirmation}
+              onSubmitEditing={() => void submitRegistration()}
+              ref={registrationConfirmationRef}
+              returnKeyType="go"
+              secureTextEntry
+              style={styles.authInput}
+              testID="registration-password-confirmation"
+              textContentType="newPassword"
+              value={passwordConfirmation}
+            />
+            {!auth.secureTransportAvailable ? (
+              <Text accessibilityRole="alert" style={styles.errorText}>
+                Account creation requires the same-origin HTTPS service. Your password will not be
+                sent over an insecure connection.
+              </Text>
+            ) : null}
+            {registrationMessage && !registrationComplete ? (
+              <Text accessibilityRole="alert" style={styles.errorText} testID="registration-error">
+                {registrationMessage}
+              </Text>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              disabled={
+                authPending ||
+                registrationComplete ||
+                !username.trim() ||
+                !password ||
+                !passwordConfirmation ||
+                !auth.secureTransportAvailable
+              }
+              onPress={() => void submitRegistration()}
+              style={({ pressed }) => [
+                styles.primaryEntryButton,
+                (authPending ||
+                  registrationComplete ||
+                  !username.trim() ||
+                  !password ||
+                  !passwordConfirmation ||
+                  !auth.secureTransportAvailable) &&
+                  styles.disabledChoice,
+                ...interactionFeedback({ pressed }),
+              ]}
+              testID="registration-submit"
+            >
+              <Text style={styles.primaryEntryButtonText}>
+                {authPending ? 'Creating account…' : 'Create account'}
+              </Text>
+            </Pressable>
+            {registrationComplete ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setRegistrationComplete(false);
+                  setRegistrationError(null);
+                  setMode('sign-in');
+                }}
+                style={({ pressed }) => [
+                  styles.entryActionButton,
+                  ...interactionFeedback({ pressed }),
+                ]}
+                testID="registration-continue-to-sign-in"
+              >
+                <Text style={styles.entryActionButtonText}>Sign in</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('welcome')}
+              style={({ pressed }) => [
+                styles.entryActionButton,
+                ...interactionFeedback({ pressed }),
+              ]}
+            >
+              <Text style={styles.entryActionButtonText}>Back</Text>
+            </Pressable>
+          </View>
+        ) : visibleMode === 'sign-in' ? (
+          <View style={styles.entryIntro}>
+            <Text style={styles.label}>WELCOME BACK</Text>
+            <Text accessibilityRole="header" style={styles.title}>
+              Sign in
+            </Text>
+            <Text style={styles.bodyText}>Enter your Rewind username and password.</Text>
+            {inviteGroupId ? (
+              <Text style={styles.bodyText} testID="invite-sign-in-intent">
+                Invitation for group {inviteGroupId} saved. Sign in to continue.
+              </Text>
+            ) : null}
+            <Text accessibilityRole="text" style={styles.authFieldLabel}>
+              Username
+            </Text>
+            <TextInput
+              accessibilityLabel="Username"
+              autoCapitalize="none"
+              autoComplete="username"
+              autoCorrect={false}
+              editable={!authPending}
+              onChangeText={setUsername}
+              returnKeyType="next"
+              style={styles.authInput}
+              testID="real-account-username"
+              textContentType="username"
+              value={username}
+            />
+            <Text accessibilityRole="text" style={styles.authFieldLabel}>
+              Password
+            </Text>
+            <TextInput
+              accessibilityLabel="Password"
+              autoCapitalize="none"
+              autoComplete="current-password"
+              editable={!authPending}
+              onChangeText={setPassword}
+              onSubmitEditing={() => void submitSignIn()}
+              returnKeyType="go"
+              secureTextEntry
+              style={styles.authInput}
+              testID="real-account-password"
+              textContentType="password"
+              value={password}
+            />
+            {!auth.secureTransportAvailable ? (
+              <Text accessibilityRole="alert" style={styles.errorText}>
+                Sign-in is unavailable until this app is connected to its same-origin HTTPS service.
+                Your password will not be sent over an insecure connection.
+              </Text>
+            ) : null}
+            {authMessage &&
+            auth.notice !== 'sign-out-recovery-pending' &&
+            auth.notice !== 'sign-out-marker-unavailable' &&
+            auth.notice !== 'sign-out-marker-cleanup-failed' &&
+            auth.notice !== 'local-credential-removal-failed' &&
+            !(auth.notice === 'offline' && !auth.secureTransportAvailable) ? (
+              <Text
+                accessibilityRole="alert"
+                style={styles.errorText}
+                testID={
+                  auth.notice === 'offline'
+                    ? 'real-account-offline-status'
+                    : 'real-account-session-status'
+                }
+              >
+                {authMessage}
+              </Text>
+            ) : null}
+            {auth.notice === 'offline' ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={auth.retryRestore}
+                style={({ pressed }) => [styles.retryButton, ...interactionFeedback({ pressed })]}
+              >
+                <Text style={styles.retryButtonText}>Retry session check</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              disabled={
+                authPending || !username.trim() || !password || !auth.secureTransportAvailable
+              }
+              onPress={() => void submitSignIn()}
+              style={({ pressed }) => [
+                styles.primaryEntryButton,
+                (authPending || !username.trim() || !password || !auth.secureTransportAvailable) &&
+                  styles.disabledChoice,
+                ...interactionFeedback({ pressed }),
+              ]}
+              testID="real-account-submit"
+            >
+              <Text style={styles.primaryEntryButtonText}>
+                {authPending ? 'Signing in…' : 'Sign in'}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setMode('welcome')}
+              style={({ pressed }) => [
+                styles.entryActionButton,
+                ...interactionFeedback({ pressed }),
+              ]}
+            >
+              <Text style={styles.entryActionButtonText}>Back to welcome</Text>
+            </Pressable>
+            {inviteGroupId || !demoAccessEnabled ? null : (
+              <Pressable
+                accessibilityRole="button"
+                disabled={authPending}
+                onPress={() => {
+                  setSelectedDemoMemberId(null);
+                  setMode('demo');
+                }}
+                style={({ pressed }) => [
+                  styles.primaryEntryButton,
+                  authPending && styles.disabledChoice,
+                  ...interactionFeedback({ pressed }),
+                ]}
+              >
+                <Text style={styles.primaryEntryButtonText}>Try Demo</Text>
+              </Pressable>
+            )}
+            <Pressable
+              accessibilityRole="button"
+              disabled={authPending}
+              onPress={() => {
+                setRegistrationComplete(false);
+                setRegistrationError(null);
+                setMode('create-account');
+              }}
+              style={({ pressed }) => [
+                styles.entryActionButton,
+                authPending && styles.disabledChoice,
+                ...interactionFeedback({ pressed }),
+              ]}
+              testID="sign-in-create-account"
+            >
+              <Text style={styles.entryActionButtonText}>Create account</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.entryIntro}>
+            <Text style={styles.label}>EXPLORE REWIND</Text>
+            <Text accessibilityRole="header" style={styles.title}>
+              Choose a Demo member
+            </Text>
+            <Text style={styles.bodyText}>
+              Explore with sample people and moments. Your Demo stays separate from your groups.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setSelectedDemoMemberId(null);
+                setMode('sign-in');
+              }}
+              style={({ pressed }) => [
+                styles.entryActionButton,
+                ...interactionFeedback({ pressed }),
+              ]}
+            >
+              <Text style={styles.entryActionButtonText}>Back to sign in</Text>
+            </Pressable>
+          </View>
+        )}
+        {error && visibleMode !== 'welcome' ? (
           <View
             accessible={false}
-            accessibilityLabel="Demo access error"
+            accessibilityLabel={entryReason === 'offline' ? 'Offline status' : 'Session status'}
             style={styles.errorPanel}
-            testID="demo-access-error"
+            testID="entry-session-status"
           >
             <Text accessibilityRole="alert" style={styles.errorText}>
               {error}
             </Text>
-            <Pressable accessibilityRole="button" onPress={retryRestore} style={styles.retryButton}>
-              <Text style={styles.retryButtonText}>Retry Demo access</Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={pending || authPending}
+              onPress={() => {
+                if (canRetryDemoStart && selectedDemoMemberId) {
+                  void chooseMember(selectedDemoMemberId);
+                } else {
+                  retryRestore();
+                }
+              }}
+              style={({ pressed }) => [styles.retryButton, ...interactionFeedback({ pressed })]}
+              testID={canRetryDemoStart ? 'retry-demo-start' : 'retry-session-check'}
+            >
+              <Text style={styles.retryButtonText}>
+                {canRetryDemoStart ? 'Retry Demo start' : 'Retry session check'}
+              </Text>
             </Pressable>
           </View>
         ) : null}
-        <View style={styles.entryChoices}>
-          {profiles.map((profile) => (
-            <Pressable
-              accessibilityHint="Starts local Demo access for this synthetic member"
-              accessibilityLabel={`Enter Demo as ${profile.displayName}, sample member`}
-              accessibilityRole="button"
-              disabled={pending}
-              key={profile.id}
-              onPress={() => void chooseMember(profile.id)}
-              style={[styles.entryChoice, pending && styles.disabledChoice]}
-              testID={`demo-entry-${profile.id}`}
-            >
-              <Text style={styles.entryChoiceName}>{profile.displayName}</Text>
-              <Text style={styles.entryChoiceBody}>Sample member · local only</Text>
-            </Pressable>
-          ))}
-        </View>
-        {pending ? (
+        {(auth.notice === 'offline' ||
+          auth.notice === 'expired' ||
+          auth.notice === 'revoked' ||
+          auth.notice === 'revocation-unconfirmed' ||
+          auth.notice === 'local-credential-removal-failed' ||
+          auth.notice === 'sign-out-incomplete' ||
+          auth.notice === 'sign-out-recovery-pending' ||
+          auth.notice === 'sign-out-marker-cleanup-failed' ||
+          auth.notice === 'sign-out-marker-unavailable') &&
+        (visibleMode === 'demo' ||
+          visibleMode === 'create-account' ||
+          auth.notice === 'sign-out-incomplete' ||
+          auth.notice === 'sign-out-recovery-pending' ||
+          auth.notice === 'sign-out-marker-cleanup-failed' ||
+          auth.notice === 'sign-out-marker-unavailable' ||
+          auth.notice === 'local-credential-removal-failed') &&
+        !(auth.notice === 'offline' && !auth.secureTransportAvailable) &&
+        !(auth.notice === 'offline' && error) ? (
+          <View
+            style={styles.errorPanel}
+            testID={
+              auth.notice === 'offline'
+                ? 'real-account-offline-status'
+                : 'real-account-session-status'
+            }
+          >
+            <Text accessibilityRole="alert" style={styles.errorText}>
+              {authMessage}
+            </Text>
+            {auth.notice === 'offline' ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={auth.retryRestore}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>Retry session check</Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'local-credential-removal-failed' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.retryLocalCredentialRemoval}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Retrying…' : 'Retry local cleanup'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'sign-out-marker-cleanup-failed' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.retryLocalCredentialRemoval}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Retrying…' : 'Retry local cleanup'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'sign-out-incomplete' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.signOut}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Signing out…' : 'Retry sign out'}
+                </Text>
+              </Pressable>
+            ) : null}
+            {auth.notice === 'sign-out-recovery-pending' ||
+            auth.notice === 'sign-out-marker-unavailable' ? (
+              <Pressable
+                accessibilityRole="button"
+                disabled={auth.pending}
+                onPress={auth.signOut}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryButtonText}>
+                  {auth.pending ? 'Signing out…' : 'Retry sign out'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+        {mode === 'demo' ? (
+          <View style={styles.entryChoices}>
+            {profiles.map((profile) => (
+              <Pressable
+                accessibilityHint="Starts local Demo access for this synthetic member"
+                accessibilityLabel={`Enter Demo as ${profile.displayName}, sample member`}
+                accessibilityRole="button"
+                disabled={pending}
+                key={profile.id}
+                onPress={() => startDemo(profile.id)}
+                style={({ pressed }) => [
+                  styles.entryChoice,
+                  pending && styles.disabledChoice,
+                  ...interactionFeedback({ pressed }),
+                ]}
+                testID={`demo-entry-${profile.id}`}
+              >
+                <Text style={styles.entryChoiceName}>{profile.displayName}</Text>
+                <Text style={styles.entryChoiceBody}>Sample member · local only</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+        {pending || authPending ? (
           <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
-            Starting Demo access…
+            {authPending ? 'Signing in…' : 'Starting the sample Demo…'}
           </Text>
         ) : null}
-      </ScrollView>
+      </Animated.ScrollView>
     </SafeAreaFrame>
   );
 }
@@ -618,11 +1338,13 @@ function SettingsScreen({
           <Text style={styles.panelTitle}>{session.actor.displayName}</Text>
           <Text style={styles.bodyText}>Synthetic member · Demo access</Text>
         </View>
+        <DemoProfilePicker />
         <View accessible style={styles.settingsPanel} testID="settings-group">
           <Text style={styles.label}>CURRENT GROUP</Text>
           <Text style={styles.panelTitle}>{groupName}</Text>
           <Text style={styles.bodyText}>{role === 'owner' ? 'Owner' : 'Member'} · local group</Text>
         </View>
+        <RuntimeStatusCard client={runtimeClient} />
         <ReminderSettings />
         <InvitePanel
           groupId={session.groupId}
@@ -1301,13 +2023,11 @@ function HomeScreen({
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       style={styles.homeScroll}
+      tabIndex={Platform.OS === 'web' ? 0 : undefined}
       testID="home-scroll"
     >
       <AppHeader />
-
-      <RuntimeStatusCard client={runtimeClient} />
-
-      <DemoProfilePicker />
+      <BuildTag />
 
       <CapsuleSummary
         clock={clock}
@@ -1322,11 +2042,11 @@ function HomeScreen({
 
       <View style={styles.section}>
         <Text style={styles.label}>SEALED MOMENTS</Text>
-        <View accessibilityLabel="Three sealed local demo moments" style={styles.momentRow}>
+        <View accessibilityLabel="Three sealed moments" style={styles.momentRow}>
           {lockedMoments.map((moment) => (
             <View
               accessible
-              accessibilityLabel={`Locked demo moment ${moment} of 3`}
+              accessibilityLabel={`Locked moment ${moment} of 3`}
               key={moment}
               style={styles.momentPlaceholder}
             >
@@ -1402,7 +2122,11 @@ function MainNavigation({
             accessibilityState={{ selected: isSelected }}
             key={route.key}
             onPress={() => onNavigate(route.key)}
-            style={[styles.tab, isSelected && styles.selectedTab]}
+            style={({ pressed }) => [
+              styles.tab,
+              isSelected && styles.selectedTab,
+              ...interactionFeedback({ pressed }),
+            ]}
             testID={`nav-${route.key}`}
           >
             <Text style={[styles.tabLabel, isSelected && styles.selectedTabLabel]}>
@@ -1424,17 +2148,15 @@ function MainNavigation({
 const styles = StyleSheet.create({
   page: {
     alignItems: 'center',
-    backgroundColor: COLORS.deep,
+    backgroundColor: COLORS.background,
     flex: 1,
   },
   screen: {
     backgroundColor: COLORS.background,
-    borderColor: COLORS.line,
-    borderWidth: 1,
     flex: 1,
-    maxWidth: 390,
     width: '100%',
   },
+  wideScreen: { maxWidth: 960 },
   content: {
     flexGrow: 1,
     gap: 18,
@@ -1449,24 +2171,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  brandLockup: { alignItems: 'center', flexDirection: 'row', gap: 10 },
+  headerMark: { height: 30, width: 30 },
+  brandMark: { height: 64, width: 64 },
+  loadingBrand: { alignItems: 'center', flex: 1, gap: 12, justifyContent: 'center' },
+  loadingWordmark: { color: COLORS.ink, fontSize: 17, fontWeight: '800', letterSpacing: 3 },
+  loadingTagline: { color: COLORS.muted, fontSize: 12, letterSpacing: 1.2, textAlign: 'center' },
   wordmark: {
     color: COLORS.ink,
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 2,
-  },
-  demoBadge: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.accent,
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  demoBadgeText: {
-    color: COLORS.accent,
-    fontSize: 10,
-    fontWeight: '700',
   },
   label: {
     color: COLORS.edge,
@@ -1612,9 +2327,53 @@ const styles = StyleSheet.create({
   activeShell: { flex: 1, minHeight: 0 },
   routeContent: { flex: 1, minHeight: 0 },
   settingsScreen: { flex: 1 },
-  entryContent: { flexGrow: 1, gap: 24, padding: 24, paddingBottom: 36 },
-  entryIntro: { gap: 8 },
+  entryContent: {
+    flexGrow: 1,
+    gap: 24,
+    justifyContent: 'flex-start',
+    padding: 24,
+    paddingBottom: 36,
+  },
+  welcomeEntryContent: { justifyContent: 'center' },
+  entryBrand: { alignItems: 'center', alignSelf: 'stretch', gap: 8 },
+  entryTagline: { color: COLORS.muted, fontSize: 12, letterSpacing: 1.2, textAlign: 'center' },
+  welcomeActions: { gap: 12 },
+  entryIntro: { gap: 12 },
+  authFieldLabel: { color: COLORS.ink, fontSize: 14, fontWeight: '700', marginTop: 4 },
+  authInput: {
+    backgroundColor: COLORS.paper,
+    borderColor: COLORS.edge,
+    borderRadius: 10,
+    borderWidth: 1,
+    color: COLORS.ink,
+    fontSize: 16,
+    minHeight: 50,
+    paddingHorizontal: 14,
+  },
+  realAccountHome: { justifyContent: 'flex-start' },
   entryChoices: { gap: 12 },
+  primaryEntryButton: {
+    alignItems: 'center',
+    backgroundColor: COLORS.accent,
+    borderRadius: 10,
+    justifyContent: 'center',
+    minHeight: 52,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  primaryEntryButtonText: { color: COLORS.deep, fontSize: 16, fontWeight: '800' },
+  entryActionButton: {
+    alignItems: 'center',
+    backgroundColor: COLORS.paper,
+    borderColor: COLORS.edge,
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 52,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  entryActionButtonText: { color: COLORS.ink, fontSize: 16, fontWeight: '700' },
   entryChoice: {
     backgroundColor: COLORS.paper,
     borderColor: COLORS.edge,
@@ -1627,6 +2386,15 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   disabledChoice: { opacity: 0.55 },
+  pressedControl: { opacity: 0.78 },
+  successPanel: {
+    backgroundColor: COLORS.paper,
+    borderColor: COLORS.edge,
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 14,
+  },
+  successText: { color: COLORS.ink, fontSize: 14, lineHeight: 21 },
   entryChoiceName: { color: COLORS.ink, fontSize: 18, fontWeight: '700' },
   entryChoiceBody: { color: COLORS.muted, fontSize: 13 },
   errorPanel: {

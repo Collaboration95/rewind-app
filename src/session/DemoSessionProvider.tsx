@@ -24,6 +24,7 @@ import {
 } from '../domain/session';
 import type { MemberProfile } from '../domain/profiles';
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
+import { isDemoAccessEnabled } from '../runtime/config';
 import { createOfflineDemoSession, demoSessionStore } from './session-store';
 import {
   clearContributionStatusForSession,
@@ -33,12 +34,14 @@ import {
 import { reminderService } from '../reminders/reminder-service';
 
 export type DemoAccessStatus = 'loading' | 'entry' | 'active' | 'error';
+export type DemoEntryReason = 'fresh' | 'signed-out' | 'expired' | 'offline' | 'restore-error';
 
 interface DemoSessionContextValue {
   status: DemoAccessStatus;
   session: DemoSession | null;
   profiles: MemberProfile[];
   error: string | null;
+  entryReason: DemoEntryReason;
   pending: boolean;
   chooseMember: (memberId: string) => Promise<void>;
   signOut: () => Promise<void>;
@@ -93,6 +96,7 @@ export function DemoSessionProvider({
   const [status, setStatus] = useState<DemoAccessStatus>('loading');
   const [session, setSession] = useState<DemoSession | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [entryReason, setEntryReason] = useState<DemoEntryReason>('fresh');
   const [pending, setPending] = useState(false);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const mounted = useRef(true);
@@ -103,7 +107,7 @@ export function DemoSessionProvider({
     try {
       const entryMode =
         typeof process !== 'undefined' && process.env.EXPO_PUBLIC_DEMO_ACCESS === 'entry';
-      if (entryMode) {
+      if (entryMode || !isDemoAccessEnabled()) {
         await clearLocalReminder();
         await store.clear();
         if (mounted.current) {
@@ -115,23 +119,30 @@ export function DemoSessionProvider({
       hydrateLocalDemoData(await localGroupStore.load());
       const stored = await store.load();
       if (!stored) {
-        // The offline fixture keeps the established clean-start experience:
-        // Amber is an explicit synthetic Demo actor, not a real account. A
-        // user can still end this session from Settings and return to entry.
-        const defaultProfile = profiles.find((profile) => profile.id === DEFAULT_MEMBER_ID);
-        if (!defaultProfile) throw new Error('The default synthetic Demo member is unavailable.');
-        const initial = runtimeClient?.createDemoSession
-          ? await runtimeClient.createDemoSession(defaultProfile.id)
-          : createOfflineDemoSession(
-              defaultProfile.id,
-              defaultProfile.displayName,
-              'demo-group',
-              clock(),
-            );
-        await store.save(initial);
+        const testDemoFixture =
+          process.env.NODE_ENV === 'test' && process.env.REWIND_TEST_DEMO_FIXTURE === 'true';
+        if (testDemoFixture) {
+          const defaultProfile = profiles.find((profile) => profile.id === DEFAULT_MEMBER_ID);
+          if (!defaultProfile) throw new Error('The default synthetic Demo member is unavailable.');
+          const initial = runtimeClient?.createDemoSession
+            ? await runtimeClient.createDemoSession(defaultProfile.id)
+            : createOfflineDemoSession(
+                defaultProfile.id,
+                defaultProfile.displayName,
+                'demo-group',
+                clock(),
+              );
+          await store.save(initial);
+          if (mounted.current) {
+            setSession(initial);
+            setStatus('active');
+          }
+          return;
+        }
         if (mounted.current) {
-          setSession(initial);
-          setStatus('active');
+          setSession(null);
+          setEntryReason('fresh');
+          setStatus('entry');
         }
         return;
       }
@@ -139,7 +150,13 @@ export function DemoSessionProvider({
       if (localResult.status !== 'valid') {
         await clearLocalReminder();
         await store.clear();
-        if (mounted.current) setStatus('entry');
+        if (mounted.current) {
+          const expired = localResult.status === 'expired';
+          setEntryReason(expired ? 'expired' : 'fresh');
+          if (expired)
+            setError('Your saved Demo session has expired. Choose Try Demo to start again.');
+          setStatus('entry');
+        }
         return;
       }
       const restored = runtimeClient?.getDemoSession
@@ -157,15 +174,24 @@ export function DemoSessionProvider({
         ) {
           await clearLocalReminder();
           await store.clear();
+          setEntryReason('expired');
           setStatus('entry');
-          setError('The saved Demo access is no longer active. Choose a member to start again.');
+          setError('Your saved Demo session has expired. Choose Try Demo to start again.');
         } else {
+          const offline =
+            restoreError instanceof LocalRuntimeError &&
+            (restoreError.code === 'runtime_offline' ||
+              restoreError.code === 'runtime_timeout' ||
+              restoreError.message.startsWith('Could not reach the local runtime'));
+          setEntryReason(offline ? 'offline' : 'restore-error');
           setStatus('error');
           setError(
-            safeError(
-              restoreError,
-              'Demo access could not be restored. Retry, or choose a member to start again.',
-            ),
+            offline
+              ? 'The runtime is unreachable. Reconnect to check the saved Demo session. Sample Demo access may also be unavailable until the runtime reconnects.'
+              : safeError(
+                  restoreError,
+                  'Saved Demo access could not be restored. Retry to try again.',
+                ),
           );
         }
       }
@@ -182,6 +208,11 @@ export function DemoSessionProvider({
 
   const chooseMember = useCallback(
     async (memberId: string) => {
+      if (!isDemoAccessEnabled()) {
+        setError('Sample Demo access is unavailable in this release. Sign in to continue.');
+        setStatus('entry');
+        return;
+      }
       const member = profiles.find((profile) => profile.id === memberId);
       if (!member || pending) return;
       setPending(true);
@@ -200,6 +231,7 @@ export function DemoSessionProvider({
         }
         if (mounted.current) {
           setSession(next);
+          setEntryReason('fresh');
           setStatus('active');
         }
       } catch (chooseError) {
@@ -246,6 +278,7 @@ export function DemoSessionProvider({
         await store.clear();
         if (mounted.current) {
           setSession(null);
+          setEntryReason('signed-out');
           setStatus('entry');
         }
       } catch (clearError) {
@@ -286,6 +319,7 @@ export function DemoSessionProvider({
         await store.clear();
         if (mounted.current) {
           setSession(null);
+          setEntryReason('fresh');
           setStatus('entry');
         }
         return true;
@@ -326,6 +360,7 @@ export function DemoSessionProvider({
       session,
       profiles,
       error,
+      entryReason,
       pending,
       chooseMember,
       signOut,
@@ -333,7 +368,18 @@ export function DemoSessionProvider({
       updateGroup,
       retryRestore: () => setRestoreAttempt((attempt) => attempt + 1),
     }),
-    [chooseMember, error, pending, profiles, resetDemoData, session, signOut, status, updateGroup],
+    [
+      chooseMember,
+      entryReason,
+      error,
+      pending,
+      profiles,
+      resetDemoData,
+      session,
+      signOut,
+      status,
+      updateGroup,
+    ],
   );
 
   return <DemoSessionContext.Provider value={value}>{children}</DemoSessionContext.Provider>;

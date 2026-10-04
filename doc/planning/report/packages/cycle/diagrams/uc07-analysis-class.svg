@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="930" viewBox="0 0 1660 930">
+<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#147d83"/></marker><marker id="rel" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#5c7082"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/><rect width="100%" height="12" fill="#147d83"/>
+<text x="36" y="52" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700" fill="#17324d">UC07 · Analysis classes</text>
+<text x="36" y="80" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#5c7082">Conceptual responsibilities for automatic close and immediate successor</text>
+<rect x="1410" y="28" width="214" height="31" rx="15" fill="#e8f1f8"/><text x="1517" y="49" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700" fill="#17324d">ANALYSIS</text>
+<polyline points="655.0,200.7394366197183 707.5,200.7394366197183 707.5,199.2605633802817 760.0,199.2605633802817" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="639.5" y="175.0" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="707.5" y="192.0" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">scans due</text>
+<polyline points="628.047619047619,275.0 705.8095238095239,275.0 705.8095238095239,390.0 783.5714285714286,390.0" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="637.8095238095239" y="307.5" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="705.8095238095239" y="324.5" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">advances</text>
+<polyline points="885.0,275.0 885.0,332.5 885.0,332.5 885.0,390.0" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="817.0" y="307.5" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="885.0" y="324.5" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">state and end</text>
+<polyline points="1010.0,390.78125 1085.0,390.78125 1085.0,301.71875 1160.0,301.71875" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="1017.0" y="321.25" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="1085.0" y="338.25" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">creates/selects</text>
+<polyline points="1010.0,475.15625 1085.0,475.15625 1085.0,487.34375 1160.0,487.34375" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="1017.0" y="456.25" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="1085.0" y="473.25" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">ensures</text>
+<polyline points="320.0,305.6828703703704 740.0,305.6828703703704 740.0,237.6273148148148 1160.0,237.6273148148148" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="672.0" y="246.6550925925926" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="740.0" y="263.6550925925926" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">contributes next</text>
+<rect x="90" y="250" width="230" height="130" rx="12" fill="#e7f4ef" stroke="#147d83" stroke-width="2"/>
+<path d="M91,296 H319" stroke="#147d83" stroke-width="2"/>
+<text x="205.0" y="280" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Group member</text>
+<text x="104" y="318" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Contributes to current</text>
+<text x="104" y="336" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">cycle</text>
+<text x="104" y="354" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Begins capture in successor</text>
+<rect x="405" y="130" width="250" height="145" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M406,176 H654" stroke="#147d83" stroke-width="2"/>
+<text x="530.0" y="160" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Cycle scheduler</text>
+<text x="419" y="198" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Finds due group cycles</text>
+<text x="419" y="216" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Requests lifecycle advance</text>
+<rect x="760" y="120" width="250" height="155" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M761,166 H1009" stroke="#147d83" stroke-width="2"/>
+<text x="885.0" y="150" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Current cycle</text>
+<text x="774" y="188" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Group, start / end, status</text>
+<text x="774" y="206" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Contribution lock</text>
+<text x="774" y="224" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Prompt and quota</text>
+<rect x="760" y="390" width="250" height="150" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M761,436 H1009" stroke="#147d83" stroke-width="2"/>
+<text x="885.0" y="420" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Lifecycle transition</text>
+<text x="774" y="458" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Boundary and status rules</text>
+<text x="774" y="476" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Close and record outcome</text>
+<rect x="1160" y="150" width="250" height="155" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M1161,196 H1409" stroke="#147d83" stroke-width="2"/>
+<text x="1285.0" y="180" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Successor cycle</text>
+<text x="1174" y="218" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Starts at prior end</text>
+<text x="1174" y="236" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Same duration and prompt</text>
+<text x="1174" y="254" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Becomes current</text>
+<rect x="1160" y="425" width="250" height="145" rx="12" fill="#fff2d8" stroke="#147d83" stroke-width="2"/>
+<path d="M1161,471 H1409" stroke="#147d83" stroke-width="2"/>
+<text x="1285.0" y="455" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Film work request</text>
+<text x="1174" y="493" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">One cycle-scoped job</text>
+<text x="1174" y="511" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Inputs settle separately</text>
+<text x="36" y="906" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">Analysis shows responsibilities and concepts; design shows only implementation-evidenced components and records at fc2b8c811e9c13b176113fa0bdb2c015798990b4.</text></svg>

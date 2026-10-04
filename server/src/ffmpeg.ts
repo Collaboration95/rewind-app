@@ -8,16 +8,46 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-/** The original capture modes supported by the client and local worker. */
-export const SUPPORTED_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
+/** The four original retro looks offered for new captures. */
+export const RETRO_CAPTURE_MODES = ['disposable-flash', 'ccd', '8mm', 'vhs'] as const;
+/** Earlier server-only looks, still accepted for existing rows and older clients. */
+export const LEGACY_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
+export const SUPPORTED_CAPTURE_MODES = [...RETRO_CAPTURE_MODES, ...LEGACY_CAPTURE_MODES] as const;
 export type CaptureMode = (typeof SUPPORTED_CAPTURE_MODES)[number];
+export const DEFAULT_CAPTURE_MODE: CaptureMode = 'ccd';
+/**
+ * The mode stored on a media job. `client:<look>` records that the client
+ * already applied the look before upload, so the worker only normalizes.
+ */
+export type ProcessingMode = CaptureMode | `client:${CaptureMode}`;
+
+export function isCaptureMode(value: unknown): value is CaptureMode {
+  return (SUPPORTED_CAPTURE_MODES as readonly unknown[]).includes(value);
+}
+
+export function processingModeFor(mode: CaptureMode, clientProcessed: boolean): ProcessingMode {
+  return clientProcessed ? `client:${mode}` : mode;
+}
+
+export function isProcessingMode(value: unknown): value is ProcessingMode {
+  return (
+    isCaptureMode(value) ||
+    (typeof value === 'string' && value.startsWith('client:') && isCaptureMode(value.slice(7)))
+  );
+}
 
 export interface FfmpegProcessInput {
   inputPath: string;
   outputPath: string;
   trimStartSeconds: number;
   trimEndSeconds: number;
-  mode: CaptureMode;
+  mode: ProcessingMode;
+}
+
+export interface FfmpegPhotoProcessInput {
+  inputPath: string;
+  outputPath: string;
+  mode: ProcessingMode;
 }
 
 export interface FfmpegProcessResult {
@@ -197,10 +227,24 @@ export async function resolveStagedMediaPath(value: string, stagingDir: string):
   }
 }
 
-function modeFilter(mode: CaptureMode): string {
-  return mode === 'high-contrast'
-    ? 'eq=contrast=1.18:brightness=0.02:saturation=1.12'
-    : 'eq=contrast=0.96:brightness=0.02:saturation=0.9,gblur=sigma=0.35';
+/**
+ * Server-side approximations of the retro looks, used when the client did not
+ * process the media (native apps and older clients). A client-processed look
+ * passes through unchanged so it is never applied twice.
+ */
+const LOOK_FILTERS: Record<CaptureMode, string> = {
+  'disposable-flash':
+    'eq=contrast=1.25:brightness=0.06:saturation=1.3,colorbalance=rm=0.06:bm=-0.04,vignette=angle=PI/4,noise=alls=12:allf=t',
+  ccd: 'eq=contrast=1.1:brightness=0.03:saturation=1.15,colorbalance=bs=0.06:bm=0.04,noise=alls=6:allf=t',
+  '8mm':
+    'eq=contrast=1.15:brightness=-0.02:saturation=0.55,colorbalance=rs=0.12:gs=0.05:bs=-0.1:rm=0.1:bm=-0.08,vignette=angle=PI/3.5,noise=alls=18:allf=t+u',
+  vhs: 'eq=contrast=1.05:saturation=1.35,chromashift=cbh=-4:crh=4,gblur=sigma=0.8,drawgrid=w=iw:h=3:t=1:c=black@0.18,noise=alls=10:allf=t',
+  'high-contrast': 'eq=contrast=1.18:brightness=0.02:saturation=1.12',
+  'soft-focus': 'eq=contrast=0.96:brightness=0.02:saturation=0.9,gblur=sigma=0.35',
+};
+
+export function modeFilter(mode: ProcessingMode): string {
+  return isCaptureMode(mode) ? LOOK_FILTERS[mode] : 'null';
 }
 
 function validProcessInput(input: FfmpegProcessInput): boolean {
@@ -213,7 +257,7 @@ function validProcessInput(input: FfmpegProcessInput): boolean {
     input.trimEndSeconds - input.trimStartSeconds >= 0.5 &&
     input.inputPath.length > 0 &&
     input.outputPath.length > 0 &&
-    SUPPORTED_CAPTURE_MODES.includes(input.mode)
+    isProcessingMode(input.mode)
   );
 }
 
@@ -293,6 +337,162 @@ export async function processClipWithFfmpeg(
   }
 }
 
+/** Turn one validated still into the film's standard three-second portrait clip. */
+export async function processPhotoWithFfmpeg(
+  ffmpegBin: string,
+  input: FfmpegPhotoProcessInput,
+): Promise<FfmpegProcessResult> {
+  if (!input.inputPath || !input.outputPath || !isProcessingMode(input.mode)) {
+    throw new FfmpegProcessingError(
+      'invalid_metadata',
+      'The photo processing metadata is invalid.',
+    );
+  }
+  try {
+    await execFileAsync(
+      ffmpegBin,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-loop',
+        '1',
+        '-framerate',
+        '12',
+        '-i',
+        input.inputPath,
+        '-f',
+        'lavfi',
+        '-i',
+        'anullsrc=r=44100:cl=stereo',
+        '-t',
+        '3',
+        '-vf',
+        `${modeFilter(input.mode)},scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=12`,
+        '-map',
+        '0:v:0',
+        '-map',
+        '1:a:0',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-ar',
+        '44100',
+        '-ac',
+        '2',
+        '-shortest',
+        '-t',
+        '3',
+        '-movflags',
+        '+faststart',
+        input.outputPath,
+      ],
+      { timeout: 60_000, maxBuffer: 2_000_000 },
+    );
+    const output = await probeClipWithFfmpeg(ffmpegBin, input.outputPath);
+    if (
+      Math.abs(output.durationSeconds - 3) > 0.1 ||
+      output.width !== 720 ||
+      output.height !== 1280
+    ) {
+      throw new Error('invalid processed photo');
+    }
+    return { outputPath: input.outputPath, durationSeconds: 3 };
+  } catch (error) {
+    if (error instanceof FfmpegProcessingError) throw error;
+    throw new FfmpegProcessingError(
+      'process_failed',
+      'The photo could not be processed. Retry the job.',
+    );
+  }
+}
+
+export interface FfmpegPhotoProbeResult {
+  mimeType: 'image/jpeg' | 'image/png';
+  byteLength: number;
+  durationSeconds: 3;
+  width: number;
+  height: number;
+  hasAudio: true;
+}
+
+export async function probePhotoWithFfmpeg(
+  ffmpegBin: string,
+  inputPath: string,
+  stagingDir?: string,
+): Promise<FfmpegPhotoProbeResult> {
+  const ffmpegDirectory = dirname(ffmpegBin);
+  const probeBin =
+    basename(ffmpegBin).startsWith('ffmpeg') && ffmpegDirectory !== '.'
+      ? `${ffmpegDirectory}/ffprobe`
+      : 'ffprobe';
+  try {
+    const safeInputPath = stagingDir
+      ? await resolveStagedMediaPath(inputPath, stagingDir)
+      : resolveLocalMediaPath(inputPath);
+    const [probe, file] = await Promise.all([
+      execFileAsync(
+        probeBin,
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-show_entries',
+          'format=format_name:stream=codec_name,width,height:stream_tags=rotate:stream_side_data=rotation',
+          '-of',
+          'json',
+          safeInputPath,
+        ],
+        { timeout: 20_000, maxBuffer: 2_000_000 },
+      ),
+      stat(safeInputPath),
+    ]);
+    const parsed = JSON.parse(probe.stdout) as {
+      format?: { format_name?: string };
+      streams?: {
+        codec_name?: string;
+        width?: number;
+        height?: number;
+        tags?: { rotate?: string };
+        side_data_list?: { rotation?: number }[];
+      }[];
+    };
+    const image = parsed.streams?.[0];
+    const rawWidth = Number(image?.width);
+    const rawHeight = Number(image?.height);
+    const rotation = Number(image?.side_data_list?.[0]?.rotation ?? image?.tags?.rotate ?? 0);
+    const width = Math.abs(rotation) % 180 === 90 ? rawHeight : rawWidth;
+    const height = Math.abs(rotation) % 180 === 90 ? rawWidth : rawHeight;
+    const format = parsed.format?.format_name?.split(',') ?? [];
+    const mimeType =
+      format.includes('png_pipe') || image?.codec_name === 'png' ? 'image/png' : 'image/jpeg';
+    if (
+      !Number.isInteger(file.size) ||
+      file.size <= 0 ||
+      file.size > 10 * 1024 * 1024 ||
+      !Number.isInteger(width) ||
+      !Number.isInteger(height) ||
+      width <= 0 ||
+      height <= 0 ||
+      width > 12000 ||
+      height > 12000 ||
+      ![0, 90, -90, 180, -180].includes(rotation) ||
+      (mimeType === 'image/png' ? image?.codec_name !== 'png' : image?.codec_name !== 'mjpeg')
+    )
+      throw new Error('invalid photo');
+    return { mimeType, byteLength: file.size, durationSeconds: 3, width, height, hasAudio: true };
+  } catch {
+    throw new FfmpegProcessingError('invalid_metadata', 'The staged photo could not be verified.');
+  }
+}
+
 /**
  * Concatenate retained clips without a shell. Each input is normalized before
  * concat so a valid but differently encoded processed clip cannot make the
@@ -320,13 +520,17 @@ export async function compileFilmWithFfmpeg(
     input.archiveFillerIndex === undefined ? null : `${input.outputPath}.archive-label.ppm`;
   const videoFilters = input.inputPaths.map((_, index) => {
     const normalized =
-      `[${index}:v:0]scale=180:320:force_original_aspect_ratio=decrease,` +
-      `pad=180:320:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS`;
+      // Vertical 720p film; landscape clips are letterboxed, not cropped.
+      `[${index}:v:0]scale=720:1280:force_original_aspect_ratio=decrease,` +
+      `pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS`;
     if (index !== input.archiveFillerIndex) return `${normalized}[v${index}]`;
     const labelInputIndex = input.inputPaths.length;
     return (
       `${normalized}[archiveBase];` +
-      `[archiveBase][${labelInputIndex}:v:0]overlay=4:4:shortest=1,` +
+      // The 172×48 label is drawn for a 180-wide frame; scale it 4× (crisp
+      // pixels) so it stays readable on the 720-wide film.
+      `[${labelInputIndex}:v:0]scale=iw*4:ih*4:flags=neighbor[archiveLabel];` +
+      `[archiveBase][archiveLabel]overlay=16:16:shortest=1,` +
       `setpts=PTS-STARTPTS[v${index}]`
     );
   });
@@ -442,7 +646,6 @@ export async function probeClipWithFfmpeg(
       !Number.isInteger(height) ||
       width <= 0 ||
       height <= 0 ||
-      width >= height ||
       !hasAudio
     ) {
       throw new Error('invalid media');

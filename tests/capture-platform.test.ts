@@ -64,6 +64,274 @@ it('treats a missing native availability probe as available on a physical device
 });
 
 describe('Expo camera adapter contract', () => {
+  it('detects secure MP4 browser recording without opening the camera before a user action', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    try {
+      const getUserMedia = jest.fn();
+      const mediaRecorder = class {
+        static isTypeSupported = jest.fn(() => true);
+      } as unknown as typeof MediaRecorder;
+      const platform = new ExpoCameraPlatform({
+        browserMediaDevices: { getUserMedia },
+        browserMediaRecorder: mediaRecorder,
+        browserPermissionReader: jest.fn().mockResolvedValue({
+          camera: 'undetermined',
+          microphone: 'undetermined',
+        }),
+        browserSecureContext: () => true,
+        getCameraRef: () => null,
+      });
+
+      await expect(platform.getCapabilities()).resolves.toEqual({
+        camera: 'supported',
+        microphone: 'supported',
+      });
+      await expect(platform.getVideoPermissions()).resolves.toEqual({
+        camera: 'undetermined',
+        microphone: 'undetermined',
+      });
+      expect(getUserMedia).not.toHaveBeenCalled();
+    } finally {
+      platformOs.restore();
+    }
+  });
+
+  it.each([
+    [false, 'HTTPS'],
+    [true, 'MP4 format'],
+  ])('explains a browser recording limitation when secure=%s', async (secure, expected) => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    try {
+      const mediaRecorder = class {
+        static isTypeSupported = jest.fn(() => false);
+      } as unknown as typeof MediaRecorder;
+      const platform = new ExpoCameraPlatform({
+        browserMediaDevices: { getUserMedia: jest.fn() },
+        browserMediaRecorder: mediaRecorder,
+        browserSecureContext: () => secure,
+        getCameraRef: () => null,
+      });
+
+      await expect(platform.getCapabilities()).resolves.toEqual({
+        camera: 'unsupported',
+        microphone: 'unsupported',
+      });
+      expect(platform.getVideoCaptureUnavailableReason()).toContain(expected);
+    } finally {
+      platformOs.restore();
+    }
+  });
+
+  it('turns a browser permission refusal into an explicit denied state', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    try {
+      const platform = new ExpoCameraPlatform({
+        browserMediaDevices: {
+          getUserMedia: jest
+            .fn()
+            .mockRejectedValue(new DOMException('Permission denied', 'NotAllowedError')),
+        },
+        browserMediaRecorder: class {
+          static isTypeSupported = jest.fn(() => true);
+        } as unknown as typeof MediaRecorder,
+        browserSecureContext: () => true,
+        getCameraRef: () => null,
+      });
+
+      await expect(platform.requestVideoPermissions()).resolves.toEqual({
+        camera: 'denied',
+        microphone: 'denied',
+      });
+    } finally {
+      platformOs.restore();
+    }
+  });
+
+  it('records an MP4 from the granted browser stream, caps at 15 seconds, and releases tracks', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    jest.useFakeTimers();
+    const previousCreateObjectUrl = URL.createObjectURL;
+    const previousRevokeObjectUrl = URL.revokeObjectURL;
+    URL.createObjectURL = jest.fn(() => 'blob:recorded-clip');
+    URL.revokeObjectURL = jest.fn();
+    let markRecorderStarted: () => void = () => undefined;
+    const recorderStarted = new Promise<void>((resolve) => {
+      markRecorderStarted = resolve;
+    });
+    class BrowserRecorder {
+      static isTypeSupported = jest.fn(() => true);
+      mimeType = 'video/mp4';
+      state: RecordingState = 'inactive';
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      onstop: (() => void) | null = null;
+
+      start() {
+        this.state = 'recording';
+        markRecorderStarted();
+      }
+
+      stop() {
+        this.state = 'inactive';
+        this.ondataavailable?.({
+          data: new Blob(['mp4-bytes'], { type: 'video/mp4' }),
+        } as BlobEvent);
+        this.onstop?.();
+      }
+    }
+    const stopTrack = jest.fn();
+    const audioTrack = { readyState: 'live', stop: stopTrack } as unknown as MediaStreamTrack;
+    const videoTrack = { readyState: 'live', stop: stopTrack } as unknown as MediaStreamTrack;
+    const stream = {
+      getAudioTracks: () => [audioTrack],
+      getTracks: () => [audioTrack, videoTrack],
+      getVideoTracks: () => [videoTrack],
+    } as unknown as MediaStream;
+    const getUserMedia = jest.fn().mockResolvedValue(stream);
+    const containerReader = jest.fn().mockResolvedValue({
+      hasAudio: true,
+      hasVideo: true,
+      isMp4: true,
+    });
+    const metadataReader = jest.fn().mockResolvedValue({
+      durationSeconds: 4,
+      hasAudio: true,
+      height: 1280,
+      width: 720,
+    });
+    const platform = new ExpoCameraPlatform({
+      browserMediaDevices: { getUserMedia },
+      browserMediaRecorder: BrowserRecorder as unknown as typeof MediaRecorder,
+      browserSecureContext: () => true,
+      browserVideoContainerReader: containerReader,
+      browserVideoMetadataReader: metadataReader,
+      getCameraRef: () => null,
+    });
+
+    try {
+      await expect(platform.requestVideoPermissions()).resolves.toEqual({
+        camera: 'granted',
+        microphone: 'granted',
+      });
+      const pendingClip = platform.recordClip(30);
+      await recorderStarted;
+      await jest.advanceTimersByTimeAsync(MAX_CLIP_DURATION_SECONDS * 1000);
+      await expect(pendingClip).resolves.toMatchObject({
+        byteLength: expect.any(Number),
+        durationSeconds: 4,
+        format: 'mp4',
+        hasAudio: true,
+        height: 1280,
+        mimeType: 'video/mp4',
+        source: 'camera',
+        sourceUri: 'blob:recorded-clip',
+        width: 720,
+      });
+      expect(getUserMedia).toHaveBeenCalledTimes(1);
+      expect(stopTrack).toHaveBeenCalledTimes(2);
+      expect(containerReader).toHaveBeenCalledTimes(1);
+      expect(metadataReader).toHaveBeenCalledWith('blob:recorded-clip');
+    } finally {
+      platform.releaseVideoCapture();
+      URL.createObjectURL = previousCreateObjectUrl;
+      URL.revokeObjectURL = previousRevokeObjectUrl;
+      jest.useRealTimers();
+      platformOs.restore();
+    }
+  });
+
+  it.each([
+    [
+      'missing video dimensions',
+      { durationSeconds: 4, hasAudio: true, height: 0, width: 1280 },
+      'no usable video',
+    ],
+    [
+      'duration limit',
+      { durationSeconds: 15.1, hasAudio: true, height: 1280, width: 720 },
+      '15 seconds or shorter',
+    ],
+  ])(
+    'rejects a browser capture for %s and releases its stream and local bytes',
+    async (_label, metadata, expected) => {
+      const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+      const previousCreate = URL.createObjectURL;
+      const previousRevoke = URL.revokeObjectURL;
+      const revokeObjectURL = jest.fn();
+      Object.defineProperty(URL, 'createObjectURL', {
+        configurable: true,
+        value: jest.fn(() => 'blob:rejected-recording'),
+      });
+      Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL });
+      let markStarted!: () => void;
+      const recordingStarted = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      class BrowserRecorder {
+        static isTypeSupported = jest.fn(() => true);
+        mimeType = 'video/mp4';
+        state: RecordingState = 'inactive';
+        ondataavailable: ((event: BlobEvent) => void) | null = null;
+        onerror: ((event: Event) => void) | null = null;
+        onstop: (() => void) | null = null;
+
+        start() {
+          this.state = 'recording';
+          markStarted();
+        }
+
+        stop() {
+          this.state = 'inactive';
+          this.ondataavailable?.({
+            data: new Blob(['recorded-bytes'], { type: 'video/mp4' }),
+          } as BlobEvent);
+          this.onstop?.();
+        }
+      }
+      const stopAudio = jest.fn();
+      const stopVideo = jest.fn();
+      const audioTrack = { readyState: 'live', stop: stopAudio } as unknown as MediaStreamTrack;
+      const videoTrack = { readyState: 'live', stop: stopVideo } as unknown as MediaStreamTrack;
+      const stream = {
+        getAudioTracks: () => [audioTrack],
+        getTracks: () => [audioTrack, videoTrack],
+        getVideoTracks: () => [videoTrack],
+      } as unknown as MediaStream;
+      const platform = new ExpoCameraPlatform({
+        browserMediaDevices: { getUserMedia: jest.fn().mockResolvedValue(stream) },
+        browserMediaRecorder: BrowserRecorder as unknown as typeof MediaRecorder,
+        browserSecureContext: () => true,
+        browserVideoContainerReader: jest
+          .fn()
+          .mockResolvedValue({ hasAudio: true, hasVideo: true, isMp4: true }),
+        browserVideoMetadataReader: jest.fn().mockResolvedValue(metadata),
+        getCameraRef: () => null,
+      });
+
+      try {
+        const pendingClip = platform.recordClip();
+        await recordingStarted;
+        platform.stopRecording();
+        await expect(pendingClip).rejects.toThrow(expected);
+        expect(stopAudio).toHaveBeenCalledTimes(1);
+        expect(stopVideo).toHaveBeenCalledTimes(1);
+        expect(revokeObjectURL).toHaveBeenCalledWith('blob:rejected-recording');
+        expect(platform.getVideoPreviewStream()).toBeNull();
+      } finally {
+        platform.releaseVideoCapture();
+        Object.defineProperty(URL, 'createObjectURL', {
+          configurable: true,
+          value: previousCreate,
+        });
+        Object.defineProperty(URL, 'revokeObjectURL', {
+          configurable: true,
+          value: previousRevoke,
+        });
+        platformOs.restore();
+      }
+    },
+  );
+
   it('uses an injected capability probe and preserves its device matrix', async () => {
     const capabilityProbe = jest.fn().mockResolvedValue({
       camera: 'unsupported',
@@ -88,21 +356,63 @@ describe('Expo camera adapter contract', () => {
     await expect(platform.getCapabilities()).rejects.toBe(nativeFailure);
   });
 
-  it('falls back to undecided capabilities when the native probe fails', async () => {
+  it('does not call the web-only availability probe on native devices', async () => {
     const cameraView = CameraView as typeof CameraView & {
       isAvailableAsync?: () => Promise<boolean>;
     };
     const previousProbe = cameraView.isAvailableAsync;
-    cameraView.isAvailableAsync = jest.fn().mockRejectedValue(new Error('probe unavailable'));
+    const probe = jest.fn().mockRejectedValue(new Error('probe unavailable'));
+    cameraView.isAvailableAsync = probe;
     try {
       const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
       await expect(platform.getCapabilities()).resolves.toEqual({
-        camera: 'undecided',
-        microphone: 'undecided',
+        camera: 'supported',
+        microphone: 'supported',
       });
+      if (Platform.OS !== 'web') expect(probe).not.toHaveBeenCalled();
     } finally {
       cameraView.isAvailableAsync = previousProbe;
     }
+  });
+
+  it('requests video permissions serially, opening the microphone prompt after camera resolves', async () => {
+    let resolveCamera!: (
+      value: Awaited<ReturnType<typeof Camera.requestCameraPermissionsAsync>>,
+    ) => void;
+    const order: string[] = [];
+    jest.mocked(Camera.requestCameraPermissionsAsync).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          order.push('camera-open');
+          resolveCamera = (value) => {
+            order.push('camera-resolved');
+            resolve(value);
+          };
+        }),
+    );
+    jest.mocked(Camera.requestMicrophonePermissionsAsync).mockImplementation(async () => {
+      order.push('microphone-open');
+      return {
+        canAskAgain: true,
+        expires: 'never',
+        granted: true,
+        status: PermissionStatus.GRANTED,
+      };
+    });
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+
+    const request = platform.requestVideoPermissions();
+    await Promise.resolve();
+    expect(order).toEqual(['camera-open']);
+    expect(Camera.requestMicrophonePermissionsAsync).not.toHaveBeenCalled();
+    resolveCamera({
+      canAskAgain: true,
+      expires: 'never',
+      granted: true,
+      status: PermissionStatus.GRANTED,
+    });
+    await expect(request).resolves.toEqual({ camera: 'granted', microphone: 'granted' });
+    expect(order).toEqual(['camera-open', 'camera-resolved', 'microphone-open']);
   });
 
   it('maps Expo permission responses for both read and request operations', async () => {
@@ -142,12 +452,12 @@ describe('Expo camera adapter contract', () => {
     });
     await expect(platform.requestPermissions()).resolves.toEqual({
       camera: 'granted',
-      microphone: 'undetermined',
+      microphone: 'denied',
     });
     expect(getCameraPermissionsAsync).toHaveBeenCalledTimes(1);
-    expect(getMicrophonePermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(getMicrophonePermissionsAsync).toHaveBeenCalledTimes(2);
     expect(requestCameraPermissionsAsync).toHaveBeenCalledTimes(1);
-    expect(requestMicrophonePermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(requestMicrophonePermissionsAsync).not.toHaveBeenCalled();
   });
 
   it('preserves native permission errors for callers to handle', async () => {
@@ -198,6 +508,31 @@ describe('Expo camera adapter contract', () => {
     });
     const platform = new ExpoCameraPlatform({ getCameraRef: () => camera });
     await expect(platform.captureStill()).rejects.toBe(nativeFailure);
+  });
+
+  it('retries a still capture while the browser camera has no frame yet (#401)', async () => {
+    const warmingUp = new Error(
+      'HTMLVideoElement does not have enough camera data to construct an image yet.',
+    );
+    const camera = cameraHandle({
+      takePictureAsync: jest
+        .fn()
+        .mockRejectedValueOnce(warmingUp)
+        .mockRejectedValueOnce(warmingUp)
+        .mockResolvedValue({ format: 'jpg', height: 1280, uri: 'blob:still', width: 720 }),
+    });
+    const wait = jest.fn().mockResolvedValue(undefined);
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => camera, wait });
+
+    await expect(platform.captureStill()).resolves.toMatchObject({ sourceUri: 'blob:still' });
+    expect(camera.takePictureAsync).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(2);
+
+    const neverReady = cameraHandle({ takePictureAsync: jest.fn().mockRejectedValue(warmingUp) });
+    const stuck = new ExpoCameraPlatform({ getCameraRef: () => neverReady, wait });
+    await expect(stuck.captureStill()).rejects.toThrow(
+      'The camera is still starting. Wait a moment, then take the photo again.',
+    );
   });
 
   it('maps video recording options and clamps a native duration above the 15-second limit', async () => {
@@ -306,9 +641,7 @@ describe('Expo camera adapter contract', () => {
       const platform = new ExpoCameraPlatform({ getCameraRef: () => camera });
 
       expect(platform.supportsVideoRecording).toBe(false);
-      await expect(platform.recordClip()).rejects.toThrow(
-        'Video recording is not supported on the web platform.',
-      );
+      await expect(platform.recordClip()).rejects.toThrow(/HTTPS|browser|MP4/);
       expect(recordAsync).not.toHaveBeenCalled();
     } finally {
       platformOs.restore();
@@ -345,6 +678,57 @@ describe('Expo camera adapter contract', () => {
       sourceUri: 'blob:verified-video',
       width: 720,
     });
+  });
+
+  it('uses the phone camera sheet on web for photos and videos (option 2)', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    try {
+      const picker = jest
+        .fn()
+        .mockResolvedValueOnce({ size: 3_000_000, type: 'image/jpeg' } as File)
+        .mockResolvedValueOnce({ size: 9_000_000, type: 'video/quicktime' } as File)
+        .mockResolvedValueOnce({ size: 60 * 1024 * 1024, type: 'video/quicktime' } as File);
+      const platform = new ExpoCameraPlatform({
+        browserSystemCamera: true,
+        browserFilePicker: picker,
+        browserImageDimensionsReader: jest.fn().mockResolvedValue({ height: 4032, width: 3024 }),
+        browserObjectUrlFactory: jest.fn().mockReturnValue('blob:camera'),
+        browserVideoContainerReader: jest
+          .fn()
+          .mockResolvedValue({ hasAudio: true, hasVideo: true, isMp4: true }),
+        browserVideoMetadataReader: jest
+          .fn()
+          .mockResolvedValue({ durationSeconds: 6, hasAudio: true, height: 1080, width: 1920 }),
+        getCameraRef: () => null,
+      });
+
+      expect(platform.fileFallbackIsCamera).toBe(true);
+      expect(platform.supportsLivePreview).toBe(false);
+      expect(platform.supportsVideoRecording).toBe(false);
+      await expect(platform.getCapabilities()).resolves.toEqual({
+        camera: 'unsupported',
+        microphone: 'unsupported',
+      });
+
+      await expect(platform.pickStillFile()).resolves.toMatchObject({
+        height: 4032,
+        source: 'camera',
+        width: 3024,
+      });
+      expect(picker).toHaveBeenNthCalledWith(1, 'image/jpeg,image/png', 'environment');
+
+      // A landscape camera recording is accepted; the film letterboxes it.
+      await expect(platform.pickVideoFile()).resolves.toMatchObject({
+        height: 1080,
+        source: 'camera',
+        width: 1920,
+      });
+      expect(picker).toHaveBeenNthCalledWith(2, 'video/*', 'environment');
+
+      await expect(platform.pickVideoFile()).rejects.toThrow('over 50 MB');
+    } finally {
+      platformOs.restore();
+    }
   });
 
   it('rejects non-blob preview schemes before assigning a video source', async () => {
@@ -444,9 +828,9 @@ describe('Expo camera adapter contract', () => {
       '15 seconds or shorter',
     ],
     [
-      'landscape',
-      { durationSeconds: 10, hasAudio: true, height: 720, width: 1280 },
-      'portrait MP4',
+      'without video dimensions',
+      { durationSeconds: 10, hasAudio: true, height: 0, width: 1280 },
+      'Choose an MP4 video',
     ],
     [
       'without audio',

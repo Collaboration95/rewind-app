@@ -33,6 +33,59 @@ describe('invite deep-link contract', () => {
     expect(webLink).not.toContain('private-group');
   });
 
+  it('creates a universal HTTPS link that identifies a real group without session credentials', () => {
+    const link = createInviteLink(ACTIVE_INVITE, {
+      platform: 'web',
+      webOrigin: 'https://rewind.example/app',
+      groupId: 'real-group-abc123',
+      now: NOW,
+    });
+    expect(link).toBe(
+      'https://rewind.example/invite?groupId=real-group-abc123&code=AB12CD34&expiresAt=2026-09-23T12%3A00%3A00.000Z',
+    );
+    expect(link).not.toMatch(/session|token|password|authorization/i);
+    expect(parseInviteLink(link!, NOW)).toEqual({
+      kind: 'valid',
+      groupId: 'real-group-abc123',
+      code: 'AB12CD34',
+      expiresAt: '2026-09-23T12:00:00.000Z',
+    });
+  });
+
+  it('accepts a new short code in a link while preserving legacy links', () => {
+    const link = createInviteLink(
+      { ...ACTIVE_INVITE, code: 'ABC-DEF' },
+      {
+        platform: 'web',
+        webOrigin: 'https://rewind.example',
+        groupId: 'real-group-1',
+        now: NOW,
+      },
+    );
+    expect(link).toContain('code=ABCDEF');
+    expect(parseInviteLink(link!, NOW)).toMatchObject({
+      kind: 'valid',
+      code: 'ABCDEF',
+      groupId: 'real-group-1',
+    });
+  });
+
+  it('requires HTTPS whenever a link identifies a real group', () => {
+    expect(
+      createInviteLink(ACTIVE_INVITE, {
+        platform: 'web',
+        webOrigin: 'http://rewind.example',
+        groupId: 'real-group-abc123',
+      }),
+    ).toBeNull();
+    expect(
+      parseInviteLink(
+        'http://rewind.example/invite?groupId=real-group-abc123&code=AB12CD34&expiresAt=2026-09-23T12%3A00%3A00.000Z',
+        NOW,
+      ),
+    ).toEqual({ kind: 'invalid', reason: 'malformed' });
+  });
+
   it('accepts valid native and web links and normalizes the bounded code', () => {
     expect(
       parseInviteLink('rewind://invite?code=ab12cd34&expiresAt=2026-09-23T12%3A00%3A00.000Z', NOW),

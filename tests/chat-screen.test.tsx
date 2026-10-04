@@ -96,7 +96,7 @@ function event(
 }
 
 function runtimeMock(overrides: Partial<RuntimeClient> = {}) {
-  let subscriptionOptions: SubscribeOptions | undefined;
+  const subscriptions = new Set<SubscribeOptions>();
   const client: RuntimeClient = {
     baseUrl: 'http://localhost:8787',
     getHealth: jest.fn().mockResolvedValue({
@@ -111,8 +111,11 @@ function runtimeMock(overrides: Partial<RuntimeClient> = {}) {
     getCurrentCycle: jest.fn().mockResolvedValue(cycle),
     advanceDemoCycle: jest.fn(),
     subscribeChat: jest.fn((_sessionId, _groupId, options) => {
-      subscriptionOptions = options;
-      return { close: jest.fn(), state: 'connected' as const };
+      subscriptions.add(options);
+      return {
+        close: jest.fn(() => subscriptions.delete(options)),
+        state: 'connected' as const,
+      };
     }),
     sendChatMessage: jest
       .fn()
@@ -121,11 +124,13 @@ function runtimeMock(overrides: Partial<RuntimeClient> = {}) {
   };
   return {
     client,
-    emit: (next: ChatMessageEvent) => subscriptionOptions?.onEvent(next),
-    fail: (error: unknown) => subscriptionOptions?.onError?.(error),
-    deny: () => subscriptionOptions?.onConnectionStateChange?.('denied'),
-    connect: () => subscriptionOptions?.onConnectionStateChange?.('connected'),
-    reconnect: () => subscriptionOptions?.onConnectionStateChange?.('reconnecting'),
+    emit: (next: ChatMessageEvent) => subscriptions.forEach((options) => options.onEvent(next)),
+    fail: (error: unknown) => subscriptions.forEach((options) => options.onError?.(error)),
+    deny: () => subscriptions.forEach((options) => options.onConnectionStateChange?.('denied')),
+    connect: () =>
+      subscriptions.forEach((options) => options.onConnectionStateChange?.('connected')),
+    reconnect: () =>
+      subscriptions.forEach((options) => options.onConnectionStateChange?.('reconnecting')),
   };
 }
 
@@ -231,6 +236,7 @@ describe('persistent group chat timeline', () => {
     const result = await render(<App runtimeClient={runtime.client} />);
     await fireEvent.press(await result.findByRole('tab', { name: 'Chat' }));
     await result.findByTestId('chat-empty');
+    await waitFor(() => expect(runtime.client.subscribeChat).toHaveBeenCalled());
 
     await act(async () => {
       runtime.emit(event(2, 'Second message', '2026-09-13T01:00:00.000Z', 'demo-2'));

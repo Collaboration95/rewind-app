@@ -1,5 +1,5 @@
 import { Platform, Linking } from 'react-native';
-import { Camera, CameraView, type CameraCapturedPicture } from 'expo-camera';
+import { Camera, type CameraCapturedPicture } from 'expo-camera';
 import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system/legacy';
 
@@ -12,6 +12,7 @@ import type {
   PlatformStillImage,
 } from './contracts';
 import type { RecordedClip } from '../domain/video';
+import { MAX_CLIP_BYTES } from './clip-uploader';
 
 export const VIDEO_CACHE_FOLDER = 'rewind-clips';
 
@@ -55,6 +56,8 @@ const MP4_BRANDS = new Set([
   'mp41',
   'mp42',
   'MSNV',
+  // iPhone camera recordings are QuickTime; the server verifies and re-encodes.
+  'qt  ',
 ]);
 
 function ascii(bytes: Uint8Array, start: number, length: number): string {
@@ -142,14 +145,26 @@ function parseMp4Container(bytes: Uint8Array): BrowserVideoContainerMetadata {
   return { hasAudio, hasVideo, isMp4: hasVideo };
 }
 
-async function readMp4Container(file: File): Promise<BrowserVideoContainerMetadata> {
+async function readMp4Container(file: Blob): Promise<BrowserVideoContainerMetadata> {
   if (typeof file.arrayBuffer !== 'function') {
     throw new Error('This browser cannot inspect the selected video.');
   }
   return parseMp4Container(new Uint8Array(await file.arrayBuffer()));
 }
 
-async function chooseBrowserFile(accept: string): Promise<File> {
+/** The person closed the file chooser or camera sheet without choosing anything. */
+export class CaptureCancelledError extends Error {
+  constructor() {
+    super('Nothing was captured.');
+    this.name = 'CaptureCancelledError';
+  }
+}
+
+export function isCaptureCancelled(error: unknown): boolean {
+  return error instanceof CaptureCancelledError;
+}
+
+async function chooseBrowserFile(accept: string, capture?: 'environment'): Promise<File> {
   if (Platform.OS !== 'web' || typeof document === 'undefined') {
     throw new Error('File fallback is available in a browser only.');
   }
@@ -157,11 +172,15 @@ async function chooseBrowserFile(accept: string): Promise<File> {
     const input = document.createElement('input');
     input.accept = accept;
     input.type = 'file';
+    // On phones this opens the system camera directly, without the library.
+    if (capture) input.setAttribute('capture', capture);
     input.onchange = () => {
       const file = input.files?.[0];
       if (file) resolve(file);
-      else reject(new Error('No file was selected.'));
+      else reject(new CaptureCancelledError());
     };
+    // Safari 16.4+ and current Chromium report a dismissed chooser or camera.
+    input.addEventListener('cancel', () => reject(new CaptureCancelledError()));
     input.click();
   });
 }
@@ -185,7 +204,7 @@ async function readImageDimensions(uri: string): Promise<{ height: number; width
   });
 }
 
-async function readVideoMetadata(uri: string): Promise<BrowserVideoMetadata> {
+export async function readVideoMetadata(uri: string): Promise<BrowserVideoMetadata> {
   let protocol: string;
   try {
     protocol = new URL(uri).protocol;
@@ -305,6 +324,17 @@ export async function readManagedRecordedClipBase64(uri: string): Promise<string
   });
 }
 
+/** The uploadable MP4 MediaRecorder type this browser supports, if any. */
+export function supportedMp4Type(MediaRecorderConstructor: typeof MediaRecorder): string | null {
+  return (
+    [
+      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+      'video/mp4;codecs="avc1.42E01E,mp4a.40.2"',
+      'video/mp4',
+    ].find((type) => MediaRecorderConstructor.isTypeSupported(type)) ?? null
+  );
+}
+
 export function permissionState(response: {
   status: string;
   canAskAgain?: boolean;
@@ -320,51 +350,278 @@ export interface ExpoCameraPlatformOptions {
   /** Allows deterministic capability responses for simulator/device probes. */
   capabilityProbe?: () => Promise<CapabilitySnapshot>;
   /** Browser media seams keep file validation deterministic in adapter tests. */
-  browserFilePicker?: (accept: string) => Promise<File>;
+  browserFilePicker?: (accept: string, capture?: 'environment') => Promise<File>;
+  /**
+   * Web only: take photos and videos with the phone's own camera sheet (full
+   * native quality and orientation) instead of an in-page viewfinder.
+   */
+  browserSystemCamera?: boolean;
   browserImageDimensionsReader?: (uri: string) => Promise<{ height: number; width: number }>;
   browserObjectUrlFactory?: (file: File) => string;
   browserVideoContainerReader?: (file: File) => Promise<BrowserVideoContainerMetadata>;
   browserVideoMetadataReader?: (uri: string) => Promise<BrowserVideoMetadata>;
+  browserMediaDevices?: Pick<MediaDevices, 'getUserMedia'>;
+  browserMediaRecorder?: typeof MediaRecorder;
+  browserSecureContext?: () => boolean;
+  browserPermissionReader?: () => Promise<PermissionSnapshot>;
+  /** Waits between still-capture attempts while a browser camera warms up. */
+  wait?: (milliseconds: number) => Promise<void>;
+}
+
+// iPhone Safari can report the camera ready before its video element holds a
+// frame; expo-camera then throws this error. Retry briefly instead of failing.
+const CAMERA_WARMUP_RETRIES = 10;
+const CAMERA_WARMUP_DELAY_MS = 200;
+
+function isCameraWarmingUp(error: unknown): boolean {
+  return error instanceof Error && /enough camera data/i.test(error.message);
 }
 
 /** Expo SDK 57 adapter. No Expo or React Native types cross the capture port. */
 export class ExpoCameraPlatform implements CameraPlatform {
   readonly kind = 'expo' as const;
-  readonly supportsLivePreview = true;
-  readonly supportsVideoRecording = Platform.OS !== 'web';
+  get supportsLivePreview(): boolean {
+    return !this.fileFallbackIsCamera;
+  }
+  get supportsVideoRecording(): boolean {
+    if (this.fileFallbackIsCamera) return false;
+    return Platform.OS !== 'web' || this.browserRecordingSupport().supported;
+  }
   readonly supportsFileFallback = Platform.OS === 'web';
+  get fileFallbackIsCamera(): boolean {
+    return Platform.OS === 'web' && this.options.browserSystemCamera === true;
+  }
+  private browserStream: MediaStream | null = null;
+  private browserRecorder: MediaRecorder | null = null;
+  private browserChunks: BlobPart[] = [];
+  private browserRecordingTimer: ReturnType<typeof setTimeout> | null = null;
+  private browserRecordingCancelled = false;
+
+  private browserRecordingSupport(): { supported: boolean; reason: string | null } {
+    if (Platform.OS !== 'web') return { supported: true, reason: null };
+    const mediaDevices = this.options.browserMediaDevices ?? globalThis.navigator?.mediaDevices;
+    const MediaRecorderConstructor = this.options.browserMediaRecorder ?? globalThis.MediaRecorder;
+    const secureContext = this.options.browserSecureContext?.() ?? globalThis.isSecureContext;
+    if (!secureContext) {
+      return {
+        supported: false,
+        reason:
+          'Camera and microphone capture requires HTTPS (or localhost). Open the secure Rewind address to record.',
+      };
+    }
+    if (!mediaDevices?.getUserMedia) {
+      return {
+        supported: false,
+        reason: 'This browser does not provide camera and microphone capture.',
+      };
+    }
+    if (
+      !MediaRecorderConstructor ||
+      typeof MediaRecorderConstructor.isTypeSupported !== 'function'
+    ) {
+      return {
+        supported: false,
+        reason: 'This browser cannot record a video file. Choose an MP4 video instead.',
+      };
+    }
+    if (!this.supportedMp4Type(MediaRecorderConstructor)) {
+      return {
+        supported: false,
+        reason:
+          'This browser cannot record the MP4 format required for upload. Choose an MP4 video instead.',
+      };
+    }
+    return { supported: true, reason: null };
+  }
+
+  private supportedMp4Type(MediaRecorderConstructor: typeof MediaRecorder): string | null {
+    return supportedMp4Type(MediaRecorderConstructor);
+  }
+
+  getVideoPreviewStream(): MediaStream | null {
+    return this.browserStream;
+  }
+
+  getVideoCaptureUnavailableReason(): string | null {
+    if (this.fileFallbackIsCamera) return null;
+    return this.browserRecordingSupport().reason;
+  }
+
+  releaseVideoCapture(): void {
+    if (this.browserRecordingTimer) clearTimeout(this.browserRecordingTimer);
+    this.browserRecordingTimer = null;
+    if (this.browserRecorder && this.browserRecorder.state !== 'inactive') {
+      this.browserRecordingCancelled = true;
+      this.browserRecorder.stop();
+    }
+    this.browserStream?.getTracks().forEach((track) => track.stop());
+    this.browserStream = null;
+  }
+
+  private async acquireBrowserStream(): Promise<MediaStream> {
+    if (this.browserStream?.getTracks().some((track) => track.readyState === 'live')) {
+      return this.browserStream;
+    }
+    const support = this.browserRecordingSupport();
+    if (!support.supported) throw new Error(support.reason ?? 'Video recording is unavailable.');
+    const mediaDevices = this.options.browserMediaDevices ?? globalThis.navigator?.mediaDevices;
+    if (!mediaDevices) throw new Error('Camera and microphone capture is unavailable.');
+    const stream = await mediaDevices.getUserMedia({
+      audio: true,
+      video: {
+        facingMode: { ideal: 'environment' },
+        // Ask for 1080p; the browser picks the closest supported size and
+        // rotates frames to match how the phone is held.
+        frameRate: { ideal: 30 },
+        height: { ideal: 1080 },
+        width: { ideal: 1920 },
+      },
+    });
+    if (!stream.getAudioTracks().length || !stream.getVideoTracks().length) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error('Both camera video and microphone audio are required to record.');
+    }
+    this.releaseVideoCapture();
+    this.browserStream = stream;
+    return stream;
+  }
+
+  private async recordBrowserClip(maxDurationSeconds: number): Promise<RecordedClip> {
+    const support = this.browserRecordingSupport();
+    const MediaRecorderConstructor = this.options.browserMediaRecorder ?? globalThis.MediaRecorder;
+    const mimeType = MediaRecorderConstructor && this.supportedMp4Type(MediaRecorderConstructor);
+    if (!support.supported || !MediaRecorderConstructor || !mimeType) {
+      throw new Error(support.reason ?? 'This browser cannot record an uploadable MP4 video.');
+    }
+    const stream = await this.acquireBrowserStream();
+    // Safari's default bitrate is low; 8 Mbps keeps 1080p sharp (about 15 MB
+    // for 15 seconds, within the 50 MB clip limit).
+    const recorder = new MediaRecorderConstructor(stream, {
+      audioBitsPerSecond: 128_000,
+      mimeType,
+      videoBitsPerSecond: 8_000_000,
+    });
+    this.browserRecorder = recorder;
+    this.browserChunks = [];
+    this.browserRecordingCancelled = false;
+    const durationLimit = Math.min(15, Math.max(1, maxDurationSeconds));
+
+    return new Promise<RecordedClip>((resolve, reject) => {
+      const finish = async () => {
+        if (this.browserRecordingTimer) clearTimeout(this.browserRecordingTimer);
+        this.browserRecordingTimer = null;
+        const cancelled = this.browserRecordingCancelled;
+        this.browserRecorder = null;
+        this.releaseVideoCapture();
+        if (cancelled) {
+          reject(new Error('The recording was cancelled.'));
+          return;
+        }
+        const blob = new Blob(this.browserChunks, { type: recorder.mimeType || mimeType });
+        this.browserChunks = [];
+        if (!blob.size || !blob.type.toLowerCase().startsWith('video/mp4')) {
+          reject(
+            new Error(
+              'This browser did not produce a usable MP4 recording. Choose an MP4 video instead.',
+            ),
+          );
+          return;
+        }
+        const sourceUri = URL.createObjectURL(blob);
+        try {
+          const container = await (this.options.browserVideoContainerReader ?? readMp4Container)(
+            blob as File,
+          );
+          if (!container.isMp4 || !container.hasVideo || !container.hasAudio) {
+            throw new Error(
+              'The browser recording must contain MP4 video and microphone audio. Try another browser or choose an MP4 video.',
+            );
+          }
+          const metadata = await (this.options.browserVideoMetadataReader ?? readVideoMetadata)(
+            sourceUri,
+          );
+          if (metadata.durationSeconds > durationLimit || metadata.durationSeconds > 15) {
+            throw new Error('Recordings must be 15 seconds or shorter.');
+          }
+          // Portrait and landscape are both accepted; the film letterboxes
+          // landscape clips. iPhone recordings may also store landscape
+          // frames with a rotation flag, so frame shape is not orientation.
+          if (
+            !Number.isInteger(metadata.width) ||
+            !Number.isInteger(metadata.height) ||
+            metadata.width <= 0 ||
+            metadata.height <= 0
+          ) {
+            throw new Error('The browser recording has no usable video. Try recording again.');
+          }
+          resolve({
+            byteLength: blob.size,
+            durationSeconds: metadata.durationSeconds,
+            format: 'mp4',
+            hasAudio: true,
+            height: metadata.height,
+            mimeType: 'video/mp4',
+            source: 'camera',
+            sourceUri,
+            width: metadata.width,
+          });
+        } catch (error) {
+          URL.revokeObjectURL(sourceUri);
+          reject(error);
+        }
+      };
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) this.browserChunks.push(event.data);
+      };
+      recorder.onerror = () => {
+        this.releaseVideoCapture();
+        this.browserRecorder = null;
+        reject(
+          new Error(
+            'The browser could not finish recording. Check camera/microphone access and try again.',
+          ),
+        );
+      };
+      recorder.onstop = () => void finish();
+      try {
+        recorder.start(250);
+        this.browserRecordingTimer = setTimeout(() => this.stopRecording(), durationLimit * 1000);
+      } catch (error) {
+        this.browserRecorder = null;
+        this.releaseVideoCapture();
+        reject(
+          error instanceof Error ? error : new Error('The browser could not start recording.'),
+        );
+      }
+    });
+  }
 
   constructor(private readonly options: ExpoCameraPlatformOptions) {}
 
   async getCapabilities(): Promise<CapabilitySnapshot> {
     if (this.options.capabilityProbe) return this.options.capabilityProbe();
 
+    if (Platform.OS === 'web') {
+      // The system camera sheet replaces the in-page camera; the screens then
+      // offer it through their single fallback action.
+      if (this.fileFallbackIsCamera) return { camera: 'unsupported', microphone: 'unsupported' };
+      const supported = this.browserRecordingSupport().supported;
+      return {
+        camera: supported ? 'supported' : 'unsupported',
+        microphone: supported ? 'supported' : 'unsupported',
+      };
+    }
+
     try {
-      // `isAvailableAsync` is currently only registered by Expo Camera on
-      // web. Some native SDK builds therefore expose no probe at all. A
-      // missing probe is not evidence that a physical device is unusable;
-      // permissions plus the native device boundary establish availability.
-      const cameraAvailabilityProbe = (
-        CameraView as typeof CameraView & {
-          isAvailableAsync?: () => Promise<boolean>;
-        }
-      ).isAvailableAsync;
-      const cameraAvailable =
-        typeof cameraAvailabilityProbe === 'function'
-          ? await cameraAvailabilityProbe()
-          : Platform.OS === 'web'
-            ? typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
-            : Device.isDevice;
       // Expo does not expose a microphone-capability probe. On native, a real
       // device is the supported recording target; simulator capture stays an
-      // explicit unsupported state. On web, ask the browser capability API.
-      const microphoneAvailable =
-        Platform.OS === 'web'
-          ? typeof navigator !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
-          : Device.isDevice;
+      // explicit unsupported state.
+      const cameraAvailable = Device.isDevice;
+      const microphoneAvailable = Device.isDevice;
 
       return {
-        camera: cameraAvailable && microphoneAvailable ? 'supported' : 'unsupported',
+        camera: cameraAvailable ? 'supported' : 'unsupported',
         microphone: microphoneAvailable ? 'supported' : 'unsupported',
       };
     } catch {
@@ -384,14 +641,69 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async requestPermissions(): Promise<PermissionSnapshot> {
-    const [camera, microphone] = await Promise.all([
-      Camera.requestCameraPermissionsAsync(),
-      Camera.requestMicrophonePermissionsAsync(),
-    ]);
+    const camera = await Camera.requestCameraPermissionsAsync();
+    const microphone = await Camera.getMicrophonePermissionsAsync();
     return {
       camera: permissionState(camera),
       microphone: permissionState(microphone),
     };
+  }
+
+  async getVideoPermissions(): Promise<PermissionSnapshot> {
+    if (Platform.OS === 'web') {
+      if (this.options.browserPermissionReader) return this.options.browserPermissionReader();
+      if (this.browserStream?.getTracks().some((track) => track.readyState === 'live')) {
+        return { camera: 'granted', microphone: 'granted' };
+      }
+      const permissions = globalThis.navigator?.permissions;
+      if (!permissions?.query) {
+        return { camera: 'undetermined', microphone: 'undetermined' };
+      }
+      const read = async (name: 'camera' | 'microphone'): Promise<PermissionState> => {
+        try {
+          const status = await permissions.query({ name } as PermissionDescriptor);
+          return status.state === 'granted'
+            ? 'granted'
+            : status.state === 'denied'
+              ? 'denied'
+              : 'undetermined';
+        } catch {
+          return 'undetermined';
+        }
+      };
+      const [camera, microphone] = await Promise.all([read('camera'), read('microphone')]);
+      return { camera, microphone };
+    }
+    const [camera, microphone] = await Promise.all([
+      Camera.getCameraPermissionsAsync(),
+      Camera.getMicrophonePermissionsAsync(),
+    ]);
+    return { camera: permissionState(camera), microphone: permissionState(microphone) };
+  }
+
+  async requestVideoPermissions(): Promise<PermissionSnapshot> {
+    if (Platform.OS === 'web') {
+      try {
+        await this.acquireBrowserStream();
+        return { camera: 'granted', microphone: 'granted' };
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          ['NotAllowedError', 'PermissionDeniedError'].includes(error.name)
+        ) {
+          return { camera: 'denied', microphone: 'denied' };
+        }
+        throw error;
+      }
+    }
+    // Native permission prompts must be opened serially. A phone may reject
+    // or queue the microphone request while the camera dialog is still open.
+    const camera = await Camera.requestCameraPermissionsAsync();
+    const microphone =
+      camera.status === 'granted'
+        ? await Camera.requestMicrophonePermissionsAsync()
+        : await Camera.getMicrophonePermissionsAsync();
+    return { camera: permissionState(camera), microphone: permissionState(microphone) };
   }
 
   async openSettings(): Promise<void> {
@@ -405,12 +717,28 @@ export class ExpoCameraPlatform implements CameraPlatform {
     const camera = this.options.getCameraRef();
     if (!camera) throw new Error('The camera preview is not ready. Try again.');
 
-    const picture: CameraCapturedPicture = await camera.takePictureAsync({
-      base64: Platform.OS === 'web',
-      quality: 0.85,
-      shutterSound: true,
-      skipProcessing: false,
-    });
+    const wait =
+      this.options.wait ??
+      ((milliseconds: number) => new Promise<void>((done) => setTimeout(done, milliseconds)));
+    let picture: CameraCapturedPicture | null = null;
+    for (let attempt = 0; !picture; attempt += 1) {
+      try {
+        picture = await camera.takePictureAsync({
+          base64: Platform.OS === 'web',
+          quality: 0.85,
+          shutterSound: true,
+          skipProcessing: false,
+        });
+      } catch (error) {
+        if (!isCameraWarmingUp(error)) throw error;
+        if (attempt >= CAMERA_WARMUP_RETRIES) {
+          throw new Error(
+            'The camera is still starting. Wait a moment, then take the photo again.',
+          );
+        }
+        await wait(CAMERA_WARMUP_DELAY_MS);
+      }
+    }
     return {
       sourceUri: picture.uri,
       base64: picture.base64,
@@ -422,8 +750,10 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async pickStillFile(): Promise<PlatformStillImage> {
+    const camera = this.fileFallbackIsCamera;
     const file = await (this.options.browserFilePicker ?? chooseBrowserFile)(
-      '.jpg,.jpeg,.png,image/jpeg,image/png',
+      camera ? 'image/jpeg,image/png' : '.jpg,.jpeg,.png,image/jpeg,image/png',
+      camera ? 'environment' : undefined,
     );
     if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
       throw new Error('Choose a JPEG or PNG image file.');
@@ -436,7 +766,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
       return {
         format: file.type === 'image/png' ? 'png' : 'jpg',
         height: dimensions.height,
-        source: 'file',
+        source: camera ? 'camera' : 'file',
         sourceUri,
         width: dimensions.width,
       };
@@ -447,7 +777,16 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async pickVideoFile(): Promise<RecordedClip> {
-    const file = await (this.options.browserFilePicker ?? chooseBrowserFile)('.mp4,video/mp4');
+    const camera = this.fileFallbackIsCamera;
+    const file = await (this.options.browserFilePicker ?? chooseBrowserFile)(
+      camera ? 'video/*' : '.mp4,video/mp4',
+      camera ? 'environment' : undefined,
+    );
+    if (camera && file.size > MAX_CLIP_BYTES) {
+      throw new Error(
+        'This video is over 50 MB. Record a shorter clip, or set the camera to 1080p in Settings.',
+      );
+    }
     const container = await (this.options.browserVideoContainerReader ?? readMp4Container)(file);
     if (!container.isMp4 || !container.hasVideo) {
       throw new Error('Choose an MP4 video file.');
@@ -458,16 +797,19 @@ export class ExpoCameraPlatform implements CameraPlatform {
         sourceUri,
       );
       if (metadata.durationSeconds > 15) {
-        throw new Error('Choose an MP4 video that is 15 seconds or shorter.');
+        throw new Error(
+          camera
+            ? 'Videos can be up to 15 seconds. Record a shorter clip.'
+            : 'Choose an MP4 video that is 15 seconds or shorter.',
+        );
       }
       if (
         !Number.isInteger(metadata.width) ||
         !Number.isInteger(metadata.height) ||
         metadata.width <= 0 ||
-        metadata.height <= 0 ||
-        metadata.width >= metadata.height
+        metadata.height <= 0
       ) {
-        throw new Error('Choose a portrait MP4 video.');
+        throw new Error('Choose an MP4 video.');
       }
       // Chromium's webkitAudioDecodedByteCount is a post-decode counter and
       // is commonly zero at loadedmetadata. Treat null as unknown here and
@@ -484,7 +826,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
         hasAudio: true,
         height: metadata.height,
         mimeType: 'video/mp4',
-        source: 'file',
+        source: camera ? 'camera' : 'file',
         sourceUri,
         width: metadata.width,
       };
@@ -495,6 +837,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async recordClip(maxDurationSeconds = 15): Promise<RecordedClip> {
+    if (Platform.OS === 'web') return this.recordBrowserClip(maxDurationSeconds);
     if (!this.supportsVideoRecording) {
       throw new Error('Video recording is not supported on the web platform.');
     }
@@ -523,10 +866,23 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   stopRecording(): void {
+    if (this.browserRecorder && this.browserRecorder.state !== 'inactive') {
+      this.browserRecorder.stop();
+      return;
+    }
     this.options.getCameraRef()?.stopRecording?.();
   }
 
   cancelRecording(): void {
+    if (this.browserRecorder && this.browserRecorder.state !== 'inactive') {
+      this.browserRecordingCancelled = true;
+      this.browserRecorder.stop();
+      return;
+    }
+    if (Platform.OS === 'web') {
+      this.releaseVideoCapture();
+      return;
+    }
     this.options.getCameraRef()?.stopRecording?.();
   }
 }
@@ -569,7 +925,15 @@ export class DemoCameraPlatform implements CameraPlatform {
     return { ...this.permissions };
   }
 
+  async getVideoPermissions(): Promise<PermissionSnapshot> {
+    return { ...this.permissions };
+  }
+
   async requestPermissions(): Promise<PermissionSnapshot> {
+    return { ...this.permissions };
+  }
+
+  async requestVideoPermissions(): Promise<PermissionSnapshot> {
     return { ...this.permissions };
   }
 

@@ -60,6 +60,8 @@ const terminalTransportCodes = new Set([
   'missing_source',
   'not_found',
   'quota_exceeded',
+  'upload_quota_exceeded',
+  'contribution_quota_exceeded',
   'source_unavailable',
   'validation',
 ]);
@@ -98,10 +100,9 @@ export function validateClipUploadInput(input: ClipUploadInput): string | null {
     input.width <= 0 ||
     !Number.isInteger(input.height) ||
     input.height <= 0 ||
-    input.width >= input.height ||
     input.hasAudio !== true
   ) {
-    return 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.';
+    return 'The clip must be an MP4 video with audio, within 15 seconds and 50 MB.';
   }
   return null;
 }

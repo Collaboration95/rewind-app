@@ -1,24 +1,36 @@
+# Low-noise version updates: one grouped PR per ecosystem per month.
+# Security updates are governed by the repository's Dependabot security
+# settings and are not limited by this file.
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
+    target-branch: dev
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
-      development-dependencies:
-        dependency-type: development
+      npm-all:
+        patterns: ['*']
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      actions-all:
+        patterns: ['*']
   - package-ecosystem: docker
     directory: /deploy
+    target-branch: dev
     schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 3
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      docker-all:
+        patterns: ['*']

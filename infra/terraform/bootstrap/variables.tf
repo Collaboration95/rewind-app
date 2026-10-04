@@ -24,3 +24,17 @@ variable "operator_username" {
   description = "IAM user permitted to assume the read-only coding-agent role."
   default     = "macos-m1"
 }
+
+variable "github_oidc_provider_arn" {
+  type        = string
+  description = "Existing GitHub Actions OIDC provider ARN. Leave null to create one with this root; set it when the account already has one."
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.github_oidc_provider_arn == null || can(
+      regex("^arn:[^:]+:iam::[0-9]{12}:oidc-provider/token\\.actions\\.githubusercontent\\.com$", var.github_oidc_provider_arn)
+    )
+    error_message = "github_oidc_provider_arn must be the token.actions.githubusercontent.com OIDC provider ARN when set."
+  }
+}

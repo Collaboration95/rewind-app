@@ -165,3 +165,44 @@ export function applyProcessedMediaRetention(
   }
   return { deleted, skipped };
 }
+
+/** Bounded incoming-version cleanup. Inventory is supplied by the adapter's
+ * caller; retained outputs and any durable source/output reference are protected. */
+export async function cleanupExpiredStoredMedia(
+  database: RewindDatabase,
+  store: import('../media/store').MediaStore,
+  scope: import('../media/store').MediaScope,
+  refs: import('../media/store').MediaObjectRef[],
+  options: { now?: Date; limit?: number } = {},
+): Promise<{ deleted: number; protected: number; failed: number }> {
+  const { encodeMediaRef, validateRef } = await import('../media/store.js');
+  const limit = options.limit ?? PROCESSED_RETENTION_DEFAULT_LIMIT;
+  if (!Number.isInteger(limit) || limit < 1 || limit > PROCESSED_RETENTION_MAX_LIMIT)
+    throw new RangeError('Invalid cleanup limit.');
+  const now = options.now ?? new Date();
+  const report = { deleted: 0, protected: 0, failed: 0 };
+  for (const ref of refs.slice(0, limit)) {
+    try {
+      validateRef(scope, ref, undefined, undefined, now, true);
+      const value = encodeMediaRef(ref);
+      if (
+        ref.prefix !== 'incoming' ||
+        !ref.expiresAt ||
+        Date.parse(ref.expiresAt) > now.getTime() ||
+        database
+          .prepare(
+            'SELECT 1 FROM media_jobs WHERE source_path = ? OR output_path = ? UNION ALL SELECT 1 FROM staged_sources WHERE source_path = ? LIMIT 1',
+          )
+          .get(value, value, value)
+      ) {
+        report.protected += 1;
+        continue;
+      }
+      await store.delete(scope, ref);
+      report.deleted += 1;
+    } catch {
+      report.failed += 1;
+    }
+  }
+  return report;
+}

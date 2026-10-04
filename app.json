@@ -6,6 +6,11 @@
     "scheme": "rewind",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./public/icons/rewind-icon-512.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#252326"
+    },
     "web": {
       "output": "single",
       "favicon": "./public/icons/rewind-icon-512.png",
@@ -14,7 +19,7 @@
       "lang": "en",
       "scope": "/",
       "startUrl": "/",
-      "themeColor": "#1D1B1E",
+      "themeColor": "#252326",
       "backgroundColor": "#252326",
       "display": "standalone",
       "orientation": "portrait-primary",
@@ -30,10 +35,19 @@
         }
       ],
       "expo-video",
-      "expo-notifications"
+      "expo-notifications",
+      "expo-secure-store"
     ],
     "ios": {
-      "bundleIdentifier": "com.anonymous.rewind-app"
+      "bundleIdentifier": "com.anonymous.rewind-app",
+      "buildNumber": "1"
+    },
+    "android": {
+      "package": "com.anonymous.rewindapp",
+      "versionCode": 1
+    },
+    "updates": {
+      "enabled": false
     }
   }
 }

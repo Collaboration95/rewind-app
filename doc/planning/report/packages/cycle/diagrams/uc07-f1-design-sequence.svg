@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1455" height="1010" viewBox="0 0 1455 1010">
+<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#147d83"/></marker><marker id="rel" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#5c7082"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/><rect width="100%" height="12" fill="#147d83"/>
+<text x="36" y="52" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700" fill="#17324d">UC07-F1 · Design sequence</text>
+<text x="36" y="80" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#5c7082">Scheduler tick, SQLite writer transaction, durable work, immediate successor</text>
+<rect x="1205" y="28" width="214" height="31" rx="15" fill="#e8f1f8"/><text x="1312" y="49" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700" fill="#17324d">DESIGN</text>
+<rect x="52.0" y="140" width="196" height="62" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="150.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">run Cycle Scheduler</text>
+<text x="150.0" y="186" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">Tick</text>
+<line x1="150.0" y1="202" x2="150.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="283.0" y="140" width="196" height="62" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="381.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">advance Cycle</text>
+<text x="381.0" y="186" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">Lifecycle…</text>
+<line x1="381.0" y1="202" x2="381.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="514.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="612.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">cycles  /  groups</text>
+<line x1="612.0" y1="188" x2="612.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="745.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="843.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">lifecycle events</text>
+<line x1="843.0" y1="188" x2="843.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="976.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="1074.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">media jobs + inputs</text>
+<line x1="1074.0" y1="188" x2="1074.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<rect x="1207.0" y="140" width="196" height="48" rx="10" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<text x="1305.0" y="169" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" font-weight="700" fill="#17324d">successor cycle</text>
+<line x1="1305.0" y1="188" x2="1305.0" y2="962" stroke="#9aabba" stroke-width="2" stroke-dasharray="6 7"/>
+<line x1="150.0" y1="210" x2="381.0" y2="210" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="265.5" y="228" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">candidate due cycle + fixed</text>
+<text x="265.5" y="245" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">tick now</text>
+<line x1="381.0" y1="280" x2="612.0" y2="280" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="298" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">BEGIN IMMEDIATE; resolve</text>
+<text x="496.5" y="315" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">and read group cycle</text>
+<rect x="55" y="327.5" width="1345" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="727.5" y="355" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Guard: collecting and now &lt; ends at → waiting for boundary; invalid / missing row → rollback</text>
+<line x1="381.0" y1="420" x2="612.0" y2="420" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="438" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">UPDATE status=revealing,</text>
+<text x="496.5" y="455" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">lock state=locked</text>
+<line x1="381.0" y1="490" x2="843.0" y2="490" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="612.0" y="508" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">INSERT close event ON CONFLICT DO NOTHING</text>
+<line x1="381.0" y1="560" x2="1074.0" y2="560" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="727.5" y="578" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">ensure one film job and persisted ordered inputs</text>
+<line x1="381.0" y1="630" x2="1305.0" y2="630" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="843.0" y="648" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">lookup by previous cycle id; else INSERT at ends at</text>
+<line x1="381.0" y1="700" x2="843.0" y2="700" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="612.0" y="718" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">UPDATE current cycle id WHERE still old cycle</text>
+<line x1="381.0" y1="770" x2="612.0" y2="770" stroke="#147d83" stroke-width="2" marker-end="url(#arrow)"/>
+<text x="496.5" y="788" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">COMMIT; return cycle +</text>
+<text x="496.5" y="805" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="14" fill="#203447">successor</text>
+<rect x="55" y="817.5" width="1345" height="45" rx="9" fill="#fff2d8" stroke="#9aabba"/>
+<text x="727.5" y="845" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#203447">Failure before commit rolls back closure, event, job / input snapshot, and pointer together</text>
+<text x="36" y="988" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">The diagram covers the normal path and named relevant branches; implementation names appear only in the design view.</text></svg>

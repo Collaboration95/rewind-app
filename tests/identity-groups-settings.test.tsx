@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system/legacy';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import App from '../App';
@@ -74,13 +74,16 @@ describe('local Demo access lifecycle', () => {
 
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     expect(result.getByTestId('settings-identity')).toBeTruthy();
-    expect(result.getByText('Amber')).toBeTruthy();
+    expect(within(result.getByTestId('settings-identity')).getByText('Amber')).toBeTruthy();
     await fireEvent.press(result.getByTestId('sign-out'));
-    await result.findByRole('header', { name: 'Choose who you are showing' });
+    await result.findByTestId('welcome-entry');
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
 
+    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
     await fireEvent.press(result.getByTestId('demo-entry-demo-2'));
     await result.findByRole('header', { name: 'Weekend People' });
+    await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     expect(result.getByText('Current member: Birch')).toBeTruthy();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBe('demo-2');
   });
@@ -120,7 +123,7 @@ describe('local Demo access lifecycle', () => {
 
       await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
       await fireEvent.press(result.getByTestId('sign-out'));
-      await result.findByRole('header', { name: 'Choose who you are showing' });
+      await result.findByTestId('welcome-entry');
 
       expect(
         JSON.parse((await AsyncStorage.getItem(CONTRIBUTION_STATUS_STORAGE_KEY)) ?? '{}'),
@@ -144,13 +147,17 @@ describe('local Demo access lifecycle', () => {
     }
   });
 
-  it('supports an explicit entry mode for deterministic review', async () => {
+  it('shows welcome in explicit entry mode before offering Demo choices', async () => {
     const previous = process.env.EXPO_PUBLIC_DEMO_ACCESS;
     process.env.EXPO_PUBLIC_DEMO_ACCESS = 'entry';
     try {
       const result = await render(<App />);
-      await result.findByRole('header', { name: 'Choose who you are showing' });
-      expect(result.getByText(/Pick a synthetic member to enter the local Demo/)).toBeTruthy();
+      await result.findByTestId('welcome-entry');
+      expect(result.queryByTestId('demo-entry-demo-1')).toBeNull();
+      expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
+      await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
+      expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
       result.unmount();
     } finally {
       if (previous === undefined) delete process.env.EXPO_PUBLIC_DEMO_ACCESS;
@@ -167,7 +174,7 @@ describe('local Demo access lifecycle', () => {
     await result.findByRole('header', { name: 'Weekend People' });
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByTestId('sign-out'));
-    await result.findByRole('header', { name: 'Choose who you are showing' });
+    await result.findByTestId('welcome-entry');
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
   });
 
@@ -200,7 +207,7 @@ describe('local Demo access lifecycle', () => {
     await fireEvent.press(result.getByRole('tab', { name: 'Settings' }));
     await fireEvent.press(result.getByTestId('reset-demo-data'));
     await fireEvent.press(result.getByTestId('reset-confirm-action'));
-    await result.findByRole('header', { name: 'Choose who you are showing' });
+    await result.findByTestId('welcome-entry');
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(LOCAL_GROUPS_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBeNull();
@@ -271,7 +278,7 @@ describe('settings reset', () => {
 
     await fireEvent.press(result.getByTestId('reset-demo-data'));
     await fireEvent.press(result.getByTestId('reset-confirm-action'));
-    await result.findByRole('header', { name: 'Choose who you are showing' });
+    await result.findByTestId('welcome-entry');
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(LOCAL_GROUPS_STORAGE_KEY)).toBeNull();
     expect(await AsyncStorage.getItem(SELECTION_KEY)).toBeNull();

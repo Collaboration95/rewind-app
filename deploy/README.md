@@ -1,12 +1,17 @@
 # Hosted Demo deployment
 
+**Public hosted URL: [https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net).**
+Use this HTTPS address for the hosted app. The HTTP loopback addresses in this
+guide are local origin checks or development endpoints, not alternate public
+URLs.
+
 The hosted Sprint 2 shape is one non-root Node 22 container on the host. SQLite
 and media are bind-mounted from persistent instance storage;
 the container itself is disposable. Compose defaults expose the static web
 shell and same-origin API proxy on `127.0.0.1:8080`. The hosted
 `rewind.env.example` explicitly sets `REWIND_WEB_BIND_ADDRESS=0.0.0.0` and
 `REWIND_WEB_PORT=80`, publishing the web container on all host IPv4 interfaces
-so the Lightsail HTTPS distribution can reach its HTTP origin on port 80.
+so the CloudFront HTTPS distribution can reach its HTTP origin on port 80.
 The container listens as non-root on internal port 8080; Compose publishes
 that as host port 80 for the distribution. The Lightsail firewall must allow
 the host port; no host-installed Nginx is needed.
@@ -133,10 +138,12 @@ Existing private environment files are preserved by bootstrap. To adopt this
 hosted binding, set both web variables above in the host's existing environment
 file and recreate the web service with
 `docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d --no-deps web`.
-Then verify the public HTTPS URL and `/api/health` through the distribution;
-successful loopback checks alone do not prove origin reachability. Port 80 also
-permits direct HTTP access to the web origin wherever the firewall allows it;
-the distribution's HTTPS redirect applies to distribution requests.
+The public hosted entry point is
+https://d2m6kz76y4kuvm.cloudfront.net. Verify `/api/health` through that HTTPS
+URL; successful loopback checks alone do not prove origin reachability. The
+`http://127.0.0.1` checks above are local origin checks, not a public app URL.
+Port 80 permits direct HTTP access to the web origin wherever the firewall
+allows it; use the public HTTPS entry point for the hosted app.
 
 For local Compose use, omit the hosted web overrides or explicitly set
 `REWIND_WEB_BIND_ADDRESS=127.0.0.1` and `REWIND_WEB_PORT=8080`. The disposable
@@ -366,6 +373,11 @@ python3 deploy/release.py verify "/private/path/rewind-$GREEN_MAIN_SHA.tar"
 sha256sum "/private/path/rewind-$GREEN_MAIN_SHA.tar"
 ```
 
+`--branch` selects the origin branch whose `Quality checks` push run gates the
+bundle. It defaults to `main`, so the release build is unchanged; the online
+integration deploy uses it as described in
+[Online deployment of the integration branch](#online-deployment-of-the-integration-branch).
+
 Before applying wake, confirm the reviewed PR and green check belong to that
 SHA, verify the full S3 backup, and review any migration against the previous
 image. A new schema version can block rollback to an older image. `wake-demo.sh`
@@ -487,3 +499,49 @@ The Docker-free contract and redaction tests are:
 ```sh
 node --test tests/deploy/host-lifecycle-smoke.test.mjs
 ```
+
+## Online deployment of the integration branch
+
+Merging to `dev` deploys to the existing hosted Lightsail host from
+`.github/workflows/deploy-dev.yml`. This is the online replacement for the
+operator-machine flow above: instead of building a bundle locally and then
+running `./deploy/release-host.sh install`, the workflow does both from CI.
+
+It reuses the same verified release path, so the guarantees are unchanged:
+
+1. The commit must have passed dev's own `Quality checks` push run.
+2. `deploy/release.py build --branch dev` produces the same source-bound,
+   checksummed bundle.
+3. `deploy/release-host.sh install` activates it only after the runtime and
+   web health checks pass, and restores the previous release when they fail.
+
+Differences from the operator flow:
+
+- The workflow never powers the host on or off. It requires the instance to be
+  `running` and fails with an explicit message otherwise, so hibernation stays
+  a deliberate operator decision rather than a side effect of a merge.
+- It never writes `/srv/rewind/rewind.env`. The host's private configuration is
+  untouched, so the recorded `release-config-version` and
+  `release-config-digest` must still match. Change the
+  `REWIND_DEMO_CONFIG_VERSION` repository variable only alongside a reviewed
+  private-configuration change.
+- It reaches the host with Lightsail's temporary SSH key, opening port 22 only
+  to the runner's address and closing it again in an `always()` step.
+
+Required repository variable: `AWS_DEMO_DEPLOY_ROLE_ARN`, taken from the
+`deploy_role_arn` output of `infra/terraform/demo`. Optional:
+`REWIND_DEMO_AWS_REGION`, `REWIND_DEMO_INSTANCE`,
+`REWIND_DEMO_CONFIG_VERSION`. No AWS keys are stored in GitHub; the job assumes
+the role with an OIDC token in the `dev` GitHub environment.
+
+The same bundle can still be produced by hand for an out-of-band deploy:
+
+```sh
+python3 deploy/release.py build --green-sha "$(git rev-parse dev)" \
+  --config-version demo-v1 --branch dev --output /private/path/rewind-dev.tar
+```
+
+Then copy it, `deploy/release.py`, and `deploy/release-host.sh` to the host
+and run `bash release-host.sh install /tmp/rewind-dev.tar`. Rollback is
+unchanged: `./deploy/release-host.sh rollback` on the host restores the
+previous image pair when the database schema permits it.

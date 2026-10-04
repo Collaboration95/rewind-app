@@ -1,10 +1,15 @@
 import { once } from 'node:events';
+import { startCycleSchedulerLoop } from './cycles/scheduler';
 import { listAuditEvents, type AuditEvent } from './audit';
 import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from './config';
 import { backfillMediaIntegrity, openDatabase, resetDatabase, fixtureSummary } from './db';
 import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 import { cleanupOrphanedStagedSources } from './jobs';
+import { configureRuntimeMedia } from './media/configured-runtime';
+import { createConfiguredReminderProviders } from './reminders/providers';
+import { runReminderOutboxTick, scanDueReminderJobs } from './reminders/outbox';
+import { startReminderLoop } from './reminders/loop';
 import {
   runWorkerTick,
   safeWorkerErrorLabel,
@@ -22,6 +27,9 @@ import {
 } from './jobs/queue';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createInterface } from 'node:readline/promises';
+import { stdin, stdout } from 'node:process';
+import { createRealAccount, resetRealAccountPassword } from './auth';
 import {
   applyConsistencyRepair,
   CONSISTENCY_DEFAULT_LIMIT,
@@ -55,6 +63,95 @@ export interface PreflightReport {
   sqlite: { ok: boolean; message: string; rows?: Record<string, number> };
   lan: { ok: boolean; message: string; address: string | null };
   ffmpeg: Awaited<ReturnType<typeof runFfmpegProbe>>;
+}
+
+async function promptSecret(label: string): Promise<string> {
+  if (!stdin.isTTY || typeof stdin.setRawMode !== 'function') {
+    throw new ConfigError(
+      'Account password entry requires an interactive terminal.',
+      'Run `npm run server:accounts -- create` or `npm run server:accounts -- reset` from a terminal.',
+    );
+  }
+  stdout.write(`${label}: `);
+  stdin.setRawMode(true);
+  stdin.resume();
+  return new Promise((resolvePromise, reject) => {
+    let value = '';
+    const finish = (error?: Error) => {
+      stdin.off('data', onData);
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdout.write('\n');
+      if (error) reject(error);
+      else resolvePromise(value);
+    };
+    const onData = (chunk: Buffer) => {
+      for (const character of chunk.toString('utf8')) {
+        if (character === '\u0003') return finish(new Error('Account operation cancelled.'));
+        if (character === '\r' || character === '\n') return finish();
+        if (character === '\u0008' || character === '\u007f') {
+          if (value.length) {
+            value = value.slice(0, -1);
+            stdout.write('\b \b');
+          }
+          continue;
+        }
+        if (character >= ' ' && character !== '\u007f') {
+          value += character;
+          stdout.write('*');
+        }
+      }
+    };
+    stdin.on('data', onData);
+  });
+}
+
+async function runAccountCommand(config: RuntimeConfig, argv: string[]): Promise<void> {
+  const action = argv[1];
+  if (action !== 'create' && action !== 'reset') {
+    throw new ConfigError(
+      'Use the accounts create or accounts reset operation.',
+      'Passwords and usernames are entered interactively and must not be passed as command arguments.',
+    );
+  }
+  const prompts = createInterface({ input: stdin, output: stdout });
+  let database: ReturnType<typeof openDatabase> | null = null;
+  try {
+    const username = await prompts.question('Username: ');
+    const displayName = action === 'create' ? await prompts.question('Display name: ') : undefined;
+    prompts.close();
+    const password = await promptSecret('Password (minimum 12 characters)');
+    const confirmation = await promptSecret('Confirm password');
+    if (password !== confirmation)
+      throw new ConfigError(
+        'The passwords did not match.',
+        'Repeat the operation and enter the same password twice.',
+      );
+    database = openDatabase(config);
+    const result =
+      action === 'create'
+        ? await createRealAccount(database, username, displayName ?? '', password)
+        : await resetRealAccountPassword(database, username, password);
+    if (!result.ok) {
+      if (result.reason === 'duplicate')
+        throw new ConfigError(
+          'That username is already provisioned.',
+          'Choose a different username or use accounts reset.',
+        );
+      if (result.reason === 'missing')
+        throw new ConfigError('That account does not exist.', 'Check the username and retry.');
+      throw new ConfigError(
+        'The account input is invalid.',
+        'Use a 3–32 character username, a display name up to 80 characters, and a password of 12–1024 characters.',
+      );
+    }
+    console.log(
+      `Account ${result.account.username} ${action === 'create' ? 'created' : 'reset'}; password hash uses scrypt N=32768, r=8, p=1.`,
+    );
+  } finally {
+    prompts.close();
+    database?.close();
+  }
 }
 
 async function serviceProbe(config: RuntimeConfig): Promise<PreflightReport['service']> {
@@ -403,7 +500,15 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
   const idleMs = parseWorkerMsOption(argv, '--idle-ms');
   const maxJobs = parseWorkerMaxJobs(argv);
   const database = await openRuntimeDatabase(config);
+  let media: Awaited<ReturnType<typeof configureRuntimeMedia>>;
+  try {
+    media = await configureRuntimeMedia(config);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
   const workerOptions = {
+    ...media.options,
     ffmpegBin: config.ffmpegBin,
     stagingDir: resolve(config.dataDir, 'media', 'staging'),
     outputDir: resolve(config.dataDir, 'media', 'processed'),
@@ -415,6 +520,7 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
     if (closed) return;
     closed = true;
     database.close();
+    media.close();
   };
 
   if (once) {
@@ -483,20 +589,70 @@ async function runWorker(config: RuntimeConfig, argv: string[]): Promise<void> {
 
 async function start(config: RuntimeConfig): Promise<void> {
   const database = await openRuntimeDatabase(config);
-  await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
-  const server = createRuntimeServer(config, database);
-  const close = () => {
-    server.close(() => database.close());
-  };
-  process.once('SIGINT', close);
-  process.once('SIGTERM', close);
-  server.on('error', (error) => {
-    console.error(
-      `Could not start the local runtime on ${config.host}:${config.port}: ${error.message}. ` +
-        'Try another REWIND_PORT or stop the process using that port.',
-    );
+  let media: Awaited<ReturnType<typeof configureRuntimeMedia>>;
+  try {
+    media = await configureRuntimeMedia(config);
+  } catch (error) {
     database.close();
+    throw error;
+  }
+  let reminderProviders: Awaited<ReturnType<typeof createConfiguredReminderProviders>>;
+  try {
+    reminderProviders = await createConfiguredReminderProviders(config.reminders);
+  } catch {
+    media.close();
+    database.close();
+    throw new ConfigError(
+      'Reminder provider unavailable.',
+      'Install the locked provider dependencies and check explicit provider configuration.',
+    );
+  }
+  let schedulerDatabase: ReturnType<typeof openDatabase>;
+  try {
+    await cleanupOrphanedStagedSources(database, resolve(config.dataDir, 'media', 'staging'));
+    schedulerDatabase = await openRuntimeDatabase(config);
+  } catch (error) {
+    media.close();
+    database.close();
+    throw error;
+  }
+  const server = createRuntimeServer(config, database, {
+    ...media.options,
+    reminderProviders,
+    reminderWebPushPublicKey: config.reminders?.webpush?.publicKey,
+  });
+  let scheduler: ReturnType<typeof startCycleSchedulerLoop> | undefined;
+  // Weekly reminders send only when a provider (for example web push) is set.
+  const reminderLoop = Object.keys(reminderProviders).length
+    ? startReminderLoop(() => openRuntimeDatabase(config), reminderProviders, {
+        onError: (message) => console.error(message),
+      })
+    : null;
+  let closing: Promise<void> | undefined;
+  const close = () => {
+    if (closing) return closing;
+    closing = (async () => {
+      // Stop claims and finish in-flight media work before closing its connection.
+      await Promise.all([
+        scheduler?.stop().catch(() => undefined),
+        reminderLoop?.stop().catch(() => undefined),
+        new Promise<void>((resolveClose) => server.close(() => resolveClose())),
+      ]);
+      schedulerDatabase.close();
+      database.close();
+      media.close();
+      process.off('SIGINT', shutdown);
+      process.off('SIGTERM', shutdown);
+    })();
+    return closing;
+  };
+  const shutdown = () => void close();
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+  server.on('error', () => {
+    console.error('Could not start the runtime listener. Check REWIND_HOST and REWIND_PORT.');
     process.exitCode = 1;
+    void close();
   });
   server.listen(config.port, config.host, () => {
     const address = server.address();
@@ -504,13 +660,77 @@ async function start(config: RuntimeConfig): Promise<void> {
     config.port = actualPort;
     const host = config.host === '0.0.0.0' || config.host === '::' ? '127.0.0.1' : config.host;
     const lan = getLanAddress();
+    scheduler = startCycleSchedulerLoop(schedulerDatabase, {
+      ...media.options,
+      ffmpegBin: config.ffmpegBin,
+      stagingDir: resolve(config.dataDir, 'media', 'staging'),
+      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      onError: (category) => console.error('Cycle scheduler: ' + category),
+    });
+    void scheduler.done.catch(() => {
+      console.error('Cycle scheduler stopped after repeated failures.');
+      process.exitCode = 1;
+      void close();
+    });
     console.log(
       `Rewind local runtime ${SERVICE_VERSION} listening on http://${host}:${actualPort}`,
     );
     if (lan) console.log(`LAN address: http://${lan}:${actualPort}`);
     console.log(`SQLite data: ${config.databasePath}`);
-    console.log('Press Ctrl-C to stop.');
+    console.log('Real-group automatic cycle/media loop started. Press Ctrl-C to stop.');
   });
+}
+
+async function runReminderCommand(config: RuntimeConfig, argv: string[]): Promise<void> {
+  if (!argv.includes('--once'))
+    throw new ConfigError(
+      'Reminder execution requires --once.',
+      'This command performs one explicit bounded scan/send pass; it does not start a schedule.',
+    );
+  const bound = (flag: string, fallback: number) => {
+    const raw = readOption(argv, [flag]);
+    const value = raw === undefined ? fallback : Number(raw);
+    if (!Number.isInteger(value) || value < 1 || value > 100)
+      throw new ConfigError(
+        `${flag} must be an integer from 1 to 100.`,
+        'Use bounded local reminder work.',
+      );
+    return value;
+  };
+  const scanLimit = bound('--scan-limit', 100);
+  const maxJobs = bound('--max-jobs', 10);
+  const providers = await createConfiguredReminderProviders(config.reminders);
+  const json = argv.includes('--json');
+  if (!Object.keys(providers).length) {
+    const report = { state: 'not-configured', scanned: 0, queued: 0, jobs: [] };
+    console.log(
+      json
+        ? JSON.stringify(report)
+        : 'Reminder providers are not configured; no scan or send was performed.',
+    );
+    return;
+  }
+  const database = await openRuntimeDatabase(config);
+  try {
+    const scan = scanDueReminderJobs(database, new Date(), {
+      limit: scanLimit,
+      ...(readOption(argv, ['--after']) ? { after: readOption(argv, ['--after'])! } : {}),
+    });
+    const jobs: Awaited<ReturnType<typeof runReminderOutboxTick>>[] = [];
+    for (let attempt = 0; attempt < maxJobs; attempt++) {
+      const job = await runReminderOutboxTick(database, providers);
+      if (!job.claimed) break;
+      jobs.push(job);
+    }
+    const report = { state: 'completed', ...scan, jobs };
+    console.log(
+      json
+        ? JSON.stringify(report)
+        : `Reminder pass scanned ${scan.scanned}, queued ${scan.queued}, and attempted ${jobs.length} jobs.`,
+    );
+  } finally {
+    database.close();
+  }
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
@@ -537,6 +757,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         `Local database reset to the deterministic five-member fixture at ${config.databasePath}.`,
       );
       database.close();
+      return;
+    }
+    if (command === 'accounts') {
+      await runAccountCommand(config, argv);
       return;
     }
     if (command === 'diagnostics') {
@@ -614,6 +838,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       await runWorker(config, argv);
       return;
     }
+    if (command === 'reminders') {
+      await runReminderCommand(config, argv);
+      return;
+    }
     if (command === 'jobs' || command === 'queue') {
       const database = await openRuntimeDatabase(config);
       try {
@@ -626,7 +854,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (command !== 'start') {
       throw new ConfigError(
         `Unknown local runtime command ${JSON.stringify(command)}.`,
-        'Use start, worker, preflight, migrate, reset, diagnostics, jobs, retention, or consistency.',
+        'Use start, worker, reminders, preflight, migrate, reset, accounts, diagnostics, jobs, retention, or consistency.',
       );
     }
     await start(config);

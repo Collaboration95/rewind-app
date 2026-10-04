@@ -4,15 +4,22 @@ FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057
 
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY vendor/node-forge ./vendor/node-forge
+COPY vendor/braces ./vendor/braces
 RUN npm ci --ignore-scripts
 
 COPY app.json tsconfig.json ./
 COPY App.tsx .
 COPY src ./src
 COPY public ./public
-RUN EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
+COPY scripts/stamp-pwa-build.mjs ./scripts/stamp-pwa-build.mjs
+ARG REWIND_BUILD_SHA=local
+ARG REWIND_BUILD_BRANCH=local
+RUN EXPO_PUBLIC_BUILD_SHA="$REWIND_BUILD_SHA" \
+    EXPO_PUBLIC_BUILD_BRANCH="$REWIND_BUILD_BRANCH" \
+    EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
 
-FROM nginx:1.31.1-alpine@sha256:8b1e78743a03dbb2c95171cc58639fef29abc8816598e27fb910ed2e621e589a AS runtime
+FROM nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 AS runtime
 
 RUN apk upgrade --no-cache
 RUN sed -i -E 's#^pid[[:space:]]+[^;]+;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \

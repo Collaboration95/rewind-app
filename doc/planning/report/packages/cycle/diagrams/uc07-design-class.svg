@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1660" height="930" viewBox="0 0 1660 930">
+<defs><marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#147d83"/></marker><marker id="rel" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#5c7082"/></marker></defs>
+<rect width="100%" height="100%" fill="#ffffff"/><rect width="100%" height="12" fill="#147d83"/>
+<text x="36" y="52" font-family="Arial,Helvetica,sans-serif" font-size="27" font-weight="700" fill="#17324d">UC07 · Design classes and records</text>
+<text x="36" y="80" font-family="Arial,Helvetica,sans-serif" font-size="15" fill="#5c7082">Pinned implementation responsibilities and persisted cycle transition</text>
+<rect x="1410" y="28" width="214" height="31" rx="15" fill="#e8f1f8"/><text x="1517" y="49" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="13" font-weight="700" fill="#17324d">DESIGN</text>
+<polyline points="365.0,232.6851851851852 420.0,232.6851851851852 420.0,234.72222222222223 475.0,234.72222222222223" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="352.0" y="208.7037037037037" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="420.0" y="225.7037037037037" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">tick input</text>
+<polyline points="775.0,222.3314606741573 852.5,222.3314606741573 852.5,206.6573033707865 930.0,206.6573033707865" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="784.5" y="189.4943820224719" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="852.5" y="206.4943820224719" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">transactional read/write</text>
+<polyline points="775.0,304.9157303370787 852.5,304.9157303370787 852.5,374.57865168539325 930.0,374.57865168539325" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="784.5" y="314.74719101123594" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="852.5" y="331.74719101123594" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">unique event</text>
+<polyline points="775.0,242.54587155963304 1037.5,242.54587155963304 1037.5,260.20642201834863 1300.0,260.20642201834863" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="969.5" y="226.37614678899084" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="1037.5" y="243.37614678899084" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">ensure film job</text>
+<polyline points="1300.0,237.26510067114094 1255.0,237.26510067114094 1255.0,219.748322147651 1210.0,219.748322147651" fill="none" stroke="#5c7082" stroke-width="2" marker-end="url(#rel)"/>
+<rect x="1187.0" y="203.50671140939596" width="136" height="23" rx="8" fill="white" opacity=".94"/><text x="1255.0" y="220.50671140939596" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">cycle scoped</text>
+<rect x="75" y="145" width="290" height="170" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M76,191 H364" stroke="#147d83" stroke-width="2"/>
+<text x="220.0" y="175" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">runCycleSchedulerTick</text>
+<text x="89" y="213" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Bounded due-cycle scan</text>
+<text x="89" y="231" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">One tick clock</text>
+<text x="89" y="249" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Round-robin worker handoff</text>
+<rect x="475" y="135" width="300" height="205" rx="12" fill="#e8f1f8" stroke="#147d83" stroke-width="2"/>
+<path d="M476,181 H774" stroke="#147d83" stroke-width="2"/>
+<text x="625.0" y="165" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">Lifecycle functions</text>
+<text x="489" y="203" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">advance Cycle Lifecycle</text>
+<text x="489" y="221" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">With Store</text>
+<text x="489" y="239" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">ensure Successor</text>
+<text x="489" y="257" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">publish Cycle Release With</text>
+<text x="489" y="275" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Store</text>
+<rect x="930" y="100" width="280" height="185" rx="12" fill="#e7f4ef" stroke="#147d83" stroke-width="2"/>
+<path d="M931,146 H1209" stroke="#147d83" stroke-width="2"/>
+<text x="1070.0" y="130" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">groups + cycles</text>
+<text x="944" y="168" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">current cycle id</text>
+<text x="944" y="186" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">status, lock state</text>
+<text x="944" y="204" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">starts at, ends at</text>
+<text x="944" y="222" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">release status  /  time</text>
+<rect x="930" y="365" width="280" height="145" rx="12" fill="#e7f4ef" stroke="#147d83" stroke-width="2"/>
+<path d="M931,411 H1209" stroke="#147d83" stroke-width="2"/>
+<text x="1070.0" y="395" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">cycle_lifecycle_events</text>
+<text x="944" y="433" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">Unique (cycle, transition)</text>
+<text x="944" y="451" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">occurred at receipt</text>
+<rect x="1300" y="170" width="285" height="190" rx="12" fill="#fff2d8" stroke="#147d83" stroke-width="2"/>
+<path d="M1301,216 H1584" stroke="#147d83" stroke-width="2"/>
+<text x="1442.5" y="200" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="16" font-weight="700" fill="#17324d">media_jobs + inputs</text>
+<text x="1314" y="238" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">One film job per cycle</text>
+<text x="1314" y="256" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">ordered clip snapshot</text>
+<text x="1314" y="274" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">status, attempts, lease</text>
+<text x="1314" y="292" font-family="Arial,Helvetica,sans-serif" font-size="13" fill="#203447">claim generation</text>
+<text x="36" y="906" font-family="Arial,Helvetica,sans-serif" font-size="12" fill="#5c7082">Analysis shows responsibilities and concepts; design shows only implementation-evidenced components and records at fc2b8c811e9c13b176113fa0bdb2c015798990b4.</text></svg>

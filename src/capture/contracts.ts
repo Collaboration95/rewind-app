@@ -68,6 +68,8 @@ export interface ImageMetadataStore {
 export interface CaptureFileStore {
   copyToManagedCache(image: PlatformStillImage, imageId: string): Promise<ManagedImageFile>;
   exists(uri: string): Promise<boolean>;
+  readAsBase64(uri: string): Promise<string>;
+  resolveManagedFile(imageId: string, format: 'jpg' | 'png'): Promise<ManagedImageFile | null>;
   remove(uri: string): Promise<void>;
 }
 
@@ -103,10 +105,21 @@ export interface CameraPlatform {
   readonly supportsVideoRecording?: boolean;
   /** Whether this adapter exposes a local file fallback. */
   readonly supportsFileFallback?: boolean;
+  /** The file fallback opens the device's own camera (web capture attribute). */
+  readonly fileFallbackIsCamera?: boolean;
 
   getCapabilities(): Promise<CapabilitySnapshot>;
   getPermissions(): Promise<PermissionSnapshot>;
   requestPermissions(): Promise<PermissionSnapshot>;
+  /** Video capture requests camera first, then microphone; still capture need not use these. */
+  getVideoPermissions?(): Promise<PermissionSnapshot>;
+  requestVideoPermissions?(): Promise<PermissionSnapshot>;
+  /** Browser preview stream owned by this adapter; never persist it. */
+  getVideoPreviewStream?(): MediaStream | null;
+  /** Release browser camera and microphone tracks when capture is no longer active. */
+  releaseVideoCapture?(): void;
+  /** Explain a browser recording limitation in the unsupported state. */
+  getVideoCaptureUnavailableReason?(): string | null;
   openSettings(): Promise<void>;
   captureStill(): Promise<PlatformStillImage>;
   /** Browser-only fallback when a live camera cannot be used. */
