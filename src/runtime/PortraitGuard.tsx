@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { COLORS } from '../theme';
@@ -10,22 +10,39 @@ export function isPhoneLandscape(width: number, height: number): boolean {
   return width > height && height < PHONE_LANDSCAPE_MAX_HEIGHT;
 }
 
+const LandscapeAllowance = createContext<() => () => void>(() => () => undefined);
+
+/** Camera screens call this so the app may be used in landscape while they are open. */
+export function useAllowLandscape() {
+  const register = useContext(LandscapeAllowance);
+  useEffect(() => register(), [register]);
+}
+
 // Native builds lock portrait in app.json. Browsers, including the installed
 // iPhone web app, cannot lock orientation, so cover the app in phone landscape
-// instead of showing a broken layout. Children stay mounted underneath.
+// instead of showing a broken layout, except on camera screens, which work in
+// either orientation. Children stay mounted underneath.
 export function PortraitGuard({ children }: { children: ReactNode }) {
   const { width, height } = useWindowDimensions();
-  const covered = Platform.OS === 'web' && isPhoneLandscape(width, height);
+  const [landscapeScreens, setLandscapeScreens] = useState(0);
+  const register = useCallback(() => {
+    setLandscapeScreens((count) => count + 1);
+    return () => setLandscapeScreens((count) => count - 1);
+  }, []);
+  const covered =
+    Platform.OS === 'web' && isPhoneLandscape(width, height) && landscapeScreens === 0;
   return (
-    <View style={styles.root}>
-      {children}
-      {covered ? (
-        <View accessibilityLiveRegion="polite" style={styles.cover} testID="portrait-guard">
-          <Text style={styles.title}>Turn your phone upright</Text>
-          <Text style={styles.body}>Rewind works in portrait.</Text>
-        </View>
-      ) : null}
-    </View>
+    <LandscapeAllowance.Provider value={register}>
+      <View style={styles.root}>
+        {children}
+        {covered ? (
+          <View accessibilityLiveRegion="polite" style={styles.cover} testID="portrait-guard">
+            <Text style={styles.title}>Turn your phone upright</Text>
+            <Text style={styles.body}>Rewind works in portrait.</Text>
+          </View>
+        ) : null}
+      </View>
+    </LandscapeAllowance.Provider>
   );
 }
 

@@ -105,6 +105,8 @@ export interface CameraPlatform {
   readonly supportsVideoRecording?: boolean;
   /** Whether this adapter exposes a local file fallback. */
   readonly supportsFileFallback?: boolean;
+  /** The file fallback opens the device's own camera (web capture attribute). */
+  readonly fileFallbackIsCamera?: boolean;
 
   getCapabilities(): Promise<CapabilitySnapshot>;
   getPermissions(): Promise<PermissionSnapshot>;

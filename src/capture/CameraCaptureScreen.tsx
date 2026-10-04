@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAllowLandscape } from '../runtime/PortraitGuard';
 import { CameraView } from 'expo-camera';
 import {
   AppState,
@@ -29,7 +30,7 @@ import {
 } from './capture-state';
 import { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } from './file-store';
 import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './metadata-store';
-import { ExpoCameraPlatform } from './platform';
+import { ExpoCameraPlatform, isCaptureCancelled } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
 import { ContributionStatusPanel, useOptionalContributionStatus } from './contribution-status';
 import { decideInterruption } from './capture-interruption';
@@ -78,11 +79,13 @@ export function CameraCaptureScreen({
   platform: platformProp,
   revealState = 'locked',
 }: CameraCaptureScreenProps = {}) {
+  useAllowLandscape();
   const cameraRef = useRef<CameraView>(null);
   const platform = useMemo(
     () =>
       platformProp ??
       new ExpoCameraPlatform({
+        browserSystemCamera: true,
         getCameraRef: () => cameraRef.current,
       }),
     [platformProp],
@@ -301,12 +304,26 @@ export function CameraCaptureScreen({
 
   const pickStillFile = useCallback(async () => {
     if (!platform.pickStillFile) return;
-    await captureImage(() => platform.pickStillFile!(), false);
+    // Wait for the chooser or camera sheet before entering the capturing
+    // state; closing it without a photo leaves the screen unchanged.
+    let picked: Awaited<ReturnType<NonNullable<typeof platform.pickStillFile>>>;
+    try {
+      picked = await platform.pickStillFile();
+    } catch (error) {
+      if (isCaptureCancelled(error)) return;
+      await captureImage(() => Promise.reject(error), false);
+      return;
+    }
+    await captureImage(() => Promise.resolve(picked), false);
   }, [captureImage, platform]);
 
   const fallbackAction = platform.kind === 'demo' ? useSyntheticStill : pickStillFile;
   const fallbackLabel =
-    platform.kind === 'demo' ? 'Use synthetic still fixture' : 'Choose an image file';
+    platform.kind === 'demo'
+      ? 'Use synthetic still fixture'
+      : platform.fileFallbackIsCamera
+        ? 'Open camera'
+        : 'Choose an image file';
   const hasFileFallback = platform.supportsFileFallback === true && Boolean(platform.pickStillFile);
   const hasFallback = platform.kind === 'demo' || hasFileFallback;
 
@@ -674,12 +691,18 @@ export function CameraCaptureScreen({
                 hasFallback
                   ? platform.kind === 'demo'
                     ? 'This simulator cannot provide a physical camera. The labelled synthetic fixture is available for the local Demo.'
-                    : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
+                    : platform.fileFallbackIsCamera
+                      ? 'Opens your phone camera. The photo comes back here so you can review it before you submit.'
+                      : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
                   : 'This device cannot provide the camera needed for a still moment. Use a physical device with camera access.'
               }
               onAction={hasFallback ? fallbackAction : undefined}
               testID="camera-unsupported"
-              title="Camera capture is not supported here"
+              title={
+                platform.fileFallbackIsCamera
+                  ? 'Take a photo'
+                  : 'Camera capture is not supported here'
+              }
             />
           ) : state.status === 'permission-undecided' ? (
             <StatusPanel
@@ -737,6 +760,25 @@ export function CameraCaptureScreen({
               saving={state.status === 'saving'}
               saved={state.status === 'saved'}
             />
+          ) : platform.fileFallbackIsCamera ? (
+            // Web uses the phone's own camera sheet, so there is no in-page
+            // viewfinder or access step; one button opens the camera.
+            <View style={styles.captureArea}>
+              <Pressable
+                accessibilityHint="Opens your phone camera; the photo comes back here for review"
+                accessibilityLabel="Open camera"
+                accessibilityRole="button"
+                accessibilityState={{ busy: state.status === 'capturing' }}
+                disabled={state.status === 'capturing'}
+                onPress={pickStillFile}
+                style={[styles.shutter, state.status === 'capturing' && styles.disabledControl]}
+                testID="camera-capture"
+              >
+                <Text style={styles.shutterText}>
+                  {state.status === 'capturing' ? 'Preparing photo…' : 'Open camera'}
+                </Text>
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.captureArea}>
               <View accessibilityLabel="Camera access granted" style={styles.accessGranted}>

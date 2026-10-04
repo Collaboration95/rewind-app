@@ -331,7 +331,7 @@ export async function processPhotoWithFfmpeg(
         '-t',
         '3',
         '-vf',
-        `${modeFilter(input.mode)},scale=180:320:force_original_aspect_ratio=increase,crop=180:320,setsar=1,fps=12`,
+        `${modeFilter(input.mode)},scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=12`,
         '-map',
         '0:v:0',
         '-map',
@@ -360,8 +360,8 @@ export async function processPhotoWithFfmpeg(
     const output = await probeClipWithFfmpeg(ffmpegBin, input.outputPath);
     if (
       Math.abs(output.durationSeconds - 3) > 0.1 ||
-      output.width !== 180 ||
-      output.height !== 320
+      output.width !== 720 ||
+      output.height !== 1280
     ) {
       throw new Error('invalid processed photo');
     }
@@ -482,13 +482,17 @@ export async function compileFilmWithFfmpeg(
     input.archiveFillerIndex === undefined ? null : `${input.outputPath}.archive-label.ppm`;
   const videoFilters = input.inputPaths.map((_, index) => {
     const normalized =
-      `[${index}:v:0]scale=180:320:force_original_aspect_ratio=decrease,` +
-      `pad=180:320:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS`;
+      // Vertical 720p film; landscape clips are letterboxed, not cropped.
+      `[${index}:v:0]scale=720:1280:force_original_aspect_ratio=decrease,` +
+      `pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS`;
     if (index !== input.archiveFillerIndex) return `${normalized}[v${index}]`;
     const labelInputIndex = input.inputPaths.length;
     return (
       `${normalized}[archiveBase];` +
-      `[archiveBase][${labelInputIndex}:v:0]overlay=4:4:shortest=1,` +
+      // The 172×48 label is drawn for a 180-wide frame; scale it 4× (crisp
+      // pixels) so it stays readable on the 720-wide film.
+      `[${labelInputIndex}:v:0]scale=iw*4:ih*4:flags=neighbor[archiveLabel];` +
+      `[archiveBase][archiveLabel]overlay=16:16:shortest=1,` +
       `setpts=PTS-STARTPTS[v${index}]`
     );
   });
@@ -604,7 +608,6 @@ export async function probeClipWithFfmpeg(
       !Number.isInteger(height) ||
       width <= 0 ||
       height <= 0 ||
-      width >= height ||
       !hasAudio
     ) {
       throw new Error('invalid media');

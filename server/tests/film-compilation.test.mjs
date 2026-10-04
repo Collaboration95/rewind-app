@@ -33,7 +33,10 @@ async function withDatabase(run) {
   }
 }
 
-async function createProcessedClip(path, { color, frequency, volume = 1, duration = 1 }) {
+async function createProcessedClip(
+  path,
+  { color, frequency, volume = 1, duration = 1, size = '180x320' },
+) {
   const args = [
     '-hide_banner',
     '-loglevel',
@@ -42,7 +45,7 @@ async function createProcessedClip(path, { color, frequency, volume = 1, duratio
     '-f',
     'lavfi',
     '-i',
-    `color=c=${color}:size=180x320:rate=12:duration=${duration}`,
+    `color=c=${color}:size=${size}:rate=12:duration=${duration}`,
     '-f',
     'lavfi',
     '-i',
@@ -78,6 +81,18 @@ test('creates a deterministic portrait synthetic clip with audio for the local D
   });
 });
 
+test('accepts a landscape clip at intake; the film letterboxes it into vertical 720p', async () => {
+  await withDatabase(async ({ config, dataDir }) => {
+    const outputDir = `${dataDir}/media/staging`;
+    await mkdir(outputDir, { recursive: true });
+    const landscape = `${outputDir}/landscape.mp4`;
+    await createProcessedClip(landscape, { color: 'blue', frequency: 440, size: '320x180' });
+    const media = await probeClipWithFfmpeg(config.ffmpegBin, landscape, outputDir);
+    assert.equal(media.width, 320);
+    assert.equal(media.height, 180);
+  });
+});
+
 async function frameAverage(path, seconds) {
   const { stdout } = await execFileAsync(
     'ffmpeg',
@@ -97,7 +112,8 @@ async function frameAverage(path, seconds) {
       'rgb24',
       '-',
     ],
-    { encoding: 'buffer', maxBuffer: 2_000_000 },
+    // One 720×1280 RGB frame is about 2.8 MB.
+    { encoding: 'buffer', maxBuffer: 8_000_000 },
   );
   const channels = [0, 0, 0];
   for (let offset = 0; offset + 2 < stdout.length; offset += 3) {
@@ -385,8 +401,13 @@ test('production selection appends and visibly labels same-group archive filler'
       'selected archive filler was not the same-group purple fixture',
     );
 
-    const plainLabelRegion = await frameCrop(archiveClip, 0.25, 'crop=172:48:4:4');
-    const fillerLabelRegion = await frameCrop(film.outputPath, 1.25, 'crop=172:48:4:4');
+    // The label is scaled 4× and placed at 16,16 on the 720-wide film.
+    const plainLabelRegion = await frameCrop(
+      archiveClip,
+      0.25,
+      'scale=720:1280,crop=688:192:16:16',
+    );
+    const fillerLabelRegion = await frameCrop(film.outputPath, 1.25, 'crop=688:192:16:16');
     assert.equal(ARCHIVE_FILLER_LABEL, 'From the archive');
     assert.ok(
       changedPixelFraction(plainLabelRegion, fillerLabelRegion) > 0.08,

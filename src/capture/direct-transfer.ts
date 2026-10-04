@@ -139,7 +139,7 @@ function metadata(input: ClipUploadInput): RequestMetadata {
     input.height < 1 ||
     (photo
       ? !['image/jpeg', 'image/png'].includes(input.mimeType)
-      : input.mimeType !== 'video/mp4' || input.width >= input.height || !input.hasAudio) ||
+      : input.mimeType !== 'video/mp4' || !input.hasAudio) ||
     !Number.isFinite(start) ||
     start < 0 ||
     !Number.isFinite(end) ||
@@ -158,7 +158,7 @@ function metadata(input: ClipUploadInput): RequestMetadata {
   )
     throw failure(
       'validation',
-      'Choose a valid photo or portrait MP4 with audio, within 15 seconds and 50 MB.',
+      'Choose a valid photo or MP4 video with audio, within 15 seconds and 50 MB.',
       false,
     );
   return {

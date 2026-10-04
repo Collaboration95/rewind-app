@@ -45,8 +45,9 @@ describe('local clip upload lifecycle', () => {
       uploadClip: jest.fn().mockResolvedValue(upload),
     };
     expect(validateClipUploadInput({ ...input, durationSeconds: 16 })).toContain('15 seconds');
-    expect(validateClipUploadInput({ ...input, width: 0, height: 1 })).toContain('portrait');
-    expect(validateClipUploadInput({ ...input, width: 1.5, height: 2 })).toContain('portrait');
+    expect(validateClipUploadInput({ ...input, width: 0, height: 1 })).toContain('MP4 video');
+    expect(validateClipUploadInput({ ...input, width: 1.5, height: 2 })).toContain('MP4 video');
+    expect(validateClipUploadInput({ ...input, width: 1280, height: 720 })).toBeNull();
     const session = new ClipUploadSession(transport);
     const progress: string[] = [];
     await expect(session.upload(input, (state) => progress.push(state.status))).resolves.toEqual(

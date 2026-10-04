@@ -764,7 +764,6 @@ export function recordClipMediaMetadata(
     metadata.width <= 0 ||
     !Number.isInteger(metadata.height) ||
     metadata.height <= 0 ||
-    (mediaType === 'video' && metadata.width >= metadata.height) ||
     metadata.hasAudio !== true
   ) {
     throw new RangeError('Server media metadata does not describe an acceptable clip.');
@@ -887,7 +886,6 @@ export function validateClipUpload(
     input.width <= 0 ||
     !Number.isInteger(input.height) ||
     input.height <= 0 ||
-    (!isPhoto && input.width >= input.height) ||
     (isPhoto && (input.durationSeconds !== 3 || input.width > 12000 || input.height > 12000)) ||
     input.hasAudio !== true
   ) {
