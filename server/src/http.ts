@@ -2454,8 +2454,9 @@ export async function handleRequest(
       width: typeof body?.width === 'number' ? body.width : Number.NaN,
       height: typeof body?.height === 'number' ? body.height : Number.NaN,
       hasAudio: body?.hasAudio === true,
-      ...(typeof body?.mode === 'string'
-        ? { mode: body.mode as 'soft-focus' | 'high-contrast' }
+      ...(typeof body?.mode === 'string' ? { mode: body.mode as ClipUploadInput['mode'] } : {}),
+      ...(body?.clientProcessed !== undefined
+        ? { clientProcessed: body.clientProcessed as boolean }
         : {}),
       ...(typeof body?.trimStartSeconds === 'number'
         ? { trimStartSeconds: body.trimStartSeconds }
@@ -3761,6 +3762,7 @@ async function handleRealGroupRequest(
           'trimStartSeconds',
           'trimEndSeconds',
           'mode',
+          'clientProcessed',
           'replacesContributionId',
         ];
     if (!body || Object.keys(body).some((key) => !keys.includes(key)))

@@ -8,22 +8,46 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-/** The original capture modes supported by the client and local worker. */
-export const SUPPORTED_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
+/** The four original retro looks offered for new captures. */
+export const RETRO_CAPTURE_MODES = ['disposable-flash', 'ccd', '8mm', 'vhs'] as const;
+/** Earlier server-only looks, still accepted for existing rows and older clients. */
+export const LEGACY_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
+export const SUPPORTED_CAPTURE_MODES = [...RETRO_CAPTURE_MODES, ...LEGACY_CAPTURE_MODES] as const;
 export type CaptureMode = (typeof SUPPORTED_CAPTURE_MODES)[number];
+export const DEFAULT_CAPTURE_MODE: CaptureMode = 'ccd';
+/**
+ * The mode stored on a media job. `client:<look>` records that the client
+ * already applied the look before upload, so the worker only normalizes.
+ */
+export type ProcessingMode = CaptureMode | `client:${CaptureMode}`;
+
+export function isCaptureMode(value: unknown): value is CaptureMode {
+  return (SUPPORTED_CAPTURE_MODES as readonly unknown[]).includes(value);
+}
+
+export function processingModeFor(mode: CaptureMode, clientProcessed: boolean): ProcessingMode {
+  return clientProcessed ? `client:${mode}` : mode;
+}
+
+export function isProcessingMode(value: unknown): value is ProcessingMode {
+  return (
+    isCaptureMode(value) ||
+    (typeof value === 'string' && value.startsWith('client:') && isCaptureMode(value.slice(7)))
+  );
+}
 
 export interface FfmpegProcessInput {
   inputPath: string;
   outputPath: string;
   trimStartSeconds: number;
   trimEndSeconds: number;
-  mode: CaptureMode;
+  mode: ProcessingMode;
 }
 
 export interface FfmpegPhotoProcessInput {
   inputPath: string;
   outputPath: string;
-  mode: CaptureMode;
+  mode: ProcessingMode;
 }
 
 export interface FfmpegProcessResult {
@@ -203,10 +227,24 @@ export async function resolveStagedMediaPath(value: string, stagingDir: string):
   }
 }
 
-function modeFilter(mode: CaptureMode): string {
-  return mode === 'high-contrast'
-    ? 'eq=contrast=1.18:brightness=0.02:saturation=1.12'
-    : 'eq=contrast=0.96:brightness=0.02:saturation=0.9,gblur=sigma=0.35';
+/**
+ * Server-side approximations of the retro looks, used when the client did not
+ * process the media (native apps and older clients). A client-processed look
+ * passes through unchanged so it is never applied twice.
+ */
+const LOOK_FILTERS: Record<CaptureMode, string> = {
+  'disposable-flash':
+    'eq=contrast=1.25:brightness=0.06:saturation=1.3,colorbalance=rm=0.06:bm=-0.04,vignette=angle=PI/4,noise=alls=12:allf=t',
+  ccd: 'eq=contrast=1.1:brightness=0.03:saturation=1.15,colorbalance=bs=0.06:bm=0.04,noise=alls=6:allf=t',
+  '8mm':
+    'eq=contrast=1.15:brightness=-0.02:saturation=0.55,colorbalance=rs=0.12:gs=0.05:bs=-0.1:rm=0.1:bm=-0.08,vignette=angle=PI/3.5,noise=alls=18:allf=t+u',
+  vhs: 'eq=contrast=1.05:saturation=1.35,chromashift=cbh=-4:crh=4,gblur=sigma=0.8,drawgrid=w=iw:h=3:t=1:c=black@0.18,noise=alls=10:allf=t',
+  'high-contrast': 'eq=contrast=1.18:brightness=0.02:saturation=1.12',
+  'soft-focus': 'eq=contrast=0.96:brightness=0.02:saturation=0.9,gblur=sigma=0.35',
+};
+
+export function modeFilter(mode: ProcessingMode): string {
+  return isCaptureMode(mode) ? LOOK_FILTERS[mode] : 'null';
 }
 
 function validProcessInput(input: FfmpegProcessInput): boolean {
@@ -219,7 +257,7 @@ function validProcessInput(input: FfmpegProcessInput): boolean {
     input.trimEndSeconds - input.trimStartSeconds >= 0.5 &&
     input.inputPath.length > 0 &&
     input.outputPath.length > 0 &&
-    SUPPORTED_CAPTURE_MODES.includes(input.mode)
+    isProcessingMode(input.mode)
   );
 }
 
@@ -304,7 +342,7 @@ export async function processPhotoWithFfmpeg(
   ffmpegBin: string,
   input: FfmpegPhotoProcessInput,
 ): Promise<FfmpegProcessResult> {
-  if (!input.inputPath || !input.outputPath || !SUPPORTED_CAPTURE_MODES.includes(input.mode)) {
+  if (!input.inputPath || !input.outputPath || !isProcessingMode(input.mode)) {
     throw new FfmpegProcessingError(
       'invalid_metadata',
       'The photo processing metadata is invalid.',

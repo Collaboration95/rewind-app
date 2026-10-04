@@ -380,6 +380,32 @@ test('real request→PUT→complete→processed survives restart and preserves p
     );
   }));
 
+test('client-processed retro uploads store a no-reapply mode; legacy and native modes still register', async () =>
+  withIntentFixture(async (c) => {
+    const invalid = await requestUploadIntent(
+      c.database,
+      c.actor,
+      { ...c.input('intent-retro-invalid'), mode: 'vhs', clientProcessed: 'yes' },
+      c.deps,
+    );
+    assert.deepEqual(invalid, { ok: false, reason: 'invalid_request' });
+    const modes = [];
+    for (const [key, extra] of [
+      ['intent-retro-client', { mode: 'vhs', clientProcessed: true }],
+      ['intent-retro-native', { mode: 'disposable-flash' }],
+      ['intent-retro-legacy', { mode: 'soft-focus' }],
+    ]) {
+      const request = await requested(c, key, extra);
+      const version = await c.put(request.upload);
+      const result = await completed(c, request.intent, version);
+      assert.equal(result.ok, true, JSON.stringify(result));
+      modes.push(
+        c.database.prepare('SELECT mode FROM media_jobs WHERE id = ?').get(result.value.jobId).mode,
+      );
+    }
+    assert.deepEqual(modes, ['client:vhs', 'disposable-flash', 'soft-focus']);
+  }));
+
 test('idempotency is scoped, rejects payload changes, survives reopen and never spends allowance twice', async () =>
   withIntentFixture(async (c) => {
     const first = await requested(c);

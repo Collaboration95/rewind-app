@@ -196,6 +196,7 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
   await inspectRecording(page, info, 1);
   await review.locator('input').nth(0).fill('1');
   await review.locator('input').nth(1).fill('4.5');
+  await page.getByRole('radio', { name: 'VHS Camcorder', exact: true }).click();
   await page.getByRole('button', { name: 'Save trim and mode', exact: true }).click();
   const requestPromise = page.waitForRequest(
     (request) =>
@@ -208,22 +209,38 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
       new URL(response.url()).pathname === '/api/contributions/upload',
   );
   await page.getByRole('button', { name: 'Upload clip', exact: true }).click();
+  // The retro look is applied in the browser, in real time, before any upload.
+  await expect(page.getByTestId('video-retro-processing')).toContainText('Applying retro look');
   const body = (await requestPromise).postDataJSON();
+  // The uploaded bytes are the processed, already-trimmed 1–4.5 s segment.
   expect(body).toMatchObject({
-    durationSeconds: 3.5,
-    trimStartSeconds: 1,
-    trimEndSeconds: 4.5,
+    mode: 'vhs',
+    clientProcessed: true,
+    trimStartSeconds: 0,
     hasAudio: true,
     width: 360,
     height: 640,
     mimeType: 'video/mp4',
   });
-  expect(body.sourceDurationSeconds).toBeGreaterThan(5);
+  expect(body.trimEndSeconds).toBe(body.durationSeconds);
+  expect(body.durationSeconds).toBeGreaterThan(3.2);
+  expect(body.durationSeconds).toBeLessThan(4.5);
+  expect(body.sourceDurationSeconds).toBeGreaterThanOrEqual(body.trimEndSeconds);
   const response = await responsePromise;
   expect(response.status(), await response.text()).toBe(201);
   await expect(review).toHaveCount(0);
   await expect(page.getByTestId('video-review-player')).toHaveCount(0);
   await expectRevoked(page, 1);
+  // Inspect the processed recording itself: real H.264/AAC with the source tone
+  // carried through Web Audio, then released once the upload is accepted.
+  const processed = await inspectRecording(page, info, 2);
+  expect(processed.streams.find((stream) => stream.codec_type === 'video')).toMatchObject({
+    width: 360,
+    height: 640,
+  });
+  expect(Number(processed.format.duration)).toBeGreaterThan(3.2);
+  expect(Number(processed.format.duration)).toBeLessThan(4.5);
+  await expectRevoked(page, 2);
 });
 
 test('real landscape recording reaches review, overlong recording rejects, and sources are disposed', async ({
