@@ -82,6 +82,7 @@ import { ReminderSettings } from './src/reminders/ReminderSettings';
 import { RealAccountProvider, useRealAccount } from './src/auth/RealAccountProvider';
 import { RealAccountGroupExperience } from './src/groups/RealAccountGroupExperience';
 import { PortraitGuard } from './src/runtime/PortraitGuard';
+import { markLaunchReady } from './src/runtime/timing';
 
 const lockedMoments = [1, 2, 3];
 const COLD_LAUNCH_MINIMUM_MS = 600;
@@ -225,7 +226,12 @@ function SessionGate({
     () => (runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null),
     [runtimeClient, session],
   );
-  if (!coldLaunchMinimumElapsed || realAccount.state === 'loading' || status === 'loading') {
+  const launchReady =
+    coldLaunchMinimumElapsed && realAccount.state !== 'loading' && status !== 'loading';
+  useEffect(() => {
+    if (launchReady) markLaunchReady();
+  }, [launchReady]);
+  if (!launchReady) {
     return <SessionLoadingScreen />;
   }
   if (realAccount.state === 'active' && realAccount.session)

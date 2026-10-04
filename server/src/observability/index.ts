@@ -3,6 +3,19 @@ import { performance } from 'node:perf_hooks';
 import type { RewindDatabase } from '../db';
 import { QUEUE_MAX_FILM_ATTEMPTS } from '../jobs/queue';
 
+// Route template for timing logs: drop the query and replace identifier-like
+// segments, so no group, account, token or media capability is logged.
+export function requestRoute(url: string | undefined): string {
+  const path = (url ?? '/').split('?', 1)[0] || '/';
+  return path
+    .split('/')
+    .map((segment) =>
+      segment.length >= 20 || (/\d/.test(segment) && segment.length >= 8) ? ':id' : segment,
+    )
+    .join('/')
+    .slice(0, 200);
+}
+
 /** No request data or exception object enters this projection. */
 export function requestObservation() {
   const requestId = randomUUID();
@@ -10,6 +23,19 @@ export function requestObservation() {
   let emitted = false;
   return {
     requestId,
+    /** Opt-in (REWIND_REQUEST_TIMING) latency line for every finished request (#321). */
+    timing(method: string | undefined, url: string | undefined, status: number): void {
+      console.log(
+        JSON.stringify({
+          event: 'api.request',
+          requestId,
+          method: /^[A-Z]{3,7}$/.test(method ?? '') ? method : 'OTHER',
+          route: requestRoute(url),
+          statusCode: Number.isInteger(status) ? status : 0,
+          durationMs: Math.min(86_400_000, Math.max(0, Math.round(performance.now() - started))),
+        }),
+      );
+    },
     failure(status: number): void {
       if (emitted) return;
       emitted = true;
