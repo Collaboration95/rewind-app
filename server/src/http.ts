@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createWriteStream, existsSync } from 'node:fs';
-import { mkdir, readdir, realpath, rename, rm, stat, type FileHandle } from 'node:fs/promises';
+import { mkdir, realpath, rename, rm, stat, type FileHandle } from 'node:fs/promises';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import { isIP } from 'node:net';
@@ -1597,24 +1597,45 @@ export async function handleRequest(
   }
 
   if (url.pathname === '/demo/reset' && request.method === 'POST') {
-    const identity = requireSessionIdentity(database, url, response, config, now());
-    if (!identity) return;
-    if (!authorizeSessionOwner(database, identity.groupId, identity).allowed) {
-      sendDenied(response, config);
-      return;
-    }
+    // Reset refusals must not touch even session/audit rows. Resolve the same
+    // persisted Demo identity and lifecycle without validation side effects.
+    const requireResetOwner = (): DemoRequestIdentity | null => {
+      const sessionId = url.searchParams.get('sessionId');
+      const session = sessionId ? getDemoSession(database, sessionId) : null;
+      if (
+        !session ||
+        classifyDemoSession(session.expiresAt, session.invalidatedAt, now()) !== 'valid'
+      ) {
+        sendSessionRequired(response, config);
+        return null;
+      }
+      const identity: DemoRequestIdentity = {
+        sessionId: session.id,
+        memberId: session.actor.memberId,
+        groupId: session.groupId,
+        session,
+      };
+      if (!authorizeSessionOwner(database, identity.groupId, identity).allowed) {
+        sendDenied(response, config);
+        return null;
+      }
+      return identity;
+    };
+    if (!requireResetOwner()) return;
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
     const releaseStagingLock = await acquireStagedSourceLock(stagingDir);
     try {
       await waitForStagedIntakesIdle();
-      // The lock prevents a concurrent upload from recreating a staged file
-      // while reset is clearing every Demo-owned media artifact. Keep the
-      // directory itself because hosted Compose binds it as a mount target.
-      const mediaDir = resolve(config.dataDir, 'media');
-      for (const entry of await readdir(mediaDir).catch(() => [])) {
-        await rm(resolve(mediaDir, entry), { recursive: true, force: true });
+      // Recheck authority after waiting. The database write lock then fences
+      // foreign-data inspection and synchronous media deletion with no await.
+      if (!requireResetOwner()) return;
+      if (!restoreFixture(database, now(), resolve(config.dataDir, 'media'))) {
+        sendJson(response, config, 409, {
+          error: 'demo_reset_unavailable',
+          message: 'Demo reset is unavailable while non-Demo data is present.',
+        });
+        return;
       }
-      restoreFixture(database, now());
       await mkdir(stagingDir, { recursive: true });
       sendJson(response, config, 200, { reset: true });
     } finally {

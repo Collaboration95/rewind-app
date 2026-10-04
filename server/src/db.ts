@@ -1709,11 +1709,32 @@ export function clearMediaDirectory(mediaDir: string): void {
   }
 }
 
-/** Restore the local fixture and its bundled synthetic media outputs.
+/** Restore only a disposable Demo fixture. Return false without mutation if
+ * real or non-synthetic data is present. The write lock and synchronous media
+ * clearing prevent registration from committing between inspection and reset.
  * Source files and migrations are never touched. */
-export function restoreFixture(database: RewindDatabase, seedNow?: Date | string): void {
-  database.exec('BEGIN');
+export function restoreFixture(
+  database: RewindDatabase,
+  seedNow?: Date | string,
+  mediaDir?: string,
+): boolean {
+  database.exec('BEGIN IMMEDIATE');
   try {
+    const foreignData = database
+      .prepare(
+        `SELECT
+      EXISTS (SELECT 1 FROM real_accounts)
+      OR EXISTS (SELECT 1 FROM real_profiles)
+      OR EXISTS (SELECT 1 FROM real_group_metadata)
+      OR EXISTS (SELECT 1 FROM profiles WHERE is_synthetic IS NOT 1)
+      AS present`,
+      )
+      .get() as { present: number };
+    if (foreignData.present) {
+      database.exec('ROLLBACK');
+      return false;
+    }
+    if (mediaDir !== undefined) clearMediaDirectory(mediaDir);
     for (const table of [
       'reactions',
       'realtime_events',
@@ -1739,6 +1760,7 @@ export function restoreFixture(database: RewindDatabase, seedNow?: Date | string
     throw error;
   }
   seedDatabase(database, seedNow);
+  return true;
 }
 
 export function fixtureSummary(database: RewindDatabase): Record<string, number> {
