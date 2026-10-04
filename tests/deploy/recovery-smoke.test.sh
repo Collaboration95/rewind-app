@@ -359,8 +359,7 @@ SQL
   {"address":"aws_lightsail_instance.rewind[0]","change":{"actions":["create"]}},
   {"address":"aws_lightsail_static_ip.rewind[0]","change":{"actions":["create"]}},
   {"address":"aws_lightsail_static_ip_attachment.rewind[0]","change":{"actions":["create"]}},
-  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["create"]}},
-  {"address":"aws_lightsail_distribution.web[0]","change":{"actions":["create"]}}
+  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["create"]}}
 ]}
 JSON
   local power_policy='{"Statement":[{"Sid":"ControlOnlyTheRewindDemo","Effect":"Allow","Action":["lightsail:StartInstance","lightsail:StopInstance"],"Resource":"arn:aws:lightsail:ap-southeast-1:123456789012:Instance/rewind-demo"}]}'

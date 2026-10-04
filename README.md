@@ -3,8 +3,14 @@
 Rewind is a local-first SWE5006 prototype for collecting short shared moments
 through a group cycle, then experiencing them together after a delayed reveal.
 
-The included Demo uses synthetic data. It is not authentication, a secure
-account, public hosting, or a cloud media service.
+The local Demo started below uses synthetic data. It is not authentication,
+a secure account, public hosting, or a cloud media service. The separately
+hosted app supports real-account sign-in and is available at:
+
+[https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net)
+
+Use that HTTPS address for the hosted app; the local Expo URL below is only for
+development.
 
 ## Start the app
 

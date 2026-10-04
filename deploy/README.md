@@ -1,12 +1,17 @@
 # Hosted Demo deployment
 
+**Public hosted URL: [https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net).**
+Use this HTTPS address for the hosted app. The HTTP loopback addresses in this
+guide are local origin checks or development endpoints, not alternate public
+URLs.
+
 The hosted Sprint 2 shape is one non-root Node 22 container on the host. SQLite
 and media are bind-mounted from persistent instance storage;
 the container itself is disposable. Compose defaults expose the static web
 shell and same-origin API proxy on `127.0.0.1:8080`. The hosted
 `rewind.env.example` explicitly sets `REWIND_WEB_BIND_ADDRESS=0.0.0.0` and
 `REWIND_WEB_PORT=80`, publishing the web container on all host IPv4 interfaces
-so the Lightsail HTTPS distribution can reach its HTTP origin on port 80.
+so the CloudFront HTTPS distribution can reach its HTTP origin on port 80.
 The container listens as non-root on internal port 8080; Compose publishes
 that as host port 80 for the distribution. The Lightsail firewall must allow
 the host port; no host-installed Nginx is needed.
@@ -133,10 +138,12 @@ Existing private environment files are preserved by bootstrap. To adopt this
 hosted binding, set both web variables above in the host's existing environment
 file and recreate the web service with
 `docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d --no-deps web`.
-Then verify the public HTTPS URL and `/api/health` through the distribution;
-successful loopback checks alone do not prove origin reachability. Port 80 also
-permits direct HTTP access to the web origin wherever the firewall allows it;
-the distribution's HTTPS redirect applies to distribution requests.
+The public hosted entry point is
+https://d2m6kz76y4kuvm.cloudfront.net. Verify `/api/health` through that HTTPS
+URL; successful loopback checks alone do not prove origin reachability. The
+`http://127.0.0.1` checks above are local origin checks, not a public app URL.
+Port 80 permits direct HTTP access to the web origin wherever the firewall
+allows it; use the public HTTPS entry point for the hosted app.
 
 For local Compose use, omit the hosted web overrides or explicitly set
 `REWIND_WEB_BIND_ADDRESS=127.0.0.1` and `REWIND_WEB_PORT=8080`. The disposable
