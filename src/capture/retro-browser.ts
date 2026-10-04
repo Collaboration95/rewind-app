@@ -21,6 +21,8 @@ import {
 export const MAX_RETRO_PHOTO_EDGE = 2160;
 /** Stay safely under the 15-second limit after recorder start-up latency. */
 export const MAX_RETRO_VIDEO_SECONDS = 14.8;
+/** Opening and seeking a local clip should take seconds, not minutes. */
+const INIT_TIMEOUT_MS = 20_000;
 
 export class RetroProcessingError extends Error {
   constructor(
@@ -250,6 +252,8 @@ export function applyRetroLookToVideo(
   let scratch: HTMLCanvasElement | null = null;
   let stream: MediaStream | null = null;
   const cleanup = () => {
+    clearTimeout(initTimer);
+    options.signal?.removeEventListener('abort', onInitAbort);
     stream?.getTracks().forEach((track) => track.stop());
     audioOut.stream.getTracks().forEach((track) => track.stop());
     try {
@@ -266,9 +270,26 @@ export function applyRetroLookToVideo(
     releaseCanvas(scratch);
   };
 
+  // Opening and seeking the clip can stall; keep those waits cancellable and
+  // bounded so a stuck decoder never strands processing or its resources.
+  let stopInit: (error: RetroProcessingError) => void = () => undefined;
+  const initStopped = new Promise<never>((_resolve, reject) => {
+    stopInit = reject;
+  });
+  initStopped.catch(() => undefined);
+  const onInitAbort = () =>
+    stopInit(new RetroProcessingError('The retro look was cancelled.', true));
+  options.signal?.addEventListener('abort', onInitAbort);
+  const initTimer = setTimeout(
+    () =>
+      stopInit(new RetroProcessingError('The clip could not be opened to apply the retro look.')),
+    INIT_TIMEOUT_MS,
+  );
+  const initStep = <T>(step: Promise<T>): Promise<T> => Promise.race([step, initStopped]);
+
   const run = async (): Promise<RetroVideoResult> => {
-    await unlocked;
-    if (video.readyState < 1) await waitFor(video, 'loadedmetadata');
+    await initStep(unlocked);
+    if (video.readyState < 1) await initStep(waitFor(video, 'loadedmetadata'));
     const start = Math.max(0, input.startSeconds);
     const end = Math.min(input.endSeconds, start + MAX_RETRO_VIDEO_SECONDS);
     if (!(end - start >= 0.5)) {
@@ -277,8 +298,10 @@ export function applyRetroLookToVideo(
     if (Math.abs(video.currentTime - start) > 0.001) {
       const seeked = waitFor(video, 'seeked');
       video.currentTime = start;
-      await seeked;
+      await initStep(seeked);
     }
+    clearTimeout(initTimer);
+    options.signal?.removeEventListener('abort', onInitAbort);
     if (options.signal?.aborted)
       throw new RetroProcessingError('The retro look was cancelled.', true);
     const size = fitWithin(video.videoWidth, video.videoHeight, 1920, 1080);
