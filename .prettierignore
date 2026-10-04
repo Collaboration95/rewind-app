@@ -8,5 +8,6 @@ package-lock.json
 # Shared workflow instructions retain their own formatting conventions.
 .github/agent-review-pr-prompt.md
 .github/pull_request_template.md
-skills/agent-review-pr-link/
-skills/agent-solve-issue/
+
+# Archived plans and prompts keep their original formatting.
+doc/planning/archive/

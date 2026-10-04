@@ -1,0 +1,7 @@
+interface:
+  display_name: 'Ship Issues'
+  short_description: 'Ship one issue or a queue of issues to dev'
+  default_prompt: 'Use $ship-issues to implement these Rewind issues end to end: verify, open a PR, run the review agent, merge when allowed, and close each issue.'
+
+policy:
+  allow_implicit_invocation: false

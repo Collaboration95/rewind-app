@@ -1,0 +1,380 @@
+You are GPT-6.1 Sol, acting as Rewind's delivery lead. Execute this task;
+do not stop after planning. Use medium reasoning for the lead and coding
+workers. Optimize for useful accepted issues per hour and a small number of
+shared verification runs. The owner wants Project 11 handled before any
+other project, with parallel agents and  combined PRs for necessary changes.
+
+OUTCOME AND CURRENT OWNER DIRECTION
+
+Inspect every Project 11 card, verify its actual acceptance criteria, accept
+and close eligible work, and synchronize the board. Target zero unresolved
+Sprint 2 issues; account explicitly for every remaining Project 11 issue.
+Zero is the target, not permission to call an unperformed requirement Done.
+
+Use the local desktop browser for ordinary forms, navigation, accounts,
+groups, chat, media playback/download, privacy and failure-state checks.
+Use one iPhone simulator session only for genuinely iPhone-specific behavior:
+orientation, safe areas, keyboard, actual Safari/Home Screen lifecycle or a
+native-specific issue. Do not start a simulator for ordinary web/API checks.
+The current release priority is Safari/PWA; Android and compiled native iOS
+follow the web work. Do not acquire the out-of-project compiled-iOS bug #386.
+
+Parallelize acceptance/evidence work and bounded implementation. Expect minor
+integration rework where necessary; minimize elapsed time, not all possible
+rework. Raise material defects and unmet mandatory criteria. Ignore naming,
+style preferences, speculative refactors and non-blocking polish.
+
+This prompt supersedes older per-issue PR/review loops, high-reasoning model
+assignments, and routine simulator use. It does not waive required Quality,
+privacy, acceptance criteria, protected branches, sensitive human review or
+an issue's actual external/device requirements. Do not silently erase them.
+
+SOURCES AND STARTUP
+
+Workspace:
+/Users/speedpowermac/Documents/projects/CODE_MAIN/NUS/SWE5006/rewind-app
+Repository: Collaboration95/rewind-app
+Project: https://github.com/users/Collaboration95/projects/11/views/1
+Issue URL: https://github.com/Collaboration95/rewind-app/issues/<number>
+Sprint 2: 27 September–10 October 2026, Asia/Singapore.
+
+Read AGENTS.md, applicable nested instructions, doc/README.md and
+skills/agent-solve-issue/SKILL.md. Read only relevant portions of the existing
+Sprint 2 execution plan and issue comments. Live issue contracts and this
+owner direction outrank stale planning counts and historical acquisition
+queues. Do not create new completion/evidence documents or another big plan.
+
+Use authenticated gh exclusively for every GitHub read and write; gh api is
+allowed. Do not use GitHub connectors, browser access or another API client.
+If sandbox networking fails, use the normal authorized network escalation;
+do not infer invalid credentials or start authentication setup from that alone.
+
+Refresh Project items/fields, all issue bodies and material comments, native
+parent/blocked-by relationships, dev, relevant PRs and current checks once.
+Check item counts and pagination; do not inspect only the visible board view.
+Reuse cached reads within this run; refresh affected issues before changing
+their state and refresh dev before final integration.
+
+At the 4 October audit, local and remote dev both were:
+25d5d83c3302491d5ea6796f31afd4a3593789a3 (PR #398 merged).
+This is a baseline to refresh, not an immutable instruction to use old code.
+
+The primary checkout was dirty: doc/README.md and four untracked Sprint 2
+execution/handoff/prompt files. Preserve all unrelated edits, including this
+prompt. Use clean isolated worktrees for implementation. Do not inspect the
+rewind-v1 archive or retired sibling src/. Current rewind-app/src/ is valid.
+
+COMPLETE PROJECT 11 BASELINE: 78 ISSUE CARDS
+
+Project Status: 33 Done, 37 In Progress, 8 Todo.
+Issue state: 42 closed, 36 open. The open set comprises 22 active leaf issues,
+six epics and eight explicitly deferred Sprint 3 issues. Status and issue
+closure are different fields; Delivery stage and Queue also need reconciliation.
+
+Closed issues, all 42:
+#169 #238 #240 #241 #242 #243 #244 #245 #246 #247 #248 #249 #250 #251 #252
+#254 #296 #304 #305 #306 #307 #308 #309 #311 #312 #313 #314 #328 #340 #342
+#343 #346 #353 #354 #355 #356 #357 #358 #359 #360 #361 #384
+
+Nine closed cards still show In Progress / Acceptance / Blocked:
+#243 #244 #245 #246 #308 #311 #312 #313 #314.
+Five closed cards show Status Done but Delivery stage Acceptance and Queue
+Blocked: #247 #248 #249 #251 #252. The owner closed these on 4 October.
+Several completed tooling/product cards also retain Queue Ready.
+
+Respect the owner's closures. Do not reopen or reimplement closed work based
+on an older agent comment saying "keep open." Reconcile owner acceptance,
+integrated code and existing verification; shared current browser checks
+can cover genuine gaps. Normalize supported completed cards to Status Done,
+Delivery stage Done, and clear stale Queue values. Do not retest all 42 closed
+cards independently. Explicit owner scope withdrawal is a disposition, not
+test evidence: #249's last comment says "NOT RELEVANT FOR NOW, CLOSING".
+Preserve that closure and represent the scope withdrawal accurately; do not
+claim its physical recording requirements passed. Do not automatically
+reopen other owner-closed cards or overwrite their decisions.
+
+Active open leaves, all 22:
+#145 #165 #166 #170 #174 #203 #230 #232 #267 #327 #329 #341 #344 #345
+#347 #348 #349 #350 #351 #352 #362 #385
+
+Open aggregate epics, all six:
+#168 entry; #239 capture/participation; #319 verification/support;
+#337 cycles/archive; #338 hosted media/clients; #339 assessment/report.
+They are rollups, not six additional implementations. Close an epic only
+after its own integrated outcome and included requirements are accepted.
+#168/#239/#338 include Sprint 3 children; completed Sprint 2 slices do not
+automatically finish those full epics. Never remove children to inflate Done.
+
+Sprint 3 deferred leaves, all eight:
+#363 managed OIDC server -> #364 web/native OIDC and invite return.
+#175 managed PostgreSQL readiness/service selection -> #261 persistence
+migration -> #172 managed backups and isolated recovery.
+#365 pre-upload retro feasibility -> #366 browser processing and #367 native
+processing; these also depend on direct transfer/native builds as specified.
+They are deliberately Todo / Deferred / Integrated later, not forgotten work.
+The owner explicitly confirmed on 4 October: finish Sprint 2 first and keep
+these eight deferred. Do not acquire, close or reschedule them in this run.
+Include their residuals in the final Project 11 count. Do not expand into
+Project 8. Zero current-sprint residuals and zero open cards across this
+multi-sprint board are different outcomes; report both accurately.
+
+MODEL ASSIGNMENT AND PARALLEL WORK
+
+Use in-thread subagents through the actual subagent runtime. Do not create
+separate Codex chats/tasks as substitutes. Check supported runtime arguments.
+Coding: model gpt-6.1-sol, reasoning_effort medium.
+Acceptance, evidence and code review: model gpt-6-luna, reasoning_effort medium.
+Use the owner's Fast setting if actually available for Luna. The runtime
+observed in this audit exposes model/reasoning overrides but no Fast/service-
+tier argument; do not invent one or silently substitute another model.
+
+Start three independent Luna lanes immediately:
+A. Board/evidence: closed-card drift, existing PR/check evidence, issue gates
+   and parent rollups. Read-only; report proposed metadata changes to lead.
+B. Browser acceptance: shared real-account journey, chat, capture review,
+   cycles, Archive, PWA deterministic checks. Own browser/fixture resources.
+C. Delivery/research/report: read-only deployment/storage/provider gates and
+   #232/#267/#362 facts. Identify exact remaining actions; no cloud mutations.
+
+The lead handles acquisition, priorities, shared interfaces, integration,
+GitHub writes and the immediate critical-path work. Do not delegate the next
+blocking action and then wait idle. Start up to three Sol workers as concrete
+fixes or unfinished deliverables become clear, in disjoint scopes:
+1. Capture/upload/review defects under #329/#341.
+2. Archive/chat/group defects under #344/#345/#385.
+3. PWA lifecycle defects under #350, or #362 report/model incorporation when
+   no confirmed PWA patch is needed. Assign only one of those write scopes.
+Reassign finished workers; do not keep unnecessary agents running.
+
+Each writer gets an isolated checkout, accepted base, exact issue contract,
+owned files, interface assumptions and a small verification target. Workers
+commit their assigned changes and report commit plus changed paths; they do
+not open PRs. Lead imports the commits into one integration branch. Only the
+lead changes Project fields, closes issues, pushes the batch or merges.
+
+Serialize edits to server/src/http.ts, migrations, package/lockfiles,
+src/groups/RealAccountGroupExperience.tsx, shared capture/platform contracts,
+service-worker interfaces and final report assembly. Assign a single owner
+for each shared file. Other workers return proposed interface changes to it.
+Allow independent coding/evidence work to continue while tests or CI run.
+
+Give test lanes isolated DB/media/profiles/ports and owned processes. Use one
+visible-browser coordinator and one simulator slot; never have two agents
+clicking the same UI. Limit concurrent heavy export/FFmpeg/broad suites when
+the host contends. Never share node_modules via a symlink that makes Expo
+resolve another checkout's source. Reuse only verified artifacts matching
+source/config/lockfile/environment; keep test data fresh.
+
+EXECUTION ORDER AND ISSUE-SPECIFIC GATES
+
+1. Reconcile completed work immediately, without code PRs for pure reviews.
+   Reuse accepted #387 photo context, #388 chat routing, #392 portrait guidance,
+   #396 browser group-switch evidence, #393 profiling reconciliation,
+   #397 report draft and #398 capacity-probe preparation. All are merged.
+   Do not resurrect closed/unmerged PRs #325/#380/#381 as accepted code.
+
+2. Run one shared local-browser acceptance pack against current dev.
+   Use established owned HTTPS real-account fixtures with certificate checks,
+   two real local application accounts and an outsider. Keep synthetic source
+   media labelled; retain real auth, SQLite persistence, scheduler, processing,
+   quota, media integrity and API authorization. Substitute only external
+   boundaries; never mock away the behavior being accepted.
+
+   Cover registration/login/logout/expiry; invite intent/join and denial;
+   selected group and profiles; capture review/play/trim/retake/error;
+   video/photo processing/sealed/retry/quota; chat/send/reply/reaction/reconnect
+   including an actual persisted write with a lost response; automatic close,
+   immediate successor, release and two-cycle Archive/playback/download;
+   restart and wrong-group/outsider/privacy boundaries. Share each result
+   across relevant issues; do not rerun the same journey for each issue.
+
+   #385: the routing fix and composed-prefix/lost-response browser tests are
+   already accepted in #388. Remaining native/Home Screen UI evidence only;
+   ordinary browser repetition is not another implementation.
+   #344: real-member film/own-clip access and outsider/range/HEAD/reveal/integrity
+   fixtures exist. Remaining actual hosted S3 semantics must be verified or
+   retained explicitly; a local pass does not satisfy that external gate.
+   #345: existing two-cycle audible browser playback/checksummed downloads
+   are shared evidence. Finish actual installed-PWA playback/download/context
+   cleanup when available. Do not wait for the hosted sealed cycle to expire.
+   #352: use the combined journey as the acceptance map; this issue is not a
+   separate implementation. Hosted/private-storage/provider/device residuals
+   remain visible; closed children alone do not prove this end-to-end gate.
+   #145: two actual hosted synthetic reset-to-reveal journeys are required.
+   The recorded owner permits an agent reviewer instead of a human peer;
+   label that substitution. Local production-shaped runs do not equal hosted
+   runs. Touch only an explicitly authorized disposable hosted fixture.
+   #203: reconcile its tracker against #145 and the existing accepted release
+   work. Do not restart old native/cloud fixes just because text is stale.
+
+3. Consolidate genuinely iPhone-specific checks into one session.
+   #329: review implementation and encoded WebKit/audio fixtures are merged.
+   Missing approved simulator Safari/Home Screen audible source/trim and
+   successful active-fixture submission/disposal; reproduce before coding.
+   #350: installed launch/session restore/sign-out already have evidence.
+   Finish retained invite/expiry, background/foreground, coherent asset update,
+   offline/private-cache behavior and installed capture/released downloads.
+   #327: web portrait-guidance fallback is accepted via #392. Verify rotation
+   and usable controls across relevant screens. The separate app-wide/device
+   criterion remains; #329/#350's simulator waiver is not a blanket waiver.
+   #385: share installed-client UI send/reply/reaction checks here.
+   Prior simulator-to-local-API routing failed twice. Inspect the known
+   fixture setup once; do not spend hours repeating navigation/connectivity
+   experiments. A unavailable fixture is a gate, not proof of a product bug.
+   For native checks use iPhone 14+ and Expo Go with --ios --lan --clear after
+   npm run check; do not use iPhone SE or --localhost. Safari/PWA acceptance
+   does not require launching Expo Go. Hardware capture/provider receipt
+   cannot be invented from synthetic simulator media.
+
+4. Work the delivery bottleneck in parallel, with reviewed concrete actions.
+   Current dev Quality succeeded (37164653854), but Deploy dev 37164653853
+   failed on 4 October before activation: copying runtime.tar into
+   /srv/rewind/.release-stage... reported No space left on device. #398's
+   read-only capacity probe is now merged; it neither recovered the host nor
+   proved live alarms. Check fresh deployment/build identity before acceptance.
+   #166: redacted logs/metrics/capacity code exists. Named operators, approved
+   alarm thresholds/recipients/cost and exercised staging alarms remain.
+   #174: namespace and optional OIDC/manual-plan exchange prep exists from
+   #298/#379. Actual scoped roles/environments/configuration and reviewed
+   plan operation remain. Do not confuse planned identity with provisioned.
+   #349: #375 prepared private storage roots/policies and validated fixtures.
+   Inventory, approved KMS/policy delivery, dated costs and exact reviewed
+   plans remain; do not rewrite already-accepted roots without a defect.
+   #230: the actual two live isolated environments, health/version/data/IAM
+   isolation and cost/plan acceptance are unfinished. This is the outcome
+   lane for #174/#349; local tests cannot finish it.
+   #165: adapter/local/protocol-double checks exist; hosted directTransfer
+   was false. Real S3 versioned read/CORS/encryption/lifecycle remains.
+   #341: direct client adapters exist, but actual bucket PUT/bypass/recovery
+   and specified platform acceptance depend on active private storage.
+   #170: #377 provides reviewed resumable/checksummed-copy preparation.
+   Exact dataset/disposition, quiescence, rollback window and actual cutover/
+   configuration-restoration rehearsal remain. Never delete source media.
+
+   Read the rewind-aws-operations skill before any Rewind AWS/SSH/Terraform
+   operation. Prepare a specific safe capacity-recovery, storage or environment
+   action for human/operator review if needed. Do not assume deletion/pruning,
+   Terraform apply, provisioning, IAM/KMS changes, deployment retry, retained
+   data migration or hosted clock/reset is authorized by this speed request.
+   While that gate is pending, finish all independent local work. Do not
+   repeatedly retry a denied inventory or an unchanged failed deployment.
+
+5. Reminders and client builds follow available configuration.
+   #347: durable outbox/provider regression code exists. Deployment reported
+   providers [] / webPushPublicKey null / not-configured. One configured,
+   reviewed non-production send is missing; don't rewrite a working outbox.
+   #348: opt-in/context-fencing/cleanup is accepted in #378. Actual installed
+   web receipt/tap/revoke and native-build receipt remain. Provider credentials,
+   scheduling and real test sends need explicit scope/authorization. Preserve
+   its mixed-client contract even if the web slice passes.
+   #351: accepted-source Android APK and iOS simulator build preparation and
+   partial preview exist. Reuse their provenance; rebuild only when relevant
+   source/config changed. Android installed journey and compiled native sign-in
+   remain outside the first web batch. No paid build or signing churn.
+
+6. Finish bounded report work; collect human facts without fabricating them.
+   #362: five accepted packages #357–#361 and #397 DOCX/PDF/PPTX draft exist.
+   Complete required model incorporation/source refresh and a visible local
+   demo rehearsal where feasible, using the document/presentation skills for
+   rendered artifacts. Preserve the template and existing accurate sources.
+   Member ownership/effort/Scrum records, final compliance/delivery and human
+   assessment sign-off remain actual gates; do not present placeholders as facts.
+   #267: the brief/reconciliation is accepted in #393. The named researchers'
+   own agreement/recommendation/ownership is the remaining gate, not another
+   performance campaign. Do not invent human agreement or a missed deadline.
+   #232: actual collaborator physical-iPhone workshop reports are required.
+   Simulator and browser checks cannot manufacture collaborator participation.
+
+VERIFICATION WITHOUT REPEATED FULL PASSES
+
+Workers diagnose with one exact existing focused test file, at most two
+attempts per issue. Preserve assertions. Add tests for substantive behavior
+changes; avoid tests that merely mirror a low-impact copy/layout edit.
+Run batch-wide gates on the stable combined tree, not on each review/card.
+
+Use npm run check once at the batch boundary: it already includes npm test
+(the same suite as test:fast) and accessibility export/browser checks. Do not
+run test:fast immediately again without changed source or a relevant failure.
+Use npm run test:slow for product/browser changes: it already includes web
+export/PWA checks, responsive browser tests and the paired production E2E
+journeys. Do not duplicate test:responsive or test:production-e2e afterward
+on the same unchanged inputs merely to produce more evidence.
+Run relevant test:coverage:frontend and test:coverage:server once; frontend's
+70% statement gate and measured server coverage remain. Run the existing
+test:real-account-e2e pack when needed for real-account acceptance; its two
+clean fixtures are distinct from the synthetic Demo production E2E pack.
+Docs-only work uses its relevant structural/render checks and real CI scope.
+
+Record commands, source/build identity, environment, actual results and
+remaining criteria once; cross-link the shared result in affected issues.
+Reuse old evidence with its original SHA/client/date, never as a fresh run.
+Required CI and skipped browser jobs must be reported accurately. Local
+browser verification still matters when dev CI skips its browser job.
+No screenshot campaign or separate evidence folder is required. Keep a
+compact working matrix in memory/temp; post concise final issue comments.
+
+ONE BATCH PR AND ONE INDEPENDENT REVIEW
+
+Start guru/project11-acceptance-batch-20261004 from fresh dev in a clean
+integration worktree. Collect necessary fixes and unfinished deliverables
+there. Keep per-issue commits/interface boundaries for review, but open one
+combined PR targeting dev, with Refs #<number> and an issue/result matrix.
+No PR is needed for acceptance/status reconciliation that changes no files.
+Do not use closing keywords. Do not pull unrelated open PRs into the batch.
+
+After composition freezes, give one independent Luna medium reviewer the
+whole dev-to-batch diff, issue contracts and shared verification results.
+Prefer a reviewer who did not author or accept the changed areas. One pass:
+flag broken required journeys, wrong-group/session leaks, data loss, incorrect
+retry/quota/release behavior, unsafe updates, missing required acceptance or
+materially false evidence. Ignore stylistic nits and optional improvements.
+Reviewer is read-only; return PASS, REVISE or BLOCKED with concrete findings.
+Fix material findings together, rerun affected checks and let that same
+reviewer check the corrections. Do not restart full reviews for every issue
+or an unchanged base refresh. Changed merge/conflict behavior needs checking.
+
+Confirm the current head is up to date with dev, the required aggregate
+"Format, lint, typecheck, and test" passes, applicable security checks pass
+and conversations are resolved. Routine dev work can integrate without an
+extra human approval. Authentication/private-media policy, DB migrations,
+deployment and infrastructure still require human review before integration.
+If any such change is in the combined PR, present the exact combined result
+for one consolidated human review; a Luna PASS cannot substitute for it.
+Do not split into per-issue PRs merely to get around that gate.
+
+When the accepted change is on dev and an issue's full applicable acceptance
+passes, explicitly close it and set Project Status/Delivery stage Done.
+Pure verification of already-integrated reviewed work can close immediately
+when acceptance is complete, without waiting for unrelated new code.
+Keep gates visible using In Progress with Acceptance/Blocked/Review as
+appropriate; do not call all three the same thing. Clear stale Queue values
+on accepted work and retain accurate native dependencies.
+
+TIME AND STOP RULES
+
+Aim for a first reviewable batch within roughly two hours of startup; this
+is a checkpoint, not a promise or permission to skip required work. Give
+agents bounded packages and prioritize accepted-existing work over expansion.
+Provide a brief useful progress update at least every minute while working.
+
+After about 20 minutes without progress on an ordinary lane, or the two
+focused diagnostic failures, record the precise blocker and take another
+independent issue. Do not spin in simulator navigation, full-suite reruns,
+provider setup, speculative research or repeated cloud attempts. An estimate
+is not proof of completion. Don't continue for tens of hours just to wait on
+an unavailable human/provider/device gate.
+
+Continue until eligible authorized Project 11 work is accepted, or all
+remaining work has a concrete external/decision gate and no independent
+progress is possible. Stop with reviewable work rather than silently waiting.
+Do not claim zero unresolved issues when deferred or blocked ones remain.
+
+FINAL OUTPUT
+
+Report actual Project 11 counts before/after: closed accepted, owner-withdrawn,
+open active leaves, open epics, deferred Sprint 3 leaves, and board drift.
+Give accepted issue links, combined PR/head/review/CI result, shared checks
+actually run, and every remaining issue's next action/owner/gate. Separate
+local acceptance from installed-device, actual hosted and provider evidence.
+State explicitly whether Project 11 reached zero, and which conditions prevent
+it if not. Keep the report compact; do not create a new reporting document.
