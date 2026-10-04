@@ -65,6 +65,24 @@ test('offline container disables network and only mounts the report directory', 
   assert.ok(!args.some((value) => value.includes('docker.sock')));
 });
 
+test('CI report sharing preserves non-root UID while selecting the host group', () => {
+  const args = fixtureContainerArgs({
+    output: '/reports-only',
+    name: 'rewind-agentic-test',
+    reportGroup: 1001,
+  });
+  assert.equal(args[args.indexOf('--user') + 1], '1000:1001');
+  assert.throws(
+    () =>
+      fixtureContainerArgs({
+        output: '/reports-only',
+        name: 'rewind-agentic-test',
+        reportGroup: '1001;command',
+      }),
+    /Invalid report group/,
+  );
+});
+
 test('live container cannot start without approval; it passes key names, not values', () => {
   const options = { output: '/reports-only', name: 'rewind-agentic-test' };
   assert.throws(() => fixtureContainerArgs({ ...options, live: true }), /DATA_SHARING/);

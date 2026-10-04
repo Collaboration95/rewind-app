@@ -1,11 +1,15 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { disposableTarget } from './vigolium-provider.mjs';
-import { fixtureContainerArgs, fixtureImage } from './vigolium-container.mjs';
+import {
+  fixtureContainerArgs,
+  fixtureImage,
+  prepareReportDirectory,
+} from './vigolium-container.mjs';
 
 const mode = process.argv[2];
 if (!['--build', '--verify', '--run'].includes(mode))
@@ -52,13 +56,13 @@ if (mode === '--build') {
   );
   const name = `rewind-agentic-${randomUUID()}`;
   const appName = `${name}-app`;
-  await mkdir(output, { recursive: true });
+  const reportGroup = await prepareReportDirectory(output);
   await rm(join(output, 'target.json'), { force: true });
   await rm(join(output, 'app-baselines.json'), { force: true });
-  const appArgs = fixtureContainerArgs({ output, name: appName }).slice(0, -3);
+  const appArgs = fixtureContainerArgs({ output, name: appName, reportGroup }).slice(0, -3);
   if (live) appArgs[appArgs.indexOf('--network') + 1] = 'bridge';
   appArgs.splice(1, 0, '--detach');
-  const scannerArgs = fixtureContainerArgs({ output, name, live, env: process.env });
+  const scannerArgs = fixtureContainerArgs({ output, name, live, env: process.env, reportGroup });
   scannerArgs[scannerArgs.indexOf('--network') + 1] = `container:${appName}`;
   scannerArgs.splice(
     -3,

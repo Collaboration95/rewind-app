@@ -31,6 +31,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    name: Trial branch Quality validation
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/vigolium-agentic-provider'
+    uses: ./.github/workflows/quality.yml
   offline:
     name: Offline setup and access checks
     runs-on: ubuntu-24.04

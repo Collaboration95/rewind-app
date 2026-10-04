@@ -39,6 +39,9 @@ Authorized branch pushes first pass offline checks, then run fixture, chat and
 groups trials with the same configuration. The fixture must export SQL injection
 and independently confirm it; a successful scanner exit alone is insufficient.
 Live PR jobs are explicitly skipped, including same-repository PRs.
+The trial branch also invokes the existing reusable Quality workflow on pushes,
+so its full checks can be reviewed without creating a PR. Normal Quality push/PR
+triggers are unchanged. The agentic offline job has no provider secrets.
 Manual dispatch supports all trials or one selected target and requires the
 sharing checkbox. Jobs have read-only repository permissions and a 25-minute
 timeout. Redacted artifacts and step summaries provide commit-specific evidence.
@@ -69,6 +72,11 @@ only a network namespace and the report directory, with external networking
 disabled, no published ports and no provider key. Temporary databases live in
 the backend's tmpfs. A short-lived `target.json` provides only the loopback chat
 URL, disposable bearer token and baseline statuses; it is removed during cleanup.
+On Linux, report directories use mode 0770 and containers retain UID 1000 with
+the host runner's group ID. This permits report writes and host cleanup without
+root containers or a world-writable directory. The backend image includes the
+latest app's locked production dependencies. The scanner image still excludes
+Rewind runtime/source and app dependencies.
 
 The setup checks login, group creation, owner chat read/write, anonymous denial,
 and unrelated-account read/write denial. The scanner independently checks the
