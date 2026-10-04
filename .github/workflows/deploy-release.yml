@@ -204,7 +204,7 @@ jobs:
           # shellcheck disable=SC2086
           for _ in $(seq 1 60); do
             if ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" \
-              'test -f /srv/rewind/.host-bootstrap-complete && docker compose version >/dev/null 2>&1' \
+              '{ test -f /srv/rewind/.host-bootstrap-complete || test -f /srv/rewind/.host-bootstrap-prerequisites; } && docker compose version >/dev/null 2>&1' \
               >/dev/null 2>&1; then
               echo 'Host is bootstrapped and reachable.'
               exit 0
