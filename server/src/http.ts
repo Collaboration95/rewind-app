@@ -4057,6 +4057,7 @@ async function handleRealGroupRequest(
           timeZone: body.timeZone,
         },
         now,
+        config.realCycleDurationMs,
       );
     } catch {
       authJson(request, response, config, 409, {

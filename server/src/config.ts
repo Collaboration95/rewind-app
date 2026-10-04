@@ -11,6 +11,8 @@ export const DEFAULT_HTTP_UPLOAD_TIMEOUT_MS = 120_000;
 export const DEFAULT_HTTP_MAX_CONCURRENT_INTAKES = 2;
 export const DEFAULT_HTTP_MAX_CONCURRENT_PROCESSING = 1;
 
+const REAL_CYCLE_DEFAULT_MINUTES = 28 * 24 * 60;
+
 export interface RuntimeConfig {
   host: string;
   port: number;
@@ -20,6 +22,8 @@ export interface RuntimeConfig {
   allowOrigin: string;
   originAuthSecret: string | null;
   allowInsecureLocalAuth: boolean;
+  /** Length of a new real group's first cycle; successors repeat it. */
+  realCycleDurationMs?: number;
   httpIdleTimeoutMs: number;
   uploadTimeoutMs: number;
   maxConcurrentIntakes: number;
@@ -111,6 +115,15 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
     allowInsecureLocalAuth: ['1', 'true'].includes(
       env.REWIND_ALLOW_INSECURE_LOCAL_AUTH?.trim().toLowerCase() ?? '',
     ),
+    // The product default is four weeks; a short value supports demo and
+    // local reveal testing (for example 1440 for a one-day cycle).
+    realCycleDurationMs:
+      parsePositiveInteger(
+        env.REWIND_REAL_CYCLE_MINUTES,
+        'REWIND_REAL_CYCLE_MINUTES',
+        REAL_CYCLE_DEFAULT_MINUTES,
+        REAL_CYCLE_DEFAULT_MINUTES,
+      ) * 60_000,
     httpIdleTimeoutMs: parsePositiveInteger(
       env.REWIND_HTTP_IDLE_TIMEOUT_MS,
       'REWIND_HTTP_IDLE_TIMEOUT_MS',
