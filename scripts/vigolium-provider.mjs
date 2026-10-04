@@ -74,8 +74,25 @@ export async function scopedProxy(origin, path, { limit = 120, interval = 550 } 
   const timers = new Set();
   let scheduled = 0;
   let next = 0;
+  let proxyOrigin;
   const server = createServer(async (request, response) => {
-    if (request.url !== path || !['GET', 'POST'].includes(request.method)) {
+    // The JS SDK sends absolute-form request targets. Admit only this proxy's
+    // exact origin/path; never turn an arbitrary absolute URL into an upstream.
+    let inScope = request.url === path;
+    if (!inScope && request.url?.startsWith(`${proxyOrigin}/`)) {
+      try {
+        const requested = new URL(request.url);
+        inScope =
+          requested.origin === proxyOrigin &&
+          requested.pathname + requested.search === path &&
+          !requested.hash &&
+          !requested.username &&
+          !requested.password;
+      } catch {
+        /* Invalid request targets remain outside scope. */
+      }
+    }
+    if (!inScope || !['GET', 'POST'].includes(request.method)) {
       evidence.denied++;
       response.writeHead(403).end();
       return;
@@ -140,8 +157,9 @@ export async function scopedProxy(origin, path, { limit = 120, interval = 550 } 
   server.headersTimeout = 5000;
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
+  proxyOrigin = `http://127.0.0.1:${server.address().port}`;
   return {
-    origin: `http://127.0.0.1:${server.address().port}`,
+    origin: proxyOrigin,
     evidence,
     close: async () => {
       for (const timer of timers) clearTimeout(timer);

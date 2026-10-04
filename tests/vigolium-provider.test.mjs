@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createServer } from 'node:http';
+import { createServer, request } from 'node:http';
 import { once } from 'node:events';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -95,6 +95,54 @@ test('proxy rejects other paths, methods and excess requests and enforces pacing
     assert.equal((await fetch(`${proxy.origin}/chat`)).status, 429);
     assert.equal(reached, 2);
     assert.ok(proxy.evidence.timestamps[1] - proxy.evidence.timestamps[0] >= 90);
+  } finally {
+    await proxy.close();
+    backend.closeAllConnections();
+    await new Promise((resolve) => backend.close(resolve));
+  }
+});
+
+test('SDK absolute-form POST preserves auth/body while foreign origins and query paths stay denied', async () => {
+  const observed = [];
+  const backend = createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    observed.push({ authorization: req.headers.authorization, body, path: req.url });
+    res.writeHead(201).end('{}');
+  });
+  backend.listen(0, '127.0.0.1');
+  await once(backend, 'listening');
+  const proxy = await scopedProxy(`http://127.0.0.1:${backend.address().port}`, '/chat', {
+    interval: 0,
+  });
+  const send = (path) =>
+    new Promise((resolve, reject) => {
+      const req = request(
+        proxy.origin,
+        {
+          method: 'POST',
+          path,
+          headers: { Authorization: 'Bearer synthetic-token', 'Content-Type': 'application/json' },
+        },
+        (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode));
+        },
+      );
+      req.on('error', reject);
+      req.end(JSON.stringify({ body: 'changed JSON value' }));
+    });
+  try {
+    assert.equal(await send(`${proxy.origin}/chat`), 201);
+    assert.equal(await send('http://example.invalid/chat'), 403);
+    assert.equal(await send(`${proxy.origin}/chat?other=1`), 403);
+    assert.deepEqual(observed, [
+      {
+        authorization: 'Bearer synthetic-token',
+        body: '{"body":"changed JSON value"}',
+        path: '/chat',
+      },
+    ]);
   } finally {
     await proxy.close();
     backend.closeAllConnections();

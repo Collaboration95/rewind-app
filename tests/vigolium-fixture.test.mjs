@@ -1,7 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createScanFixture } from '../scripts/vigolium-fixture.mjs';
+import { createScanFixture, verifyFixturePayloads } from '../scripts/vigolium-fixture.mjs';
 import { fixtureContainerArgs } from '../scripts/vigolium-container.mjs';
+
+test('independent replay distinguishes real predicate manipulation from benign values and errors', async () => {
+  const checked = await verifyFixturePayloads([
+    'ordinary unmatched text',
+    "Disposable agentic trial message'",
+    "Disposable agentic trial message' AND 1=1 -- ",
+    "Disposable agentic trial message' AND 1=2 -- ",
+  ]);
+  assert.equal(checked.confirmed, true);
+  assert.deepEqual(
+    checked.checks.map((check) => check.confirmed),
+    [false, false, true, false],
+  );
+  assert.equal((await verifyFixturePayloads(['ordinary unmatched text'])).confirmed, false);
+});
 
 test('real SQL injection exposes synthetic canary; parameterized control rejects it', async () => {
   for (const vulnerable of [true, false]) {
@@ -26,6 +41,11 @@ test('real SQL injection exposes synthetic canary; parameterized control rejects
         vulnerable,
       );
       if (!vulnerable) assert.deepEqual(injected, []);
+      const probe = target.evidence.find((entry) => entry.body === "' OR 1=1 --");
+      assert.equal(probe.authenticated, true);
+      assert.equal(probe.canaryExposed, vulnerable);
+      assert.ok(!JSON.stringify(target.evidence).includes(target.token));
+      assert.ok(target.evidence.some((entry) => !entry.authenticated && entry.status === 401));
     } finally {
       await target.close();
     }

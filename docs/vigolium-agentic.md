@@ -112,6 +112,9 @@ The runner uses `--input -`: Vigolium 0.5.1 skips automatic stdin detection when
 `--target` is present, which would lose the supplied POST body and authorization.
 The request also declares its same-origin HTTP `Origin`; otherwise Vigolium
 assumes HTTPS on the fixture's nonstandard loopback port.
+The proxy accepts both origin-form and the JS SDK's absolute-form request lines,
+but an absolute URL must name this proxy's exact origin and endpoint. Foreign
+origins, other paths and query strings remain blocked.
 No `--source`, personal OAuth credentials, or repository source context is
 provided. Requests and responses, including the disposable bearer token, may be
 sent to the model. This is a data-sharing approval switch, not a complete
@@ -128,7 +131,9 @@ The initial target is one group's chat GET/POST endpoint. The proxy denies other
 paths and methods, caps bodies at 64 KiB, caps admitted requests at 120, spaces
 forwards by 550 ms and times out upstream requests after five seconds. The agent
 has a five-minute budget with a six-minute process deadline. Broad discovery,
-source audit and rescan phases are disabled. AI planning and triage remain enabled.
+source audit and discovery phases are disabled. AI planning and extension generation
+remain enabled. AI triage is disabled for this focused trial because its rescan path
+expanded to all modules despite the requested rescan exclusion.
 The trial selects the error-based SQL injection module and asks the AI to generate
 a small custom extension using paired controls. Broad native boolean SQL injection
 testing exhausted the 120-request gate in the trial, so it is excluded.
@@ -149,9 +154,49 @@ The summary separates informational observations from vulnerability findings and
 explicitly states whether SQL injection was reported. `scanner-completed` describes
 execution; it does not mean the detection trial passed. `requestLimitReached`
 flags exhaustion of the request allowance.
+For the synthetic live trial, `generated-artifacts.json` retains up to ten redacted
+plan/extension files (256 KiB each); raw session conversations are discarded.
+`fixtureProbes` records bounded synthetic body values, authentication booleans,
+statuses and canary exposure without credential headers. Treat generated scripts
+as untrusted code and keep them in the disposable container.
 
-Next validation is a real provider-backed finding on the prepared vulnerable
-fixture, followed by expanding approved endpoint coverage. Do
+`independentVerification` replays up to eight observed changed body values against
+fresh vulnerable and parameterized twins. It establishes SQL predicate manipulation
+only when a changed value returns rows from the vulnerable query while the bound
+parameter returns none, with valid authenticated baselines. Syntax errors alone
+do not pass. `detectionTrialPassed` requires both a scanner SQL injection finding
+and this independent confirmation. The SDK context contract in the prompt tells
+the extension to parse `ctx.request.raw`; `ctx.request.body` is unavailable.
+The synthetic live runner exits nonzero when this detection gate fails, even if
+the scanner process itself completed successfully.
+After swarm generation, the fixture runner explicitly ingests the authenticated
+seed and runs Vigolium's dedicated `run extension` phase using the generated
+files. The installed swarm bridge did not execute their probes in the trial.
+The dedicated phase uses its own scan database and removes the native-only module
+allowlist, which otherwise excludes generated extension IDs.
+Unmodified generated files are copied into the temporary home's default extension
+directory and explicitly selected with `--ext`; starter presets are removed only
+from that owned temporary directory. Both explicit and isolated default
+configuration point to those files. Native extension execution, ingestion and export
+receive no provider key. This is an orchestration workaround, not a patch to
+Vigolium's binary or a hand-written exploit substituted for AI generation.
+Generation instructions require stable true-versus-false response differences,
+without assuming a false OR predicate removes existing baseline matches. Generated
+detectors can still be wrong, so successful process exit alone never passes the
+independent detection gate.
+
+To repeat execution without another provider call, run
+`node scripts/run-vigolium-container.mjs --replay` after a live synthetic run has
+retained `generated-artifacts.json`. Replay uses the network-disabled container,
+passes no API key, and relocates only the generated script's disposable loopback
+fixture URL. It preserves detector logic and overwrites the current report with
+the replay result, explicitly marked `providerContacted: false`.
+
+The repaired execution/export path passed with a retained provider-generated
+detector: a high-severity SQL injection finding was exported and independently
+confirmed. Separate offline execution against the parameterized fixture produced
+no SQL injection finding. This is synthetic evidence; a fresh generation can
+still fail the detection gate. Next validation is expanding approved endpoint coverage. Do
 not make live scanning automatic until scope, isolation, cost and evidence are
 validated.
 

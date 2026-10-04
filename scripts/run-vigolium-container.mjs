@@ -6,8 +6,8 @@ import { resolve } from 'node:path';
 import { fixtureContainerArgs, fixtureImage } from './vigolium-container.mjs';
 
 const mode = process.argv[2];
-if (!['--build', '--verify', '--run'].includes(mode))
-  throw new Error('Choose --build, --verify or --run');
+if (!['--build', '--verify', '--run', '--replay'].includes(mode))
+  throw new Error('Choose --build, --verify, --run or --replay');
 const docker = process.env.REWIND_DOCKER_BIN || 'docker';
 async function execute(args, deadline) {
   const child = spawn(docker, args, { stdio: 'inherit' });
@@ -34,6 +34,7 @@ if (mode === '--build') {
   const output = resolve('vigolium-result/agentic-container');
   const name = `rewind-agentic-${randomUUID()}`;
   const args = fixtureContainerArgs({ live: mode === '--run', env: process.env, output, name });
+  if (mode === '--replay') args[args.length - 2] = '--replay';
   await mkdir(output, { recursive: true });
   try {
     if (mode === '--verify') {
