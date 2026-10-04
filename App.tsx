@@ -4,6 +4,8 @@ import * as Clipboard from 'expo-clipboard';
 import {
   AccessibilityInfo,
   Animated,
+  InputAccessoryView,
+  Keyboard,
   Linking,
   Image,
   Modal,
@@ -794,6 +796,9 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               autoCorrect={false}
               blurOnSubmit={false}
               editable={!authPending && !registrationComplete}
+              inputAccessoryViewID={
+                Platform.OS === 'ios' ? 'registration-keyboard-accessory' : undefined
+              }
               onChangeText={setUsername}
               onSubmitEditing={() => registrationPasswordRef.current?.focus()}
               returnKeyType="next"
@@ -811,6 +816,9 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               autoComplete="new-password"
               blurOnSubmit={false}
               editable={!authPending && !registrationComplete}
+              inputAccessoryViewID={
+                Platform.OS === 'ios' ? 'registration-keyboard-accessory' : undefined
+              }
               onChangeText={setPassword}
               onSubmitEditing={() => registrationConfirmationRef.current?.focus()}
               ref={registrationPasswordRef}
@@ -829,6 +837,9 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
               autoCapitalize="none"
               autoComplete="new-password"
               editable={!authPending && !registrationComplete}
+              inputAccessoryViewID={
+                Platform.OS === 'ios' ? 'registration-keyboard-accessory' : undefined
+              }
               onChangeText={setPasswordConfirmation}
               onSubmitEditing={() => void submitRegistration()}
               ref={registrationConfirmationRef}
@@ -1218,6 +1229,26 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
           </Text>
         ) : null}
       </Animated.ScrollView>
+      {Platform.OS === 'ios' && visibleMode === 'create-account' ? (
+        <InputAccessoryView
+          backgroundColor={COLORS.deep}
+          nativeID="registration-keyboard-accessory"
+        >
+          <View style={styles.registrationKeyboardAccessory}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={Keyboard.dismiss}
+              style={({ pressed }) => [
+                styles.registrationKeyboardDismiss,
+                ...interactionFeedback({ pressed }),
+              ]}
+              testID="registration-keyboard-dismiss"
+            >
+              <Text style={styles.entryActionButtonText}>Hide keyboard</Text>
+            </Pressable>
+          </View>
+        </InputAccessoryView>
+      ) : null}
     </SafeAreaFrame>
   );
 }
@@ -2335,6 +2366,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     minHeight: 50,
     paddingHorizontal: 14,
+  },
+  registrationKeyboardAccessory: {
+    alignItems: 'center',
+    borderTopColor: COLORS.edge,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  registrationKeyboardDismiss: {
+    alignItems: 'center',
+    backgroundColor: COLORS.paper,
+    borderColor: COLORS.edge,
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 16,
   },
   realAccountHome: { justifyContent: 'flex-start' },
   entryChoices: { gap: 12 },

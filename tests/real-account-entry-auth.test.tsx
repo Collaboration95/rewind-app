@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
-import { Platform, Share } from 'react-native';
+import { Keyboard, Platform, Share } from 'react-native';
 
 import App from '../App';
 import { signOutMarkerStore } from '../src/auth/sign-out-marker';
@@ -338,6 +338,21 @@ describe('real account entry flow', () => {
     expect(result.getByRole('button', { name: 'Create account', disabled: true })).toBeTruthy();
     expect(result.queryByTestId('registration-error')).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('offers an accessible native keyboard dismiss action during account creation', async () => {
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios', writable: true });
+    const dismiss = jest.spyOn(Keyboard, 'dismiss').mockImplementation(() => undefined);
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Create account' }));
+
+    expect(result.getByTestId('registration-username').props.inputAccessoryViewID).toBe(
+      'registration-keyboard-accessory',
+    );
+    expect(result.getByRole('button', { name: 'Hide keyboard' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Hide keyboard' }));
+    expect(dismiss).toHaveBeenCalledTimes(1);
   });
 
   it('keeps registration input after service failure and permits one retry', async () => {
