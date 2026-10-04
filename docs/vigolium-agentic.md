@@ -30,23 +30,29 @@ removed at the end. Previous exported findings are removed before a new attempt.
 
 ## Live trial on a disposable worker
 
-### Manual GitHub Actions preparation
+### GitHub Actions validation
 
-`.github/workflows/vigolium-agentic.yml` is a manual `workflow_dispatch` trial.
-It does not run on pushes or pull requests and does not change the existing
-automatic native workflow. The dispatch chooses chat or groups, an OpenAI model,
-and an explicit disposable-data sharing checkbox (false by default). The job
-has read-only repository permissions and a 25-minute timeout. It builds the
-runtime, runs harness/access tests, builds both isolated images, verifies the
-offline connection, then runs the approved provider trial.
+`.github/workflows/vigolium-agentic.yml` validates pushes to `dev` and
+`codex/vigolium-agentic-provider`, plus PRs targeting `dev`. PRs run offline
+against GitHub's proposed merge checkout and receive no provider credentials.
+Authorized branch pushes first pass offline checks, then run fixture, chat and
+groups trials with the same configuration. The fixture must export SQL injection
+and independently confirm it; a successful scanner exit alone is insufficient.
+Live PR jobs are explicitly skipped, including same-repository PRs.
+Manual dispatch supports all trials or one selected target and requires the
+sharing checkbox. Jobs have read-only repository permissions and a 25-minute
+timeout. Redacted artifacts and step summaries provide commit-specific evidence.
 
 The live step alone receives the repository's `OPENAI_API_KEY` secret; the key
 is passed by environment variable name to the scanner container. Report uploads
 use an explicit file allowlist excluding `target.json`, databases and generated
-session files, with seven-day retention. Publishing this workflow and configuring
-the GitHub secret require separately authorized GitHub changes. It has been
-parsed locally and its container path exercised locally; no GitHub run has been
-performed. Automatic dev agentic scans remain deferred until CI is validated.
+session files, with seven-day retention. The existing native workflow remains
+separate. Three provider trials run on every push to an allowed branch; provider
+quota, outages or nondeterministic generation can fail these jobs. Before merging,
+review successful trial artifacts, current Quality status and the PR's offline
+merge checks. After merging, verify the actual `dev` commit's live run; a feature
+branch pass cannot guarantee all future merges. No branch protection is changed
+by this workflow.
 
 ### Offline connection to the real Rewind backend
 
