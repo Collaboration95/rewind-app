@@ -165,9 +165,10 @@ export function VideoCaptureScreen({
   const platform = useMemo(
     () =>
       platformProp ??
+      // Video keeps the in-page recorder: the phone camera sheet records web
+      // video at a low preset (about 480p) that a page cannot raise.
       // eslint-disable-next-line react-hooks/refs
       new ExpoCameraPlatform({
-        browserSystemCamera: true,
         getCameraRef,
       }),
     [getCameraRef, platformProp],
@@ -199,11 +200,19 @@ export function VideoCaptureScreen({
   const [access, setAccess] = useState<AccessStatus>('checking');
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
-  const { height: viewportHeight } = useWindowDimensions();
+  const { height: viewportHeight, width: viewportWidth } = useWindowDimensions();
+  // Size the web viewfinder to the camera's real shape (tall when the phone
+  // is upright, wide when it is turned), like a camera app.
+  const [previewAspect, setPreviewAspect] = useState(9 / 16);
   const webPreviewHeight = Math.max(
     160,
-    Math.min(320, viewportHeight * 0.35) - (recording ? 96 : 0),
+    Math.min(
+      // About 45% of the screen keeps the record controls visible below it.
+      viewportHeight * 0.45 - (recording ? 96 : 0),
+      Math.max(160, viewportWidth - 48) / previewAspect,
+    ),
   );
+  const webPreviewWidth = webPreviewHeight * previewAspect;
   const [browserPreviewStream, setBrowserPreviewStream] = useState<MediaStream | null>(null);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -1394,8 +1403,14 @@ export function VideoCaptureScreen({
       {access === 'ready' && !clip ? (
         <View style={styles.captureArea}>
           {Platform.OS === 'web' ? (
-            <View style={[styles.preview, styles.webPreview, { height: webPreviewHeight }]}>
-              <BrowserVideoPreview stream={browserPreviewStream} />
+            <View
+              style={[
+                styles.preview,
+                styles.webPreview,
+                { alignSelf: 'center', height: webPreviewHeight, width: webPreviewWidth },
+              ]}
+            >
+              <BrowserVideoPreview onAspect={setPreviewAspect} stream={browserPreviewStream} />
             </View>
           ) : (
             <CameraView
@@ -1689,12 +1704,27 @@ function CapturedVideoReview({
   );
 }
 
-function BrowserVideoPreview({ stream }: { stream: MediaStream | null }) {
+function BrowserVideoPreview({
+  onAspect,
+  stream,
+}: {
+  onAspect?: (aspect: number) => void;
+  stream: MediaStream | null;
+}) {
   const setPreviewRef = useCallback(
     (video: HTMLVideoElement | null) => {
-      if (video) video.srcObject = stream;
+      if (!video) return;
+      video.srcObject = stream;
+      // Frame size changes when the phone rotates.
+      const measure = () => {
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          onAspect?.(video.videoWidth / video.videoHeight);
+        }
+      };
+      video.onloadedmetadata = measure;
+      video.onresize = measure;
     },
-    [stream],
+    [onAspect, stream],
   );
   return createElement('video', {
     'aria-label': 'Live camera preview',
@@ -1766,7 +1796,15 @@ const styles = StyleSheet.create({
   panelTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
   captureArea: { flex: 1, gap: 14, minHeight: 0 },
   preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 240 },
-  webPreview: { flex: 0, minHeight: 160, maxHeight: 320, overflow: 'hidden' },
+  // Height and width come from the stream's aspect ratio (see webPreviewHeight).
+  // flex: 0 would become flex-basis 0% on web and override the explicit height.
+  webPreview: {
+    flexBasis: 'auto',
+    flexGrow: 0,
+    flexShrink: 0,
+    minHeight: 160,
+    overflow: 'hidden',
+  },
   recordButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,

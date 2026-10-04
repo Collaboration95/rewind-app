@@ -467,6 +467,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
         facingMode: { ideal: 'environment' },
         // Ask for 1080p; the browser picks the closest supported size and
         // rotates frames to match how the phone is held.
+        frameRate: { ideal: 30 },
         height: { ideal: 1080 },
         width: { ideal: 1920 },
       },
@@ -488,7 +489,13 @@ export class ExpoCameraPlatform implements CameraPlatform {
       throw new Error(support.reason ?? 'This browser cannot record an uploadable MP4 video.');
     }
     const stream = await this.acquireBrowserStream();
-    const recorder = new MediaRecorderConstructor(stream, { mimeType });
+    // Safari's default bitrate is low; 8 Mbps keeps 1080p sharp (about 15 MB
+    // for 15 seconds, within the 50 MB clip limit).
+    const recorder = new MediaRecorderConstructor(stream, {
+      audioBitsPerSecond: 128_000,
+      mimeType,
+      videoBitsPerSecond: 8_000_000,
+    });
     this.browserRecorder = recorder;
     this.browserChunks = [];
     this.browserRecordingCancelled = false;
