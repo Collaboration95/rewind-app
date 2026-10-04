@@ -13,7 +13,11 @@ COPY App.tsx .
 COPY src ./src
 COPY public ./public
 COPY scripts/stamp-pwa-build.mjs ./scripts/stamp-pwa-build.mjs
-RUN EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
+ARG REWIND_BUILD_SHA=local
+ARG REWIND_BUILD_BRANCH=local
+RUN EXPO_PUBLIC_BUILD_SHA="$REWIND_BUILD_SHA" \
+    EXPO_PUBLIC_BUILD_BRANCH="$REWIND_BUILD_BRANCH" \
+    EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
 
 FROM nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 AS runtime
 
