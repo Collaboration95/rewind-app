@@ -47,11 +47,20 @@ export const secureTokenStore: TokenStore = {
   clear: () => SecureStore.deleteItemAsync(SECURE_SESSION_KEY),
 };
 
-export function isSecureAuthUrl(baseUrl: string): boolean {
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+// Dev builds only (`make run-real`): a same-origin plain-HTTP loopback API is
+// accepted because the local server allows HTTP auth only from loopback.
+function isLocalDevAuthUrl(url: URL, devBuild: boolean): boolean {
+  return devBuild && url.protocol === 'http:' && LOOPBACK_HOSTNAMES.has(url.hostname);
+}
+
+export function isSecureAuthUrl(baseUrl: string, devBuild = __DEV__): boolean {
   try {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const url = new URL(baseUrl, window.location.href);
-      return url.protocol === 'https:' && url.origin === window.location.origin;
+      if (url.origin !== window.location.origin) return false;
+      return url.protocol === 'https:' || isLocalDevAuthUrl(url, devBuild);
     }
     return new URL(baseUrl).protocol === 'https:';
   } catch {
