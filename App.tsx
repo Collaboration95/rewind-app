@@ -44,6 +44,7 @@ import {
 import type { RuntimeClient } from './src/runtime/local-runtime-client';
 import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { RuntimeStatusCard } from './src/runtime/RuntimeStatusCard';
+import { BuildTag } from './src/runtime/BuildTag';
 import { DemoSessionProvider, useDemoSession } from './src/session/DemoSessionProvider';
 import type { DemoSessionStore } from './src/domain/session';
 import {
@@ -2014,6 +2015,7 @@ function HomeScreen({
       testID="home-scroll"
     >
       <AppHeader />
+      <BuildTag />
 
       <CapsuleSummary
         clock={clock}

@@ -34,6 +34,7 @@ import {
 } from '../reminders/private-reminder-client';
 import { subscribeToReminderIntents } from '../reminders/reminder-intents';
 import { RealAccountArchiveScreen } from '../archive/ArchiveScreen';
+import { BuildTag } from '../runtime/BuildTag';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -1056,6 +1057,7 @@ export function RealAccountGroupExperience({
         </View>
       ) : screen === 'home' && group ? (
         <View style={styles.panel} testID="real-group-home">
+          <BuildTag />
           {auth.notice === 'revocation-unconfirmed' ||
           auth.notice === 'sign-out-marker-unavailable' ? (
             <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
