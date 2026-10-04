@@ -33,6 +33,8 @@ const expoEnv = {
 };
 
 const children = new Set();
+const proxySockets = new Set();
+let proxy = null;
 let stopping = false;
 
 function start(command, args, env) {
@@ -46,6 +48,8 @@ function stop() {
   if (stopping) return;
   stopping = true;
   for (const child of children) child.kill('SIGINT');
+  proxy?.close();
+  for (const socket of proxySockets) socket.destroy();
 }
 
 process.once('SIGINT', stop);
@@ -111,6 +115,10 @@ function startProxy() {
     upstream.on('error', () => socket.destroy());
     socket.on('error', () => upstream.destroy());
   });
+  server.on('connection', (socket) => {
+    proxySockets.add(socket);
+    socket.once('close', () => proxySockets.delete(socket));
+  });
   server.listen(appPort, '127.0.0.1');
   return server;
 }
@@ -121,8 +129,7 @@ try {
   }
   const runtime = start(process.execPath, ['server/dist/cli.js', 'start'], runtimeEnv);
   await waitForHealth(runtime);
-  const proxy = startProxy();
-  process.once('exit', () => proxy.close());
+  proxy = startProxy();
   console.log(`\nServer data: ${runtimeEnv.REWIND_DATA_DIR}`);
   console.log(`Open http://localhost:${appPort} and create test accounts on the sign-in screen.`);
   console.log('Press Ctrl-C to stop.\n');

@@ -339,7 +339,11 @@ export interface RealAccountArchiveClient {
 }
 
 /** Resolve a server-issued capability at the configured public API origin. */
-export function resolvePublicMediaPath(baseUrl: string, capabilityPath: string): string {
+export function resolvePublicMediaPath(
+  baseUrl: string,
+  capabilityPath: string,
+  devBuild = __DEV__,
+): string {
   let base: URL;
   let capability: URL;
   let target: URL;
@@ -352,8 +356,10 @@ export function resolvePublicMediaPath(baseUrl: string, capabilityPath: string):
     throw new AuthRequestError(502, 'response');
   }
 
+  const secureOrLocalDev = (url: URL) =>
+    url.protocol === 'https:' || isLocalDevAuthUrl(url, devBuild);
   if (
-    base.protocol !== 'https:' ||
+    !secureOrLocalDev(base) ||
     base.username.length > 0 ||
     base.password.length > 0 ||
     base.search.length > 0 ||
@@ -364,7 +370,7 @@ export function resolvePublicMediaPath(baseUrl: string, capabilityPath: string):
     capability.hash.length > 0 ||
     !/^\/media\/access\/[A-Za-z0-9_-]{43}$/.test(capability.pathname) ||
     target.origin !== base.origin ||
-    target.protocol !== 'https:' ||
+    !secureOrLocalDev(target) ||
     target.search.length > 0 ||
     target.hash.length > 0
   ) {
