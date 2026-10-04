@@ -1,6 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { CAPTURE_MODES, type CaptureMode, type RecordedClip } from '../domain/video';
+import {
+  CAPTURE_MODES,
+  DEFAULT_CAPTURE_MODE,
+  type CaptureMode,
+  type RecordedClip,
+} from '../domain/video';
+
+export { CAPTURE_MODE_LABELS } from '../domain/video';
 
 export interface TrimBounds {
   startSeconds: number;
@@ -21,11 +28,6 @@ export interface PendingClipMetadataStore {
 }
 
 export const PENDING_CLIP_METADATA_KEY = '@rewind/pending-clip-metadata-v1';
-
-export const CAPTURE_MODE_LABELS: Record<CaptureMode, string> = {
-  'high-contrast': 'High Contrast',
-  'soft-focus': 'Soft Focus',
-};
 
 export type TrimValidation =
   | { ok: true; bounds: TrimBounds }
@@ -128,7 +130,7 @@ export class ClipReviewSession {
   private readonly defaultClipId: string;
   private pendingClipId: string | null = null;
   private bounds: TrimBounds;
-  private mode: CaptureMode = 'soft-focus';
+  private mode: CaptureMode = DEFAULT_CAPTURE_MODE;
 
   constructor(clip: RecordedClip, metadataStore: PendingClipMetadataStore, now = () => new Date()) {
     this.clip = { ...clip };

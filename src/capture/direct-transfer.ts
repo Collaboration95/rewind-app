@@ -1,7 +1,7 @@
 import type AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-import type { ClipUploadInput } from '../domain/video';
+import { CAPTURE_MODES, DEFAULT_CAPTURE_MODE, type ClipUploadInput } from '../domain/video';
 import { ClipUploadError, MAX_CLIP_BYTES } from './clip-uploader';
 import type { AuthenticatedRequest } from './real-account-video-runtime';
 
@@ -58,6 +58,7 @@ interface RequestMetadata {
   trimStartSeconds: number;
   trimEndSeconds: number;
   mode: NonNullable<ClipUploadInput['mode']>;
+  clientProcessed?: true;
   replacesContributionId?: string;
 }
 interface Checkpoint {
@@ -152,7 +153,8 @@ function metadata(input: ClipUploadInput): RequestMetadata {
         input.durationSeconds > 15 ||
         (input.sourceDurationSeconds !== undefined &&
           (!Number.isFinite(input.sourceDurationSeconds) || end > input.sourceDurationSeconds)))) ||
-    !['soft-focus', 'high-contrast'].includes(input.mode ?? 'soft-focus') ||
+    !CAPTURE_MODES.includes(input.mode ?? DEFAULT_CAPTURE_MODE) ||
+    (input.clientProcessed !== undefined && typeof input.clientProcessed !== 'boolean') ||
     (input.replacesContributionId !== undefined &&
       !/^[A-Za-z0-9_-]{1,128}$/.test(input.replacesContributionId))
   )
@@ -168,7 +170,8 @@ function metadata(input: ClipUploadInput): RequestMetadata {
     durationSeconds: duration,
     trimStartSeconds: start,
     trimEndSeconds: end,
-    mode: input.mode ?? 'soft-focus',
+    mode: input.mode ?? DEFAULT_CAPTURE_MODE,
+    ...(input.clientProcessed ? { clientProcessed: true as const } : {}),
     ...(input.replacesContributionId
       ? { replacesContributionId: input.replacesContributionId }
       : {}),

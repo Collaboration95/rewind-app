@@ -32,9 +32,23 @@ import { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } f
 import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './metadata-store';
 import { ExpoCameraPlatform, isCaptureCancelled } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
+import {
+  CAPTURE_MODE_LABELS,
+  CAPTURE_MODES,
+  DEFAULT_CAPTURE_MODE,
+  type CaptureMode,
+} from '../domain/video';
+import { applyRetroLookToPhoto, type RetroPhotoResult } from './retro-browser';
 import { ContributionStatusPanel, useOptionalContributionStatus } from './contribution-status';
 import { decideInterruption } from './capture-interruption';
 import { runCaptureRestartRecovery } from './reset';
+
+/** How the chosen retro look reaches the server for one photo. */
+export interface PhotoRetroLook {
+  mode: CaptureMode;
+  /** True when this device already applied the look (web). */
+  clientProcessed: boolean;
+}
 
 export interface CameraCaptureScreenProps {
   /** Display context only; group authorization belongs to the caller. */
@@ -52,6 +66,7 @@ export interface CameraCaptureScreenProps {
     base64: string,
     onProgress: (status: import('./contribution-status').ContributionStatus) => void,
     replacesContributionId?: string,
+    look?: PhotoRetroLook,
   ) => Promise<import('./contribution-status').ContributionStatus>;
   onDeletePhotoContribution?: (contributionId: string) => Promise<void>;
   onOpenArchive?: () => void;
@@ -124,6 +139,9 @@ export function CameraCaptureScreen({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [photoSubmitPending, setPhotoSubmitPending] = useState(false);
   const [photoSubmitError, setPhotoSubmitError] = useState<string | null>(null);
+  const [photoMode, setPhotoMode] = useState<CaptureMode>(DEFAULT_CAPTURE_MODE);
+  // A retried submit reuses the same graded bytes under the same capture key.
+  const retroPhotoRef = useRef<{ key: string; result: RetroPhotoResult } | null>(null);
   const contributionStatusContext = useOptionalContributionStatus();
   const contributionStatus = contributionStatusContext?.status ?? null;
   // Captures are asynchronous and the platform may resolve one after the route
@@ -424,17 +442,55 @@ export function CameraCaptureScreen({
     };
     try {
       await session.retainForUpload();
-      const base64 = await resolvedFileStore.readAsBase64(active.previewUri);
+      let base64 = await resolvedFileStore.readAsBase64(active.previewUri);
+      let metadata = active.metadata;
+      const mode = photoMode;
+      // Web applies the retro look here, before upload; native uploads the
+      // original and the server applies the same look.
+      const clientProcessed = Platform.OS === 'web';
+      if (clientProcessed) {
+        const key = `${active.metadata.id}|${mode}`;
+        let graded = retroPhotoRef.current?.key === key ? retroPhotoRef.current.result : null;
+        if (!graded) {
+          try {
+            graded = await applyRetroLookToPhoto({
+              base64,
+              capturedAt: new Date(active.metadata.capturedAt),
+              mimeType: active.metadata.mimeType,
+              mode,
+              seed: active.metadata.id,
+            });
+          } catch (error) {
+            throw new Error(
+              `${
+                error instanceof Error ? error.message : 'The retro look could not be applied.'
+              } Your original photo is kept; try again.`,
+            );
+          }
+          retroPhotoRef.current = { key, result: graded };
+        }
+        base64 = graded.base64;
+        metadata = {
+          ...active.metadata,
+          byteLength: graded.byteLength,
+          format: 'jpg',
+          height: graded.height,
+          mimeType: graded.mimeType,
+          width: graded.width,
+        };
+      }
       contributionStatusContext?.setStatus(latestStatus);
       const submittedStatus = await onSubmitPhoto(
-        active.metadata,
+        metadata,
         base64,
         (status) => {
           latestStatus = status;
           contributionStatusContext?.setStatus(status);
         },
         replacementTarget.current,
+        { mode, clientProcessed },
       );
+      retroPhotoRef.current = null;
       replacementTarget.current = undefined;
       contributionStatusContext?.setStatus(submittedStatus);
       await contributionStatusContext?.refreshStatus();
@@ -460,7 +516,7 @@ export function CameraCaptureScreen({
     } finally {
       setPhotoSubmitPending(false);
     }
-  }, [contributionStatusContext, onSubmitPhoto, resolvedFileStore, session]);
+  }, [contributionStatusContext, onSubmitPhoto, photoMode, resolvedFileStore, session]);
 
   const deletePhotoForReplacement = useCallback(async () => {
     if (
@@ -752,6 +808,8 @@ export function CameraCaptureScreen({
               metadata={state.activePreview.metadata}
               onAccept={accept}
               onSubmit={onSubmitPhoto ? submitPhoto : undefined}
+              mode={photoMode}
+              onModeChange={setPhotoMode}
               submitError={photoSubmitError}
               submitting={photoSubmitPending}
               onDiscard={discard}
@@ -866,6 +924,8 @@ function StatusPanel({
 function PreviewPanel({
   demo,
   metadata,
+  mode,
+  onModeChange,
   onAccept,
   onSubmit,
   submitError,
@@ -878,6 +938,8 @@ function PreviewPanel({
 }: {
   demo: boolean;
   metadata: NonNullable<CaptureState['activePreview']>['metadata'];
+  mode: CaptureMode;
+  onModeChange: (mode: CaptureMode) => void;
   onAccept: () => void | Promise<void>;
   onSubmit?: () => void | Promise<void>;
   submitError?: string | null;
@@ -914,6 +976,22 @@ function PreviewPanel({
       <Text style={styles.previewMeta}>
         {metadata.width} × {metadata.height} · {metadata.format.toUpperCase()}
       </Text>
+      {onSubmit && !saved ? (
+        <View style={styles.previewActions} testID="camera-retro-look">
+          {CAPTURE_MODES.map((option) => (
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ selected: mode === option, disabled: Boolean(submitting) }}
+              disabled={Boolean(submitting)}
+              key={option}
+              onPress={() => onModeChange(option)}
+              style={[styles.secondaryButton, mode === option && styles.selectedLook]}
+            >
+              <Text style={styles.secondaryButtonText}>{CAPTURE_MODE_LABELS[option]}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       {submitError ? (
         <Text accessibilityLiveRegion="assertive" style={styles.errorText}>
           {submitError}
@@ -1043,6 +1121,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   actionButtonText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
+  selectedLook: { backgroundColor: COLORS.accent },
   secondaryButton: {
     alignItems: 'center',
     borderColor: COLORS.edge,

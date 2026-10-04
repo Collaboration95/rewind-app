@@ -30,7 +30,9 @@ const {
 } = await import('../dist/media/index.js');
 const { cleanupOrphanedStagedSources, processClipJob, PROCESSING_CLAIM_LEASE_MS } =
   await import('../dist/jobs/index.js');
-const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
+const { modeFilter, probeClipWithFfmpeg, processPhotoWithFfmpeg } =
+  await import('../dist/ffmpeg.js');
+const { validateClipUpload } = await import('../dist/media/index.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 
 async function withDatabase(run) {
@@ -95,6 +97,7 @@ async function enqueue(
   idempotencyKey,
   trimStartSeconds = 1,
   trimEndSeconds = 1.5,
+  extra = {},
 ) {
   const upload = createClipUpload(
     database,
@@ -113,6 +116,7 @@ async function enqueue(
       trimStartSeconds,
       trimEndSeconds,
       sourceDurationSeconds: 2,
+      ...extra,
     },
     new Date('2026-09-10T12:00:00.000Z'),
   );
@@ -152,7 +156,8 @@ async function firstFrameAverage(path) {
   return { red: red / pixels, green: green / pixels, blue: blue / pixels };
 }
 
-for (const mode of ['soft-focus', 'high-contrast']) {
+// The four retro looks plus the two legacy looks kept for existing rows.
+for (const mode of ['disposable-flash', 'ccd', '8mm', 'vhs', 'soft-focus', 'high-contrast']) {
   test(`FFmpeg produces a playable ${mode} clip with bounded trim and raw cleanup`, async () => {
     await withDatabase(async ({ database, config, dataDir }) => {
       const stagingDir = `${dataDir}/media/staging`;
@@ -163,7 +168,7 @@ for (const mode of ['soft-focus', 'high-contrast']) {
         database,
         stagedSourcePath,
         mode,
-        `mode-${mode.replace('-', '')}-key`,
+        `mode-${mode.replaceAll('-', '')}-key`,
       );
       const result = await processClipJob(database, {
         jobId,
@@ -229,6 +234,104 @@ for (const mode of ['soft-focus', 'high-contrast']) {
     });
   });
 }
+
+test('retro modes and the clientProcessed flag are validated', () => {
+  const base = {
+    idempotencyKey: 'retro-validation-key',
+    sourceUri: '/tmp/retro.mp4',
+    mimeType: 'video/mp4',
+    byteLength: 10_000,
+    durationSeconds: 1,
+    width: 180,
+    height: 320,
+    hasAudio: true,
+    trimStartSeconds: 0,
+    trimEndSeconds: 1,
+  };
+  for (const mode of ['disposable-flash', 'ccd', '8mm', 'vhs', 'soft-focus', 'high-contrast']) {
+    assert.equal(validateClipUpload({ ...base, mode }), null, mode);
+    assert.equal(validateClipUpload({ ...base, mode, clientProcessed: true }), null, mode);
+  }
+  assert.equal(validateClipUpload(base), null);
+  assert.deepEqual(validateClipUpload({ ...base, mode: 'sepia' }), {
+    ok: false,
+    reason: 'invalid_mode',
+  });
+  assert.deepEqual(validateClipUpload({ ...base, mode: 'client:vhs' }), {
+    ok: false,
+    reason: 'invalid_mode',
+  });
+  assert.deepEqual(validateClipUpload({ ...base, mode: 'vhs', clientProcessed: 'yes' }), {
+    ok: false,
+    reason: 'invalid_mode',
+  });
+  assert.equal(modeFilter('client:vhs'), 'null');
+  assert.notEqual(modeFilter('vhs'), 'null');
+});
+
+test('a client-processed clip is normalized without re-applying its look; native uploads get it', async () => {
+  await withDatabase(async ({ database, config, dataDir }) => {
+    const stagingDir = `${dataDir}/media/staging`;
+    await mkdir(stagingDir, { recursive: true });
+    const run = async (key, extra) => {
+      const sourcePath = `${stagingDir}/${key}.mp4`;
+      await createSyntheticSource(sourcePath, 'blue');
+      const jobId = await enqueue(database, sourcePath, '8mm', key, 0, 1, extra);
+      const stored = database.prepare('SELECT mode FROM media_jobs WHERE id = ?').get(jobId);
+      const result = await processClipJob(database, {
+        jobId,
+        ffmpegBin: config.ffmpegBin,
+        stagingDir,
+        outputDir: `${dataDir}/processed`,
+      });
+      assert.deepEqual(result, { ok: true, jobId, status: 'ready' });
+      const row = database
+        .prepare('SELECT output_path AS outputPath FROM media_jobs WHERE id = ?')
+        .get(jobId);
+      return { mode: stored.mode, average: await firstFrameAverage(row.outputPath) };
+    };
+    const client = await run('client-processed-key', { clientProcessed: true });
+    const native = await run('native-retro-key', {});
+    assert.equal(client.mode, 'client:8mm');
+    assert.equal(native.mode, '8mm');
+    // The pure-blue source passes through untouched when the client already
+    // applied the look; the server's 8mm approximation warms and desaturates it.
+    assert.ok(client.average.blue > 200, JSON.stringify(client.average));
+    assert.ok(client.average.red < 40, JSON.stringify(client.average));
+    assert.ok(
+      native.average.blue < client.average.blue - 30 ||
+        native.average.red > client.average.red + 30,
+      `8mm look was not applied: ${JSON.stringify(native.average)}`,
+    );
+  });
+});
+
+test('photo processing accepts every retro look and the client-processed pass-through', async () => {
+  await withDatabase(async ({ config, dataDir }) => {
+    const inputPath = `${dataDir}/still.jpg`;
+    await execFileAsync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=blue:size=181x321',
+      '-frames:v',
+      '1',
+      inputPath,
+    ]);
+    for (const mode of ['disposable-flash', 'ccd', '8mm', 'vhs', 'client:ccd']) {
+      const result = await processPhotoWithFfmpeg(config.ffmpegBin, {
+        inputPath,
+        outputPath: `${dataDir}/${mode.replace(':', '-')}.mp4`,
+        mode,
+      });
+      assert.equal(result.durationSeconds, 3, mode);
+    }
+  });
+});
 
 test('the shared probe accepts only playable portrait MP4 sources with audio', async () => {
   await withDatabase(async ({ config, dataDir }) => {
