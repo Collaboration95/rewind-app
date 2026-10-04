@@ -246,8 +246,10 @@ jobs:
           fi
           # Once configured, a read failure (access, network, missing object)
           # fails the deploy instead of shipping stale settings.
+          # Read fully before sending so a partial download is never applied.
+          settings="$(aws s3 cp "$REWIND_HOSTED_ENV_URI" -)"
           # shellcheck disable=SC2086
-          aws s3 cp "$REWIND_HOSTED_ENV_URI" - |
+          printf '%s\n' "$settings" |
             ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" 'bash /tmp/release-host.sh configure'
 
       - name: Install the release on the host
