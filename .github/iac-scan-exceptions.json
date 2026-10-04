@@ -43,10 +43,18 @@
     {
       "id": "AWS-0132",
       "target": "infra/terraform/media/main.tf",
-      "resource": "aws_s3_bucket_server_side_encryption_configuration.media",
+      "resource": "module.media",
       "owner": "Guruprasath",
       "expires": "2026-10-31",
-      "reason": "Accepted risk: the private, versioned dev media bucket uses SSE-S3 (AES256), which meets the encryption-at-rest requirement; a customer-managed KMS key adds cost and needs KMS rights the apply role does not have."
+      "reason": "Accepted risk: the private, versioned dev and release media buckets (media root, reused by release as module.media) use SSE-S3 (AES256), which meets the encryption-at-rest requirement; a customer-managed KMS key adds cost and needs KMS rights the apply role does not have."
+    },
+    {
+      "id": "AWS-0011",
+      "target": "infra/terraform/release/main.tf",
+      "resource": "aws_cloudfront_distribution.release",
+      "owner": "Guruprasath",
+      "expires": "2026-10-31",
+      "reason": "Accepted risk: the release CloudFront distribution matches the dev distribution (HTTPS redirect, no caching of private API responses, origin secret header) without AWS WAF; a web ACL adds monthly cost outside this academic deployment."
     }
   ]
 }
