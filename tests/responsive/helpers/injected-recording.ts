@@ -294,7 +294,11 @@ export async function inspectRecording(page: Page, testInfo: TestInfo, index: nu
   expect(rms).toBeLessThan(0.3);
   expect(crossings).toBeGreaterThan(430);
   expect(crossings).toBeLessThan(450);
-  expect(metadata.streams.find((stream) => stream.codec_type === 'audio')?.codec_name).toBe('aac');
+  // Safari and Chrome record AAC; open-source Chromium (CI) can only encode Opus
+  // in MP4. The server re-encodes either; the tone check above proves the audio.
+  expect(['aac', 'opus']).toContain(
+    metadata.streams.find((stream) => stream.codec_type === 'audio')?.codec_name,
+  );
   expect(metadata.streams.find((stream) => stream.codec_type === 'video')?.codec_name).toBe('h264');
   const evidence = { ...metadata, decodedAudio: { rms, positiveCrossingsPerSecond: crossings } };
   await testInfo.attach(`encoded-media-${index}`, {
