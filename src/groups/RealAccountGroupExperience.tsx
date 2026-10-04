@@ -594,6 +594,21 @@ export function RealAccountGroupExperience({
     );
   }
 
+  const tabBar = group ? (
+    <RealGroupTabBar
+      active={screen}
+      capturePending={capturePending}
+      onSelect={(tab) => {
+        if (tab === 'capture') {
+          void openCapture();
+          return;
+        }
+        if (tab !== 'home') setHomeAllowance(null);
+        setScreen(tab);
+      }}
+    />
+  ) : null;
+
   if (screen === 'chat' && group) {
     return (
       <View style={styles.captureContainer}>
@@ -610,6 +625,7 @@ export function RealAccountGroupExperience({
           currentMemberId={group.memberId}
           onBack={() => setScreen('home')}
         />
+        {tabBar}
       </View>
     );
   }
@@ -629,6 +645,7 @@ export function RealAccountGroupExperience({
           authenticatedRequest={auth.authenticatedRequest}
           onBack={() => setScreen('home')}
         />
+        {tabBar}
       </View>
     );
   }
@@ -856,451 +873,509 @@ export function RealAccountGroupExperience({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.content} testID="real-group-experience">
-      <View style={styles.brand}>
-        <Text style={styles.wordmark}>REWIND</Text>
-        <Text style={styles.label}>{displayName}</Text>
-      </View>
-      {inviteIntent ? (
-        <View style={styles.inviteIntent} testID="real-invite-intent">
-          <Text style={styles.panelTitle}>Invitation retained</Text>
-          <Text style={styles.body}>Your group invitation is ready.</Text>
-          <Text style={styles.body}>
-            Expires {new Date(inviteIntent.expiresAt).toLocaleString()}
-          </Text>
-          <Text style={styles.body}>
-            Sign-in is complete. Accept the invitation to join this private group.
-          </Text>
-          <Action
-            title={acceptPending ? 'Joining…' : 'Accept invitation'}
-            disabled={acceptPending}
-            onPress={() => void acceptInvitation(inviteIntent.code, inviteIntent.groupId)}
-            testID="real-invite-accept"
-          />
-          {inviteFeedback ? (
-            <Text accessibilityRole="alert" style={styles.body} testID="real-invite-feedback">
-              {inviteFeedback}
+    <View style={styles.captureContainer}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        style={styles.captureContainer}
+        testID="real-group-experience"
+      >
+        <View style={styles.brand}>
+          <Text style={styles.wordmark}>REWIND</Text>
+          <Text style={styles.label}>{displayName}</Text>
+        </View>
+        {inviteIntent ? (
+          <View style={styles.inviteIntent} testID="real-invite-intent">
+            <Text style={styles.panelTitle}>Invitation retained</Text>
+            <Text style={styles.body}>Your group invitation is ready.</Text>
+            <Text style={styles.body}>
+              Expires {new Date(inviteIntent.expiresAt).toLocaleString()}
             </Text>
-          ) : null}
-        </View>
-      ) : null}
-      {screen === 'loading' ? (
-        <View testID="real-group-loading">
-          <Text style={styles.title}>Restoring your group…</Text>
-        </View>
-      ) : screen === 'error' ? (
-        <View>
-          <Text accessibilityRole="header" style={styles.title}>
-            Group unavailable
-          </Text>
-          <Text accessibilityRole="alert" style={styles.body}>
-            {message}
-          </Text>
-          <Action
-            title="Retry"
-            onPress={() => {
-              setMessage(null);
-              setScreen('loading');
-              void load();
-            }}
-            testID="real-group-retry"
-          />
-        </View>
-      ) : screen === 'choices' ? (
-        <View style={styles.panel}>
-          <Text accessibilityRole="header" style={styles.title}>
-            Choose a group
-          </Text>
-          {auth.notice === 'revocation-unconfirmed' ||
-          auth.notice === 'sign-out-marker-unavailable' ? (
-            <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
-              {auth.notice === 'sign-out-marker-unavailable'
-                ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
-                : Platform.OS === 'web'
-                  ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
-                  : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
-            </Text>
-          ) : null}
-          <Text style={styles.body}>
-            Create a private group for your account, or join later with an invitation.
-          </Text>
-          <Action
-            title="Create group"
-            onPress={() => {
-              setMessage(null);
-              setScreen('create');
-            }}
-            testID="real-group-create-choice"
-          />
-          <Text style={styles.body}>Have an invitation code? Enter it to join your group.</Text>
-          <TextInput
-            accessibilityLabel="Invitation code"
-            autoCapitalize="characters"
-            autoCorrect={false}
-            onChangeText={setEnteredCode}
-            placeholder="ABC-DEF"
-            placeholderTextColor={COLORS.muted}
-            style={styles.input}
-            testID="real-group-enter-code"
-            value={enteredCode}
-          />
-          <Action
-            title={acceptPending ? 'Joining…' : 'Join with code'}
-            disabled={acceptPending}
-            onPress={() => void acceptInvitation(enteredCode)}
-            testID="real-group-join-choice"
-          />
-          {inviteFeedback ? (
-            <Text accessibilityRole="alert" style={styles.error} testID="real-group-join-feedback">
-              {inviteFeedback}
-            </Text>
-          ) : null}
-          {group ? <Action title="Back to group" onPress={() => setScreen('home')} /> : null}
-          <Action
-            title={
-              auth.pending
-                ? 'Signing out…'
-                : auth.notice === 'revocation-unconfirmed' ||
-                    auth.notice === 'sign-out-marker-unavailable'
-                  ? 'Retry sign out'
-                  : 'Sign out'
-            }
-            disabled={auth.pending}
-            onPress={signOut}
-            testID="real-group-sign-out"
-          />
-        </View>
-      ) : screen === 'create' ? (
-        <View style={styles.panel}>
-          <Text accessibilityRole="header" style={styles.title}>
-            Create your private group
-          </Text>
-          <Text style={styles.body}>You’ll be the owner. The first cycle lasts four weeks.</Text>
-          <Text style={styles.label}>GROUP NAME</Text>
-          <TextInput
-            accessibilityLabel="Group name"
-            maxLength={GROUP_NAME_MAX_LENGTH + 1}
-            onChangeText={setName}
-            style={styles.input}
-            testID="real-group-name"
-            value={name}
-          />
-          <Text style={styles.label}>CYCLE PROMPT</Text>
-          {BUILT_IN_PROMPTS.map((item) => (
-            <Action
-              key={item}
-              title={`${prompt === item && !useCustomPrompt ? '✓ ' : ''}${item}`}
-              onPress={() => {
-                setPrompt(item);
-                setUseCustomPrompt(false);
-              }}
-            />
-          ))}
-          <Action
-            title="Write a custom prompt"
-            onPress={() => setUseCustomPrompt(true)}
-            testID="real-group-custom-prompt-choice"
-          />
-          {useCustomPrompt ? (
-            <TextInput
-              accessibilityLabel="Custom prompt"
-              maxLength={PROMPT_MAX_LENGTH + 1}
-              multiline
-              onChangeText={setCustomPrompt}
-              style={[styles.input, styles.multiline]}
-              testID="real-group-custom-prompt"
-              value={customPrompt}
-            />
-          ) : null}
-          <Text style={styles.label}>MEMBER LIMIT (INCLUDING YOU)</Text>
-          <View style={styles.capacity}>
-            <Action
-              title="−"
-              disabled={maxMembers <= 2}
-              onPress={() => setMaxMembers((value) => value - 1)}
-              testID="real-group-capacity-decrease"
-            />
-            <Text
-              accessibilityLiveRegion="polite"
-              style={styles.capacityText}
-              testID="real-group-capacity"
-            >
-              {maxMembers}
+            <Text style={styles.body}>
+              Sign-in is complete. Accept the invitation to join this private group.
             </Text>
             <Action
-              title="+"
-              disabled={maxMembers >= 10}
-              onPress={() => setMaxMembers((value) => value + 1)}
-              testID="real-group-capacity-increase"
+              title={acceptPending ? 'Joining…' : 'Accept invitation'}
+              disabled={acceptPending}
+              onPress={() => void acceptInvitation(inviteIntent.code, inviteIntent.groupId)}
+              testID="real-invite-accept"
             />
-          </View>
-          <Text style={styles.body}>You are the first member in this private group.</Text>
-          {message ? (
-            <Text accessibilityRole="alert" style={styles.error}>
-              {message}
-            </Text>
-          ) : null}
-          <Action
-            title={pending ? 'Creating…' : 'Create group'}
-            disabled={pending}
-            onPress={() => void create()}
-            testID="real-group-create-submit"
-          />
-          <Action
-            title="Back"
-            disabled={pending}
-            onPress={() => {
-              setMessage(null);
-              setScreen('choices');
-            }}
-          />
-        </View>
-      ) : screen === 'home' && group ? (
-        <View style={styles.panel} testID="real-group-home">
-          <BuildTag />
-          {auth.notice === 'revocation-unconfirmed' ||
-          auth.notice === 'sign-out-marker-unavailable' ? (
-            <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
-              {auth.notice === 'sign-out-marker-unavailable'
-                ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
-                : Platform.OS === 'web'
-                  ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
-                  : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
-            </Text>
-          ) : null}
-          <Text style={styles.label} testID="real-group-active-context">
-            Your group
-          </Text>
-          <Text accessibilityRole="header" style={styles.title} testID="real-group-name-heading">
-            {group.group.name}
-          </Text>
-          <Text style={styles.body}>{group.group.role === 'owner' ? 'Owner' : 'Member'}</Text>
-          <Text style={styles.body}>Up to {group.group.maxMembers} members</Text>
-          <View style={styles.invitationPanel} testID="real-group-members">
-            <Text accessibilityRole="header" style={styles.label}>
-              {groupMembers
-                ? `MEMBERS · ${groupMembers.members.length}/${group.group.maxMembers}`
-                : 'MEMBERS'}
-            </Text>
-            {groupMembers?.members.length ? (
-              groupMembers.members.map((member, index) => (
-                <Text
-                  key={`${member.role}-${member.joinedAt}-${index}`}
-                  accessibilityLabel={`${member.displayName}, ${member.role}`}
-                  style={styles.body}
-                  testID={`real-group-member-${index}`}
-                >
-                  {member.displayName} · {member.role === 'owner' ? 'Owner' : 'Member'}
-                </Text>
-              ))
-            ) : (
-              <Text style={styles.body} testID="real-group-members-empty">
-                {groupMembers
-                  ? 'No member profiles are available.'
-                  : (groupMembersError ?? 'Loading group members…')}
+            {inviteFeedback ? (
+              <Text accessibilityRole="alert" style={styles.body} testID="real-invite-feedback">
+                {inviteFeedback}
               </Text>
-            )}
-            <Text style={styles.body} testID="real-group-pending-invites">
-              {groupMembers?.pendingInviteCount
-                ? `${groupMembers.pendingInviteCount} pending ${groupMembers.pendingInviteCount === 1 ? 'invitation' : 'invitations'}`
-                : groupMembers
-                  ? 'No pending invitations'
-                  : groupMembersError
-                    ? 'Invitation status unavailable.'
-                    : 'Loading invitation status…'}
-            </Text>
+            ) : null}
           </View>
-          {message ? (
-            <Text accessibilityRole="alert" style={styles.error} testID="real-group-switch-error">
+        ) : null}
+        {screen === 'loading' ? (
+          <View testID="real-group-loading">
+            <Text style={styles.title}>Restoring your group…</Text>
+          </View>
+        ) : screen === 'error' ? (
+          <View>
+            <Text accessibilityRole="header" style={styles.title}>
+              Group unavailable
+            </Text>
+            <Text accessibilityRole="alert" style={styles.body}>
               {message}
             </Text>
-          ) : null}
-          {memberGroups.length > 1 ? (
-            <View style={styles.invitationPanel} testID="real-group-switcher">
-              <Text style={styles.label}>YOUR GROUPS</Text>
-              {memberGroups
-                .filter((membership) => membership.group.id !== group.group.id)
-                .map((membership) => (
-                  <Action
-                    key={membership.group.id}
-                    title={`Switch to ${membership.group.name}`}
-                    disabled={pending}
-                    onPress={() => void switchGroup(membership.group.id)}
-                    testID={`switch-real-group-${membership.group.id}`}
-                  />
-                ))}
-            </View>
-          ) : null}
-          <Action title="Join another group" onPress={() => setScreen('choices')} />
-          {group.group.role === 'owner' ? (
-            <View style={styles.invitationPanel} testID="real-group-invitations">
-              <Text style={styles.label}>GROUP INVITATION</Text>
-              <Text style={styles.body}>
-                Create a private invitation code that expires in 24 hours.
+            <Action
+              title="Retry"
+              onPress={() => {
+                setMessage(null);
+                setScreen('loading');
+                void load();
+              }}
+              testID="real-group-retry"
+            />
+          </View>
+        ) : screen === 'choices' ? (
+          <View style={styles.panel}>
+            <Text accessibilityRole="header" style={styles.title}>
+              Choose a group
+            </Text>
+            {auth.notice === 'revocation-unconfirmed' ||
+            auth.notice === 'sign-out-marker-unavailable' ? (
+              <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
+                {auth.notice === 'sign-out-marker-unavailable'
+                  ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                  : Platform.OS === 'web'
+                    ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
+                    : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
+              </Text>
+            ) : null}
+            <Text style={styles.body}>
+              Create a private group for your account, or join later with an invitation.
+            </Text>
+            <Action
+              title="Create group"
+              onPress={() => {
+                setMessage(null);
+                setScreen('create');
+              }}
+              testID="real-group-create-choice"
+            />
+            <Text style={styles.body}>Have an invitation code? Enter it to join your group.</Text>
+            <TextInput
+              accessibilityLabel="Invitation code"
+              autoCapitalize="characters"
+              autoCorrect={false}
+              onChangeText={setEnteredCode}
+              placeholder="ABC-DEF"
+              placeholderTextColor={COLORS.muted}
+              style={styles.input}
+              testID="real-group-enter-code"
+              value={enteredCode}
+            />
+            <Action
+              title={acceptPending ? 'Joining…' : 'Join with code'}
+              disabled={acceptPending}
+              onPress={() => void acceptInvitation(enteredCode)}
+              testID="real-group-join-choice"
+            />
+            {inviteFeedback ? (
+              <Text
+                accessibilityRole="alert"
+                style={styles.error}
+                testID="real-group-join-feedback"
+              >
+                {inviteFeedback}
+              </Text>
+            ) : null}
+            {group ? <Action title="Back to group" onPress={() => setScreen('home')} /> : null}
+            <Action
+              title={
+                auth.pending
+                  ? 'Signing out…'
+                  : auth.notice === 'revocation-unconfirmed' ||
+                      auth.notice === 'sign-out-marker-unavailable'
+                    ? 'Retry sign out'
+                    : 'Sign out'
+              }
+              disabled={auth.pending}
+              onPress={signOut}
+              testID="real-group-sign-out"
+            />
+          </View>
+        ) : screen === 'create' ? (
+          <View style={styles.panel}>
+            <Text accessibilityRole="header" style={styles.title}>
+              Create your private group
+            </Text>
+            <Text style={styles.body}>You’ll be the owner. The first cycle lasts four weeks.</Text>
+            <Text style={styles.label}>GROUP NAME</Text>
+            <TextInput
+              accessibilityLabel="Group name"
+              maxLength={GROUP_NAME_MAX_LENGTH + 1}
+              onChangeText={setName}
+              style={styles.input}
+              testID="real-group-name"
+              value={name}
+            />
+            <Text style={styles.label}>CYCLE PROMPT</Text>
+            {BUILT_IN_PROMPTS.map((item) => (
+              <Action
+                key={item}
+                title={`${prompt === item && !useCustomPrompt ? '✓ ' : ''}${item}`}
+                onPress={() => {
+                  setPrompt(item);
+                  setUseCustomPrompt(false);
+                }}
+              />
+            ))}
+            <Action
+              title="Write a custom prompt"
+              onPress={() => setUseCustomPrompt(true)}
+              testID="real-group-custom-prompt-choice"
+            />
+            {useCustomPrompt ? (
+              <TextInput
+                accessibilityLabel="Custom prompt"
+                maxLength={PROMPT_MAX_LENGTH + 1}
+                multiline
+                onChangeText={setCustomPrompt}
+                style={[styles.input, styles.multiline]}
+                testID="real-group-custom-prompt"
+                value={customPrompt}
+              />
+            ) : null}
+            <Text style={styles.label}>MEMBER LIMIT (INCLUDING YOU)</Text>
+            <View style={styles.capacity}>
+              <Action
+                title="−"
+                disabled={maxMembers <= 2}
+                onPress={() => setMaxMembers((value) => value - 1)}
+                testID="real-group-capacity-decrease"
+              />
+              <Text
+                accessibilityLiveRegion="polite"
+                style={styles.capacityText}
+                testID="real-group-capacity"
+              >
+                {maxMembers}
               </Text>
               <Action
-                title={invitePending ? 'Creating invitation…' : 'Create invitation code'}
-                disabled={invitePending}
-                onPress={() => void createInvitation()}
-                testID="real-group-create-invite"
+                title="+"
+                disabled={maxMembers >= 10}
+                onPress={() => setMaxMembers((value) => value + 1)}
+                testID="real-group-capacity-increase"
               />
-              {invite ? (
-                <>
-                  <Text style={styles.body} testID="real-group-invite-expiry">
-                    Expires {new Date(invite.expiresAt).toLocaleString()} · Active
-                  </Text>
-                  <Text selectable style={styles.inviteCode} testID="real-group-invite-code">
-                    {displayInviteCode(invite.code)}
-                  </Text>
-                  <Action
-                    title="Copy invitation code"
-                    onPress={() => void copyInvitation()}
-                    testID="real-group-copy-invite"
-                  />
-                  <Action
-                    title="Share invitation code"
-                    onPress={() => void shareInvitation()}
-                    testID="real-group-share-invite"
-                  />
-                  {inviteLink ? (
-                    <Action title="Copy invite link" onPress={() => void copyInvitationLink()} />
-                  ) : null}
-                  <Action
-                    title={invitePending ? 'Revoking invitation…' : 'Revoke invitation code'}
-                    disabled={invitePending}
-                    onPress={() => void revokeInvitation()}
-                    testID="real-group-revoke-invite"
-                  />
-                </>
-              ) : null}
-              {inviteFeedback ? (
-                <Text
-                  accessibilityLiveRegion="polite"
-                  accessibilityRole="alert"
-                  style={styles.body}
-                >
-                  {inviteFeedback}
-                </Text>
-              ) : null}
             </View>
-          ) : null}
-          <View style={styles.divider} />
-          <Text style={styles.label}>CURRENT CAPTURE CYCLE</Text>
-          <Text style={styles.body}>
-            Contributions here are separate from previously released films.
-          </Text>
-          <Text style={styles.body} testID="real-group-countdown">
-            {remainingLabel(group.cycle.endsAt)}
-          </Text>
-          <Text style={styles.label}>THIS CYCLE’S PROMPT</Text>
-          <Text style={styles.prompt} testID="real-group-cycle-prompt">
-            {group.cycle.prompt}
-          </Text>
-          <View style={styles.invitationPanel} testID="real-group-releases">
-            <Text style={styles.label}>PREVIOUS RELEASES</Text>
-            {(group.releases ?? []).filter((release) => release.cycleId !== group.cycle.id)
-              .length === 0 ? (
-              <Text style={styles.body} testID="real-group-releases-empty">
-                Earlier group films will remain available in Archive after release.
+            <Text style={styles.body}>You are the first member in this private group.</Text>
+            {message ? (
+              <Text accessibilityRole="alert" style={styles.error}>
+                {message}
               </Text>
-            ) : (
-              (group.releases ?? [])
-                .filter((release) => release.cycleId !== group.cycle.id)
-                .map((release) => (
-                  <View key={release.cycleId} style={styles.releaseRow}>
-                    <Text style={styles.body} testID={`real-group-release-${release.cycleId}`}>
-                      {release.state === 'processing'
-                        ? 'Film processing'
-                        : release.state === 'delayed'
-                          ? 'Release delayed'
-                          : release.state === 'premiere'
-                            ? 'Premiere ready'
-                            : 'Archived film'}
-                      {' · '}
-                      Cycle ended {new Date(release.endsAt).toLocaleDateString()}
-                    </Text>
-                  </View>
-                ))
-            )}
+            ) : null}
             <Action
-              title="Open Archive"
-              onPress={() => setScreen('archive')}
-              testID="real-group-open-archive"
+              title={pending ? 'Creating…' : 'Create group'}
+              disabled={pending}
+              onPress={() => void create()}
+              testID="real-group-create-submit"
+            />
+            <Action
+              title="Back"
+              disabled={pending}
+              onPress={() => {
+                setMessage(null);
+                setScreen('choices');
+              }}
             />
           </View>
-          <RealGroupSettings
-            key={group.group.id}
-            group={group}
-            authenticatedRequest={auth.authenticatedRequest}
-            onUpdated={(updated) =>
-              setGroup((current) =>
-                current ? { ...updated, releases: updated.releases ?? current.releases } : updated,
-              )
-            }
-          />
-          {reminderClient ? (
-            <PrivateReminderSubscription
-              client={reminderClient}
-              disabled={pending || acceptPending || auth.pending}
-            />
-          ) : null}
-          <Text style={styles.label}>MY ALLOWANCE</Text>
-          <Text style={styles.body} testID="real-group-allowance">
-            {homeAllowance
-              ? `${homeAllowance.countUsed} of ${homeAllowance.maxCount} contributions · ${homeAllowance.secondsUsed} of ${homeAllowance.maxSeconds} seconds used`
-              : 'Loading allowance…'}
-          </Text>
-          <ContributionLedgerSection
-            cycleId={group.cycle.id}
-            groupId={group.group.id}
-            loadPage={loadContributionLedger}
-            onPageLoaded={handleHomeLedgerPage}
-            memberId={group.memberId ?? auth.session?.account.id ?? ''}
-            sessionId="real-account-session"
-          />
-          {group.cycle.contributionCount === 0 ? (
-            <View style={styles.empty} testID="real-group-empty-contributions">
-              <Text style={styles.panelTitle}>No contributions yet</Text>
-              <Text style={styles.body}>Nothing has been contributed to this cycle.</Text>
-            </View>
-          ) : (
-            <View style={styles.empty} testID="real-group-contribution-summary">
-              <Text style={styles.panelTitle}>{group.cycle.contributionCount} contributions</Text>
-              <Text style={styles.body}>
-                Contribution details will appear when real capture is available.
+        ) : screen === 'home' && group ? (
+          <View style={styles.panel} testID="real-group-home">
+            <BuildTag />
+            {auth.notice === 'revocation-unconfirmed' ||
+            auth.notice === 'sign-out-marker-unavailable' ? (
+              <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
+                {auth.notice === 'sign-out-marker-unavailable'
+                  ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                  : Platform.OS === 'web'
+                    ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
+                    : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
+              </Text>
+            ) : null}
+            <Text style={styles.label} testID="real-group-active-context">
+              Your group
+            </Text>
+            <Text accessibilityRole="header" style={styles.title} testID="real-group-name-heading">
+              {group.group.name}
+            </Text>
+            <Text style={styles.body}>{group.group.role === 'owner' ? 'Owner' : 'Member'}</Text>
+            <Text style={styles.body}>Up to {group.group.maxMembers} members</Text>
+            <View style={styles.invitationPanel} testID="real-group-members">
+              <Text accessibilityRole="header" style={styles.label}>
+                {groupMembers
+                  ? `MEMBERS · ${groupMembers.members.length}/${group.group.maxMembers}`
+                  : 'MEMBERS'}
+              </Text>
+              {groupMembers?.members.length ? (
+                groupMembers.members.map((member, index) => (
+                  <Text
+                    key={`${member.role}-${member.joinedAt}-${index}`}
+                    accessibilityLabel={`${member.displayName}, ${member.role}`}
+                    style={styles.body}
+                    testID={`real-group-member-${index}`}
+                  >
+                    {member.displayName} · {member.role === 'owner' ? 'Owner' : 'Member'}
+                  </Text>
+                ))
+              ) : (
+                <Text style={styles.body} testID="real-group-members-empty">
+                  {groupMembers
+                    ? 'No member profiles are available.'
+                    : (groupMembersError ?? 'Loading group members…')}
+                </Text>
+              )}
+              <Text style={styles.body} testID="real-group-pending-invites">
+                {groupMembers?.pendingInviteCount
+                  ? `${groupMembers.pendingInviteCount} pending ${groupMembers.pendingInviteCount === 1 ? 'invitation' : 'invitations'}`
+                  : groupMembers
+                    ? 'No pending invitations'
+                    : groupMembersError
+                      ? 'Invitation status unavailable.'
+                      : 'Loading invitation status…'}
               </Text>
             </View>
-          )}
-          <Action
-            title={capturePending ? 'Checking capture…' : 'Capture a moment'}
-            disabled={capturePending}
-            onPress={() => void openCapture()}
-            testID="real-group-capture-action"
-          />
-          <Action
-            title="Chat"
-            onPress={() => {
-              setHomeAllowance(null);
-              setScreen('chat');
-            }}
-            testID="real-group-chat-action"
-          />
-          <Action
-            title={
-              auth.pending
-                ? 'Signing out…'
-                : auth.notice === 'revocation-unconfirmed' ||
-                    auth.notice === 'sign-out-marker-unavailable'
-                  ? 'Retry sign out'
-                  : 'Sign out'
-            }
-            disabled={auth.pending}
-            onPress={signOut}
-            testID="real-group-sign-out"
-          />
-        </View>
-      ) : null}
-    </ScrollView>
+            {message ? (
+              <Text accessibilityRole="alert" style={styles.error} testID="real-group-switch-error">
+                {message}
+              </Text>
+            ) : null}
+            {memberGroups.length > 1 ? (
+              <View style={styles.invitationPanel} testID="real-group-switcher">
+                <Text style={styles.label}>YOUR GROUPS</Text>
+                {memberGroups
+                  .filter((membership) => membership.group.id !== group.group.id)
+                  .map((membership) => (
+                    <Action
+                      key={membership.group.id}
+                      title={`Switch to ${membership.group.name}`}
+                      disabled={pending}
+                      onPress={() => void switchGroup(membership.group.id)}
+                      testID={`switch-real-group-${membership.group.id}`}
+                    />
+                  ))}
+              </View>
+            ) : null}
+            <Action title="Join another group" onPress={() => setScreen('choices')} />
+            {group.group.role === 'owner' ? (
+              <View style={styles.invitationPanel} testID="real-group-invitations">
+                <Text style={styles.label}>GROUP INVITATION</Text>
+                <Text style={styles.body}>
+                  Create a private invitation code that expires in 24 hours.
+                </Text>
+                <Action
+                  title={invitePending ? 'Creating invitation…' : 'Create invitation code'}
+                  disabled={invitePending}
+                  onPress={() => void createInvitation()}
+                  testID="real-group-create-invite"
+                />
+                {invite ? (
+                  <>
+                    <Text style={styles.body} testID="real-group-invite-expiry">
+                      Expires {new Date(invite.expiresAt).toLocaleString()} · Active
+                    </Text>
+                    <Text selectable style={styles.inviteCode} testID="real-group-invite-code">
+                      {displayInviteCode(invite.code)}
+                    </Text>
+                    <Action
+                      title="Copy invitation code"
+                      onPress={() => void copyInvitation()}
+                      testID="real-group-copy-invite"
+                    />
+                    <Action
+                      title="Share invitation code"
+                      onPress={() => void shareInvitation()}
+                      testID="real-group-share-invite"
+                    />
+                    {inviteLink ? (
+                      <Action title="Copy invite link" onPress={() => void copyInvitationLink()} />
+                    ) : null}
+                    <Action
+                      title={invitePending ? 'Revoking invitation…' : 'Revoke invitation code'}
+                      disabled={invitePending}
+                      onPress={() => void revokeInvitation()}
+                      testID="real-group-revoke-invite"
+                    />
+                  </>
+                ) : null}
+                {inviteFeedback ? (
+                  <Text
+                    accessibilityLiveRegion="polite"
+                    accessibilityRole="alert"
+                    style={styles.body}
+                  >
+                    {inviteFeedback}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+            <View style={styles.divider} />
+            <Text style={styles.label}>CURRENT CAPTURE CYCLE</Text>
+            <Text style={styles.body}>
+              Contributions here are separate from previously released films.
+            </Text>
+            <Text style={styles.body} testID="real-group-countdown">
+              {remainingLabel(group.cycle.endsAt)}
+            </Text>
+            <Text style={styles.label}>THIS CYCLE’S PROMPT</Text>
+            <Text style={styles.prompt} testID="real-group-cycle-prompt">
+              {group.cycle.prompt}
+            </Text>
+            <View style={styles.invitationPanel} testID="real-group-releases">
+              <Text style={styles.label}>PREVIOUS RELEASES</Text>
+              {(group.releases ?? []).filter((release) => release.cycleId !== group.cycle.id)
+                .length === 0 ? (
+                <Text style={styles.body} testID="real-group-releases-empty">
+                  Earlier group films will remain available in Archive after release.
+                </Text>
+              ) : (
+                (group.releases ?? [])
+                  .filter((release) => release.cycleId !== group.cycle.id)
+                  .map((release) => (
+                    <View key={release.cycleId} style={styles.releaseRow}>
+                      <Text style={styles.body} testID={`real-group-release-${release.cycleId}`}>
+                        {release.state === 'processing'
+                          ? 'Film processing'
+                          : release.state === 'delayed'
+                            ? 'Release delayed'
+                            : release.state === 'premiere'
+                              ? 'Premiere ready'
+                              : 'Archived film'}
+                        {' · '}
+                        Cycle ended {new Date(release.endsAt).toLocaleDateString()}
+                      </Text>
+                    </View>
+                  ))
+              )}
+              <Action
+                title="Open Archive"
+                onPress={() => setScreen('archive')}
+                testID="real-group-open-archive"
+              />
+            </View>
+            <RealGroupSettings
+              key={group.group.id}
+              group={group}
+              authenticatedRequest={auth.authenticatedRequest}
+              onUpdated={(updated) =>
+                setGroup((current) =>
+                  current
+                    ? { ...updated, releases: updated.releases ?? current.releases }
+                    : updated,
+                )
+              }
+            />
+            {reminderClient ? (
+              <PrivateReminderSubscription
+                client={reminderClient}
+                disabled={pending || acceptPending || auth.pending}
+              />
+            ) : null}
+            <Text style={styles.label}>MY ALLOWANCE</Text>
+            <Text style={styles.body} testID="real-group-allowance">
+              {homeAllowance
+                ? `${homeAllowance.countUsed} of ${homeAllowance.maxCount} contributions · ${homeAllowance.secondsUsed} of ${homeAllowance.maxSeconds} seconds used`
+                : 'Loading allowance…'}
+            </Text>
+            <ContributionLedgerSection
+              cycleId={group.cycle.id}
+              groupId={group.group.id}
+              loadPage={loadContributionLedger}
+              onPageLoaded={handleHomeLedgerPage}
+              memberId={group.memberId ?? auth.session?.account.id ?? ''}
+              sessionId="real-account-session"
+            />
+            {group.cycle.contributionCount === 0 ? (
+              <View style={styles.empty} testID="real-group-empty-contributions">
+                <Text style={styles.panelTitle}>No contributions yet</Text>
+                <Text style={styles.body}>Nothing has been contributed to this cycle.</Text>
+              </View>
+            ) : (
+              <View style={styles.empty} testID="real-group-contribution-summary">
+                <Text style={styles.panelTitle}>{group.cycle.contributionCount} contributions</Text>
+                <Text style={styles.body}>
+                  Contribution details will appear when real capture is available.
+                </Text>
+              </View>
+            )}
+            <Action
+              title={capturePending ? 'Checking capture…' : 'Capture a moment'}
+              disabled={capturePending}
+              onPress={() => void openCapture()}
+              testID="real-group-capture-action"
+            />
+            <Action
+              title="Chat"
+              onPress={() => {
+                setHomeAllowance(null);
+                setScreen('chat');
+              }}
+              testID="real-group-chat-action"
+            />
+            <Action
+              title={
+                auth.pending
+                  ? 'Signing out…'
+                  : auth.notice === 'revocation-unconfirmed' ||
+                      auth.notice === 'sign-out-marker-unavailable'
+                    ? 'Retry sign out'
+                    : 'Sign out'
+              }
+              disabled={auth.pending}
+              onPress={signOut}
+              testID="real-group-sign-out"
+            />
+          </View>
+        ) : null}
+      </ScrollView>
+      {screen === 'home' ? tabBar : null}
+    </View>
+  );
+}
+
+type RealGroupTab = 'home' | 'capture' | 'chat' | 'archive';
+
+const REAL_GROUP_TABS: { key: RealGroupTab; label: string }[] = [
+  { key: 'home', label: 'Home' },
+  { key: 'capture', label: 'Capture' },
+  { key: 'chat', label: 'Chat' },
+  { key: 'archive', label: 'Archive' },
+];
+
+// Bottom navigation for the real-account group screens. Capture is a
+// full-screen flow with its own Back, so the bar is not shown there.
+function RealGroupTabBar({
+  active,
+  capturePending,
+  onSelect,
+}: {
+  active: string;
+  capturePending: boolean;
+  onSelect: (tab: RealGroupTab) => void;
+}) {
+  return (
+    <View accessibilityRole="tablist" style={styles.tabBar} testID="real-group-navigation">
+      {REAL_GROUP_TABS.map((tab) => {
+        const selected = tab.key === active;
+        const disabled = tab.key === 'capture' && capturePending;
+        return (
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected, disabled }}
+            disabled={disabled}
+            key={tab.key}
+            onPress={() => onSelect(tab.key)}
+            style={[styles.tabBarItem, selected && styles.tabBarItemSelected]}
+            testID={`real-group-nav-${tab.key}`}
+          >
+            <Text style={[styles.tabBarLabel, selected && styles.tabBarLabelSelected]}>
+              {tab.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -1331,6 +1406,17 @@ function Action({
 const styles = StyleSheet.create({
   content: { gap: 18, padding: 22 },
   captureContainer: { flex: 1 },
+  tabBar: {
+    backgroundColor: COLORS.deep,
+    borderTopColor: COLORS.line,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    minHeight: 56,
+  },
+  tabBarItem: { alignItems: 'center', flex: 1, justifyContent: 'center', paddingVertical: 12 },
+  tabBarItemSelected: { borderTopColor: COLORS.accent, borderTopWidth: 2 },
+  tabBarLabel: { color: COLORS.muted, fontSize: 13, fontWeight: '600' },
+  tabBarLabelSelected: { color: COLORS.ink },
   captureContent: { flexGrow: 1, gap: 12, padding: 22 },
   photoCaptureContent: { flexGrow: 1 },
   captureModes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
