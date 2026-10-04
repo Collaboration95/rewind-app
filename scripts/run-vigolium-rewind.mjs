@@ -11,6 +11,9 @@ const mode = process.argv[2];
 if (!['--build', '--verify', '--run'].includes(mode))
   throw new Error('Choose --build, --verify or --run');
 const live = mode === '--run';
+const endpointIndex = process.argv.indexOf('--endpoint');
+const endpoint = endpointIndex < 0 ? 'chat' : process.argv[endpointIndex + 1];
+if (!['chat', 'groups'].includes(endpoint)) throw new Error('Endpoint must be chat or groups');
 if (live && process.env.REWIND_AGENT_REWIND_DATA_SHARING !== 'approved')
   throw new Error(
     'Live Rewind scanning requires REWIND_AGENT_REWIND_DATA_SHARING=approved in addition to provider approval',
@@ -42,7 +45,11 @@ if (mode === '--build') {
     1200_000,
   );
 } else {
-  const output = resolve('vigolium-result/agentic-rewind-container');
+  const output = resolve(
+    endpoint === 'chat'
+      ? 'vigolium-result/agentic-rewind-container'
+      : 'vigolium-result/agentic-rewind-groups',
+  );
   const name = `rewind-agentic-${randomUUID()}`;
   const appName = `${name}-app`;
   await mkdir(output, { recursive: true });
@@ -62,7 +69,7 @@ if (mode === '--build') {
     '/reports/target.json',
   );
   try {
-    await execute([...appArgs, image]);
+    await execute([...appArgs, '--env', `REWIND_AGENT_ENDPOINT=${endpoint}`, image]);
     const deadline = Date.now() + 45_000;
     let ready = false;
     while (Date.now() < deadline) {

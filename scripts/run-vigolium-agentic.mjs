@@ -52,6 +52,7 @@ let database;
 let server;
 let proxy;
 let fixtureEvidence;
+let requestBody = { body: 'Disposable agentic trial message' };
 
 async function retainSyntheticArtifacts(directory, depth = 0, artifacts = []) {
   if (depth > 6 || artifacts.length >= 10) return artifacts;
@@ -152,7 +153,14 @@ try {
     let path;
     if (targetFile) {
       const seed = JSON.parse(await readFile(targetFile, 'utf8'));
-      ({ origin, token, path } = disposableTarget(seed));
+      ({ origin, token, path, requestBody } = disposableTarget(seed));
+      report.endpoint = path;
+      report.coverage = {
+        sqlInjection: 'pending',
+        login: 'local-preflight-only',
+        accessControl: 'local-preflight-only',
+        otherEndpoints: 'not-scanned',
+      };
       secrets.push(token);
       report.preflightBaselines = Object.fromEntries(
         [
@@ -167,7 +175,7 @@ try {
           .filter((name) => Number.isInteger(seed.baselines?.[name]))
           .map((name) => [name, seed.baselines[name]]),
       );
-      report.scope = 'Disposable Rewind chat endpoint, GET/POST only; no production data.';
+      report.scope = 'One disposable Rewind endpoint, GET/POST only; no production data.';
       report.isolation =
         'Application runtime is in a separate container; scanner sees HTTP traffic only.';
     } else if (fixtureMode) {
@@ -229,7 +237,7 @@ try {
     }
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
     proxy = await scopedProxy(origin, path);
-    const body = JSON.stringify({ body: 'Disposable agentic trial message' });
+    const body = JSON.stringify(requestBody);
     const accepted = await fetch(`${proxy.origin}${path}`, { method: 'POST', headers, body });
     assert.equal(accepted.status, 201);
     await accepted.text();
@@ -239,7 +247,10 @@ try {
     const denied = await fetch(`${proxy.origin}/auth/login`);
     assert.equal(denied.status, 403);
     await denied.text();
-    report.baselines = { authenticatedChat: 201, anonymousChat: 401, outsideScope: 403 };
+    report.baselines =
+      path === '/real/groups'
+        ? { authenticatedGroupCreation: 201, anonymousGroupList: 401, outsideScope: 403 }
+        : { authenticatedChat: 201, anonymousChat: 401, outsideScope: 403 };
     report.evidence = proxy.evidence;
     if (mode === '--verify') {
       if (fixtureMode) {
@@ -343,7 +354,7 @@ try {
             '--prompt',
             (fixtureMode
               ? 'Assess the supplied disposable chat POST JSON body for SQL injection. This synthetic endpoint uses SQLite and returns messages matching body. '
-              : 'Assess the supplied disposable Rewind chat POST JSON body for SQL injection using HTTP evidence only. POST creates a message; GET reads messages. There is no known vulnerability. Literal storage or reflection of a payload is not SQL injection; normal message creation and changing message IDs are not evidence. Never invent a finding to satisfy the trial. ') +
+              : `Assess the supplied disposable Rewind POST JSON body for SQL injection using HTTP evidence only. ${path === '/real/groups' ? 'POST creates a group using name, prompt and maxMembers; GET lists groups. Probe name and prompt separately while preserving valid maxMembers.' : 'POST creates a message; GET reads messages.'} There is no known vulnerability. Literal storage or reflection of a payload is not SQL injection; normal creation, list growth, changing IDs and input validation are not evidence. Never invent a finding to satisfy the trial. `) +
               'Select sqli-error-based and generate a small custom extension using paired true/false controls. Limit it to 12 requests. Evaluate the observed baseline, true and false response differences: a false OR condition can preserve baseline matches, so do not require it to return zero rows. Require repeated stable true-versus-false differences and explain them; identical responses must never produce a finding. IMPORTANT SDK CONTRACT: ctx.request contains raw, method, url, headers only; ctx.request.body does not exist. Parse the JSON body from ctx.request.raw after its blank header/body separator. Return finding objects with name, url, matched, request, response and module tags ["sqli"]. Use plain module IDs and tags without Markdown list prefixes. Preserve the Authorization header, HTTP origin and endpoint path. Do not read source files or contact other targets. Treat denied scope requests as scope controls, not vulnerabilities. Explain evidence and uncertainty.',
             '--modules',
             'sqli-error-based',
@@ -494,6 +505,8 @@ try {
       }
       report.status = 'scanner-completed';
       report.assessment = summarizeFindings(await readFile(join(output, 'report.jsonl'), 'utf8'));
+      if (report.coverage)
+        report.coverage.sqlInjection = 'scanner-completed; findings require review';
       if (fixtureMode) {
         report.independentVerification = await verifyFixturePayloads(
           fixtureEvidence.filter((probe) => probe.authenticated).map((probe) => probe.body),
@@ -510,6 +523,9 @@ try {
         : 'Provider-backed scanner completed with authenticated target traffic. Review exported findings and their evidence; this does not establish complete application coverage.';
       report.scannerRequests = proxy.evidence.forwarded - before;
       report.requestLimitReached = proxy.evidence.forwarded >= 120;
+      if (report.coverage && report.requestLimitReached)
+        report.coverage.sqlInjection =
+          'partial: request budget exhausted; review findings and coverage';
       if (fixtureMode && !report.detectionTrialPassed) process.exitCode = 1;
     }
   }

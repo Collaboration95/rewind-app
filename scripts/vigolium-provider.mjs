@@ -46,13 +46,25 @@ export function disposableTarget(value) {
   )
     throw new Error('Target must be a loopback HTTP origin with an explicit port');
   if (
-    !/^\/realtime\/groups\/[a-zA-Z0-9-]+\/messages$/.test(value.path) ||
+    !(
+      value.path === '/real/groups' ||
+      /^\/realtime\/groups\/[a-zA-Z0-9-]+\/messages$/.test(value.path)
+    ) ||
     typeof value.token !== 'string' ||
     !value.token ||
     /[\r\n]/.test(value.token)
   )
-    throw new Error('Target must contain one chat endpoint and a temporary token');
-  return { origin: url.origin, path: value.path, token: value.token };
+    throw new Error('Target must contain one supported endpoint and a temporary token');
+  const requestBody = value.requestBody || { body: 'Disposable agentic trial message' };
+  if (
+    value.path === '/real/groups' &&
+    (typeof requestBody.name !== 'string' ||
+      typeof requestBody.prompt !== 'string' ||
+      requestBody.maxMembers !== 4)
+  )
+    throw new Error('Group target requires a synthetic group creation seed');
+  if (JSON.stringify(requestBody).length > 4096) throw new Error('Seed body exceeds its limit');
+  return { origin: url.origin, path: value.path, token: value.token, requestBody };
 }
 
 export function summarizeFindings(jsonl) {

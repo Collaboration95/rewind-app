@@ -6,7 +6,7 @@ run on a computer or CI worker; the AI runs at the provider.
 
 The existing native scanning workflow remains the automatic dev/PR scan.
 Agentic execution is separate and opt-in. This branch is an initial bounded
-chat-endpoint trial, not whole-app discovery or a completed live AI evaluation.
+endpoint trial with chat and group-creation seeds, not whole-app discovery.
 
 ## Offline setup checks
 
@@ -72,6 +72,23 @@ available separately from the extension HTML report. No findings does not
 establish app security or full coverage. The role/access baselines are local
 preflight checks, not discoveries made by the AI.
 
+Select `--endpoint groups` for a separate bounded `/real/groups` trial:
+
+```sh
+node scripts/run-vigolium-rewind.mjs --verify --endpoint groups
+node scripts/run-vigolium-rewind.mjs --run --endpoint groups
+```
+
+The default is `--endpoint chat`. Group results are saved separately in
+`vigolium-result/agentic-rewind-groups/`, preserving the chat report. The group
+seed keeps `maxMembers` valid and uses synthetic name/prompt strings. The agent
+is instructed to test those strings separately and exclude normal list growth,
+new IDs, literal payload storage and validation errors as SQL injection proof.
+The seed validator permits only these two endpoint shapes. Reports identify the
+endpoint and distinguish SQL injection assessment from local login/access-control
+preflight checks and untested endpoints. Exhausting the request budget labels the
+coverage partial rather than implying the assessment finished without limits.
+
 The first live Rewind trial completed on 4 October 2026: 67 forwarded scanner
 requests, one generated extension executed, no reported SQL injection, and one
 informational Authorization-header observation. Login/group creation and owner,
@@ -80,6 +97,14 @@ checked for the configured provider key and unredacted HTTP bearer token; neithe
 was present. The temporary credential seed and backend container were removed.
 This establishes a working bounded trial, not comprehensive coverage or a clean
 security assessment of the whole app.
+
+The subsequent group-creation trial on 4 October 2026 completed with 79 forwarded
+scanner requests. Its generated detector tested both `name` and `prompt` with
+repeated paired controls. No SQL injection was reported; the single exported
+finding was the informational Authorization-header observation. The request
+budget was not exhausted. Credential redaction and cleanup checks passed. Chat
+and group reports remain separate; this still does not cover login injection,
+invitation flows, media, or an AI assessment of access between different users.
 
 ### Container and known-vulnerability fixture
 

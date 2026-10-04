@@ -10,7 +10,8 @@ import { createRuntimeServer } from '../server/dist/http.js';
 import { createRealAccount } from '../server/dist/auth/index.js';
 
 // Application runtime lives in its own container, never in the AI worker.
-export async function createRewindTarget() {
+export async function createRewindTarget({ endpoint = 'chat' } = {}) {
+  assert.ok(['chat', 'groups'].includes(endpoint), 'Unsupported endpoint');
   const temporary = await mkdtemp(join(tmpdir(), 'rewind-dast-target-'));
   const database = openDatabase(
     parseConfig({
@@ -89,7 +90,17 @@ export async function createRewindTarget() {
       outsiderRead: await check('GET', outsider.headers, 403),
       outsiderPost: await check('POST', outsider.headers, 403),
     };
-    return { origin, path, token: owner.token, baselines, close };
+    return {
+      origin,
+      path: endpoint === 'groups' ? '/real/groups' : path,
+      requestBody:
+        endpoint === 'groups'
+          ? { name: 'Disposable DAST group', prompt: 'Synthetic trial', maxMembers: 4 }
+          : { body: 'Disposable agentic trial message' },
+      token: owner.token,
+      baselines,
+      close,
+    };
   } catch (error) {
     await close();
     throw error;
@@ -97,7 +108,9 @@ export async function createRewindTarget() {
 }
 
 if (process.argv[2] === '--serve') {
-  const target = await createRewindTarget();
+  const target = await createRewindTarget({
+    endpoint: process.env.REWIND_AGENT_ENDPOINT || 'chat',
+  });
   const directory = process.env.REWIND_TARGET_OUTPUT || '/reports';
   await writeFile(
     join(directory, 'target.json'),
@@ -106,6 +119,7 @@ if (process.argv[2] === '--serve') {
       path: target.path,
       token: target.token,
       disposable: true,
+      requestBody: target.requestBody,
       baselines: target.baselines,
     }),
   );

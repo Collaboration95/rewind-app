@@ -58,3 +58,24 @@ test('disposable real backend validates owner, anonymous and outsider boundaries
   }
   await assert.rejects(fetch(target.origin + target.path));
 });
+
+test('group scan seed creates a disposable group and cannot select other API paths', async () => {
+  const target = await createRewindTarget({ endpoint: 'groups' });
+  try {
+    const seed = disposableTarget({ ...target, disposable: true });
+    assert.equal(seed.path, '/real/groups');
+    const response = await fetch(seed.origin + seed.path, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${seed.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(seed.requestBody),
+    });
+    assert.equal(response.status, 201);
+    assert.equal((await response.json()).group.name, seed.requestBody.name);
+    assert.throws(() => disposableTarget({ ...target, disposable: true, path: '/auth/login' }));
+    assert.throws(() =>
+      disposableTarget({ ...target, disposable: true, requestBody: { name: 'test' } }),
+    );
+  } finally {
+    await target.close();
+  }
+});
