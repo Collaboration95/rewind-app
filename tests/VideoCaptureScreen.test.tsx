@@ -201,7 +201,11 @@ async function openYourMoments(result: Awaited<ReturnType<typeof render>>) {
   await result.findByTestId('camera-moments-dialog');
 }
 
-async function renderReviewWithRuntime(videoPlatform: TestVideoPlatform, client: RuntimeClient) {
+async function renderReviewWithRuntime(
+  videoPlatform: TestVideoPlatform,
+  client: RuntimeClient,
+  startCapture = true,
+) {
   const result = await render(
     <ToastProvider>
       <DemoSessionProvider
@@ -215,9 +219,12 @@ async function renderReviewWithRuntime(videoPlatform: TestVideoPlatform, client:
     </ToastProvider>,
   );
   await result.findByTestId('demo-session-ready');
-  await result.findByTestId('video-live-preview');
-  await fireEvent.press(result.getByTestId('video-record'));
-  await result.findByTestId('video-review');
+  if (startCapture) await result.findByTestId('video-live-preview');
+  else await result.findByTestId('video-record');
+  if (startCapture) {
+    await fireEvent.press(result.getByTestId('video-record'));
+    await result.findByTestId('video-review');
+  }
   return result;
 }
 
@@ -290,6 +297,38 @@ describe('VideoCaptureScreen', () => {
     ).toBeTruthy();
   });
 
+  it('opens the granted browser preview on entry and carries the live look into review and upload', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    const permission = { camera: 'granted' as const, microphone: 'granted' as const };
+    const stream = {} as MediaStream;
+    let preview: MediaStream | null = null;
+    const platform = videoPlatformForReview();
+    platform.getVideoPermissions = jest.fn().mockResolvedValue(permission);
+    platform.getVideoPreviewStream = jest.fn(() => preview);
+    platform.requestVideoPermissions = jest.fn(async () => {
+      preview = stream;
+      return permission;
+    });
+    const uploadClip = jest.fn().mockResolvedValue(upload);
+    try {
+      const result = await renderReviewWithRuntime(platform, runtimeClient({ uploadClip }), false);
+      await result.findByTestId('video-record');
+      expect(platform.requestVideoPermissions).toHaveBeenCalledTimes(1);
+      expect(result.queryByTestId('video-preview-recovery')).toBeNull();
+      await fireEvent.press(result.getByRole('radio', { name: 'VHS Camcorder' }));
+      await fireEvent.press(result.getByTestId('video-record'));
+      await result.findByTestId('video-review');
+      expect(
+        result.getByRole('radio', { name: 'VHS Camcorder' }).props.accessibilityState,
+      ).toMatchObject({ selected: true });
+      await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
+      await waitFor(() => expect(uploadClip).toHaveBeenCalled());
+      expect(uploadClip.mock.calls[0][2]).toMatchObject({ mode: 'vhs' });
+    } finally {
+      platformOs.restore();
+    }
+  });
+
   it.each([
     ['unusable video rejection', 'The browser recording has no usable video. Try recording again.'],
     ['duration rejection', 'Recordings must be 15 seconds or shorter.'],
@@ -310,9 +349,8 @@ describe('VideoCaptureScreen', () => {
 
     try {
       const result = await render(<VideoCaptureScreen platform={platform} />);
-      await result.findByTestId('video-preview-recovery');
-      await fireEvent.press(result.getByRole('button', { name: 'Restore camera preview' }));
       await result.findByTestId('video-record');
+      expect(result.queryByTestId('video-preview-recovery')).toBeNull();
       await fireEvent.press(result.getByTestId('video-record'));
       await result.findByText(failureMessage);
       expect(result.getByTestId('video-preview-recovery')).toBeTruthy();
@@ -320,7 +358,7 @@ describe('VideoCaptureScreen', () => {
 
       await fireEvent.press(result.getByRole('button', { name: 'Restore camera preview' }));
       await result.findByTestId('video-record');
-      expect(platform.requestVideoPermissions).toHaveBeenCalledTimes(2);
+      expect(platform.requestVideoPermissions).toHaveBeenCalledTimes(1);
     } finally {
       platformOs.restore();
     }
@@ -717,6 +755,7 @@ describe('VideoCaptureScreen', () => {
           trimStartSeconds: 1,
           width: 720,
         }),
+        expect.any(AbortSignal),
       );
       expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
     } finally {
@@ -786,6 +825,7 @@ describe('VideoCaptureScreen', () => {
       'demo-session-ui',
       'demo-group',
       expect.objectContaining({ replacesContributionId: 'contribution-ui' }),
+      expect.any(AbortSignal),
     );
   });
 

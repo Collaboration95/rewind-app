@@ -7,6 +7,7 @@ import {
   digestTransferBytes,
   type DirectTransferIntent,
 } from '../src/capture/direct-transfer';
+import { ClipUploadSession } from '../src/capture/clip-uploader';
 import { createRealAccountVideoRuntimeClient } from '../src/capture/real-account-video-runtime';
 import { RealAccountClient } from '../src/auth/real-account-client';
 import type { ClipUploadInput } from '../src/domain/video';
@@ -754,6 +755,55 @@ describe('direct private transfer', () => {
       }),
     ).rejects.toMatchObject({ code: 'idempotency_conflict' });
     expect(c.puts).toBe(0);
+  });
+
+  it('session cancellation aborts the real-account Blob transfer before registration without base64', async () => {
+    const c = fixture();
+    const started = deferred<void>();
+    let transferSignal: AbortSignal | undefined;
+    c.storageFetch.mockImplementationOnce(async (_url, init) => {
+      transferSignal = init?.signal as AbortSignal;
+      started.resolve();
+      return new Promise<Response>((_resolve, reject) => {
+        transferSignal!.addEventListener('abort', () =>
+          reject(new DOMException('Aborted', 'AbortError')),
+        );
+      });
+    });
+    const originalFetch = globalThis.fetch;
+    const blob = new NodeBlob([bytes], { type: 'video/mp4' }) as unknown as Blob;
+    globalThis.fetch = jest.fn(async () => ({
+      ok: true,
+      blob: async () => blob,
+    })) as unknown as typeof fetch;
+    const decode = jest.spyOn(globalThis, 'atob');
+    const runtime = createRealAccountVideoRuntimeClient(c.api, {
+      ...c.options,
+      transferMode: 'direct',
+    });
+    const session = new ClipUploadSession({
+      uploadClip: (value, signal) => runtime.uploadClip!('ignored', 'group-1', value, signal),
+      cancelClipUpload: (jobId) => runtime.cancelClipUpload!('ignored', 'group-1', jobId),
+    });
+    try {
+      const work = session.upload({ ...input, sourceUri: 'blob:local-capture' });
+      const rejected = expect(work).rejects.toMatchObject({ code: 'cancelled', retryable: false });
+      await started.promise;
+      await session.cancel();
+      await rejected;
+      expect(transferSignal?.aborted).toBe(true);
+      expect(decode).not.toHaveBeenCalled();
+      expect(
+        c.api.mock.calls.some(
+          ([path]) => path.endsWith('/complete') || path.endsWith('/reconcile'),
+        ),
+      ).toBe(false);
+      expect(c.contributions).toBe(0);
+    } finally {
+      runtime.dispose();
+      globalThis.fetch = originalFetch;
+      decode.mockRestore();
+    }
   });
 
   it('abort during PUT suppresses completion, disposal and late success', async () => {

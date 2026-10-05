@@ -800,6 +800,9 @@ describe('Expo camera adapter contract', () => {
       onloadedmetadata: null as (() => void) | null,
       onerror: null as (() => void) | null,
       preload: '',
+      pause: jest.fn(),
+      removeAttribute: jest.fn(),
+      load: jest.fn(),
       set src(value: string) {
         assignedSource = value;
         queueMicrotask(() => video.onloadedmetadata?.());
@@ -829,6 +832,10 @@ describe('Expo camera adapter contract', () => {
         sourceUri: 'blob:https://rewind.example/clip-1',
       });
       expect(assignedSource).toBe('blob:https://rewind.example/clip-1');
+      expect(video.pause).toHaveBeenCalledTimes(1);
+      expect(video.removeAttribute).toHaveBeenCalledWith('src');
+      expect(video.load).toHaveBeenCalledTimes(1);
+      expect(video.onloadedmetadata).toBeNull();
     } finally {
       if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument);
       else Reflect.deleteProperty(globalThis, 'document');

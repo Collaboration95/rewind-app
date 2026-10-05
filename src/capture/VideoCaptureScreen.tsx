@@ -18,6 +18,7 @@ import {
   type PendingClipUpload,
   type RecordedClip,
 } from '../domain/video';
+import { LookPreview } from './LookPreview';
 import { applyRetroLookToVideo, canProcessRetroVideo, RetroProcessingError } from './retro-browser';
 import { ClipUploadError, ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
 import {
@@ -234,6 +235,7 @@ export function VideoCaptureScreen({
   const [clip, setClip] = useState<RecordedClip | null>(null);
   const [review, setReview] = useState<ClipReviewSession | null>(null);
   const [reviewPlayerVisible, setReviewPlayerVisible] = useState(true);
+  const [reviewPanelHeight, setReviewPanelHeight] = useState(280);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
   const [mode, setMode] = useState<CaptureMode>(DEFAULT_CAPTURE_MODE);
@@ -283,7 +285,8 @@ export function VideoCaptureScreen({
     return new ClipUploadSession({
       cancelClipUpload: (jobId) =>
         activeRuntimeClient.cancelClipUpload!(uploadSessionId, uploadGroupId, jobId),
-      uploadClip: (input) => activeRuntimeClient.uploadClip!(uploadSessionId, uploadGroupId, input),
+      uploadClip: (input, signal) =>
+        activeRuntimeClient.uploadClip!(uploadSessionId, uploadGroupId, input, signal),
     });
   }, [activeRuntimeClient, uploadGroupId, uploadSessionId]);
 
@@ -454,10 +457,10 @@ export function VideoCaptureScreen({
       setReviewPlayerVisible(true);
       setTrimStart(0);
       setTrimEnd(selected.durationSeconds);
-      setMode(DEFAULT_CAPTURE_MODE);
+      nextReview.setMode(mode);
       return true;
     },
-    [isCaptureActive, releaseOwnedClip, reviewStore, unmountReviewPlayer],
+    [isCaptureActive, mode, releaseOwnedClip, reviewStore, unmountReviewPlayer],
   );
   const cancelActiveWork = useCallback((): Promise<void> => {
     if (captureLeftRef.current) return Promise.resolve();
@@ -539,6 +542,22 @@ export function VideoCaptureScreen({
         } else if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
           setAccess('permission-denied');
         } else {
+          if (Platform.OS === 'web' && !clipRef.current) {
+            let stream = platform.getVideoPreviewStream?.() ?? null;
+            if (!stream && platform.requestVideoPermissions) {
+              const restored = await platform.requestVideoPermissions();
+              if (!isCaptureActive()) {
+                platform.releaseVideoCapture?.();
+                return;
+              }
+              if (restored.camera !== 'granted' || restored.microphone !== 'granted') {
+                setAccess('permission-denied');
+                return;
+              }
+              stream = platform.getVideoPreviewStream?.() ?? null;
+            }
+            setBrowserPreviewStream(stream);
+          }
           setAccess('ready');
         }
       } catch {
@@ -1006,13 +1025,25 @@ export function VideoCaptureScreen({
       pendingUploadInputRef.current = pendingInput;
     }
     const operation = beginContributionWork(true);
-    const prepareInput = async (input: ClipUploadInput): Promise<ClipUploadInput> => {
+    const prepareInput = async (
+      input: ClipUploadInput,
+      signal?: AbortSignal,
+    ): Promise<ClipUploadInput> => {
       await review.savePending(input.idempotencyKey);
       if (!isContributionWorkActive(operation)) {
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
-      if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
-        const sourceData = await readManagedRecordedClipBase64(input.sourceUri);
+      if (
+        activeRuntimeClient?.stageClipSource &&
+        uploadSessionId &&
+        uploadGroupId &&
+        !(
+          ownedRealRuntimeClient &&
+          !runtimeClient &&
+          (transferMode === 'direct' || input.sourceUri.startsWith('blob:'))
+        )
+      ) {
+        const sourceData = await readManagedRecordedClipBase64(input.sourceUri, signal);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
@@ -1021,6 +1052,7 @@ export function VideoCaptureScreen({
           uploadGroupId,
           input.idempotencyKey,
           sourceData,
+          signal,
         );
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
@@ -1111,13 +1143,25 @@ export function VideoCaptureScreen({
     setFailureDismissed(false);
     toast('Uploading again. It finishes in the background.');
     const operation = beginContributionWork(true);
-    const prepareInput = async (input: ClipUploadInput): Promise<ClipUploadInput> => {
+    const prepareInput = async (
+      input: ClipUploadInput,
+      signal?: AbortSignal,
+    ): Promise<ClipUploadInput> => {
       await review.savePending(input.idempotencyKey);
       if (!isContributionWorkActive(operation)) {
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
-      if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
-        const sourceData = await readManagedRecordedClipBase64(input.sourceUri);
+      if (
+        activeRuntimeClient?.stageClipSource &&
+        uploadSessionId &&
+        uploadGroupId &&
+        !(
+          ownedRealRuntimeClient &&
+          !runtimeClient &&
+          (transferMode === 'direct' || input.sourceUri.startsWith('blob:'))
+        )
+      ) {
+        const sourceData = await readManagedRecordedClipBase64(input.sourceUri, signal);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
@@ -1126,6 +1170,7 @@ export function VideoCaptureScreen({
           uploadGroupId,
           input.idempotencyKey,
           sourceData,
+          signal,
         );
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
@@ -1416,13 +1461,13 @@ export function VideoCaptureScreen({
     <CameraFrame bokeh={!viewfinder && !inReview} testID="video-capture-screen">
       {viewfinder ? (
         Platform.OS === 'web' ? (
-          <View style={StyleSheet.absoluteFill}>
+          <LookPreview mode={mode} testID="video-live-look">
             <BrowserVideoPreview
               fit={previewFit}
               onAspect={setPreviewAspect}
               stream={browserPreviewStream}
             />
-          </View>
+          </LookPreview>
         ) : (
           <CameraView
             facing="back"
@@ -1439,12 +1484,14 @@ export function VideoCaptureScreen({
             <CapturedVideoReview
               clip={clip}
               endSeconds={trimEnd}
+              mode={mode}
+              panelHeight={reviewPanelHeight}
               onMounted={onReviewPlayerMounted}
               onUnmounted={onReviewPlayerUnmounted}
               startSeconds={trimStart}
             />
           ) : null}
-          <CamBottom>
+          <CamBottom onLayout={(event) => setReviewPanelHeight(event.nativeEvent.layout.height)}>
             {clip.source === 'file' ? <Tag>Chosen from a file</Tag> : null}
             <Text style={styles.caption} testID="video-review-facts">
               {clip.source === 'file'
@@ -1649,6 +1696,14 @@ export function VideoCaptureScreen({
               photoTestID="video-photo-mode"
             />
           )}
+          {viewfinder ? (
+            <LookPicker
+              disabled={recording}
+              mode={mode}
+              onChange={setMode}
+              testID="video-live-look-picker"
+            />
+          ) : null}
           {viewfinder && browserPreviewMissing ? (
             <CamButton
               label="Restore camera preview"
@@ -1731,12 +1786,16 @@ export function VideoCaptureScreen({
 function CapturedVideoReview({
   clip,
   endSeconds,
+  mode,
+  panelHeight,
   onMounted,
   onUnmounted,
   startSeconds,
 }: {
   clip: RecordedClip;
   endSeconds: number;
+  mode: CaptureMode;
+  panelHeight: number;
   onMounted: () => void;
   onUnmounted: () => void;
   startSeconds: number;
@@ -1823,18 +1882,32 @@ function CapturedVideoReview({
   };
 
   return (
-    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-      <VideoView
-        accessible
-        accessibilityLabel="Captured video preview with audio"
-        contentFit="contain"
-        nativeControls={false}
-        player={player}
-        playsInline
-        style={styles.fillVideo}
-        testID="video-review-player"
-      />
-      <View pointerEvents="box-none" style={styles.playLayer} testID="video-review-playback">
+    <View pointerEvents="box-none" style={[styles.playerArea, { bottom: panelHeight + 8 }]}>
+      <View
+        style={
+          clip.width > clip.height
+            ? [styles.landscapeMedia, { aspectRatio: clip.width / clip.height }]
+            : styles.portraitMedia
+        }
+      >
+        <LookPreview mode={mode} testID="video-review-look">
+          <VideoView
+            accessible
+            accessibilityLabel="Captured video preview with audio"
+            contentFit="contain"
+            nativeControls={false}
+            player={player}
+            playsInline
+            style={styles.fillVideo}
+            testID="video-review-player"
+          />
+        </LookPreview>
+      </View>
+      <View
+        pointerEvents="box-none"
+        style={[styles.playLayer, clip.width < clip.height && styles.portraitPlayback]}
+        testID="video-review-playback"
+      >
         <View style={styles.playRow}>
           <IconButton dark icon="back" label="Back 5 seconds" onPress={() => seek(-5)} size={44} />
           <IconButton
@@ -1938,13 +2011,16 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.6)',
     textShadowRadius: 6,
   },
+  playerArea: { position: 'absolute', top: 92, left: 0, right: 0, justifyContent: 'center' },
+  landscapeMedia: { width: '100%', maxHeight: '72%', flexShrink: 1, position: 'relative' },
+  portraitMedia: { flex: 1, position: 'relative' },
+  portraitPlayback: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   playLayer: {
-    ...StyleSheet.absoluteFill,
     alignItems: 'center',
-    gap: 10,
-    justifyContent: 'center',
-    paddingBottom: 260,
+    gap: 8,
+    paddingVertical: 12,
     paddingHorizontal: 22,
+    backgroundColor: 'rgba(8,5,4,.82)',
   },
   playRow: { alignItems: 'center', flexDirection: 'row', gap: 22 },
   playbackTime: {

@@ -341,8 +341,12 @@ export async function setTrim(page: Page, handle: 'start' | 'end', seconds: numb
     Number.parseFloat((await control.getAttribute('aria-valuetext')) ?? 'NaN');
   for (let step = 0; step < 40; step += 1) {
     const current = await read();
-    if (Math.abs(current - seconds) <= 0.25) break;
-    await page.keyboard.press(current < seconds ? 'ArrowRight' : 'ArrowLeft');
+    if (Math.abs(current - seconds) < 0.05) break;
+    const key = current < seconds ? 'ArrowRight' : 'ArrowLeft';
+    // Finish at the requested tenth, rather than accepting a different trim
+    // within 0.25s and later asserting playback against the requested value.
+    await page.keyboard.press(Math.abs(current - seconds) < 0.5 ? `Shift+${key}` : key);
   }
   expect(Math.abs((await read()) - seconds)).toBeLessThanOrEqual(0.25);
+  expect(await read()).toBeCloseTo(seconds, 1);
 }

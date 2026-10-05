@@ -76,6 +76,38 @@ describe('local clip upload lifecycle', () => {
     expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
   });
 
+  it('aborts a slow transfer before it can register a contribution and renews the retry signal', async () => {
+    const signals: AbortSignal[] = [];
+    const register = jest.fn();
+    const transport = {
+      cancelClipUpload: jest.fn().mockResolvedValue(undefined),
+      uploadClip: jest.fn((_input: typeof input, signal?: AbortSignal) => {
+        signals.push(signal!);
+        if (signals.length === 2) {
+          register();
+          return Promise.resolve(upload);
+        }
+        return new Promise<typeof upload>((_resolve, reject) => {
+          signal!.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError')),
+          );
+        });
+      }),
+    };
+    const session = new ClipUploadSession(transport);
+    const pending = session.upload(input);
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    await session.cancel();
+    await rejected;
+    expect(signals[0].aborted).toBe(true);
+    expect(register).not.toHaveBeenCalled();
+    expect(transport.cancelClipUpload).not.toHaveBeenCalled();
+    await session.retry();
+    expect(signals[1]).not.toBe(signals[0]);
+    expect(signals[1].aborted).toBe(false);
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels source preparation before transport and retries with the same input key', async () => {
     let finishPreparation!: () => void;
     const transport = {
@@ -91,7 +123,7 @@ describe('local clip upload lifecycle', () => {
     );
 
     const pending = session.upload(input, undefined, prepareInput);
-    expect(prepareInput).toHaveBeenCalledWith(input);
+    expect(prepareInput).toHaveBeenCalledWith(input, expect.any(AbortSignal));
     await session.cancel();
     finishPreparation();
     await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
@@ -104,6 +136,7 @@ describe('local clip upload lifecycle', () => {
     }));
     expect(transport.uploadClip).toHaveBeenCalledWith(
       expect.objectContaining({ idempotencyKey: input.idempotencyKey }),
+      expect.any(AbortSignal),
     );
   });
 
