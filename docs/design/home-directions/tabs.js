@@ -157,6 +157,8 @@ function bubble(m, prev, o) {
       ? ''
       : `<div class="macts" role="group" aria-label="Message actions"><button type="button" data-msg-sp="${m.id}" aria-pressed="${!!CHAT.mine[m.id]}">✨ ${CHAT.mine[m.id] ? 'Reacted' : 'React'}</button>` +
         (m.re ? '' : `<button type="button" data-msg-re="${m.id}">Reply</button>`) +
+        // Others' messages can be reported (App Store 1.2)
+        (mine ? '' : `<button type="button" data-msg-rep="${m.id}">Report</button>`) +
         `</div>`) +
     (m.st === 'sending' ? `<span class="mst" role="status">Sending…</span>` : '') +
     (m.st === 'failed'
@@ -168,7 +170,8 @@ function bubble(m, prev, o) {
 
 function chatBody(d, o) {
   const conn = o.conn || 'ready';
-  const list = conn === 'error' ? [] : chatList(o);
+  // Blocked people's messages are hidden for you
+  const list = conn === 'error' ? [] : chatList(o).filter((m) => !isBlocked(m.who));
   // Entering with unread: a "new messages" divider before the last 3
   const freshAt = o.fresh && isSample() && !o.empty ? list.length - 3 - (o.failed ? 1 : 0) : -1;
   let rows = '';
@@ -210,7 +213,8 @@ function chatBody(d, o) {
           : '') +
         `<span class="cmp-n" aria-live="polite"${draft.length > CHAT_MAX - 200 ? '' : ' hidden'}>${draft.length} / ${CHAT_MAX}</span>` +
         `<div class="glass cmp-row"><textarea data-chat-input rows="1" maxlength="${CHAT_MAX}" placeholder="Message ${esc(short(groupName(), 20))}" aria-label="Message">${esc(draft)}</textarea>` +
-        `<button type="button" class="cmp-send" data-chat-send aria-label="Send"${off || !draft.trim() ? ' disabled' : ''}>${ic('send')}</button></div></div>`)
+        `<button type="button" class="cmp-send" data-chat-send aria-label="Send"${off || !draft.trim() ? ' disabled' : ''}>${ic('send')}</button></div></div>`) +
+    (o.report ? reportSheet(POOL[findMsg(o, o.report).who], 'message') : '')
   );
 }
 
@@ -466,6 +470,7 @@ document.addEventListener('click', (e) => {
     CHAT.mine[d.msgSp] = !CHAT.mine[d.msgSp];
     return chatRedraw(scr, { acts: null });
   }
+  if (d.msgRep) return chatRedraw(scr, { report: d.msgRep, acts: null });
   if (d.msgRe) {
     const ns = chatRedraw(scr, { reply: d.msgRe, acts: null });
     return ns.querySelector('[data-chat-input]').focus();

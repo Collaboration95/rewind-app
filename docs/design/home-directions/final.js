@@ -237,6 +237,7 @@ const FINAL = [
         [
           'The group sees the name (up to 40 characters).',
           'Password at least 8 characters; too short says so under the field.',
+          'The Terms and Privacy Policy line sits under the button; both links open in an in-app browser.',
         ],
       ],
     ],
@@ -468,7 +469,7 @@ const FINAL = [
         'Allow camera and mic',
         'Shutter, the first time',
         [
-          ['Allow → the system prompt says yes', 'V3'],
+          ['Continue → the system prompt says yes', 'V3'],
           ['The system prompt says no', 'V2'],
           ['Close', 'H1'],
         ],
@@ -481,12 +482,12 @@ const FINAL = [
         'Camera is off',
         'Permission blocked',
         [
-          ['Try again', 'V3'],
+          ['Open Settings', ''],
           ['Not now', 'H1'],
         ],
         [
-          'Browsers can’t show the prompt again once blocked, so say where the switch is.',
-          'Try again checks once more and stays here if it is still off.',
+          'iOS never shows the prompt twice, so Open Settings goes straight to Rewind in the Settings app.',
+          'Coming back with access on moves on to V3 by itself.',
         ],
       ],
       [
@@ -712,10 +713,13 @@ const FINAL = [
           ['Group name', 'S2'],
           ['Prompt', 'S3'],
           ['Invite friends', 'S4'],
+          ['Members', 'S15'],
           ['Switch group', 'S7'],
           ['Turn the reminder on', 'S10'],
           ['Time', 'S8'],
+          ['Help, Privacy Policy, Terms', ''],
           ['Sign out', 'S12'],
+          ['Delete account', 'S19'],
           ['Back', 'H1'],
         ],
         [
@@ -812,12 +816,11 @@ const FINAL = [
         'Allow notifications',
         'Turn the reminder on, the first time',
         [
-          ['Continue → browser prompt', 'S1'],
-          ['Not now', 'S1'],
-          ['On iPhone', 'S11'],
+          ['Continue → system prompt', 'S1'],
+          ['On iPhone, web only', 'S11'],
         ],
         [
-          'Explains before the browser asks, so the one real prompt is not wasted.',
+          'Explains before the system asks, so the one real prompt is not wasted. Continue is the only button.',
           'If the browser blocks it, the switch turns back off with “Notifications are off in your browser settings”.',
         ],
       ],
@@ -863,6 +866,89 @@ const FINAL = [
         ],
         ['Says exactly what is cleared. Real accounts are never touched.'],
       ],
+      [
+        'S15',
+        'settings',
+        { step: 'members' },
+        'Members',
+        'Members, in Settings',
+        [
+          ['Tap a person', 'S16'],
+          ['Leave group', 'S18'],
+          ['Back', 'S1'],
+        ],
+        ['Everyone in the group, owner first. Blocked people say so under their name.'],
+      ],
+      [
+        'S16',
+        'settings',
+        { step: 'person', person: 1 },
+        'A member',
+        'Tap a person',
+        [
+          ['Report', 'S17'],
+          ['Block or Unblock', 'S15'],
+          ['Remove from group (owner)', 'S15'],
+          ['Cancel', 'S15'],
+        ],
+        [
+          'Blocking hides their messages and their moments in your film. They aren’t told and stay in the group.',
+          'Removing takes them out at once; their sealed moments stay in this cycle’s film.',
+        ],
+      ],
+      [
+        'S17',
+        'settings',
+        { step: 'report', person: 1 },
+        'Report a person',
+        'Report',
+        [
+          ['Send report', 'S15'],
+          ['Cancel', 'S15'],
+        ],
+        [
+          'One reason, with Also block ticked by default. The same sheet reports a message (T11) and a moment (F4).',
+        ],
+      ],
+      [
+        'S18',
+        'settings',
+        { step: 'leave' },
+        'Leave group?',
+        'Leave group',
+        [
+          ['Leave group', 'H1'],
+          ['Stay', 'S15'],
+        ],
+        [
+          'Goes to the next group, or D1 if none is left.',
+          'An owner who leaves hands the group to the member who joined next.',
+        ],
+      ],
+      [
+        'S19',
+        'settings',
+        { step: 'delete' },
+        'Delete account',
+        'Delete account',
+        [
+          ['Delete account', 'S20'],
+          ['Back', 'S1'],
+        ],
+        ['Lists what is deleted. Asks for the password once.'],
+      ],
+      [
+        'S20',
+        'settings',
+        { step: 'delconf' },
+        'Delete for good?',
+        'Delete account',
+        [
+          ['Delete for good', 'A2'],
+          ['Keep my account', 'S19'],
+        ],
+        ['Signs out everywhere and lands on Welcome with “Your account is deleted.”'],
+      ],
     ],
   },
   {
@@ -896,6 +982,7 @@ const FINAL = [
         [
           ['✨', 'T1'],
           ['Reply', 'T3'],
+          ['Report (others’ messages)', 'T11'],
           ['Tap outside', 'T1'],
         ],
         ['One ✨ per person per message; tapping again removes it.'],
@@ -976,6 +1063,18 @@ const FINAL = [
         'Chat tab while the film premieres',
         [['Watch', 'F1']],
         ['A banner on top links to the film.'],
+      ],
+      [
+        'T11',
+        'chat',
+        { report: 'm6' },
+        'Report a message',
+        'Report, on someone else’s message',
+        [
+          ['Send report', 'T1'],
+          ['Cancel', 'T1'],
+        ],
+        ['Ticking Also block hides that person’s messages right away.'],
       ],
     ],
   },
@@ -1090,6 +1189,7 @@ const FINAL = [
           ['Replay', 'F1'],
           ['Save film', ''],
           ['Save your own moments', ''],
+          ['Report a moment', 'F4'],
           ['Close', 'H1'],
         ],
         [
@@ -1097,12 +1197,24 @@ const FINAL = [
           'Save opens the system share sheet; only released media can be saved.',
         ],
       ],
+      [
+        'F4',
+        'film',
+        { step: 'end', report: true },
+        'Report a moment',
+        'Report a moment',
+        [
+          ['Send report', 'F3'],
+          ['Cancel', 'F3'],
+        ],
+        ['No name or block option: moments in the film aren’t labelled with who took them.'],
+      ],
     ],
   },
   {
     k: 'N',
     title: 'Outside the app',
-    p: 'Web push, to the browser or the installed Home Screen app.',
+    p: 'Push through APNs in the App Store app; web push in the browser or the Home Screen web app.',
     steps: [
       [
         'N1',
@@ -1202,6 +1314,136 @@ const FIN_DIAGRAM = `flowchart LR
   classDef hub fill:#ffd9b8,stroke:#e08a5c,stroke-width:2px,color:#3a2a22,font-weight:600
   class H1 hub`;
 
+// App Store (iOS) requirements that touch a screen. Guideline numbers are from the App Store Review Guidelines.
+const APPSTORE = {
+  A1: [
+    'The launch screen comes from the app’s launch storyboard: the icon and name only, no ads, no tips (HIG, Launch screen).',
+    'Must not crash or hang offline (2.1).',
+  ],
+  A2: [
+    'App Review needs a working sign-in: add a review account in App Store Connect › App Review Information (2.1). Try Demo also has to work.',
+    'Sign in with Apple isn’t required while Rewind only uses its own email, phone and username accounts with no Google or Facebook sign-in (4.8).',
+  ],
+  A4: [
+    'Invite links open the app as Universal Links (apple-app-site-association on the invite domain); without the app they open the web page.',
+  ],
+  C1: [
+    'Email and phone are used only for sign-in: declare them as Contact Info, not tracking, in the App Privacy labels (5.1.2).',
+  ],
+  C5: [
+    'Apps with user content must have people agree to terms that forbid objectionable content and abusive users (1.2).',
+    'The Privacy Policy is linked here and in Settings, and its URL goes in App Store Connect (5.1.1(i)).',
+  ],
+  H1: [
+    'The App Store build is a native app (camera, APNs push, Universal Links), not a wrapped website, which Apple rejects (4.2).',
+  ],
+  V1: [
+    'The button says Continue, never Allow, and there is no skip: it always leads to the system prompt (5.1.1(iv)).',
+    'Info.plist: NSCameraUsageDescription “Rewind uses the camera to record your moments.” and NSMicrophoneUsageDescription “Rewind records sound with your videos.”',
+  ],
+  V2: [
+    'Open Settings uses UIApplication.openSettingsURLString. Never block the rest of the app because the camera is off (5.1.1(iv)).',
+  ],
+  V5: [
+    'Recording and trimming happen on the device. Nothing uploads before Seal, so no background upload permission is needed beyond a normal background task.',
+  ],
+  V8: [
+    'Uploads that finish in the background use a background URLSession, not a background mode Apple would question (2.5.4).',
+  ],
+  M1: ['Deleting a moment deletes it on the server too, not just hides it (5.1.1).'],
+  G1: [
+    'Each group is private and invite-only. Nothing is public, so no public profile or search moderation is needed.',
+  ],
+  S1: [
+    'Delete account, Privacy Policy, Terms of use and a support contact must all be in the app (5.1.1(i), 5.1.1(v), 1.2, 1.5).',
+    'Help and support also needs a support URL in App Store Connect.',
+  ],
+  S4: ['Share uses the system share sheet (UIActivityViewController).'],
+  S10: [
+    'No Not now and no tap-outside before the system prompt: Continue is the only way on (5.1.1(iv)).',
+    'Ask for push here, when the reminder is turned on, never at launch. The app works fully without notifications, and nothing promotional is sent without a separate opt-in (4.5.4).',
+  ],
+  S11: ['Web only. The App Store build hides this link: native push needs no Home Screen install.'],
+  S12: ['Sign out and Delete account are separate. Deactivating is not deleting (5.1.1(v)).'],
+  S15: ['Apps with user content need a way to block abusive users (1.2).'],
+  S16: [
+    'Block, report, and for the owner, remove: the moderation tools 1.2 asks for, inside a private group.',
+  ],
+  S17: [
+    'Reports reach the Rewind team, who act within 24 hours by removing the content and the person who posted it (1.2).',
+    'Needs a small moderation inbox for the team (email is enough at launch).',
+  ],
+  S19: [
+    'Deletion is done fully in the app: no email, call or website (5.1.1(v)).',
+    'It deletes the account and its data, not just deactivates it. If Sign in with Apple is added later, revoke its token here.',
+  ],
+  S20: ['A confirmation step is allowed; extra hurdles after it are not (5.1.1(v)).'],
+  T1: ['Chat is user content: report and block must be on every message from someone else (1.2).'],
+  T2: ['Report sits next to ✨ and Reply on others’ messages (1.2).'],
+  T11: ['Same report flow as S17. Blocking hides their messages for you at once (1.2).'],
+  F3: [
+    'Save film uses Add to Photos: NSPhotoLibraryAddUsageDescription “Rewind saves films you choose to your Photos.”',
+    'Every film has Report a moment (1.2).',
+  ],
+  F4: ['The team can remove a reported moment from the film for everyone (1.2).'],
+  N1: [
+    'Notifications never show sealed media or what someone recorded.',
+    'Reminders use the default interruption level, not time-sensitive or critical, which need a reason.',
+  ],
+};
+
+// The App Store checklist above the rows: [guideline, what it needs, screens]
+const APPSTORE_LIST = [
+  [
+    '1.2 User content',
+    'Terms that forbid objectionable content, report, block, remove members, act on reports within 24 hours, a contact link',
+    ['C5', 'T11', 'F4', 'S16', 'S17', 'S1'],
+  ],
+  [
+    '2.1 Completeness',
+    'A review account in App Store Connect; Try Demo works with no setup',
+    ['A2', 'A5'],
+  ],
+  [
+    '2.3 Metadata',
+    'Screenshots of the real app, with abstract or generated images only, never sealed media',
+    [],
+  ],
+  [
+    '4.2 Minimum functionality',
+    'A native app with the camera, push and Universal Links, not a website in a wrapper. The current plan ships iOS as a PWA, so App Store needs a native shell',
+    ['H1'],
+  ],
+  [
+    '4.8 Sign in with Apple',
+    'Not needed while there is no third-party sign-in. Required if Google or Facebook sign-in is ever added',
+    ['A2'],
+  ],
+  ['5.1.1(i) Privacy Policy', 'Linked in the app and in App Store Connect', ['C5', 'S1']],
+  [
+    '5.1.1(iv) Permissions',
+    'Ask in context; pre-prompts say Continue and have no skip; purpose strings for camera, microphone and Add to Photos',
+    ['V1', 'V2', 'S10', 'F3'],
+  ],
+  ['5.1.1(v) Account deletion', 'Delete account inside the app, deleting the data', ['S19', 'S20']],
+  [
+    '5.1.2 App Privacy labels',
+    'Contact info (email or phone), name, photos and videos, other user content (chat); no tracking, so no App Tracking Transparency prompt',
+    ['C1'],
+  ],
+  [
+    'Age rating',
+    'Answer yes to user-generated content and unrestricted chat in the age rating questionnaire',
+    ['T1'],
+  ],
+  ['Export compliance', 'Only standard HTTPS: set ITSAppUsesNonExemptEncryption to NO', []],
+  [
+    'App icon',
+    '1024 × 1024 PNG, square, no transparency and no rounded corners (iOS rounds it)',
+    [],
+  ],
+];
+
 const finAll = () => FINAL.flatMap((f) => f.steps);
 const finStep = (code) => finAll().find((s) => s[0] === code);
 
@@ -1257,6 +1499,9 @@ function finFigure(st) {
     `<p class="fn-k">Actions</p><ul class="fn-acts">${acts.map(act).join('')}</ul>` +
     (notes.length
       ? `<p class="fn-k">Behaviour</p><ul class="fn-notes">${notes.map((n) => `<li>${n}</li>`).join('')}</ul>`
+      : '') +
+    (APPSTORE[code]
+      ? `<div class="fn-as"><p class="fn-k">App Store (iOS)</p><ul class="fn-notes">${APPSTORE[code].map((n) => `<li>${n}</li>`).join('')}</ul></div>`
       : '') +
     `</figcaption></figure>`
   );
@@ -1347,6 +1592,11 @@ function renderFinalView() {
     `<section class="fn-block"><h2 class="fn-h">State diagram</h2><div class="fn-diagram glass-page"><p class="hint">Drawing the diagram…</p></div></section>` +
     `<section class="fn-block"><h2 class="fn-h">Moving between screens</h2><div class="fn-rules">${FIN_RULES.map(
       ([k, where, how]) => `<div><b>${k}</b><small>${where}</small><p>${how}</p></div>`,
+    ).join('')}</div></section>` +
+    `<section class="fn-block"><h2 class="fn-h">App Store (iOS) checklist</h2><p class="hint">What Apple’s review checks, and the screens that handle it. Each screen below also lists its own App Store notes.</p>` +
+    `<div class="fn-aslist">${APPSTORE_LIST.map(
+      ([g, what, codes]) =>
+        `<div><b>${g}</b><p>${what}</p>${codes.length ? `<span>${codes.map((c) => `<button type="button" data-fin-go="${c}">${c}</button>`).join('')}</span>` : ''}</div>`,
     ).join('')}</div></section>` +
     `<nav class="fn-index" aria-label="All screens">${FINAL.map(
       (f) =>

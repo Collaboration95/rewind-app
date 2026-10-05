@@ -190,7 +190,7 @@ function renderMix() {
   if (!root) return;
   const ic = iconOf(mix.icon);
   root.innerHTML =
-    `<header class="main-h"><p class="k">APP ICON</p><h1>Pick an icon</h1><p>Five icons in the Warm Glass colours. See the one you pick on the launch screen, the home screen, in small sizes and in a notification. Copy the link to share a pick.</p></header>` +
+    `<header class="main-h"><p class="k">APP ICON</p><h1>Pick an icon</h1><p>Five icons in the Warm Glass colours. See the one you pick on the launch screen, the home screen, in small sizes and in a notification. Copy the link to share a pick. For the App Store, export it as a 1024 × 1024 PNG: square, no transparency and no rounded corners, since iOS rounds it.</p></header>` +
     `<div class="mx-grid"><aside class="mx-pick"><p class="lbl">Icon</p><div class="mx-tiles">${ICONS.map(tile).join('')}</div>` +
     `<button type="button" class="rv-send mx-share" data-mx-share>Copy a link to this icon</button></aside>` +
     `<div class="mx-stage"><p class="mx-now"><b>${ic.no} ${ic.name}</b></p>` +

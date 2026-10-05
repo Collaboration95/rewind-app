@@ -268,7 +268,8 @@ function signupHTML(step) {
       `<label class="glass set-field"><span>Name</span><input data-up-name autocomplete="name" maxlength="40" placeholder="Your name" /></label>` +
       `<label class="glass set-field si-pass"><span>Password</span><input data-up-pass type="password" autocomplete="new-password" placeholder="At least 8 characters" /></label>` +
       `<p class="set-err" role="alert"></p>` +
-      `<button type="button" class="set-btn primary" data-up-create data-busy="Creating account…">Create account</button>`,
+      `<button type="button" class="set-btn primary" data-up-create data-busy="Creating account…">Create account</button>` +
+      `<p class="si-note si-terms">By creating an account you agree to the <button type="button" class="up-link" data-set-toast="terms">Terms</button> and <button type="button" class="up-link" data-set-toast="privacy">Privacy Policy</button>. Rewind doesn’t allow objectionable content or abusive behaviour.</p>`,
   };
   const page = { upbad: 'up', upcodebad: 'upcode' }[step] || step;
   return (
@@ -291,6 +292,33 @@ function resendTimer(scr) {
     b.textContent = 'Send a new code';
   });
 }
+
+/* ---------- Report: a message, a member or a moment (App Store 1.2) ----------
+   who: the person reported, or null for a film moment (no name, so no block option) */
+const REASONS = [
+  'Sexual or inappropriate',
+  'Harassment or bullying',
+  'Violence or self-harm',
+  'Spam',
+  'Something else',
+];
+function reportSheet(who, what) {
+  const n = `rp-${++setUid}`;
+  return (
+    `<div class="set-dim" data-rep-cancel></div><section class="glass set-dlg set-report" role="dialog" aria-label="Report">` +
+    `<h2>Report this ${what}</h2><p>Reports go to the Rewind team${who ? `, not to ${esc(who.name)}` : ''}. We review every one within 24 hours.</p>` +
+    `<div class="glass set-list set-prompts" role="radiogroup" aria-label="Reason">${REASONS.map(
+      (r, i) =>
+        `<label class="set-opt"><input type="radio" name="${n}" value="${i}"${i ? '' : ' checked'} /><span>${r}</span></label>`,
+    ).join('')}</div>` +
+    (who
+      ? `<label class="set-chk"><input type="checkbox" data-rep-block checked /><span>Also block ${esc(who.name)}</span></label>`
+      : '') +
+    `<button type="button" class="set-btn danger" data-rep-send${who ? ` data-rep-who="${POOL.indexOf(who)}"` : ''} data-busy="Sending…">Send report</button>` +
+    `<button type="button" class="set-btn" data-rep-cancel>Cancel</button></section>`
+  );
+}
+const isBlocked = (i) => !!SET.blocked?.[i];
 
 /* ---------- Settings ----------
    step: main | groups | time | invite | join | joined | create | rename | prompt | member | reset
@@ -345,6 +373,7 @@ function settingsHTML(d, step, o = {}) {
       : `<li><div class="set-row off">${ic('quote')}<span>Prompt<small>${promptText()}</small></span></div></li>` +
         `<li class="set-hint">Only the owner can change the prompt or invite friends.</li>`) +
     `</ul><ul class="glass set-list set-more">` +
+    setRow('users', 'Members', `${d.n} of 10`, ' data-set-go="members"') +
     setRow('users', 'Switch group', plural(SET.list.length, 'group'), ' data-set-go="groups"') +
     setRow('key', 'Have an invite?', '', ' data-set-go="join"') +
     setRow('plus', 'Create a group', '', ' data-set-go="create"') +
@@ -363,6 +392,10 @@ function settingsHTML(d, step, o = {}) {
         ) +
         setRow('send', 'Send a test reminder', '', ' data-set-test')
       : '') +
+    `</ul><p class="set-k">Help and privacy</p><ul class="glass set-list">` +
+    setRow('chat', 'Help and support', '', ' data-set-toast="help"') +
+    setRow('lock', 'Privacy Policy', '', ' data-set-toast="privacy"') +
+    setRow('quote', 'Terms of use', '', ' data-set-toast="terms"') +
     `</ul><p class="set-k">Account</p><ul class="glass set-list">` +
     setRow(
       'out',
@@ -371,6 +404,7 @@ function settingsHTML(d, step, o = {}) {
       ' data-set-go="signout"',
       ' out',
     ) +
+    (SET.demo ? '' : setRow('trash', 'Delete account', '', ' data-set-go="delete"', ' out')) +
     `</ul>` +
     // Demo identity controls: only when signed in with Demo, kept separate from real accounts
     (SET.demo
@@ -384,6 +418,30 @@ function settingsHTML(d, step, o = {}) {
     main,
     reset: main,
     signout: main,
+    members: () =>
+      setHead('Members') +
+      `<ul class="glass set-list">` +
+      d.members
+        .map((x, i) =>
+          i === SET.me
+            ? `<li><div class="set-row">${avatarOf(x, ' sm')}<span>${esc(x.name)} (you)<small>${isOwner() ? 'Owner' : 'Member'}</small></span></div></li>`
+            : `<li><button type="button" class="set-row" data-set-person="${i}">${avatarOf(x, ' sm')}<span>${esc(x.name)}<small>${i === 0 ? 'Owner' : 'Member'}${isBlocked(POOL.indexOf(POOL.find((p) => p.name === x.name))) ? ' · blocked' : ''}</small></span>${ic('chev', 'go')}</button></li>`,
+        )
+        .join('') +
+      `</ul><ul class="glass set-list set-more">` +
+      setRow('out', 'Leave group', '', ' data-set-go="leave"', ' out') +
+      `</ul><p class="set-foot">Blocking hides someone’s messages and moments from you. They aren’t told.</p>`,
+    person: () => pages.members(),
+    report: () => pages.members(),
+    leave: () => pages.members(),
+    delete: () =>
+      setHead('Delete account') +
+      `<section class="glass set-card"><p class="set-lead">This deletes your account for good:</p>` +
+      `<ul class="set-bul"><li>your name, email or phone, and password</li><li>your chat messages</li><li>your moments, including in past films (within 30 days)</li></ul></section>` +
+      `<p class="set-lead">Groups you own pass to the member who joined next. Saved copies on people’s phones stay theirs.</p>` +
+      `<label class="glass set-field si-pass"><span>Password</span><input type="password" autocomplete="current-password" /></label>` +
+      `<button type="button" class="set-btn danger" data-set-go="delconf">Delete account</button>`,
+    delconf: () => pages.delete(),
     notify: main,
     install: main,
     groups: () =>
@@ -475,6 +533,40 @@ function settingsHTML(d, step, o = {}) {
         `<button type="button" class="set-btn" data-set-go="main">Keep local data</button>` +
         `<button type="button" class="set-btn danger" data-set-reset data-busy="Resetting…">Reset</button></section>`
       : '') +
+    (step === 'person'
+      ? (() => {
+          const x = d.members[o.person ?? 1];
+          const pi = POOL.findIndex((p) => p.name === x.name);
+          return (
+            `<div class="set-dim" data-set-go="members"></div><section class="glass set-dlg" role="dialog" aria-label="${esc(x.name)}">` +
+            `<span class="set-okic" style="background:${x.col}">${x.name[0]}</span><h2>${esc(x.name)}</h2>` +
+            `<button type="button" class="set-btn" data-set-report="${o.person ?? 1}">Report</button>` +
+            `<button type="button" class="set-btn" data-set-block="${pi}">${isBlocked(pi) ? 'Unblock' : 'Block'}</button>` +
+            (isOwner()
+              ? `<button type="button" class="set-btn danger" data-set-remove="${esc(x.name)}">Remove from group</button>`
+              : '') +
+            `<button type="button" class="set-btn" data-set-go="members">Cancel</button></section>`
+          );
+        })()
+      : '') +
+    (step === 'report'
+      ? reportSheet(
+          POOL.find((p) => p.name === d.members[o.person ?? 1].name),
+          'person',
+        )
+      : '') +
+    (step === 'leave'
+      ? `<div class="set-dim" data-set-go="members"></div><section class="glass set-dlg" role="dialog" aria-label="Leave group confirmation">` +
+        `<h2>Leave ${esc(groupName())}?</h2><p>Your sealed moments stay in this cycle’s film. To come back you need a new invite.${isOwner() ? ' You’re the owner, so the member who joined next becomes owner.' : ''}</p>` +
+        `<button type="button" class="set-btn" data-set-go="members">Stay</button>` +
+        `<button type="button" class="set-btn danger" data-set-leave data-busy="Leaving…">Leave group</button></section>`
+      : '') +
+    (step === 'delconf'
+      ? `<div class="set-dim" data-set-go="delete"></div><section class="glass set-dlg" role="dialog" aria-label="Delete account confirmation">` +
+        `<h2>Delete your account?</h2><p>This can’t be undone. You’ll be signed out on every device.</p>` +
+        `<button type="button" class="set-btn" data-set-go="delete">Keep my account</button>` +
+        `<button type="button" class="set-btn danger" data-set-delete data-busy="Deleting…">Delete for good</button></section>`
+      : '') +
     (step === 'signout'
       ? `<div class="set-dim" data-set-go="main"></div><section class="glass set-dlg" role="dialog" aria-label="Sign out confirmation">` +
         `<h2>${SET.demo ? 'Sign out of Demo?' : 'Sign out?'}</h2><p>Your sealed moments stay with the group. A moment still uploading on this phone stops until you sign in again.</p>` +
@@ -483,10 +575,9 @@ function settingsHTML(d, step, o = {}) {
       : '') +
     // Turning the reminder on the first time: say what comes before the browser asks
     (step === 'notify'
-      ? `<div class="set-dim" data-set-go="main"></div><section class="glass set-dlg" role="dialog" aria-label="Allow notifications">` +
-        `<h2>Get the Sunday reminder?</h2><p>One notification a week, Sundays at ${SET.time}, and one when your film premieres. Your browser asks next.</p>` +
+      ? `<div class="set-dim"></div><section class="glass set-dlg" role="dialog" aria-label="Allow notifications">` +
+        `<h2>Get the Sunday reminder?</h2><p>One notification a week, Sundays at ${SET.time}, and one when your film premieres. Your phone asks next.</p>` +
         `<button type="button" class="set-btn primary" data-set-allow>Continue</button>` +
-        `<button type="button" class="set-btn" data-set-go="main">Not now</button>` +
         `<button type="button" class="up-link" data-set-go="install">On iPhone? Add Rewind to your Home Screen first</button></section>`
       : '') +
     // iPhone Safari only sends web push to the Home Screen app
@@ -560,9 +651,9 @@ function cameraHTML(d, mode, step, o = {}) {
     // No permission: video needs camera and microphone, photo only the camera
     (step === 'denied'
       ? `<section class="cam-perm glass"><h2>${video ? 'Camera or mic is off' : 'The camera is off'}</h2><p>Turn ${video ? 'Camera and Microphone' : 'Camera'} on for Rewind in your phone’s Settings, then come back. Nothing was recorded.</p>` +
-        `<button type="button" class="cam-allow" data-cam-allow>Try again</button><button type="button" class="cam-fin" data-sub-back>Not now</button></section>`
+        `<button type="button" class="cam-allow" data-set-toast="settings">Open Settings</button><button type="button" class="cam-fin" data-sub-back>Not now</button></section>`
       : `<section class="cam-perm glass"><h2>${video ? 'Allow camera and mic' : 'Allow the camera'}</h2><p>${video ? 'Rewind records short videos with sound.' : 'Rewind needs the camera to take a photo.'}</p>` +
-        `<button type="button" class="cam-allow" data-cam-allow>Allow</button></section>`) +
+        `<button type="button" class="cam-allow" data-cam-allow>Continue</button></section>`) +
     // Framing, recording
     `<div class="cam-bottom"><div class="cam-modes" role="tablist" aria-label="Capture mode">` +
     `<button type="button" role="tab" data-cam-mode="video" aria-selected="${video}">Video</button>` +
@@ -640,7 +731,8 @@ function filmHTML(d, o = {}) {
     `<div class="fm-acts"><button type="button" class="glass-btn" data-fm-replay>${ic('replay')}Replay</button>` +
     `<button type="button" class="glass-btn" data-fm-save="film">${ic('save')}Save film</button></div>` +
     `<button type="button" class="fm-link" data-fm-save="mine">Save your own moments</button>` +
-    `<p class="fm-note">It stays in Archive.</p></section>`
+    `<p class="fm-note">It stays in Archive.</p><button type="button" class="fm-link fm-rep" data-fm-report>Report a moment</button></section>` +
+    (o.report ? reportSheet(null, 'moment') : '')
   );
 }
 
@@ -908,14 +1000,26 @@ function signedIn(scr, idx, demo, name) {
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
     '[data-sub-back],[data-set-gojoined],[data-mine-retry],[data-cam-tell],[data-cam-done],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-cam-cancel],[data-cam-mine],[data-look],' +
-      '[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-allow],[data-set-snooze],[data-set-join],[data-set-create],[data-set-rename],[data-set-prompt],[data-set-group],[data-set-me],[data-set-reset],' +
+      '[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-allow],[data-set-person],[data-set-report],[data-set-block],[data-set-remove],[data-set-leave],[data-set-delete],[data-set-snooze],[data-set-join],[data-set-create],[data-set-rename],[data-set-prompt],[data-set-group],[data-set-me],[data-set-reset],' +
       '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-si-forgot],[data-si-reset],[data-up-via],[data-up-send],[data-up-resend],[data-up-verify],[data-up-create],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
-      '[data-fm-pause],[data-fm-replay],[data-fm-save],[data-fm-chat]',
+      '[data-fm-pause],[data-fm-replay],[data-fm-save],[data-fm-chat],[data-fm-report],[data-rep-send],[data-rep-cancel]',
   );
   if (!b || b.disabled) return;
   const scr = b.closest('.screen');
   const d = b.dataset;
   if ('subBack' in d) return closeSub(scr);
+  // Report sheet: send or cancel, then back to where it opened
+  if ('repSend' in d || 'repCancel' in d) {
+    const block = 'repSend' in d && d.repWho && scr.querySelector('[data-rep-block]')?.checked;
+    const done = () => {
+      if (block) SET.blocked = { ...SET.blocked, [d.repWho]: true };
+      if (scr.dataset.tab === 'chat') chatRedraw(scr, { report: null });
+      else if (scr.dataset.kind === 'film') redraw(scr, 'film', { step: 'end' });
+      else redraw(scr, 'settings', { step: 'members' });
+      if ('repSend' in d) rvToast(t(block ? 'scr.toast.reportBlock' : 'scr.toast.report'));
+    };
+    return 'repSend' in d ? busy(b, 700, done) : done();
+  }
   // Camera
   if ('camShoot' in d) return shoot(scr);
   if (d.camMode) {
@@ -970,6 +1074,36 @@ document.addEventListener('click', (e) => {
     return rvToast(t(SET.snoozed ? 'scr.toast.snoozed' : 'scr.toast.unsnoozed'));
   }
   if ('setOut' in d) return redraw(scr, 'signin', {});
+  if (d.setPerson) return redraw(scr, 'settings', { step: 'person', person: Number(d.setPerson) });
+  if (d.setReport) return redraw(scr, 'settings', { step: 'report', person: Number(d.setReport) });
+  if (d.setBlock) {
+    const i = Number(d.setBlock);
+    SET.blocked = { ...SET.blocked, [i]: !isBlocked(i) };
+    redraw(scr, 'settings', { step: 'members' });
+    return rvToast(
+      isBlocked(i)
+        ? t('scr.toast.blocked').replace('{name}', POOL[i].name)
+        : t('scr.toast.unblocked'),
+    );
+  }
+  if (d.setRemove) {
+    redraw(scr, 'settings', { step: 'members' });
+    return rvToast(t('scr.toast.removed').replace('{name}', d.setRemove));
+  }
+  if ('setLeave' in d)
+    return busy(b, 700, () => {
+      const name = groupName();
+      SET.list.splice(SET.gi, 1);
+      SET.gi = 0;
+      rvToast(t('scr.toast.left').replace('{name}', name));
+      closeSub(scr);
+    });
+  if ('setDelete' in d)
+    return busy(b, 800, () => {
+      sampleAccount();
+      redraw(scr, 'signin', {});
+      rvToast(t('scr.toast.deletedAcct'));
+    });
   if ('setAllow' in d) {
     SET.reminder = true;
     SET.asked = true;
@@ -1192,6 +1326,7 @@ document.addEventListener('click', (e) => {
     return startFilm(scr);
   }
   if (d.fmSave) return rvToast(t('scr.toast.save.' + d.fmSave));
+  if ('fmReport' in d) return redraw(scr, 'film', { step: 'end', report: true });
   if ('fmChat' in d) {
     const wrap = scr.closest('.phone-wrap');
     wrap.dataset.tab = 'chat';
