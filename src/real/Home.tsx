@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import { Icon } from '../ui/Icon';
 import { Button, Glass, ProgressBar, rw } from '../ui/primitives';
@@ -57,6 +57,7 @@ export function HomeBody({
   rollKey?: number;
   notices?: ReactNode;
 }) {
+  const compact = useWindowDimensions().height < 720 && cards.length > 0;
   const used = countUsed ?? 0;
   const secs = secondsUsed ?? 0;
   return (
@@ -75,10 +76,10 @@ export function HomeBody({
       ))}
       <View
         accessibilityLabel={`${plural(countdown.count, countdown.unit)} until our film`}
-        style={[styles.hero, cards.length > 0 && styles.heroSlim]}
+        style={[styles.hero, cards.length > 0 && styles.heroSlim, compact && styles.heroCompact]}
         testID="real-group-countdown"
       >
-        <Text style={styles.heroDays}>{countdown.count}</Text>
+        <Text style={[styles.heroDays, compact && styles.heroDaysCompact]}>{countdown.count}</Text>
         <Text style={styles.heroLabel}>
           {countdown.unit}
           {countdown.count === 1 ? '' : 's'} until our film
@@ -318,6 +319,8 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.82 },
   hero: { alignItems: 'center', height: 282, justifyContent: 'center' },
   heroSlim: { height: 210 },
+  heroCompact: { height: 144 },
+  heroDaysCompact: { letterSpacing: -3, ...serif(96, '300', 108) },
   heroDays: {
     color: WARM.heroInk,
     letterSpacing: -5,
