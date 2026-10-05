@@ -1453,7 +1453,7 @@ const finDevice = (cls, body) =>
 const splashPhone = () => finDevice('sub-splash', splashHTML(150));
 function notifPhone() {
   const card = (title, text, when) =>
-    `<div class="fn-push glass">${iconHTML(mix.icon, 34)}<div><b>${title}</b><span>${text}</span></div><em>${when}</em></div>`;
+    `<div class="fn-push glass">${iconHTML(34)}<div><b>${title}</b><span>${text}</span></div><em>${when}</em></div>`;
   return finDevice(
     'sub-lock dark',
     `<div class="fn-lock"><p class="fn-date">Sunday 11 October</p><p class="fn-clock">7:00</p>` +

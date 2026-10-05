@@ -52,7 +52,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
   - The film: plays straight away during the 24-hour premiere, labels _From the archive_ moments, then the cast, a main button that opens Chat, and Replay, Save film and Save your own moments.
   - Chat: new messages, tap a message, reply, no messages yet, reconnecting, offline, not sent, couldn't load, and after the premiere.
   - Archive: collecting, the premiere, developing, a film playing in its card, the first cycle and couldn't load.
-- **App icon**: five icons in the Warm Glass colours (Ember ring, Soft rewind, Time capsule, Soft r., Campfire). See the one you pick on the launch screen opening into Home, the home screen, in sizes and in a notification. `#mix=ember` links to a pick.
+- **App icon**: the chosen icon, Campfire, on the launch screen opening into Home, the home screen, in sizes and in a notification, with the App Store export rules. `#mix` opens it.
 - **Dock icons**: try six icon sets in the dock. `#dock=ios` links to a set.
 
 ## Home states
@@ -87,7 +87,7 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 | `states.js`, `styles-states.css`                         | Home states and the States tab                                        |
 | `screens.js`, `styles-screens.css`                       | Sign in, Settings, Your moments, the camera and the film; Screens tab |
 | `tabs.js`, `styles-tabs.css`                             | Chat, Archive and the group menu                                      |
-| `mix.js`, `styles-mix.css`, `icons.js`                   | App icon tab, page tabs, and the five icons as SVG                    |
+| `mix.js`, `styles-mix.css`, `icons.js`                   | App icon tab, page tabs, and the Campfire icon as SVG                 |
 | `final.js`, `styles-final.css`                           | Final tab: diagram, transition rules and every screen with its notes  |
 | `dockicons.js`, `styles-dock.css`                        | Dock icons tab                                                        |
 | `i18n.js`                                                | Page text                                                             |

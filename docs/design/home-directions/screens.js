@@ -171,7 +171,7 @@ function signinHTML(step) {
     offline: 'You’re offline. Try again when you’re connected.',
   }[step];
   const welcome =
-    `<section class="si-brand">${iconHTML(mix.icon, 96)}<h1>Rewind</h1><p>Small moments with your people, opened together every 4 weeks.</p></section>` +
+    `<section class="si-brand">${iconHTML(96)}<h1>Rewind</h1><p>Small moments with your people, opened together every 4 weeks.</p></section>` +
     (step === 'expired'
       ? `<p class="si-alert" role="status">You were signed out. Please sign in again.</p>`
       : '') +
@@ -976,7 +976,7 @@ function testReminder(scr) {
   const n = document.createElement('div');
   n.className = 'set-push';
   n.setAttribute('role', 'status');
-  n.innerHTML = `${iconHTML(mix.icon, 38)}<div><b>Rewind test reminder</b><span>Local reminders are working on this device.</span></div><em>now</em>`;
+  n.innerHTML = `${iconHTML(38)}<div><b>Rewind test reminder</b><span>Local reminders are working on this device.</span></div><em>now</em>`;
   scr.appendChild(n);
   setTimeout(() => n.remove(), 3200);
 }

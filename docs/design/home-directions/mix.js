@@ -1,8 +1,7 @@
 'use strict';
 
-/* ---------- App icon: pick one of five icons and see it where people meet it ----------
-   The launch screen opening into Warm Glass Home, the home screen, small sizes and a notification.
-   The pick is in the URL (#mix=ember), so a link shares it. */
+/* ---------- App icon: Campfire, where people meet it ----------
+   The launch screen opening into Warm Glass Home, the home screen, small sizes and a notification. */
 
 const WARM = { bg: '#fff3e2', ink: '#3a2a22' };
 // Two plain wallpapers so the wallpaper colour doesn't sway the choice
@@ -52,19 +51,13 @@ const APP_ICONS = {
 const appIcon = (k, size) =>
   `<span class="mx-icon" style="width:${size}px;height:${size}px"><svg viewBox="0 0 60 60">${APP_ICONS[k]}</svg></span>`;
 
-let mix = { icon: 'ember', wall: 'light' };
-const iconOf = (id) => ICONS.find((i) => i.id === id) || ICONS[0];
+let mix = { wall: 'light' };
 // The same icon shows many times on the page: the svg has no size, the wrapper sets it
-const iconHTML = (id, size, cls = '') =>
-  `<span class="mx-icon ${cls}" style="width:${size}px;height:${size}px">${iconOf(id).svg}</span>`;
+const iconHTML = (size, cls = '') =>
+  `<span class="mx-icon ${cls}" style="width:${size}px;height:${size}px">${APP_ICON.svg}</span>`;
 
-const mixHash = () => `#mix=${mix.icon}`;
-function readHash() {
-  const m = /^#mix(?:=(.*))?$/.exec(location.hash);
-  if (!m) return false;
-  if (m[1] && iconOf(m[1]).id === m[1]) mix.icon = m[1];
-  return true;
-}
+const mixHash = () => '#mix';
+const readHash = () => /^#mix(=.*)?$/.test(location.hash);
 
 /* ---------- Page tabs ---------- */
 const VIEWS = ['final', 'states', 'screens', 'mix', 'dockicons'];
@@ -133,7 +126,7 @@ function homeScreenHTML() {
   ];
   const cell = (a) =>
     a === 'rewind'
-      ? `<figure class="me">${iconHTML(mix.icon, 52)}<figcaption>Rewind</figcaption></figure>`
+      ? `<figure class="me">${iconHTML(52)}<figcaption>Rewind</figcaption></figure>`
       : `<figure>${appIcon(a, 52)}<figcaption>${APP_NAMES[a]}</figcaption></figure>`;
   const walls = Object.keys(WALLS)
     .map(
@@ -150,7 +143,7 @@ function homeScreenHTML() {
 
 // The launch screen sits inside the screen, so it is clipped by the screen corners
 const splashHTML = (size = 190) =>
-  `<div class="mx-splash" style="background:${WARM.bg}">${iconHTML(mix.icon, size)}<span style="color:${WARM.ink}">Rewind</span></div>`;
+  `<div class="mx-splash" style="background:${WARM.bg}">${iconHTML(size)}<span style="color:${WARM.ink}">Rewind</span></div>`;
 function phoneHTML() {
   const c = concepts[0];
   const phone = screen(c, dataFor(c.id)).replace(/<\/div><\/div>$/, splashHTML() + '</div></div>');
@@ -159,13 +152,6 @@ function phoneHTML() {
     `<button type="button" class="ghost mx-replay" data-mx-replay>Replay the launch</button>`
   );
 }
-
-const tile = (ic) =>
-  `<button type="button" class="mx-tile" data-mx-icon="${ic.id}" aria-pressed="${mix.icon === ic.id}" title="${ic.name}">${iconHTML(ic.id, 46)}<b>${ic.no}</b></button>`;
-const card = (ic) =>
-  `<figure class="mx-card${mix.icon === ic.id ? ' on' : ''}"><button type="button" data-mx-icon="${ic.id}" aria-label="Pick ${ic.name}">${iconHTML(ic.id, 150)}</button>` +
-  `<figcaption><b>${ic.no} <small>${ic.name}</small></b><span>${ic.note}</span>` +
-  `<span class="mx-sizes">${iconHTML(ic.id, 60)}${iconHTML(ic.id, 29)}</span></figcaption></figure>`;
 
 let splashTimer;
 function playSplash() {
@@ -188,12 +174,11 @@ function playSplash() {
 function renderMix() {
   const root = $('mix');
   if (!root) return;
-  const ic = iconOf(mix.icon);
   root.innerHTML =
-    `<header class="main-h"><p class="k">APP ICON</p><h1>Pick an icon</h1><p>Five icons in the Warm Glass colours. See the one you pick on the launch screen, the home screen, in small sizes and in a notification. Copy the link to share a pick. For the App Store, export it as a 1024 × 1024 PNG: square, no transparency and no rounded corners, since iOS rounds it.</p></header>` +
-    `<div class="mx-grid"><aside class="mx-pick"><p class="lbl">Icon</p><div class="mx-tiles">${ICONS.map(tile).join('')}</div>` +
-    `<button type="button" class="rv-send mx-share" data-mx-share>Copy a link to this icon</button></aside>` +
-    `<div class="mx-stage"><p class="mx-now"><b>${ic.no} ${ic.name}</b></p>` +
+    `<header class="main-h"><p class="k">APP ICON</p><h1>${APP_ICON.name}</h1><p>${APP_ICON.note} Here it is on the launch screen, the home screen, in small sizes and in a notification.</p></header>` +
+    `<div class="mx-grid"><aside class="mx-pick">${iconHTML(180)}` +
+    `<p class="lbl">For the App Store</p><p class="hint">Export as a 1024 × 1024 PNG: square, no transparency and no rounded corners, since iOS rounds it. Outline the shapes; the svg in icons.js is the source.</p></aside>` +
+    `<div class="mx-stage">` +
     `<div class="mx-row"><section class="mx-block"><p class="lbl">Launch → Home</p>${phoneHTML()}</section>` +
     `<section class="mx-block"><p class="lbl">On the home screen</p>${homeScreenHTML()}` +
     `<p class="lbl">Sizes</p><div class="mx-sizerow">${[
@@ -202,47 +187,23 @@ function renderMix() {
       [40, 'Spotlight'],
       [29, 'Settings'],
     ]
-      .map(
-        ([s, l]) =>
-          `<figure>${iconHTML(mix.icon, s)}<figcaption>${s} px · ${l}</figcaption></figure>`,
-      )
+      .map(([s, l]) => `<figure>${iconHTML(s)}<figcaption>${s} px · ${l}</figcaption></figure>`)
       .join('')}</div>` +
-    `<p class="lbl">Notification</p><div class="mx-notif">${iconHTML(mix.icon, 38)}<div><b>Rewind</b><span>It’s Sunday. Add a moment before the week resets.</span></div><em>now</em></div>` +
-    `</section></div></div></div>` +
-    `<h2 class="gal-h mx-fam-h">All five</h2><div class="mx-gallery">${ICONS.map(card).join('')}</div>`;
+    `<p class="lbl">Notification</p><div class="mx-notif">${iconHTML(38)}<div><b>Rewind</b><span>It’s Sunday. Add a moment before the week resets.</span></div><em>now</em></div>` +
+    `</section></div></div></div>`;
   playSplash();
-  try {
-    if (document.body.classList.contains('view-mix')) history.replaceState(null, '', mixHash());
-  } catch {
-    /* as above */
-  }
 }
 
 document.addEventListener('click', (e) => {
-  const b = e.target.closest(
-    '[data-view],[data-mx-icon],[data-mx-wall],[data-mx-replay],[data-mx-share]',
-  );
+  const b = e.target.closest('[data-view],[data-mx-wall],[data-mx-replay]');
   if (!b) return;
   const d = b.dataset;
   if (d.view) return setView(d.view);
-  if (d.mxIcon) {
-    mix.icon = d.mxIcon;
-    renderMix();
-    if (b.closest('.mx-gallery'))
-      $('mix').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth' });
-    return;
-  }
   if (d.mxWall) {
     mix.wall = d.mxWall;
     return renderMix();
   }
   if ('mxReplay' in d) return playSplash();
-  if ('mxShare' in d) {
-    const url = location.href.split('#')[0] + mixHash();
-    return copyText(url).then((ok) =>
-      rvToast(ok ? 'Link copied' : 'Couldn’t copy. Select the text and press Ctrl+C.'),
-    );
-  }
 });
 
 // Opening with #mix… goes straight to this tab (htmlpreview settles late, so check again on load)
