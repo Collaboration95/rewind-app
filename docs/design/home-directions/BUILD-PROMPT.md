@@ -36,8 +36,11 @@ make, a check that needs their physical iPhone, or a sign-in that needs their pa
   the new equivalent.
 - Diagnosis rule: two focused attempts per problem. If still stuck, write the blocker down (it goes
   in the PR description) and move on.
-- Add no new dependencies unless a screen truly can't be built without one. Prefer what the repo
-  already has (Expo / React Native Web, `react-native-svg` if present, existing fonts setup).
+- Add no new dependencies beyond these two, which are already justified: `react-native-svg`, for
+  the dock icons, the allowance ring and the icons (dev has no SVG library today), and Expo's
+  font loading (`expo-font`, with the Fraunces, Geist and DM Mono files under `assets/fonts`),
+  since dev has no font loader. Install both with `npx expo install` so the versions match the
+  SDK. Anything else needs a reason in the PR.
 - Add the `doing` label to the issues in section 6 when you start. Reference them in the PR without
   closing keywords.
 
