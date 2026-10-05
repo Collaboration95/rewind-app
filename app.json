@@ -29,8 +29,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow Rewind to use your camera for a still moment.",
-          "microphonePermission": "Allow Rewind to use your microphone for capture readiness.",
+          "cameraPermission": "Rewind uses the camera to take the photos and videos you share with your group.",
+          "microphonePermission": "Rewind records sound with the videos you share with your group.",
           "recordAudioAndroid": true
         }
       ],
@@ -40,7 +40,10 @@
     ],
     "ios": {
       "bundleIdentifier": "com.anonymous.rewind-app",
-      "buildNumber": "1"
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.anonymous.rewindapp",
