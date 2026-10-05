@@ -140,17 +140,27 @@ export function freezeFilmSegments(database: RewindDatabase, filmId: string): vo
      VALUES (?, ?, ?, ?, ?)`,
   );
   let startSeconds = 0;
-  rows.forEach((row, position) => {
-    const durationSeconds = Math.round(Math.max(0, Number(row.durationSeconds)) * 1000) / 1000;
-    insert.run(
-      filmId,
-      position,
-      row.contributionId,
-      Math.round(startSeconds * 1000) / 1000,
-      durationSeconds,
-    );
-    startSeconds += durationSeconds;
-  });
+  // All or nothing: a partial set would read as frozen for good. A savepoint
+  // also nests inside the account purge's transaction.
+  database.exec('SAVEPOINT freeze_film_segments');
+  try {
+    rows.forEach((row, position) => {
+      const durationSeconds = Math.round(Math.max(0, Number(row.durationSeconds)) * 1000) / 1000;
+      insert.run(
+        filmId,
+        position,
+        row.contributionId,
+        Math.round(startSeconds * 1000) / 1000,
+        durationSeconds,
+      );
+      startSeconds += durationSeconds;
+    });
+    database.exec('RELEASE freeze_film_segments');
+  } catch (error) {
+    database.exec('ROLLBACK TO freeze_film_segments');
+    database.exec('RELEASE freeze_film_segments');
+    throw error;
+  }
 }
 
 /** The moments in a compiled film, in order, from its frozen timing. A

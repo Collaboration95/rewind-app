@@ -9,6 +9,13 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 /** The four original retro looks offered for new captures. */
+/** H.264 every iPhone decodes in hardware, for outputs normalized to
+ * 720×1280 at 30 fps or less (photos and films). Browser recordings carry a
+ * variable frame rate and photos are full range; left alone, x264 marked a
+ * film full range at level 6.2, which iOS Safari refuses to play. Filters
+ * convert to TV range with scale's out_range=tv; these flags pin the rest. */
+const IPHONE_H264 = ['-profile:v', 'high', '-level:v', '4.0', '-color_range', 'tv'];
+
 export const RETRO_CAPTURE_MODES = ['disposable-flash', 'ccd', '8mm', 'vhs'] as const;
 /** Earlier server-only looks, still accepted for existing rows and older clients. */
 export const LEGACY_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
@@ -298,7 +305,7 @@ export async function processClipWithFfmpeg(
         '-map',
         '0:a?',
         '-vf',
-        `${modeFilter(input.mode)},setpts=PTS-STARTPTS`,
+        `${modeFilter(input.mode)},scale=out_range=tv,setpts=PTS-STARTPTS`,
         '-af',
         'asetpts=PTS-STARTPTS',
         '-c:v',
@@ -309,6 +316,9 @@ export async function processClipWithFfmpeg(
         '0',
         '-pix_fmt',
         'yuv420p',
+        // Clips keep their source size and rate, so x264 picks the level.
+        '-color_range',
+        'tv',
         '-c:a',
         'aac',
         '-movflags',
@@ -369,7 +379,7 @@ export async function processPhotoWithFfmpeg(
         '-t',
         '3',
         '-vf',
-        `${modeFilter(input.mode)},scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=12`,
+        `${modeFilter(input.mode)},scale=720:1280:force_original_aspect_ratio=increase:out_range=tv,crop=720:1280,setsar=1,fps=12`,
         '-map',
         '0:v:0',
         '-map',
@@ -380,6 +390,7 @@ export async function processPhotoWithFfmpeg(
         'veryfast',
         '-pix_fmt',
         'yuv420p',
+        ...IPHONE_H264,
         '-c:a',
         'aac',
         '-ar',
@@ -521,7 +532,7 @@ export async function compileFilmWithFfmpeg(
   const videoFilters = input.inputPaths.map((_, index) => {
     const normalized =
       // Vertical 720p film; landscape clips are letterboxed, not cropped.
-      `[${index}:v:0]scale=720:1280:force_original_aspect_ratio=decrease,` +
+      `[${index}:v:0]scale=720:1280:force_original_aspect_ratio=decrease:out_range=tv,` +
       `pad=720:1280:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,setpts=PTS-STARTPTS`;
     if (index !== input.archiveFillerIndex) return `${normalized}[v${index}]`;
     const labelInputIndex = input.inputPaths.length;
@@ -572,6 +583,10 @@ export async function compileFilmWithFfmpeg(
         '0',
         '-pix_fmt',
         'yuv420p',
+        ...IPHONE_H264,
+        // Mixed photo and variable-rate clips need one constant rate.
+        '-r',
+        '30',
         '-c:a',
         'aac',
         '-ar',

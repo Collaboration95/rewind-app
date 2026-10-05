@@ -13,8 +13,13 @@ const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createCompilationJob, getCompilationJob, MAX_COMPILATION_ATTEMPTS, processCompilationJob } =
   await import('../dist/jobs/index.js');
-const { ARCHIVE_FILLER_LABEL, generateSyntheticDemoClip, probeClipWithFfmpeg } =
-  await import('../dist/ffmpeg.js');
+const {
+  ARCHIVE_FILLER_LABEL,
+  compileFilmWithFfmpeg,
+  generateSyntheticDemoClip,
+  probeClipWithFfmpeg,
+  processPhotoWithFfmpeg,
+} = await import('../dist/ffmpeg.js');
 
 async function withDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-film-compilation-test-`);
@@ -324,6 +329,122 @@ test('compiles chronological retained clips into a playable normalized-audio fil
       'middle accepted clip was not second in the film',
     );
     assert.ok(lastBlue > lastRed * 1.5, 'last accepted clip was not last in the film');
+  });
+});
+
+test('a moment the owner removed before the film compiles stays out of it', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const outputDir = `${dataDir}/media/processed`;
+    await mkdir(outputDir, { recursive: true });
+    const keptClip = `${outputDir}/kept.mp4`;
+    const removedClip = `${outputDir}/removed.mp4`;
+    await createProcessedClip(keptClip, { color: 'red', frequency: 440 });
+    await createProcessedClip(removedClip, { color: 'blue', frequency: 880 });
+    insertReadyClip(database, {
+      id: 'kept',
+      contributionId: 'contribution-kept',
+      acceptedAt: '2026-09-10T01:00:00.000Z',
+      jobCreatedAt: '2026-09-10T01:00:00.000Z',
+      outputPath: keptClip,
+    });
+    insertReadyClip(database, {
+      id: 'removed',
+      contributionId: 'contribution-removed',
+      acceptedAt: '2026-09-10T02:00:00.000Z',
+      jobCreatedAt: '2026-09-10T02:00:00.000Z',
+      outputPath: removedClip,
+    });
+    database
+      .prepare("UPDATE contributions SET removed_at = ? WHERE id = 'contribution-removed'")
+      .run('2026-09-10T03:00:00.000Z');
+    const jobId = await createFilmJob(database);
+    const result = await processCompilationJob(database, {
+      jobId,
+      ffmpegBin: config.ffmpegBin,
+      outputDir,
+    });
+    assert.deepEqual(result, { ok: true, jobId, status: 'ready' });
+    const job = getCompilationJob(database, jobId);
+    assert.equal(job?.completedCount, 1);
+    const metadata = await probeClipWithFfmpeg(config.ffmpegBin, job.outputPath);
+    assert.ok(
+      metadata.durationSeconds < 1.5,
+      `film kept the removed moment: ${metadata.durationSeconds}s`,
+    );
+  });
+});
+
+test('a film from a photo and a variable-rate clip stays playable on iPhone', async () => {
+  await withDatabase(async ({ config, dataDir }) => {
+    // Photos are full range, and browser recordings carry an odd frame rate
+    // on a microsecond timescale; together they made a level 6.2 film that
+    // iOS Safari would not play.
+    const still = `${dataDir}/still.jpg`;
+    await execFileAsync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=orange:size=360x640',
+      '-frames:v',
+      '1',
+      still,
+    ]);
+    const photo = `${dataDir}/photo.mp4`;
+    await processPhotoWithFfmpeg(config.ffmpegBin, {
+      inputPath: still,
+      outputPath: photo,
+      mode: 'ccd',
+    });
+    const recorded = `${dataDir}/recorded.mp4`;
+    await execFileAsync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=720x1280:rate=12.98:duration=2',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=48000:duration=2',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuvj420p',
+      '-c:a',
+      'aac',
+      '-video_track_timescale',
+      '1000000',
+      '-shortest',
+      recorded,
+    ]);
+    const outputPath = `${dataDir}/film.mp4`;
+    await compileFilmWithFfmpeg(config.ffmpegBin, { inputPaths: [photo, recorded], outputPath });
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=profile,level,pix_fmt,color_range,r_frame_rate',
+      '-of',
+      'json',
+      outputPath,
+    ]);
+    const [video] = JSON.parse(stdout).streams;
+    assert.equal(video.profile, 'High');
+    assert.ok(video.level <= 40, `level ${video.level}`);
+    assert.equal(video.pix_fmt, 'yuv420p');
+    // Older FFmpeg builds leave the range untagged, which decoders read as TV
+    // range; full range ('pc') is what iOS Safari rejected.
+    assert.notEqual(video.color_range, 'pc');
+    assert.equal(video.r_frame_rate, '30/1');
   });
 });
 

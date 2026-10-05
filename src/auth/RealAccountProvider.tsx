@@ -72,6 +72,9 @@ export function RealAccountProvider({
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const mounted = useRef(true);
   const tokenRef = useRef<string | undefined>(undefined);
+  // Requests still in flight when sign-out lands get a 401; that is the
+  // sign-out itself, not a revoked session.
+  const signingOut = useRef(false);
 
   const restore = useCallback(async () => {
     if (!client) {
@@ -156,6 +159,7 @@ export function RealAccountProvider({
 
   const signIn = useCallback(
     async (username: string, password: string): Promise<boolean> => {
+      signingOut.current = false;
       if (!client) {
         setNotice('offline');
         return false;
@@ -264,6 +268,7 @@ export function RealAccountProvider({
   }, [client]);
 
   const signOut = useCallback(async () => {
+    signingOut.current = true;
     setPending(true);
     if (!client) {
       await clearLocalSession();
@@ -277,6 +282,7 @@ export function RealAccountProvider({
       } catch {
         // Keep the active session visible and truthful if durable recovery
         // state cannot be written. No request or credential deletion starts.
+        signingOut.current = false;
         setPending(false);
         setNotice('sign-out-marker-unavailable');
         return;
@@ -302,6 +308,7 @@ export function RealAccountProvider({
       } else {
         // HttpOnly cookies cannot be cleared in JavaScript. Keep this browser
         // session active until the server confirms revocation.
+        signingOut.current = false;
         setPending(false);
         setNotice('revocation-unconfirmed');
       }
@@ -399,7 +406,7 @@ export function RealAccountProvider({
         return await client.request(path, init, tokenRef.current);
       } catch (error) {
         if (error instanceof AuthRequestError && error.status === 401) {
-          setNotice('revoked');
+          if (!signingOut.current) setNotice('revoked');
           await clearLocalSession();
         }
         throw error;

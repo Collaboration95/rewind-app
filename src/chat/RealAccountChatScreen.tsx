@@ -597,10 +597,16 @@ export function RealAccountChatScreen({
                           accessibilityLabel={`${author}: ${message.body}${message.replyTo ? `. Reply to ${nameOf(message.replyTo.memberId)}` : ''}${sparks ? `. ${sparks} ✨` : ''}`}
                           accessibilityRole="button"
                           accessibilityState={{ expanded: open }}
+                          // A long press is how people expect to reach message actions;
+                          // it must not select the text instead.
+                          onLongPress={() => setOpenMessage(message.id)}
                           onPress={() => setOpenMessage(open ? null : message.id)}
                           testID={`real-chat-message-${message.id}`}
                         >
-                          <Text style={[styles.body, own && { color: WARM.peachInk }]}>
+                          <Text
+                            selectable={false}
+                            style={[styles.body, own && { color: WARM.peachInk }]}
+                          >
                             {message.body}
                           </Text>
                         </Pressable>

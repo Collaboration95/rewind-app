@@ -62,8 +62,16 @@
         margin: 0;
         background: #f6ede3;
       }
-      body {
+      /* The app scrolls inside its own views. Clip the page itself, html
+         included: decorative glows wider than the screen otherwise let iOS
+         Safari pan the whole app sideways. */
+      html,
+      body,
+      #root {
         overflow: hidden;
+        overflow: clip;
+      }
+      body {
         overscroll-behavior: none;
       }
       :focus-visible {
