@@ -28,7 +28,7 @@ export function ContributionLedgerSection({
   cycleId,
   render,
 }: {
-  render?: (view: ContributionLedgerView, retry: () => void, loadMore: () => void) => ReactNode;
+  render?: (view: ContributionLedgerView, retry: () => void) => ReactNode;
   client?: RuntimeClient;
   loadPage?: LedgerPageLoader;
   onPageLoaded?: (page: ContributionLedgerPage | null) => void;

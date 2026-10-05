@@ -50,7 +50,12 @@ test('camera CTA and navigation remain reachable from portrait through short lan
   await page.setViewportSize({ width: 393, height: 852 });
   await page.getByTestId('nav-home').click();
   await expect(page.getByTestId('camera-screen')).toHaveCount(0);
-  await expect(page.getByTestId('nav-home')).toContainText('SELECTED');
+  await expect(page.getByTestId('nav-home')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('nav-home')).toHaveCSS(
+    'background-color',
+    'rgba(255, 250, 244, 0.97)',
+  );
+  await expect(page.getByRole('tab', { selected: true })).toHaveCount(1);
   await page.getByTestId('nav-camera').click();
   await expectReachable(page, allow);
 });
@@ -87,5 +92,10 @@ test('short landscape file review keeps retake and discard usable above navigati
   await page.setViewportSize({ width: 393, height: 852 });
   await page.getByTestId('nav-home').click();
   await expect(page.getByTestId('camera-screen')).toHaveCount(0);
-  await expect(page.getByTestId('nav-home')).toContainText('SELECTED');
+  await expect(page.getByTestId('nav-home')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('nav-home')).toHaveCSS(
+    'background-color',
+    'rgba(255, 250, 244, 0.97)',
+  );
+  await expect(page.getByRole('tab', { selected: true })).toHaveCount(1);
 });

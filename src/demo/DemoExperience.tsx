@@ -264,7 +264,7 @@ export function DemoExperience({
       <SafeAreaFrame>
         <TabColumn>
           <Glow />
-          {activeRoute !== 'film' && (
+          {activeRoute !== 'film' && activeRoute !== 'camera' && activeRoute !== 'video' && (
             <View nativeID="demo-header" style={[styles.demoTop, { paddingTop: insets.top }]}>
               <View style={{ width: 36 }} />
               <Text
@@ -278,6 +278,7 @@ export function DemoExperience({
                 <Pressable
                   accessibilityLabel="Settings"
                   accessibilityRole="tab"
+                  aria-selected={activeRoute === 'settings' || activeRoute === 'create-group'}
                   accessibilityState={{
                     selected: activeRoute === 'settings' || activeRoute === 'create-group',
                   }}
@@ -1284,6 +1285,7 @@ function MainNavigation({
               }
               accessibilityRole="tab"
               accessibilityState={{ selected }}
+              aria-selected={selected}
               aria-current={selected ? 'page' : undefined}
               onPress={() => onNavigate(key)}
               style={[styles.tab, selected && styles.selectedTab]}
@@ -1312,6 +1314,7 @@ function MainNavigation({
         accessibilityHint="Add a photo or video moment"
         accessibilityRole="tab"
         accessibilityState={{ selected: activeRoute === 'camera' }}
+        aria-selected={activeRoute === 'camera'}
         onPress={() => onNavigate('camera')}
         style={styles.demoShutter}
         testID="nav-camera"
