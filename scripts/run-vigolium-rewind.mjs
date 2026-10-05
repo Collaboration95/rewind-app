@@ -1,9 +1,8 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { readFile, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { disposableTarget } from './vigolium-provider.mjs';
 import {
   fixtureContainerArgs,
@@ -25,8 +24,14 @@ if (live && process.env.REWIND_AGENT_REWIND_DATA_SHARING !== 'approved')
   );
 const docker = process.env.REWIND_DOCKER_BIN || 'docker';
 const image = 'rewind-vigolium-target:trial';
-async function execute(args, deadline = 60_000, quiet = false) {
-  const child = spawn(docker, args, { stdio: quiet ? 'ignore' : 'inherit' });
+async function execute(args, deadline = 60_000, quiet = false, input) {
+  const child = spawn(docker, args, {
+    stdio: input ? ['pipe', 'inherit', 'inherit'] : quiet ? 'ignore' : 'inherit',
+  });
+  if (input) {
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  }
   let expired = false;
   const timer = setTimeout(() => {
     expired = true;
@@ -64,36 +69,55 @@ if (mode === '--build') {
   await rm(join(output, 'app-baselines.json'), { force: true });
   const appArgs = fixtureContainerArgs({ output, name: appName, reportGroup }).slice(0, -3);
   if (live) appArgs[appArgs.indexOf('--network') + 1] = 'bridge';
-  appArgs.splice(1, 0, '--detach');
+  appArgs.splice(1, 0, '--log-driver', 'none');
   const scannerArgs = fixtureContainerArgs({ output, name, live, env: process.env, reportGroup });
   scannerArgs[scannerArgs.indexOf('--network') + 1] = `container:${appName}`;
-  scannerArgs.splice(
-    -3,
-    3,
-    fixtureImage,
-    live ? '--run' : '--verify',
-    '--target-file',
-    '/reports/target.json',
-  );
+  scannerArgs.splice(-3, 3, fixtureImage, live ? '--run' : '--verify', '--target-stdin');
+  scannerArgs.splice(1, 0, '--interactive');
+  let app;
   try {
-    await execute([...appArgs, '--env', `REWIND_AGENT_ENDPOINT=${endpoint}`, image]);
-    const deadline = Date.now() + 45_000;
-    let ready = false;
-    while (Date.now() < deadline) {
-      try {
-        disposableTarget(JSON.parse(await readFile(join(output, 'target.json'), 'utf8')));
-        ready = true;
-        break;
-      } catch {
-        await delay(500);
-      }
-    }
-    if (!ready) throw new Error('Disposable Rewind backend did not become ready');
+    app = spawn(docker, [...appArgs, '--env', `REWIND_AGENT_ENDPOINT=${endpoint}`, image], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const seed = await new Promise((resolveSeed, rejectSeed) => {
+      let buffer = '';
+      const timer = setTimeout(
+        () => finish(new Error('Disposable backend readiness deadline exceeded')),
+        45000,
+      );
+      const finish = (error, value) => {
+        clearTimeout(timer);
+        app.stdout.removeListener('data', onData);
+        app.removeListener('error', onError);
+        app.removeListener('exit', onExit);
+        app.stdout.resume();
+        if (error) rejectSeed(error);
+        else resolveSeed(value);
+      };
+      const onError = () => finish(new Error('Backend launch failed'));
+      const onExit = () => finish(new Error('Backend exited before readiness'));
+      const onData = (chunk) => {
+        buffer += chunk.toString();
+        if (buffer.length > 65536) return finish(new Error('Backend seed exceeds limit'));
+        const newline = buffer.indexOf('\n');
+        if (newline < 0) return;
+        try {
+          const value = JSON.parse(buffer.slice(0, newline));
+          disposableTarget(value);
+          finish(undefined, JSON.stringify(value));
+        } catch {
+          finish(new Error('Invalid disposable seed'));
+        }
+      };
+      app.on('error', onError);
+      app.on('exit', onExit);
+      app.stdout.on('data', onData);
+    });
     if (live) await rm(join(output, 'isolation.json'), { force: true });
     else
       await execute(
         [
-          ...scannerArgs.slice(0, -4),
+          ...scannerArgs.slice(0, -3),
           '--entrypoint',
           'node',
           fixtureImage,
@@ -101,10 +125,11 @@ if (mode === '--build') {
         ],
         45_000,
       );
-    await execute(scannerArgs, live ? 420_000 : 60_000);
+    await execute(scannerArgs, live ? 420_000 : 60_000, false, seed);
   } finally {
     // These exact names belong to this invocation; no unrelated containers are touched.
     await execute(['rm', '--force', name, appName], 15_000, true).catch(() => {});
+    app?.kill();
     await rm(join(output, 'target.json'), { force: true });
   }
 }

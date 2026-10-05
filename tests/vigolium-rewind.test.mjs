@@ -1,6 +1,10 @@
+import { once } from 'node:events';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { disposableTarget } from '../scripts/vigolium-provider.mjs';
 import { createRewindTarget } from '../scripts/vigolium-rewind-target.mjs';
 
@@ -93,5 +97,32 @@ test('group scan seed creates a disposable group and cannot select other API pat
     );
   } finally {
     await target.close();
+  }
+});
+
+test('offline scanner receives seed via stdin without a credential file', async () => {
+  const target = await createRewindTarget({ endpoint: 'access' });
+  const output = await mkdtemp(join(tmpdir(), 'rewind-stdin-test-'));
+  try {
+    const child = spawn(
+      process.execPath,
+      ['scripts/run-vigolium-agentic.mjs', '--verify', '--target-stdin'],
+      { env: { REWIND_AGENT_REPORT_DIR: output }, stdio: ['pipe', 'ignore', 'pipe'] },
+    );
+    let errors = '';
+    child.stderr.on('data', (chunk) => {
+      errors += chunk.toString();
+    });
+    child.stdin.end(JSON.stringify({ ...target, disposable: true }));
+    const [code] = await once(child, 'exit');
+    assert.equal(code, 0, errors);
+    const report = JSON.parse(await readFile(join(output, 'scope.json'), 'utf8'));
+    assert.equal(report.accessAssessment.complete, true);
+    assert.equal(report.accessAssessment.discoveredByAI, false);
+    assert.ok(!JSON.stringify(report).includes(target.token));
+    await assert.rejects(readFile(join(output, 'target.json')));
+  } finally {
+    await target.close();
+    await rm(output, { recursive: true, force: true });
   }
 });

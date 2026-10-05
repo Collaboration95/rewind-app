@@ -1,10 +1,11 @@
 import { accessMonitor, accessPrompt, verifyAccessControls } from './vigolium-access.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { constants } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, open, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import {
@@ -23,10 +24,10 @@ if (!['--prepare', '--verify', '--run', '--replay'].includes(mode))
 // Fail before starting the backend or scanner when live configuration is missing.
 const settings = providerSettings(process.env, mode === '--run');
 const fixtureMode = process.argv.includes('--fixture');
-const targetFileIndex = process.argv.indexOf('--target-file');
-const targetFile = targetFileIndex < 0 ? undefined : process.argv[targetFileIndex + 1];
-if (targetFileIndex >= 0 && (!targetFile || fixtureMode))
-  throw new Error('Choose either a target file or a synthetic fixture');
+const targetStdin = process.argv.includes('--target-stdin');
+if (process.argv.includes('--target-file'))
+  throw new Error('File seeds are unsupported; use --target-stdin');
+if (targetStdin && fixtureMode) throw new Error('Choose either stdin target or fixture');
 const output = resolve(
   process.env.REWIND_AGENT_REPORT_DIR ||
     (fixtureMode ? 'vigolium-result/agentic-fixture' : 'vigolium-result/agentic'),
@@ -66,13 +67,20 @@ async function retainSyntheticArtifacts(directory, depth = 0, artifacts = []) {
       entry.isFile() &&
       artifacts.length < 10 &&
       (entry.name === 'swarm-plan.json' ||
-        (entry.name.endsWith('.js') && /[\\/]extensions[\\/]/.test(path))) &&
-      (await stat(path)).size <= 262144
+        (entry.name.endsWith('.js') && /[\\/]extensions[\\/]/.test(path)))
     ) {
-      artifacts.push({
-        path: relative(temporary, path),
-        content: redact(await readFile(path, 'utf8'), secrets),
-      });
+      const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+      try {
+        const buffer = Buffer.alloc(262145);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+        if (bytesRead <= 262144)
+          artifacts.push({
+            path: relative(temporary, path),
+            content: redact(buffer.subarray(0, bytesRead).toString('utf8'), secrets),
+          });
+      } finally {
+        await handle.close();
+      }
     }
   }
   return artifacts;
@@ -154,8 +162,13 @@ try {
     let origin;
     let token;
     let path;
-    if (targetFile) {
-      const seed = JSON.parse(await readFile(targetFile, 'utf8'));
+    if (targetStdin) {
+      let input = '';
+      for await (const chunk of process.stdin) {
+        input += chunk.toString();
+        if (Buffer.byteLength(input) > 65536) throw new Error('Seed input exceeds limit');
+      }
+      const seed = JSON.parse(input);
       ({ origin, token, path, requestBody, access } = disposableTarget(seed));
       if (access) {
         secrets.push(
@@ -438,7 +451,7 @@ try {
           ],
           raw,
         );
-      if (fixtureMode || targetFile) {
+      if (fixtureMode || targetStdin) {
         // Preserve native findings before the dedicated extension database is used.
         await runCli([
           'export',
@@ -601,7 +614,7 @@ try {
     await new Promise((resolve) => server.close(resolve));
   }
   database?.close();
-  if ((fixtureMode || targetFile) && ['--run', '--replay'].includes(mode)) {
+  if ((fixtureMode || targetStdin) && ['--run', '--replay'].includes(mode)) {
     report.fixtureProbes = fixtureEvidence;
     const artifacts = await retainSyntheticArtifacts(join(temporary, 'sessions'));
     await writeFile(join(output, 'generated-artifacts.json'), JSON.stringify(artifacts, null, 2));

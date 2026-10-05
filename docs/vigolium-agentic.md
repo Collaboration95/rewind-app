@@ -5,8 +5,8 @@ No local AI model or personal Codex login is needed. The app and scanner still
 run on a computer or CI worker; the AI runs at the provider.
 
 The existing native scanning workflow remains the automatic dev/PR scan.
-Agentic execution is separate and opt-in. This branch is an initial bounded
-endpoint trial with chat and group-creation seeds, not whole-app discovery.
+Agentic execution runs on authorized trial-branch/dev pushes, with offline-only PR validation.
+This is a bounded chat, groups and access-control trial, not whole-app discovery.
 
 ## Offline setup checks
 
@@ -36,7 +36,7 @@ removed at the end. Previous exported findings are removed before a new attempt.
 `codex/vigolium-agentic-provider`, plus PRs targeting `dev`. PRs run offline
 against GitHub's proposed merge checkout and receive no provider credentials.
 Authorized branch pushes first pass offline checks, then run fixture, chat and
-groups trials with the same configuration. The fixture must export SQL injection
+groups and access trials with the same configuration. The fixture must export SQL injection
 and independently confirm it; a successful scanner exit alone is insufficient.
 Live PR jobs are explicitly skipped, including same-repository PRs.
 The trial branch also invokes the existing reusable Quality workflow on pushes,
@@ -345,8 +345,10 @@ cannot be overwritten by a later successful control. Preflight requests are rese
 before the agent begins and cannot satisfy live coverage. The offline scenario
 sequence is never supplied to the scanner as executable code.
 
-The context contains all disposable tokens and invitation codes; it is provided to
-the approved provider, then removed with target.json during cleanup. Tokens and known
+The context contains disposable tokens and invitation codes. The backend passes it
+through a captured stdout pipe to scanner stdin; it is never written to target.json
+or published in Docker logs (the backend uses the none log driver). The approved
+provider receives the synthetic scan context. Tokens and known
 or observed invitation codes are redacted from retained reports/artifacts. Proxy
 probe summaries contain no raw headers, request bodies, or credentials. The agent
 worker still runs untrusted generated code; isolation limits remain those described
@@ -358,3 +360,18 @@ file allowlist. Download `vigolium-agentic-access` and open summary.html for the
 scenario matrix; report.html contains scanner findings. Reports persist seven days.
 Whole-app discovery, browser XSS, session revocation and upload scanning remain
 outside this scope.
+
+## Harness hardening and bounded generation retry
+
+The proxy precomputes destinations from validated loopback origins and exact routes.
+Incoming URL data selects an entry rather than constructing an outbound URL.
+Generated artifacts are read through one bounded file handle (maximum 256 KiB),
+with no-follow opening on Linux; there is no separate path size-check/read pair.
+Disposable backend seeds travel through stdout/stdin pipes, not a shared file.
+
+Only the fixture wrapper retries a transient planning timeout or missing generated
+extension, once, in a fresh container/fixture. Detection verdict failures, auth
+errors, and other errors are not retried. A successful retry retains the initial
+failure in `generationRetries` in scope.json and summary.html; independent detection
+confirmation remains mandatory. Retries can add one provider call sequence and up
+to seven minutes. Two failures still fail the job.

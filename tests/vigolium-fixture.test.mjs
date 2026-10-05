@@ -102,3 +102,22 @@ test('live container cannot start without approval; it passes key names, not val
   assert.ok(!args.includes('unrelated'));
   assert.deepEqual(args.slice(-2), ['--run', '--fixture']);
 });
+
+test('fixture retry policy allows one transient generation retry without hiding detection failures', async () => {
+  const { retryableFixtureFailure } = await import('../scripts/vigolium-container.mjs');
+  assert.equal(
+    retryableFixtureFailure({ status: 'incomplete', message: 'olium: context deadline exceeded' }),
+    true,
+  );
+  assert.equal(
+    retryableFixtureFailure({
+      status: 'scanner-completed',
+      message: 'SQL injection detection was not independently verified',
+    }),
+    false,
+  );
+  assert.equal(
+    retryableFixtureFailure({ status: 'incomplete', message: 'HTTP 401 invalid API key' }),
+    false,
+  );
+});

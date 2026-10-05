@@ -114,6 +114,28 @@ export function summaryHtml(report) {
 // This limits traffic through the seed target. It is not an OS sandbox for agent tools.
 export async function scopedProxy(origin, path, { limit = 120, interval = 550, observe } = {}) {
   const paths = Array.isArray(path) ? path : [path];
+  const backend = new URL(origin);
+  if (
+    backend.protocol !== 'http:' ||
+    backend.hostname !== '127.0.0.1' ||
+    !backend.port ||
+    backend.pathname !== '/' ||
+    backend.username ||
+    backend.password ||
+    backend.search ||
+    backend.hash
+  )
+    throw new Error('Proxy backend must be a loopback HTTP origin');
+  // Request data selects a precomputed entry; it never constructs the forwarding URL.
+  const destinations = paths.map((allowedPath) => {
+    if (
+      !/^\/[a-zA-Z0-9/-]+$/.test(allowedPath) ||
+      allowedPath.startsWith('//') ||
+      allowedPath.includes('..')
+    )
+      throw new Error('Invalid proxy route');
+    return { path: allowedPath, url: new URL(allowedPath, backend) };
+  });
   const evidence = { forwarded: 0, denied: 0, statuses: {}, timestamps: [] };
   const timers = new Set();
   let scheduled = 0;
@@ -138,7 +160,8 @@ export async function scopedProxy(origin, path, { limit = 120, interval = 550, o
         /* Invalid request targets remain outside scope. */
       }
     }
-    if (!inScope || !['GET', 'POST'].includes(request.method)) {
+    const destination = destinations.find((entry) => entry.path === requestedPath);
+    if (!inScope || !destination || !['GET', 'POST'].includes(request.method)) {
       evidence.denied++;
       response.writeHead(403).end();
       return;
@@ -172,7 +195,7 @@ export async function scopedProxy(origin, path, { limit = 120, interval = 550, o
       evidence.forwarded++;
       evidence.timestamps.push(Date.now());
       const upstream = forward(
-        new URL(requestedPath, origin),
+        destination.url,
         {
           method: request.method,
           headers: {

@@ -51,3 +51,13 @@ export function fixtureContainerArgs({ live = false, env = {}, output, name, rep
   }
   return [...args, fixtureImage, live ? '--run' : '--verify', '--fixture'];
 }
+
+// Retry generation failures only, never a failed independent detection verdict.
+export function retryableFixtureFailure(report) {
+  return (
+    report?.status === 'incomplete' &&
+    /context deadline exceeded|No generated extension retained|Scanner exceeded the six-minute deadline/.test(
+      report.message || '',
+    )
+  );
+}

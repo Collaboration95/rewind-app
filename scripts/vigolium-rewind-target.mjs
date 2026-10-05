@@ -221,8 +221,7 @@ if (process.argv[2] === '--serve') {
     endpoint: process.env.REWIND_AGENT_ENDPOINT || 'chat',
   });
   const directory = process.env.REWIND_TARGET_OUTPUT || '/reports';
-  await writeFile(
-    join(directory, 'target.json'),
+  process.stdout.write(
     JSON.stringify({
       origin: target.origin,
       path: target.path,
@@ -232,9 +231,24 @@ if (process.argv[2] === '--serve') {
       baselines: target.baselines,
       accessChecks: target.accessChecks,
       access: target.access,
-    }),
+    }) + '\n',
   );
-  await writeFile(join(directory, 'app-baselines.json'), JSON.stringify(target.baselines, null, 2));
+  await writeFile(
+    join(directory, 'app-baselines.json'),
+    JSON.stringify(
+      {
+        login: 200,
+        groupCreation: 201,
+        ownerPost: 201,
+        ownerRead: 200,
+        anonymousRead: 401,
+        outsiderRead: 403,
+        outsiderPost: 403,
+      },
+      null,
+      2,
+    ),
+  );
   for (const signal of ['SIGINT', 'SIGTERM'])
     process.once(signal, async () => {
       await target.close();

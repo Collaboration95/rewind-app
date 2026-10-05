@@ -1,11 +1,14 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { summaryHtml } from './vigolium-provider.mjs';
+import { resolve, join } from 'node:path';
 import {
   fixtureContainerArgs,
   fixtureImage,
   prepareReportDirectory,
+  retryableFixtureFailure,
 } from './vigolium-container.mjs';
 
 const mode = process.argv[2];
@@ -56,7 +59,29 @@ if (mode === '--build') {
         45_000,
       );
     }
-    await execute(args, 420_000);
+    const attempts = [];
+    for (let attempt = 1; attempt <= (mode === '--run' ? 2 : 1); attempt++) {
+      try {
+        await execute(args, 420_000);
+        break;
+      } catch (error) {
+        const report = await readFile(join(output, 'scope.json'), 'utf8')
+          .then(JSON.parse)
+          .catch(() => undefined);
+        if (mode !== '--run' || attempt === 2 || !retryableFixtureFailure(report)) throw error;
+        attempts.push({ attempt, status: report.status, message: report.message });
+        await execute(['rm', '--force', name], 10000).catch(() => {});
+        console.log(
+          'Retrying fixture generation once after a transient failure; detection gate unchanged.',
+        );
+      }
+    }
+    if (attempts.length) {
+      const report = JSON.parse(await readFile(join(output, 'scope.json'), 'utf8'));
+      report.generationRetries = attempts;
+      await writeFile(join(output, 'scope.json'), JSON.stringify(report, null, 2));
+      await writeFile(join(output, 'summary.html'), summaryHtml(report));
+    }
   } finally {
     // Remove this one owned container even if the Docker client was terminated.
     const child = spawn(docker, ['rm', '--force', name, `${name}-check`], { stdio: 'ignore' });

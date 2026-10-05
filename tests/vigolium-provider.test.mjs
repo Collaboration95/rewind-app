@@ -161,3 +161,9 @@ test('live entry point refuses unapproved execution before runtime imports', () 
       error.status !== 0 && error.stderr.toString().includes('REWIND_AGENT_DATA_SHARING=approved'),
   );
 });
+
+test('proxy rejects non-loopback backends and URL-like scope entries before listening', async () => {
+  await assert.rejects(scopedProxy('http://example.com:8080', '/chat'), /loopback/);
+  await assert.rejects(scopedProxy('http://127.0.0.1:8080', ['//example.com', '/chat']), /route/);
+  await assert.rejects(scopedProxy('http://127.0.0.1:8080', ['/chat?other=1']), /route/);
+});
