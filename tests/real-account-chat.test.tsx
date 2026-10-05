@@ -246,6 +246,48 @@ describe('real-account chat', () => {
     );
   });
 
+  it('asks once for fresh member names when a message comes from someone new', async () => {
+    const event = (id: number) => ({
+      eventId: id,
+      type: 'message' as const,
+      occurredAt: savedMessage.createdAt,
+      message: { ...savedMessage, id: `message-${id}`, memberId: 'real-profile-new' },
+    });
+    const authenticatedRequest = jest.fn(async () =>
+      response({
+        events: [event(1), event(2)],
+        nextCursor: null,
+        watermarkEventId: 2,
+        hasMore: false,
+      }),
+    );
+    (useRealAccount as jest.Mock).mockReturnValue({
+      baseUrl: 'https://runtime.example',
+      session: { account: { id: 'account-id', displayName: 'Member' } },
+      authenticatedRequest,
+      realtimeAuthorizationHeader: () => undefined,
+    });
+    const onUnknownAuthor = jest.fn();
+    const props = {
+      groupId: 'real-group-a',
+      groupName: 'Saturday table',
+      currentMemberId: 'real-profile-member',
+      onUnknownAuthor,
+    };
+    const result = await render(<RealAccountChatScreen {...props} members={[]} />);
+    await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(2));
+    expect(result.getByText('Group member')).toBeTruthy();
+    expect(onUnknownAuthor).toHaveBeenCalledTimes(1);
+    await result.rerender(
+      <RealAccountChatScreen
+        {...props}
+        members={[{ memberId: 'real-profile-new', displayName: 'Bea' }]}
+      />,
+    );
+    expect(await result.findByText('Bea')).toBeTruthy();
+    expect(onUnknownAuthor).toHaveBeenCalledTimes(1);
+  });
+
   it('shows an explicit denied state when group history is forbidden', async () => {
     const authenticatedRequest = jest.fn(async () => response({ message: 'forbidden' }, 403));
     (useRealAccount as jest.Mock).mockReturnValue({

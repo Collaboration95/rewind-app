@@ -756,6 +756,8 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
                           : null;
 
   const submitSignIn = async () => {
+    // The "account is ready" banner has done its job once they try to sign in.
+    setRegistrationComplete(false);
     setAuthPending(true);
     await auth.signIn(username.trim(), password);
     setAuthPending(false);

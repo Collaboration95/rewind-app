@@ -24,6 +24,7 @@ import {
   type ViewProps,
   type ViewStyle,
 } from 'react-native';
+import { createPortal } from 'react-dom';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from './Icon';
@@ -681,8 +682,11 @@ export function Dialog({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onDismiss]);
-  return (
-    <View style={StyleSheet.absoluteFill} testID={testID ? `${testID}-layer` : undefined}>
+  const layer = (
+    <View
+      style={[StyleSheet.absoluteFill, isWeb && styles.dialogLayerWeb]}
+      testID={testID ? `${testID}-layer` : undefined}
+    >
       <Pressable
         accessibilityLabel={onDismiss ? 'Dismiss' : undefined}
         accessible={Boolean(onDismiss)}
@@ -711,6 +715,9 @@ export function Dialog({
       </Glass>
     </View>
   );
+  // On the web every view is its own stacking context, so a dialog opened inside
+  // a tab would sit under the dock. Render it on the page itself instead.
+  return isWeb && typeof document !== 'undefined' ? createPortal(layer, document.body) : layer;
 }
 
 /* ---------- Toast ---------- */
@@ -943,6 +950,8 @@ export const styles = StyleSheet.create({
   subRight: { alignItems: 'flex-end' },
   subTitle: { color: WARM.ink, flex: 1, textAlign: 'center', ...serif(22) },
   dimNative: { backgroundColor: 'rgba(40, 24, 14, 0.4)' },
+  // 'fixed' is web-only, so it is outside React Native's style types.
+  dialogLayerWeb: { position: 'fixed' as 'absolute', zIndex: 50 },
   dialog: {
     gap: 10,
     left: 22,

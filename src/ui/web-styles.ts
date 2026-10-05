@@ -8,7 +8,8 @@ import { Platform } from 'react-native';
 // `html` raises specificity above react-native-web's single-class rules.
 const CSS = `
 html [data-rw~="glass"] {
-  position: relative;
+  /* No position here: it would beat react-native-web's absolute dialogs and menus.
+     RNW views are already position: relative, which the pseudo-elements need. */
   isolation: isolate;
   background: linear-gradient(170deg, rgba(255,255,255,.4), rgba(255,255,255,.1));
   -webkit-backdrop-filter: blur(12px) saturate(190%) brightness(1.04);

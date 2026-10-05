@@ -440,12 +440,15 @@ export function RealAccountGroupExperience({
   };
 
   const loadGroupMembers = useCallback(
-    async (groupId: string, contextVersion: number) => {
+    async (groupId: string, contextVersion: number, quiet = false) => {
       if (contextVersion !== groupContextVersion.current || selectedGroupId.current !== groupId)
         return;
       const requestId = ++groupMembersRequest.current;
-      setGroupMembers(null);
-      setGroupMembersError(null);
+      // A quiet refresh keeps the current list on screen until the new one arrives.
+      if (!quiet) {
+        setGroupMembers(null);
+        setGroupMembersError(null);
+      }
       try {
         const response = await auth.authenticatedRequest(
           `/real/groups/${encodeURIComponent(groupId)}/members`,
@@ -461,6 +464,7 @@ export function RealAccountGroupExperience({
           setGroupMembers(summary);
       } catch (error) {
         if (
+          !quiet &&
           contextVersion === groupContextVersion.current &&
           selectedGroupId.current === groupId &&
           requestId === groupMembersRequest.current
@@ -998,6 +1002,9 @@ export function RealAccountGroupExperience({
           unreadOnOpen={chatUnreadAtOpen}
           premiere={premiere ? { left: premiereLeft(premiere, now), onWatch: watchPremiere } : null}
           bottomInset={LAYOUT.dockHeight + insets.bottom + 12}
+          onUnknownAuthor={() =>
+            void loadGroupMembers(group.group.id, groupContextVersion.current, true)
+          }
         />
       </View>
     );

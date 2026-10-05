@@ -491,7 +491,8 @@ function ReminderBlock({
       setDialog('notify');
       return;
     }
-    await save(true, null, 'Sunday 7 PM reminders are on for this device.');
+    // This device can't take push (no support or not installed); the row says why.
+    await save(true, null, 'Sunday 7 PM reminders are on.');
   };
   const allow = async () => {
     setDialog(null);
@@ -855,9 +856,11 @@ function Invite<T extends SettingsGroup>({
         ) : (
           <Text style={styles.codeWaiting}>{invite.pending ? 'Making a code…' : '— — —'}</Text>
         )}
-        <Text style={styles.note} testID="real-group-invite-expiry">
-          Works once · expires in 24 hours
-        </Text>
+        {invite.code ? (
+          <Text style={styles.note} testID="real-group-invite-expiry">
+            Works once · expires in 24 hours
+          </Text>
+        ) : null}
       </Glass>
       {invite.code ? (
         <>

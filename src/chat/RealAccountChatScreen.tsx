@@ -84,6 +84,7 @@ export function RealAccountChatScreen({
   unreadOnOpen = 0,
   premiere,
   bottomInset = 0,
+  onUnknownAuthor,
 }: {
   groupId: string;
   groupName: string;
@@ -99,6 +100,8 @@ export function RealAccountChatScreen({
   premiere?: { left: string; onWatch: () => void } | null;
   /** Room for the dock under the composer. */
   bottomInset?: number;
+  /** A message from someone not in `members` (they joined after it loaded). */
+  onUnknownAuthor?: () => void;
   onBack?: () => void;
 }) {
   const auth = useRealAccount();
@@ -111,6 +114,16 @@ export function RealAccountChatScreen({
     [members],
   );
   const [rows, setRows] = useState<ChatRow[]>([]);
+  const askedFor = useRef(new Set<string>());
+  useEffect(() => {
+    // Ask once per unknown author, so a deleted account cannot cause a loop.
+    const unknown = rows
+      .map((row) => row.message.memberId)
+      .filter((id) => id !== currentMemberId && !memberNames.has(id) && !askedFor.current.has(id));
+    if (!unknown.length || !onUnknownAuthor) return;
+    unknown.forEach((id) => askedFor.current.add(id));
+    onUnknownAuthor();
+  }, [currentMemberId, memberNames, onUnknownAuthor, rows]);
   const [state, setState] = useState<'loading' | 'ready' | 'error' | 'denied'>('loading');
   const [connection, setConnection] = useState<RealtimeConnectionState>('connecting');
   const [error, setError] = useState<string | null>(null);
@@ -538,21 +551,19 @@ export function RealAccountChatScreen({
                           {timeLabel(message.createdAt)}
                         </Text>
                       ) : null}
-                      <Pressable
-                        accessibilityLabel={`${author}: ${message.body}${message.replyTo ? `. Reply to ${nameOf(message.replyTo.memberId)}` : ''}${sparks ? `. ${sparks} ✨` : ''}`}
-                        accessibilityState={{ expanded: open }}
-                        onPress={() => setOpenMessage(open ? null : message.id)}
+                      {/* The quote and the message are sibling controls, never nested. */}
+                      <View
                         style={[
                           styles.bub,
                           own ? styles.bubOwn : styles.bubOther,
                           (open || highlight === message.id) && styles.bubOpen,
                         ]}
-                        testID={`real-chat-message-${message.id}`}
                         {...(own ? rw('own-bubble') : {})}
                       >
                         {message.replyTo ? (
                           <Pressable
                             accessibilityLabel={`Go to the message from ${nameOf(message.replyTo.memberId)}`}
+                            accessibilityRole="button"
                             onPress={() => quoteTarget(message.replyTo!.id)}
                             style={[styles.quote, own && styles.quoteOwn]}
                           >
@@ -562,10 +573,19 @@ export function RealAccountChatScreen({
                             </Text>
                           </Pressable>
                         ) : null}
-                        <Text style={[styles.body, own && { color: WARM.peachInk }]}>
-                          {message.body}
-                        </Text>
-                      </Pressable>
+                        <Pressable
+                          accessibilityHint="Shows react, reply and report"
+                          accessibilityLabel={`${author}: ${message.body}${message.replyTo ? `. Reply to ${nameOf(message.replyTo.memberId)}` : ''}${sparks ? `. ${sparks} ✨` : ''}`}
+                          accessibilityRole="button"
+                          accessibilityState={{ expanded: open }}
+                          onPress={() => setOpenMessage(open ? null : message.id)}
+                          testID={`real-chat-message-${message.id}`}
+                        >
+                          <Text style={[styles.body, own && { color: WARM.peachInk }]}>
+                            {message.body}
+                          </Text>
+                        </Pressable>
+                      </View>
                       {sparks ? (
                         <Pressable
                           accessibilityLabel={`${sparks} sparkles. Toggle yours`}
