@@ -11,13 +11,13 @@ export function DemoMoments({
   clock,
   onBack,
   onRetake,
-  onChanged,
+  onReloadCapsule,
 }: {
   runtimeClient: RuntimeClient | null;
   clock: () => number;
   onBack: () => void;
   onRetake: () => void;
-  onChanged: () => void;
+  onReloadCapsule: () => void;
 }) {
   const { session } = useDemoSession();
   const { state } = useCapsule();
@@ -35,7 +35,7 @@ export function DemoMoments({
         onDelete={async () => {}}
         onRetry={async () => {}}
         onRetake={onRetake}
-        onReload={onChanged}
+        onReload={onReloadCapsule}
       />
     );
   return (
@@ -45,6 +45,7 @@ export function DemoMoments({
       groupId={cycle.groupId}
       memberId={session.actor.memberId}
       cycleId={cycle.id}
+      allPages
       render={(view, reload) => (
         <MomentsScreen
           page={view.status === 'ready' ? view.page : null}
@@ -65,14 +66,12 @@ export function DemoMoments({
               throw new Error('Deletion is unavailable in this Demo runtime.');
             await runtimeClient.deleteContribution(session.id, cycle.groupId, entry.contributionId);
             reload();
-            onChanged();
           }}
           onRetry={async (entry) => {
             if (!entry.jobId || !runtimeClient.processClipJob)
               throw new Error('Retry is unavailable in this Demo runtime.');
             await runtimeClient.processClipJob(session.id, cycle.groupId, entry.jobId);
             reload();
-            onChanged();
           }}
         />
       )}

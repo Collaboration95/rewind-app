@@ -7,6 +7,7 @@ import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 import App from '../App';
 import { DemoCameraPlatform } from '../src/capture/platform';
 import { SELECTION_KEY } from '../src/data/selection-store';
+import { getLatestMockVideoPlayer } from './mocks/expo-video';
 import type { ContributionLedgerPage } from '../src/domain/contributions';
 import type { Cycle, CycleRepository } from '../src/domain/cycles';
 import type { SelectionStore } from '../src/domain/profiles';
@@ -142,6 +143,39 @@ function runtimeClientWithPremiere(
         releaseStatus: 'published',
       },
     ]),
+  };
+}
+
+function currentDemoLedger(): ContributionLedgerPage {
+  return {
+    cycleId: 'demo-cycle',
+    memberId: 'demo-1',
+    allowance: {
+      maxCount: 5,
+      maxSeconds: 30,
+      countUsed: 1,
+      secondsUsed: 4,
+      deletionsUsed: 0,
+      deletionAvailability: 'available',
+    },
+    entries: [
+      {
+        contributionId: 'current-moment',
+        jobId: 'current-job',
+        state: 'sealed',
+        durationSeconds: 4,
+        mediaType: 'video',
+        createdAt: new Date(TEST_NOW).toISOString(),
+        updatedAt: new Date(TEST_NOW).toISOString(),
+        attempts: 1,
+        progress: 100,
+        failureCategory: null,
+        retryable: false,
+        replaced: false,
+        restored: null,
+      },
+    ],
+    pagination: { limit: 50, hasMore: false, nextCursor: null },
   };
 }
 
@@ -713,5 +747,171 @@ describe('Local demo profile flow', () => {
     await fireEvent.press(result.getByRole('button', { name: 'Retry saving selection' }));
     await result.findByText('Your selection is remembered on this device.');
     expect(store.save).toHaveBeenLastCalledWith('demo-2');
+  });
+});
+
+describe('Warm Glass Demo behavior preservation', () => {
+  it.each(['retake', 'Home tab'] as const)(
+    'keeps successful deletion feedback and refreshes the capsule on departure via %s',
+    async (departure) => {
+      let ledger = currentDemoLedger();
+      let finishRefresh!: (cycle: Cycle) => void;
+      const delayedCycle = new Promise<Cycle>((resolve) => {
+        finishRefresh = resolve;
+      });
+      const cycles = {
+        getCurrentCycle: jest
+          .fn()
+          .mockResolvedValueOnce(cycleFixture())
+          .mockReturnValueOnce(delayedCycle),
+      };
+      const client = {
+        ...runtimeClientWithPremiere({ state: 'locked', cycleId: 'demo-cycle' }),
+        getContributionLedger: jest.fn(async () => ledger),
+        deleteContribution: jest.fn(async () => {
+          ledger = {
+            ...ledger,
+            entries: [],
+            allowance: {
+              ...ledger.allowance,
+              countUsed: 0,
+              secondsUsed: 0,
+              deletionsUsed: 1,
+              deletionAvailability: 'used',
+            },
+          };
+          return {
+            contributionId: 'current-moment',
+            jobId: 'current-job',
+            restored: { count: 1 as const, seconds: 4 },
+          };
+        }),
+      };
+      const ui = await render(
+        <App
+          clock={() => TEST_NOW}
+          runtimeClient={client}
+          cycleRepository={cycles}
+          cameraPlatform={new DemoCameraPlatform()}
+        />,
+      );
+      await ui.findByTestId('contribution-ledger-ready');
+      await fireEvent.press(ui.getByRole('button', { name: /^Your moments:/ }));
+      await ui.findByTestId('real-moment-0');
+      await fireEvent.press(ui.getByTestId('real-moment-0'));
+      await fireEvent.press(ui.getByTestId('real-moment-delete-confirm'));
+      await ui.findByTestId('real-moments-retake');
+      await waitFor(() => expect(ui.getByTestId('real-moments-count')).toHaveTextContent('0 of 5'));
+      expect(ui.getByTestId('app-toast')).toHaveTextContent(
+        'Deleted. Its seconds are back for this week.',
+      );
+      expect(cycles.getCurrentCycle).toHaveBeenCalledTimes(1);
+      expect(client.deleteContribution).toHaveBeenCalledWith(
+        expect.any(String),
+        'demo-group',
+        'current-moment',
+      );
+      await fireEvent.press(
+        departure === 'retake' ? ui.getByTestId('real-moments-retake') : ui.getByTestId('nav-home'),
+      );
+      await waitFor(() => expect(cycles.getCurrentCycle).toHaveBeenCalledTimes(2));
+      if (departure === 'retake') expect(ui.getByTestId('camera-screen')).toBeTruthy();
+      else expect(ui.getByTestId('capsule-loading')).toBeTruthy();
+      await act(async () => finishRefresh(cycleFixture()));
+      if (departure === 'retake') await fireEvent.press(ui.getByTestId('nav-home'));
+      await ui.findByTestId('contribution-ledger-ready');
+      expect(ui.getByLabelText(/0 of 5 contributions used. 0 of 30 seconds used/)).toBeTruthy();
+    },
+  );
+
+  it('shows a later-page weekly failed moment on Home and lets Moments retry and delete it', async () => {
+    const ledger = currentDemoLedger();
+    const failed = {
+      ...ledger.entries[0],
+      state: 'failed' as const,
+      retryable: true,
+      failureCategory: 'processing_failed' as const,
+    };
+    const first = {
+      ...ledger,
+      entries: [
+        {
+          ...ledger.entries[0],
+          contributionId: 'old-deleted',
+          state: 'deleted' as const,
+          restored: { count: 1 as const, seconds: 4 },
+        },
+      ],
+      pagination: { limit: 1, hasMore: true, nextCursor: 'next-page' },
+    };
+    const client = {
+      ...runtimeClientWithPremiere({ state: 'locked', cycleId: 'demo-cycle' }),
+      getContributionLedger: jest.fn(
+        async (_session: string, _group: string, options?: { cursor?: string }) =>
+          options?.cursor ? { ...ledger, entries: [failed] } : first,
+      ),
+      processClipJob: jest.fn().mockResolvedValue({ status: 'ready' }),
+      deleteContribution: jest.fn().mockResolvedValue({}),
+    };
+    const ui = await render(<App clock={() => TEST_NOW} runtimeClient={client} />);
+    await ui.findByTestId('contribution-ledger-ready');
+    expect(within(ui.getByLabelText('Your moments this week')).getByText(/4 s/)).toBeTruthy();
+    expect(ui.queryByText('Nothing sealed yet this week')).toBeNull();
+    expect(client.getContributionLedger).toHaveBeenCalledWith(expect.any(String), 'demo-group', {
+      cursor: 'next-page',
+    });
+    await fireEvent.press(ui.getByRole('button', { name: /^Your moments:/ }));
+    await ui.findByTestId('real-moment-retry-0');
+    expect(ui.queryByText('Nothing sealed yet this week.')).toBeNull();
+    await fireEvent.press(ui.getByTestId('real-moment-retry-0'));
+    await waitFor(() =>
+      expect(client.processClipJob).toHaveBeenCalledWith(
+        expect.any(String),
+        'demo-group',
+        'current-job',
+      ),
+    );
+    await ui.findByTestId('real-moment-delete-0');
+    await fireEvent.press(ui.getByTestId('real-moment-delete-0'));
+    await fireEvent.press(ui.getByTestId('real-moment-delete-confirm'));
+    await waitFor(() =>
+      expect(client.deleteContribution).toHaveBeenCalledWith(
+        expect.any(String),
+        'demo-group',
+        'current-moment',
+      ),
+    );
+  });
+
+  it('shows the existing Film save failure toast inside the active Demo frame', async () => {
+    const client = runtimeClientWithPremiere({
+      state: 'ready',
+      cycleId: 'demo-cycle',
+      filmId: 'demo-film',
+      playbackUrl: 'https://media.invalid/demo-film.mp4',
+    });
+    client.getCycleHistory.mockResolvedValue([
+      {
+        id: 'demo-cycle',
+        prompt: 'Prompt',
+        startsAt: '2026-09-01T00:00:00.000Z',
+        endsAt: '2026-09-12T00:00:00.000Z',
+        status: 'revealing',
+        releaseStatus: 'published',
+      },
+    ]);
+    const ui = await render(<App runtimeClient={client} />);
+    await ui.findByTestId('capsule-ready');
+    await fireEvent.press(ui.getByTestId('nav-archive'));
+    await ui.findByTestId('demo-watch-film');
+    await fireEvent.press(ui.getByTestId('demo-watch-film'));
+    await ui.findByTestId('real-film-pause');
+    await act(async () => getLatestMockVideoPlayer()?.emit('playToEnd'));
+    await fireEvent.press(ui.getByTestId('real-film-save'));
+    await waitFor(() =>
+      expect(ui.getByTestId('app-toast')).toHaveTextContent(
+        'The film could not be saved. Try again when connected.',
+      ),
+    );
   });
 });

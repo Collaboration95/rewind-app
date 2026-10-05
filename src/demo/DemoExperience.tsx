@@ -53,7 +53,7 @@ import { ReminderSettings } from '../reminders/ReminderSettings';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { RuntimeStatusCard } from '../runtime/RuntimeStatusCard';
 import { useDemoSession } from '../session/DemoSessionProvider';
-import { Avatar, Glass, Glow, rw, useScreenInsets } from '../ui/primitives';
+import { Avatar, Glass, Glow, ToastProvider, rw, useScreenInsets } from '../ui/primitives';
 import { FONT, LAYOUT, WARM, serif } from '../ui/tokens';
 import { createDemoArchiveClient } from './demo-archive-client';
 import { DemoHome } from './DemoHome';
@@ -73,7 +73,7 @@ function SafeAreaFrame({ children }: { children: ReactNode }) {
   return (
     <View style={{ flex: 1, backgroundColor: WARM.bg }} testID="application-safe-area">
       <StatusBar style="dark" />
-      {children}
+      <ToastProvider>{children}</ToastProvider>
     </View>
   );
 }
@@ -105,6 +105,12 @@ export function DemoExperience({
   const previousRoute = useRef(activeRoute);
   const initialFocusPending = useRef(true);
   const { retry: refreshCapsule, state: capsuleState } = useCapsule();
+  const navigate = (route: typeof activeRoute) => {
+    // Moments reloads its own ledger after corrections. Refresh the capsule
+    // only on departure so its successful-delete state survives until retake.
+    if (activeRoute === 'moments' && route !== 'moments') refreshCapsule();
+    setActiveRoute(route);
+  };
   const chatGroup = 'group' in capsuleState ? capsuleState.group : null;
   const chatStreamEnabled = Boolean(session && chatGroup?.id === session.groupId);
   const unreadSession = capsuleState.status === 'denied' ? null : session;
@@ -282,7 +288,7 @@ export function DemoExperience({
                   accessibilityState={{
                     selected: activeRoute === 'settings' || activeRoute === 'create-group',
                   }}
-                  onPress={() => setActiveRoute('settings')}
+                  onPress={() => navigate('settings')}
                   testID="nav-settings"
                 >
                   <Avatar glass name={session?.actor.displayName ?? 'Demo'} />
@@ -297,9 +303,9 @@ export function DemoExperience({
             {activeRoute === 'home' ? (
               <HomeScreen
                 clock={clock}
-                onAddMoment={() => setActiveRoute('camera')}
-                onOpenMoments={() => setActiveRoute('moments')}
-                onOpenArchive={() => setActiveRoute('archive')}
+                onAddMoment={() => navigate('camera')}
+                onOpenMoments={() => navigate('moments')}
+                onOpenArchive={() => navigate('archive')}
                 revealState={revealState}
                 runtimeClient={runtimeClient}
               />
@@ -313,42 +319,42 @@ export function DemoExperience({
                 cycleId={filmTarget.cycleId}
                 label={filmTarget.label}
                 isOwner={false}
-                onClose={() => setActiveRoute('archive')}
-                onChat={() => setActiveRoute('chat')}
+                onClose={() => navigate('archive')}
+                onChat={() => navigate('chat')}
               />
             ) : activeRoute === 'moments' ? (
               <DemoMoments
                 key={`${session?.id}:${group?.id}:${cycle?.id}`}
                 runtimeClient={runtimeClient}
                 clock={clock}
-                onBack={() => setActiveRoute('home')}
-                onRetake={() => setActiveRoute('camera')}
-                onChanged={refreshCapsule}
+                onBack={() => navigate('home')}
+                onRetake={() => navigate('camera')}
+                onReloadCapsule={refreshCapsule}
               />
             ) : activeRoute === 'settings' ? (
               <SettingsScreen
                 confirmResetDialogOpen={confirmResetDialogOpen}
                 onConfirmResetDialogOpenChange={setConfirmResetDialogOpen}
-                onCreateGroup={() => setActiveRoute('create-group')}
+                onCreateGroup={() => navigate('create-group')}
                 inviteLink={inviteLink}
                 runtimeClient={runtimeClient}
               />
             ) : activeRoute === 'create-group' ? (
               <GroupCreateScreen
-                onCancel={() => setActiveRoute('settings')}
-                onCreated={() => setActiveRoute('home')}
+                onCancel={() => navigate('settings')}
+                onCreated={() => navigate('home')}
                 runtimeClient={runtimeClient}
               />
             ) : activeRoute === 'camera' ? (
               <CameraCaptureScreen
-                onRecordClip={() => setActiveRoute('video')}
-                onOpenArchive={() => setActiveRoute('archive')}
+                onRecordClip={() => navigate('video')}
+                onOpenArchive={() => navigate('archive')}
                 revealState={revealState}
                 platform={resolvedCameraPlatform}
               />
             ) : activeRoute === 'video' ? (
               <VideoCaptureScreen
-                onBack={() => setActiveRoute('camera')}
+                onBack={() => navigate('camera')}
                 onContributionDeleted={refreshCapsule}
                 platform={resolvedCameraPlatform}
                 runtimeClient={runtimeClient}
@@ -360,7 +366,7 @@ export function DemoExperience({
                 runtimeClient={runtimeClient}
                 onOpenFilm={(cycleId, label) => {
                   setFilmTarget({ cycleId, label });
-                  setActiveRoute('film');
+                  navigate('film');
                 }}
               />
             ) : (
@@ -380,7 +386,7 @@ export function DemoExperience({
                       : activeRoute
               }
               backgroundHidden={confirmResetDialogOpen}
-              onNavigate={setActiveRoute}
+              onNavigate={navigate}
             />
           )}
         </TabColumn>

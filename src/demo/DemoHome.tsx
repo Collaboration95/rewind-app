@@ -216,6 +216,7 @@ function ReadyDemoHome({
       groupId={cycle.groupId}
       memberId={session.actor.memberId}
       cycleId={cycle.id}
+      allPages
       render={body}
     />
   ) : (
