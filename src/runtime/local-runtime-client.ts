@@ -414,13 +414,15 @@ export class LocalRuntimeClient implements RuntimeClient {
     input: ClipUploadInput,
     signal?: AbortSignal,
   ): Promise<PendingClipUpload> {
+    if (signal?.aborted)
+      throw new LocalRuntimeError('The upload was cancelled.', undefined, 'cancelled');
+    // Preserve the committed job receipt for ClipUploadSession's stale-generation DELETE.
     const body = await this.request<{ upload: PendingClipUpload }>(
       `/contributions/upload?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
       {
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
-        ...(signal ? { signal } : {}),
       },
     );
     return body.upload;

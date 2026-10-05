@@ -169,6 +169,8 @@ export function createRealAccountVideoRuntimeClient(
       input: ClipUploadInput,
       signal?: AbortSignal,
     ): Promise<PendingClipUpload> {
+      if (signal?.aborted)
+        throw new LocalRuntimeError('The upload was cancelled.', undefined, 'cancelled');
       if (transferMode === 'direct') {
         const held = staged.get(input.sourceUri);
         let source: DirectTransferSource;
@@ -278,12 +280,15 @@ export function createRealAccountVideoRuntimeClient(
           byteLength: stagedBody.source.byteLength,
         };
       }
+      if (signal?.aborted)
+        throw new LocalRuntimeError('The upload was cancelled.', undefined, 'cancelled');
+      // A committed registration must return its job ID even after Cancel.
+      // The upload session deletes that receipt when its generation is stale.
       const body = await readResponse<{ upload: PendingClipUpload }>(
         await authenticatedRequest(`/contributions/upload?${groupQuery(groupId)}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(input),
-          ...(signal ? { signal } : {}),
         }),
       );
       return body.upload;
