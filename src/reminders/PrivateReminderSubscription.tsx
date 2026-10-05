@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
-import { COLORS } from '../theme';
+import { WARM } from '../ui/tokens';
 import type { PrivateReminderClient, PrivateReminderSnapshot } from './private-reminder-client';
 
 // Lead supplies a client scoped to the authenticated session/current group.
@@ -106,7 +106,7 @@ function SubscriptionContext({
 }
 const styles = StyleSheet.create({
   panel: { gap: 10, marginVertical: 18 },
-  title: { color: COLORS.ink, fontSize: 13, fontWeight: '700', letterSpacing: 1 },
-  body: { color: COLORS.ink, fontSize: 15, lineHeight: 22 },
+  title: { color: WARM.ink, fontSize: 13, fontWeight: '700', letterSpacing: 1 },
+  body: { color: WARM.ink, fontSize: 15, lineHeight: 22 },
   action: { minHeight: 44, paddingVertical: 12 },
 });

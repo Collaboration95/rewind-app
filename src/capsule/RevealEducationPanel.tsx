@@ -1,11 +1,12 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 
 import {
   getRevealEducationCopy,
   type RevealEducationState,
   type RevealEducationSurface,
 } from '../domain/reveal-education';
-import { COLORS } from '../theme';
+import { Glass } from '../ui/primitives';
+import { FONT, WARM } from '../ui/tokens';
 
 export function RevealEducationPanel({
   actionLabel,
@@ -23,7 +24,7 @@ export function RevealEducationPanel({
   const copy = getRevealEducationCopy(surface, state);
   const label = actionLabel ?? copy.actionLabel;
   return (
-    <View
+    <Glass
       accessible={false}
       accessibilityLabel={`${copy.title}. ${copy.body}`}
       style={styles.panel}
@@ -44,30 +45,36 @@ export function RevealEducationPanel({
       >
         <Text style={styles.actionText}>{label}</Text>
       </Pressable>
-    </View>
+    </Glass>
   );
 }
 
 const styles = StyleSheet.create({
   panel: {
-    backgroundColor: COLORS.deep,
-    borderColor: COLORS.edge,
-    borderRadius: 10,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     gap: 10,
     padding: 16,
   },
-  label: { color: COLORS.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 21, fontWeight: '700' },
-  body: { color: COLORS.ink, fontSize: 14, lineHeight: 21 },
+  label: {
+    color: WARM.dangerInk,
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  title: { color: WARM.ink, fontFamily: FONT.body, fontSize: 21, fontWeight: '700' },
+  body: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
   action: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    backgroundColor: WARM.dangerInk,
+    borderRadius: 24,
     justifyContent: 'center',
     minHeight: 48,
     paddingHorizontal: 16,
   },
-  actionText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
+  actionText: { color: WARM.sheet, fontFamily: FONT.body, fontSize: 14, fontWeight: '800' },
 });

@@ -1,6 +1,6 @@
 import { StyleSheet, Text } from 'react-native';
 
-import { COLORS } from '../theme';
+import { WARM } from '../ui/tokens';
 
 export function BuildTag() {
   const sha = process.env.EXPO_PUBLIC_BUILD_SHA;
@@ -16,5 +16,5 @@ export function BuildTag() {
 }
 
 const styles = StyleSheet.create({
-  tag: { color: COLORS.muted, fontSize: 12, marginBottom: 8 },
+  tag: { color: WARM.muted, fontSize: 12, marginBottom: 8 },
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { ContributionLedger, type ContributionLedgerView } from './ContributionLedger';
@@ -26,7 +26,9 @@ export function ContributionLedgerSection({
   groupId,
   memberId,
   cycleId,
+  render,
 }: {
+  render?: (view: ContributionLedgerView, retry: () => void, loadMore: () => void) => ReactNode;
   client?: RuntimeClient;
   loadPage?: LedgerPageLoader;
   onPageLoaded?: (page: ContributionLedgerPage | null) => void;
@@ -146,11 +148,7 @@ export function ContributionLedgerSection({
       });
   };
 
-  return (
-    <ContributionLedger
-      view={view}
-      onRetry={() => setRetryAttempt((attempt) => attempt + 1)}
-      onLoadMore={loadMore}
-    />
-  );
+  const retry = () => setRetryAttempt((attempt) => attempt + 1);
+  if (render) return render(view, retry);
+  return <ContributionLedger view={view} onRetry={retry} onLoadMore={loadMore} />;
 }

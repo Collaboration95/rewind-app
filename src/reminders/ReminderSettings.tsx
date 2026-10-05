@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 
-import { COLORS } from '../theme';
+import { Glass } from '../ui/primitives';
+import { FONT, WARM } from '../ui/tokens';
 import { reminderService, type ReminderService, type ReminderSnapshot } from './reminder-service';
 
 export function ReminderSettings({ service = reminderService }: { service?: ReminderService }) {
@@ -41,7 +42,7 @@ export function ReminderSettings({ service = reminderService }: { service?: Remi
   const undecided = reminder?.availability === 'permission-undecided';
 
   return (
-    <View style={styles.panel} testID="settings-reminders">
+    <Glass style={styles.panel} testID="settings-reminders">
       <Text style={styles.label}>LOCAL REMINDERS</Text>
       <Text accessibilityRole="header" style={styles.title}>
         Sunday 7pm reminder
@@ -115,48 +116,54 @@ export function ReminderSettings({ service = reminderService }: { service?: Remi
           {error}
         </Text>
       ) : null}
-    </View>
+    </Glass>
   );
 }
 
 const styles = StyleSheet.create({
   panel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     gap: 10,
     padding: 16,
   },
-  label: { color: COLORS.muted, fontSize: 12, fontWeight: '800', letterSpacing: 1.4 },
-  title: { color: COLORS.ink, fontSize: 20, fontWeight: '800' },
-  body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  status: { fontSize: 14, lineHeight: 21 },
-  statusPositive: { color: COLORS.ink },
-  statusWarning: { color: COLORS.accent },
-  detail: { color: COLORS.muted, fontSize: 13, lineHeight: 19 },
+  label: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+  },
+  title: { color: WARM.ink, fontFamily: FONT.body, fontSize: 20, fontWeight: '800' },
+  body: { color: WARM.muted, fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
+  status: { fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
+  statusPositive: { color: WARM.ink },
+  statusWarning: { color: WARM.dangerInk },
+  detail: { color: WARM.muted, fontFamily: FONT.body, fontSize: 13, lineHeight: 19 },
   primaryButton: {
     alignItems: 'center',
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    backgroundColor: WARM.dangerInk,
+    borderRadius: 24,
     justifyContent: 'center',
     minHeight: 46,
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
-  primaryButtonText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
+  primaryButtonText: { color: WARM.sheet, fontFamily: FONT.body, fontSize: 14, fontWeight: '800' },
   outlineButton: {
     alignItems: 'center',
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.edge,
-    borderRadius: 8,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     justifyContent: 'center',
     minHeight: 46,
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
-  outlineButtonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
+  outlineButtonText: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, fontWeight: '700' },
   disabled: { opacity: 0.5 },
-  error: { color: COLORS.accent, fontSize: 14, lineHeight: 21 },
+  error: { color: WARM.dangerInk, fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
 });

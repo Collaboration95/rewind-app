@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { FONT, WARM } from '../ui/tokens';
 import {
   RUNTIME_OFFLINE_MESSAGE,
   type RuntimeClient,
   type RuntimeHealth,
 } from './local-runtime-client';
-import { COLORS } from '../theme';
 
 type RuntimeStatus =
   | { kind: 'demo' }
@@ -163,27 +163,33 @@ export function RuntimeStatusCard({ client }: { client: RuntimeClient | null }) 
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: COLORS.deep,
-    borderColor: COLORS.edge,
-    borderRadius: 10,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     gap: 8,
     padding: 16,
   },
-  label: { color: COLORS.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  endpoint: { color: COLORS.accent, fontSize: 13, fontWeight: '600' },
+  label: {
+    color: WARM.dangerInk,
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  title: { color: WARM.ink, fontFamily: FONT.body, fontSize: 20, fontWeight: '700' },
+  body: { color: WARM.muted, fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
+  endpoint: { color: WARM.dangerInk, fontFamily: FONT.body, fontSize: 13, fontWeight: '600' },
   retry: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.edge,
-    borderRadius: 8,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     justifyContent: 'center',
     minHeight: 48,
     paddingHorizontal: 14,
   },
-  retryText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
+  retryText: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, fontWeight: '700' },
 });

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
-import { COLORS } from '../theme';
+import { WARM } from '../ui/tokens';
 
 // Phones held sideways are shorter than this; tablets and desktops are not.
 const PHONE_LANDSCAPE_MAX_HEIGHT = 500;
@@ -75,11 +75,11 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     alignItems: 'center',
-    backgroundColor: COLORS.background,
+    backgroundColor: WARM.bg,
     gap: 8,
     justifyContent: 'center',
     padding: 24,
   },
-  title: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  body: { color: COLORS.muted, fontSize: 15 },
+  title: { color: WARM.ink, fontSize: 20, fontWeight: '700' },
+  body: { color: WARM.muted, fontSize: 15 },
 });
