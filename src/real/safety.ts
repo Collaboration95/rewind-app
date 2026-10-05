@@ -1,5 +1,6 @@
 import { Linking, Platform } from 'react-native';
 
+import { rateLimitMessage } from '../auth/real-account-client';
 import { getConfiguredInviteWebOrigin } from '../runtime/config';
 
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
@@ -24,19 +25,26 @@ export async function reportContent(
     `/real/groups/${encodeURIComponent(groupId)}/reports`,
     json({ ...target, reason }),
   );
-  if (!response.ok) throw new Error('The report could not be sent. Try again.');
+  if (!response.ok)
+    throw new Error(await rateLimitMessage(response, 'The report could not be sent. Try again.'));
 }
 
 export async function blockMember(request: Request, profileId: string): Promise<void> {
   const response = await request('/real/blocks', json({ profileId }));
-  if (!response.ok) throw new Error('That person could not be blocked. Try again.');
+  if (!response.ok)
+    throw new Error(
+      await rateLimitMessage(response, 'That person could not be blocked. Try again.'),
+    );
 }
 
 export async function unblockMember(request: Request, profileId: string): Promise<void> {
   const response = await request(`/real/blocks/${encodeURIComponent(profileId)}`, {
     method: 'DELETE',
   });
-  if (!response.ok) throw new Error('That person could not be unblocked. Try again.');
+  if (!response.ok)
+    throw new Error(
+      await rateLimitMessage(response, 'That person could not be unblocked. Try again.'),
+    );
 }
 
 export async function listBlocked(request: Request): Promise<Set<string>> {

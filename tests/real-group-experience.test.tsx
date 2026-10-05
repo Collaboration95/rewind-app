@@ -43,6 +43,27 @@ const persistedGroup = {
 };
 
 describe('real account group journey', () => {
+  it('shows the server group rate-limit message in the existing creation error slot', async () => {
+    const message = 'You have reached the group creation limit. Please try again later.';
+    const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
+      if (path === '/real/media/config?uploadProtocol=2')
+        return jsonResponse({ directTransfer: false });
+      if (path === '/real/groups/current') return jsonResponse({ group: null });
+      if (path === '/real/groups' && init?.method !== 'POST') return jsonResponse({ groups: [] });
+      if (path === '/real/groups' && init?.method === 'POST')
+        return jsonResponse({ error: 'rate_limited', message }, 429);
+      throw new Error(`Unexpected authenticated request: ${path}`);
+    });
+    (useRealAccount as jest.Mock).mockReturnValue({ authenticatedRequest, signOut: jest.fn() });
+    const result = await render(<RealAccountGroupExperience displayName="Real Owner" />);
+    await fireEvent.press(await result.findByTestId('real-group-create-choice'));
+    await fireEvent.changeText(result.getByTestId('real-group-name'), 'Saturday table');
+    await fireEvent.press(result.getByTestId('real-group-create-submit'));
+    expect(await result.findByText(message)).toBeTruthy();
+    expect(result.getByTestId('real-group-create-submit')).toBeEnabled();
+    expect(result.queryByTestId('real-group-home')).toBeNull();
+  });
+
   it('keeps active capture separate from older releases and opens real Archive', async () => {
     const activeGroup = {
       ...persistedGroup,

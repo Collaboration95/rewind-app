@@ -111,6 +111,13 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   }
 }
 
+/** Read throttling feedback only when a UI consumer is rejecting the response. */
+export async function rateLimitMessage(response: Response, fallback: string): Promise<string> {
+  if (response.status !== 429) return fallback;
+  const body = await readJson(response);
+  return typeof body.message === 'string' && body.message.trim() ? body.message : fallback;
+}
+
 export class RealAccountClient {
   private activeToken: string | undefined;
   private readonly fetcher: typeof fetch;
@@ -281,14 +288,6 @@ export class RealAccountClient {
       requestOptions(init, token ?? this.activeToken),
     );
     if (response.status === 401) throw new AuthRequestError(401, 'expired');
-    if (response.status === 429) {
-      const body = await readJson(response);
-      throw new AuthRequestError(
-        429,
-        'response',
-        typeof body.message === 'string' ? body.message : 'Please wait before trying again.',
-      );
-    }
     return response;
   }
 
@@ -326,13 +325,11 @@ export class AuthRequestError extends Error {
       | 'secure-storage'
       | 'registration'
       | 'logout',
-    message?: string,
   ) {
     super(
-      message ??
-        (reason === 'expired'
-          ? 'Your sign-in has expired or was reset.'
-          : 'Authentication request failed.'),
+      reason === 'expired'
+        ? 'Your sign-in has expired or was reset.'
+        : 'Authentication request failed.',
     );
     this.name = 'AuthRequestError';
   }
