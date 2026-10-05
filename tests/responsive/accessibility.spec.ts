@@ -140,7 +140,6 @@ test('Demo access error state has no serious or critical Axe violations', async 
   });
   await page.goto('/');
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
-  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await page.getByTestId('demo-entry-demo-1').click();
   await expect(page.getByRole('alert')).toContainText('local runtime is offline');
@@ -151,9 +150,11 @@ test('Demo access error state has no serious or critical Axe violations', async 
 test('entry chooser has no serious or critical Axe violations', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
   await expectNoSeriousAxeViolations(page, 'welcome');
-  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   await expectNoSeriousAxeViolations(page, 'Demo chooser');
@@ -168,7 +169,6 @@ test('keyboard navigation keeps focus on visible controls and reaches each main 
 }) => {
   await page.goto('/');
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
-  await page.getByRole('button', { name: 'Sign in' }).click();
   await tabUntilFocused(page, page.getByRole('button', { name: 'Try Demo' }));
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();

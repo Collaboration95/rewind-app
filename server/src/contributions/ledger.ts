@@ -47,6 +47,8 @@ export interface LedgerEntry {
   jobId: string | null;
   state: LedgerState;
   durationSeconds: number;
+  /** Photo or video: shown with the day and length, never the media itself. */
+  mediaType: 'photo' | 'video';
   createdAt: string;
   updatedAt: string;
   attempts: number;
@@ -116,6 +118,7 @@ interface LedgerRow {
   errorCode?: unknown;
   deletedAt?: unknown;
   replacedBy?: unknown;
+  mediaType?: unknown;
 }
 
 interface LedgerCursor {
@@ -366,6 +369,7 @@ function mapEntry(row: LedgerRow): LedgerEntry {
     jobId: row.jobId === null || row.jobId === undefined ? null : String(row.jobId),
     state,
     durationSeconds,
+    mediaType: row.mediaType === 'photo' ? 'photo' : 'video',
     createdAt,
     updatedAt: String(row.updatedAt ?? deletedAt ?? createdAt),
     attempts: boundedNumber(row.attempts, 0, Number.MAX_SAFE_INTEGER),
@@ -500,7 +504,8 @@ export function listContributionLedger(
               c.duration_seconds AS durationSeconds, c.created_at AS createdAt,
               COALESCE(j.updated_at, j.processing_started_at, c.created_at) AS updatedAt,
               j.attempt_count AS attempts, j.progress AS progress, j.error_code AS errorCode,
-              c.deleted_at AS deletedAt, c.${REPLACED_BY_COLUMN} AS replacedBy
+              c.deleted_at AS deletedAt, c.${REPLACED_BY_COLUMN} AS replacedBy,
+              COALESCE(j.media_type, 'video') AS mediaType
        FROM contributions c
        JOIN cycles cy ON cy.id = c.cycle_id
        LEFT JOIN media_jobs j ON j.contribution_id = c.id AND j.kind = 'clip'
@@ -515,7 +520,8 @@ export function listContributionLedger(
               c.duration_seconds AS durationSeconds, c.created_at AS createdAt,
               COALESCE(j.updated_at, j.processing_started_at, c.created_at) AS updatedAt,
               j.attempt_count AS attempts, j.progress AS progress, j.error_code AS errorCode,
-              c.deleted_at AS deletedAt, c.${REPLACED_BY_COLUMN} AS replacedBy
+              c.deleted_at AS deletedAt, c.${REPLACED_BY_COLUMN} AS replacedBy,
+              COALESCE(j.media_type, 'video') AS mediaType
        FROM contributions c
        JOIN cycles cy ON cy.id = c.cycle_id
        LEFT JOIN media_jobs j ON j.contribution_id = c.id AND j.kind = 'clip'

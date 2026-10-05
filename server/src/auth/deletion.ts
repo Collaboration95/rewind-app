@@ -1,5 +1,6 @@
 import { safeRemoveOwnedPath } from '../contributions';
 import type { RewindDatabase } from '../db';
+import { freezeFilmSegments } from '../groups/safety';
 import type { MediaStore } from '../media/store';
 import { decodeMediaRef, isMediaRef } from '../media/store';
 
@@ -76,6 +77,14 @@ export function purgeRealAccount(
     }
 
     if (profileId) {
+      // Kept films must keep their segment timing after the cascade below.
+      const films = database
+        .prepare(
+          `SELECT DISTINCT i.job_id AS id FROM compilation_job_inputs i
+           JOIN contributions c ON c.id = i.contribution_id WHERE c.member_id = ?`,
+        )
+        .all(profileId) as { id: string }[];
+      for (const film of films) freezeFilmSegments(database, film.id);
       const jobs = database
         .prepare(
           `SELECT j.id, j.group_id AS groupId, j.output_path AS outputPath,

@@ -57,6 +57,7 @@
     "@aws-sdk/client-s3": "3.1145.0",
     "@aws-sdk/s3-request-presigner": "3.1145.0",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "braces": "file:vendor/braces/rewind-braces-3.0.3-rewind.1.tgz",
     "expo": "~57.0.21",
     "expo-camera": "~57.0.4",
     "expo-clipboard": "~57.0.2",
@@ -64,6 +65,7 @@
     "expo-crypto": "~57.0.3",
     "expo-device": "~57.0.2",
     "expo-file-system": "~57.0.6",
+    "expo-font": "~57.0.4",
     "expo-network": "~57.0.2",
     "expo-notifications": "~57.0.20",
     "expo-secure-store": "~57.0.4",
@@ -74,9 +76,9 @@
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
+    "react-native-svg": "15.15.4",
     "react-native-web": "~0.21.0",
-    "web-push": "3.6.7",
-    "braces": "file:vendor/braces/rewind-braces-3.0.3-rewind.1.tgz"
+    "web-push": "3.6.7"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

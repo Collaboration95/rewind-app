@@ -1,19 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAllowLandscape } from '../runtime/PortraitGuard';
 import { CameraView } from 'expo-camera';
-import {
-  AppState,
-  Image,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { AppState, Image, Platform, StyleSheet, Text, View } from 'react-native';
 
-import { COLORS } from '../theme';
-import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
+import type { ContributionLedgerAllowance } from '../domain/contributions';
 import { getRevealEducationCopy, type RevealEducationState } from '../domain/reveal-education';
 import {
   CaptureFileLifecycleError,
@@ -32,16 +22,34 @@ import { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } f
 import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './metadata-store';
 import { ExpoCameraPlatform, isCaptureCancelled } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
-import {
-  CAPTURE_MODE_LABELS,
-  CAPTURE_MODES,
-  DEFAULT_CAPTURE_MODE,
-  type CaptureMode,
-} from '../domain/video';
+import { DEFAULT_CAPTURE_MODE, type CaptureMode } from '../domain/video';
 import { applyRetroLookToPhoto, type RetroPhotoResult } from './retro-browser';
-import { ContributionStatusPanel, useOptionalContributionStatus } from './contribution-status';
+import { useOptionalContributionStatus } from './contribution-status';
 import { decideInterruption } from './capture-interruption';
 import { runCaptureRestartRecovery } from './reset';
+import { FONT } from '../ui/tokens';
+import {
+  CamBottom,
+  CamButton,
+  CamCard,
+  CamTop,
+  CameraFrame,
+  FailedPanel,
+  FlashFx,
+  LookPicker,
+  ModeSwitch,
+  MomentsButton,
+  MomentsDialog,
+  Notice,
+  PHOTO_SECONDS,
+  ReviewActions,
+  SealedOverlay,
+  Shutter,
+  ShutterRow,
+  Tag,
+  UploadPanel,
+  allowanceLeft,
+} from './camera-ui';
 
 /** How the chosen retro look reaches the server for one photo. */
 export interface PhotoRetroLook {
@@ -70,9 +78,13 @@ export interface CameraCaptureScreenProps {
   ) => Promise<import('./contribution-status').ContributionStatus>;
   onDeletePhotoContribution?: (contributionId: string) => Promise<void>;
   onOpenArchive?: () => void;
+  /** Close (×): back to the group. */
   onBack?: () => void;
+  /** The Video tab of the mode switch. */
   onRecordClip?: () => void;
   revealState?: RevealEducationState;
+  /** This week's allowance from the group ledger, for the pill before any moment exists. */
+  allowance?: ContributionLedgerAllowance | null;
 }
 
 /**
@@ -92,6 +104,7 @@ export function CameraCaptureScreen({
   onBack,
   onRecordClip,
   platform: platformProp,
+  allowance: allowanceProp = null,
   revealState = 'locked',
 }: CameraCaptureScreenProps = {}) {
   useAllowLandscape();
@@ -140,6 +153,11 @@ export function CameraCaptureScreen({
   const [photoSubmitPending, setPhotoSubmitPending] = useState(false);
   const [photoSubmitError, setPhotoSubmitError] = useState<string | null>(null);
   const [photoMode, setPhotoMode] = useState<CaptureMode>(DEFAULT_CAPTURE_MODE);
+  // V8 after a seal from this screen; a status restored from storage never shows it.
+  const [sealed, setSealed] = useState(false);
+  const [failureDismissed, setFailureDismissed] = useState(false);
+  const [momentsOpen, setMomentsOpen] = useState(false);
+  const [flash, setFlash] = useState(0);
   // A retried submit reuses the same graded bytes under the same capture key.
   const retroPhotoRef = useRef<{ key: string; result: RetroPhotoResult } | null>(null);
   const contributionStatusContext = useOptionalContributionStatus();
@@ -345,43 +363,6 @@ export function CameraCaptureScreen({
   const hasFileFallback = platform.supportsFileFallback === true && Boolean(platform.pickStillFile);
   const hasFallback = platform.kind === 'demo' || hasFileFallback;
 
-  const handleRevealAction = useCallback(() => {
-    if (revealState === 'locked') {
-      if (isCaptureReady(state) && (!platform.supportsLivePreview || cameraReady)) {
-        void capture();
-      } else if (state.status === 'permission-blocked') {
-        void openSettings();
-      } else if (state.status === 'unsupported' && hasFallback) {
-        void fallbackAction();
-      } else if (state.status === 'permission-undecided' || state.status === 'permission-denied') {
-        void requestAccess();
-      } else {
-        void refreshAccess();
-      }
-      return;
-    }
-    onOpenArchive?.();
-  }, [
-    cameraReady,
-    capture,
-    fallbackAction,
-    hasFallback,
-    onOpenArchive,
-    openSettings,
-    platform.supportsLivePreview,
-    refreshAccess,
-    requestAccess,
-    revealState,
-    state,
-  ]);
-  const revealActionLabel =
-    revealState === 'locked' && state.status === 'unsupported' && hasFallback
-      ? fallbackLabel
-      : revealState === 'locked' &&
-          (!isCaptureReady(state) || (platform.supportsLivePreview && !cameraReady))
-        ? 'Check capture access'
-        : undefined;
-
   const retake = useCallback(async () => {
     await session.retake();
     setState((current) => ({
@@ -434,6 +415,7 @@ export function CameraCaptureScreen({
     }
     setPhotoSubmitPending(true);
     setPhotoSubmitError(null);
+    setFailureDismissed(false);
     let latestStatus: import('./contribution-status').ContributionStatus = {
       state: 'queued',
       durationSeconds: 3,
@@ -501,6 +483,7 @@ export function CameraCaptureScreen({
         activePreview: null,
         errorMessage: null,
       }));
+      setSealed(true);
     } catch (error) {
       contributionStatusContext?.setStatus({
         ...latestStatus,
@@ -533,6 +516,7 @@ export function CameraCaptureScreen({
       contributionStatusContext?.clearStatus();
       await contributionStatusContext?.refreshStatus();
       setPhotoSubmitError(null);
+      setMomentsOpen(false);
     } catch (error) {
       setPhotoSubmitError(
         error instanceof Error ? error.message : 'The contribution could not be deleted.',
@@ -540,679 +524,356 @@ export function CameraCaptureScreen({
     }
   }, [contributionStatus, contributionStatusContext, onDeletePhotoContribution]);
 
-  const showingViewfinder =
-    !state.activePreview &&
-    (state.status === 'ready' || state.status === 'capturing') &&
-    (platform.supportsLivePreview || platform.kind === 'demo');
+  const preview = state.activePreview;
+  const capturing = state.status === 'capturing';
+  // Web opens the phone's own camera sheet, so the viewfinder has no live image.
+  const systemCamera = platform.fileFallbackIsCamera === true && hasFileFallback;
+  const viewfinder =
+    !preview &&
+    (state.status === 'ready' || capturing || (systemCamera && state.status === 'unsupported'));
+  const liveCamera = viewfinder && platform.supportsLivePreview && state.status !== 'unsupported';
+  const allowance = contributionStatus?.allowance ?? allowanceProp;
+  const left = allowanceLeft(allowance);
+  // P1: a photo takes 3 s, so the shutter is off with less than that left.
+  const photoBlocked = left !== null && left.seconds < PHOTO_SECONDS;
+  const shutterDisabled =
+    photoBlocked || capturing || (!systemCamera && platform.supportsLivePreview && !cameraReady);
+  const shoot = () => {
+    if (systemCamera) {
+      void pickStillFile();
+      return;
+    }
+    setFlash((value) => value + 1);
+    void capture();
+  };
+  const revealCopy =
+    revealState !== 'locked' ? getRevealEducationCopy('capture', revealState) : null;
 
   return (
-    <View
-      style={[styles.screen, showingViewfinder && styles.viewfinderScreen]}
-      testID="camera-screen"
-    >
-      {showingViewfinder ? (
-        <>
-          {platform.supportsLivePreview ? (
-            <CameraView
-              accessibilityLabel="Live camera viewfinder"
-              facing="back"
-              onCameraReady={() => setCameraReady(true)}
-              ref={cameraRef}
-              style={styles.fullScreenPreview}
-              testID="camera-live-preview"
-            />
-          ) : (
-            <View
-              accessibilityLabel="Simulator fixture viewfinder"
-              style={styles.fullScreenFixture}
-            >
-              <Text style={styles.fixturePreviewText}>READY FOR A FIXTURE PREVIEW</Text>
-            </View>
-          )}
-          <View pointerEvents="box-none" style={styles.viewfinderChrome}>
-            <View style={styles.viewfinderTop}>
-              {onBack ? (
-                <Pressable
-                  accessibilityRole="button"
-                  hitSlop={12}
-                  onPress={onBack}
-                  style={styles.viewfinderBack}
-                  testID="capture-back-to-group"
-                >
-                  <Text style={styles.viewfinderBackText}>Back to group</Text>
-                </Pressable>
-              ) : null}
-              {groupName ? (
-                <Text
-                  accessibilityLiveRegion="polite"
-                  style={styles.viewfinderHint}
-                  testID="camera-group-context"
-                >
-                  Group · {groupName}
-                </Text>
-              ) : null}
-              <Text accessibilityRole="header" style={styles.viewfinderTitle}>
-                Photo
-              </Text>
-              <Text accessibilityLiveRegion="polite" style={styles.viewfinderHint}>
-                {state.status === 'capturing' ? 'Capturing…' : 'Frame your moment'}
-              </Text>
-              {revealState !== 'locked' ? (
-                <View style={styles.viewfinderReveal} testID={`capture-reveal-${revealState}`}>
-                  <Text style={styles.viewfinderHint}>
-                    {getRevealEducationCopy('capture', revealState).title}
-                  </Text>
-                  <Pressable accessibilityRole="button" onPress={handleRevealAction}>
-                    <Text style={styles.viewfinderBackText}>Open Archive</Text>
-                  </Pressable>
-                </View>
-              ) : null}
-              {onRecordClip ? (
-                <Pressable accessibilityRole="button" onPress={onRecordClip}>
-                  <Text style={styles.viewfinderBackText}>Video</Text>
-                </Pressable>
-              ) : null}
-            </View>
-            <View style={styles.viewfinderControls}>
-              {settingsError ? <Text style={styles.errorText}>{settingsError}</Text> : null}
-              <Pressable
-                accessibilityHint="Takes one still image and opens a preview"
-                accessibilityLabel="Take still image"
-                accessibilityRole="button"
-                accessibilityState={{
-                  busy: state.status === 'capturing',
-                  disabled: !cameraReady || state.status === 'capturing',
-                }}
-                disabled={!cameraReady || state.status === 'capturing'}
-                onPress={capture}
-                style={[
-                  styles.shutter,
-                  (!cameraReady || state.status === 'capturing') && styles.disabledControl,
-                ]}
-                testID="camera-capture"
-              >
-                <View style={styles.shutterInner} />
-              </Pressable>
-              <Text accessibilityLiveRegion="polite" style={styles.shutterCaption}>
-                {state.status === 'capturing' ? 'Capturing…' : 'Tap to take photo'}
-              </Text>
-            </View>
-          </View>
-        </>
+    <CameraFrame bokeh={!liveCamera && !preview} testID="camera-screen">
+      {/* The viewfinder has no visible title; screen readers and route focus land here. */}
+      <Text accessibilityRole="header" style={styles.srOnly} testID="route-heading-camera">
+        Add a moment
+      </Text>
+      {liveCamera ? (
+        <CameraView
+          accessibilityLabel="Live camera viewfinder"
+          facing="back"
+          onCameraReady={() => setCameraReady(true)}
+          ref={cameraRef}
+          style={StyleSheet.absoluteFill}
+          testID="camera-live-preview"
+        />
       ) : null}
-      {!showingViewfinder ? (
-        <ScrollView style={styles.panelScroll} contentContainerStyle={styles.panelContent}>
-          {onBack ? (
-            <Pressable
-              accessibilityRole="button"
-              hitSlop={12}
-              onPress={onBack}
-              style={styles.back}
-              testID="capture-panel-back-to-group"
-            >
-              <Text style={styles.backText}>Back to group</Text>
-            </Pressable>
-          ) : null}
-          <View style={styles.heading}>
-            <Text style={styles.eyebrow}>CAPTURE</Text>
-            {groupName ? (
-              <Text
-                accessibilityLiveRegion="polite"
-                style={styles.groupContext}
-                testID="camera-group-context"
-              >
-                Group · {groupName}
-              </Text>
-            ) : null}
-            <Text accessibilityRole="header" style={styles.title} testID="route-heading-camera">
-              Add a still moment
-            </Text>
-            <Text style={styles.intro}>
-              {onSubmitPhoto
-                ? 'Review your photo, then submit it to this private group. The original stays on this device until upload is confirmed.'
-                : 'Camera access stays on this device. Nothing is uploaded from this screen.'}
-            </Text>
-          </View>
-          {state.status === 'ready' || state.status === 'preview' || state.status === 'saved' ? (
-            <RevealEducationPanel
-              actionLabel={revealActionLabel}
-              onAction={handleRevealAction}
-              state={revealState}
-              surface="capture"
-              testID={`capture-reveal-${revealState}`}
-            />
-          ) : null}
-          {onRecordClip ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={onRecordClip}
-              style={styles.videoButton}
-              testID="camera-record-clip"
-            >
-              <Text style={styles.videoButtonText}>
-                {state.status === 'ready' && platform.supportsVideoRecording !== false
-                  ? 'Record a 15-second clip'
-                  : platform.kind === 'demo'
-                    ? 'Open synthetic clip fallback'
-                    : 'Open clip capture options'}
-              </Text>
-            </Pressable>
-          ) : null}
-
-          <ContributionStatusPanel
-            deleteLabel="Delete and replace"
-            onDelete={onDeletePhotoContribution ? deletePhotoForReplacement : undefined}
-            onRetry={contributionStatus?.state === 'failed' ? () => void submitPhoto() : undefined}
-            retryLabel="Retry photo upload"
-            status={contributionStatus}
-            testID="camera-contribution-status"
-          />
-
+      {viewfinder && platform.kind === 'demo' ? (
+        <View accessibilityLabel="Simulator fixture viewfinder" style={styles.fixture}>
+          <Text style={styles.fixtureText}>READY FOR A FIXTURE PREVIEW</Text>
+        </View>
+      ) : null}
+      {preview ? (
+        <View style={StyleSheet.absoluteFill} testID="camera-preview-panel">
           {platform.kind === 'demo' ? (
             <View
-              accessibilityLabel="Simulator demo capture, not a real camera"
-              style={styles.demoNotice}
+              accessibilityLabel="Simulator fixture still preview"
+              style={styles.fixture}
+              testID="camera-demo-preview"
             >
-              <Text style={styles.demoNoticeTitle}>SIMULATOR DEMO</Text>
-              <Text style={styles.demoNoticeText}>
-                This uses a fixture preview because the simulator has no physical camera. It does
-                not claim a real capture.
-              </Text>
-            </View>
-          ) : null}
-
-          {state.status === 'checking' ? (
-            <StatusPanel
-              testID="camera-checking"
-              title="Checking camera access…"
-              body="We are checking camera capability and permission."
-            />
-          ) : state.status === 'temporarily-unavailable' ? (
-            <StatusPanel
-              actionLabel="Check again"
-              body={
-                state.errorMessage ??
-                'Camera availability needs to be checked before capture can begin.'
-              }
-              onAction={refreshAccess}
-              onSecondaryAction={hasFallback ? fallbackAction : undefined}
-              secondaryActionLabel={hasFallback ? fallbackLabel : undefined}
-              testID="camera-temporarily-unavailable"
-              title="Camera is temporarily unavailable"
-            />
-          ) : state.status === 'unsupported' ? (
-            <StatusPanel
-              actionLabel={hasFallback ? fallbackLabel : undefined}
-              body={
-                hasFallback
-                  ? platform.kind === 'demo'
-                    ? 'This simulator cannot provide a physical camera. The labelled synthetic fixture is available for the local Demo.'
-                    : platform.fileFallbackIsCamera
-                      ? 'Opens your phone camera. The photo comes back here so you can review it before you submit.'
-                      : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
-                  : 'This device cannot provide the camera needed for a still moment. Use a physical device with camera access.'
-              }
-              onAction={hasFallback ? fallbackAction : undefined}
-              testID="camera-unsupported"
-              title={
-                platform.fileFallbackIsCamera
-                  ? 'Take a photo'
-                  : 'Camera capture is not supported here'
-              }
-            />
-          ) : state.status === 'permission-undecided' ? (
-            <StatusPanel
-              actionLabel="Allow camera access"
-              body="Rewind needs camera permission before the capture control becomes available."
-              onAction={requestAccess}
-              testID="camera-permission-undecided"
-              title="Allow access to continue"
-            />
-          ) : state.status === 'permission-denied' ? (
-            <StatusPanel
-              actionLabel={hasFileFallback ? fallbackLabel : 'Try again'}
-              secondaryActionLabel="Open Settings"
-              body={
-                state.errorMessage ??
-                'Camera access is off. Try again, or allow camera access in Settings.'
-              }
-              onAction={hasFileFallback ? fallbackAction : requestAccess}
-              onSecondaryAction={openSettings}
-              testID="camera-permission-denied"
-              title="Camera access is off"
-            />
-          ) : state.status === 'permission-blocked' ? (
-            <StatusPanel
-              actionLabel="Open Settings"
-              body="Camera access is blocked. Open Settings, allow camera access, then return and check again."
-              onAction={openSettings}
-              testID="camera-permission-blocked"
-              title="Permission is blocked"
-            />
-          ) : state.status === 'capture-failed' || state.status === 'write-failed' ? (
-            <StatusPanel
-              actionLabel="Try again"
-              body={
-                state.errorMessage ??
-                'The still image could not be completed. Your previous preview was discarded.'
-              }
-              onAction={state.status === 'write-failed' ? refreshAccess : retryCapture}
-              testID={
-                state.status === 'write-failed' ? 'camera-write-failed' : 'camera-capture-failed'
-              }
-              title={state.status === 'write-failed' ? 'Local save failed' : 'Capture failed'}
-            />
-          ) : state.activePreview ? (
-            <PreviewPanel
-              demo={platform.kind === 'demo'}
-              metadata={state.activePreview.metadata}
-              onAccept={accept}
-              onSubmit={onSubmitPhoto ? submitPhoto : undefined}
-              mode={photoMode}
-              onModeChange={setPhotoMode}
-              submitError={photoSubmitError}
-              submitting={photoSubmitPending}
-              onDiscard={discard}
-              onRetake={retake}
-              previewUri={state.activePreview.uri}
-              saving={state.status === 'saving'}
-              saved={state.status === 'saved'}
-            />
-          ) : platform.fileFallbackIsCamera ? (
-            // Web uses the phone's own camera sheet, so there is no in-page
-            // viewfinder or access step; one button opens the camera.
-            <View style={styles.captureArea}>
-              <Pressable
-                accessibilityHint="Opens your phone camera; the photo comes back here for review"
-                accessibilityLabel="Open camera"
-                accessibilityRole="button"
-                accessibilityState={{ busy: state.status === 'capturing' }}
-                disabled={state.status === 'capturing'}
-                onPress={pickStillFile}
-                style={[styles.shutter, state.status === 'capturing' && styles.disabledControl]}
-                testID="camera-capture"
-              >
-                <Text style={styles.shutterText}>
-                  {state.status === 'capturing' ? 'Preparing photo…' : 'Open camera'}
-                </Text>
-              </Pressable>
+              <Text style={styles.fixtureText}>FIXTURE STILL</Text>
+              <Text style={styles.fixtureSub}>No physical image was captured</Text>
             </View>
           ) : (
-            <View style={styles.captureArea}>
-              <View accessibilityLabel="Camera access granted" style={styles.accessGranted}>
-                <Text style={styles.accessGrantedTitle}>ACCESS GRANTED</Text>
-                <Text style={styles.accessGrantedText}>Camera is ready for a still moment.</Text>
-              </View>
-              {platform.supportsLivePreview ? null : (
-                <View
-                  accessibilityLabel="Simulator fixture preview area"
-                  style={styles.fixturePreview}
-                >
-                  <Text style={styles.fixturePreviewText}>READY FOR A FIXTURE PREVIEW</Text>
-                </View>
-              )}
-              {!platform.supportsLivePreview ? (
-                <Pressable
-                  accessibilityHint="Takes one still image and opens a preview"
-                  accessibilityLabel="Take still image"
-                  accessibilityRole="button"
-                  accessibilityState={{
-                    busy: state.status === 'capturing',
-                    disabled: !cameraReady,
-                  }}
-                  disabled={!cameraReady || state.status === 'capturing'}
-                  onPress={capture}
-                  style={[
-                    styles.shutter,
-                    (!cameraReady || state.status === 'capturing') && styles.disabledControl,
-                  ]}
-                  testID="camera-capture"
-                >
-                  <Text style={styles.shutterText}>
-                    {state.status === 'capturing' ? 'Capturing…' : 'Take still image'}
-                  </Text>
-                </Pressable>
-              ) : null}
-              {settingsError ? <Text style={styles.errorText}>{settingsError}</Text> : null}
-            </View>
+            <Image
+              accessibilityLabel="Captured still preview"
+              resizeMode="contain"
+              source={{ uri: preview.uri }}
+              style={StyleSheet.absoluteFill}
+            />
           )}
-        </ScrollView>
-      ) : null}
-    </View>
-  );
-}
-
-function StatusPanel({
-  actionLabel,
-  body,
-  onAction,
-  onSecondaryAction,
-  secondaryActionLabel,
-  testID,
-  title,
-}: {
-  actionLabel?: string;
-  body: string;
-  onAction?: () => void | Promise<void>;
-  onSecondaryAction?: () => void | Promise<void>;
-  secondaryActionLabel?: string;
-  testID: string;
-  title: string;
-}) {
-  return (
-    <View accessibilityLiveRegion="polite" style={styles.statusPanel} testID={testID}>
-      <Text style={styles.statusTitle}>{title}</Text>
-      <Text style={styles.statusBody}>{body}</Text>
-      {actionLabel && onAction ? (
-        <Pressable accessibilityRole="button" onPress={onAction} style={styles.actionButton}>
-          <Text style={styles.actionButtonText}>{actionLabel}</Text>
-        </Pressable>
-      ) : null}
-      {secondaryActionLabel && onSecondaryAction ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={onSecondaryAction}
-          style={styles.secondaryButton}
-        >
-          <Text style={styles.secondaryButtonText}>{secondaryActionLabel}</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
-function PreviewPanel({
-  demo,
-  metadata,
-  mode,
-  onModeChange,
-  onAccept,
-  onSubmit,
-  submitError,
-  submitting,
-  onDiscard,
-  onRetake,
-  previewUri,
-  saved,
-  saving,
-}: {
-  demo: boolean;
-  metadata: NonNullable<CaptureState['activePreview']>['metadata'];
-  mode: CaptureMode;
-  onModeChange: (mode: CaptureMode) => void;
-  onAccept: () => void | Promise<void>;
-  onSubmit?: () => void | Promise<void>;
-  submitError?: string | null;
-  submitting?: boolean;
-  onDiscard: () => void | Promise<void>;
-  onRetake: () => void | Promise<void>;
-  previewUri: string;
-  saved: boolean;
-  saving: boolean;
-}) {
-  return (
-    <View style={styles.previewArea} testID="camera-preview-panel">
-      {demo ? (
-        <View
-          accessibilityLabel="Simulator fixture still preview"
-          style={[styles.fixturePreview, styles.previewFixture]}
-          testID="camera-demo-preview"
-        >
-          <Text style={styles.fixturePreviewText}>FIXTURE STILL</Text>
-          <Text style={styles.fixturePreviewSubtext}>No physical image was captured</Text>
+          <CamBottom>
+            {preview.metadata.source === 'file' ? <Tag>Chosen from a file</Tag> : null}
+            {photoSubmitPending ? (
+              <UploadPanel label="Uploading…" testID="camera-uploading" />
+            ) : photoSubmitError && !failureDismissed ? (
+              <FailedPanel
+                accessibilityLabel={`Couldn’t upload. ${photoSubmitError} It’s kept on this phone and doesn’t count until it’s sealed.`}
+                detail={`${photoSubmitError} It’s kept on this phone and doesn’t count until it’s sealed.`}
+                onBackToReview={() => setFailureDismissed(true)}
+                onRetry={() => void submitPhoto()}
+                retryLabel="Retry photo upload"
+                testID="camera-upload-failed"
+                title="Couldn’t upload"
+              />
+            ) : (
+              <>
+                {onSubmitPhoto && state.status !== 'saved' ? (
+                  <LookPicker mode={photoMode} onChange={setPhotoMode} testID="camera-retro-look" />
+                ) : null}
+                {onSubmitPhoto ? (
+                  <Text style={styles.caption}>
+                    Counts as one moment · {PHOTO_SECONDS} s in the film
+                  </Text>
+                ) : null}
+                {state.status === 'saved' ? (
+                  <>
+                    <Notice alert={false}>Saved locally. Metadata only is retained.</Notice>
+                    <CamButton label="Take another still" onPress={() => void retake()} />
+                  </>
+                ) : (
+                  <>
+                    <ReviewActions>
+                      <CamButton
+                        label="Retake"
+                        onPress={() => void retake()}
+                        style={styles.retake}
+                      />
+                      <CamButton
+                        busy={state.status === 'saving'}
+                        icon={onSubmitPhoto ? 'lock' : undefined}
+                        label={
+                          onSubmitPhoto
+                            ? 'Seal'
+                            : state.status === 'saving'
+                              ? 'Saving…'
+                              : 'Use this still'
+                        }
+                        onPress={() => void (onSubmitPhoto ? submitPhoto() : accept())}
+                        primary
+                        style={styles.seal}
+                        testID="camera-seal"
+                      />
+                    </ReviewActions>
+                    {onSubmitPhoto ? null : (
+                      <CamButton height={44} label="Discard" onPress={() => void discard()} />
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </CamBottom>
         </View>
-      ) : (
-        <Image
-          accessibilityLabel="Captured still preview"
-          source={{ uri: previewUri }}
-          style={[styles.stillPreview, styles.previewImage]}
+      ) : null}
+      <FlashFx fire={flash} />
+      <CamTop
+        allowance={allowance}
+        closeTestID="capture-back-to-group"
+        groupName={groupName}
+        onClose={onBack}
+      >
+        {platform.kind === 'demo' ? (
+          <View accessibilityLabel="Simulator demo capture, not a real camera" accessible>
+            <Tag>Simulator demo · fixture, not a real camera</Tag>
+          </View>
+        ) : null}
+        {revealCopy ? (
+          <View style={styles.reveal} testID={`capture-reveal-${revealState}`}>
+            <Notice alert={false}>{revealCopy.title}</Notice>
+            {onOpenArchive ? (
+              <CamButton height={44} label="Open Archive" onPress={onOpenArchive} />
+            ) : null}
+          </View>
+        ) : null}
+      </CamTop>
+
+      {preview || viewfinder ? null : state.status === 'checking' ? (
+        <CamCard
+          body="We are checking camera capability and permission."
+          testID="camera-checking"
+          title="Checking camera access…"
         />
+      ) : state.status === 'temporarily-unavailable' ? (
+        <CamCard
+          body={
+            state.errorMessage ??
+            'Camera availability needs to be checked before capture can begin.'
+          }
+          testID="camera-temporarily-unavailable"
+          title="Camera is temporarily unavailable"
+        >
+          <CamButton height={48} label="Check again" onPress={() => void refreshAccess()} soft />
+          {hasFallback ? (
+            <CamButton height={48} label={fallbackLabel} onPress={() => void fallbackAction()} />
+          ) : null}
+        </CamCard>
+      ) : state.status === 'unsupported' ? (
+        <CamCard
+          body={
+            hasFallback
+              ? platform.kind === 'demo'
+                ? 'This simulator cannot provide a physical camera. The labelled synthetic fixture is available for the local Demo.'
+                : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
+              : 'This device cannot provide the camera needed for a still moment. Use a physical device with camera access.'
+          }
+          testID="camera-unsupported"
+          title="Camera capture is not supported here"
+        >
+          {hasFallback ? (
+            <CamButton
+              height={48}
+              label={fallbackLabel}
+              onPress={() => void fallbackAction()}
+              soft
+            />
+          ) : null}
+        </CamCard>
+      ) : state.status === 'permission-undecided' ? (
+        // V1: asked only when the camera first opens; there is no skip.
+        <CamCard
+          body="Rewind needs the camera to take a photo."
+          testID="camera-permission-undecided"
+          title="Allow the camera"
+        >
+          <CamButton height={48} label="Continue" onPress={() => void requestAccess()} soft />
+        </CamCard>
+      ) : state.status === 'permission-denied' || state.status === 'permission-blocked' ? (
+        // V2: the system prompt will not show again, so Settings is the way back.
+        <CamCard
+          body="Turn Camera on for Rewind in your phone’s Settings, then come back. Nothing was recorded."
+          testID={
+            state.status === 'permission-blocked'
+              ? 'camera-permission-blocked'
+              : 'camera-permission-denied'
+          }
+          title="The camera is off"
+        >
+          {settingsError ? <Notice>{settingsError}</Notice> : null}
+          <CamButton height={48} label="Open Settings" onPress={() => void openSettings()} soft />
+          <CamButton
+            height={48}
+            label="Check again"
+            onPress={() =>
+              void (state.status === 'permission-denied' ? requestAccess() : refreshAccess())
+            }
+          />
+          {hasFileFallback ? (
+            <CamButton height={48} label={fallbackLabel} onPress={() => void fallbackAction()} />
+          ) : null}
+        </CamCard>
+      ) : state.status === 'capture-failed' || state.status === 'write-failed' ? (
+        <CamCard
+          body={
+            state.errorMessage ??
+            'The still image could not be completed. Your previous preview was discarded.'
+          }
+          testID={state.status === 'write-failed' ? 'camera-write-failed' : 'camera-capture-failed'}
+          title={state.status === 'write-failed' ? 'Local save failed' : 'Capture failed'}
+        >
+          <CamButton
+            height={48}
+            label="Try again"
+            onPress={() =>
+              void (state.status === 'write-failed' ? refreshAccess() : retryCapture())
+            }
+            soft
+          />
+        </CamCard>
+      ) : null}
+
+      {preview ? null : (
+        <CamBottom>
+          {viewfinder && settingsError ? <Notice>{settingsError}</Notice> : null}
+          <ModeSwitch mode="photo" onVideo={onRecordClip} videoTestID="camera-record-clip" />
+          {viewfinder ? (
+            <>
+              <ShutterRow
+                center={
+                  <Shutter
+                    busy={capturing}
+                    disabled={shutterDisabled}
+                    hint={
+                      systemCamera
+                        ? 'Opens your phone camera; the photo comes back here for review'
+                        : 'Takes one still image and opens a preview'
+                    }
+                    kind="photo"
+                    label="Take photo"
+                    onPress={shoot}
+                    testID="camera-capture"
+                  />
+                }
+                left={
+                  contributionStatus ? (
+                    <MomentsButton
+                      count={allowance?.countUsed}
+                      onPress={() => setMomentsOpen(true)}
+                    />
+                  ) : null
+                }
+              />
+              <Text accessibilityLiveRegion="polite" style={styles.caption}>
+                {photoBlocked
+                  ? `A photo needs ${PHOTO_SECONDS} s; you have ${left.seconds} s left this week.`
+                  : capturing
+                    ? systemCamera
+                      ? 'Preparing photo…'
+                      : 'Capturing…'
+                    : systemCamera
+                      ? 'Opens your phone camera'
+                      : ' '}
+              </Text>
+            </>
+          ) : null}
+        </CamBottom>
       )}
-      {metadata.source === 'file' ? (
-        <Text style={styles.previewMeta}>
-          FILE FALLBACK · selected locally, not camera-captured
-        </Text>
+
+      {sealed ? (
+        <SealedOverlay
+          left={left?.moments ?? null}
+          onDone={() => {
+            setSealed(false);
+            onBack?.();
+          }}
+          testID="camera-sealed"
+        />
       ) : null}
-      <Text style={styles.previewMeta}>
-        {metadata.width} × {metadata.height} · {metadata.format.toUpperCase()}
-      </Text>
-      {onSubmit && !saved ? (
-        <View style={styles.previewActions} testID="camera-retro-look">
-          {CAPTURE_MODES.map((option) => (
-            <Pressable
-              accessibilityRole="radio"
-              accessibilityState={{ selected: mode === option, disabled: Boolean(submitting) }}
-              disabled={Boolean(submitting)}
-              key={option}
-              onPress={() => onModeChange(option)}
-              style={[styles.secondaryButton, mode === option && styles.selectedLook]}
-            >
-              <Text style={styles.secondaryButtonText}>{CAPTURE_MODE_LABELS[option]}</Text>
-            </Pressable>
-          ))}
-        </View>
+      {momentsOpen ? (
+        <MomentsDialog
+          onClose={() => setMomentsOpen(false)}
+          onDelete={onDeletePhotoContribution ? deletePhotoForReplacement : undefined}
+          onRetry={contributionStatus?.state === 'failed' ? () => void submitPhoto() : undefined}
+          retryLabel="Retry photo upload"
+          status={contributionStatus}
+        />
       ) : null}
-      {submitError ? (
-        <Text accessibilityLiveRegion="assertive" style={styles.errorText}>
-          {submitError}
-        </Text>
-      ) : null}
-      {saved ? (
-        <Text style={styles.savedText}>Saved locally. Metadata only is retained.</Text>
-      ) : null}
-      {saved ? (
-        <Pressable accessibilityRole="button" onPress={onRetake} style={styles.secondaryButton}>
-          <Text style={styles.secondaryButtonText}>Take another still</Text>
-        </Pressable>
-      ) : (
-        <View style={styles.previewActions}>
-          <Pressable accessibilityRole="button" onPress={onRetake} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>Retake</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{
-              busy: saving || Boolean(submitting),
-              disabled: saving || Boolean(submitting),
-            }}
-            disabled={saving || Boolean(submitting)}
-            onPress={onSubmit ?? onAccept}
-            style={[styles.actionButton, saving && styles.disabledControl]}
-          >
-            <Text style={styles.actionButtonText}>
-              {submitting
-                ? 'Uploading…'
-                : onSubmit
-                  ? 'Submit photo'
-                  : saving
-                    ? 'Saving…'
-                    : 'Use this still'}
-            </Text>
-          </Pressable>
-          <Pressable accessibilityRole="button" onPress={onDiscard} style={styles.discardButton}>
-            <Text style={styles.discardButtonText}>Discard</Text>
-          </Pressable>
-        </View>
-      )}
-    </View>
+    </CameraFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, minHeight: 0 },
-  panelScroll: { flex: 1, minHeight: 0 },
-  panelContent: { flexGrow: 1, gap: 18, padding: 24 },
-  viewfinderScreen: { backgroundColor: '#080808', gap: 0, padding: 0, position: 'relative' },
-  fullScreenPreview: { ...StyleSheet.absoluteFill, backgroundColor: '#080808' },
-  fullScreenFixture: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    backgroundColor: '#181818',
-    justifyContent: 'center',
-  },
-  viewfinderChrome: {
-    ...StyleSheet.absoluteFill,
-    justifyContent: 'space-between',
-    paddingBottom: 28,
-    paddingHorizontal: 24,
-    paddingTop: 28,
-  },
-  viewfinderTop: { alignItems: 'center', gap: 8 },
-  // Back controls keep a 44pt tap target; on an installed iPhone web app they
-  // sit near the status bar, where a text-height target is easy to miss.
-  viewfinderBack: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: 44 },
-  back: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: 44 },
-  viewfinderBackText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  backText: { color: COLORS.accent, fontSize: 16, fontWeight: '700' },
-  viewfinderTitle: { color: '#fff', fontSize: 20, fontWeight: '700' },
-  viewfinderHint: { color: '#fff', fontSize: 14, textShadowColor: '#000', textShadowRadius: 5 },
-  viewfinderReveal: {
-    alignItems: 'center',
-    backgroundColor: '#0009',
-    borderRadius: 8,
-    gap: 4,
-    padding: 8,
-  },
-  viewfinderControls: { alignItems: 'center', gap: 12 },
-  shutterCaption: { color: '#fff', fontSize: 13, textShadowColor: '#000', textShadowRadius: 5 },
-  heading: { gap: 7 },
-  groupContext: { color: COLORS.ink, fontSize: 16, fontWeight: '700' },
-  eyebrow: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 30, fontWeight: '700' },
-  intro: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  demoNotice: {
-    backgroundColor: COLORS.deep,
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: 4,
-    padding: 12,
-  },
-  videoButton: {
-    alignItems: 'center',
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  videoButtonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  demoNoticeTitle: { color: COLORS.edge, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
-  demoNoticeText: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
-  statusPanel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 12,
-    padding: 18,
-  },
-  statusTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  statusBody: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  actionButton: {
-    alignItems: 'center',
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
-    minHeight: 48,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  actionButtonText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
-  selectedLook: { backgroundColor: COLORS.accent },
-  secondaryButton: {
-    alignItems: 'center',
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 48,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  secondaryButtonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  captureArea: { flex: 1, gap: 14, minHeight: 420 },
-  accessGranted: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 8,
-    borderWidth: 1,
-    gap: 4,
-    padding: 12,
-  },
-  accessGrantedTitle: { color: COLORS.accent, fontSize: 10, fontWeight: '800', letterSpacing: 1 },
-  accessGrantedText: { color: COLORS.muted, fontSize: 12, lineHeight: 18 },
-  livePreview: {
-    backgroundColor: COLORS.deep,
-    borderRadius: 10,
-    flex: 1,
-    minHeight: 300,
+  srOnly: {
+    height: 1,
+    left: 0,
+    opacity: 0,
     overflow: 'hidden',
+    position: 'absolute',
+    top: 0,
+    width: 1,
   },
-  fixturePreview: {
+  fixture: {
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
-    backgroundColor: COLORS.deep,
-    borderColor: COLORS.edge,
-    borderRadius: 10,
-    borderStyle: 'dashed',
-    borderWidth: 1,
-    flex: 1,
     gap: 8,
     justifyContent: 'center',
-    minHeight: 300,
     padding: 24,
   },
-  fixturePreviewText: {
-    color: COLORS.edge,
+  fixtureText: {
+    color: 'rgba(255, 255, 255, 0.82)',
+    fontFamily: FONT.body,
     fontSize: 12,
-    fontWeight: '800',
+    fontWeight: '700',
     letterSpacing: 1,
     textAlign: 'center',
   },
-  fixturePreviewSubtext: { color: COLORS.muted, fontSize: 12, textAlign: 'center' },
-  shutter: {
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderColor: 'rgba(255,255,255,0.8)',
-    borderRadius: 40,
-    borderWidth: 5,
-    justifyContent: 'center',
-    height: 76,
-    width: 76,
+  fixtureSub: { color: 'rgba(255, 255, 255, 0.82)', fontFamily: FONT.body, fontSize: 12 },
+  caption: {
+    color: 'rgba(255, 255, 255, 0.86)',
+    fontFamily: FONT.body,
+    fontSize: 13,
+    minHeight: 18,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textShadowRadius: 6,
   },
-  shutterInner: {
-    backgroundColor: '#fff',
-    borderColor: '#444',
-    borderRadius: 32,
-    borderWidth: 1,
-    height: 62,
-    width: 62,
-  },
-  shutterText: { color: COLORS.deep, fontSize: 15, fontWeight: '800' },
-  disabledControl: { opacity: 0.48 },
-  errorText: { color: COLORS.edge, fontSize: 13, textAlign: 'center' },
-  previewArea: { flex: 1, flexShrink: 1, gap: 12, minHeight: 0 },
-  previewFixture: {
-    flex: 0,
-    flexGrow: 0,
-    flexShrink: 1,
-    height: 360,
-    maxHeight: 360,
-    minHeight: 0,
-  },
-  stillPreview: {
-    backgroundColor: COLORS.deep,
-    borderRadius: 10,
-    flex: 1,
-    minHeight: 300,
-    width: '100%',
-  },
-  previewImage: { flex: 0, flexGrow: 0, flexShrink: 1, height: 360, maxHeight: 360, minHeight: 0 },
-  previewMeta: { color: COLORS.muted, fontSize: 12, textAlign: 'center' },
-  previewActions: { gap: 10 },
-  savedText: { color: COLORS.accent, fontSize: 13, textAlign: 'center' },
-  discardButton: { alignItems: 'center', minHeight: 44, justifyContent: 'center', padding: 8 },
-  discardButtonText: { color: COLORS.edge, fontSize: 13, fontWeight: '700' },
+  reveal: { alignItems: 'center', gap: 8, marginTop: 4 },
+  retake: { flex: 1 },
+  seal: { flex: 1.6 },
 });

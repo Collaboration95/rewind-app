@@ -3,27 +3,58 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#252326" />
+    <meta name="theme-color" content="#f6ede3" />
     <title>Rewind support</title>
     <style>
       :root {
-        color-scheme: dark;
-        font-family: system-ui, sans-serif;
-        background: #252326;
-        color: #f9ebd5;
+        color-scheme: light;
+        font-family:
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        background: #f6ede3;
+        color: #33231a;
       }
       body {
         margin: 0 auto;
         max-width: 40rem;
-        padding: 32px 16px;
-        line-height: 1.5;
+        padding: 40px 16px 56px;
+        line-height: 1.55;
+        background: #f6ede3;
+      }
+      h1,
+      h2 {
+        font-family: Fraunces, Georgia, serif;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      h1 {
+        font-size: 2rem;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin: 32px 0 8px;
       }
       p,
       li {
-        color: #d8cabe;
+        color: rgba(51, 35, 26, 0.74);
+      }
+      strong {
+        color: #33231a;
       }
       a {
-        color: #f9ebd5;
+        color: #e0703a;
+        text-underline-offset: 2px;
+      }
+      nav {
+        margin-top: 40px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(51, 35, 26, 0.16);
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
       }
     </style>
   </head>
@@ -40,18 +71,27 @@
       <h2>Common questions</h2>
       <ul>
         <li>
-          <strong>Report content or block a member:</strong> use the report and block options in the
-          group.
+          <strong>Report content or a person, or block a member:</strong> use the report and block
+          options in the group. We review reports within 24 hours and remove content or accounts
+          that break the <a href="/terms">terms of use</a>. Blocking hides that person's messages
+          and moments from you.
         </li>
         <li>
-          <strong>Delete your account:</strong> use the delete-account option in the app. See the
-          <a href="/privacy.html">privacy policy</a> for what is deleted.
+          <strong>Delete your account:</strong> in the app, open
+          <strong>Settings → Delete account</strong>. See the
+          <a href="/privacy">privacy policy</a> for what is deleted.
         </li>
         <li>
           <strong>Forgot your password:</strong> open an issue with your username and we will help
-          you get back in.
+          you get back in. Rewind accounts use a username and password only, with no email address
+          or phone number.
         </li>
       </ul>
+      <nav aria-label="Rewind legal pages">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms of use</a>
+        <a href="/support">Support</a>
+      </nav>
     </main>
   </body>
 </html>

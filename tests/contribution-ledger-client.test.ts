@@ -70,6 +70,7 @@ describe('contribution ledger runtime adapter', () => {
       'durationSeconds',
       'failureCategory',
       'jobId',
+      'mediaType',
       'progress',
       'replaced',
       'restored',

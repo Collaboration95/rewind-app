@@ -92,15 +92,15 @@ describe('first-run and session entry navigation', () => {
     const result = await render(<App sessionStore={store} />);
 
     expect(result.getByLabelText('Rewind')).toBeTruthy();
-    expect(result.getByText('REWIND')).toBeTruthy();
-    expect(result.getByText('PRIVATE MOMENTS, SHARED TOGETHER')).toBeTruthy();
+    expect(result.getByText('Rewind')).toBeTruthy();
+    expect(result.getByText('Opening…')).toBeTruthy();
     expect(result.queryByRole('button', { name: 'Create account' })).toBeNull();
     expect(result.queryByRole('button', { name: 'Sign in' })).toBeNull();
     expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
 
     await act(async () => finishLoad(null));
     expect(await result.findByTestId('welcome-entry')).toBeTruthy();
-    expect(result.getByRole('button', { name: 'Create account' })).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Create an account' })).toBeTruthy();
   });
 
   it('shows branded welcome on a fresh install without creating Amber', async () => {
@@ -109,8 +109,13 @@ describe('first-run and session entry navigation', () => {
 
     expect(await result.findByTestId('welcome-entry')).toBeTruthy();
     expect(result.getByRole('button', { name: 'Sign in' })).toBeTruthy();
-    expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
-    expect(result.getAllByText('PRIVATE MOMENTS, SHARED TOGETHER')).toHaveLength(1);
+    // A5: Try Demo is a closed sheet on Welcome; nothing starts until a member is picked.
+    expect(
+      result.getByRole('button', { name: 'Try Demo' }).props.accessibilityState?.expanded,
+    ).toBe(false);
+    expect(
+      result.getAllByText('Small moments with your people, opened together every 4 weeks.'),
+    ).toHaveLength(1);
     expect(result.queryByText(/sample Demo data|Welcome to Rewind/i)).toBeNull();
     expect(result.queryByRole('header', { name: 'Weekend People' })).toBeNull();
     expect(await store.load()).toBeNull();
@@ -159,12 +164,14 @@ describe('first-run and session entry navigation', () => {
     },
   );
 
-  it('opens sign-in, account registration, and Demo only through Sign in without creating a real session', async () => {
+  it('opens sign-in and account registration, and Demo only from its own sheet, without creating a real session', async () => {
     const store = sessionStore();
     const result = await render(<App sessionStore={store} />);
 
     await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
-    expect(result.getByText('PRIVATE MOMENTS, SHARED TOGETHER')).toBeTruthy();
+    expect(result.getByRole('header', { name: 'Sign in' })).toBeTruthy();
+    // Try Demo is never mixed into the real sign-in.
+    expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
     expect(result.getByLabelText('Username')).toBeTruthy();
     expect(result.getByLabelText('Password')).toBeTruthy();
     expect(result.getByText(/password will not be sent over an insecure connection/)).toBeTruthy();
@@ -174,11 +181,12 @@ describe('first-run and session entry navigation', () => {
     expect(result.getByLabelText('Confirm password')).toBeTruthy();
     expect(await store.load()).toBeNull();
     await fireEvent.press(result.getByRole('button', { name: 'Back' }));
-    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
     expect(result.queryByRole('button', { name: 'Try Demo' })).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
     expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
-    expect(result.getByRole('button', { name: 'Back to sign in' })).toBeTruthy();
+    expect(
+      result.getByRole('button', { name: 'Try Demo' }).props.accessibilityState?.expanded,
+    ).toBe(true);
     await fireEvent.press(
       result.getByRole('button', { name: 'Enter Demo as Amber, sample member' }),
     );
@@ -187,7 +195,7 @@ describe('first-run and session entry navigation', () => {
     await waitFor(async () => expect((await store.load())?.accessKind).toBe('demo'));
   });
 
-  it('keeps Demo available from Sign in over HTTP while disabling real credentials', async () => {
+  it('keeps Demo available from Welcome over HTTP while disabling real credentials', async () => {
     const originalPlatform = Platform.OS;
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web', writable: true });
@@ -207,21 +215,26 @@ describe('first-run and session entry navigation', () => {
       );
 
       expect(await result.findByTestId('welcome-entry')).toBeTruthy();
-      expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
+      expect(
+        result.getByRole('button', { name: 'Try Demo' }).props.accessibilityState?.expanded,
+      ).toBe(false);
       expect(result.queryByText(/sign-in service could not be reached/i)).toBeNull();
       expect(result.queryByText(/secure HTTPS connection/i)).toBeNull();
       await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+      expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
       expect(
         result.getByText(/password will not be sent over an insecure connection/i),
       ).toBeTruthy();
       expect(result.getByTestId('real-account-submit').props.accessibilityState?.disabled).toBe(
         true,
       );
+      await fireEvent.press(result.getByRole('button', { name: 'Back to welcome' }));
       await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
       expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
       expect(result.queryByText(/sign-in service could not be reached/i)).toBeNull();
 
-      await fireEvent.press(result.getByRole('button', { name: 'Back to sign in' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
       expect(result.getAllByRole('alert')).toHaveLength(1);
       expect(await store.load()).toBeNull();
     } finally {

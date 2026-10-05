@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
-import type { Premiere } from '../domain/premiere';
+import { parseFilmSegments, type FilmSegment, type Premiere } from '../domain/premiere';
 
 export interface RealAccount {
   id: string;
@@ -50,6 +50,7 @@ export type AuthNotice =
   | 'sign-out-recovery-pending'
   | 'sign-out-marker-cleanup-failed'
   | 'sign-out-marker-unavailable'
+  | 'deleted'
   | null;
 
 const SECURE_SESSION_KEY = 'rewind.real-account.session-token';
@@ -321,6 +322,7 @@ export interface RealArchiveFilm {
   publishedAt: string;
   downloadUrl: string;
   playbackUrl: string | null;
+  segments?: FilmSegment[];
 }
 
 export interface RealArchiveClip {
@@ -438,12 +440,14 @@ function mapRealArchivePage(baseUrl: string, value: unknown): RealArchivePage {
     if (!id || !cycleId || !publishedAt || !downloadUrl) {
       throw new AuthRequestError(502, 'response');
     }
+    const segments = parseFilmSegments(film?.segments);
     return {
       id,
       cycleId,
       publishedAt,
       downloadUrl,
       playbackUrl: optionalCapabilityUrl(baseUrl, film?.playbackPath),
+      ...(segments ? { segments } : {}),
     };
   };
   const mapClip = (value: unknown): RealArchiveClip => {
@@ -497,7 +501,14 @@ function mapRealPremiere(baseUrl: string, value: unknown, cycleId: string): Prem
       metadata?.playbackPath ?? film?.playbackPath,
     );
     if (!filmId || !playbackUrl) throw new AuthRequestError(502, 'response');
-    return { state: 'ready', cycleId: responseCycleId, filmId, playbackUrl };
+    const segments = parseFilmSegments(metadata?.segments);
+    return {
+      state: 'ready',
+      cycleId: responseCycleId,
+      filmId,
+      playbackUrl,
+      ...(segments ? { segments } : {}),
+    };
   }
   throw new AuthRequestError(502, 'response');
 }

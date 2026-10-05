@@ -64,6 +64,7 @@ const MIGRATIONS = [
   { version: 26, key: 'upload-intents-v1', fileName: '026-upload-intents.sql' },
   { version: 27, key: 'reminder-outbox-v1', fileName: '027-reminder-outbox.sql' },
   { version: 28, key: 'content-safety-v1', fileName: '028-content-safety.sql' },
+  { version: 29, key: 'member-reports-v1', fileName: '029-member-reports.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),

@@ -188,6 +188,17 @@ test('the ledger reports every lifecycle state with duration and redacted metada
     assert.equal(byId['c-deleted'].restored.seconds, 6);
     assert.equal(byId['c-deleted'].replaced, false);
     assert.equal(byId['c-queued'].restored, null);
+    assert.equal(byId['c-sealed'].mediaType, 'video');
+    database.prepare("UPDATE media_jobs SET media_type = 'photo' WHERE id = 'j-sealed'").run();
+    const photoPage = listContributionLedger(database, {
+      groupId: 'demo-group',
+      memberId: 'demo-1',
+      limit: 50,
+    });
+    assert.equal(
+      photoPage.entries.find((entry) => entry.contributionId === 'c-sealed').mediaType,
+      'photo',
+    );
 
     // Sealed is a metadata label only: no capability, path, or share leaks.
     const serialized = JSON.stringify(page);
@@ -202,6 +213,7 @@ test('the ledger reports every lifecycle state with duration and redacted metada
       'durationSeconds',
       'failureCategory',
       'jobId',
+      'mediaType',
       'progress',
       'replaced',
       'restored',

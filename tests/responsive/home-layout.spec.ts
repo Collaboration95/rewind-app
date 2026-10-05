@@ -18,12 +18,11 @@ for (const screenSize of screenSizes) {
     const entryChoice = page.getByTestId('demo-entry-demo-1');
     const welcome = page.getByTestId('welcome-entry');
 
-    // A clean browser context starts at Welcome; Demo is available from Sign in.
+    // A clean browser context starts at Welcome; Demo is in the Try Demo sheet there.
     await expect(navigation.or(entryChoice).or(welcome)).toBeVisible();
     if (await entryChoice.isVisible()) {
       await entryChoice.click();
     } else {
-      await page.getByRole('button', { name: 'Sign in' }).click();
       await page.getByRole('button', { name: 'Try Demo' }).click();
       await entryChoice.click();
     }

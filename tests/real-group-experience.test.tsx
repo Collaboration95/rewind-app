@@ -10,6 +10,20 @@ jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
 jest.mock('../src/auth/RealAccountProvider', () => ({ useRealAccount: jest.fn() }));
+const eventSources: { close: jest.Mock }[] = [];
+jest.mock('../src/chat/native-event-source', () => ({
+  createRuntimeEventSource: () => {
+    const source = {
+      addEventListener: jest.fn(),
+      close: jest.fn(),
+      onerror: null,
+      onopen: null,
+      removeEventListener: jest.fn(),
+    };
+    eventSources.push(source);
+    return source;
+  },
+}));
 
 function jsonResponse(body: unknown, status = 200): Response {
   return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
@@ -95,32 +109,32 @@ describe('real account group journey', () => {
     });
 
     const result = await render(<RealAccountGroupExperience displayName="Real Owner" />);
-    await result.findByTestId('real-group-open-archive');
+    await result.findByTestId('real-group-home');
     expect(result.getByTestId('real-group-cycle-prompt').props.children).toBe(
       persistedGroup.cycle.prompt,
     );
-    expect(result.getByTestId('real-group-release-real-cycle-older').props.children).toContain(
-      'Film processing',
+    // The older cycle's film is developing; the current cycle never shows as a release.
+    expect(result.getByTestId('real-home-card-developing')).toHaveTextContent(
+      /Your film is developing/,
     );
-    expect(result.queryByTestId(`real-group-release-${persistedGroup.cycle.id}`)).toBeNull();
+    expect(result.queryAllByTestId(/^real-home-card-/)).toHaveLength(1);
 
-    await fireEvent.press(result.getByTestId('real-group-open-archive'));
-    await result.findByTestId('archive-empty-films');
-    expect(authenticatedRequest).toHaveBeenCalledWith('/archive?groupId=real-group-1&limit=50');
-    expect(authenticatedRequest).toHaveBeenCalledWith(
-      '/cycles/real-cycle-1/premiere?groupId=real-group-1',
-    );
-    await fireEvent.press(result.getByText('Back to group'));
+    await fireEvent.press(result.getByTestId('real-group-nav-archive'));
+    await result.findByTestId('real-archive-first');
+    expect(authenticatedRequest).toHaveBeenCalledWith('/archive?groupId=real-group-1&limit=20');
+    // The top card follows the group's release state instead of a separate premiere request.
+    expect(result.getByTestId('real-archive-now')).toHaveTextContent(/Your film is developing/);
+    await fireEvent.press(result.getByTestId('real-group-nav-home'));
     await result.findByTestId('real-group-home');
 
     // #402: the bottom navigation reaches Archive and returns Home.
     expect(result.getByTestId('real-group-navigation')).toBeTruthy();
     await fireEvent.press(result.getByTestId('real-group-nav-archive'));
-    await result.findByTestId('archive-empty-films');
+    await result.findByTestId('real-archive-first');
     expect(result.getByTestId('real-group-navigation')).toBeTruthy();
     await fireEvent.press(result.getByTestId('real-group-nav-home'));
     await result.findByTestId('real-group-home');
-    result.unmount();
+    await result.unmount();
   });
 
   it('joins an invited group with a six-letter code without a group ID', async () => {
@@ -162,13 +176,16 @@ describe('real account group journey', () => {
     (useRealAccount as jest.Mock).mockReturnValue({ authenticatedRequest, signOut: jest.fn() });
 
     const result = await render(<RealAccountGroupExperience displayName="Invited member" />);
-    await result.findByTestId('real-group-enter-code');
+    await fireEvent.press(await result.findByTestId('real-group-join-start'));
     await fireEvent.changeText(result.getByTestId('real-group-enter-code'), 'abc-def');
+    expect(result.getByTestId('real-group-enter-code').props.value).toBe('ABC-DEF');
     await fireEvent.press(result.getByTestId('real-group-join-choice'));
+    expect(await result.findByTestId('real-join-done')).toHaveTextContent(/Joined Saturday table/);
+    await fireEvent.press(result.getByTestId('real-join-go'));
     await result.findByTestId('real-group-home');
     expect(joined).toBe(true);
     expect(result.getByTestId('real-group-name-heading').props.children).toBe('Saturday table');
-    result.unmount();
+    await result.unmount();
   });
 
   it('refreshes both Home allowance displays from the ledger when returning from capture', async () => {
@@ -211,20 +228,31 @@ describe('real account group journey', () => {
     const result = await render(<RealAccountGroupExperience displayName="Real Owner" />);
     await result.findByTestId('real-group-home');
     await waitFor(() =>
-      expect(result.getByTestId('real-group-allowance').props.children).toContain('1 of 5'),
+      expect(result.getByTestId('real-group-allowance').props.accessibilityLabel).toContain(
+        '1 of 5',
+      ),
     );
-    expect(result.getByText(/1 of 5 contributions and 3 seconds of 30 seconds used/)).toBeTruthy();
+    expect(result.getByText('You · 1 of 5 · 3 of 30 s')).toBeTruthy();
+    expect(result.getByTestId('real-group-capture-action').props.accessibilityLabel).toBe(
+      'Add a moment · 4 of 5 left',
+    );
 
     await fireEvent.press(result.getByTestId('real-group-capture-action'));
     await result.findByTestId('camera-screen');
-    await fireEvent.press(result.getByText('Back to group'));
+    await fireEvent.press(result.getByRole('button', { name: 'Close' }));
 
     await waitFor(() => expect(ledgerRead).toBeGreaterThanOrEqual(3));
     await waitFor(() =>
-      expect(result.getByTestId('real-group-allowance').props.children).toContain('3 of 5'),
+      expect(result.getByTestId('real-group-allowance').props.accessibilityLabel).toContain(
+        '3 of 5',
+      ),
     );
-    expect(result.getByText(/3 of 5 contributions and 9 seconds of 30 seconds used/)).toBeTruthy();
-    expect(result.getByTestId('real-group-allowance').props.children).toContain('9 of 30 seconds');
+    expect(result.getByTestId('real-group-capture-action').props.accessibilityLabel).toBe(
+      'Add a moment · 2 of 5 left',
+    );
+    expect(result.getByTestId('real-group-allowance').props.accessibilityLabel).toContain(
+      '9 of 30 seconds',
+    );
   });
 
   it('keeps an already-processing photo queued or processing and reserves retryable failure for terminal jobs', () => {
@@ -282,15 +310,29 @@ describe('real account group journey', () => {
         saved = persistedGroup;
         return jsonResponse(saved, 201);
       }
+      if (path.startsWith('/contributions?'))
+        return jsonResponse({
+          cycleId: persistedGroup.cycle.id,
+          memberId: 'real-member-1',
+          allowance: {
+            maxCount: 5,
+            maxSeconds: 30,
+            countUsed: 0,
+            secondsUsed: 0,
+            deletionsUsed: 0,
+            deletionAvailability: 'available',
+          },
+          entries: [],
+          latestContribution: null,
+          pagination: { limit: 50, hasMore: false, nextCursor: null },
+        });
       throw new Error(`Unexpected authenticated request: ${path}`);
     });
     (useRealAccount as jest.Mock).mockReturnValue({ authenticatedRequest, signOut: jest.fn() });
 
     const first = await render(<RealAccountGroupExperience displayName="Real Owner" />);
     await first.findByTestId('real-group-create-choice');
-    expect(first.getByTestId('real-group-join-choice').props.accessibilityState?.disabled).toBe(
-      false,
-    );
+    expect(first.getByTestId('real-group-join-start')).toBeEnabled();
     await fireEvent.press(first.getByTestId('real-group-create-choice'));
     await fireEvent.changeText(first.getByTestId('real-group-name'), '   ');
     await fireEvent.press(first.getByTestId('real-group-create-submit'));
@@ -302,28 +344,32 @@ describe('real account group journey', () => {
     expect(first.getByTestId('real-group-capacity').props.children).toBe(2);
     await fireEvent.press(first.getByTestId('real-group-create-submit'));
     await first.findByTestId('real-group-home');
-    await first.findByTestId('real-group-member-0');
-    expect(first.getByTestId('real-group-empty-contributions')).toBeTruthy();
-    expect(first.getByTestId('real-group-active-context').props.children).toBe('Your group');
+    expect(first.getByText('Nothing sealed yet this week')).toBeTruthy();
+    expect(first.getByTestId('real-group-menu-button').props.accessibilityLabel).toBe(
+      'Saturday table · switch group',
+    );
     expect(first.getByTestId('real-group-name-heading').props.children).toBe('Saturday table');
-    expect(first.getByTestId('real-group-member-0').props.children).toEqual([
-      'Real Owner',
-      ' · ',
-      'Owner',
-    ]);
+    await fireEvent.press(first.getByTestId('real-account-settings-button'));
+    await fireEvent.press(await first.findByTestId('real-settings-members'));
+    expect(await first.findByTestId('real-group-member-0')).toHaveTextContent(/Real Owner.*Owner/);
+    expect(first.getByTestId('real-group-member-0').props.accessibilityLabel).toBe(
+      'Real Owner, owner',
+    );
+    await fireEvent.press(first.getByLabelText('Back'));
+    await fireEvent.press(first.getByTestId('real-settings-back'));
     expect(first.queryByText('LOCKED')).toBeNull();
     await fireEvent.press(first.getByTestId('real-group-capture-action'));
     expect(await first.findByTestId('camera-screen')).toBeTruthy();
     await fireEvent.press(first.getByTestId('camera-record-clip'));
     await first.findByTestId('video-capture-screen');
-    expect(first.getByText('Record a contribution')).toBeTruthy();
+    expect(first.getByRole('tab', { name: 'Video', selected: true })).toBeTruthy();
     expect(first.queryByTestId('real-group-capture-unavailable')).toBeNull();
 
-    first.unmount();
+    await first.unmount();
     const restored = await render(<RealAccountGroupExperience displayName="Real Owner" />);
     await restored.findByTestId('real-group-home');
     expect(restored.getByTestId('real-group-name-heading').props.children).toBe('Saturday table');
     expect(authenticatedRequest).toHaveBeenCalledWith('/real/groups/current');
-    restored.unmount();
+    await restored.unmount();
   });
 });

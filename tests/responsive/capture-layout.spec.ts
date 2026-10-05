@@ -17,7 +17,6 @@ async function openCamera(page: Page, permission: 'prompt' | 'denied' = 'prompt'
   }, permission);
   await page.goto('/');
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('button', { name: 'Try Demo', exact: true }).click();
   await page.getByTestId('demo-entry-demo-1').click();
   await expect(page.getByTestId('main-navigation')).toBeVisible();
@@ -43,7 +42,7 @@ test('camera CTA and navigation remain reachable from portrait through short lan
   await page.setViewportSize({ width: 393, height: 852 });
   await openCamera(page);
   // Option 2: the web app opens the phone's own camera; no in-page permission step.
-  const allow = page.getByRole('button', { name: 'Open camera', exact: true });
+  const allow = page.getByRole('button', { name: 'Take photo', exact: true });
   await expectReachable(page, allow);
   await page.setViewportSize({ width: 852, height: 300 });
   await expectReachable(page, allow);
@@ -61,7 +60,7 @@ test('short landscape file review keeps retake and discard usable above navigati
 }) => {
   await page.setViewportSize({ width: 393, height: 852 });
   await openCamera(page, 'denied');
-  const choose = page.getByRole('button', { name: 'Open camera', exact: true });
+  const choose = page.getByRole('button', { name: 'Take photo', exact: true });
   async function selectImage() {
     const chooser = page.waitForEvent('filechooser');
     await choose.click();

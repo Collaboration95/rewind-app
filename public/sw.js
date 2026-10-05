@@ -3,6 +3,7 @@
 // The exporter replaces this marker with the public shell's content identity.
 const CACHE_NAME = 'rewind-shell-v3-__BUILD_ID__';
 const CACHE_PREFIX = 'rewind-shell-';
+const LEGAL_PAGE = /^\/(?:privacy|support|terms)(?:\.html)?$/;
 const CORE_SHELL_FILES = [
   '/index.html',
   '/offline.html',
@@ -118,6 +119,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(event.request).catch(() => apiUnavailableResponse()));
     return;
   }
+
+  // Public legal pages are plain documents: let the browser load them, never
+  // the SPA shell, even offline.
+  if (url.origin === self.location.origin && LEGAL_PAGE.test(url.pathname)) return;
 
   if (url.origin === self.location.origin && event.request.mode === 'navigate') {
     // Navigation may carry invite/capability query strings or return JSON/media.

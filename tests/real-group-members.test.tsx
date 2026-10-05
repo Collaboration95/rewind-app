@@ -7,7 +7,12 @@ jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
 );
 jest.mock('../src/auth/RealAccountProvider', () => ({ useRealAccount: jest.fn() }));
-jest.mock('../src/capture/VideoCaptureScreen', () => ({ VideoCaptureScreen: () => null }));
+jest.mock('../src/capture/VideoCaptureScreen', () => ({
+  VideoCaptureScreen: ({ realAccount }: { realAccount: { groupId: string } }) => {
+    const { Text } = jest.requireActual('react-native');
+    return <Text testID="video-capture-group">{realAccount.groupId}</Text>;
+  },
+}));
 jest.mock('../src/chat/native-event-source', () => ({
   createRuntimeEventSource: () => ({
     addEventListener: jest.fn(),
@@ -43,6 +48,27 @@ const ownerGroup = {
     contributionCount: 0,
   },
 };
+
+type Screen = Awaited<ReturnType<typeof render>>;
+/** Members and pending invitations live in Settings → Members. */
+async function openMembers(screen: Screen) {
+  await fireEvent.press(screen.getByTestId('real-account-settings-button'));
+  await fireEvent.press(await screen.findByTestId('real-settings-members'));
+}
+async function closeMembers(screen: Screen) {
+  await fireEvent.press(screen.getByRole('button', { name: 'Back' }));
+  await fireEvent.press(screen.getByTestId('real-settings-back'));
+}
+async function pickGroup(screen: Screen, id: string) {
+  await fireEvent.press(screen.getByTestId('real-group-menu-button'));
+  await fireEvent.press(screen.getByTestId(`switch-real-group-${id}`));
+}
+/** The switcher marks the group the whole app now acts on. */
+async function expectActive(screen: Screen, id: string) {
+  await fireEvent.press(screen.getByTestId('real-group-menu-button'));
+  expect(screen.getByTestId(`switch-real-group-${id}`).props.accessibilityState.checked).toBe(true);
+  await fireEvent.press(screen.getByTestId(`switch-real-group-${id}`));
+}
 
 const joinedGroup = {
   ...ownerGroup,
@@ -121,34 +147,38 @@ it('updates group members and active context when switching selected groups', as
 
   const screen = await render(<RealAccountGroupExperience displayName="Member" />);
   await screen.findByTestId('real-group-home');
-  expect(await screen.findByText('Ada Owner · Owner')).toBeTruthy();
-  expect(screen.getByText('Bea Member · Member')).toBeTruthy();
+  await openMembers(screen);
+  expect(await screen.findByLabelText('Ada Owner, owner')).toBeTruthy();
+  expect(screen.getByLabelText('Bea Member, member')).toBeTruthy();
+  expect(screen.getByText('Ada Owner (you)')).toBeTruthy();
   expect(screen.getByTestId('real-group-pending-invites').props.children).toBe(
     '1 pending invitation',
   );
+  await closeMembers(screen);
 
   await fireEvent.press(screen.getByTestId('real-group-capture-action'));
   expect(screen.getByTestId('camera-group-context').props.children).toEqual([
     'Group · ',
     'Saturday table',
   ]);
-  await fireEvent.press(screen.getByRole('button', { name: 'Back to group' }));
+  await fireEvent.press(screen.getByTestId('capture-back-to-group'));
 
-  await fireEvent.press(screen.getByTestId(`switch-real-group-${joinedGroup.group.id}`));
-  expect(await screen.findByText('Cy Owner · Owner')).toBeTruthy();
-  expect(screen.getByTestId('real-group-active-context').props.children).toBe('Your group');
-  expect(screen.getByTestId('real-group-name-heading').props.children).toBe('Garden circle');
-  expect(screen.queryByText('Ada Owner · Owner')).toBeNull();
+  await pickGroup(screen, joinedGroup.group.id);
+  await waitFor(() =>
+    expect(screen.getByTestId('real-group-name-heading').props.children).toBe('Garden circle'),
+  );
+  await expectActive(screen, joinedGroup.group.id);
+  await openMembers(screen);
+  expect(await screen.findByLabelText('Cy Owner, owner')).toBeTruthy();
+  expect(screen.queryByLabelText('Ada Owner, owner')).toBeNull();
   expect(screen.getByTestId('real-group-pending-invites').props.children).toBe(
     'No pending invitations',
   );
-  await fireEvent.press(screen.getByTestId('real-group-chat-action'));
-  expect(screen.getByTestId('real-chat-context').props.children).toEqual([
-    'Group · ',
-    'Garden circle',
-  ]);
+  await closeMembers(screen);
+  await fireEvent.press(screen.getByTestId('real-group-nav-chat'));
+  expect(screen.getByPlaceholderText('Message Garden circle')).toBeTruthy();
   expect(await screen.findByTestId('real-chat-empty')).toBeTruthy();
-  await fireEvent.press(screen.getByTestId('real-group-chat-back'));
+  await fireEvent.press(screen.getByTestId('real-group-nav-home'));
   await fireEvent.press(screen.getByTestId('real-group-capture-action'));
   expect(screen.getByTestId('camera-screen')).toBeTruthy();
   expect(screen.getByTestId('camera-group-context').props.children).toEqual([
@@ -157,11 +187,8 @@ it('updates group members and active context when switching selected groups', as
   ]);
   expect(screen.queryByText('Saturday table')).toBeNull();
   await fireEvent.press(screen.getByTestId('camera-record-clip'));
-  expect(screen.getByTestId('real-group-capture-context').props.children).toEqual([
-    'Group · ',
-    'Garden circle',
-  ]);
-  screen.unmount();
+  expect(screen.getByTestId('video-capture-group').props.children).toBe(joinedGroup.group.id);
+  await screen.unmount();
 });
 
 it('keeps loading summaries honest and ignores a delayed prior-group response after switching', async () => {
@@ -177,6 +204,8 @@ it('keeps loading summaries honest and ignores a delayed prior-group response af
     if (path === '/real/groups/current') return Promise.resolve(jsonResponse({ group: selected }));
     if (path === '/real/groups') return Promise.resolve(jsonResponse({ groups }));
     if (path === `/real/groups/${ownerGroup.group.id}/members`) return delayedOwnerSummary.promise;
+    if (path.endsWith('/reminders'))
+      return Promise.resolve(jsonResponse({ preference: { enabled: false, snoozedUntil: null } }));
     if (path === `/real/groups/${joinedGroup.group.id}/members`)
       return Promise.resolve(
         jsonResponse({
@@ -194,16 +223,27 @@ it('keeps loading summaries honest and ignores a delayed prior-group response af
 
   const screen = await render(<RealAccountGroupExperience displayName="Member" />);
   await screen.findByTestId('real-group-home');
+  await openMembers(screen);
   expect(await screen.findByText('Loading group members…')).toBeTruthy();
-  expect(screen.getByTestId('real-group-members').props.children).toBeDefined();
-  expect(screen.queryByText('MEMBERS · 0/4')).toBeNull();
+  expect(screen.getByTestId('real-group-members-empty')).toBeTruthy();
+  expect(screen.queryByTestId('real-group-members')).toBeNull();
   expect(screen.getByTestId('real-group-pending-invites').props.children).toBe(
     'Loading invitation status…',
   );
   expect(screen.queryByText('No pending invitations')).toBeNull();
+  await fireEvent.press(screen.getByRole('button', { name: 'Back' }));
+  // Unknown counts never read as zero on the Settings summary either.
+  expect(screen.getByTestId('real-settings-group-summary')).toHaveTextContent(
+    'Owner · … of 4 members',
+  );
+  await fireEvent.press(screen.getByTestId('real-settings-back'));
 
-  await fireEvent.press(screen.getByTestId(`switch-real-group-${joinedGroup.group.id}`));
-  expect(await screen.findByText('Cy Owner · Owner')).toBeTruthy();
+  await pickGroup(screen, joinedGroup.group.id);
+  await waitFor(() =>
+    expect(screen.getByTestId('real-group-name-heading').props.children).toBe('Garden circle'),
+  );
+  await openMembers(screen);
+  expect(await screen.findByLabelText('Cy Owner, owner')).toBeTruthy();
   expect(screen.getByTestId('real-group-pending-invites').props.children).toBe(
     'No pending invitations',
   );
@@ -221,12 +261,13 @@ it('keeps loading summaries honest and ignores a delayed prior-group response af
     );
   });
   await waitFor(() => {
-    expect(screen.getByTestId('real-group-active-context').props.children).toBe('Your group');
     expect(screen.getByTestId('real-group-name-heading').props.children).toBe('Garden circle');
-    expect(screen.getByText('Cy Owner · Owner')).toBeTruthy();
-    expect(screen.queryByText('Ada Owner · Owner')).toBeNull();
+    expect(screen.getByLabelText('Cy Owner, owner')).toBeTruthy();
+    expect(screen.queryByLabelText('Ada Owner, owner')).toBeNull();
   });
-  screen.unmount();
+  await closeMembers(screen);
+  await expectActive(screen, joinedGroup.group.id);
+  await screen.unmount();
 });
 
 it('keeps member and invitation counts unknown when the summary request fails', async () => {
@@ -242,11 +283,14 @@ it('keeps member and invitation counts unknown when the summary request fails', 
   (useRealAccount as jest.Mock).mockReturnValue({ authenticatedRequest, signOut: jest.fn() });
 
   const screen = await render(<RealAccountGroupExperience displayName="Member" />);
+  await screen.findByTestId('real-group-home');
+  await openMembers(screen);
   await screen.findByText('Group members could not be loaded. Retry when connected.');
   expect(screen.getByTestId('real-group-pending-invites').props.children).toBe(
     'Invitation status unavailable.',
   );
-  expect(screen.queryByText(/MEMBERS · 0\//)).toBeNull();
+  expect(screen.queryByTestId('real-group-members')).toBeNull();
+  expect(screen.queryByText(/0 of 4/)).toBeNull();
   expect(screen.queryByText('No pending invitations')).toBeNull();
-  screen.unmount();
+  await screen.unmount();
 });

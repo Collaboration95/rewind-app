@@ -1,41 +1,62 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import * as Clipboard from 'expo-clipboard';
 import {
-  Platform,
-  Pressable,
-  ScrollView,
-  Share,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import * as Clipboard from 'expo-clipboard';
+import { Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 
 import { useRealAccount } from '../auth/RealAccountProvider';
-import { BUILT_IN_PROMPTS, GROUP_NAME_MAX_LENGTH, PROMPT_MAX_LENGTH } from '../domain/groups';
-import { createInviteLink, type InviteLinkPayload } from '../invites/deep-links';
-import { COLORS } from '../theme';
+import type { InviteLinkPayload } from '../invites/deep-links';
 import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
 import { CameraCaptureScreen } from '../capture/CameraCaptureScreen';
 import { RealAccountChatScreen } from '../chat/RealAccountChatScreen';
-import { ContributionLedgerSection } from '../contributions/ContributionLedgerSection';
-import type { ContributionLedgerAllowance, ContributionLedgerPage } from '../domain/contributions';
+import { useRealChatUnread } from '../chat/real-chat-client';
+import type { ContributionLedgerPage } from '../domain/contributions';
 import {
   ContributionStatusProvider,
   type ContributionStatus,
 } from '../capture/contribution-status';
 import { createRealAccountVideoRuntimeClient } from '../capture/real-account-video-runtime';
 import { DEFAULT_CAPTURE_MODE, type PendingClipUpload } from '../domain/video';
-import { RealGroupSettings } from '../reminders/RealGroupSettings';
-import { PrivateReminderSubscription } from '../reminders/PrivateReminderSubscription';
 import {
   createPrivateReminderClient,
   type PrivateReminderClient,
 } from '../reminders/private-reminder-client';
 import { subscribeToReminderIntents } from '../reminders/reminder-intents';
-import { RealAccountArchiveScreen } from '../archive/ArchiveScreen';
-import { BuildTag } from '../runtime/BuildTag';
+import { createRealAccountArchiveClient } from '../auth/real-account-client';
+import { ArchiveScreen } from '../real/Archive';
+import { FilmScreen } from '../real/Film';
 import { markEnd, markLaunchReady, markStart } from '../runtime/timing';
+import { CreateGroupScreen, JoinScreen, type NewGroupInput } from '../real/GroupFlows';
+import { HomeBody, HomeState, LoadingState } from '../real/Home';
+import {
+  cycleWeek,
+  daysUntil,
+  homeCards,
+  momentDay,
+  premiereLeft,
+  premiereRelease,
+  shutterState,
+} from '../real/home-model';
+import { MomentsScreen, weekMoments } from '../real/Moments';
+import { listBlocked } from '../real/safety';
+import { SettingsScreen, type SettingsStep } from '../real/Settings';
+import {
+  Dock,
+  GroupMenu,
+  ScreenFades,
+  TabColumn,
+  TopBar,
+  type MenuGroup,
+  type ShellTab,
+} from '../real/Shell';
+import { Button, Glass, Glow, rw, useNow, useScreenInsets, useToast } from '../ui/primitives';
+import { FONT, LAYOUT, WARM } from '../ui/tokens';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -122,23 +143,26 @@ async function readGroupMembers(response: Response): Promise<RealGroupMembers> {
   return (await response.json()) as RealGroupMembers;
 }
 
-function remainingLabel(endsAt: string): string {
-  const milliseconds = Date.parse(endsAt) - Date.now();
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return 'Cycle ended';
-  const days = Math.ceil(milliseconds / (24 * 60 * 60 * 1000));
-  return `${days} ${days === 1 ? 'day' : 'days'} remaining`;
-}
+type Push =
+  | { kind: 'settings'; step: SettingsStep }
+  | { kind: 'mine' }
+  | { kind: 'capture' }
+  | { kind: 'join' }
+  | { kind: 'create' }
+  | { kind: 'film'; cycleId: string; label: string };
 
 export function RealAccountGroupExperience({
   displayName,
   inviteIntent,
-  inviteWebOrigin,
 }: {
   displayName: string;
   inviteIntent?: (InviteLinkPayload & { groupId: string }) | null;
   inviteWebOrigin?: string;
 }) {
   const auth = useRealAccount();
+  const toast = useToast();
+  const insets = useScreenInsets();
+  const now = useNow();
   const [group, setGroup] = useState<RealGroup | null>(null);
   const [transferMode, setTransferMode] = useState<'server' | 'direct'>('server');
   const mediaClient = useMemo(
@@ -146,7 +170,6 @@ export function RealAccountGroupExperience({
     [auth.authenticatedRequest, transferMode],
   );
   const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
-  const [homeAllowance, setHomeAllowance] = useState<ContributionLedgerAllowance | null>(null);
   const loadContributionLedger = useCallback(
     () =>
       group
@@ -154,9 +177,6 @@ export function RealAccountGroupExperience({
         : Promise.reject(new Error('No active group.')),
     [group, mediaClient],
   );
-  const handleHomeLedgerPage = useCallback((page: ContributionLedgerPage | null) => {
-    setHomeAllowance(page?.allowance ?? null);
-  }, []);
   const [memberGroups, setMemberGroups] = useState<RealGroup[]>([]);
   const [groupMembers, setGroupMembers] = useState<RealGroupMembers | null>(null);
   const [groupMembersError, setGroupMembersError] = useState<string | null>(null);
@@ -164,21 +184,39 @@ export function RealAccountGroupExperience({
   const groupMembersRequest = useRef(0);
   const groupMutationPending = useRef(false);
   const selectedGroupId = useRef<string | null>(null);
-  const [screen, setScreen] = useState<
-    'loading' | 'choices' | 'create' | 'home' | 'capture' | 'chat' | 'archive' | 'error'
-  >('loading');
-  const [name, setName] = useState('');
-  const [prompt, setPrompt] = useState<string>(BUILT_IN_PROMPTS[0]);
-  const [customPrompt, setCustomPrompt] = useState('');
-  const [useCustomPrompt, setUseCustomPrompt] = useState(false);
-  const [maxMembers, setMaxMembers] = useState(10);
+  const [screen, setScreen] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [tab, setTab] = useState<ShellTab>('home');
+  const [stack, setStack] = useState<Push[]>([]);
+  const top = stack[stack.length - 1] ?? null;
+  const pushScreen = useCallback((next: Push) => setStack((current) => [...current, next]), []);
+  const popScreen = useCallback(() => setStack((current) => current.slice(0, -1)), []);
+  const replaceScreen = (next: Push) => setStack((current) => [...current.slice(0, -1), next]);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const goHome = useCallback(() => {
+    setStack([]);
+    setTab('home');
+    setMenuOpen(false);
+  }, []);
+  const [rollKey, setRollKey] = useState(0);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [joinFeedback, setJoinFeedback] = useState<string | null>(null);
+  const [joinedName, setJoinedName] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState<Set<string>>(() => new Set());
+  const [chatUnreadAtOpen, setChatUnreadAtOpen] = useState(0);
+  const archiveClient = useMemo(
+    () =>
+      auth.baseUrl ? createRealAccountArchiveClient(auth.baseUrl, auth.authenticatedRequest) : null,
+    [auth.authenticatedRequest, auth.baseUrl],
+  );
+  const [ledger, setLedger] = useState<ContributionLedgerPage | null>(null);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
+  const ledgerRequest = useRef(0);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [invite, setInvite] = useState<RealInvite | null>(null);
   const [inviteFeedback, setInviteFeedback] = useState<string | null>(null);
   const [invitePending, setInvitePending] = useState(false);
   const [acceptPending, setAcceptPending] = useState(false);
-  const [enteredCode, setEnteredCode] = useState('');
   const [capturePending, setCapturePending] = useState(false);
   const captureRequest = useRef(0);
   const captureMounted = useRef(true);
@@ -315,7 +353,8 @@ export function RealAccountGroupExperience({
           selectedGroupId.current = current.group.id;
           setMessage(null);
           setGroup(current);
-          setScreen('home');
+          setScreen('ready');
+          goHome();
         } else {
           setMessage('This reminder is for another group. Choose a group you belong to.');
         }
@@ -334,7 +373,7 @@ export function RealAccountGroupExperience({
       active = false;
       unsubscribe();
     };
-  }, [auth.session?.account.id, auth.authenticatedRequest]);
+  }, [auth.session?.account.id, auth.authenticatedRequest, goHome]);
 
   useEffect(() => {
     captureMounted.current = true;
@@ -348,9 +387,9 @@ export function RealAccountGroupExperience({
   }, [auth.session?.account.id]);
   useEffect(() => () => mediaClient.dispose(), [mediaClient]);
   useEffect(() => {
-    if (screen !== 'capture') mediaClient.cancelDirectTransfers();
+    if (top?.kind !== 'capture') mediaClient.cancelDirectTransfers();
     return () => mediaClient.cancelDirectTransfers();
-  }, [mediaClient, screen, group?.group.id, auth.session?.account.id]);
+  }, [mediaClient, top?.kind, group?.group.id, auth.session?.account.id]);
 
   const openCapture = async () => {
     if (!group) return;
@@ -382,8 +421,8 @@ export function RealAccountGroupExperience({
       )
         return;
       setTransferMode(mode);
-      setHomeAllowance(null);
-      setScreen('capture');
+      setMenuOpen(false);
+      pushScreen({ kind: 'capture' });
     } catch (error) {
       if (
         captureMounted.current &&
@@ -401,12 +440,15 @@ export function RealAccountGroupExperience({
   };
 
   const loadGroupMembers = useCallback(
-    async (groupId: string, contextVersion: number) => {
+    async (groupId: string, contextVersion: number, quiet = false) => {
       if (contextVersion !== groupContextVersion.current || selectedGroupId.current !== groupId)
         return;
       const requestId = ++groupMembersRequest.current;
-      setGroupMembers(null);
-      setGroupMembersError(null);
+      // A quiet refresh keeps the current list on screen until the new one arrives.
+      if (!quiet) {
+        setGroupMembers(null);
+        setGroupMembersError(null);
+      }
       try {
         const response = await auth.authenticatedRequest(
           `/real/groups/${encodeURIComponent(groupId)}/members`,
@@ -422,6 +464,7 @@ export function RealAccountGroupExperience({
           setGroupMembers(summary);
       } catch (error) {
         if (
+          !quiet &&
           contextVersion === groupContextVersion.current &&
           selectedGroupId.current === groupId &&
           requestId === groupMembersRequest.current
@@ -450,7 +493,7 @@ export function RealAccountGroupExperience({
       setMemberGroups(memberships.groups ?? []);
       selectedGroupId.current = result?.group.id ?? null;
       setGroup(result);
-      setScreen(result ? 'home' : 'choices');
+      setScreen('ready');
       markEnd('home-load');
       markLaunchReady();
       if (result) await loadGroupMembers(result.group.id, contextVersion);
@@ -470,220 +513,60 @@ export function RealAccountGroupExperience({
     void Promise.resolve().then(load);
   }, [load]);
 
-  if (screen === 'capture' && group) {
-    return (
-      <ScrollView
-        contentContainerStyle={
-          captureMode === 'photo' ? styles.photoCaptureContent : styles.captureContent
-        }
-        style={styles.captureContainer}
-      >
-        {captureMode === 'video' ? (
-          <Text style={styles.label} testID="real-group-capture-context">
-            Group · {group.group.name}
-          </Text>
-        ) : null}
-        {captureMode === 'video' ? (
-          <View style={styles.captureModes}>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setScreen('home')}
-              style={styles.modeButton}
-            >
-              <Text style={styles.modeButtonText}>Back to group</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setCaptureMode('photo')}
-              style={styles.modeButton}
-            >
-              <Text style={styles.modeButtonText}>Photo</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setCaptureMode('video')}
-              style={styles.modeButton}
-            >
-              <Text style={styles.modeButtonText}>Video</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        <ContributionStatusProvider
-          scope={{
-            sessionId: 'real-account-session',
-            groupId: group.group.id,
-            memberId: auth.session?.account.id ?? '',
-          }}
-          loadStatus={loadContributionLedger}
-        >
-          {captureMode === 'photo' ? (
-            <CameraCaptureScreen
-              groupName={group.group.name}
-              onBack={() => setScreen('home')}
-              onRecordClip={() => setCaptureMode('video')}
-              onSubmitPhoto={async (
-                metadata,
-                base64,
-                onProgress,
-                replacesContributionId,
-                look = { mode: DEFAULT_CAPTURE_MODE, clientProcessed: false },
-              ) => {
-                if (!mediaClient.uploadClip || !mediaClient.processClipJob) {
-                  throw new Error('Photo contribution upload is unavailable. Retry shortly.');
-                }
-                const { mimeType } = metadata;
-                // Client-graded bytes differ per look, so each look gets its own key.
-                const idempotencyKey = look.clientProcessed
-                  ? `${metadata.id}-${look.mode}`
-                  : metadata.id;
-                const staged = await mediaClient.stagePhotoSource(
-                  'real-account-session',
-                  group.group.id,
-                  idempotencyKey,
-                  base64,
-                  mimeType,
-                );
-                const upload = await mediaClient.uploadClip(
-                  'real-account-session',
-                  group.group.id,
-                  {
-                    mediaType: 'photo',
-                    idempotencyKey,
-                    sourceUri: staged.uri,
-                    mimeType,
-                    byteLength: staged.byteLength,
-                    durationSeconds: 3,
-                    width: metadata.width,
-                    height: metadata.height,
-                    hasAudio: true,
-                    mode: look.mode,
-                    ...(look.clientProcessed ? { clientProcessed: true } : {}),
-                    trimStartSeconds: 0,
-                    trimEndSeconds: 3,
-                    ...(replacesContributionId ? { replacesContributionId } : {}),
-                  },
-                );
-                const sharedStatus = {
-                  contributionId: upload.contribution.id,
-                  jobId: upload.job.id,
-                  durationSeconds: 3,
-                  createdAt: upload.contribution.createdAt,
-                  retryable: true,
-                };
-                onProgress({ state: 'queued', ...sharedStatus });
-                onProgress({ state: 'processing', ...sharedStatus });
-                const job = await mediaClient.processClipJob(
-                  'real-account-session',
-                  group.group.id,
-                  upload.job.id,
-                );
-                const finalStatus = photoContributionStatusForJob(job.status, sharedStatus);
-                onProgress(finalStatus);
-                if (finalStatus.state === 'failed') {
-                  throw new Error(
-                    finalStatus.message ?? 'The photo could not be processed. Retry this photo.',
-                  );
-                }
-                return finalStatus;
-              }}
-              onDeletePhotoContribution={(contributionId) =>
-                mediaClient.deleteContribution(
-                  'real-account-session',
-                  group.group.id,
-                  contributionId,
-                )
-              }
-            />
-          ) : (
-            <VideoCaptureScreen
-              onBack={() => setCaptureMode('photo')}
-              realAccount={{
-                groupId: group.group.id,
-                authenticatedRequest: auth.authenticatedRequest,
-                transferMode,
-              }}
-            />
-          )}
-        </ContributionStatusProvider>
-      </ScrollView>
-    );
-  }
+  const ledgerGroupId = group?.group.id ?? null;
+  const refreshLedger = useCallback(async (): Promise<ContributionLedgerPage | null> => {
+    if (!ledgerGroupId) return null;
+    const requestId = ++ledgerRequest.current;
+    try {
+      const page = await mediaClient.getContributionLedger(ledgerGroupId);
+      if (requestId !== ledgerRequest.current || selectedGroupId.current !== ledgerGroupId)
+        return null;
+      setLedger(page);
+      setLedgerError(null);
+      return page;
+    } catch {
+      if (requestId === ledgerRequest.current)
+        setLedgerError('Your moments could not be loaded. Retry when connected.');
+      return null;
+    }
+  }, [ledgerGroupId, mediaClient]);
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      setLedger(null);
+      return refreshLedger();
+    });
+  }, [refreshLedger]);
 
-  const tabBar = group ? (
-    <RealGroupTabBar
-      active={screen}
-      capturePending={capturePending}
-      onSelect={(tab) => {
-        if (tab === 'capture') {
-          void openCapture();
-          return;
-        }
-        if (tab !== 'home') setHomeAllowance(null);
-        setScreen(tab);
-      }}
-    />
-  ) : null;
+  // Blocked people are fetched when Members opens; the server already hides
+  // their messages and moments everywhere else.
+  const membersOpen = top?.kind === 'settings' && top.step === 'members';
+  useEffect(() => {
+    if (!membersOpen) return;
+    let active = true;
+    void listBlocked(auth.authenticatedRequest)
+      .then((ids) => {
+        if (active) setBlocked(ids);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [auth.authenticatedRequest, membersOpen]);
 
-  if (screen === 'chat' && group) {
-    return (
-      <View style={styles.captureContainer}>
-        <View style={styles.brand}>
-          <Text style={styles.wordmark}>REWIND</Text>
-          <Text style={styles.label}>{displayName}</Text>
-        </View>
-        <RealAccountChatScreen
-          key={`${group.group.id}:${group.memberId ?? ''}`}
-          groupId={group.group.id}
-          groupName={group.group.name}
-          members={groupMembers?.members ?? []}
-          memberProfilesError={groupMembersError}
-          currentMemberId={group.memberId}
-          onBack={() => setScreen('home')}
-        />
-        {tabBar}
-      </View>
-    );
-  }
+  const closeCapture = () => {
+    const before = ledger?.allowance.countUsed ?? 0;
+    popScreen();
+    void refreshLedger().then((page) => {
+      // A moment was sealed: the allowance row rolls and the shutter says "Sealed".
+      if (page && page.allowance.countUsed > before) setRollKey((key) => key + 1);
+    });
+  };
 
-  if (screen === 'archive' && group) {
-    return (
-      <View style={styles.captureContainer}>
-        <View style={styles.brand}>
-          <Text style={styles.wordmark}>REWIND</Text>
-          <Text style={styles.label}>{group.group.name}</Text>
-        </View>
-        <RealAccountArchiveScreen
-          key={`${group.group.id}:${auth.session?.account.id ?? ''}`}
-          baseUrl={auth.baseUrl}
-          groupId={group.group.id}
-          cycleId={group.cycle.id}
-          authenticatedRequest={auth.authenticatedRequest}
-          onBack={() => setScreen('home')}
-        />
-        {tabBar}
-      </View>
-    );
-  }
-
-  const create = async () => {
+  const create = async ({ name: cleanName, prompt: cleanPrompt, maxMembers }: NewGroupInput) => {
     if (groupMutationPending.current) return;
-    const cleanName = name.trim();
-    const cleanPrompt = (useCustomPrompt ? customPrompt : prompt).trim();
-    if (!cleanName || cleanName.length > GROUP_NAME_MAX_LENGTH) {
-      setMessage(`Enter a group name of 1–${GROUP_NAME_MAX_LENGTH} characters.`);
-      return;
-    }
-    if (!cleanPrompt || cleanPrompt.length > PROMPT_MAX_LENGTH) {
-      setMessage(`Enter a prompt of 1–${PROMPT_MAX_LENGTH} characters.`);
-      return;
-    }
-    if (!Number.isInteger(maxMembers) || maxMembers < 2 || maxMembers > 10) {
-      setMessage('Choose a member limit from 2 to 10.');
-      return;
-    }
     groupMutationPending.current = true;
     setPending(true);
-    setMessage(null);
+    setCreateError(null);
     try {
       await revokeReminderBeforeGroupChange();
       const response = await auth.authenticatedRequest('/real/groups', {
@@ -698,11 +581,14 @@ export function RealAccountGroupExperience({
       const contextVersion = ++groupContextVersion.current;
       selectedGroupId.current = created.group.id;
       setGroup(created);
-      setScreen('home');
+      setMemberGroups((current) => [...current, created]);
+      setScreen('ready');
+      goHome();
+      toast(`Created “${created.group.name}”.`);
       await loadGroupMembers(created.group.id, contextVersion);
     } catch (error) {
       if (currentMutationAccount())
-        setMessage(error instanceof Error ? error.message : 'The group could not be created.');
+        setCreateError(error instanceof Error ? error.message : 'The group could not be created.');
     } finally {
       groupMutationPending.current = false;
       if (currentMutationAccount()) {
@@ -748,7 +634,7 @@ export function RealAccountGroupExperience({
       );
       if (!response.ok) throw new Error('The invitation could not be revoked. Try again.');
       setInvite(null);
-      setInviteFeedback('Invitation code revoked. Create a new code to invite someone.');
+      toast('Code revoked. Make a new one when you need it.');
       await loadGroupMembers(group.group.id, groupContextVersion.current);
     } catch (error) {
       setInviteFeedback(
@@ -759,31 +645,14 @@ export function RealAccountGroupExperience({
     }
   };
 
-  const inviteLink = invite
-    ? createInviteLink(invite, {
-        platform: 'web',
-        webOrigin: inviteWebOrigin,
-        groupId: invite.groupId,
-      })
-    : null;
-
   const copyInvitation = async () => {
     if (!invite) return;
     try {
       await Clipboard.setStringAsync(displayInviteCode(invite.code));
-      setInviteFeedback('Invitation code copied.');
+      setInviteFeedback(null);
+      toast('Invitation code copied.');
     } catch {
       setInviteFeedback('Copy is unavailable here. Select the invitation code to copy it.');
-    }
-  };
-
-  const copyInvitationLink = async () => {
-    if (!inviteLink) return;
-    try {
-      await Clipboard.setStringAsync(inviteLink);
-      setInviteFeedback('Invitation link copied.');
-    } catch {
-      setInviteFeedback('Copy is unavailable here. Share the invitation code instead.');
     }
   };
 
@@ -791,9 +660,9 @@ export function RealAccountGroupExperience({
     if (!invite) return;
     try {
       await Share.share({
-        message: `Join my Rewind group with code ${displayInviteCode(invite.code)}. Open Rewind and choose Enter invitation code.`,
+        message: `Join my Rewind group with code ${displayInviteCode(invite.code)}. Open Rewind and choose Have an invite?`,
       });
-      setInviteFeedback('Invitation code ready to share.');
+      setInviteFeedback(null);
     } catch {
       setInviteFeedback('Share is unavailable here. Copy the invitation code to share it.');
     }
@@ -803,12 +672,12 @@ export function RealAccountGroupExperience({
     if (acceptPending || groupMutationPending.current) return;
     const code = rawCode.replace(/[\s-]/g, '').toUpperCase();
     if (!/^(?:[A-Z]{6}|[A-Z0-9]{8})$/.test(code)) {
-      setInviteFeedback('Enter the six-letter invitation code, like ABC-DEF.');
+      setJoinFeedback('Enter the six-letter invitation code, like ABC-DEF.');
       return;
     }
     groupMutationPending.current = true;
     setAcceptPending(true);
-    setInviteFeedback(null);
+    setJoinFeedback(null);
     try {
       await revokeReminderBeforeGroupChange();
       const response = await auth.authenticatedRequest('/real/invites/accept', {
@@ -835,12 +704,12 @@ export function RealAccountGroupExperience({
           ? current
           : [...current, body.group!],
       );
-      setScreen('home');
-      setEnteredCode('');
-      setInviteFeedback('Invitation accepted. You joined the group.');
+      setScreen('ready');
+      if (requestedGroupId) goHome();
+      else setJoinedName(body.group.group.name);
     } catch (error) {
       if (currentMutationAccount())
-        setInviteFeedback(
+        setJoinFeedback(
           error instanceof Error ? error.message : 'The invitation could not be accepted.',
         );
     } finally {
@@ -852,8 +721,8 @@ export function RealAccountGroupExperience({
     }
   };
 
-  const switchGroup = async (groupId: string) => {
-    if (pending || acceptPending || groupMutationPending.current) return;
+  const switchGroup = async (groupId: string): Promise<boolean> => {
+    if (pending || acceptPending || groupMutationPending.current) return false;
     groupMutationPending.current = true;
     const previousGroupId = selectedGroupId.current;
     let contextVersion = groupContextVersion.current;
@@ -869,15 +738,18 @@ export function RealAccountGroupExperience({
       });
       const selected = await readGroup(response);
       if (!selected) throw new Error('That group is not available to this account.');
-      if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return;
+      if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return false;
       selectedGroupId.current = selected.group.id;
       setGroup(selected);
       setInvite(null);
+      setTab('home');
       await loadGroupMembers(selected.group.id, contextVersion);
+      return true;
     } catch (error) {
-      if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return;
+      if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return false;
       setMessage(error instanceof Error ? error.message : 'The group could not be selected.');
       if (previousGroupId) await loadGroupMembers(previousGroupId, contextVersion);
+      return false;
     } finally {
       groupMutationPending.current = false;
       if (currentMutationAccount()) {
@@ -887,617 +759,520 @@ export function RealAccountGroupExperience({
     }
   };
 
-  return (
-    <View style={styles.captureContainer}>
+  const captureView = group ? (
+    <ContributionStatusProvider
+      scope={{
+        sessionId: 'real-account-session',
+        groupId: group.group.id,
+        memberId: auth.session?.account.id ?? '',
+      }}
+      loadStatus={loadContributionLedger}
+    >
+      {captureMode === 'photo' ? (
+        <CameraCaptureScreen
+          allowance={ledger?.allowance ?? null}
+          groupName={group.group.name}
+          onBack={closeCapture}
+          onRecordClip={() => setCaptureMode('video')}
+          onSubmitPhoto={async (
+            metadata,
+            base64,
+            onProgress,
+            replacesContributionId,
+            look = { mode: DEFAULT_CAPTURE_MODE, clientProcessed: false },
+          ) => {
+            if (!mediaClient.uploadClip || !mediaClient.processClipJob) {
+              throw new Error('Photo contribution upload is unavailable. Retry shortly.');
+            }
+            const { mimeType } = metadata;
+            // Client-graded bytes differ per look, so each look gets its own key.
+            const idempotencyKey = look.clientProcessed
+              ? `${metadata.id}-${look.mode}`
+              : metadata.id;
+            const staged = await mediaClient.stagePhotoSource(
+              'real-account-session',
+              group.group.id,
+              idempotencyKey,
+              base64,
+              mimeType,
+            );
+            const upload = await mediaClient.uploadClip('real-account-session', group.group.id, {
+              mediaType: 'photo',
+              idempotencyKey,
+              sourceUri: staged.uri,
+              mimeType,
+              byteLength: staged.byteLength,
+              durationSeconds: 3,
+              width: metadata.width,
+              height: metadata.height,
+              hasAudio: true,
+              mode: look.mode,
+              ...(look.clientProcessed ? { clientProcessed: true } : {}),
+              trimStartSeconds: 0,
+              trimEndSeconds: 3,
+              ...(replacesContributionId ? { replacesContributionId } : {}),
+            });
+            const sharedStatus = {
+              contributionId: upload.contribution.id,
+              jobId: upload.job.id,
+              durationSeconds: 3,
+              createdAt: upload.contribution.createdAt,
+              retryable: true,
+            };
+            onProgress({ state: 'queued', ...sharedStatus });
+            onProgress({ state: 'processing', ...sharedStatus });
+            const job = await mediaClient.processClipJob(
+              'real-account-session',
+              group.group.id,
+              upload.job.id,
+            );
+            const finalStatus = photoContributionStatusForJob(job.status, sharedStatus);
+            onProgress(finalStatus);
+            if (finalStatus.state === 'failed') {
+              throw new Error(
+                finalStatus.message ?? 'The photo could not be processed. Retry this photo.',
+              );
+            }
+            return finalStatus;
+          }}
+          onDeletePhotoContribution={(contributionId) =>
+            mediaClient.deleteContribution('real-account-session', group.group.id, contributionId)
+          }
+        />
+      ) : (
+        <VideoCaptureScreen
+          allowance={ledger?.allowance ?? null}
+          onBack={() => setCaptureMode('photo')}
+          onClose={closeCapture}
+          realAccount={{
+            groupId: group.group.id,
+            authenticatedRequest: auth.authenticatedRequest,
+            transferMode,
+          }}
+        />
+      )}
+    </ContributionStatusProvider>
+  ) : null;
+
+  const signOutNotice =
+    auth.notice === 'sign-out-marker-unavailable'
+      ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+      : auth.notice === 'revocation-unconfirmed'
+        ? Platform.OS === 'web'
+          ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
+          : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'
+        : null;
+  const signOutLabel = auth.pending
+    ? 'Signing out…'
+    : signOutNotice
+      ? 'Retry sign out'
+      : 'Sign out';
+
+  const chatUnread = useRealChatUnread({
+    groupId: screen === 'ready' ? (group?.group.id ?? null) : null,
+    memberId: group?.memberId ?? null,
+    chatActive: tab === 'chat' && !top,
+  });
+  const week = group ? cycleWeek(group.cycle, now) : null;
+  const moments = weekMoments(ledger, week?.windowStart ?? 0);
+  const failedMoment = moments.find((entry) => entry.state === 'failed') ?? null;
+  const allowance = ledger?.allowance ?? null;
+  const shutter = group && week ? shutterState(allowance, week.resetDays) : null;
+  const premiere = group ? premiereRelease(group.releases, group.cycle.id) : undefined;
+  const menuGroups: MenuGroup[] = memberGroups.map((membership) => ({
+    id: membership.group.id,
+    name: membership.group.name,
+  }));
+  if (group && !menuGroups.some((item) => item.id === group.group.id))
+    menuGroups.unshift({ id: group.group.id, name: group.group.name });
+
+  const watchPremiere = () => {
+    if (premiere)
+      pushScreen({
+        kind: 'film',
+        cycleId: premiere.cycleId,
+        label: `Premiere · ${premiereLeft(premiere, now)}`,
+      });
+  };
+  const pickGroup = async (groupId: string) => {
+    setMenuOpen(false);
+    const name = memberGroups.find((membership) => membership.group.id === groupId)?.group.name;
+    if ((await switchGroup(groupId)) && name) toast(`Switched to ${name}.`);
+  };
+  const header = (
+    <TopBar
+      accountName={displayName}
+      groupName={group ? group.group.name : null}
+      menuOpen={menuOpen}
+      onOpenSettings={() => {
+        setMenuOpen(false);
+        pushScreen({ kind: 'settings', step: 'main' });
+      }}
+      onToggleMenu={() => setMenuOpen((open) => !open)}
+    />
+  );
+  const inviteIntentCard = inviteIntent ? (
+    <Glass style={styles.notice} testID="real-invite-intent">
+      <Text style={styles.noticeTitle}>You have an invitation</Text>
+      <Text style={styles.noticeBody}>
+        Expires {new Date(inviteIntent.expiresAt).toLocaleString()}. Accept it to join this private
+        group.
+      </Text>
+      <Button
+        busy={acceptPending}
+        busyLabel="Joining…"
+        label="Accept invitation"
+        onPress={() => void acceptInvitation(inviteIntent.code, inviteIntent.groupId)}
+        testID="real-invite-accept"
+        variant="primary"
+      />
+      {joinFeedback ? (
+        <Text accessibilityRole="alert" style={styles.noticeBody} testID="real-invite-feedback">
+          {joinFeedback}
+        </Text>
+      ) : null}
+    </Glass>
+  ) : null;
+  const notices = (
+    <>
+      {inviteIntentCard}
+      {signOutNotice ? (
+        <Text accessibilityRole="alert" style={styles.alert} testID="logout-unconfirmed">
+          {signOutNotice}
+        </Text>
+      ) : null}
+      {message ? (
+        <Text accessibilityRole="alert" style={styles.alert} testID="real-group-switch-error">
+          {message}
+        </Text>
+      ) : null}
+    </>
+  );
+
+  let body: ReactNode;
+  if (screen === 'loading') body = <LoadingState header={header} />;
+  else if (screen === 'error')
+    body = (
+      <HomeState
+        action="Try again"
+        actionTestID="real-group-retry"
+        body="Check your connection and try again."
+        dim
+        header={header}
+        onAction={() => {
+          setMessage(null);
+          setScreen('loading');
+          void load();
+        }}
+        testID="real-group-error"
+        title="Couldn’t load your group"
+      />
+    );
+  else if (!group)
+    body = (
+      <HomeState
+        action="Have an invite?"
+        actionTestID="real-group-join-start"
+        alt="Create a group"
+        altTestID="real-group-create-choice"
+        body="Join one with an invite code, or start your own."
+        header={header}
+        onAction={() => pushScreen({ kind: 'join' })}
+        onAlt={() => pushScreen({ kind: 'create' })}
+        primary
+        testID="real-group-none"
+        title="You’re not in a group yet"
+      >
+        {notices}
+      </HomeState>
+    );
+  else if (tab === 'chat')
+    body = (
+      <View style={styles.fill}>
+        <View style={[styles.pinnedHeader, { paddingTop: insets.top }]}>{header}</View>
+        <RealAccountChatScreen
+          key={`${group.group.id}:${group.memberId ?? ''}`}
+          groupId={group.group.id}
+          groupName={group.group.name}
+          members={groupMembers?.members ?? []}
+          memberProfilesError={groupMembersError}
+          currentMemberId={group.memberId}
+          blocked={blocked}
+          onBlocked={(memberId) => setBlocked((current) => new Set(current).add(memberId))}
+          unreadOnOpen={chatUnreadAtOpen}
+          premiere={premiere ? { left: premiereLeft(premiere, now), onWatch: watchPremiere } : null}
+          bottomInset={LAYOUT.dockHeight + insets.bottom + 12}
+          onUnknownAuthor={() =>
+            void loadGroupMembers(group.group.id, groupContextVersion.current, true)
+          }
+        />
+      </View>
+    );
+  else if (tab === 'archive')
+    body = (
+      <ArchiveScreen
+        key={`${group.group.id}:${auth.session?.account.id ?? ''}`}
+        bottomInset={LAYOUT.dockHeight + insets.bottom + 40}
+        client={archiveClient}
+        currentCycleId={group.cycle.id}
+        daysLeft={daysUntil(group.cycle.endsAt, now)}
+        groupId={group.group.id}
+        header={header}
+        onOpenFilm={(cycleId, label) => pushScreen({ kind: 'film', cycleId, label })}
+        prompt={group.cycle.prompt}
+        releases={group.releases ?? []}
+        topInset={insets.top}
+      />
+    );
+  else
+    body = (
       <ScrollView
-        contentContainerStyle={styles.content}
-        style={styles.captureContainer}
+        contentContainerStyle={[styles.tabContent, { paddingTop: insets.top }]}
+        showsVerticalScrollIndicator={false}
+        style={styles.fill}
         testID="real-group-experience"
       >
-        <View style={styles.brand}>
-          <Text style={styles.wordmark}>REWIND</Text>
-          <Text style={styles.label}>{displayName}</Text>
-        </View>
-        {inviteIntent ? (
-          <View style={styles.inviteIntent} testID="real-invite-intent">
-            <Text style={styles.panelTitle}>Invitation retained</Text>
-            <Text style={styles.body}>Your group invitation is ready.</Text>
-            <Text style={styles.body}>
-              Expires {new Date(inviteIntent.expiresAt).toLocaleString()}
-            </Text>
-            <Text style={styles.body}>
-              Sign-in is complete. Accept the invitation to join this private group.
-            </Text>
-            <Action
-              title={acceptPending ? 'Joining…' : 'Accept invitation'}
-              disabled={acceptPending}
-              onPress={() => void acceptInvitation(inviteIntent.code, inviteIntent.groupId)}
-              testID="real-invite-accept"
-            />
-            {inviteFeedback ? (
-              <Text accessibilityRole="alert" style={styles.body} testID="real-invite-feedback">
-                {inviteFeedback}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
-        {screen === 'loading' ? (
-          <View testID="real-group-loading">
-            <Text style={styles.title}>Restoring your group…</Text>
-          </View>
-        ) : screen === 'error' ? (
-          <View>
-            <Text accessibilityRole="header" style={styles.title}>
-              Group unavailable
-            </Text>
-            <Text accessibilityRole="alert" style={styles.body}>
-              {message}
-            </Text>
-            <Action
-              title="Retry"
-              onPress={() => {
-                setMessage(null);
-                setScreen('loading');
-                void load();
-              }}
-              testID="real-group-retry"
-            />
-          </View>
-        ) : screen === 'choices' ? (
-          <View style={styles.panel}>
-            <Text accessibilityRole="header" style={styles.title}>
-              Choose a group
-            </Text>
-            {auth.notice === 'revocation-unconfirmed' ||
-            auth.notice === 'sign-out-marker-unavailable' ? (
-              <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
-                {auth.notice === 'sign-out-marker-unavailable'
-                  ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
-                  : Platform.OS === 'web'
-                    ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
-                    : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
-              </Text>
-            ) : null}
-            <Text style={styles.body}>
-              Create a private group for your account, or join later with an invitation.
-            </Text>
-            <Action
-              title="Create group"
-              onPress={() => {
-                setMessage(null);
-                setScreen('create');
-              }}
-              testID="real-group-create-choice"
-            />
-            <Text style={styles.body}>Have an invitation code? Enter it to join your group.</Text>
-            <TextInput
-              accessibilityLabel="Invitation code"
-              autoCapitalize="characters"
-              autoCorrect={false}
-              onChangeText={setEnteredCode}
-              placeholder="ABC-DEF"
-              placeholderTextColor={COLORS.muted}
-              style={styles.input}
-              testID="real-group-enter-code"
-              value={enteredCode}
-            />
-            <Action
-              title={acceptPending ? 'Joining…' : 'Join with code'}
-              disabled={acceptPending}
-              onPress={() => void acceptInvitation(enteredCode)}
-              testID="real-group-join-choice"
-            />
-            {inviteFeedback ? (
-              <Text
-                accessibilityRole="alert"
-                style={styles.error}
-                testID="real-group-join-feedback"
-              >
-                {inviteFeedback}
-              </Text>
-            ) : null}
-            {group ? <Action title="Back to group" onPress={() => setScreen('home')} /> : null}
-            <Action
-              title={
-                auth.pending
-                  ? 'Signing out…'
-                  : auth.notice === 'revocation-unconfirmed' ||
-                      auth.notice === 'sign-out-marker-unavailable'
-                    ? 'Retry sign out'
-                    : 'Sign out'
-              }
-              disabled={auth.pending}
-              onPress={signOut}
-              testID="real-group-sign-out"
-            />
-          </View>
-        ) : screen === 'create' ? (
-          <View style={styles.panel}>
-            <Text accessibilityRole="header" style={styles.title}>
-              Create your private group
-            </Text>
-            <Text style={styles.body}>You’ll be the owner. The first cycle lasts four weeks.</Text>
-            <Text style={styles.label}>GROUP NAME</Text>
-            <TextInput
-              accessibilityLabel="Group name"
-              maxLength={GROUP_NAME_MAX_LENGTH + 1}
-              onChangeText={setName}
-              style={styles.input}
-              testID="real-group-name"
-              value={name}
-            />
-            <Text style={styles.label}>CYCLE PROMPT</Text>
-            {BUILT_IN_PROMPTS.map((item) => (
-              <Action
-                key={item}
-                title={`${prompt === item && !useCustomPrompt ? '✓ ' : ''}${item}`}
-                onPress={() => {
-                  setPrompt(item);
-                  setUseCustomPrompt(false);
-                }}
-              />
-            ))}
-            <Action
-              title="Write a custom prompt"
-              onPress={() => setUseCustomPrompt(true)}
-              testID="real-group-custom-prompt-choice"
-            />
-            {useCustomPrompt ? (
-              <TextInput
-                accessibilityLabel="Custom prompt"
-                maxLength={PROMPT_MAX_LENGTH + 1}
-                multiline
-                onChangeText={setCustomPrompt}
-                style={[styles.input, styles.multiline]}
-                testID="real-group-custom-prompt"
-                value={customPrompt}
-              />
-            ) : null}
-            <Text style={styles.label}>MEMBER LIMIT (INCLUDING YOU)</Text>
-            <View style={styles.capacity}>
-              <Action
-                title="−"
-                disabled={maxMembers <= 2}
-                onPress={() => setMaxMembers((value) => value - 1)}
-                testID="real-group-capacity-decrease"
-              />
-              <Text
-                accessibilityLiveRegion="polite"
-                style={styles.capacityText}
-                testID="real-group-capacity"
-              >
-                {maxMembers}
-              </Text>
-              <Action
-                title="+"
-                disabled={maxMembers >= 10}
-                onPress={() => setMaxMembers((value) => value + 1)}
-                testID="real-group-capacity-increase"
-              />
-            </View>
-            <Text style={styles.body}>You are the first member in this private group.</Text>
-            {message ? (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {message}
-              </Text>
-            ) : null}
-            <Action
-              title={pending ? 'Creating…' : 'Create group'}
-              disabled={pending}
-              onPress={() => void create()}
-              testID="real-group-create-submit"
-            />
-            <Action
-              title="Back"
-              disabled={pending}
-              onPress={() => {
-                setMessage(null);
-                setScreen('choices');
-              }}
-            />
-          </View>
-        ) : screen === 'home' && group ? (
-          <View style={styles.panel} testID="real-group-home">
-            <BuildTag />
-            {auth.notice === 'revocation-unconfirmed' ||
-            auth.notice === 'sign-out-marker-unavailable' ? (
-              <Text accessibilityRole="alert" style={styles.error} testID="logout-unconfirmed">
-                {auth.notice === 'sign-out-marker-unavailable'
-                  ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
-                  : Platform.OS === 'web'
-                    ? 'We could not confirm sign-out. You are still signed in on this browser; retry when the service is reachable.'
-                    : 'This device signed out, but server revocation was not confirmed. Another device may remain signed in until expiry or account reset.'}
-              </Text>
-            ) : null}
-            <Text style={styles.label} testID="real-group-active-context">
-              Your group
-            </Text>
-            <Text accessibilityRole="header" style={styles.title} testID="real-group-name-heading">
-              {group.group.name}
-            </Text>
-            <Text style={styles.body}>{group.group.role === 'owner' ? 'Owner' : 'Member'}</Text>
-            <Text style={styles.body}>Up to {group.group.maxMembers} members</Text>
-            <View style={styles.invitationPanel} testID="real-group-members">
-              <Text accessibilityRole="header" style={styles.label}>
-                {groupMembers
-                  ? `MEMBERS · ${groupMembers.members.length}/${group.group.maxMembers}`
-                  : 'MEMBERS'}
-              </Text>
-              {groupMembers?.members.length ? (
-                groupMembers.members.map((member, index) => (
-                  <Text
-                    key={`${member.role}-${member.joinedAt}-${index}`}
-                    accessibilityLabel={`${member.displayName}, ${member.role}`}
-                    style={styles.body}
-                    testID={`real-group-member-${index}`}
-                  >
-                    {member.displayName} · {member.role === 'owner' ? 'Owner' : 'Member'}
-                  </Text>
-                ))
-              ) : (
-                <Text style={styles.body} testID="real-group-members-empty">
-                  {groupMembers
-                    ? 'No member profiles are available.'
-                    : (groupMembersError ?? 'Loading group members…')}
-                </Text>
-              )}
-              <Text style={styles.body} testID="real-group-pending-invites">
-                {groupMembers?.pendingInviteCount
-                  ? `${groupMembers.pendingInviteCount} pending ${groupMembers.pendingInviteCount === 1 ? 'invitation' : 'invitations'}`
-                  : groupMembers
-                    ? 'No pending invitations'
-                    : groupMembersError
-                      ? 'Invitation status unavailable.'
-                      : 'Loading invitation status…'}
-              </Text>
-            </View>
-            {message ? (
-              <Text accessibilityRole="alert" style={styles.error} testID="real-group-switch-error">
-                {message}
-              </Text>
-            ) : null}
-            {memberGroups.length > 1 ? (
-              <View style={styles.invitationPanel} testID="real-group-switcher">
-                <Text style={styles.label}>YOUR GROUPS</Text>
-                {memberGroups
-                  .filter((membership) => membership.group.id !== group.group.id)
-                  .map((membership) => (
-                    <Action
-                      key={membership.group.id}
-                      title={`Switch to ${membership.group.name}`}
-                      disabled={pending}
-                      onPress={() => void switchGroup(membership.group.id)}
-                      testID={`switch-real-group-${membership.group.id}`}
-                    />
-                  ))}
-              </View>
-            ) : null}
-            <Action title="Join another group" onPress={() => setScreen('choices')} />
-            {group.group.role === 'owner' ? (
-              <View style={styles.invitationPanel} testID="real-group-invitations">
-                <Text style={styles.label}>GROUP INVITATION</Text>
-                <Text style={styles.body}>
-                  Create a private invitation code that expires in 24 hours.
-                </Text>
-                <Action
-                  title={invitePending ? 'Creating invitation…' : 'Create invitation code'}
-                  disabled={invitePending}
-                  onPress={() => void createInvitation()}
-                  testID="real-group-create-invite"
-                />
-                {invite ? (
-                  <>
-                    <Text style={styles.body} testID="real-group-invite-expiry">
-                      Expires {new Date(invite.expiresAt).toLocaleString()} · Active
-                    </Text>
-                    <Text selectable style={styles.inviteCode} testID="real-group-invite-code">
-                      {displayInviteCode(invite.code)}
-                    </Text>
-                    <Action
-                      title="Copy invitation code"
-                      onPress={() => void copyInvitation()}
-                      testID="real-group-copy-invite"
-                    />
-                    <Action
-                      title="Share invitation code"
-                      onPress={() => void shareInvitation()}
-                      testID="real-group-share-invite"
-                    />
-                    {inviteLink ? (
-                      <Action title="Copy invite link" onPress={() => void copyInvitationLink()} />
-                    ) : null}
-                    <Action
-                      title={invitePending ? 'Revoking invitation…' : 'Revoke invitation code'}
-                      disabled={invitePending}
-                      onPress={() => void revokeInvitation()}
-                      testID="real-group-revoke-invite"
-                    />
-                  </>
-                ) : null}
-                {inviteFeedback ? (
-                  <Text
-                    accessibilityLiveRegion="polite"
-                    accessibilityRole="alert"
-                    style={styles.body}
-                  >
-                    {inviteFeedback}
-                  </Text>
-                ) : null}
-              </View>
-            ) : null}
-            <View style={styles.divider} />
-            <Text style={styles.label}>CURRENT CAPTURE CYCLE</Text>
-            <Text style={styles.body}>
-              Contributions here are separate from previously released films.
-            </Text>
-            <Text style={styles.body} testID="real-group-countdown">
-              {remainingLabel(group.cycle.endsAt)}
-            </Text>
-            <Text style={styles.label}>THIS CYCLE’S PROMPT</Text>
-            <Text style={styles.prompt} testID="real-group-cycle-prompt">
-              {group.cycle.prompt}
-            </Text>
-            <View style={styles.invitationPanel} testID="real-group-releases">
-              <Text style={styles.label}>PREVIOUS RELEASES</Text>
-              {(group.releases ?? []).filter((release) => release.cycleId !== group.cycle.id)
-                .length === 0 ? (
-                <Text style={styles.body} testID="real-group-releases-empty">
-                  Earlier group films will remain available in Archive after release.
-                </Text>
-              ) : (
-                (group.releases ?? [])
-                  .filter((release) => release.cycleId !== group.cycle.id)
-                  .map((release) => (
-                    <View key={release.cycleId} style={styles.releaseRow}>
-                      <Text style={styles.body} testID={`real-group-release-${release.cycleId}`}>
-                        {release.state === 'processing'
-                          ? 'Film processing'
-                          : release.state === 'delayed'
-                            ? 'Release delayed'
-                            : release.state === 'premiere'
-                              ? 'Premiere ready'
-                              : 'Archived film'}
-                        {' · '}
-                        Cycle ended {new Date(release.endsAt).toLocaleDateString()}
-                      </Text>
-                    </View>
-                  ))
-              )}
-              <Action
-                title="Open Archive"
-                onPress={() => setScreen('archive')}
-                testID="real-group-open-archive"
-              />
-            </View>
-            <RealGroupSettings
-              key={group.group.id}
-              group={group}
-              authenticatedRequest={auth.authenticatedRequest}
-              onUpdated={(updated) =>
-                setGroup((current) =>
-                  current
-                    ? { ...updated, releases: updated.releases ?? current.releases }
-                    : updated,
-                )
-              }
-            />
-            {reminderClient ? (
-              <PrivateReminderSubscription
-                client={reminderClient}
-                disabled={pending || acceptPending || auth.pending}
-              />
-            ) : null}
-            <Text style={styles.label}>MY ALLOWANCE</Text>
-            <Text style={styles.body} testID="real-group-allowance">
-              {homeAllowance
-                ? `${homeAllowance.countUsed} of ${homeAllowance.maxCount} contributions · ${homeAllowance.secondsUsed} of ${homeAllowance.maxSeconds} seconds used`
-                : 'Loading allowance…'}
-            </Text>
-            <ContributionLedgerSection
-              cycleId={group.cycle.id}
-              groupId={group.group.id}
-              loadPage={loadContributionLedger}
-              onPageLoaded={handleHomeLedgerPage}
-              memberId={group.memberId ?? auth.session?.account.id ?? ''}
-              sessionId="real-account-session"
-            />
-            {group.cycle.contributionCount === 0 ? (
-              <View style={styles.empty} testID="real-group-empty-contributions">
-                <Text style={styles.panelTitle}>No contributions yet</Text>
-                <Text style={styles.body}>Nothing has been contributed to this cycle.</Text>
-              </View>
-            ) : (
-              <View style={styles.empty} testID="real-group-contribution-summary">
-                <Text style={styles.panelTitle}>{group.cycle.contributionCount} contributions</Text>
-                <Text style={styles.body}>
-                  Contribution details will appear when real capture is available.
-                </Text>
-              </View>
-            )}
-            <Action
-              title={capturePending ? 'Checking capture…' : 'Capture a moment'}
-              disabled={capturePending}
-              onPress={() => void openCapture()}
-              testID="real-group-capture-action"
-            />
-            <Action
-              title="Chat"
-              onPress={() => {
-                setHomeAllowance(null);
-                setScreen('chat');
-              }}
-              testID="real-group-chat-action"
-            />
-            <Action
-              title={
-                auth.pending
-                  ? 'Signing out…'
-                  : auth.notice === 'revocation-unconfirmed' ||
-                      auth.notice === 'sign-out-marker-unavailable'
-                    ? 'Retry sign out'
-                    : 'Sign out'
-              }
-              disabled={auth.pending}
-              onPress={signOut}
-              testID="real-group-sign-out"
-            />
-          </View>
-        ) : null}
+        <HomeBody
+          cards={homeCards(group.releases, group.cycle.id, Boolean(failedMoment))}
+          countUsed={allowance?.countUsed ?? null}
+          days={daysUntil(group.cycle.endsAt, now)}
+          header={header}
+          maxCount={allowance?.maxCount ?? group.cycle.quota.maxCount}
+          maxSeconds={allowance?.maxSeconds ?? group.cycle.quota.maxSeconds}
+          moments={
+            ledger
+              ? moments.map((entry) => ({
+                  id: entry.contributionId,
+                  mediaType: entry.mediaType,
+                  seconds: Math.round(entry.durationSeconds),
+                  day: momentDay(entry.createdAt, now),
+                  failed: entry.state === 'failed',
+                }))
+              : null
+          }
+          notices={notices}
+          onOpenMoments={() => pushScreen({ kind: 'mine' })}
+          onRetryFailed={() => pushScreen({ kind: 'mine' })}
+          onWatch={watchPremiere}
+          premiereLeft={premiere ? premiereLeft(premiere, now) : null}
+          prompt={group.cycle.prompt}
+          resetDays={week?.resetDays ?? 7}
+          rollKey={rollKey}
+          secondsUsed={allowance?.secondsUsed ?? null}
+          week={week?.week ?? 1}
+        />
       </ScrollView>
-      {screen === 'home' ? tabBar : null}
-    </View>
-  );
-}
+    );
 
-type RealGroupTab = 'home' | 'capture' | 'chat' | 'archive';
+  if (screen !== 'ready' || !group)
+    body = (
+      <ScrollView
+        contentContainerStyle={[styles.tabContent, styles.stateContent, { paddingTop: insets.top }]}
+        style={styles.fill}
+      >
+        {body}
+      </ScrollView>
+    );
 
-const REAL_GROUP_TABS: { key: RealGroupTab; label: string }[] = [
-  { key: 'home', label: 'Home' },
-  { key: 'capture', label: 'Capture' },
-  { key: 'chat', label: 'Chat' },
-  { key: 'archive', label: 'Archive' },
-];
+  const settingsTop = top?.kind === 'settings' ? top : null;
+  let pushed: ReactNode = null;
+  if (top?.kind === 'capture' && group) pushed = <View style={styles.camera}>{captureView}</View>;
+  else if (settingsTop)
+    pushed = (
+      <SettingsScreen
+        account={{
+          displayName,
+          username: auth.session?.account.username ?? displayName,
+          id: auth.session?.account.id ?? '',
+        }}
+        authenticatedRequest={auth.authenticatedRequest}
+        blocked={blocked}
+        group={group}
+        groups={menuGroups}
+        invite={{
+          code: invite ? displayInviteCode(invite.code) : null,
+          pending: invitePending,
+          feedback: inviteFeedback,
+          create: () => void createInvitation(),
+          revoke: () => void revokeInvitation(),
+          copy: () => void copyInvitation(),
+          share: () => void shareInvitation(),
+        }}
+        members={groupMembers?.members ?? null}
+        membersError={groupMembersError}
+        pendingInvites={groupMembers ? groupMembers.pendingInviteCount : null}
+        notice={signOutNotice}
+        onBack={popScreen}
+        onBlockedChange={(profileId, isBlocked) =>
+          setBlocked((current) => {
+            const next = new Set(current);
+            if (isBlocked) next.add(profileId);
+            else next.delete(profileId);
+            return next;
+          })
+        }
+        onCreate={() => pushScreen({ kind: 'create' })}
+        onDeleteAccount={auth.deleteAccount}
+        onGroupUpdated={(updated) =>
+          setGroup((current) =>
+            current ? { ...updated, releases: updated.releases ?? current.releases } : updated,
+          )
+        }
+        onJoin={() => pushScreen({ kind: 'join' })}
+        onNavigate={(step) => replaceScreen({ kind: 'settings', step })}
+        onSwitchGroup={switchGroup}
+        reminderClient={reminderClient}
+        signOut={{ label: signOutLabel, pending: auth.pending, onSignOut: signOut }}
+        step={settingsTop.step}
+        switchPending={pending}
+      />
+    );
+  else if (top?.kind === 'film' && group && archiveClient)
+    pushed = (
+      <FilmScreen
+        client={archiveClient}
+        cycleId={top.cycleId}
+        groupId={group.group.id}
+        isOwner={group.group.role === 'owner'}
+        label={top.label}
+        onChat={() => {
+          setStack([]);
+          setTab('chat');
+        }}
+        onClose={popScreen}
+        request={auth.authenticatedRequest}
+      />
+    );
+  else if (top?.kind === 'mine')
+    pushed = (
+      <MomentsScreen
+        error={ledgerError}
+        onBack={popScreen}
+        onReload={() => void refreshLedger()}
+        onDelete={async (entry) => {
+          if (!group) return;
+          await mediaClient.deleteContribution(
+            'real-account-session',
+            group.group.id,
+            entry.contributionId,
+          );
+          await refreshLedger();
+        }}
+        onRetake={() => {
+          popScreen();
+          void openCapture();
+        }}
+        onRetry={async (entry) => {
+          if (!group || !entry.jobId || !mediaClient.processClipJob) return;
+          await mediaClient.processClipJob('real-account-session', group.group.id, entry.jobId);
+          await refreshLedger();
+        }}
+        page={ledger}
+        resetDays={week?.resetDays ?? 7}
+        windowStart={week?.windowStart ?? 0}
+      />
+    );
+  else if (top?.kind === 'join')
+    pushed = (
+      <JoinScreen
+        error={joinFeedback}
+        joinedName={joinedName}
+        onBack={() => {
+          setJoinFeedback(null);
+          setJoinedName(null);
+          popScreen();
+        }}
+        onGoToGroup={() => {
+          setJoinedName(null);
+          goHome();
+        }}
+        onJoin={(code) => void acceptInvitation(code)}
+        pending={acceptPending}
+      />
+    );
+  else if (top?.kind === 'create')
+    pushed = (
+      <CreateGroupScreen
+        error={createError}
+        onBack={() => {
+          setCreateError(null);
+          popScreen();
+        }}
+        onCreate={(input) => void create(input)}
+        pending={pending}
+      />
+    );
 
-// Bottom navigation for the real-account group screens. Capture is a
-// full-screen flow with its own Back, so the bar is not shown there.
-function RealGroupTabBar({
-  active,
-  capturePending,
-  onSelect,
-}: {
-  active: string;
-  capturePending: boolean;
-  onSelect: (tab: RealGroupTab) => void;
-}) {
+  const docked = screen === 'ready' && group;
   return (
-    <View accessibilityRole="tablist" style={styles.tabBar} testID="real-group-navigation">
-      {REAL_GROUP_TABS.map((tab) => {
-        const selected = tab.key === active;
-        const disabled = tab.key === 'capture' && capturePending;
-        return (
-          <Pressable
-            accessibilityRole="tab"
-            accessibilityState={{ selected, disabled }}
-            disabled={disabled}
-            key={tab.key}
-            onPress={() => onSelect(tab.key)}
-            style={[styles.tabBarItem, selected && styles.tabBarItemSelected]}
-            testID={`real-group-nav-${tab.key}`}
-          >
-            <Text style={[styles.tabBarLabel, selected && styles.tabBarLabelSelected]}>
-              {tab.label}
-            </Text>
-          </Pressable>
-        );
-      })}
+    <View style={styles.root} {...rw('clip')}>
+      {tab === 'home' || !group ? <Glow /> : null}
+      <TabColumn>{body}</TabColumn>
+      {docked ? <ScreenFades /> : null}
+      {docked ? (
+        <Dock
+          active={tab}
+          chatUnread={chatUnread}
+          newFilm={Boolean(premiere)}
+          onSelect={(next) => {
+            setMenuOpen(false);
+            if (next === 'chat' && tab !== 'chat') setChatUnreadAtOpen(chatUnread);
+            setTab(next);
+          }}
+          onShutter={() => void openCapture()}
+          shutter={shutter}
+          shutterPending={capturePending}
+          sealedTip={rollKey}
+        />
+      ) : null}
+      {menuOpen && group ? (
+        <GroupMenu
+          currentId={group.group.id}
+          disabled={pending}
+          groups={menuGroups}
+          onClose={() => setMenuOpen(false)}
+          onCreate={() => {
+            setMenuOpen(false);
+            pushScreen({ kind: 'create' });
+          }}
+          onJoin={() => {
+            setMenuOpen(false);
+            pushScreen({ kind: 'join' });
+          }}
+          onPick={(groupId) => void pickGroup(groupId)}
+        />
+      ) : null}
+      {pushed ? (
+        <View key={stack.length} style={styles.pushed} {...rw('push')}>
+          {pushed}
+        </View>
+      ) : null}
     </View>
-  );
-}
-
-function Action({
-  title,
-  onPress,
-  disabled = false,
-  testID,
-}: {
-  title: string;
-  onPress: () => void;
-  disabled?: boolean;
-  testID?: string;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      onPress={onPress}
-      style={[styles.action, disabled && styles.disabled]}
-      testID={testID}
-    >
-      <Text style={styles.actionText}>{title}</Text>
-    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { gap: 18, padding: 22 },
-  captureContainer: { flex: 1 },
-  tabBar: {
-    backgroundColor: COLORS.deep,
-    borderTopColor: COLORS.line,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    minHeight: 56,
-  },
-  tabBarItem: { alignItems: 'center', flex: 1, justifyContent: 'center', paddingVertical: 12 },
-  tabBarItemSelected: { borderTopColor: COLORS.accent, borderTopWidth: 2 },
-  tabBarLabel: { color: COLORS.muted, fontSize: 13, fontWeight: '600' },
-  tabBarLabelSelected: { color: COLORS.ink },
-  captureContent: { flexGrow: 1, gap: 12, padding: 22 },
-  photoCaptureContent: { flexGrow: 1 },
-  captureModes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  modeButton: { borderColor: COLORS.edge, borderRadius: 8, borderWidth: 1, padding: 10 },
-  modeButtonText: { color: COLORS.ink, fontWeight: '700' },
-  brand: { gap: 4 },
-  wordmark: { color: COLORS.ink, fontSize: 15, fontWeight: '800', letterSpacing: 2 },
-  label: { color: COLORS.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1, marginTop: 8 },
-  panel: {
-    backgroundColor: COLORS.deep,
-    borderColor: COLORS.edge,
-    borderRadius: 12,
+  root: { backgroundColor: WARM.bg, flex: 1, overflow: 'hidden' },
+  fill: { flex: 1 },
+  tabContent: { paddingBottom: 150, paddingHorizontal: LAYOUT.gutter },
+  stateContent: { paddingBottom: 40 },
+  pinnedHeader: { paddingHorizontal: LAYOUT.gutter },
+  pushed: { ...StyleSheet.absoluteFill, zIndex: 10 },
+  camera: { backgroundColor: '#000', flex: 1 },
+  notice: { gap: 8, marginBottom: 14, padding: 18 },
+  noticeTitle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 16, fontWeight: '600' },
+  noticeBody: { color: WARM.muted, fontFamily: FONT.body, fontSize: 13.5, lineHeight: 19 },
+  alert: {
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderColor: 'rgba(194, 69, 47, 0.35)',
+    borderRadius: 14,
     borderWidth: 1,
-    gap: 12,
-    padding: 18,
-  },
-  title: { color: COLORS.ink, fontSize: 27, fontWeight: '700' },
-  panelTitle: { color: COLORS.ink, fontSize: 19, fontWeight: '700' },
-  inviteCode: { color: COLORS.ink, fontSize: 28, fontWeight: '800', letterSpacing: 3 },
-  body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  prompt: { color: COLORS.ink, fontSize: 18, fontWeight: '600' },
-  input: {
-    backgroundColor: COLORS.deep,
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    color: COLORS.ink,
-    minHeight: 48,
-    padding: 12,
-  },
-  multiline: { minHeight: 92, textAlignVertical: 'top' },
-  capacity: { alignItems: 'center', flexDirection: 'row', gap: 14 },
-  capacityText: {
-    color: COLORS.ink,
-    fontSize: 22,
-    fontWeight: '700',
-    minWidth: 24,
-    textAlign: 'center',
-  },
-  action: {
-    alignItems: 'center',
-    borderColor: COLORS.accent,
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 46,
-    justifyContent: 'center',
+    color: '#6b2a1a',
+    fontFamily: FONT.body,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 14,
     paddingHorizontal: 14,
     paddingVertical: 10,
-  },
-  disabled: { opacity: 0.45 },
-  actionText: { color: COLORS.ink, fontSize: 15, fontWeight: '600', textAlign: 'center' },
-  error: { color: '#ffb8a9', fontSize: 14 },
-  divider: { borderTopColor: COLORS.edge, borderTopWidth: 1, marginVertical: 4 },
-  empty: { borderColor: COLORS.edge, borderRadius: 8, borderWidth: 1, gap: 6, padding: 14 },
-  invitationPanel: {
-    backgroundColor: COLORS.paper,
-    borderRadius: 12,
-    gap: 10,
-    marginTop: 8,
-    padding: 14,
-  },
-  releaseRow: { borderTopColor: COLORS.line, borderTopWidth: 1, paddingTop: 8 },
-  inviteIntent: {
-    backgroundColor: COLORS.paper,
-    borderRadius: 12,
-    gap: 8,
-    padding: 16,
   },
 });

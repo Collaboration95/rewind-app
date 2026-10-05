@@ -135,7 +135,9 @@ import {
 import { purgeRealAccount, removeStoredMedia } from './auth/deletion';
 import {
   blockMember,
+  filmSegments,
   listBlockedMembers,
+  removeContribution,
   reportContent,
   unblockMember,
   visibleChatEvent,
@@ -3084,6 +3086,7 @@ export async function handleRequest(
               state,
               cycleId,
               filmId: film.filmId,
+              segments: filmSegments(database, film.filmId!, identity.memberId),
               playbackPath: protectedAssetPath(
                 database,
                 request,
@@ -3252,6 +3255,7 @@ export async function handleRequest(
         archive: {
           films: films.map((film) => ({
             ...film,
+            segments: filmSegments(database, film.id, identity.memberId),
             downloadPath: protectedAssetPath(
               database,
               request,
@@ -3974,7 +3978,7 @@ async function handleRealGroupRequest(
     if (result === 'invalid') {
       authJson(request, response, config, 400, {
         error: 'invalid_report',
-        message: 'Report one message or one moment, with a reason of up to 500 characters.',
+        message: 'Report one message, moment or person, with a reason of up to 500 characters.',
       });
       return;
     }
@@ -3986,6 +3990,33 @@ async function handleRealGroupRequest(
       return;
     }
     authJson(request, response, config, 201, { reported: true });
+    return;
+  }
+
+  const removeMatch = url.pathname.match(
+    /^\/real\/groups\/([^/]+)\/contributions\/([^/]+)\/remove$/,
+  );
+  if (removeMatch && request.method === 'POST') {
+    const groupId = decodePathSegment(removeMatch[1], response, config);
+    if (groupId === null) return;
+    const contributionId = decodePathSegment(removeMatch[2], response, config);
+    if (contributionId === null) return;
+    const result = removeContribution(database, session.account.id, groupId, contributionId, now);
+    if (result === 'forbidden') {
+      authJson(request, response, config, 403, {
+        error: 'forbidden',
+        message: 'Only the group owner can remove moments.',
+      });
+      return;
+    }
+    if (result === 'not_found') {
+      authJson(request, response, config, 404, {
+        error: 'not_found',
+        message: 'That moment was not found in this group.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, { removed: true });
     return;
   }
 

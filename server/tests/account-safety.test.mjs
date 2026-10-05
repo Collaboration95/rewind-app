@@ -286,3 +286,56 @@ test('members can report and block, which hides that chat from them only', async
     assert.deepEqual(await chatBodies(baseUrl, member, groupId), ['second', 'mine', 'reply']);
   });
 });
+
+test('members can report a person in their group, once, but not themselves or outsiders', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const owner = await provision(baseUrl, database, 'person-owner');
+    const member = await provision(baseUrl, database, 'person-member');
+    const outsider = await provision(baseUrl, database, 'person-outsider');
+    const groupId = await createGroup(baseUrl, owner, 'People');
+    await createGroup(baseUrl, outsider, 'Apart');
+    await joinGroup(baseUrl, owner, member, groupId);
+    const profile = (user) =>
+      database.prepare('SELECT id FROM real_profiles WHERE account_id = ?').get(user.account.id).id;
+    const reports = `/real/groups/${groupId}/reports`;
+    const message = await sendMessage(baseUrl, owner, groupId, 'hello');
+
+    assert.equal(
+      (await post(baseUrl, reports, member, { memberId: profile(owner), messageId: message }))
+        .status,
+      400,
+    );
+    assert.equal((await post(baseUrl, reports, member, { memberId: '' })).status, 400);
+    assert.equal(
+      (await post(baseUrl, reports, member, { memberId: profile(owner), reason: 'x'.repeat(501) }))
+        .status,
+      400,
+    );
+    assert.equal((await post(baseUrl, reports, member, { memberId: profile(member) })).status, 404);
+    assert.equal(
+      (await post(baseUrl, reports, member, { memberId: profile(outsider) })).status,
+      404,
+    );
+    assert.equal(
+      (await post(baseUrl, reports, outsider, { memberId: profile(owner) })).status,
+      404,
+    );
+    const reported = await post(baseUrl, reports, member, {
+      memberId: profile(owner),
+      reason: ' abusive ',
+    });
+    assert.equal(reported.status, 201);
+    assert.deepEqual(await reported.json(), { reported: true });
+    assert.equal((await post(baseUrl, reports, member, { memberId: profile(owner) })).status, 201);
+    assert.deepEqual(
+      database
+        .prepare(
+          'SELECT reporter_account_id AS reporter, reported_account_id AS reported, reason FROM member_reports',
+        )
+        .all()
+        .map((row) => ({ ...row })),
+      [{ reporter: member.account.id, reported: owner.account.id, reason: 'abusive' }],
+    );
+    assert.equal(database.prepare('SELECT COUNT(*) AS n FROM content_reports').get().n, 0);
+  });
+});

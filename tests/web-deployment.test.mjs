@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
@@ -113,6 +113,37 @@ test('runtime-unavailable API responses stay JSON and never fall back to the she
     await new Promise((resolve, reject) => {
       upstream.close((error) => (error ? reject(error) : resolve()));
     });
+    await rm(staticDir, { recursive: true, force: true });
+  }
+});
+
+test('public legal pages resolve at extensionless paths without the SPA shell', async () => {
+  assert.match(
+    nginx,
+    /location ~ \^\/\(privacy\|support\|terms\)\$ \{\s*try_files \/\$1\.html =404;/,
+  );
+  for (const page of ['privacy', 'support', 'terms'])
+    await access(new URL(`../public/${page}.html`, import.meta.url));
+  const staticDir = await mkdtemp(join(tmpdir(), 'rewind-web-legal-'));
+  const web = createProductionWebServer({ staticDir, runtimeOrigin: 'http://127.0.0.1:9' });
+  web.listen(0, '127.0.0.1');
+  await once(web, 'listening');
+  try {
+    await writeFile(join(staticDir, 'index.html'), 'shell');
+    for (const page of ['privacy', 'support', 'terms'])
+      await writeFile(join(staticDir, `${page}.html`), `${page} page`);
+    const base = `http://127.0.0.1:${web.address().port}`;
+    for (const page of ['privacy', 'support', 'terms']) {
+      for (const path of [`/${page}`, `/${page}.html`]) {
+        const response = await fetch(base + path);
+        assert.equal(response.status, 200);
+        assert.match(response.headers.get('content-type') ?? '', /text\/html/);
+        assert.equal(await response.text(), `${page} page`);
+      }
+    }
+    assert.equal(await (await fetch(`${base}/privacy/extra`)).text(), 'shell');
+  } finally {
+    await new Promise((resolve) => web.close(resolve));
     await rm(staticDir, { recursive: true, force: true });
   }
 });

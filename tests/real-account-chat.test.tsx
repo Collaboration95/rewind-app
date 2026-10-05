@@ -130,24 +130,23 @@ describe('real-account chat', () => {
         onBack={jest.fn()}
       />,
     );
-    const timeline = result.getByTestId('real-chat-timeline') as unknown as {
-      props: { data: { message: { id: string; body: string } }[] };
-    };
-    await waitFor(() => expect(timeline.props.data).toHaveLength(100));
-    expect(timeline.props.data.at(-1)?.message.body).toBe('Saved message 101');
+    expect(result.getByTestId('real-chat-timeline')).toBeTruthy();
+    const rows = () => result.queryAllByTestId('real-chat-message');
+    await waitFor(() => expect(rows()).toHaveLength(100));
+    expect(rows().at(-1)).toHaveTextContent(/Saved message 101/);
     expect(result.getByTestId('real-chat-load-older')).toBeTruthy();
     await act(async () => {
       for (const listener of mockMessageListeners) {
         listener({ data: JSON.stringify(liveEvent), lastEventId: '102' });
       }
     });
-    await waitFor(() => expect(timeline.props.data).toHaveLength(101));
-    expect(timeline.props.data.at(-1)?.message.body).toBe('Live newer message');
+    await waitFor(() => expect(rows()).toHaveLength(101));
+    expect(rows().at(-1)).toHaveTextContent(/Live newer message/);
 
     await fireEvent.press(result.getByTestId('real-chat-load-older'));
-    await waitFor(() => expect(timeline.props.data).toHaveLength(102));
-    expect(timeline.props.data[0].message.body).toBe('Oldest saved message');
-    expect(timeline.props.data.at(-1)?.message.body).toBe('Live newer message');
+    await waitFor(() => expect(rows()).toHaveLength(102));
+    expect(rows()[0]).toHaveTextContent(/Oldest saved message/);
+    expect(rows().at(-1)).toHaveTextContent(/Live newer message/);
     expect(authenticatedRequest).toHaveBeenCalledWith(
       '/realtime/groups/real-group-a/messages?limit=100&beforeEventId=1',
     );
@@ -157,9 +156,7 @@ describe('real-account chat', () => {
         listener({ data: JSON.stringify(liveEvent), lastEventId: '102' });
       }
     });
-    expect(
-      timeline.props.data.filter((row) => row.message.id === liveEvent.message.id),
-    ).toHaveLength(1);
+    expect(result.getAllByText(liveEvent.message.body)).toHaveLength(1);
     expect(result.queryByTestId('real-chat-load-older')).toBeNull();
   });
 
@@ -229,14 +226,15 @@ describe('real-account chat', () => {
       />,
     );
     expect(await result.findByText('A saved group message')).toBeTruthy();
-    expect(result.getByTestId('real-chat-context').props.children).toEqual([
-      'Group · ',
-      'Saturday table',
-    ]);
+    expect(result.getByTestId('real-chat-composer').props.placeholder).toBe(
+      'Message Saturday table',
+    );
+    await fireEvent.press(result.getByTestId('real-chat-message-root-message'));
     await fireEvent.press(result.getByTestId('real-chat-reply-root-message'));
     await fireEvent.changeText(result.getByTestId('real-chat-composer'), 'A reply from a member');
     await fireEvent.press(result.getByTestId('real-chat-send'));
     expect(await result.findByText('A reply from a member')).toBeTruthy();
+    await fireEvent.press(result.getByTestId('real-chat-message-root-message'));
     await fireEvent.press(result.getByTestId('real-chat-reaction-root-message'));
     expect(await result.findByText('✨ 1')).toBeTruthy();
     const requestUrls = authenticatedRequest.mock.calls.map(([path]) => String(path));
@@ -246,6 +244,100 @@ describe('real-account chat', () => {
       '/realtime/groups/real-group-a/messages',
       expect.objectContaining({ method: 'POST' }),
     );
+  });
+
+  it('asks once for fresh member names when a message comes from someone new', async () => {
+    const event = (id: number) => ({
+      eventId: id,
+      type: 'message' as const,
+      occurredAt: savedMessage.createdAt,
+      message: { ...savedMessage, id: `message-${id}`, memberId: 'real-profile-new' },
+    });
+    const authenticatedRequest = jest.fn(async () =>
+      response({
+        events: [event(1), event(2)],
+        nextCursor: null,
+        watermarkEventId: 2,
+        hasMore: false,
+      }),
+    );
+    (useRealAccount as jest.Mock).mockReturnValue({
+      baseUrl: 'https://runtime.example',
+      session: { account: { id: 'account-id', displayName: 'Member' } },
+      authenticatedRequest,
+      realtimeAuthorizationHeader: () => undefined,
+    });
+    const onUnknownAuthor = jest.fn();
+    const props = {
+      groupId: 'real-group-a',
+      groupName: 'Saturday table',
+      currentMemberId: 'real-profile-member',
+      onUnknownAuthor,
+    };
+    const result = await render(<RealAccountChatScreen {...props} members={[]} />);
+    await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(2));
+    expect(result.getByText('Group member')).toBeTruthy();
+    expect(onUnknownAuthor).toHaveBeenCalledTimes(1);
+    await result.rerender(
+      <RealAccountChatScreen
+        {...props}
+        members={[{ memberId: 'real-profile-new', displayName: 'Bea' }]}
+      />,
+    );
+    expect(await result.findByText('Bea')).toBeTruthy();
+    expect(onUnknownAuthor).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a reported message and quotes of it from the open timeline', async () => {
+    const reported = { ...savedMessage, id: 'reported', body: 'Reported words' };
+    const reply = {
+      ...savedMessage,
+      id: 'reply',
+      body: 'A reply',
+      replyTo: { id: 'reported', memberId: savedMessage.memberId, body: 'Reported words' },
+    };
+    const authenticatedRequest = jest.fn(async (path: string) =>
+      path.endsWith('/reports')
+        ? response({ reported: true }, 201)
+        : response({
+            events: [reported, reply].map((message, index) => ({
+              eventId: index + 1,
+              type: 'message',
+              occurredAt: message.createdAt,
+              message,
+            })),
+            nextCursor: null,
+            watermarkEventId: 2,
+            hasMore: false,
+          }),
+    );
+    (useRealAccount as jest.Mock).mockReturnValue({
+      baseUrl: 'https://runtime.example',
+      session: { account: { id: 'account-id', displayName: 'Member' } },
+      authenticatedRequest,
+      realtimeAuthorizationHeader: () => undefined,
+    });
+    const result = await render(
+      <RealAccountChatScreen
+        currentMemberId="real-profile-member"
+        groupId="real-group-a"
+        groupName="Saturday table"
+        members={[]}
+      />,
+    );
+    await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(2));
+    expect(result.getAllByText('Reported words')).toHaveLength(2);
+    await fireEvent.press(result.getByTestId('real-chat-message-reported'));
+    await fireEvent.press(result.getByTestId('real-chat-report-reported'));
+    await fireEvent.press(result.getByTestId('report-send'));
+    await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(1));
+    expect(result.queryByText('Reported words')).toBeNull();
+    expect(result.getByText('A reply')).toBeTruthy();
+    expect(authenticatedRequest).toHaveBeenCalledWith(
+      '/real/groups/real-group-a/reports',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    await result.unmount();
   });
 
   it('shows an explicit denied state when group history is forbidden', async () => {
@@ -395,13 +487,18 @@ describe('composed real-account chat transport', () => {
       await result.findByText('Composed text');
       expect(result.getByTestId('real-chat-composer').props.value).toBe('');
 
+      await fireEvent.press(result.getByTestId('real-chat-message-root-message'));
+
       await fireEvent.press(result.getByTestId('real-chat-reply-root-message'));
       await fireEvent.changeText(result.getByTestId('real-chat-composer'), 'Composed reply');
       await fireEvent.press(result.getByTestId('real-chat-send'));
       await result.findByText('Fixture response lost after persistence');
-      expect(result.getByTestId('real-chat-composer').props.value).toBe('Composed reply');
-      expect(result.getByTestId('real-chat-reply-target')).toBeTruthy();
-      await fireEvent.press(result.getByTestId('real-chat-send'));
+      // T8: the message stays in place, marked "Not sent · Retry".
+      expect(result.getByTestId('real-chat-composer').props.value).toBe('');
+      expect(result.getByText('Composed reply')).toBeTruthy();
+      expect(result.getByTestId('real-chat-retry-send')).toHaveTextContent('Not sent · Retry');
+      await fireEvent.press(result.getByTestId('real-chat-retry-send'));
+      await waitFor(() => expect(result!.queryByTestId('real-chat-retry-send')).toBeNull());
       await result.findByText('Composed reply');
       expect(result.getByTestId('real-chat-composer').props.value).toBe('');
       expect(result.queryByTestId('real-chat-reply-target')).toBeNull();
@@ -415,8 +512,11 @@ describe('composed real-account chat transport', () => {
       expect(posts[2][1]?.signal).toBeInstanceOf(AbortSignal);
       expect(new Headers(posts[2][1]?.headers).get('Content-Type')).toBe('application/json');
 
+      await fireEvent.press(result.getByTestId('real-chat-message-root-message'));
+
       await fireEvent.press(result.getByTestId('real-chat-reaction-root-message'));
       await result.findByText('✨ 1');
+      await fireEvent.press(result.getByTestId('real-chat-message-root-message'));
       await fireEvent.press(result.getByTestId('real-chat-reaction-root-message'));
       await waitFor(() => expect(result!.queryByText('✨ 1')).toBeNull());
 
@@ -441,7 +541,8 @@ describe('composed real-account chat transport', () => {
       );
       expect(resumedSource.headers).toEqual(firstSource.headers);
       await act(async () => resumedSource.onopen?.());
-      expect(result.getByText('Connected')).toBeTruthy();
+      // T5: the Reconnecting pill goes away once the stream is back.
+      expect(result.queryByTestId('real-chat-connection')).toBeNull();
       jest.useRealTimers();
 
       for (const [url, init] of fetcher.mock.calls) {

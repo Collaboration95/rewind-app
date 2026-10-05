@@ -10,6 +10,7 @@ RUN npm ci --ignore-scripts
 
 COPY app.json tsconfig.json ./
 COPY App.tsx .
+COPY assets ./assets
 COPY src ./src
 COPY public ./public
 COPY scripts/stamp-pwa-build.mjs ./scripts/stamp-pwa-build.mjs

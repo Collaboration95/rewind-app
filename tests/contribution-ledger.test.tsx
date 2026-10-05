@@ -18,6 +18,7 @@ function entry(
     jobId: `job-${contributionId}`,
     state,
     durationSeconds: 4.5,
+    mediaType: 'video',
     createdAt: '2026-09-10T12:00:00.000Z',
     updatedAt: '2026-09-10T12:01:00.000Z',
     attempts: 1,

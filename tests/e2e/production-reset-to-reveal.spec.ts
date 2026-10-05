@@ -140,11 +140,14 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   });
   await page.goto('/');
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
+  // A5: Demo stays in its own closed sheet on Welcome.
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
   await expect
     .poll(async () => page.evaluate(async () => (await fetch('/api/health')).ok))
     .toBe(true);
-  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   const initialSession = await waitForDemoSession(page, () =>
@@ -168,7 +171,6 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
 
   await page.getByTestId('sign-out').click();
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
-  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   let guestSessionId = '';
@@ -191,7 +193,7 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
 
   stage = 'labelled synthetic contribution';
   await page.getByTestId('nav-camera').click();
-  await page.getByRole('button', { name: 'Video' }).click();
+  await page.getByRole('tab', { name: 'Video' }).click();
   await expect(page.getByTestId('video-unsupported')).toBeVisible();
   const syntheticResponsePromise = page.waitForResponse(
     (response) =>
@@ -206,9 +208,10 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   expect(syntheticBody.upload?.contribution?.memberId).toBe('demo-2');
   const clipJobId = syntheticBody.upload?.job?.id;
   expect(clipJobId).toEqual(expect.any(String));
-  await expect(page.getByText('Contribution sealed', { exact: true })).toBeVisible({
-    timeout: 90_000,
-  });
+  // V8: the Sealed screen appears once the server has sealed the clip.
+  const sealed = page.getByTestId('camera-contribution-status-sealed');
+  await expect(sealed).toBeVisible({ timeout: 90_000 });
+  await expect(sealed.getByRole('heading', { name: 'Sealed', exact: true })).toBeVisible();
 
   stage = 'sealed before release';
   const guestGroup = await runtimeJson(
@@ -232,7 +235,6 @@ test('proves the disposable reset-to-reveal Demo journey through the production 
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('sign-out').click();
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
-  await page.getByRole('button', { name: 'Sign in' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   ownerSessionId = (
