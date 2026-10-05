@@ -1212,7 +1212,11 @@ export function RealAccountGroupExperience({
   const docked = screen === 'ready' && group;
   return (
     <View
-      style={[styles.root, chatKeyboard.keyboardOpen && { height: chatKeyboard.height, flex: 0 }]}
+      style={[
+        styles.root,
+        chatKeyboard.keyboardOpen && { maxHeight: chatKeyboard.height ?? undefined },
+      ]}
+      testID="real-group-shell"
       {...rw('clip')}
     >
       {tab === 'home' || !group ? <Glow /> : null}
