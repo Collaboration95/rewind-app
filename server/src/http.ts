@@ -4108,7 +4108,7 @@ async function handleRealGroupRequest(
         error: `invite_${result.status}`,
         message:
           result.status === 'expired'
-            ? 'This invitation has expired.'
+            ? "That code isn't valid or has expired."
             : result.status === 'replayed'
               ? 'This invitation has already been used.'
               : result.status === 'full'
@@ -4117,7 +4117,7 @@ async function handleRealGroupRequest(
                   ? 'You do not have access to this group.'
                   : result.status === 'throttled'
                     ? 'Too many invitation attempts. Please try again later.'
-                    : 'Enter a valid invitation code.',
+                    : "That code isn't valid or has expired.",
       });
       return;
     }

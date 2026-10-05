@@ -16,6 +16,7 @@ import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
 import { CameraCaptureScreen } from '../capture/CameraCaptureScreen';
 import { RealAccountChatScreen } from '../chat/RealAccountChatScreen';
 import { useRealChatUnread } from '../chat/real-chat-client';
+import { useComposerKeyboard } from '../chat/use-composer-keyboard';
 import type { ContributionLedgerPage } from '../domain/contributions';
 import {
   ContributionStatusProvider,
@@ -37,6 +38,7 @@ import { HomeBody, HomeState, LoadingState } from '../real/Home';
 import {
   cycleWeek,
   daysUntil,
+  filmCountdown,
   homeCards,
   momentDay,
   premiereLeft,
@@ -188,6 +190,7 @@ export function RealAccountGroupExperience({
   const [tab, setTab] = useState<ShellTab>('home');
   const [stack, setStack] = useState<Push[]>([]);
   const top = stack[stack.length - 1] ?? null;
+  const chatKeyboard = useComposerKeyboard(tab === 'chat' && !top);
   const pushScreen = useCallback((next: Push) => setStack((current) => [...current, next]), []);
   const popScreen = useCallback(() => setStack((current) => current.slice(0, -1)), []);
   const replaceScreen = (next: Push) => setStack((current) => [...current.slice(0, -1), next]);
@@ -1001,7 +1004,10 @@ export function RealAccountGroupExperience({
           onBlocked={(memberId) => setBlocked((current) => new Set(current).add(memberId))}
           unreadOnOpen={chatUnreadAtOpen}
           premiere={premiere ? { left: premiereLeft(premiere, now), onWatch: watchPremiere } : null}
-          bottomInset={LAYOUT.dockHeight + insets.bottom + 12}
+          bottomInset={chatKeyboard.keyboardOpen ? 8 : LAYOUT.dockHeight + insets.bottom + 12}
+          keyboardOpen={chatKeyboard.keyboardOpen}
+          onComposerFocus={chatKeyboard.onFocus}
+          onComposerBlur={chatKeyboard.onBlur}
           onUnknownAuthor={() =>
             void loadGroupMembers(group.group.id, groupContextVersion.current, true)
           }
@@ -1035,7 +1041,7 @@ export function RealAccountGroupExperience({
         <HomeBody
           cards={homeCards(group.releases, group.cycle.id, Boolean(failedMoment))}
           countUsed={allowance?.countUsed ?? null}
-          days={daysUntil(group.cycle.endsAt, now)}
+          countdown={filmCountdown(group.cycle.endsAt, now)}
           header={header}
           maxCount={allowance?.maxCount ?? group.cycle.quota.maxCount}
           maxSeconds={allowance?.maxSeconds ?? group.cycle.quota.maxSeconds}
@@ -1205,11 +1211,14 @@ export function RealAccountGroupExperience({
 
   const docked = screen === 'ready' && group;
   return (
-    <View style={styles.root} {...rw('clip')}>
+    <View
+      style={[styles.root, chatKeyboard.keyboardOpen && { height: chatKeyboard.height, flex: 0 }]}
+      {...rw('clip')}
+    >
       {tab === 'home' || !group ? <Glow /> : null}
       <TabColumn>{body}</TabColumn>
-      {docked ? <ScreenFades /> : null}
-      {docked ? (
+      {docked && !chatKeyboard.keyboardOpen ? <ScreenFades /> : null}
+      {docked && !chatKeyboard.keyboardOpen ? (
         <Dock
           active={tab}
           chatUnread={chatUnread}

@@ -84,6 +84,9 @@ export function RealAccountChatScreen({
   unreadOnOpen = 0,
   premiere,
   bottomInset = 0,
+  keyboardOpen = false,
+  onComposerFocus,
+  onComposerBlur,
   onUnknownAuthor,
 }: {
   groupId: string;
@@ -100,6 +103,9 @@ export function RealAccountChatScreen({
   premiere?: { left: string; onWatch: () => void } | null;
   /** Room for the dock under the composer. */
   bottomInset?: number;
+  keyboardOpen?: boolean;
+  onComposerFocus?: () => void;
+  onComposerBlur?: () => void;
   /** A message from someone not in `members` (they joined after it loaded). */
   onUnknownAuthor?: () => void;
   onBack?: () => void;
@@ -457,7 +463,11 @@ export function RealAccountChatScreen({
         <Pressable
           accessibilityRole="button"
           onPress={premiere.onWatch}
-          style={({ pressed }) => [styles.banner, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.banner,
+            keyboardOpen && styles.bannerCompact,
+            pressed && styles.pressed,
+          ]}
           testID="real-chat-premiere"
           {...rw('glass')}
         >
@@ -465,8 +475,16 @@ export function RealAccountChatScreen({
             <Icon color={WARM.peachInk} filled name="play" size={16} />
           </View>
           <View style={styles.bannerText}>
-            <Text style={styles.bannerTitle}>Your film is here</Text>
-            <Text style={styles.bannerNote}>Premiere · {premiere.left}</Text>
+            {keyboardOpen ? (
+              <Text numberOfLines={1} style={styles.bannerNote}>
+                Premiere · {premiere.left}
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.bannerTitle}>Your film is here</Text>
+                <Text style={styles.bannerNote}>Premiere · {premiere.left}</Text>
+              </>
+            )}
           </View>
           <Text style={styles.bannerGo}>Watch</Text>
         </Pressable>
@@ -729,6 +747,8 @@ export function RealAccountChatScreen({
           <Glass style={styles.cmpRow} variant="composer">
             <TextInput
               accessibilityLabel="Message"
+              onFocus={onComposerFocus}
+              onBlur={onComposerBlur}
               maxLength={CHAT_MAX}
               multiline
               numberOfLines={1}
@@ -838,6 +858,7 @@ const styles = StyleSheet.create({
     minHeight: 56,
     paddingHorizontal: 12,
   },
+  bannerCompact: { borderRadius: 999, minHeight: 44 },
   bannerIcon: {
     alignItems: 'center',
     borderRadius: 16,

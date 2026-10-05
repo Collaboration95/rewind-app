@@ -176,6 +176,44 @@ describe('real account entry flow', () => {
     ).toBeNull();
   });
 
+  it('retains offline sign-in credentials and signs in again after reconnecting', async () => {
+    useWebPlatform();
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(jsonResponse(200, { account: apiAccount, expiresAt }))
+      .mockResolvedValueOnce(jsonResponse(200, { group: null }))
+      .mockResolvedValueOnce(jsonResponse(200, { groups: [] })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'pilot.user');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
+    await fireEvent.press(result.getByTestId('real-account-submit'));
+
+    expect(await result.findByTestId('real-account-offline-status')).toHaveTextContent(
+      "You're offline. Sign in again when you're connected.",
+    );
+    expect(result.getByLabelText('Username').props.value).toBe('pilot.user');
+    expect(result.getByLabelText('Password').props.value).toBe('correct password');
+    expect(result.getByTestId('real-account-submit')).toBeEnabled();
+    expect(result.queryByRole('button', { name: 'Retry session check' })).toBeNull();
+    await fireEvent.press(result.getByTestId('real-account-submit'));
+    expect(await result.findByRole('header', { name: 'You’re not in a group yet' })).toBeTruthy();
+    expect(globalThis.fetch).toHaveBeenNthCalledWith(
+      3,
+      'https://rewind.example/auth/login',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          username: 'pilot.user',
+          password: 'correct password',
+          clientType: 'browser',
+        }),
+      }),
+    );
+  });
+
   it('registers a new account and carries the username into its direct sign-in path', async () => {
     useWebPlatform();
     const newAccount = { ...apiAccount, username: 'new.member', displayName: 'new.member' };
@@ -723,7 +761,6 @@ describe('real account entry flow', () => {
     const result = await render(<App runtimeClient={runtimeClient} />);
 
     expect(await result.findByTestId('welcome-entry')).toBeTruthy();
-    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
     expect(await result.findByTestId('real-account-offline-status')).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Retry session check' }));
     await waitFor(() => expect(secureStoreMock.token).toBeNull());

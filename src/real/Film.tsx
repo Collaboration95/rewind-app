@@ -361,6 +361,7 @@ export function FilmScreen({
               onPress={() => void open()}
               style={styles.half}
               testID="real-film-replay"
+              variant="glass"
             />
             <Button
               icon="save"
@@ -368,6 +369,7 @@ export function FilmScreen({
               onPress={() => void saveFilm()}
               style={styles.half}
               testID="real-film-save"
+              variant="glass"
             />
           </View>
           {ownClips.length ? (
@@ -509,7 +511,16 @@ const styles = StyleSheet.create({
     right: 0,
   },
   moment: { alignItems: 'flex-start', gap: 4 },
-  end: { bottom: 0, gap: 12, left: 0, paddingHorizontal: 22, position: 'absolute', right: 0 },
+  end: {
+    backgroundColor: 'rgba(15, 10, 7, 0.92)',
+    bottom: 0,
+    gap: 12,
+    left: 0,
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    position: 'absolute',
+    right: 0,
+  },
   endTitle: { color: '#fff', textAlign: 'center', ...serif(34) },
   endNote: {
     color: 'rgba(255, 255, 255, 0.75)',

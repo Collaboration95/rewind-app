@@ -19,7 +19,7 @@ export interface HomeMoment {
 /** H1–H7: countdown, week, prompt card with your allowance and this week's moments. */
 export function HomeBody({
   header,
-  days,
+  countdown,
   week,
   resetDays,
   prompt,
@@ -38,7 +38,7 @@ export function HomeBody({
   notices,
 }: {
   header: ReactNode;
-  days: number;
+  countdown: { count: number; unit: string };
   week: number;
   resetDays: number;
   prompt: string;
@@ -74,13 +74,14 @@ export function HomeBody({
         />
       ))}
       <View
-        accessibilityLabel={`${plural(days, 'day')} until the film`}
+        accessibilityLabel={`${plural(countdown.count, countdown.unit)} until our film`}
         style={[styles.hero, cards.length > 0 && styles.heroSlim]}
         testID="real-group-countdown"
       >
-        <Text style={styles.heroDays}>{days}</Text>
+        <Text style={styles.heroDays}>{countdown.count}</Text>
         <Text style={styles.heroLabel}>
-          {days === 1 ? 'day until our film' : 'days until our film'}
+          {countdown.unit}
+          {countdown.count === 1 ? '' : 's'} until our film
         </Text>
       </View>
       <View style={styles.count}>
