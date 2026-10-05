@@ -441,7 +441,9 @@ test('a film from a photo and a variable-rate clip stays playable on iPhone', as
     assert.equal(video.profile, 'High');
     assert.ok(video.level <= 40, `level ${video.level}`);
     assert.equal(video.pix_fmt, 'yuv420p');
-    assert.equal(video.color_range, 'tv');
+    // Older FFmpeg builds leave the range untagged, which decoders read as TV
+    // range; full range ('pc') is what iOS Safari rejected.
+    assert.notEqual(video.color_range, 'pc');
     assert.equal(video.r_frame_rate, '30/1');
   });
 });
