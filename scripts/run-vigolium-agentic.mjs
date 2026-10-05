@@ -117,10 +117,10 @@ async function runCli(args, input) {
   const timer = setTimeout(() => {
     expired = true;
     child.kill();
-  }, 360_000);
+  }, 540_000);
   try {
     const [code] = await once(child, 'exit');
-    if (expired) throw new Error('Scanner exceeded the six-minute deadline');
+    if (expired) throw new Error('Scanner exceeded the nine-minute deadline');
     if (code !== 0) {
       // Only publish bounded error lines, after credential redaction, not agent conversation logs.
       const errors = redact(diagnostic, secrets)
@@ -433,7 +433,7 @@ try {
             '--skip',
             'recon,discovery,spidering,spa,external-harvest,rescan',
             '--max-duration',
-            '5m',
+            '8m',
             '--max-iterations',
             '1',
             '--batch-concurrency',

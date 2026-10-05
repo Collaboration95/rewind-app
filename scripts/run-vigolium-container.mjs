@@ -62,7 +62,7 @@ if (mode === '--build') {
     const attempts = [];
     for (let attempt = 1; attempt <= (mode === '--run' ? 2 : 1); attempt++) {
       try {
-        await execute(args, 420_000);
+        await execute(args, 600_000);
         break;
       } catch (error) {
         const report = await readFile(join(output, 'scope.json'), 'utf8')

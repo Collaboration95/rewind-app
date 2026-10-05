@@ -374,4 +374,8 @@ extension, once, in a fresh container/fixture. Detection verdict failures, auth
 errors, and other errors are not retried. A successful retry retains the initial
 failure in `generationRetries` in scope.json and summary.html; independent detection
 confirmation remains mandatory. Retries can add one provider call sequence and up
-to seven minutes. Two failures still fail the job.
+to ten minutes. Two failures still fail the job.
+
+Planning is bounded at eight minutes, with a nine-minute CLI deadline and ten-minute
+container deadline. This gives slow provider planning time to finish without
+turning observed probes alone into a completed security assessment.

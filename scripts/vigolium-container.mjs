@@ -56,7 +56,7 @@ export function fixtureContainerArgs({ live = false, env = {}, output, name, rep
 export function retryableFixtureFailure(report) {
   return (
     report?.status === 'incomplete' &&
-    /context deadline exceeded|No generated extension retained|Scanner exceeded the six-minute deadline/.test(
+    /context deadline exceeded|No generated extension retained|Scanner exceeded the (?:six|nine)-minute deadline/.test(
       report.message || '',
     )
   );

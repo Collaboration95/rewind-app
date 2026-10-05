@@ -125,7 +125,7 @@ if (mode === '--build') {
         ],
         45_000,
       );
-    await execute(scannerArgs, live ? 420_000 : 60_000, false, seed);
+    await execute(scannerArgs, live ? 600_000 : 60_000, false, seed);
   } finally {
     // These exact names belong to this invocation; no unrelated containers are touched.
     await execute(['rm', '--force', name, appName], 15_000, true).catch(() => {});
