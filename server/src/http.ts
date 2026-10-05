@@ -961,6 +961,10 @@ interface RequestLimiters {
   processing: ConcurrencyLimiter;
   archive: ConcurrencyLimiter;
   registration: RegistrationRateLimiter;
+  chat: AccountTokenBucket;
+  groups: AccountTokenBucket;
+  safety: AccountTokenBucket;
+  streams: AccountStreamLimiter;
 }
 
 class ConcurrencyLimiter {
@@ -986,6 +990,10 @@ function createRequestLimiters(config: RuntimeConfig): RequestLimiters {
     processing: new ConcurrencyLimiter(config.maxConcurrentProcessing),
     archive: new ConcurrencyLimiter(2),
     registration: new RegistrationRateLimiter(),
+    chat: new AccountTokenBucket(30, 60 * 1000),
+    groups: new AccountTokenBucket(5, 24 * 60 * 60 * 1000),
+    safety: new AccountTokenBucket(20, 10 * 60 * 1000),
+    streams: new AccountStreamLimiter(),
   };
 }
 
@@ -1024,6 +1032,86 @@ class RegistrationRateLimiter {
     bucket.count += 1;
     return { allowed: true };
   }
+}
+
+// ponytail: one runtime host today. Before scaling to multiple hosts, move
+// buckets and stream leases to a shared atomic store (for example Redis).
+class AccountTokenBucket {
+  private readonly buckets = new Map<string, { tokens: number; updatedAt: number }>();
+  constructor(
+    private readonly capacity: number,
+    private readonly windowMs: number,
+  ) {}
+  tryAcquire(
+    accountId: string,
+    nowMs: number,
+  ): { allowed: true } | { allowed: false; retryAfter: number } {
+    for (const [key, bucket] of this.buckets) {
+      if (nowMs - bucket.updatedAt >= this.windowMs) this.buckets.delete(key);
+    }
+    let bucket = this.buckets.get(accountId);
+    if (!bucket) {
+      if (this.buckets.size >= MAX_REGISTRATION_RATE_LIMIT_SOURCES)
+        return { allowed: false, retryAfter: Math.ceil(this.windowMs / 1000) };
+      bucket = { tokens: this.capacity, updatedAt: nowMs };
+      this.buckets.set(accountId, bucket);
+    }
+    bucket.tokens = Math.min(
+      this.capacity,
+      bucket.tokens + (Math.max(0, nowMs - bucket.updatedAt) * this.capacity) / this.windowMs,
+    );
+    bucket.updatedAt = nowMs;
+    if (bucket.tokens < 1)
+      return {
+        allowed: false,
+        retryAfter: Math.max(
+          1,
+          Math.ceil(((1 - bucket.tokens) * this.windowMs) / this.capacity / 1000),
+        ),
+      };
+    bucket.tokens -= 1;
+    return { allowed: true };
+  }
+}
+
+class AccountStreamLimiter {
+  private readonly active = new Map<string, number>();
+  tryAcquire(accountId: string): (() => void) | null {
+    const count = this.active.get(accountId) ?? 0;
+    if (count >= 5) return null;
+    this.active.set(accountId, count + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = (this.active.get(accountId) ?? 1) - 1;
+      if (next > 0) this.active.set(accountId, next);
+      else this.active.delete(accountId);
+    };
+  }
+}
+
+function enforceRateLimit(
+  limiter: Pick<RegistrationRateLimiter, 'tryAcquire'>,
+  key: string,
+  now: Date,
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  message: string,
+): boolean {
+  const result = limiter.tryAcquire(key, now.getTime());
+  if (result.allowed) return true;
+  authJson(
+    request,
+    response,
+    config,
+    429,
+    { error: 'rate_limited', message },
+    { 'Retry-After': String(result.retryAfter) },
+  );
+  finishRejectedRequest(request, response);
+  return false;
 }
 
 function acquireRequestCapacity(
@@ -1738,6 +1826,19 @@ export async function handleRequest(
       return;
     }
 
+    const releaseStream = identity.accountId
+      ? requestLimiters.streams.tryAcquire(identity.accountId)
+      : () => {};
+    if (!releaseStream) {
+      authJson(request, response, config, 429, {
+        error: 'rate_limited',
+        message: 'You have too many open chat connections. Close another Rewind tab and retry.',
+      });
+      return;
+    }
+    response.once('close', releaseStream);
+    response.once('finish', releaseStream);
+
     response.writeHead(200, {
       ...(identity.accountId && (request.headers.authorization || request.headers.cookie)
         ? authCorsHeaders(request, config)
@@ -1863,6 +1964,19 @@ export async function handleRequest(
       groupId,
     );
     if (!identity) return;
+    if (
+      identity.accountId &&
+      !enforceRateLimit(
+        requestLimiters.chat,
+        identity.accountId,
+        now(),
+        request,
+        response,
+        config,
+        'You are sending messages too quickly. Please wait before trying again.',
+      )
+    )
+      return;
     const body = await requestBody(request, config);
     if (!chatIdentityIsCurrent(request, database, identity, now())) {
       sendDenied(response, config);
@@ -3586,6 +3700,7 @@ async function handleRealGroupRequest(
     return;
   }
 
+  const limits = options.requestLimiters ?? createRequestLimiters(config);
   if (url.pathname === '/real/reminders/config' && request.method === 'GET') {
     authJson(request, response, config, 200, {
       providers: Object.keys(options.reminderProviders ?? {}).filter(
@@ -3971,6 +4086,18 @@ async function handleRealGroupRequest(
 
   const reportMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/reports$/);
   if (reportMatch && request.method === 'POST') {
+    if (
+      !enforceRateLimit(
+        limits.safety,
+        session.account.id,
+        now,
+        request,
+        response,
+        config,
+        'You have made too many safety requests. Please wait before trying again.',
+      )
+    )
+      return;
     const groupId = decodePathSegment(reportMatch[1], response, config);
     if (groupId === null) return;
     const body = await requestBody(request, config, 8 * 1024);
@@ -4028,6 +4155,18 @@ async function handleRealGroupRequest(
   }
 
   if (url.pathname === '/real/blocks' && request.method === 'POST') {
+    if (
+      !enforceRateLimit(
+        limits.safety,
+        session.account.id,
+        now,
+        request,
+        response,
+        config,
+        'You have made too many safety requests. Please wait before trying again.',
+      )
+    )
+      return;
     const body = await requestBody(request, config, 8 * 1024);
     const profileId = typeof body?.profileId === 'string' ? body.profileId : '';
     if (!profileId || blockMember(database, session.account.id, profileId, now) !== 'blocked') {
@@ -4043,6 +4182,18 @@ async function handleRealGroupRequest(
 
   const unblockMatch = url.pathname.match(/^\/real\/blocks\/([^/]+)$/);
   if (unblockMatch && request.method === 'DELETE') {
+    if (
+      !enforceRateLimit(
+        limits.safety,
+        session.account.id,
+        now,
+        request,
+        response,
+        config,
+        'You have made too many safety requests. Please wait before trying again.',
+      )
+    )
+      return;
     const profileId = decodePathSegment(unblockMatch[1], response, config);
     if (profileId === null) return;
     unblockMember(database, session.account.id, profileId);
@@ -4142,12 +4293,37 @@ async function handleRealGroupRequest(
   }
 
   if (url.pathname === '/real/groups' && request.method === 'POST') {
+    if (
+      !enforceRateLimit(
+        limits.groups,
+        session.account.id,
+        now,
+        request,
+        response,
+        config,
+        'You have reached the group creation limit. Please try again later.',
+      )
+    )
+      return;
     const body = await requestBody(request, config);
     if (!body) {
       authJson(request, response, config, 400, {
         error: 'invalid_group',
         message: 'Enter a valid group name, prompt, and member limit from 2 to 10.',
       });
+      return;
+    }
+    // Recheck durable ownership after receiving the body: concurrent requests
+    // must not both pass at nineteen groups before either has committed.
+    const owned = database
+      .prepare('SELECT COUNT(*) AS count FROM real_group_metadata WHERE owner_account_id = ?')
+      .get(session.account.id) as { count: number };
+    if (owned.count >= 20) {
+      authJson(request, response, config, 429, {
+        error: 'rate_limited',
+        message: 'You already own twenty groups. Leave or hand on a group before creating another.',
+      });
+      finishRejectedRequest(request, response);
       return;
     }
     let created: ReturnType<typeof createRealGroup>;
