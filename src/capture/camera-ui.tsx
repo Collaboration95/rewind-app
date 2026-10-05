@@ -9,6 +9,7 @@ import {
   type AccessibilityActionEvent,
   type StyleProp,
   type ViewStyle,
+  type LayoutChangeEvent,
 } from 'react-native';
 
 import type { ContributionLedgerAllowance } from '../domain/contributions';
@@ -109,6 +110,7 @@ export function CamTop({
   const left = allowanceLeft(allowance);
   return (
     <View
+      {...rw('capture-top')}
       pointerEvents="box-none"
       style={[
         styles.top,
@@ -158,13 +160,17 @@ export function CamTop({
 export function CamBottom({
   children,
   style,
+  onLayout,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
+  onLayout?: (event: LayoutChangeEvent) => void;
 }) {
   const insets = useScreenInsets();
   return (
     <View
+      {...rw('capture-bottom')}
+      onLayout={onLayout}
       pointerEvents="box-none"
       style={[
         styles.bottom,
@@ -353,7 +359,7 @@ export function CamButton({
         style,
       ]}
       testID={testID}
-      {...(primary ? rw('primary') : soft ? {} : rw('dark-glass'))}
+      {...(primary ? rw('primary') : soft ? {} : rw('dark-glass look-chip'))}
     >
       {icon ? <Icon color={ink} name={icon} size={18} /> : null}
       <Text style={[styles.buttonText, { color: ink }]}>{label}</Text>
@@ -575,12 +581,14 @@ export function LookPicker({
         return (
           <Pressable
             accessibilityRole="radio"
-            accessibilityState={{ selected, disabled: Boolean(disabled) }}
+            aria-checked={selected}
+            aria-disabled={disabled || undefined}
+            accessibilityState={{ checked: selected, selected, disabled: Boolean(disabled) }}
             disabled={disabled}
             key={option}
             onPress={() => onChange(option)}
             style={[styles.look, selected ? styles.lookOn : !isWeb && styles.glassNative]}
-            {...(selected ? {} : rw('dark-glass'))}
+            {...(selected ? {} : rw('dark-glass look-chip'))}
           >
             <Text style={[styles.lookText, selected && styles.lookTextOn]}>
               {CAPTURE_MODE_LABELS[option]}
@@ -647,6 +655,10 @@ export function MomentsDialog({
 const TRIM_MIN = 0.5;
 const TRIM_STEP = 0.5;
 const tenth = (value: number) => Math.round(value * 10) / 10;
+// Recorded durations are fractional. Keyboard/screen-reader steps land on
+// the next half-second mark instead of carrying that fraction into every edit.
+const stepTrimTime = (value: number, step: number) =>
+  (step > 0 ? Math.floor(value / TRIM_STEP) + 1 : Math.ceil(value / TRIM_STEP) - 1) * TRIM_STEP;
 
 function moveHandle(
   current: {
@@ -727,12 +739,12 @@ export function TrimBar({
         onAccessibilityAction={(event: AccessibilityActionEvent) => {
           if (disabled) return;
           const step = event.nativeEvent.actionName === 'increment' ? TRIM_STEP : -TRIM_STEP;
-          move(which, value + step);
+          move(which, stepTrimTime(value, step));
         }}
         // Web has no accessibility actions: arrow keys move a focused handle instead.
         focusable={!disabled}
         // @ts-expect-error react-native-web forwards keyboard events on View.
-        onKeyDown={(event: { key: string; preventDefault: () => void }) => {
+        onKeyDown={(event: { key: string; shiftKey?: boolean; preventDefault: () => void }) => {
           const step = {
             ArrowRight: TRIM_STEP,
             ArrowUp: TRIM_STEP,
@@ -741,7 +753,7 @@ export function TrimBar({
           }[event.key];
           if (disabled || step === undefined) return;
           event.preventDefault();
-          move(which, value + step);
+          move(which, event.shiftKey ? tenth(value + step / 5) : stepTrimTime(value, step));
         }}
         style={[styles.handle, { left: pct(value) }]}
         testID={which === 'start' ? 'video-trim-start' : 'video-trim-end'}
@@ -801,7 +813,16 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   bokeh: { borderRadius: 999, position: 'absolute' },
-  top: { left: 0, position: 'absolute', right: 0, top: 0, zIndex: 6, gap: 8 },
+  top: {
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    zIndex: 6,
+    gap: 8,
+    paddingBottom: 20,
+    backgroundColor: isWeb ? undefined : 'rgba(8,5,4,.65)',
+  },
   topRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   side: { height: 44, width: 44 },
   pill: {
@@ -831,6 +852,8 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 0,
     zIndex: 4,
+    paddingTop: 24,
+    backgroundColor: isWeb ? undefined : 'rgba(8,5,4,.8)',
   },
   modes: {
     backgroundColor: isWeb ? undefined : 'rgba(0, 0, 0, 0.4)',
@@ -998,7 +1021,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   looks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
-  look: { borderRadius: 999, justifyContent: 'center', minHeight: 44, paddingHorizontal: 13 },
+  look: {
+    borderRadius: 999,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: 13,
+    backgroundColor: 'rgba(8,5,4,.82)',
+  },
   lookOn: { backgroundColor: PEACH },
   lookText: { color: INK, fontFamily: FONT.body, fontSize: 12.5 },
   lookTextOn: { color: WARM.peachInk, fontWeight: '600' },

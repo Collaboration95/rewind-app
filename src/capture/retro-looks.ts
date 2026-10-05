@@ -65,6 +65,11 @@ export const RETRO_LOOKS: Readonly<Record<CaptureMode, RetroLookSpec>> = {
   },
 };
 
+/** Grade only the media layer so controls keep their original contrast. */
+export function lookPreviewStyle(mode: CaptureMode): { filter: string } {
+  return { filter: RETRO_LOOKS[mode].filter };
+}
+
 /** The grain tile edge, in pixels. */
 export const NOISE_TILE_SIZE = 128;
 

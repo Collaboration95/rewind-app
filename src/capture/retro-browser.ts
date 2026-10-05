@@ -396,7 +396,7 @@ export function applyRetroLookToVideo(
           return;
         }
         const sourceUri = URL.createObjectURL(blob);
-        readVideoMetadata(sourceUri).then(
+        readVideoMetadata(sourceUri, options.signal).then(
           (metadata) =>
             resolve({
               sourceUri,
