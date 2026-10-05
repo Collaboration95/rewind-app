@@ -4,9 +4,11 @@ import { Platform } from 'react-native';
 /** Mobile web keyboards reduce the visual viewport while the layout stays tall. */
 export function useComposerKeyboard(active: boolean) {
   const [focused, setFocused] = useState(false);
-  const [viewportState, setViewportState] = useState<{ height: number; reduced: boolean } | null>(
-    null,
-  );
+  const [viewportState, setViewportState] = useState<{
+    height: number;
+    offsetTop: number;
+    reduced: boolean;
+  } | null>(null);
   const fullHeight = useRef(0);
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') return;
@@ -17,15 +19,29 @@ export function useComposerKeyboard(active: boolean) {
       else fullHeight.current = Math.max(fullHeight.current, window.innerHeight);
       setViewportState({
         height: viewport.height,
+        offsetTop: viewport.offsetTop,
         reduced: fullHeight.current - viewport.height > 150,
       });
     };
     resize();
     viewport.addEventListener('resize', resize);
-    return () => viewport.removeEventListener('resize', resize);
+    // Safari can pan to the focused input after the keyboard's resize event.
+    viewport.addEventListener('scroll', resize);
+    window.addEventListener('scroll', resize);
+    return () => {
+      viewport.removeEventListener('resize', resize);
+      viewport.removeEventListener('scroll', resize);
+      window.removeEventListener('scroll', resize);
+    };
   }, [focused]);
   const onFocus = useCallback(() => setFocused(true), []);
   const onBlur = useCallback(() => setFocused(false), []);
   const keyboardOpen = active && focused && viewportState?.reduced === true;
-  return { keyboardOpen, height: viewportState?.height ?? null, onFocus, onBlur };
+  return {
+    keyboardOpen,
+    height: viewportState?.height ?? null,
+    offsetTop: viewportState?.offsetTop ?? 0,
+    onFocus,
+    onBlur,
+  };
 }

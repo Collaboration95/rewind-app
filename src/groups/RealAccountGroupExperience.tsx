@@ -1214,7 +1214,15 @@ export function RealAccountGroupExperience({
     <View
       style={[
         styles.root,
-        chatKeyboard.keyboardOpen && { maxHeight: chatKeyboard.height ?? undefined },
+        // Fixed positioning removes document scrollY; offsetTop follows Safari's
+        // visual viewport pan, keeping both header and composer above the keyboard.
+        chatKeyboard.keyboardOpen && {
+          position: 'fixed' as 'absolute',
+          top: chatKeyboard.offsetTop,
+          left: 0,
+          right: 0,
+          height: chatKeyboard.height ?? undefined,
+        },
       ]}
       testID="real-group-shell"
       {...rw('clip')}
