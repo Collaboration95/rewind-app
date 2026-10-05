@@ -209,7 +209,7 @@ interface DeletableContributionRow {
   sourcePath: string | null;
 }
 
-function safeRemoveOwnedPath(path: string | null, root: string | undefined): void {
+export function safeRemoveOwnedPath(path: string | null, root: string | undefined): void {
   if (!path || !root) return;
   const remainder = relative(resolve(root), resolve(path));
   if (!remainder || remainder.startsWith('..') || isAbsolute(remainder)) return;

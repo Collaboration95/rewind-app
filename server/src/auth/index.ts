@@ -495,3 +495,40 @@ export function lookupRealAccount(database: RewindDatabase, username: string): R
   const normalized = normalizeUsername(username);
   return normalized ? readAccount(database, normalized.normalized) : null;
 }
+
+/** Re-check the signed-in account's password before a destructive action.
+ * Failures count against the same per-account login throttle, so a stolen
+ * session cannot be used to guess the password. */
+export async function verifyRealAccountPassword(
+  database: RewindDatabase,
+  accountId: string,
+  password: string,
+  now = new Date(),
+): Promise<'ok' | 'invalid' | 'throttled'> {
+  return serializeAuthOperation(async () => {
+    const row = database
+      .prepare(
+        `SELECT normalized_username AS normalized, password_salt AS salt, password_hash AS hash,
+         password_scrypt_n AS n, password_scrypt_r AS r, password_scrypt_p AS p
+         FROM real_accounts WHERE id = ?`,
+      )
+      .get(accountId) as
+      | { normalized: string; salt: string; hash: string; n: number; r: number; p: number }
+      | undefined;
+    if (!row) return 'invalid';
+    const throttle = throttleRow(database, 'account', row.normalized);
+    if (throttle?.cooldownUntil && Date.parse(throttle.cooldownUntil) > now.getTime())
+      return 'throttled';
+    const expected = Buffer.from(row.hash, 'hex');
+    const actual = await scrypt(password.slice(0, 1024), Buffer.from(row.salt, 'hex'), {
+      N: Number(row.n),
+      r: Number(row.r),
+      p: Number(row.p),
+      keyLength: PASSWORD_SCRYPT.keyLength,
+      maxmem: Math.max(PASSWORD_SCRYPT.maxmem, 128 * Number(row.n) * Number(row.r) + 1024 * 1024),
+    });
+    if (expected.length === actual.length && timingSafeEqual(expected, actual)) return 'ok';
+    recordFailure(database, 'account', row.normalized, now);
+    return 'invalid';
+  });
+}

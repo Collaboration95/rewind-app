@@ -314,6 +314,31 @@ describe('real account entry flow', () => {
     );
   });
 
+  it.each([
+    ['GURU 123', 'random12345678', /Usernames need 3 to 32 characters/],
+    ['GURU123', 'random123', /Passwords need at least 12 characters/],
+  ])(
+    'explains which registration field the server rejected (#336)',
+    async (username, password, message) => {
+      useWebPlatform();
+      globalThis.fetch = jest
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+        .mockResolvedValueOnce(
+          jsonResponse(400, { error: 'invalid_registration' }),
+        ) as typeof fetch;
+      const result = await render(<App runtimeClient={runtimeClient} />);
+
+      await fireEvent.press(await result.findByRole('button', { name: 'Create account' }));
+      await fireEvent.changeText(result.getByLabelText('Username'), username);
+      await fireEvent.changeText(result.getByLabelText('Password'), password);
+      await fireEvent.changeText(result.getByLabelText('Confirm password'), password);
+      await fireEvent.press(result.getByTestId('registration-submit'));
+
+      expect(await result.findByTestId('registration-error')).toHaveTextContent(message);
+    },
+  );
+
   it('does not let the native keyboard Go action bypass registration guards', async () => {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios', writable: true });
     globalThis.fetch = jest.fn() as typeof fetch;

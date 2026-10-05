@@ -614,7 +614,14 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const [authPending, setAuthPending] = useState(false);
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [registrationError, setRegistrationError] = useState<
-    'invalid' | 'duplicate' | 'rate-limited' | 'unavailable' | 'password-mismatch' | null
+    | 'invalid'
+    | 'invalid-username'
+    | 'invalid-password'
+    | 'duplicate'
+    | 'rate-limited'
+    | 'unavailable'
+    | 'password-mismatch'
+    | null
   >(null);
   const [selectedDemoMemberId, setSelectedDemoMemberId] = useState<string | null>(null);
   const visibleMode = mode;
@@ -729,13 +736,17 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
       ? 'Passwords do not match.'
       : registrationError === 'duplicate'
         ? 'That username is already in use. Try another.'
-        : registrationError === 'invalid'
-          ? 'Choose a valid username and a stronger password, then try again.'
-          : registrationError === 'rate-limited'
-            ? 'Too many account attempts. Wait a moment before trying again.'
-            : registrationError === 'unavailable'
-              ? 'Account creation is unavailable right now. Please try again shortly.'
-              : null;
+        : registrationError === 'invalid-username'
+          ? 'Usernames need 3 to 32 characters: letters, numbers, dots, dashes or underscores, starting with a letter or number.'
+          : registrationError === 'invalid-password'
+            ? 'Passwords need at least 12 characters. A short phrase of a few words works well.'
+            : registrationError === 'invalid'
+              ? 'Choose a valid username and a stronger password, then try again.'
+              : registrationError === 'rate-limited'
+                ? 'Too many account attempts. Wait a moment before trying again.'
+                : registrationError === 'unavailable'
+                  ? 'Account creation is unavailable right now. Please try again shortly.'
+                  : null;
 
   return (
     <SafeAreaFrame>

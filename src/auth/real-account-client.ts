@@ -19,7 +19,26 @@ export interface RealAccountSession {
 
 export type AuthState = 'loading' | 'entry' | 'active' | 'error';
 export type RegistrationOutcome =
-  'created' | 'invalid' | 'duplicate' | 'rate-limited' | 'unavailable';
+  | 'created'
+  | 'invalid'
+  | 'invalid-username'
+  | 'invalid-password'
+  | 'duplicate'
+  | 'rate-limited'
+  | 'unavailable';
+
+/**
+ * The server answers every rejected registration with one generic 400, so
+ * name the failing field from the same rules (server/src/auth/index.ts).
+ */
+export function invalidRegistrationOutcome(
+  username: string,
+  password: string,
+): 'invalid' | 'invalid-username' | 'invalid-password' {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/.test(username.trim())) return 'invalid-username';
+  if (password.length < 12 || password.length > 1024) return 'invalid-password';
+  return 'invalid';
+}
 export type AuthNotice =
   | 'expired'
   | 'revoked'

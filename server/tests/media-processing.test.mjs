@@ -1469,7 +1469,7 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
       versions,
       [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-        26, 27,
+        26, 27, 28,
       ],
     );
 
@@ -1520,7 +1520,7 @@ test('migration versions are explicit and guard legacy media-v6 promotion until 
         .map((row) => Number(row.version)),
       [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-        26, 27,
+        26, 27, 28,
       ],
     );
     assert.equal(
