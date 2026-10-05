@@ -14,7 +14,7 @@ export interface RealAccount {
 export interface RealAccountSession {
   account: RealAccount;
   idleExpiresAt: string;
-  absoluteExpiresAt: string;
+  absoluteExpiresAt?: string;
 }
 
 export type AuthState = 'loading' | 'entry' | 'active' | 'error';
@@ -111,6 +111,13 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   }
 }
 
+/** Read throttling feedback only when a UI consumer is rejecting the response. */
+export async function rateLimitMessage(response: Response, fallback: string): Promise<string> {
+  if (response.status !== 429) return fallback;
+  const body = await readJson(response);
+  return typeof body.message === 'string' && body.message.trim() ? body.message : fallback;
+}
+
 export class RealAccountClient {
   private activeToken: string | undefined;
   private readonly fetcher: typeof fetch;
@@ -148,7 +155,12 @@ export class RealAccountClient {
   async login(
     username: string,
     password: string,
-  ): Promise<{ account: RealAccount; token?: string; expiresAt: string }> {
+  ): Promise<{
+    account: RealAccount;
+    token?: string;
+    expiresAt: string;
+    absoluteExpiresAt?: string;
+  }> {
     this.assertSecureTransport();
     const response = await this.fetcher(
       authUrl(this.baseUrl, '/auth/login'),
@@ -183,7 +195,14 @@ export class RealAccountClient {
       }
       this.activeToken = token;
     }
-    return { account: body.account, expiresAt: body.expiresAt, ...(token ? { token } : {}) };
+    return {
+      account: body.account,
+      expiresAt: body.expiresAt,
+      ...(typeof body.absoluteExpiresAt === 'string'
+        ? { absoluteExpiresAt: body.absoluteExpiresAt }
+        : {}),
+      ...(token ? { token } : {}),
+    };
   }
 
   async restore(): Promise<RealAccountSession | null> {

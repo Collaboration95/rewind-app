@@ -38,7 +38,7 @@
     "format:write": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/scaffold.test.mjs tests/architecture.test.mjs tests/pwa.test.mjs tests/web-deployment.test.mjs tests/deploy/host-lifecycle-smoke.test.mjs tests/terraform/*.test.mjs scripts/focused-test.test.mjs scripts/real-account-e2e-utils.test.mjs scripts/build-artifact.test.mjs scripts/production-e2e-runner.test.mjs && npm run server:test && jest --runInBand",
+    "test": "npm run test:root && npm run server:test && jest --runInBand",
     "test:fast": "npm test",
     "test:slow": "npm run build:web && node scripts/check-pwa.mjs dist && playwright test && npm run test:production-e2e",
     "test:coverage:frontend": "jest --runInBand --coverage",
@@ -51,7 +51,8 @@
     "check": "npm run format:check && npm run lint && npm run architecture:check && npm run typecheck && npm test && npm run test:a11y",
     "test:focused": "node scripts/focused-test.mjs",
     "client:prepare": "node scripts/native-build.mjs prepare",
-    "test:native-build": "node --test tests/native-build.test.mjs"
+    "test:native-build": "node --test tests/native-build.test.mjs",
+    "test:root": "npm run server:build && node scripts/run-root-tests.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1145.0",

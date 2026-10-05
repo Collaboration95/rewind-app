@@ -38,6 +38,7 @@ function browserBundle(now) {
   compile(auth);
   compile(adapter);
   return `(() => {
+    globalThis.__DEV__ = false;
     const sources = ${JSON.stringify(modules)}, cache = {};
     function load(path) {
       if (cache[path]) return cache[path].exports;
@@ -104,6 +105,7 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
     const storageRequests = [];
     // Preserve assertion details in the test runner, never in HTTP responses.
     const fixtureErrors = [];
+    const fixtureSockets = new Set();
     t.after(() => assert.deepEqual(fixtureErrors, [], 'fixture handlers must not fail'));
     const photoBytes = readFileSync('public/icons/rewind-icon-192.png');
     let hideVersion = false;
@@ -266,6 +268,11 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
         response.end('Fixture request failed');
       }
     });
+    for (const server of [app, storage])
+      server.on('connection', (socket) => {
+        fixtureSockets.add(socket);
+        socket.once('close', () => fixtureSockets.delete(socket));
+      });
     let browser;
     try {
       await listen(app, 5421);
@@ -495,6 +502,8 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
       assert.deepEqual(scriptErrors, []);
     } finally {
       await browser?.close();
+      // Also close idle TLS handshakes, which closeAllConnections does not own.
+      for (const socket of fixtureSockets) socket.destroy();
       for (const server of [app, storage]) {
         server.closeAllConnections();
         await new Promise((done) => server.close(done));
