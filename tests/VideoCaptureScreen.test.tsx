@@ -283,6 +283,11 @@ describe('VideoCaptureScreen', () => {
     expect(platform.pickVideoFile).toHaveBeenCalledTimes(1);
     expect(result.getByText('Chosen from a file')).toBeTruthy();
     expect(result.getByText('0.0 – 8.0 s · 8.0 s')).toBeTruthy();
+    expect(
+      result.getByText(
+        /Selected MP4 8.0 seconds · 720 × 1280 · audio track detected; server verifies/,
+      ),
+    ).toBeTruthy();
   });
 
   it.each([
@@ -603,6 +608,7 @@ describe('VideoCaptureScreen', () => {
     resolveRecording(clip);
 
     await result.findByTestId('video-review');
+    expect(result.getByText('Recorded 8.0 seconds · 720 × 1280 · audio included')).toBeTruthy();
     expect(result.getByText('0.0 – 8.0 s · 8.0 s')).toBeTruthy();
     expect(platform.recordClip).toHaveBeenCalledWith(15);
   });

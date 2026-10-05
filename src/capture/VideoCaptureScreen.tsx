@@ -1446,6 +1446,11 @@ export function VideoCaptureScreen({
           ) : null}
           <CamBottom>
             {clip.source === 'file' ? <Tag>Chosen from a file</Tag> : null}
+            <Text style={styles.caption} testID="video-review-facts">
+              {clip.source === 'file'
+                ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio track detected; server verifies`
+                : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio included`}
+            </Text>
             {retroPercent !== null ? (
               <UploadPanel
                 cancelLabel="Cancel retro look"

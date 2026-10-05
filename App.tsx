@@ -1176,6 +1176,8 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ expanded: visibleMode === 'demo' }}
+            // The web build drops a false expanded state; say it explicitly.
+            aria-expanded={visibleMode === 'demo'}
             disabled={authPending}
             onPress={() => {
               setSelectedDemoMemberId(null);

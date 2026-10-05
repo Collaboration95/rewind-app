@@ -1,18 +1,22 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
-test('fresh web install keeps Demo behind Sign in before any member is active', async ({
+test('fresh web install keeps Demo in its own closed sheet before any member is active', async ({
   page,
 }) => {
   await page.goto('/');
 
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Create an account' })).toBeVisible();
+  // A5: Try Demo is a separate bottom sheet, closed until pulled up, never inside sign-in.
+  const tryDemo = page.getByRole('button', { name: 'Try Demo' });
+  await expect(tryDemo).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId('demo-entry-demo-1')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Weekend People' })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('button', { name: 'Try Demo' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Back to welcome' }).click();
   await page.getByRole('button', { name: 'Try Demo' }).click();
   await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
   await page.getByRole('button', { name: 'Enter Demo as Amber, sample member' }).click();
@@ -27,32 +31,37 @@ test('mobile welcome keeps the brand and entry actions together and vertically b
 
   const brand = await page.getByTestId('entry-brand').boundingBox();
   const actions = await page.getByTestId('welcome-entry').boundingBox();
+  const sheet = await page.getByRole('button', { name: 'Try Demo' }).boundingBox();
   expect(brand).not.toBeNull();
   expect(actions).not.toBeNull();
+  expect(sheet).not.toBeNull();
 
   const gap = actions!.y - (brand!.y + brand!.height);
   const contentCenter = (brand!.y + actions!.y + actions!.height) / 2;
   expect(gap).toBeLessThan(96);
-  expect(Math.abs(contentCenter - 844 / 2)).toBeLessThan(88);
+  // Balanced in the space above the closed Try Demo sheet, which it never overlaps.
+  expect(actions!.y + actions!.height).toBeLessThanOrEqual(sheet!.y);
+  expect(Math.abs(contentCenter - sheet!.y / 2)).toBeLessThan(88);
 });
 
 test('mobile signup starts close to the brand without a large empty band', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.getByRole('button', { name: 'Create an account' }).click();
 
-  const brand = await page.getByTestId('entry-brand').boundingBox();
-  const formIntro = await page.getByText('JOIN REWIND').boundingBox();
-  expect(brand).not.toBeNull();
-  expect(formIntro).not.toBeNull();
-  expect(formIntro!.y - (brand!.y + brand!.height)).toBeLessThan(64);
+  const heading = await page.getByRole('heading', { name: 'Create account' }).boundingBox();
+  const username = await page.getByText('Username', { exact: true }).boundingBox();
+  expect(heading).not.toBeNull();
+  expect(username).not.toBeNull();
+  expect(heading!.y).toBeLessThan(120);
+  expect(username!.y - (heading!.y + heading!.height)).toBeLessThan(64);
 });
 
 test('web entry opens account registration and blocks credentials without HTTPS configuration', async ({
   page,
 }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.getByRole('button', { name: 'Create an account' }).click();
   await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page.getByTestId('registration-password')).toBeVisible();
@@ -113,7 +122,7 @@ test('the exported shell exposes install metadata and an honest offline API fall
     display: 'standalone',
     name: 'Rewind',
     start_url: '/',
-    theme_color: '#252326',
+    theme_color: '#f6ede3',
   });
 
   const serviceWorkerResponse = await request.get('/sw.js');
@@ -144,18 +153,18 @@ test('the installed shell reloads root and starts a deep SPA route offline', asy
 }) => {
   await page.goto('/');
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
-  await expect(page.locator('#root')).toContainText('REWIND');
+  await expect(page.locator('#root')).toContainText('Rewind');
 
   let deepPage: Awaited<ReturnType<typeof context.newPage>> | undefined;
   await context.setOffline(true);
   try {
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.locator('#root')).toContainText('REWIND');
+    await expect(page.locator('#root')).toContainText('Rewind');
 
     deepPage = await context.newPage();
     await deepPage.goto('/groups/demo-group/capsule', { waitUntil: 'domcontentloaded' });
     expect(new URL(deepPage.url()).pathname).toBe('/groups/demo-group/capsule');
-    await expect(deepPage.locator('#root')).toContainText('REWIND');
+    await expect(deepPage.locator('#root')).toContainText('Rewind');
   } finally {
     await deepPage?.close();
     await context.setOffline(false);

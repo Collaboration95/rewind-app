@@ -551,6 +551,10 @@ export function CameraCaptureScreen({
 
   return (
     <CameraFrame bokeh={!liveCamera && !preview} testID="camera-screen">
+      {/* The viewfinder has no visible title; screen readers and route focus land here. */}
+      <Text accessibilityRole="header" style={styles.srOnly} testID="route-heading-camera">
+        Add a moment
+      </Text>
       {liveCamera ? (
         <CameraView
           accessibilityLabel="Live camera viewfinder"
@@ -835,6 +839,15 @@ export function CameraCaptureScreen({
 }
 
 const styles = StyleSheet.create({
+  srOnly: {
+    height: 1,
+    left: 0,
+    opacity: 0,
+    overflow: 'hidden',
+    position: 'absolute',
+    top: 0,
+    width: 1,
+  },
   fixture: {
     ...StyleSheet.absoluteFill,
     alignItems: 'center',

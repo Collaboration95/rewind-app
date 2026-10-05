@@ -719,10 +719,28 @@ export function TrimBar({
         accessibilityRole="adjustable"
         accessibilityState={{ disabled: Boolean(disabled) }}
         accessibilityValue={{ text: `${value.toFixed(1)} seconds` }}
+        aria-valuemax={duration}
+        aria-valuemin={0}
+        aria-valuenow={value}
+        aria-valuetext={`${value.toFixed(1)} seconds`}
         accessible
         onAccessibilityAction={(event: AccessibilityActionEvent) => {
           if (disabled) return;
           const step = event.nativeEvent.actionName === 'increment' ? TRIM_STEP : -TRIM_STEP;
+          move(which, value + step);
+        }}
+        // Web has no accessibility actions: arrow keys move a focused handle instead.
+        focusable={!disabled}
+        // @ts-expect-error react-native-web forwards keyboard events on View.
+        onKeyDown={(event: { key: string; preventDefault: () => void }) => {
+          const step = {
+            ArrowRight: TRIM_STEP,
+            ArrowUp: TRIM_STEP,
+            ArrowLeft: -TRIM_STEP,
+            ArrowDown: -TRIM_STEP,
+          }[event.key];
+          if (disabled || step === undefined) return;
+          event.preventDefault();
           move(which, value + step);
         }}
         style={[styles.handle, { left: pct(value) }]}

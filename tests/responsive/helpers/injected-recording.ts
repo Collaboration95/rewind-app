@@ -182,7 +182,6 @@ export async function openInjectedCapture(page: Page) {
     page.getByTestId('main-navigation').or(entry).or(page.getByTestId('welcome-entry')),
   ).toBeVisible();
   if (!(await entry.isVisible())) {
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.getByRole('button', { name: 'Try Demo', exact: true }).click();
   }
   await entry.click();
@@ -194,7 +193,7 @@ export async function allowInjectedSource(page: Page) {
   await expectInjectedSourceInstalled(page);
   await expect(page.getByTestId('video-permission')).toBeVisible();
   expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
-  await page.getByRole('button', { name: 'Allow camera and microphone', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(page.getByTestId('video-live-preview')).toBeVisible();
   await expect
     .poll(() =>
@@ -209,7 +208,7 @@ export async function recordFor(page: Page, seconds = 6) {
   await page.getByTestId('video-record').click();
   await expect(page.getByTestId('video-recording')).toBeVisible();
   await page.waitForTimeout(seconds * 1000);
-  await page.getByRole('button', { name: 'Stop and review', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop recording', exact: true }).click();
 }
 
 export async function restoreInjectedPreview(page: Page) {
@@ -329,4 +328,21 @@ export async function expectRevoked(page: Page, index: number) {
       }
     }, index),
   ).toBe(false);
+}
+
+/**
+ * Move a trim handle with the keyboard, half a second per arrow press, to the
+ * nearest step of `seconds` (a recorded end is not on the half-second grid).
+ */
+export async function setTrim(page: Page, handle: 'start' | 'end', seconds: number) {
+  const control = page.getByTestId(`video-trim-${handle}`);
+  await control.focus();
+  const read = async () =>
+    Number.parseFloat((await control.getAttribute('aria-valuetext')) ?? 'NaN');
+  for (let step = 0; step < 40; step += 1) {
+    const current = await read();
+    if (Math.abs(current - seconds) <= 0.25) break;
+    await page.keyboard.press(current < seconds ? 'ArrowRight' : 'ArrowLeft');
+  }
+  expect(Math.abs((await read()) - seconds)).toBeLessThanOrEqual(0.25);
 }
