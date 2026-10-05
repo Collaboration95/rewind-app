@@ -81,8 +81,29 @@ import { ArchiveScreen } from './src/archive/ArchiveScreen';
 import { ReminderSettings } from './src/reminders/ReminderSettings';
 import { RealAccountProvider, useRealAccount } from './src/auth/RealAccountProvider';
 import { RealAccountGroupExperience } from './src/groups/RealAccountGroupExperience';
+import { useWarmFonts } from './src/ui/fonts';
+import { openLegalPage } from './src/real/safety';
+import {
+  Avatar,
+  Button,
+  ErrorText,
+  Field,
+  Glass,
+  Glow,
+  ListGroup,
+  ListRow,
+  SubHeader,
+  TextLink,
+  ToastProvider,
+  rw,
+  useScreenInsets,
+} from './src/ui/primitives';
+import { FONT, LAYOUT, WARM, memberColor, serif } from './src/ui/tokens';
+import { ensureWebStyles } from './src/ui/web-styles';
 import { PortraitGuard } from './src/runtime/PortraitGuard';
 import { markLaunchReady } from './src/runtime/timing';
+
+ensureWebStyles();
 
 const lockedMoments = [1, 2, 3];
 const COLD_LAUNCH_MINIMUM_MS = 600;
@@ -215,7 +236,9 @@ function SessionGate({
 }) {
   const { status, session } = useDemoSession();
   const realAccount = useRealAccount();
+  const fontsReady = useWarmFonts();
   const [coldLaunchMinimumElapsed, setColdLaunchMinimumElapsed] = useState(false);
+  const [launchFaded, setLaunchFaded] = useState(false);
   useEffect(() => {
     // SessionGate stays mounted while the app is backgrounded, so this minimum
     // applies to process startup and does not delay a warm foreground resume.
@@ -227,7 +250,16 @@ function SessionGate({
     [runtimeClient, session],
   );
   const launchReady =
-    coldLaunchMinimumElapsed && realAccount.state !== 'loading' && status !== 'loading';
+    coldLaunchMinimumElapsed &&
+    fontsReady &&
+    realAccount.state !== 'loading' &&
+    status !== 'loading';
+  useEffect(() => {
+    if (!launchReady) return;
+    // A1: the launch screen fades over the first screen, then leaves.
+    const timeout = setTimeout(() => setLaunchFaded(true), MOTION_LAUNCH_FADE_MS);
+    return () => clearTimeout(timeout);
+  }, [launchReady]);
   const realAccountActive = realAccount.state === 'active' && Boolean(realAccount.session);
   useEffect(() => {
     // A signed-in member is ready once the group screen loads (see
@@ -237,9 +269,10 @@ function SessionGate({
   if (!launchReady) {
     return <SessionLoadingScreen />;
   }
+  const launchFade = launchFaded || Platform.OS !== 'web' ? null : <LaunchScreen leaving />;
   if (realAccount.state === 'active' && realAccount.session)
     return (
-      <SafeAreaFrame>
+      <WarmFrame overlay={launchFade}>
         <RealAccountGroupExperience
           displayName={realAccount.session.account.displayName}
           inviteIntent={
@@ -257,7 +290,7 @@ function SessionGate({
               : (getConfiguredInviteWebOrigin() ?? undefined)
           }
         />
-      </SafeAreaFrame>
+      </WarmFrame>
     );
   if (inviteLink?.kind === 'valid' && inviteLink.groupId)
     return <DemoAccessEntry key={inviteLink.intentId} inviteGroupId={inviteLink.groupId} />;
@@ -292,25 +325,55 @@ function inviteLinkKey(inviteLink: InviteLinkIntent | null): string {
   return `invite-link-intent-${inviteLink.intentId}`;
 }
 
+const MOTION_LAUNCH_FADE_MS = 500;
+
+/** A1: the Campfire icon and the wordmark on cream; "Opening…" after 2 s. */
+function LaunchScreen({ leaving }: { leaving?: boolean }) {
+  return (
+    <View
+      accessibilityLabel="Rewind"
+      accessibilityRole={leaving ? undefined : 'progressbar'}
+      pointerEvents={leaving ? 'none' : 'auto'}
+      style={[styles.launch, leaving && StyleSheet.absoluteFill]}
+      testID={leaving ? 'launch-leaving' : 'launch-screen'}
+      {...(leaving ? rw('launch-out') : {})}
+    >
+      <Image
+        accessibilityLabel="Rewind mark"
+        source={require('./assets/icon.png')}
+        style={styles.launchIcon}
+      />
+      <Text style={styles.launchWord}>Rewind</Text>
+      {leaving ? null : (
+        <Text style={styles.launchLate} {...rw('late-in')}>
+          Opening…
+        </Text>
+      )}
+    </View>
+  );
+}
+
+/**
+ * Frame for the Warm Glass screens: cream, full bleed. The screens pad for the
+ * safe area themselves so glass and glow can run under the notch.
+ */
+function WarmFrame({ children, overlay }: { children: ReactNode; overlay?: ReactNode }) {
+  return (
+    <>
+      <StatusBar style="dark" />
+      <View style={styles.warmPage} testID="application-safe-area">
+        <ToastProvider>{children}</ToastProvider>
+        {overlay}
+      </View>
+    </>
+  );
+}
+
 function SessionLoadingScreen() {
   return (
-    <SafeAreaFrame>
-      <View style={styles.entryContent}>
-        <View
-          accessibilityLabel="Rewind"
-          accessibilityRole="progressbar"
-          style={styles.loadingBrand}
-        >
-          <Image
-            accessibilityLabel="Rewind mark"
-            source={require('./public/icons/rewind-icon-192.png')}
-            style={styles.brandMark}
-          />
-          <Text style={styles.loadingWordmark}>REWIND</Text>
-          <Text style={styles.loadingTagline}>PRIVATE MOMENTS, SHARED TOGETHER</Text>
-        </View>
-      </View>
-    </SafeAreaFrame>
+    <WarmFrame>
+      <LaunchScreen />
+    </WarmFrame>
   );
 }
 
@@ -611,6 +674,8 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const registrationPasswordRef = useRef<ElementRef<typeof TextInput>>(null);
   const registrationConfirmationRef = useRef<ElementRef<typeof TextInput>>(null);
+  const signInPasswordRef = useRef<ElementRef<typeof TextInput>>(null);
+  const entryInsets = useScreenInsets();
   const [authPending, setAuthPending] = useState(false);
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [registrationError, setRegistrationError] = useState<
@@ -666,27 +731,29 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
       ? 'Your session expired or an administrator reset your password. Sign in again to continue.'
       : auth.notice === 'revoked'
         ? 'Your session has ended. Sign in again to continue.'
-        : auth.notice === 'sign-in-failed'
-          ? 'Sign-in failed. Check your username and password, or try again later.'
-          : auth.notice === 'offline'
-            ? 'The sign-in service could not be reached. Please try again shortly.'
-            : auth.notice === 'revocation-unconfirmed'
-              ? Platform.OS === 'web'
-                ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
-                : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'
-              : auth.notice === 'local-credential-removal-failed'
-                ? 'The server says this session has ended, but this device could not confirm deletion of its saved sign-in. The credential may remain in SecureStore; retry local cleanup before treating this device as signed out.'
-                : auth.notice === 'sign-out-incomplete'
-                  ? 'Sign-out is incomplete: this device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in. Retry sign out.'
-                  : auth.notice === 'sign-out-recovery-pending'
-                    ? 'Sign-out recovery is pending. This device will not restore a saved sign-in automatically until recovery finishes. Server revocation may still be unconfirmed.'
-                    : auth.notice === 'sign-out-marker-unavailable'
-                      ? auth.state === 'active'
-                        ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
-                        : 'This device could not verify sign-out recovery state, so the saved sign-in was not restored. Retry sign out to recover safely.'
-                      : auth.notice === 'sign-out-marker-cleanup-failed'
-                        ? 'The server confirmed sign-out and this device deleted its saved sign-in, but it could not clear the recovery marker. Account restore stays blocked on this device until cleanup is retried.'
-                        : null;
+        : auth.notice === 'deleted'
+          ? 'Your account is deleted.'
+          : auth.notice === 'sign-in-failed'
+            ? 'Wrong username or password.'
+            : auth.notice === 'offline'
+              ? 'You’re offline. Try again when you’re connected.'
+              : auth.notice === 'revocation-unconfirmed'
+                ? Platform.OS === 'web'
+                  ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
+                  : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'
+                : auth.notice === 'local-credential-removal-failed'
+                  ? 'The server says this session has ended, but this device could not confirm deletion of its saved sign-in. The credential may remain in SecureStore; retry local cleanup before treating this device as signed out.'
+                  : auth.notice === 'sign-out-incomplete'
+                    ? 'Sign-out is incomplete: this device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in. Retry sign out.'
+                    : auth.notice === 'sign-out-recovery-pending'
+                      ? 'Sign-out recovery is pending. This device will not restore a saved sign-in automatically until recovery finishes. Server revocation may still be unconfirmed.'
+                      : auth.notice === 'sign-out-marker-unavailable'
+                        ? auth.state === 'active'
+                          ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                          : 'This device could not verify sign-out recovery state, so the saved sign-in was not restored. Retry sign out to recover safely.'
+                        : auth.notice === 'sign-out-marker-cleanup-failed'
+                          ? 'The server confirmed sign-out and this device deleted its saved sign-in, but it could not clear the recovery marker. Account restore stays blocked on this device until cleanup is retried.'
+                          : null;
 
   const submitSignIn = async () => {
     setAuthPending(true);
@@ -698,7 +765,6 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const submitRegistration = async () => {
     if (
       authPending ||
-      registrationComplete ||
       !username.trim() ||
       !password ||
       !passwordConfirmation ||
@@ -718,6 +784,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
       setPassword('');
       setPasswordConfirmation('');
       setRegistrationComplete(true);
+      setMode('sign-in');
       return;
     }
     setRegistrationError(outcome);
@@ -728,14 +795,11 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     void chooseMember(memberId);
   };
 
-  const registrationMessage = registrationComplete
-    ? inviteGroupId
-      ? 'Your account is ready. Sign in to accept the invitation.'
-      : 'Your account is ready. Sign in to continue.'
-    : registrationError === 'password-mismatch'
+  const registrationMessage =
+    registrationError === 'password-mismatch'
       ? 'Passwords do not match.'
       : registrationError === 'duplicate'
-        ? 'That username is already in use. Try another.'
+        ? 'That username is taken. Try another.'
         : registrationError === 'invalid-username'
           ? 'Usernames need 3 to 32 characters: letters, numbers, dots, dashes or underscores, starting with a letter or number.'
           : registrationError === 'invalid-password'
@@ -748,238 +812,245 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
                   ? 'Account creation is unavailable right now. Please try again shortly.'
                   : null;
 
+  const signInBlocked =
+    authPending || !username.trim() || !password || !auth.secureTransportAvailable;
+  const registrationBlocked =
+    authPending ||
+    !username.trim() ||
+    !password ||
+    !passwordConfirmation ||
+    !auth.secureTransportAvailable;
+  const welcomeBanner =
+    auth.notice === 'expired' || auth.notice === 'revoked' || auth.notice === 'deleted'
+      ? authMessage
+      : null;
+  const recoveryNotice =
+    (auth.notice === 'offline' ||
+      auth.notice === 'expired' ||
+      auth.notice === 'revoked' ||
+      auth.notice === 'revocation-unconfirmed' ||
+      auth.notice === 'local-credential-removal-failed' ||
+      auth.notice === 'sign-out-incomplete' ||
+      auth.notice === 'sign-out-recovery-pending' ||
+      auth.notice === 'sign-out-marker-cleanup-failed' ||
+      auth.notice === 'sign-out-marker-unavailable') &&
+    (visibleMode === 'demo' ||
+      visibleMode === 'create-account' ||
+      auth.notice === 'sign-out-incomplete' ||
+      auth.notice === 'sign-out-recovery-pending' ||
+      auth.notice === 'sign-out-marker-cleanup-failed' ||
+      auth.notice === 'sign-out-marker-unavailable' ||
+      auth.notice === 'local-credential-removal-failed') &&
+    !(auth.notice === 'offline' && !auth.secureTransportAvailable) &&
+    !(auth.notice === 'offline' && error);
+
   return (
-    <SafeAreaFrame>
+    <WarmFrame>
+      <Glow />
       <Animated.ScrollView
         automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
         contentContainerStyle={[
-          styles.entryContent,
-          visibleMode === 'welcome' && styles.welcomeEntryContent,
+          styles.warmEntry,
+          { paddingTop: entryInsets.top + 8, paddingBottom: entryInsets.bottom + 140 },
+          visibleMode === 'welcome' || visibleMode === 'demo' ? styles.warmWelcome : null,
         ]}
         keyboardShouldPersistTaps="handled"
         style={{ transform: [{ translateY: entryOffset }] }}
         testID="entry-mode-content"
       >
-        <View style={styles.entryBrand} testID="entry-brand">
-          <View style={styles.brandLockup}>
+        {visibleMode === 'welcome' || visibleMode === 'demo' ? (
+          <View style={styles.warmBrand} testID="entry-brand">
             <Image
               accessibilityLabel="Rewind mark"
-              source={require('./public/icons/rewind-icon-192.png')}
-              style={styles.headerMark}
+              source={require('./assets/icon.png')}
+              style={styles.warmIcon}
             />
-            <Text style={styles.wordmark}>REWIND</Text>
+            <Text accessibilityRole="header" style={styles.warmWord}>
+              Rewind
+            </Text>
+            <Text style={styles.warmTagline}>
+              Small moments with your people, opened together every 4 weeks.
+            </Text>
           </View>
-          <Text style={styles.entryTagline}>PRIVATE MOMENTS, SHARED TOGETHER</Text>
-        </View>
-        {visibleMode === 'welcome' ? (
-          <View style={styles.welcomeActions} testID="welcome-entry">
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setMode('create-account')}
-              style={({ pressed }) => [
-                styles.entryActionButton,
-                ...interactionFeedback({ pressed }),
-              ]}
-            >
-              <Text style={styles.entryActionButtonText}>Create account</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setMode('sign-in')}
-              style={({ pressed }) => [
-                styles.primaryEntryButton,
-                ...interactionFeedback({ pressed }),
-              ]}
-            >
-              <Text style={styles.primaryEntryButtonText}>Sign in</Text>
-            </Pressable>
+        ) : null}
+        {visibleMode === 'welcome' || visibleMode === 'demo' ? (
+          <View style={styles.warmActions} testID="welcome-entry">
+            {welcomeBanner ? (
+              <Text
+                accessibilityRole="alert"
+                style={styles.warmAlert}
+                testID="real-account-session-status"
+              >
+                {welcomeBanner}
+              </Text>
+            ) : null}
+            <Button label="Sign in" onPress={() => setMode('sign-in')} variant="primary" />
+            <Button
+              label="Create an account"
+              onPress={() => {
+                setRegistrationError(null);
+                setMode('create-account');
+              }}
+            />
           </View>
         ) : visibleMode === 'create-account' ? (
-          <View style={styles.entryIntro}>
-            <Text style={styles.label}>JOIN REWIND</Text>
-            <Text accessibilityRole="header" style={styles.title}>
-              Create account
-            </Text>
-            <Text style={styles.bodyText}>Choose a username and password for your account.</Text>
-            {registrationComplete ? (
-              <View accessibilityLiveRegion="polite" style={styles.successPanel}>
-                <Text style={styles.successText} testID="registration-success">
-                  {registrationMessage}
-                </Text>
-              </View>
-            ) : null}
-            <Text accessibilityRole="text" style={styles.authFieldLabel}>
-              Username
-            </Text>
-            <TextInput
-              accessibilityLabel="Username"
+          <View style={styles.warmForm}>
+            <SubHeader onBack={() => setMode('welcome')} title="Create account" />
+            <Field
               autoCapitalize="none"
               autoComplete="username"
               autoCorrect={false}
               blurOnSubmit={false}
-              editable={!authPending && !registrationComplete}
+              editable={!authPending}
+              label="Username"
+              maxLength={32}
               onChangeText={setUsername}
               onSubmitEditing={() => registrationPasswordRef.current?.focus()}
+              placeholder="3–32 letters, numbers, . _ -"
               returnKeyType="next"
-              style={styles.authInput}
+              spellCheck={false}
               testID="registration-username"
               textContentType="username"
               value={username}
             />
-            <Text accessibilityRole="text" style={styles.authFieldLabel}>
-              Password
-            </Text>
-            <TextInput
-              accessibilityLabel="Password"
+            <Field
               autoCapitalize="none"
               autoComplete="new-password"
               blurOnSubmit={false}
-              editable={!authPending && !registrationComplete}
+              editable={!authPending}
+              label="Password"
               onChangeText={setPassword}
               onSubmitEditing={() => registrationConfirmationRef.current?.focus()}
+              placeholder="At least 12 characters"
               ref={registrationPasswordRef}
               returnKeyType="next"
               secureTextEntry
-              style={styles.authInput}
               testID="registration-password"
               textContentType="newPassword"
               value={password}
             />
-            <Text accessibilityRole="text" style={styles.authFieldLabel}>
-              Confirm password
-            </Text>
-            <TextInput
-              accessibilityLabel="Confirm password"
+            <Field
               autoCapitalize="none"
               autoComplete="new-password"
-              editable={!authPending && !registrationComplete}
+              editable={!authPending}
+              label="Confirm password"
               onChangeText={setPasswordConfirmation}
               onSubmitEditing={() => void submitRegistration()}
               ref={registrationConfirmationRef}
               returnKeyType="go"
               secureTextEntry
-              style={styles.authInput}
               testID="registration-password-confirmation"
               textContentType="newPassword"
               value={passwordConfirmation}
             />
             {!auth.secureTransportAvailable ? (
-              <Text accessibilityRole="alert" style={styles.errorText}>
+              <ErrorText>
                 Account creation requires the same-origin HTTPS service. Your password will not be
                 sent over an insecure connection.
-              </Text>
+              </ErrorText>
             ) : null}
-            {registrationMessage && !registrationComplete ? (
-              <Text accessibilityRole="alert" style={styles.errorText} testID="registration-error">
-                {registrationMessage}
-              </Text>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              disabled={
-                authPending ||
-                registrationComplete ||
-                !username.trim() ||
-                !password ||
-                !passwordConfirmation ||
-                !auth.secureTransportAvailable
-              }
+            <ErrorText testID="registration-error">{registrationMessage}</ErrorText>
+            <Button
+              busy={authPending}
+              busyLabel="Creating account…"
+              disabled={registrationBlocked}
+              label="Create account"
               onPress={() => void submitRegistration()}
-              style={({ pressed }) => [
-                styles.primaryEntryButton,
-                (authPending ||
-                  registrationComplete ||
-                  !username.trim() ||
-                  !password ||
-                  !passwordConfirmation ||
-                  !auth.secureTransportAvailable) &&
-                  styles.disabledChoice,
-                ...interactionFeedback({ pressed }),
-              ]}
               testID="registration-submit"
-            >
-              <Text style={styles.primaryEntryButtonText}>
-                {authPending ? 'Creating account…' : 'Create account'}
-              </Text>
-            </Pressable>
-            {registrationComplete ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  setRegistrationComplete(false);
-                  setRegistrationError(null);
-                  setMode('sign-in');
-                }}
-                style={({ pressed }) => [
-                  styles.entryActionButton,
-                  ...interactionFeedback({ pressed }),
-                ]}
-                testID="registration-continue-to-sign-in"
+              variant="primary"
+            />
+            <Text style={styles.warmNote}>
+              By creating an account you agree to the{' '}
+              <Text
+                accessibilityRole="link"
+                onPress={() => openLegalPage('/terms')}
+                style={styles.warmLink}
+                testID="registration-terms"
               >
-                <Text style={styles.entryActionButtonText}>Sign in</Text>
-              </Pressable>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setMode('welcome')}
-              style={({ pressed }) => [
-                styles.entryActionButton,
-                ...interactionFeedback({ pressed }),
-              ]}
-            >
-              <Text style={styles.entryActionButtonText}>Back</Text>
-            </Pressable>
-          </View>
-        ) : visibleMode === 'sign-in' ? (
-          <View style={styles.entryIntro}>
-            <Text style={styles.label}>WELCOME BACK</Text>
-            <Text accessibilityRole="header" style={styles.title}>
-              Sign in
+                Terms
+              </Text>{' '}
+              and{' '}
+              <Text
+                accessibilityRole="link"
+                onPress={() => openLegalPage('/privacy')}
+                style={styles.warmLink}
+                testID="registration-privacy"
+              >
+                Privacy Policy
+              </Text>
+              . Rewind doesn’t allow objectionable content or abusive behaviour.
             </Text>
-            <Text style={styles.bodyText}>Enter your Rewind username and password.</Text>
-            {inviteGroupId ? (
-              <Text style={styles.bodyText} testID="invite-sign-in-intent">
-                Invitation for group {inviteGroupId} saved. Sign in to continue.
+            <Text style={styles.warmNote}>
+              Already have an account?{' '}
+              <Text
+                accessibilityRole="button"
+                onPress={() => setMode('sign-in')}
+                style={styles.warmLink}
+                testID="registration-sign-in"
+              >
+                Sign in
+              </Text>
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.warmForm}>
+            <SubHeader
+              onBack={() => setMode('welcome')}
+              backLabel="Back to welcome"
+              title="Sign in"
+            />
+            {registrationComplete ? (
+              <Text
+                accessibilityLiveRegion="polite"
+                accessibilityRole="alert"
+                style={styles.warmAlert}
+                testID="registration-success"
+              >
+                {inviteGroupId
+                  ? 'Your account is ready. Sign in to accept the invitation.'
+                  : 'Your account is ready. Sign in to continue.'}
               </Text>
             ) : null}
-            <Text accessibilityRole="text" style={styles.authFieldLabel}>
-              Username
-            </Text>
-            <TextInput
-              accessibilityLabel="Username"
+            {inviteGroupId ? (
+              <Text style={styles.warmLead} testID="invite-sign-in-intent">
+                Your invitation is saved. Sign in to join the group.
+              </Text>
+            ) : null}
+            <Field
               autoCapitalize="none"
               autoComplete="username"
               autoCorrect={false}
+              autoFocus={Platform.OS === 'web'}
+              blurOnSubmit={false}
               editable={!authPending}
+              label="Username"
               onChangeText={setUsername}
+              onSubmitEditing={() => signInPasswordRef.current?.focus()}
               returnKeyType="next"
-              style={styles.authInput}
+              spellCheck={false}
               testID="real-account-username"
               textContentType="username"
               value={username}
             />
-            <Text accessibilityRole="text" style={styles.authFieldLabel}>
-              Password
-            </Text>
-            <TextInput
-              accessibilityLabel="Password"
+            <Field
               autoCapitalize="none"
               autoComplete="current-password"
               editable={!authPending}
+              label="Password"
               onChangeText={setPassword}
               onSubmitEditing={() => void submitSignIn()}
+              ref={signInPasswordRef}
               returnKeyType="go"
               secureTextEntry
-              style={styles.authInput}
               testID="real-account-password"
               textContentType="password"
               value={password}
             />
             {!auth.secureTransportAvailable ? (
-              <Text accessibilityRole="alert" style={styles.errorText}>
+              <ErrorText>
                 Sign-in is unavailable until this app is connected to its same-origin HTTPS service.
                 Your password will not be sent over an insecure connection.
-              </Text>
+              </ErrorText>
             ) : null}
             {authMessage &&
             auth.notice !== 'sign-out-recovery-pending' &&
@@ -987,9 +1058,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             auth.notice !== 'sign-out-marker-cleanup-failed' &&
             auth.notice !== 'local-credential-removal-failed' &&
             !(auth.notice === 'offline' && !auth.secureTransportAvailable) ? (
-              <Text
-                accessibilityRole="alert"
-                style={styles.errorText}
+              <ErrorText
                 testID={
                   auth.notice === 'offline'
                     ? 'real-account-offline-status'
@@ -997,117 +1066,54 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
                 }
               >
                 {authMessage}
-              </Text>
-            ) : null}
-            {auth.notice === 'offline' ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={auth.retryRestore}
-                style={({ pressed }) => [styles.retryButton, ...interactionFeedback({ pressed })]}
-              >
-                <Text style={styles.retryButtonText}>Retry session check</Text>
-              </Pressable>
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              disabled={
-                authPending || !username.trim() || !password || !auth.secureTransportAvailable
-              }
-              onPress={() => void submitSignIn()}
-              style={({ pressed }) => [
-                styles.primaryEntryButton,
-                (authPending || !username.trim() || !password || !auth.secureTransportAvailable) &&
-                  styles.disabledChoice,
-                ...interactionFeedback({ pressed }),
-              ]}
-              testID="real-account-submit"
-            >
-              <Text style={styles.primaryEntryButtonText}>
-                {authPending ? 'Signing in…' : 'Sign in'}
-              </Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => setMode('welcome')}
-              style={({ pressed }) => [
-                styles.entryActionButton,
-                ...interactionFeedback({ pressed }),
-              ]}
-            >
-              <Text style={styles.entryActionButtonText}>Back to welcome</Text>
-            </Pressable>
-            {inviteGroupId || !demoAccessEnabled ? null : (
-              <Pressable
-                accessibilityRole="button"
-                disabled={authPending}
-                onPress={() => {
-                  setSelectedDemoMemberId(null);
-                  setMode('demo');
-                }}
-                style={({ pressed }) => [
-                  styles.primaryEntryButton,
-                  authPending && styles.disabledChoice,
-                  ...interactionFeedback({ pressed }),
-                ]}
-              >
-                <Text style={styles.primaryEntryButtonText}>Try Demo</Text>
-              </Pressable>
+              </ErrorText>
+            ) : (
+              <ErrorText />
             )}
-            <Pressable
-              accessibilityRole="button"
-              disabled={authPending}
-              onPress={() => {
-                setRegistrationComplete(false);
-                setRegistrationError(null);
-                setMode('create-account');
-              }}
-              style={({ pressed }) => [
-                styles.entryActionButton,
-                authPending && styles.disabledChoice,
-                ...interactionFeedback({ pressed }),
-              ]}
-              testID="sign-in-create-account"
-            >
-              <Text style={styles.entryActionButtonText}>Create account</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <View style={styles.entryIntro}>
-            <Text style={styles.label}>EXPLORE REWIND</Text>
-            <Text accessibilityRole="header" style={styles.title}>
-              Choose a Demo member
+            {auth.notice === 'offline' ? (
+              <TextLink
+                label="Retry session check"
+                onPress={auth.retryRestore}
+                style={styles.warmRetry}
+              />
+            ) : null}
+            <Button
+              busy={authPending}
+              busyLabel="Signing in…"
+              disabled={signInBlocked}
+              label="Sign in"
+              onPress={() => void submitSignIn()}
+              testID="real-account-submit"
+              variant="primary"
+            />
+            <Text style={styles.warmNote}>
+              New here?{' '}
+              <Text
+                accessibilityRole="button"
+                onPress={() => {
+                  setRegistrationComplete(false);
+                  setRegistrationError(null);
+                  setMode('create-account');
+                }}
+                style={styles.warmLink}
+                testID="sign-in-create-account"
+              >
+                Create an account
+              </Text>
             </Text>
-            <Text style={styles.bodyText}>
-              Explore with sample people and moments. Your Demo stays separate from your groups.
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => {
-                setSelectedDemoMemberId(null);
-                setMode('sign-in');
-              }}
-              style={({ pressed }) => [
-                styles.entryActionButton,
-                ...interactionFeedback({ pressed }),
-              ]}
-            >
-              <Text style={styles.entryActionButtonText}>Back to sign in</Text>
-            </Pressable>
           </View>
         )}
         {error && visibleMode !== 'welcome' ? (
           <View
             accessible={false}
             accessibilityLabel={entryReason === 'offline' ? 'Offline status' : 'Session status'}
-            style={styles.errorPanel}
+            style={styles.warmPanel}
             testID="entry-session-status"
           >
-            <Text accessibilityRole="alert" style={styles.errorText}>
-              {error}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
+            <ErrorText>{error}</ErrorText>
+            <Button
               disabled={pending || authPending}
+              label={canRetryDemoStart ? 'Retry Demo start' : 'Retry session check'}
               onPress={() => {
                 if (canRetryDemoStart && selectedDemoMemberId) {
                   void chooseMember(selectedDemoMemberId);
@@ -1115,134 +1121,105 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
                   retryRestore();
                 }
               }}
-              style={({ pressed }) => [styles.retryButton, ...interactionFeedback({ pressed })]}
               testID={canRetryDemoStart ? 'retry-demo-start' : 'retry-session-check'}
-            >
-              <Text style={styles.retryButtonText}>
-                {canRetryDemoStart ? 'Retry Demo start' : 'Retry session check'}
-              </Text>
-            </Pressable>
+            />
           </View>
         ) : null}
-        {(auth.notice === 'offline' ||
-          auth.notice === 'expired' ||
-          auth.notice === 'revoked' ||
-          auth.notice === 'revocation-unconfirmed' ||
-          auth.notice === 'local-credential-removal-failed' ||
-          auth.notice === 'sign-out-incomplete' ||
-          auth.notice === 'sign-out-recovery-pending' ||
-          auth.notice === 'sign-out-marker-cleanup-failed' ||
-          auth.notice === 'sign-out-marker-unavailable') &&
-        (visibleMode === 'demo' ||
-          visibleMode === 'create-account' ||
-          auth.notice === 'sign-out-incomplete' ||
-          auth.notice === 'sign-out-recovery-pending' ||
-          auth.notice === 'sign-out-marker-cleanup-failed' ||
-          auth.notice === 'sign-out-marker-unavailable' ||
-          auth.notice === 'local-credential-removal-failed') &&
-        !(auth.notice === 'offline' && !auth.secureTransportAvailable) &&
-        !(auth.notice === 'offline' && error) ? (
+        {recoveryNotice ? (
           <View
-            style={styles.errorPanel}
+            style={styles.warmPanel}
             testID={
               auth.notice === 'offline'
                 ? 'real-account-offline-status'
                 : 'real-account-session-status'
             }
           >
-            <Text accessibilityRole="alert" style={styles.errorText}>
-              {authMessage}
-            </Text>
+            <ErrorText>{authMessage}</ErrorText>
             {auth.notice === 'offline' ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={auth.retryRestore}
-                style={styles.retryButton}
-              >
-                <Text style={styles.retryButtonText}>Retry session check</Text>
-              </Pressable>
+              <Button label="Retry session check" onPress={auth.retryRestore} />
             ) : null}
-            {auth.notice === 'local-credential-removal-failed' ? (
-              <Pressable
-                accessibilityRole="button"
-                disabled={auth.pending}
+            {auth.notice === 'local-credential-removal-failed' ||
+            auth.notice === 'sign-out-marker-cleanup-failed' ? (
+              <Button
+                busy={auth.pending}
+                busyLabel="Retrying…"
+                label="Retry local cleanup"
                 onPress={auth.retryLocalCredentialRemoval}
-                style={styles.retryButton}
-              >
-                <Text style={styles.retryButtonText}>
-                  {auth.pending ? 'Retrying…' : 'Retry local cleanup'}
-                </Text>
-              </Pressable>
+              />
             ) : null}
-            {auth.notice === 'sign-out-marker-cleanup-failed' ? (
-              <Pressable
-                accessibilityRole="button"
-                disabled={auth.pending}
-                onPress={auth.retryLocalCredentialRemoval}
-                style={styles.retryButton}
-              >
-                <Text style={styles.retryButtonText}>
-                  {auth.pending ? 'Retrying…' : 'Retry local cleanup'}
-                </Text>
-              </Pressable>
-            ) : null}
-            {auth.notice === 'sign-out-incomplete' ? (
-              <Pressable
-                accessibilityRole="button"
-                disabled={auth.pending}
-                onPress={auth.signOut}
-                style={styles.retryButton}
-              >
-                <Text style={styles.retryButtonText}>
-                  {auth.pending ? 'Signing out…' : 'Retry sign out'}
-                </Text>
-              </Pressable>
-            ) : null}
-            {auth.notice === 'sign-out-recovery-pending' ||
+            {auth.notice === 'sign-out-incomplete' ||
+            auth.notice === 'sign-out-recovery-pending' ||
             auth.notice === 'sign-out-marker-unavailable' ? (
-              <Pressable
-                accessibilityRole="button"
-                disabled={auth.pending}
+              <Button
+                busy={auth.pending}
+                busyLabel="Signing out…"
+                label="Retry sign out"
                 onPress={auth.signOut}
-                style={styles.retryButton}
-              >
-                <Text style={styles.retryButtonText}>
-                  {auth.pending ? 'Signing out…' : 'Retry sign out'}
-                </Text>
-              </Pressable>
+              />
             ) : null}
-          </View>
-        ) : null}
-        {mode === 'demo' ? (
-          <View style={styles.entryChoices}>
-            {profiles.map((profile) => (
-              <Pressable
-                accessibilityHint="Starts local Demo access for this synthetic member"
-                accessibilityLabel={`Enter Demo as ${profile.displayName}, sample member`}
-                accessibilityRole="button"
-                disabled={pending}
-                key={profile.id}
-                onPress={() => startDemo(profile.id)}
-                style={({ pressed }) => [
-                  styles.entryChoice,
-                  pending && styles.disabledChoice,
-                  ...interactionFeedback({ pressed }),
-                ]}
-                testID={`demo-entry-${profile.id}`}
-              >
-                <Text style={styles.entryChoiceName}>{profile.displayName}</Text>
-                <Text style={styles.entryChoiceBody}>Sample member · local only</Text>
-              </Pressable>
-            ))}
           </View>
         ) : null}
         {pending || authPending ? (
-          <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
+          <Text accessibilityLiveRegion="polite" style={styles.warmNote}>
             {authPending ? 'Signing in…' : 'Starting the sample Demo…'}
           </Text>
         ) : null}
       </Animated.ScrollView>
-    </SafeAreaFrame>
+      {(visibleMode === 'welcome' || visibleMode === 'demo') &&
+      demoAccessEnabled &&
+      !inviteGroupId ? (
+        <Glass
+          accessibilityLabel="Try Demo"
+          style={[styles.demoSheet, { paddingBottom: entryInsets.bottom + 12 }]}
+          variant="sheet"
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: visibleMode === 'demo' }}
+            disabled={authPending}
+            onPress={() => {
+              setSelectedDemoMemberId(null);
+              setMode(visibleMode === 'demo' ? 'welcome' : 'demo');
+            }}
+            style={styles.demoGrab}
+            testID="try-demo"
+          >
+            <View style={styles.demoHandle} />
+            <Text style={styles.demoTitle}>Try Demo</Text>
+          </Pressable>
+          {visibleMode === 'demo' ? (
+            <>
+              <Text accessibilityRole="header" style={styles.demoHeader}>
+                Choose a Demo member
+              </Text>
+              <Text style={styles.demoSub}>Synthetic members, kept apart from real accounts.</Text>
+              <ListGroup>
+                {profiles.map((profile, index) => (
+                  <ListRow
+                    accessibilityHint="Starts local Demo access for this synthetic member"
+                    accessibilityLabel={`Enter Demo as ${profile.displayName}, sample member`}
+                    disabled={pending}
+                    first={index === 0}
+                    key={profile.id}
+                    label={profile.displayName}
+                    leading={
+                      <Avatar
+                        color={memberColor(profile.id)}
+                        name={profile.displayName}
+                        size={32}
+                      />
+                    }
+                    note={`${index === 0 ? 'Owner' : 'Member'} · synthetic`}
+                    onPress={() => startDemo(profile.id)}
+                    testID={`demo-entry-${profile.id}`}
+                  />
+                ))}
+              </ListGroup>
+            </>
+          ) : null}
+        </Glass>
+      ) : null}
+    </WarmFrame>
   );
 }
 
@@ -2157,6 +2134,92 @@ function MainNavigation({
 }
 
 const styles = StyleSheet.create({
+  warmPage: { backgroundColor: WARM.bg, flex: 1 },
+  launch: {
+    alignItems: 'center',
+    backgroundColor: WARM.bg,
+    flex: 1,
+    gap: 18,
+    justifyContent: 'center',
+  },
+  launchIcon: { borderRadius: 26, height: 112, width: 112 },
+  launchWord: { color: WARM.ink, letterSpacing: -0.6, ...serif(34, '500') },
+  launchLate: { color: WARM.muted, fontFamily: FONT.body, fontSize: 13, marginTop: 6 },
+  warmEntry: {
+    alignSelf: 'center',
+    flexGrow: 1,
+    maxWidth: LAYOUT.maxWidth,
+    paddingHorizontal: LAYOUT.gutter,
+    width: '100%',
+  },
+  warmWelcome: { justifyContent: 'center' },
+  warmBrand: { alignItems: 'center', gap: 14, marginBottom: 36 },
+  warmIcon: { borderRadius: 22, height: 96, width: 96 },
+  warmWord: { color: WARM.ink, letterSpacing: -0.6, ...serif(38, '500') },
+  warmTagline: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 15,
+    lineHeight: 22,
+    maxWidth: 280,
+    textAlign: 'center',
+  },
+  warmActions: { gap: 12 },
+  warmForm: { gap: 0 },
+  warmAlert: {
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderColor: 'rgba(224, 112, 58, 0.35)',
+    borderRadius: 14,
+    borderWidth: 1,
+    color: WARM.ink,
+    fontFamily: FONT.body,
+    fontSize: 13.5,
+    lineHeight: 19,
+    marginBottom: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  warmLead: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 14.5,
+    lineHeight: 21,
+    marginBottom: 14,
+  },
+  warmNote: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  warmLink: { color: WARM.ink, fontWeight: '600', textDecorationLine: 'underline' },
+  warmRetry: { alignSelf: 'center', marginBottom: 8 },
+  warmPanel: { gap: 8, marginTop: 18 },
+  demoSheet: {
+    alignSelf: 'center',
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
+    borderRadius: 28,
+    bottom: 0,
+    gap: 10,
+    maxWidth: LAYOUT.maxWidth,
+    paddingHorizontal: 18,
+    position: 'absolute',
+    width: '100%',
+  },
+  demoGrab: { alignItems: 'center', gap: 6, minHeight: 52, paddingTop: 10 },
+  demoHandle: { backgroundColor: 'rgba(51, 35, 26, 0.25)', borderRadius: 3, height: 5, width: 40 },
+  demoHeader: { color: WARM.ink, textAlign: 'center', ...serif(20) },
+  demoSub: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 13,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  demoTitle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 15, fontWeight: '600' },
   page: {
     alignItems: 'center',
     backgroundColor: COLORS.background,

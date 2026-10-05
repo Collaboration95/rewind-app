@@ -150,9 +150,11 @@ describe('Rewind Home start screen', () => {
     expect(result.getByTestId('application-safe-area')).toBeTruthy();
   });
 
-  it('uses a light status bar on the dark application shell', async () => {
-    await render(<App />);
+  it('uses a dark status bar on the cream launch and a light one on the dark Demo shell', async () => {
+    const result = await render(<App />);
 
+    expect(mockStatusBar).toHaveBeenCalledWith({ style: 'dark' });
+    await result.findByRole('header', { name: 'Weekend People' });
     expect(mockStatusBar).toHaveBeenCalledWith({ hidden: true, style: 'light' });
   });
 
@@ -188,6 +190,7 @@ describe('Rewind Home start screen', () => {
           jobId: 'clip-job-1',
           state: 'sealed',
           durationSeconds: 4,
+          mediaType: 'video',
           createdAt: '2026-09-10T12:00:00.000Z',
           updatedAt: '2026-09-10T12:01:00.000Z',
           attempts: 1,
@@ -232,7 +235,7 @@ describe('Rewind Home start screen', () => {
       await fireEvent.press(result.getByTestId(`nav-${area.key}`));
 
       if (area.key === 'camera') {
-        expect(await result.findByRole('header', { name: 'Add a still moment' })).toBeTruthy();
+        expect(await result.findByTestId('camera-screen')).toBeTruthy();
       } else if (area.key === 'archive') {
         expect(await result.findByRole('header', { name: 'Premiere unavailable' })).toBeTruthy();
       } else {
@@ -505,7 +508,7 @@ describe('Rewind Home start screen', () => {
     await result.findByRole('button', { name: 'Add a moment' });
 
     await fireEvent.press(result.getByRole('button', { name: 'Add a moment' }));
-    expect(await result.findByRole('header', { name: 'Add a still moment' })).toBeTruthy();
+    expect(await result.findByTestId('camera-screen')).toBeTruthy();
   });
 
   it('shows the repository-backed prompt, countdown, quota, and locked-safe state', async () => {

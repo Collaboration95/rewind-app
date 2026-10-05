@@ -22,12 +22,13 @@ test('Expo web config and manifest describe an installable standalone shell', ()
   assert.equal(appJson.expo.web.themeColor, manifest.theme_color);
   assert.equal(appJson.expo.web.backgroundColor, manifest.background_color);
   assert.equal(manifest.theme_color, manifest.background_color);
-  assert.equal(manifest.icons.length, 2);
+  assert.equal(manifest.icons.length, 3);
   assert.deepEqual(
-    manifest.icons.map(({ sizes, type }) => ({ sizes, type })),
+    manifest.icons.map(({ sizes, type, purpose }) => ({ sizes, type, purpose })),
     [
-      { sizes: '192x192', type: 'image/png' },
-      { sizes: '512x512', type: 'image/png' },
+      { sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   );
 });
@@ -37,9 +38,9 @@ test('the web shell registers a bounded offline fallback without offline sync', 
   assert.match(index, /serviceWorker\.register\('\/sw\.js'/);
   assert.match(index, /viewport-fit=cover/);
   assert.match(index, /name="apple-mobile-web-app-capable" content="yes"/);
-  assert.match(index, /name="apple-mobile-web-app-status-bar-style" content="black-translucent"/);
-  assert.match(index, /name="theme-color" content="#252326"/);
-  assert.match(index, /background: #252326/);
+  assert.match(index, /name="apple-mobile-web-app-status-bar-style" content="default"/);
+  assert.match(index, /name="theme-color" content="#f6ede3"/);
+  assert.match(index, /background: #f6ede3/);
   assert.match(index, /min-height: 100dvh/);
   assert.match(index, /margin: 0/);
   assert.match(serviceWorker, /const CACHE_NAME = 'rewind-shell-v3-__BUILD_ID__'/);
@@ -318,6 +319,16 @@ test('private API/media, invite query navigations and writes never enter the she
   assert.equal((await worker.request('/api/real/current', { method: 'POST' })).status, 503);
   assert.equal(worker.calls.filter((call) => call.method === 'POST').length, 2);
   assert.equal(worker.skipped, 0);
+});
+
+test('public legal pages load as documents, never the SPA shell', async () => {
+  const worker = workerFixture();
+  worker.installShell();
+  await worker.lifecycle('install');
+  worker.network.clear();
+  for (const path of ['/privacy', '/support', '/terms', '/terms.html'])
+    assert.equal(await worker.request(path, { mode: 'navigate' }), undefined);
+  assert.match(await (await worker.request('/groups/group', { mode: 'navigate' })).text(), /old/);
 });
 
 test('offline entry uses its installed build; an incomplete upgrade preserves the previous cache', async () => {

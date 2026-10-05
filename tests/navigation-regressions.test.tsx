@@ -125,7 +125,7 @@ describe('application navigation regressions', () => {
     expect(result.queryByRole('header', { name: 'Create a group' })).toBeNull();
   });
 
-  it('enters video from Camera, cancels recording on Back, and ignores a late completion', async () => {
+  it('enters video from Camera, cancels recording on Close, and ignores a late completion', async () => {
     const fixture = videoPlatform();
     const result = await activeApp({ cameraPlatform: fixture.platform });
 
@@ -138,7 +138,7 @@ describe('application navigation regressions', () => {
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-recording');
 
-    await fireEvent.press(result.getByRole('button', { name: 'Back' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Close' }));
     expect(fixture.cancelRecording).toHaveBeenCalledTimes(1);
     expect(await result.findByTestId('camera-screen')).toBeTruthy();
     expect(result.queryByTestId('video-capture-screen')).toBeNull();

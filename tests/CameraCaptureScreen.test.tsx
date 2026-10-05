@@ -1,6 +1,7 @@
 import React from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import { AppState } from 'react-native';
+import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import { CameraCaptureScreen } from '../src/capture/CameraCaptureScreen';
 import {
@@ -9,6 +10,13 @@ import {
   InMemoryImageMetadataStore,
 } from '../src/capture';
 import type { CameraPlatform } from '../src/capture/contracts';
+import {
+  ContributionStatusProvider,
+  type ContributionStatus,
+  type ContributionStatusStore,
+} from '../src/capture/contribution-status';
+
+jest.mock('react-native-safe-area-context', () => mockSafeAreaContext);
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
@@ -169,7 +177,7 @@ describe('CameraCaptureScreen', () => {
     const result = await screen(platform);
 
     await result.findByTestId('camera-unsupported');
-    expect(result.queryByRole('button', { name: 'Take still image' })).toBeNull();
+    expect(result.queryByRole('button', { name: 'Take photo' })).toBeNull();
     await fireEvent.press(result.getByRole('button', { name: 'Choose an image file' }));
     await result.findByTestId('camera-preview-panel');
     expect(platform.pickStillFile).toHaveBeenCalledTimes(1);
@@ -181,7 +189,7 @@ describe('CameraCaptureScreen', () => {
     const result = await screen(new DemoCameraPlatform(), { files, metadata });
 
     await result.findByTestId('camera-capture');
-    expect(result.getByRole('button', { name: 'Take still image' })).toBeEnabled();
+    expect(result.getByRole('button', { name: 'Take photo' })).toBeEnabled();
     await fireEvent.press(result.getByTestId('camera-capture'));
     expect(await result.findByTestId('camera-demo-preview')).toBeTruthy();
     expect(result.queryByText(/fixture:\/\//)).toBeNull();
@@ -222,7 +230,7 @@ describe('CameraCaptureScreen', () => {
     await result.findByTestId('camera-live-preview');
     const screenRoot = result.getByTestId('camera-screen');
     const viewfinder = result.getByTestId('camera-live-preview');
-    const shutter = result.getByRole('button', { name: 'Take still image' });
+    const shutter = result.getByRole('button', { name: 'Take photo' });
     expect(screenRoot.props.style).toEqual(
       expect.arrayContaining([expect.objectContaining({ padding: 0 })]),
     );
@@ -233,10 +241,8 @@ describe('CameraCaptureScreen', () => {
     await act(async () => {
       fireEvent(result.getByTestId('camera-live-preview'), 'cameraReady');
     });
-    await waitFor(() =>
-      expect(result.getByRole('button', { name: 'Take still image' })).toBeEnabled(),
-    );
-    await fireEvent.press(result.getByRole('button', { name: 'Take still image' }));
+    await waitFor(() => expect(result.getByRole('button', { name: 'Take photo' })).toBeEnabled());
+    await fireEvent.press(result.getByRole('button', { name: 'Take photo' }));
     await result.findByTestId('camera-preview-panel');
     expect(result.getByRole('button', { name: 'Retake' })).toBeTruthy();
   });
@@ -280,21 +286,21 @@ describe('CameraCaptureScreen', () => {
       { camera: 'supported' as const, microphone: 'supported' as const },
       { camera: 'undetermined' as const, microphone: 'granted' as const },
       'camera-permission-undecided',
-      'Allow access to continue',
+      'Allow the camera',
     ],
     [
       'permission-denied',
       { camera: 'supported' as const, microphone: 'supported' as const },
       { camera: 'denied' as const, microphone: 'granted' as const },
       'camera-permission-denied',
-      'Camera access is off',
+      'The camera is off',
     ],
     [
       'permission-blocked',
       { camera: 'supported' as const, microphone: 'supported' as const },
       { camera: 'blocked' as const, microphone: 'granted' as const },
       'camera-permission-blocked',
-      'Permission is blocked',
+      'The camera is off',
     ],
   ])(
     'renders the %s state without exposing a capture control',
@@ -303,7 +309,7 @@ describe('CameraCaptureScreen', () => {
       const result = await screen(platform);
       expect(await result.findByTestId(testID)).toBeTruthy();
       expect(result.getByText(title)).toBeTruthy();
-      expect(result.queryByRole('button', { name: 'Take still image' })).toBeNull();
+      expect(result.queryByRole('button', { name: 'Take photo' })).toBeNull();
     },
   );
 
@@ -317,10 +323,10 @@ describe('CameraCaptureScreen', () => {
     });
     const result = await screen(platform);
     await result.findByTestId('camera-permission-undecided');
-    await fireEvent.press(result.getByRole('button', { name: 'Allow camera access' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Continue' }));
     await waitFor(() => expect(requestPermissions).toHaveBeenCalled());
     await result.findByTestId('camera-capture');
-    expect(result.getByRole('button', { name: 'Take still image' })).toBeEnabled();
+    expect(result.getByRole('button', { name: 'Take photo' })).toBeEnabled();
   });
 
   it('keeps a capture failure actionable', async () => {
@@ -499,5 +505,74 @@ describe('CameraCaptureScreen', () => {
     expect(files.size).toBe(1);
 
     appState.restore();
+  });
+
+  it('seals a photo, shows Sealed with Done only, and Done closes the camera', async () => {
+    const onBack = jest.fn();
+    const onSubmitPhoto = jest.fn(async (): Promise<ContributionStatus> => ({
+      createdAt: '2026-09-10T00:00:00.000Z',
+      retryable: false,
+      state: 'sealed',
+    }));
+    const result = await render(
+      <CameraCaptureScreen
+        fileStore={new InMemoryCaptureFileStore()}
+        metadataStore={new InMemoryImageMetadataStore()}
+        onBack={onBack}
+        onSubmitPhoto={onSubmitPhoto}
+        platform={new DemoCameraPlatform()}
+      />,
+    );
+    await fireEvent.press(await result.findByTestId('camera-capture'));
+    await result.findByTestId('camera-preview-panel');
+    expect(result.getByRole('radio', { name: 'Compact Digital' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
+
+    await result.findByTestId('camera-sealed');
+    expect(onSubmitPhoto).toHaveBeenCalledTimes(1);
+    expect(result.getByText('Nobody sees it before the film, not even you.')).toBeTruthy();
+    expect(result.queryByRole('button', { name: /Tell the group/ })).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Done' }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('turns the photo shutter off with less than 3 s left this week and says why', async () => {
+    const stored: ContributionStatus = {
+      allowance: {
+        countUsed: 4,
+        deletionAvailability: 'available',
+        deletionsUsed: 0,
+        maxCount: 5,
+        maxSeconds: 30,
+        secondsUsed: 28,
+      },
+      createdAt: '2026-09-10T00:00:00.000Z',
+      retryable: false,
+      state: 'sealed',
+    };
+    const store: ContributionStatusStore = {
+      clear: jest.fn().mockResolvedValue(undefined),
+      load: jest.fn().mockResolvedValue(stored),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    const result = await render(
+      <ContributionStatusProvider
+        scope={{ groupId: 'g', memberId: 'm', sessionId: 's' }}
+        store={store}
+      >
+        <CameraCaptureScreen
+          fileStore={new InMemoryCaptureFileStore()}
+          metadataStore={new InMemoryImageMetadataStore()}
+          platform={new DemoCameraPlatform()}
+        />
+      </ContributionStatusProvider>,
+    );
+    expect(await result.findByText('1 left · 2 s')).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Take photo' })).toBeDisabled();
+    expect(result.getByText('A photo needs 3 s; you have 2 s left this week.')).toBeTruthy();
+    // A restored status never shows the Sealed screen; the lock count opens it.
+    expect(result.queryByTestId('camera-sealed')).toBeNull();
+    await fireEvent.press(result.getByRole('button', { name: 'Your moments: 4 sealed' }));
+    expect(await result.findByTestId('camera-contribution-status-sealed')).toBeTruthy();
   });
 });

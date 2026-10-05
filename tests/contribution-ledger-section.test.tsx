@@ -21,6 +21,7 @@ function page(ids: string[], hasMore = false, memberId = 'member-1'): Contributi
       jobId: `job-${contributionId}`,
       state: 'sealed',
       durationSeconds: 4,
+      mediaType: 'video',
       createdAt: '2026-09-10T12:00:00.000Z',
       updatedAt: '2026-09-10T12:00:00.000Z',
       attempts: 1,

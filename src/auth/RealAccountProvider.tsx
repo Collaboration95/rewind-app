@@ -32,11 +32,15 @@ interface RealAccountContextValue {
   signIn: (username: string, password: string) => Promise<boolean>;
   registerAccount: (username: string, password: string) => Promise<RegistrationOutcome>;
   signOut: () => Promise<void>;
+  /** Delete the signed-in account after re-checking its password (#428). */
+  deleteAccount: (password: string) => Promise<AccountDeletionOutcome>;
   retryLocalCredentialRemoval: () => Promise<void>;
   retryRestore: () => void;
   authenticatedRequest: (path: string, init?: RequestInit) => Promise<Response>;
   realtimeAuthorizationHeader: () => string | undefined;
 }
+
+export type AccountDeletionOutcome = 'deleted' | 'incorrect' | 'throttled' | 'unavailable';
 
 const RealAccountContext = createContext<RealAccountContextValue | null>(null);
 
@@ -357,6 +361,37 @@ export function RealAccountProvider({
     }
   }, [clearLocalSession, client]);
 
+  const deleteAccount = useCallback(
+    async (password: string): Promise<AccountDeletionOutcome> => {
+      if (!client || state !== 'active') return 'unavailable';
+      setPending(true);
+      try {
+        const response = await client.request(
+          '/auth/account/delete',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password }),
+          },
+          tokenRef.current,
+        );
+        if (response.status === 403) return 'incorrect';
+        if (response.status === 429) return 'throttled';
+        if (!response.ok) return 'unavailable';
+        // The server revoked every session with the account, so only this
+        // device's copy of the credential is left to clear.
+        await clearLocalSession();
+        if (mounted.current) setNotice('deleted');
+        return 'deleted';
+      } catch {
+        return 'unavailable';
+      } finally {
+        if (mounted.current) setPending(false);
+      }
+    },
+    [clearLocalSession, client, state],
+  );
+
   const authenticatedRequest = useCallback(
     async (path: string, init: RequestInit = {}) => {
       if (!client || state !== 'active' || !session) throw new AuthRequestError(401, 'expired');
@@ -402,6 +437,7 @@ export function RealAccountProvider({
       signIn,
       registerAccount,
       signOut,
+      deleteAccount,
       retryLocalCredentialRemoval,
       retryRestore: () => {
         setState('loading');
@@ -416,6 +452,7 @@ export function RealAccountProvider({
       realtimeAuthorizationHeader,
       baseUrl,
       client,
+      deleteAccount,
       notice,
       pending,
       retryLocalCredentialRemoval,

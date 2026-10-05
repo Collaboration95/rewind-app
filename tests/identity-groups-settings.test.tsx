@@ -79,7 +79,6 @@ describe('local Demo access lifecycle', () => {
     await result.findByTestId('welcome-entry');
     expect(await AsyncStorage.getItem(DEMO_SESSION_STORAGE_KEY)).toBeNull();
 
-    await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
     await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
     await fireEvent.press(result.getByTestId('demo-entry-demo-2'));
     await result.findByRole('header', { name: 'Weekend People' });
@@ -154,8 +153,10 @@ describe('local Demo access lifecycle', () => {
       const result = await render(<App />);
       await result.findByTestId('welcome-entry');
       expect(result.queryByTestId('demo-entry-demo-1')).toBeNull();
-      expect(result.queryByRole('button', { name: 'Try Demo' })).toBeNull();
-      await fireEvent.press(result.getByRole('button', { name: 'Sign in' }));
+      // A5: Demo members stay in the closed Try Demo sheet until it's opened.
+      expect(
+        result.getByRole('button', { name: 'Try Demo' }).props.accessibilityState?.expanded,
+      ).toBe(false);
       await fireEvent.press(result.getByRole('button', { name: 'Try Demo' }));
       expect(result.getByRole('header', { name: 'Choose a Demo member' })).toBeTruthy();
       result.unmount();

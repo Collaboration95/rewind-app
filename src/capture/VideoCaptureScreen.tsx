@@ -1,17 +1,7 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAllowLandscape } from '../runtime/PortraitGuard';
 import { CameraView } from 'expo-camera';
-import {
-  AppState,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  useWindowDimensions,
-} from 'react-native';
+import { AppState, Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
@@ -20,11 +10,9 @@ import {
   type AuthenticatedRequest,
 } from './real-account-video-runtime';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
-import { COLORS } from '../theme';
 import {
-  CAPTURE_MODE_LABELS,
-  CAPTURE_MODES,
   DEFAULT_CAPTURE_MODE,
+  MAX_CLIP_DURATION_SECONDS,
   type CaptureMode,
   type ClipUploadInput,
   type PendingClipUpload,
@@ -40,11 +28,7 @@ import {
   reconcileContributionStatus,
 } from './capture-interruption';
 import { runCaptureRestartRecovery } from './reset';
-import {
-  ContributionStatusPanel,
-  useOptionalContributionStatus,
-  type ContributionStatus,
-} from './contribution-status';
+import { useOptionalContributionStatus, type ContributionStatus } from './contribution-status';
 import {
   BoundedVideoRecordingSession,
   validateRecordedClip,
@@ -54,7 +38,6 @@ import {
   clampTrimmedPlaybackTime,
   ClipReviewSession,
   InMemoryPendingClipMetadataStore,
-  validateTrimBounds,
 } from './video-review';
 import {
   ExpoCameraPlatform,
@@ -62,7 +45,32 @@ import {
   removeManagedRecordedClip,
   isCaptureCancelled,
 } from './platform';
+import type { ContributionLedgerAllowance } from '../domain/contributions';
 import type { CameraPlatform, PermissionSnapshot } from './contracts';
+import { Button, Dialog, IconButton, useToast } from '../ui/primitives';
+import { FONT } from '../ui/tokens';
+import {
+  CamBottom,
+  CamButton,
+  CamCard,
+  CamTop,
+  CameraFrame,
+  FailedPanel,
+  LookPicker,
+  ModeSwitch,
+  MomentsButton,
+  MomentsDialog,
+  Notice,
+  ReviewActions,
+  SealedOverlay,
+  Shutter,
+  ShutterRow,
+  Tag,
+  TrimBar,
+  UploadPanel,
+  allowanceLeft,
+  clock,
+} from './camera-ui';
 
 type AccessStatus =
   | 'checking'
@@ -82,8 +90,13 @@ export interface VideoCaptureScreenProps {
     authenticatedRequest: AuthenticatedRequest;
     transferMode?: 'server' | 'direct';
   };
+  /** The Photo tab of the mode switch (and Close, when `onClose` is not given). */
   onBack?: () => void;
+  /** Close (×) and Done: back to the group. */
+  onClose?: () => void;
   onContributionDeleted?: () => void;
+  /** This week's allowance from the group ledger, for the pill before any moment exists. */
+  allowance?: ContributionLedgerAllowance | null;
 }
 
 /** The server rejects clips over 15 seconds; keep a processed clip below it. */
@@ -161,9 +174,11 @@ function isUploadCancellation(error: unknown): boolean {
 
 export function VideoCaptureScreen({
   onBack,
+  onClose,
   onContributionDeleted,
   platform: platformProp,
   runtimeClient = null,
+  allowance: allowanceProp = null,
   realAccount,
 }: VideoCaptureScreenProps = {}) {
   useAllowLandscape();
@@ -208,26 +223,19 @@ export function VideoCaptureScreen({
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const { height: viewportHeight, width: viewportWidth } = useWindowDimensions();
-  // Size the web viewfinder to the camera's real shape (tall when the phone
-  // is upright, wide when it is turned), like a camera app.
+  // Fill the screen when the camera's shape matches it (phone upright, camera
+  // upright); otherwise show the whole frame so nothing recorded is hidden.
   const [previewAspect, setPreviewAspect] = useState(9 / 16);
-  const webPreviewHeight = Math.max(
-    160,
-    Math.min(
-      // About 45% of the screen keeps the record controls visible below it.
-      viewportHeight * 0.45 - (recording ? 96 : 0),
-      Math.max(160, viewportWidth - 48) / previewAspect,
-    ),
-  );
-  const webPreviewWidth = webPreviewHeight * previewAspect;
+  const previewFit =
+    previewAspect < 1 === viewportWidth / Math.max(1, viewportHeight) < 1 ? 'cover' : 'contain';
   const [browserPreviewStream, setBrowserPreviewStream] = useState<MediaStream | null>(null);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [clip, setClip] = useState<RecordedClip | null>(null);
   const [review, setReview] = useState<ClipReviewSession | null>(null);
   const [reviewPlayerVisible, setReviewPlayerVisible] = useState(true);
-  const [startText, setStartText] = useState('0');
-  const [endText, setEndText] = useState('0');
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(0);
   const [mode, setMode] = useState<CaptureMode>(DEFAULT_CAPTURE_MODE);
   // Web applies the retro look on this device before upload (null when idle).
   const [retroPercent, setRetroPercent] = useState<number | null>(null);
@@ -239,6 +247,13 @@ export function VideoCaptureScreen({
   });
   const [creatingSyntheticClip, setCreatingSyntheticClip] = useState(false);
   const [retryInFlight, setRetryInFlight] = useState(false);
+  // V8 shows only for a seal made on this screen, never for a restored status.
+  const [sealedHere, setSealedHere] = useState(false);
+  // Cancel and "Back to review" return to the review instead of V7.
+  const [failureDismissed, setFailureDismissed] = useState(false);
+  const [momentsOpen, setMomentsOpen] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const toast = useToast();
   const statusContext = useOptionalContributionStatus();
   const [localContributionStatus, setLocalContributionStatus] = useState<ContributionStatus | null>(
     null,
@@ -437,8 +452,8 @@ export function VideoCaptureScreen({
       setClip(selected);
       setReview(nextReview);
       setReviewPlayerVisible(true);
-      setStartText('0');
-      setEndText(String(selected.durationSeconds));
+      setTrimStart(0);
+      setTrimEnd(selected.durationSeconds);
       setMode(DEFAULT_CAPTURE_MODE);
       return true;
     },
@@ -653,15 +668,22 @@ export function VideoCaptureScreen({
     }
   }, [isCaptureActive, platform, refresh]);
 
+  // Longest clip: 15 s, or the seconds left this week when that is less.
+  const allowance = contributionStatus?.allowance ?? allowanceProp;
+  const left = allowanceLeft(allowance);
+  const clipLimit = Math.min(MAX_CLIP_DURATION_SECONDS, left?.seconds ?? MAX_CLIP_DURATION_SECONDS);
+
   useEffect(() => {
     if (!recording || recordingStartedAt === null || !recorder) return undefined;
     const interval = setInterval(() => {
       const elapsed = Math.min(15, (Date.now() - recordingStartedAt) / 1000);
       recorder.setElapsed(elapsed);
       setElapsedSeconds(elapsed);
+      // The platform stops by itself at 15 s; a smaller weekly limit stops here.
+      if (clipLimit < MAX_CLIP_DURATION_SECONDS && elapsed >= clipLimit) recorder.stop();
     }, 250);
     return () => clearInterval(interval);
-  }, [recording, recordingStartedAt, recorder]);
+  }, [clipLimit, recording, recordingStartedAt, recorder]);
 
   const startRecording = async () => {
     if (!isCaptureActive() || !recorder || access !== 'ready') return;
@@ -700,15 +722,6 @@ export function VideoCaptureScreen({
         fileError instanceof Error ? fileError.message : 'The video file could not be used.',
       );
     }
-  };
-
-  const cancelRecording = () => {
-    recorder?.cancel();
-    setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
-    setRecording(false);
-    setRecordingStartedAt(null);
-    setElapsedSeconds(0);
-    setError(null);
   };
 
   const retake = async () => {
@@ -754,19 +767,10 @@ export function VideoCaptureScreen({
     setError(null);
   };
 
-  const saveReview = () => {
-    if (!review || !clip) return;
-    const trim = review.setTrim(Number(startText), Number(endText));
-    if (!trim.ok) {
-      setError(
-        trim.reason === 'too_short'
-          ? 'Keep at least half a second in the clip.'
-          : 'Choose trim bounds inside the recorded clip.',
-      );
-      return;
-    }
-    review.setMode(mode);
-    setError(null);
+  const changeTrim = (start: number, end: number) => {
+    if (!review || !review.setTrim(start, end).ok) return;
+    setTrimStart(start);
+    setTrimEnd(end);
   };
 
   const describeUpload = useCallback(
@@ -808,6 +812,7 @@ export function VideoCaptureScreen({
       if (!isContributionWorkActive(operation)) return null;
       if (processed.status === 'ready') {
         setContributionStatus(describeUpload(uploaded, 'sealed'));
+        setSealedHere(true);
       } else if (processed.status === 'processing') {
         setContributionStatus(describeUpload(uploaded, 'processing'));
       } else if (processed.status === 'failed') {
@@ -891,6 +896,7 @@ export function VideoCaptureScreen({
       );
       return;
     }
+    setFailureDismissed(false);
     const reviewMetadata = review.getReview();
     const signature = JSON.stringify([
       clip.sourceUri,
@@ -1102,6 +1108,8 @@ export function VideoCaptureScreen({
     if (!review || !clip || !uploadSession) return;
     retryInFlightRef.current = true;
     setRetryInFlight(true);
+    setFailureDismissed(false);
+    toast('Uploading again. It finishes in the background.');
     const operation = beginContributionWork(true);
     const prepareInput = async (input: ClipUploadInput): Promise<ClipUploadInput> => {
       await review.savePending(input.idempotencyKey);
@@ -1245,11 +1253,15 @@ export function VideoCaptureScreen({
             state: 'failed',
           },
     );
-    setError('The upload was cancelled.');
+    // Cancel keeps the moment in review; it isn't counted until sealed.
+    setFailureDismissed(true);
+    setError(null);
+    toast('Upload cancelled. Your moment is still here to seal.');
     try {
       await uploadSession.cancel();
     } catch (cancelError) {
       if (!isCaptureActive()) return;
+      setFailureDismissed(false);
       const failure = classifyContributionFailure(cancelError);
       setUploadProgress({ status: 'failed', percent: 10, message: failure.message });
       setError(`The upload could not be cancelled. ${failure.message}`);
@@ -1262,18 +1274,23 @@ export function VideoCaptureScreen({
     setContributionStatus,
     uploadProgress.status,
     uploadSession,
+    toast,
   ]);
 
-  const leaveCapture = useCallback(() => {
-    const currentClip = clipRef.current;
-    clipRef.current = null;
-    reviewRef.current = null;
-    void cancelActiveWork().finally(async () => {
-      await waitForReviewPlayerUnmount();
-      if (currentClip) void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
-    });
-    onBack?.();
-  }, [cancelActiveWork, onBack, waitForReviewPlayerUnmount]);
+  const leaveCapture = useCallback(
+    (exit: (() => void) | undefined) => {
+      const currentClip = clipRef.current;
+      clipRef.current = null;
+      reviewRef.current = null;
+      void cancelActiveWork().finally(async () => {
+        await waitForReviewPlayerUnmount();
+        if (currentClip)
+          void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
+      });
+      exit?.();
+    },
+    [cancelActiveWork, waitForReviewPlayerUnmount],
+  );
 
   const contributionFailed = contributionStatus?.state === 'failed';
   const canRetryContribution = contributionFailed && contributionStatus.retryable && !retryInFlight;
@@ -1319,6 +1336,7 @@ export function VideoCaptureScreen({
       clearContributionStatus();
       await statusContext?.refreshStatus();
       onContributionDeleted?.();
+      setMomentsOpen(false);
       setError('Contribution deleted. Your weekly allowance is restored for a replacement.');
     } catch (deleteError) {
       if (!isCaptureActive()) return;
@@ -1356,77 +1374,180 @@ export function VideoCaptureScreen({
     uploadSessionId,
     unmountReviewPlayer,
   ]);
-  const playbackBounds =
-    clip && review
-      ? (() => {
-          const draft = validateTrimBounds(
-            Number(startText),
-            Number(endText),
-            clip.durationSeconds,
-          );
-          return draft.ok ? draft.bounds : review.getReview();
-        })()
-      : null;
+  const inReview = Boolean(review && clip && !recording);
+  const uploading =
+    retroPercent !== null ||
+    uploadProgress.status === 'uploading' ||
+    uploadProgress.status === 'validating';
+  const showFailure = inReview && contributionFailed && !failureDismissed && !uploading;
+  const showSealed = sealedHere && contributionStatus?.state === 'sealed';
+  const hasFileFallback = Boolean(platform.supportsFileFallback && platform.pickVideoFile);
+  const canCreateDemoClip = Boolean(
+    platform.kind === 'demo' && runtimeClient?.createSyntheticDemoClip && demoSession?.session,
+  );
+  const viewfinder = access === 'ready' && !clip;
+  const browserPreviewMissing = Platform.OS === 'web' && !browserPreviewStream;
+  const exitTo = onClose ?? onBack;
+  const close = () => {
+    // A moment in review is lost on close, so ask first.
+    if (clip && !uploading) setConfirmDiscard(true);
+    else leaveCapture(exitTo);
+  };
+  // V7 copy by failure kind; the message itself is in the notice below it.
+  const failure = contributionFailed
+    ? contributionStatus.reason === 'quota_exceeded'
+      ? { title: 'Contribution limit reached', body: 'No allowance remains.' }
+      : contributionStatus.retryable
+        ? {
+            title: 'Couldn’t upload',
+            body: 'It’s kept on this phone and doesn’t count until it’s sealed.',
+          }
+        : {
+            title: 'Contribution could not be prepared',
+            body: 'This contribution cannot be retried. Retake it to submit a new contribution.',
+          }
+    : null;
+  const guidance =
+    Platform.OS === 'web'
+      ? `Up to ${clipLimit} s with sound · portrait or landscape`
+      : `Up to ${clipLimit} s with sound · hold your phone upright`;
+
   return (
-    <ScrollView
-      contentContainerStyle={styles.screenContent}
-      keyboardShouldPersistTaps="handled"
-      style={styles.screen}
-      testID="video-capture-screen"
-    >
-      <View style={styles.header}>
-        {onBack ? (
-          <Pressable accessibilityRole="button" onPress={leaveCapture} style={styles.backButton}>
-            <Text style={styles.backText}>Back</Text>
-          </Pressable>
-        ) : null}
-        <Text style={styles.eyebrow}>CLIP CAPTURE</Text>
-        <Text accessibilityRole="header" style={styles.title}>
-          Record a contribution
-        </Text>
-        <Text style={styles.body} testID="video-portrait-guidance">
-          {Platform.OS === 'web'
-            ? 'Record in portrait or landscape, with microphone audio. Maximum duration: 15 seconds.'
-            : 'Portrait video with microphone audio. Maximum duration: 15 seconds.'}
-        </Text>
-      </View>
-      {access === 'checking' ? (
-        <Panel title="Checking recording access…" body="Camera and microphone are being checked." />
+    <CameraFrame bokeh={!viewfinder && !inReview} testID="video-capture-screen">
+      {viewfinder ? (
+        Platform.OS === 'web' ? (
+          <View style={StyleSheet.absoluteFill}>
+            <BrowserVideoPreview
+              fit={previewFit}
+              onAspect={setPreviewAspect}
+              stream={browserPreviewStream}
+            />
+          </View>
+        ) : (
+          <CameraView
+            facing="back"
+            mode="video"
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            testID="video-live-preview"
+          />
+        )
       ) : null}
-      {access === 'unsupported' ? (
-        <Panel
-          actionLabel={
-            platform.kind === 'demo' &&
-            runtimeClient?.createSyntheticDemoClip &&
-            demoSession?.session
-              ? creatingSyntheticClip
-                ? 'Preparing synthetic Demo clip…'
-                : 'Create synthetic Demo clip'
-              : platform.supportsFileFallback && platform.pickVideoFile
-                ? fileFallbackLabel
-                : undefined
-          }
-          disabled={creatingSyntheticClip}
-          onAction={
-            platform.kind === 'demo' &&
-            runtimeClient?.createSyntheticDemoClip &&
-            demoSession?.session
-              ? createSyntheticDemoClip
-              : platform.supportsFileFallback && platform.pickVideoFile
-                ? chooseVideoFile
-                : undefined
-          }
-          testID="video-unsupported"
-          title={
-            platform.fileFallbackIsCamera ? 'Record a video' : 'Recording is not supported here'
-          }
+      {inReview && clip ? (
+        <View pointerEvents="box-none" style={StyleSheet.absoluteFill} testID="video-review">
+          {reviewPlayerVisible ? (
+            <CapturedVideoReview
+              clip={clip}
+              endSeconds={trimEnd}
+              onMounted={onReviewPlayerMounted}
+              onUnmounted={onReviewPlayerUnmounted}
+              startSeconds={trimStart}
+            />
+          ) : null}
+          <CamBottom>
+            {clip.source === 'file' ? <Tag>Chosen from a file</Tag> : null}
+            {retroPercent !== null ? (
+              <UploadPanel
+                cancelLabel="Cancel retro look"
+                label={`Applying look ${retroPercent}%`}
+                onCancel={() => retroAbortRef.current?.abort()}
+                percent={retroPercent}
+                testID="video-retro-processing"
+              />
+            ) : uploading ? (
+              <UploadPanel
+                label={`Uploading ${uploadProgress.percent}%`}
+                onCancel={() => void cancelUpload()}
+                percent={uploadProgress.percent}
+                testID="video-uploading"
+              />
+            ) : showFailure && failure ? (
+              <FailedPanel
+                accessibilityLabel={`${failure.title}. ${failure.body}${contributionStatus?.message ? ` ${contributionStatus.message}` : ''}`}
+                detail={failure.body}
+                onBackToReview={canRetryContribution ? () => setFailureDismissed(true) : undefined}
+                onRetake={canRetryContribution ? undefined : () => void retake()}
+                onRetry={canRetryContribution ? () => void retryUpload() : undefined}
+                testID="camera-contribution-status-failed"
+                title={failure.title}
+              />
+            ) : uploadProgress.status === 'complete' && !contributionFailed ? (
+              <>
+                <Notice alert={false}>Upload queued as one pending contribution.</Notice>
+                <CamButton height={52} label="Retake" onPress={() => void retake()} />
+              </>
+            ) : (
+              <>
+                <TrimBar
+                  duration={clip.durationSeconds}
+                  end={trimEnd}
+                  onChange={changeTrim}
+                  start={trimStart}
+                />
+                <LookPicker
+                  disabled={retroPercent !== null}
+                  mode={mode}
+                  onChange={(option) => {
+                    setMode(option);
+                    review?.setMode(option);
+                  }}
+                />
+                <ReviewActions>
+                  <CamButton label="Retake" onPress={() => void retake()} style={styles.retake} />
+                  {contributionFailed && !canRetryContribution ? null : (
+                    <CamButton
+                      busy={retryInFlight}
+                      icon="lock"
+                      label="Seal"
+                      onPress={() => void (contributionFailed ? retryUpload() : upload())}
+                      primary
+                      style={styles.seal}
+                      testID="video-seal"
+                    />
+                  )}
+                </ReviewActions>
+              </>
+            )}
+            {error && access !== 'error' ? <Notice>{error}</Notice> : null}
+          </CamBottom>
+        </View>
+      ) : null}
+
+      <CamTop allowance={allowance} closeTestID="video-close" onClose={exitTo ? close : undefined}>
+        {viewfinder ? (
+          <View
+            accessibilityLabel={
+              recording
+                ? `Recording, ${Math.floor(elapsedSeconds)} of ${clipLimit} seconds`
+                : `Up to ${clipLimit} seconds`
+            }
+            accessible
+            style={styles.timer}
+            testID={recording ? 'video-recording' : undefined}
+          >
+            <View
+              style={[styles.dot, recording && styles.dotOn]}
+              {...(recording ? { dataSet: { rw: 'blink' } } : {})}
+            />
+            <Text style={styles.timerText}>
+              {clock(elapsedSeconds)} / {clock(clipLimit)}
+            </Text>
+          </View>
+        ) : null}
+      </CamTop>
+
+      {clip ? null : access === 'checking' ? (
+        <CamCard
+          body="Camera and microphone are being checked."
+          title="Checking recording access…"
+        />
+      ) : access === 'unsupported' ? (
+        <CamCard
           body={[
             platform.getVideoCaptureUnavailableReason?.(),
-            platform.kind === 'demo' &&
-            runtimeClient?.createSyntheticDemoClip &&
-            demoSession?.session
+            canCreateDemoClip
               ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
-              : platform.supportsFileFallback && platform.pickVideoFile
+              : hasFileFallback
                 ? platform.fileFallbackIsCamera
                   ? 'Opens your phone camera. Record up to 15 seconds in portrait or landscape; the video comes back here so you can review it before you submit.'
                   : 'Live recording is not supported here. Choose an MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
@@ -1434,251 +1555,171 @@ export function VideoCaptureScreen({
           ]
             .filter((message): message is string => Boolean(message))
             .join(' ')}
-        />
-      ) : null}
-      {access === 'temporarily-unavailable' ? (
-        <Panel
-          actionLabel={
-            platform.supportsFileFallback && platform.pickVideoFile
-              ? fileFallbackLabel
-              : 'Check again'
+          testID="video-unsupported"
+          title={
+            platform.fileFallbackIsCamera ? 'Record a video' : 'Recording is not supported here'
           }
-          onAction={
-            platform.supportsFileFallback && platform.pickVideoFile ? chooseVideoFile : refresh
-          }
+        >
+          {canCreateDemoClip ? (
+            <CamButton
+              busy={creatingSyntheticClip}
+              height={48}
+              label={
+                creatingSyntheticClip
+                  ? 'Preparing synthetic Demo clip…'
+                  : 'Create synthetic Demo clip'
+              }
+              onPress={() => void createSyntheticDemoClip()}
+              soft
+            />
+          ) : hasFileFallback ? (
+            <CamButton
+              height={48}
+              label={fileFallbackLabel}
+              onPress={() => void chooseVideoFile()}
+              soft
+            />
+          ) : null}
+        </CamCard>
+      ) : access === 'temporarily-unavailable' ? (
+        <CamCard
+          body={error ?? 'The device capability check is not ready yet. Try again shortly.'}
           testID="video-temporarily-unavailable"
           title="Recording is temporarily unavailable"
-          body={error ?? 'The device capability check is not ready yet. Try again shortly.'}
-        />
-      ) : null}
-      {access === 'permission-undecided' ? (
-        <Panel
-          actionLabel="Allow camera and microphone"
-          onAction={requestAccess}
+        >
+          <CamButton
+            height={48}
+            label={hasFileFallback ? fileFallbackLabel : 'Check again'}
+            onPress={() => void (hasFileFallback ? chooseVideoFile() : refresh())}
+            soft
+          />
+        </CamCard>
+      ) : access === 'permission-undecided' ? (
+        // V1: asked only when the camera first opens; there is no skip.
+        <CamCard
+          body="Rewind records short videos with sound."
           testID="video-permission"
-          title="Allow access to record"
-          body="Both camera and microphone permissions are required before recording."
-        />
-      ) : null}
-      {access === 'permission-denied' ? (
-        <Panel
-          actionLabel={
-            platform.supportsFileFallback && platform.pickVideoFile
-              ? fileFallbackLabel
-              : 'Try again'
+          title="Allow camera and mic"
+        >
+          <CamButton height={48} label="Continue" onPress={() => void requestAccess()} soft />
+        </CamCard>
+      ) : access === 'permission-denied' || access === 'permission-blocked' ? (
+        // V2: the system prompt will not show again, so Settings is the way back.
+        <CamCard
+          body="Turn Camera and Microphone on for Rewind in your phone’s Settings, then come back. Nothing was recorded."
+          testID={
+            access === 'permission-blocked' ? 'video-permission-blocked' : 'video-permission-denied'
           }
-          onAction={
-            platform.supportsFileFallback && platform.pickVideoFile
-              ? chooseVideoFile
-              : requestAccess
-          }
-          testID="video-permission-denied"
-          title="Camera or microphone access is denied"
-          body={
-            Platform.OS === 'web'
-              ? 'Recording needs both permissions. Allow camera and microphone for this site in your browser permissions, then try again.'
-              : 'Recording needs both permissions. Try again or choose a labelled video file fallback when it is available.'
-          }
-        />
+          title="Camera or mic is off"
+        >
+          <CamButton height={48} label="Open Settings" onPress={() => void openSettings()} soft />
+          <CamButton
+            height={48}
+            label="Check again"
+            onPress={() => void (access === 'permission-denied' ? requestAccess() : refresh())}
+          />
+          {hasFileFallback ? (
+            <CamButton
+              height={48}
+              label={fileFallbackLabel}
+              onPress={() => void chooseVideoFile()}
+            />
+          ) : null}
+        </CamCard>
+      ) : access === 'error' ? (
+        <CamCard body={error ?? 'Try again.'} title="Recording access needs checking">
+          <CamButton height={48} label="Check again" onPress={() => void refresh()} soft />
+        </CamCard>
       ) : null}
-      {access === 'permission-blocked' ? (
-        <Panel
-          actionLabel="Open Settings"
-          onAction={openSettings}
-          testID="video-permission-blocked"
-          title="Permission is blocked"
-          body="Camera or microphone access is blocked. Open Settings, allow both permissions, then return to Rewind and try again."
-        />
-      ) : null}
-      {access === 'error' ? (
-        <Panel
-          actionLabel="Check again"
-          onAction={refresh}
-          title="Recording access needs checking"
-          body={error ?? 'Try again.'}
-        />
-      ) : null}
-      {access === 'ready' && !clip ? (
-        <View style={styles.captureArea}>
-          {Platform.OS === 'web' ? (
-            <View
-              style={[
-                styles.preview,
-                styles.webPreview,
-                { alignSelf: 'center', height: webPreviewHeight, width: webPreviewWidth },
-              ]}
-            >
-              <BrowserVideoPreview onAspect={setPreviewAspect} stream={browserPreviewStream} />
-            </View>
-          ) : (
-            <CameraView
-              facing="back"
+
+      {clip ? null : (
+        <CamBottom>
+          {error && access !== 'error' && access !== 'temporarily-unavailable' ? (
+            <Notice>{error}</Notice>
+          ) : null}
+          {recording ? null : (
+            <ModeSwitch
               mode="video"
-              ref={cameraRef}
-              style={styles.preview}
-              testID="video-live-preview"
+              onPhoto={onBack ? () => leaveCapture(onBack) : undefined}
+              photoTestID="video-photo-mode"
             />
           )}
-          {Platform.OS === 'web' && !browserPreviewStream ? (
-            <Pressable
-              accessibilityRole="button"
+          {viewfinder && browserPreviewMissing ? (
+            <CamButton
+              label="Restore camera preview"
               onPress={() => void requestAccess()}
-              style={styles.outlineButton}
               testID="video-preview-recovery"
-            >
-              <Text style={styles.outlineText}>Restore camera preview</Text>
-            </Pressable>
-          ) : null}
-          {recording ? (
-            <View style={styles.recordingPanel} testID="video-recording">
-              <Text style={styles.recordingTitle}>Recording…</Text>
-              <Text style={styles.timer}>{Math.floor(elapsedSeconds)} / 15 seconds</Text>
-              <View style={styles.recordingActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={cancelRecording}
-                  style={styles.outlineButton}
-                >
-                  <Text style={styles.outlineText}>Cancel recording</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => recorder?.stop()}
-                  style={styles.recordButton}
-                >
-                  <Text style={styles.recordButtonText}>Stop and review</Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : Platform.OS !== 'web' || browserPreviewStream ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void startRecording()}
-              style={styles.recordButton}
-              testID="video-record"
-            >
-              <Text style={styles.recordButtonText}>Start recording</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
-      {review && clip && !recording ? (
-        <View style={styles.reviewPanel} testID="video-review">
-          <Text style={styles.panelTitle}>Review your clip</Text>
-          <Text style={styles.body}>
-            {clip.source === 'file'
-              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio track detected; server verifies`
-              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio included`}
-          </Text>
-          {reviewPlayerVisible && playbackBounds ? (
-            <CapturedVideoReview
-              clip={clip}
-              endSeconds={playbackBounds.endSeconds}
-              onMounted={onReviewPlayerMounted}
-              onUnmounted={onReviewPlayerUnmounted}
-              startSeconds={playbackBounds.startSeconds}
+            />
+          ) : viewfinder ? (
+            <ShutterRow
+              center={
+                <Shutter
+                  disabled={clipLimit < 1 && !recording}
+                  fraction={elapsedSeconds / MAX_CLIP_DURATION_SECONDS}
+                  hint={recording ? undefined : `Records up to ${clipLimit} seconds`}
+                  kind="video"
+                  label={recording ? 'Stop recording' : 'Start recording'}
+                  onPress={() => (recording ? recorder?.stop() : void startRecording())}
+                  recording={recording}
+                  testID="video-record"
+                />
+              }
+              left={
+                contributionStatus && !recording ? (
+                  <MomentsButton
+                    count={allowance?.countUsed}
+                    onPress={() => setMomentsOpen(true)}
+                  />
+                ) : null
+              }
             />
           ) : null}
-          {clip.source === 'file' ? (
-            <Text style={styles.body}>
-              FILE FALLBACK · selected locally, not recorded in Rewind
+          {recording ? null : (
+            <Text style={styles.caption} testID="video-portrait-guidance">
+              {guidance}
             </Text>
-          ) : null}
-          <Text style={styles.fieldLabel}>Start seconds</Text>
-          <TextInput
-            keyboardType="decimal-pad"
-            onChangeText={setStartText}
-            style={styles.input}
-            value={startText}
-          />
-          <Text style={styles.fieldLabel}>End seconds</Text>
-          <TextInput
-            keyboardType="decimal-pad"
-            onChangeText={setEndText}
-            style={styles.input}
-            value={endText}
-          />
-          <Text style={styles.fieldLabel}>Retro look</Text>
-          <View style={styles.modeRow}>
-            {CAPTURE_MODES.map((option) => (
-              <Pressable
-                accessibilityRole="radio"
-                accessibilityState={{ selected: mode === option }}
-                disabled={retroPercent !== null}
-                key={option}
-                onPress={() => {
-                  setMode(option);
-                  review.setMode(option);
-                }}
-                style={[styles.modeButton, mode === option && styles.modeSelected]}
-              >
-                <Text style={styles.outlineText}>{CAPTURE_MODE_LABELS[option]}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <Pressable accessibilityRole="button" onPress={saveReview} style={styles.outlineButton}>
-            <Text style={styles.outlineText}>Save trim and mode</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void retake()}
-            style={styles.outlineButton}
-          >
-            <Text style={styles.outlineText}>Retake</Text>
-          </Pressable>
-          {retroPercent !== null ? (
-            <View testID="video-retro-processing">
-              <Text accessibilityLiveRegion="polite" style={styles.body}>
-                Applying retro look… {retroPercent}%
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => retroAbortRef.current?.abort()}
-                style={styles.outlineButton}
-              >
-                <Text style={styles.outlineText}>Cancel retro look</Text>
-              </Pressable>
-            </View>
-          ) : uploadProgress.status === 'complete' && !contributionFailed ? (
-            <Text style={styles.success}>Upload queued as one pending contribution.</Text>
-          ) : uploadProgress.status === 'failed' || contributionFailed ? null : (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void upload()}
-              style={styles.primaryButton}
-            >
-              <Text style={styles.primaryText}>
-                {uploadProgress.status === 'uploading'
-                  ? `Uploading ${uploadProgress.percent}%`
-                  : 'Upload clip'}
-              </Text>
-            </Pressable>
           )}
-          {uploadProgress.status === 'uploading' ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void cancelUpload()}
-              style={styles.outlineButton}
-            >
-              <Text style={styles.outlineText}>Cancel upload</Text>
-            </Pressable>
-          ) : null}
-        </View>
+        </CamBottom>
+      )}
+
+      {showSealed ? (
+        <SealedOverlay
+          left={left?.moments ?? null}
+          onDone={() => {
+            setSealedHere(false);
+            if (onClose) leaveCapture(onClose);
+          }}
+          testID="camera-contribution-status-sealed"
+        />
       ) : null}
-      <ContributionStatusPanel
-        deleteLabel="Delete and replace"
-        onDelete={canDeleteContribution ? deleteContributionForReplacement : undefined}
-        onRetry={canRetryContribution ? () => void retryUpload() : undefined}
-        retryLabel="Retry upload"
-        status={contributionStatus}
-        testID="camera-contribution-status"
-      />
-      {error && access !== 'error' ? (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {error}
-        </Text>
+      {momentsOpen ? (
+        <MomentsDialog
+          onClose={() => setMomentsOpen(false)}
+          onDelete={canDeleteContribution ? deleteContributionForReplacement : undefined}
+          onRetry={canRetryContribution ? () => void retryUpload() : undefined}
+          retryLabel="Retry upload"
+          status={contributionStatus}
+        />
       ) : null}
-    </ScrollView>
+      {confirmDiscard ? (
+        <Dialog
+          body="It hasn’t been sealed, so it won’t count."
+          label="Discard this video?"
+          onDismiss={() => setConfirmDiscard(false)}
+          title="Discard this video?"
+        >
+          <Button
+            label="Discard"
+            onPress={() => {
+              setConfirmDiscard(false);
+              leaveCapture(exitTo);
+            }}
+            variant="danger"
+          />
+          <Button label="Keep" onPress={() => setConfirmDiscard(false)} />
+        </Dialog>
+      ) : null}
+    </CameraFrame>
   );
 }
 
@@ -1777,7 +1818,7 @@ function CapturedVideoReview({
   };
 
   return (
-    <View style={styles.videoReview} testID="video-review-playback">
+    <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
       <VideoView
         accessible
         accessibilityLabel="Captured video preview with audio"
@@ -1785,42 +1826,44 @@ function CapturedVideoReview({
         nativeControls={false}
         player={player}
         playsInline
-        style={styles.videoReviewPlayer}
+        style={StyleSheet.absoluteFill}
         testID="video-review-player"
       />
-      <Text style={styles.body}>Audio enabled · {clip.durationSeconds.toFixed(1)} seconds</Text>
-      <Text style={styles.playbackTime} testID="video-review-time">
-        {currentTime.toFixed(1)} / {endSeconds.toFixed(1)} seconds
-      </Text>
-      <View style={styles.playbackControls}>
-        <Pressable accessibilityRole="button" onPress={() => seek(-5)} style={styles.outlineButton}>
-          <Text style={styles.outlineText}>Back 5 seconds</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          onPress={togglePlayback}
-          style={styles.outlineButton}
-          testID="video-review-playback-toggle"
-        >
-          <Text style={styles.outlineText}>{playing ? 'Pause preview' : 'Play preview'}</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" onPress={() => seek(5)} style={styles.outlineButton}>
-          <Text style={styles.outlineText}>Forward 5 seconds</Text>
-        </Pressable>
-      </View>
-      {playbackError ? (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {playbackError}
+      <View pointerEvents="box-none" style={styles.playLayer} testID="video-review-playback">
+        <View style={styles.playRow}>
+          <IconButton dark icon="back" label="Back 5 seconds" onPress={() => seek(-5)} size={44} />
+          <IconButton
+            dark
+            filled
+            icon={playing ? 'pause' : 'play'}
+            label={playing ? 'Pause preview' : 'Play preview'}
+            onPress={togglePlayback}
+            size={72}
+            testID="video-review-playback-toggle"
+          />
+          <IconButton
+            dark
+            icon="forward"
+            label="Forward 5 seconds"
+            onPress={() => seek(5)}
+            size={44}
+          />
+        </View>
+        <Text style={styles.playbackTime} testID="video-review-time">
+          {currentTime.toFixed(1)} / {endSeconds.toFixed(1)} seconds
         </Text>
-      ) : null}
+        {playbackError ? <Notice>{playbackError}</Notice> : null}
+      </View>
     </View>
   );
 }
 
 function BrowserVideoPreview({
+  fit,
   onAspect,
   stream,
 }: {
+  fit: 'cover' | 'contain';
   onAspect?: (aspect: number) => void;
   stream: MediaStream | null;
 }) {
@@ -1847,154 +1890,55 @@ function BrowserVideoPreview({
     playsInline: true,
     ref: setPreviewRef,
     style: {
-      backgroundColor: COLORS.deep,
-      borderRadius: 12,
+      backgroundColor: 'transparent',
       height: '100%',
-      objectFit: 'cover',
+      objectFit: fit,
       width: '100%',
     },
   });
 }
 
-function Panel({
-  actionLabel,
-  body,
-  disabled = false,
-  onAction,
-  testID,
-  title,
-}: {
-  actionLabel?: string;
-  body: string;
-  disabled?: boolean;
-  onAction?: () => void | Promise<void>;
-  testID?: string;
-  title: string;
-}) {
-  return (
-    <View style={styles.panel} testID={testID}>
-      <Text style={styles.panelTitle}>{title}</Text>
-      <Text style={styles.body}>{body}</Text>
-      {actionLabel && onAction ? (
-        <Pressable
-          accessibilityRole="button"
-          disabled={disabled}
-          onPress={onAction}
-          style={styles.outlineButton}
-        >
-          <Text style={styles.outlineText}>{actionLabel}</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  screen: { backgroundColor: COLORS.background, flex: 1, width: '100%' },
-  screenContent: { flexGrow: 1, gap: 16, padding: 24, paddingBottom: 32 },
-  header: { gap: 7 },
-  backButton: { alignSelf: 'flex-start', paddingVertical: 4 },
-  backText: { color: COLORS.accent, fontSize: 14, fontWeight: '700' },
-  eyebrow: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 28, fontWeight: '700' },
-  body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  panel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 10,
-    padding: 18,
-  },
-  panelTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  captureArea: { flex: 1, gap: 14, minHeight: 0 },
-  preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 240 },
-  // Height and width come from the stream's aspect ratio (see webPreviewHeight).
-  // flex: 0 would become flex-basis 0% on web and override the explicit height.
-  webPreview: {
-    flexBasis: 'auto',
-    flexGrow: 0,
-    flexShrink: 0,
-    minHeight: 160,
-    overflow: 'hidden',
-  },
-  recordButton: {
+  timer: {
     alignItems: 'center',
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
-    justifyContent: 'center',
-    minHeight: 50,
-    padding: 12,
-  },
-  recordButtonText: { color: COLORS.deep, fontSize: 15, fontWeight: '800' },
-  recordingPanel: {
-    backgroundColor: COLORS.deep,
-    borderColor: COLORS.accent,
-    borderRadius: 10,
-    borderWidth: 1,
+    alignSelf: 'center',
+    flexDirection: 'row',
     gap: 8,
-    padding: 12,
+    marginTop: 6,
   },
-  recordingTitle: { color: COLORS.accent, fontSize: 24, fontWeight: '800' },
-  timer: { color: COLORS.ink, fontSize: 20, fontVariant: ['tabular-nums'] },
-  recordingActions: { flexDirection: 'row', gap: 8 },
-  videoReview: { gap: 8 },
-  videoReviewPlayer: {
-    backgroundColor: COLORS.deep,
-    borderRadius: 8,
-    height: 220,
-    width: '100%',
+  dot: { backgroundColor: '#ff5a4a', borderRadius: 4, height: 8, opacity: 0.35, width: 8 },
+  dotOn: { opacity: 1 },
+  timerText: {
+    color: '#fff',
+    fontFamily: FONT.monoMedium,
+    fontSize: 15,
+    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textShadowRadius: 6,
   },
-  playbackControls: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  playbackTime: { color: COLORS.ink, fontSize: 14, fontVariant: ['tabular-nums'] },
-  reviewPanel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
-    borderWidth: 1,
+  caption: {
+    color: 'rgba(255, 255, 255, 0.86)',
+    fontFamily: FONT.body,
+    fontSize: 13,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textShadowRadius: 6,
+  },
+  playLayer: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
     gap: 10,
-    padding: 18,
-  },
-  fieldLabel: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  input: {
-    backgroundColor: COLORS.background,
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    color: COLORS.ink,
-    minHeight: 46,
-    paddingHorizontal: 12,
-  },
-  modeRow: { flexDirection: 'row', gap: 8 },
-  modeButton: {
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    minHeight: 46,
     justifyContent: 'center',
-    padding: 8,
+    paddingBottom: 260,
+    paddingHorizontal: 22,
   },
-  modeSelected: { backgroundColor: COLORS.accent },
-  outlineButton: {
-    alignItems: 'center',
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 46,
-    padding: 10,
+  playRow: { alignItems: 'center', flexDirection: 'row', gap: 22 },
+  playbackTime: {
+    color: '#fff',
+    fontFamily: FONT.monoMedium,
+    fontSize: 13,
+    textShadowColor: 'rgba(0, 0, 0, 0.6)',
+    textShadowRadius: 6,
   },
-  outlineText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  primaryButton: {
-    alignItems: 'center',
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
-    justifyContent: 'center',
-    minHeight: 46,
-    padding: 10,
-  },
-  primaryText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
-  success: { color: COLORS.edge, fontSize: 14, fontWeight: '700' },
-  error: { color: COLORS.accent, fontSize: 14, lineHeight: 20 },
+  retake: { flex: 1 },
+  seal: { flex: 1.6 },
 });

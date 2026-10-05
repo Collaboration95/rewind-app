@@ -93,7 +93,6 @@ describe('native accessibility panels', () => {
         <App runtimeClient={{ ...inviteRuntime(), createDemoSession } as RuntimeClient} />,
       );
 
-      await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
       await fireEvent.press(await result.findByRole('button', { name: 'Try Demo' }));
       await fireEvent.press(
         await result.findByRole('button', { name: 'Enter Demo as Amber, sample member' }),
