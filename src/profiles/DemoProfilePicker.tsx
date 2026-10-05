@@ -1,14 +1,14 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 
-import { useDemoProfile } from './DemoProfileProvider';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
+import { Avatar, Glass, ListGroup, ListRow } from '../ui/primitives';
+import { FONT, WARM, memberColor, serif } from '../ui/tokens';
+import { useDemoProfile } from './DemoProfileProvider';
 
 export function DemoProfilePicker() {
   const { profiles, currentMember, saveStatus, loadWarning, selectMember, retrySave } =
     useDemoProfile();
   const demoSession = useOptionalDemoSession();
-  const [focusedId, setFocusedId] = useState<string | null>(null);
   const sessionMember =
     demoSession?.status === 'active' && demoSession.session
       ? (profiles.find((profile) => profile.id === demoSession.session?.actor.memberId) ?? null)
@@ -16,7 +16,7 @@ export function DemoProfilePicker() {
   const resolvedCurrentMember = sessionMember ?? currentMember;
 
   return (
-    <View style={styles.card}>
+    <Glass style={styles.card}>
       <Text accessibilityRole="header" style={styles.heading}>
         Local demo
       </Text>
@@ -32,33 +32,29 @@ export function DemoProfilePicker() {
           <Text accessibilityLiveRegion="polite" style={styles.current}>
             Current member: {resolvedCurrentMember.displayName}
           </Text>
-          <View style={styles.choices}>
-            {profiles.map((profile) => {
+          <ListGroup>
+            {profiles.map((profile, index) => {
               const selected = profile.id === resolvedCurrentMember.id;
               return (
-                <Pressable
+                <ListRow
                   key={profile.id}
-                  accessibilityRole="button"
+                  first={index === 0}
+                  label={profile.displayName}
                   accessibilityLabel={`Choose ${profile.displayName}, sample member${selected ? ', selected' : ''}`}
                   accessibilityState={{ selected }}
+                  selected={selected}
+                  note={selected ? 'Selected' : 'Sample member'}
+                  leading={
+                    <Avatar name={profile.displayName} color={memberColor(profile.id)} size={32} />
+                  }
                   onPress={() => {
                     selectMember(profile.id);
                     if (demoSession?.status === 'active') void demoSession.chooseMember(profile.id);
                   }}
-                  onFocus={() => setFocusedId(profile.id)}
-                  onBlur={() => setFocusedId(null)}
-                  style={[
-                    styles.choice,
-                    selected && styles.selected,
-                    focusedId === profile.id && styles.focused,
-                  ]}
-                >
-                  <Text style={styles.name}>{profile.displayName}</Text>
-                  <Text style={styles.body}>{selected ? 'Selected' : 'Sample member'}</Text>
-                </Pressable>
+                />
               );
             })}
-          </View>
+          </ListGroup>
           {loadWarning && (
             <Text accessibilityRole="alert" style={styles.body}>
               Could not restore your saved profile. Using the default member for now.
@@ -80,25 +76,22 @@ export function DemoProfilePicker() {
           )}
         </>
       )}
-    </View>
+    </Glass>
   );
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: '#E4EEE7', borderRadius: 20, padding: 24, gap: 16, maxWidth: 620 },
-  heading: { color: '#1D2622', fontSize: 24, fontWeight: '700' },
-  body: { color: '#3D4B44', fontSize: 16, lineHeight: 24 },
-  current: { color: '#1D2622', fontSize: 20, fontWeight: '600' },
-  choices: { gap: 12 },
+  card: { backgroundColor: WARM.sheet, borderRadius: 24, padding: 24, gap: 16, maxWidth: 520 },
+  heading: { color: WARM.ink, ...serif(24) },
+  body: { color: WARM.muted, fontFamily: FONT.body, fontSize: 13, lineHeight: 19 },
+  current: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, fontWeight: '600' },
   choice: {
     padding: 14,
     minHeight: 48,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: '#687E70',
-    backgroundColor: '#F5F1EA',
+    borderColor: WARM.line,
+    backgroundColor: WARM.sheet,
   },
-  selected: { borderColor: '#236341', backgroundColor: '#CDE4D3' },
-  focused: { borderColor: '#1D2622', borderWidth: 4 },
-  name: { color: '#1D2622', fontSize: 18, fontWeight: '600' },
+  name: { color: WARM.ink, fontFamily: FONT.body, fontSize: 18, fontWeight: '600' },
 });

@@ -1,7 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { ContributionLedgerEntry, ContributionLedgerPage } from '../domain/contributions';
-import { COLORS } from '../theme';
+import { Glass } from '../ui/primitives';
+import { FONT, WARM } from '../ui/tokens';
 
 export type ContributionLedgerView =
   | { status: 'loading' }
@@ -99,26 +100,26 @@ export function ContributionLedger({
 }) {
   if (view.status === 'loading') {
     return (
-      <View style={styles.panel} testID="contribution-ledger-loading">
+      <Glass style={styles.panel} testID="contribution-ledger-loading">
         <Text accessibilityLiveRegion="polite" style={styles.title}>
           Loading contributions…
         </Text>
-      </View>
+      </Glass>
     );
   }
   if (view.status === 'denied') {
     return (
-      <View style={styles.panel} testID="contribution-ledger-denied">
+      <Glass style={styles.panel} testID="contribution-ledger-denied">
         <Text accessibilityLiveRegion="assertive" style={styles.title}>
           Contributions unavailable
         </Text>
         <Text style={styles.body}>This Demo session cannot access the selected group.</Text>
-      </View>
+      </Glass>
     );
   }
   if (view.status === 'error') {
     return (
-      <View style={styles.panel} testID="contribution-ledger-error">
+      <Glass style={styles.panel} testID="contribution-ledger-error">
         <Text accessibilityLiveRegion="assertive" style={styles.title}>
           Contributions could not be loaded
         </Text>
@@ -133,13 +134,13 @@ export function ContributionLedger({
             <Text style={styles.buttonText}>Retry loading contributions</Text>
           </Pressable>
         ) : null}
-      </View>
+      </Glass>
     );
   }
 
   const { page } = view;
   return (
-    <View style={styles.panel} testID="contribution-ledger-ready">
+    <Glass style={styles.panel} testID="contribution-ledger-ready">
       <Text style={styles.label}>MY CONTRIBUTIONS</Text>
       <Text style={styles.title}>Current cycle</Text>
       <Text style={styles.body}>{allowanceText(page)}</Text>
@@ -178,39 +179,45 @@ export function ContributionLedger({
           <Text style={styles.body}>More contributions are available.</Text>
         )
       ) : null}
-    </View>
+    </Glass>
   );
 }
 
 const styles = StyleSheet.create({
   panel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     gap: 10,
     padding: 16,
   },
-  label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
+  label: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  title: { color: WARM.ink, fontFamily: FONT.body, fontSize: 20, fontWeight: '700' },
+  body: { color: WARM.muted, fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
   row: {
-    borderColor: COLORS.line,
+    borderColor: WARM.line,
     borderTopWidth: 1,
     gap: 4,
     paddingTop: 12,
   },
-  rowTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '700' },
-  reference: { color: COLORS.edge, fontSize: 12 },
-  status: { color: COLORS.accent, fontSize: 14, fontWeight: '700' },
+  rowTitle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 16, fontWeight: '700' },
+  reference: { color: WARM.muted, fontSize: 12 },
+  status: { color: WARM.dangerInk, fontFamily: FONT.body, fontSize: 14, fontWeight: '700' },
   button: {
     alignSelf: 'flex-start',
-    borderColor: COLORS.edge,
-    borderRadius: 8,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     minHeight: 44,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
-  buttonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
+  buttonText: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, fontWeight: '700' },
 });

@@ -1,3 +1,4 @@
+import { Text } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import { ContributionLedgerSection } from '../src/contributions/ContributionLedgerSection';
@@ -118,4 +119,72 @@ describe('ContributionLedgerSection', () => {
     expect(result.queryByText('Reference stale-clip')).toBeNull();
     expect(result.getByText('Reference peer-clip')).toBeTruthy();
   });
+});
+
+it('exhausts and deduplicates pages before supplying a week-filtered renderer', async () => {
+  let finish!: (value: ContributionLedgerPage) => void;
+  const later = new Promise<ContributionLedgerPage>((resolve) => {
+    finish = resolve;
+  });
+  const read = jest
+    .fn()
+    .mockResolvedValueOnce(page(['old'], true))
+    .mockReturnValueOnce(later);
+  const ui = await render(
+    <ContributionLedgerSection
+      {...scope}
+      client={client(read)}
+      allPages
+      render={(view) => (
+        <Text>
+          {view.status === 'ready'
+            ? view.page.entries.map((e) => e.contributionId).join(',')
+            : view.status}
+        </Text>
+      )}
+    />,
+  );
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  expect(ui.getByText('loading')).toBeTruthy();
+  await act(async () => finish(page(['old', 'current'])));
+  expect(ui.getByText('old,current')).toBeTruthy();
+  expect(read).toHaveBeenNthCalledWith(2, 'session-1', 'group-1', { cursor: 'cursor-1' });
+});
+
+it.each(['memberId', 'cycleId'] as const)(
+  'rejects a later page from another %s when exhausting pages',
+  async (field) => {
+    const read = jest
+      .fn()
+      .mockResolvedValueOnce(page(['mine'], true))
+      .mockResolvedValueOnce({ ...page(['foreign']), [field]: 'other-scope' });
+    const ui = await render(
+      <ContributionLedgerSection {...scope} client={client(read)} allPages />,
+    );
+    await ui.findByTestId('contribution-ledger-error');
+    expect(ui.queryByText('Reference foreign')).toBeNull();
+    expect(ui.queryByText('Reference mine')).toBeNull();
+  },
+);
+
+it('stops exhausting a stale member scope while its next page is pending', async () => {
+  let finish!: (value: ContributionLedgerPage) => void;
+  const later = new Promise<ContributionLedgerPage>((resolve) => {
+    finish = resolve;
+  });
+  const read = jest
+    .fn()
+    .mockResolvedValueOnce(page(['old'], true))
+    .mockReturnValueOnce(later)
+    .mockResolvedValueOnce(page(['new-member'], false, 'member-2'));
+  const runtime = client(read);
+  const ui = await render(<ContributionLedgerSection {...scope} client={runtime} allPages />);
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+  await ui.rerender(
+    <ContributionLedgerSection {...scope} memberId="member-2" client={runtime} allPages />,
+  );
+  await ui.findByText('Reference new-member');
+  await act(async () => finish(page(['stale'], true)));
+  expect(ui.queryByText('Reference stale')).toBeNull();
+  expect(read).toHaveBeenCalledTimes(3);
 });

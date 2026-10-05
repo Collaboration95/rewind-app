@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
 import { ContributionLedger, type ContributionLedgerView } from './ContributionLedger';
@@ -26,7 +26,12 @@ export function ContributionLedgerSection({
   groupId,
   memberId,
   cycleId,
+  render,
+  allPages = false,
 }: {
+  render?: (view: ContributionLedgerView, retry: () => void) => ReactNode;
+  /** Week-filtered renderers need the complete cycle metadata before filtering. */
+  allPages?: boolean;
   client?: RuntimeClient;
   loadPage?: LedgerPageLoader;
   onPageLoaded?: (page: ContributionLedgerPage | null) => void;
@@ -57,10 +62,30 @@ export function ContributionLedgerSection({
     const request = ++generation.current;
     pendingCursor.current = null;
     void Promise.resolve()
-      .then(() => {
+      .then(async () => {
         if (request !== generation.current) return null;
         onPageLoaded?.(null);
-        return readPage();
+        let page = await readPage();
+        const cursors = new Set<string>();
+        while (allPages && page.pagination.hasMore) {
+          if (request !== generation.current) return null;
+          if (page.cycleId !== cycleId || page.memberId !== memberId) return page;
+          const cursor = page.pagination.nextCursor;
+          if (!cursor || cursors.has(cursor)) throw new Error('Invalid contribution cursor.');
+          cursors.add(cursor);
+          const next = await readPage({ cursor });
+          if (request !== generation.current) return null;
+          if (next.cycleId !== cycleId || next.memberId !== memberId) return next;
+          const seen = new Set(page.entries.map((entry) => entry.contributionId));
+          page = {
+            ...next,
+            entries: [
+              ...page.entries,
+              ...next.entries.filter((entry) => !seen.has(entry.contributionId)),
+            ],
+          };
+        }
+        return page;
       })
       .then(
         (page) => {
@@ -83,7 +108,7 @@ export function ContributionLedgerSection({
     return () => {
       generation.current += 1;
     };
-  }, [readPage, memberId, cycleId, retryAttempt, scopeKey, onPageLoaded]);
+  }, [readPage, memberId, cycleId, retryAttempt, scopeKey, onPageLoaded, allPages]);
 
   const loadMore = () => {
     if (
@@ -146,11 +171,7 @@ export function ContributionLedgerSection({
       });
   };
 
-  return (
-    <ContributionLedger
-      view={view}
-      onRetry={() => setRetryAttempt((attempt) => attempt + 1)}
-      onLoadMore={loadMore}
-    />
-  );
+  const retry = () => setRetryAttempt((attempt) => attempt + 1);
+  if (render) return render(view, retry);
+  return <ContributionLedger view={view} onRetry={retry} onLoadMore={loadMore} />;
 }

@@ -15,9 +15,11 @@ import { useCapsule, type CapsuleState } from '../capsule/CapsuleProvider';
 import { demoRepository } from '../data/demo-repository';
 import type { Group } from '../domain/profiles';
 import type { DemoSession } from '../domain/session';
-import { useDemoSession } from '../session/DemoSessionProvider';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
-import { COLORS } from '../theme';
+import { useDemoSession } from '../session/DemoSessionProvider';
+import { Glass } from '../ui/primitives';
+import { FONT, WARM, serif } from '../ui/tokens';
+import { useOptionalChatUnread } from './ChatUnreadProvider';
 import {
   createChatMessageDraft,
   type ChatMessage,
@@ -25,7 +27,6 @@ import {
   type ChatMessageEvent,
   type RealtimeConnectionState,
 } from './realtime-client';
-import { useOptionalChatUnread } from './ChatUnreadProvider';
 import { chatConnectionLabel, type ChatConnectionState } from './unread-owner';
 import { useNetworkOnline } from './use-network-online';
 
@@ -479,15 +480,16 @@ export function ChatSessionSurface({
         extraData={{ reactionActive, reactionBusy, memberId: session?.actor.memberId }}
         keyExtractor={({ message }) => message.id}
         ListHeaderComponent={
-          <View style={styles.content}>
+          <View style={styles.headerContent}>
             <View style={styles.header}>
-              <Text style={styles.label}>GROUP CHAT</Text>
               <Text accessibilityRole="header" style={styles.title} testID="route-heading-chat">
                 Chat
               </Text>
-              <Text style={styles.bodyText}>
-                {group?.name ?? 'Messages are visible only to authorised group members.'}
-              </Text>
+              {!group ? (
+                <Text style={styles.bodyText}>
+                  Messages are visible only to authorised group members.
+                </Text>
+              ) : null}
             </View>
 
             {accessState !== 'loading' ? (
@@ -501,34 +503,34 @@ export function ChatSessionSurface({
             ) : null}
 
             {effectiveTimelineState === 'loading' ? (
-              <View accessible style={styles.statePanel} testID="chat-loading">
+              <Glass accessible style={styles.statePanel} testID="chat-loading">
                 <Text style={styles.panelTitle}>Loading messages…</Text>
                 <Text accessibilityLiveRegion="polite" style={styles.bodyText}>
                   Checking the saved group conversation.
                 </Text>
-              </View>
+              </Glass>
             ) : null}
 
             {effectiveTimelineState === 'denied' ? (
-              <View accessible style={styles.statePanel} testID="chat-denied">
+              <Glass accessible style={styles.statePanel} testID="chat-denied">
                 <Text style={styles.panelTitle}>Chat unavailable</Text>
                 <Text style={styles.bodyText}>
                   Choose authorised Demo access to view this group conversation.
                 </Text>
-              </View>
+              </Glass>
             ) : null}
 
             {effectiveTimelineState === 'unavailable' ? (
-              <View accessible style={styles.statePanel} testID="chat-unavailable">
+              <Glass accessible style={styles.statePanel} testID="chat-unavailable">
                 <Text style={styles.panelTitle}>Chat needs the local runtime</Text>
                 <Text style={styles.bodyText}>
                   Connect the local runtime to load this group chat.
                 </Text>
-              </View>
+              </Glass>
             ) : null}
 
             {effectiveTimelineState === 'error' ? (
-              <View accessible style={styles.errorPanel} testID="chat-error">
+              <Glass accessible style={styles.errorPanel} testID="chat-error">
                 <Text accessibilityRole="alert" style={styles.errorText}>
                   {connectionError ?? 'The chat connection could not be established.'}
                 </Text>
@@ -540,14 +542,14 @@ export function ChatSessionSurface({
                 >
                   <Text style={styles.outlineButtonText}>Retry chat connection</Text>
                 </Pressable>
-              </View>
+              </Glass>
             ) : null}
 
             {effectiveTimelineState === 'ready' && canRenderMessages && messages.length === 0 ? (
-              <View accessible style={styles.statePanel} testID="chat-empty">
+              <Glass accessible style={styles.statePanel} testID="chat-empty">
                 <Text style={styles.panelTitle}>No messages yet</Text>
                 <Text style={styles.bodyText}>Start the conversation with a short note below.</Text>
-              </View>
+              </Glass>
             ) : null}
 
             {hasOlderMessages ? (
@@ -644,7 +646,6 @@ export function ChatSessionSurface({
 
       {showComposer && !subscriptionDenied && runtimeClient?.sendChatMessage && group && session ? (
         <View style={styles.composer}>
-          <Text style={styles.fieldLabel}>MESSAGE</Text>
           {replyTarget ? (
             <View accessible={false} style={styles.composerReply} testID="chat-reply-target">
               <Text style={styles.replyLabel}>REPLYING TO</Text>
@@ -671,7 +672,7 @@ export function ChatSessionSurface({
               setSendError(null);
             }}
             placeholder="Write a message"
-            placeholderTextColor={COLORS.muted}
+            placeholderTextColor={WARM.muted}
             style={styles.input}
             testID="chat-composer"
             value={draft}
@@ -709,117 +710,139 @@ export function ChatSessionSurface({
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   timelineScroll: { flex: 1 },
-  content: { gap: 14, padding: 24, paddingBottom: 20 },
+  content: { gap: 12, paddingHorizontal: 22, paddingTop: 12, paddingBottom: 16 },
+  headerContent: { gap: 8, paddingBottom: 12 },
   header: { gap: 4 },
-  label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 30, fontWeight: '700', marginTop: 2 },
-  bodyText: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  connectionStatus: { color: COLORS.muted, fontSize: 12, fontWeight: '700' },
+  label: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  title: { color: WARM.ink, ...serif(24) },
+  bodyText: { color: WARM.muted, fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
+  connectionStatus: { color: WARM.muted, fontFamily: FONT.body, fontSize: 12, fontWeight: '700' },
   statePanel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     gap: 8,
     padding: 16,
   },
   errorPanel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.edge,
-    borderRadius: 10,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     gap: 12,
     padding: 16,
   },
-  panelTitle: { color: COLORS.ink, fontSize: 18, fontWeight: '700' },
-  errorText: { color: COLORS.ink, fontSize: 14, lineHeight: 21 },
+  panelTitle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 18, fontWeight: '700' },
+  errorText: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
   message: {
     alignSelf: 'flex-start',
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     gap: 8,
     maxWidth: '92%',
     padding: 14,
   },
-  currentMessage: { alignSelf: 'flex-end', borderColor: COLORS.accent },
+  currentMessage: { alignSelf: 'flex-end', borderColor: WARM.dangerInk },
   messageMeta: { alignItems: 'baseline', flexDirection: 'row', gap: 8 },
   messageActions: { flexDirection: 'row', gap: 8, marginTop: 2 },
   actionButton: {
-    borderColor: COLORS.line,
+    borderColor: WARM.line,
     borderRadius: 6,
     borderWidth: 1,
-    minHeight: 32,
+    minHeight: 48,
+    minWidth: 48,
     justifyContent: 'center',
     paddingHorizontal: 9,
     paddingVertical: 5,
   },
-  actionText: { color: COLORS.ink, fontSize: 12, fontWeight: '700' },
-  author: { color: COLORS.ink, fontSize: 13, fontWeight: '700' },
-  timestamp: { color: COLORS.muted, fontSize: 11 },
-  messageBody: { color: COLORS.ink, fontSize: 16, lineHeight: 23 },
+  actionText: { color: WARM.ink, fontFamily: FONT.body, fontSize: 12, fontWeight: '700' },
+  author: { color: WARM.ink, fontFamily: FONT.body, fontSize: 13, fontWeight: '700' },
+  timestamp: { color: WARM.muted, fontSize: 11 },
+  messageBody: { color: WARM.ink, fontFamily: FONT.body, fontSize: 16, lineHeight: 23 },
   replyContext: {
-    backgroundColor: COLORS.background,
-    borderLeftColor: COLORS.edge,
+    backgroundColor: WARM.bg,
+    borderLeftColor: WARM.line,
     borderLeftWidth: 3,
     gap: 3,
     paddingHorizontal: 9,
     paddingVertical: 6,
   },
-  replyLabel: { color: COLORS.edge, fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
-  replyText: { color: COLORS.muted, fontSize: 12, lineHeight: 17 },
-  composer: {
-    backgroundColor: COLORS.background,
-    borderColor: COLORS.line,
-    borderTopWidth: 1,
-    gap: 8,
-    padding: 16,
+  replyLabel: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
-  fieldLabel: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  replyText: { color: WARM.muted, fontFamily: FONT.body, fontSize: 12, lineHeight: 17 },
+  composer: {
+    backgroundColor: WARM.bg,
+    borderColor: WARM.line,
+    borderTopWidth: 1,
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  fieldLabel: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
   composerReply: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
     borderRadius: 6,
     borderWidth: 1,
     gap: 4,
     padding: 8,
   },
   input: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 8,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
-    color: COLORS.ink,
+    color: WARM.ink,
+    fontFamily: FONT.body,
     fontSize: 16,
-    minHeight: 72,
+    minHeight: 44,
     paddingHorizontal: 12,
     paddingVertical: 10,
     textAlignVertical: 'top',
   },
   composerFooter: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  counter: { color: COLORS.muted, fontSize: 12 },
+  counter: { color: WARM.muted, fontSize: 12 },
   primaryButton: {
     alignItems: 'center',
-    backgroundColor: COLORS.accent,
-    borderRadius: 8,
+    backgroundColor: WARM.dangerInk,
+    borderRadius: 24,
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 16,
     paddingVertical: 10,
   },
-  primaryButtonText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
+  primaryButtonText: { color: WARM.sheet, fontFamily: FONT.body, fontSize: 14, fontWeight: '800' },
   disabledButton: { opacity: 0.5 },
   outlineButton: {
     alignItems: 'center',
-    borderColor: COLORS.edge,
-    borderRadius: 8,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 14,
     paddingVertical: 9,
   },
-  outlineButtonText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  fieldError: { color: COLORS.ink, fontSize: 14, lineHeight: 21 },
+  outlineButtonText: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, fontWeight: '700' },
+  fieldError: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
 });

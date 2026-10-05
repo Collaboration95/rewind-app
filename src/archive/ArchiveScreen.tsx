@@ -1,6 +1,6 @@
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { VideoView, useVideoPlayer } from 'expo-video';
 
 import {
   AuthRequestError,
@@ -9,15 +9,16 @@ import {
   type RealArchiveFilm,
   type RealArchivePage,
 } from '../auth/real-account-client';
+import { useCapsule } from '../capsule/CapsuleProvider';
+import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
 import type { ReleasedArchive, ReleasedArchiveMedia, ReleasedArchivePage } from '../domain/archive';
 import type { CycleHistoryEntry, CycleHistoryPage } from '../domain/cycles';
 import type { Premiere } from '../domain/premiere';
-import { useCapsule } from '../capsule/CapsuleProvider';
-import { RevealEducationPanel } from '../capsule/RevealEducationPanel';
-import { useDemoSession } from '../session/DemoSessionProvider';
 import { revealStateForPremiere } from '../domain/reveal-education';
 import { RUNTIME_OFFLINE_MESSAGE, type RuntimeClient } from '../runtime/local-runtime-client';
-import { COLORS } from '../theme';
+import { useDemoSession } from '../session/DemoSessionProvider';
+import { Glass } from '../ui/primitives';
+import { FONT, WARM, serif } from '../ui/tokens';
 import { createArchiveDownloadQueue } from './archive-download';
 
 type ArchiveState =
@@ -39,7 +40,7 @@ function PublishedPlayer({ premiere }: { premiere: Extract<Premiere, { state: 'r
     instance.loop = false;
   });
   return (
-    <View style={styles.panel} testID="archive-premiere-ready">
+    <Glass style={styles.panel} testID="archive-premiere-ready">
       <RevealEducationPanel
         onAction={() => player.play()}
         state="released"
@@ -62,7 +63,7 @@ function PublishedPlayer({ premiere }: { premiere: Extract<Premiere, { state: 'r
         style={styles.player}
         testID="archive-video-player"
       />
-    </View>
+    </Glass>
   );
 }
 
@@ -75,7 +76,9 @@ function ArchiveEntries({
   loadingMore,
   loadMore,
   playFilm,
+  demoCompact = false,
 }: {
+  demoCompact?: boolean;
   archive: ReleasedArchive;
   cycles: CycleHistoryEntry[];
   hasMoreCycles: boolean;
@@ -87,7 +90,7 @@ function ArchiveEntries({
 }) {
   const cycleById = new Map(cycles.map((cycle) => [cycle.id, cycle]));
   return (
-    <View style={styles.panel} testID="archive-released-media">
+    <Glass style={styles.panel} testID="archive-released-media">
       <Text style={styles.label}>RELEASED MEDIA</Text>
       <Text accessibilityRole="header" style={styles.sectionTitle}>
         Your archive
@@ -121,7 +124,7 @@ function ArchiveEntries({
               accessibilityLabel="Download released group film"
               accessibilityRole="button"
               onPress={() => download(film)}
-              style={styles.downloadButton}
+              style={[styles.downloadButton, demoCompact && styles.demoDownloadButton]}
             >
               <Text style={styles.downloadText}>Download film</Text>
             </Pressable>
@@ -144,7 +147,7 @@ function ArchiveEntries({
               accessibilityLabel="Download your released clip"
               accessibilityRole="button"
               onPress={() => download(clip)}
-              style={styles.downloadButton}
+              style={[styles.downloadButton, demoCompact && styles.demoDownloadButton]}
             >
               <Text style={styles.downloadText}>Download clip</Text>
             </Pressable>
@@ -187,15 +190,27 @@ function ArchiveEntries({
           </Text>
         </Pressable>
       ) : null}
-    </View>
+    </Glass>
   );
 }
 
-export function ArchiveScreen({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
+export function ArchiveScreen({
+  runtimeClient,
+  onOpenFilm,
+}: {
+  runtimeClient: RuntimeClient | null;
+  onOpenFilm?: (cycleId: string, label: string) => void;
+}) {
   const { session } = useDemoSession();
   const { state } = useCapsule();
   const scope = state.status === 'ready' ? `${state.group?.id}:${state.cycle?.id}` : state.status;
-  return <ArchiveSurface key={`${session?.id}:${scope}`} runtimeClient={runtimeClient} />;
+  return (
+    <ArchiveSurface
+      key={`${session?.id}:${scope}`}
+      runtimeClient={runtimeClient}
+      onOpenFilm={onOpenFilm}
+    />
+  );
 }
 
 type PremiereAvailability =
@@ -375,7 +390,7 @@ export function RealAccountArchiveScreen({
 
   if (state.status === 'loading') {
     return (
-      <View style={styles.panel} testID="real-archive-loading">
+      <Glass style={styles.panel} testID="real-archive-loading">
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
           Archive
         </Text>
@@ -385,13 +400,13 @@ export function RealAccountArchiveScreen({
         <Pressable accessibilityRole="button" onPress={onBack} style={styles.retryButton}>
           <Text style={styles.retryText}>Back to group</Text>
         </Pressable>
-      </View>
+      </Glass>
     );
   }
 
   if (state.status === 'unavailable') {
     return (
-      <View style={styles.panel} testID="real-archive-unavailable">
+      <Glass style={styles.panel} testID="real-archive-unavailable">
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
           Archive
         </Text>
@@ -408,7 +423,7 @@ export function RealAccountArchiveScreen({
         <Pressable accessibilityRole="button" onPress={onBack} style={styles.retryButton}>
           <Text style={styles.retryText}>Back to group</Text>
         </Pressable>
-      </View>
+      </Glass>
     );
   }
 
@@ -580,7 +595,7 @@ function RealCapabilityPlayer({
 
   const canPlay = !renewalError && (initiallyReady || availability?.state === 'ready');
   return (
-    <View style={styles.panel} testID="real-archive-player-panel">
+    <Glass style={styles.panel} testID="real-archive-player-panel">
       <Text style={styles.label}>GROUP PREMIERE</Text>
       <Text accessibilityRole="header" style={styles.sectionTitle}>
         {title}
@@ -643,11 +658,17 @@ function RealCapabilityPlayer({
           <Text style={styles.retryText}>Close player</Text>
         </Pressable>
       ) : null}
-    </View>
+    </Glass>
   );
 }
 
-function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null }) {
+function ArchiveSurface({
+  runtimeClient,
+  onOpenFilm,
+}: {
+  runtimeClient: RuntimeClient | null;
+  onOpenFilm?: (cycleId: string, label: string) => void;
+}) {
   const { session } = useDemoSession();
   const { state: capsuleState, retry: retryCapsule } = useCapsule();
   const [state, setState] = useState<ArchiveState>({ status: 'loading' });
@@ -824,7 +845,7 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
 
   if (state.status === 'loading') {
     return (
-      <View style={styles.panel} testID="archive-loading">
+      <Glass style={styles.panel} testID="archive-loading">
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
           Archive
         </Text>
@@ -832,13 +853,13 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
         <Text accessibilityLiveRegion="polite" style={styles.title}>
           Checking the group premiere…
         </Text>
-      </View>
+      </Glass>
     );
   }
 
   if (state.status === 'unavailable') {
     return (
-      <View style={styles.panel} testID="archive-unavailable">
+      <Glass style={styles.panel} testID="archive-unavailable">
         <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
           Archive
         </Text>
@@ -859,7 +880,7 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
         >
           <Text style={styles.retryText}>Retry premiere</Text>
         </Pressable>
-      </View>
+      </Glass>
     );
   }
 
@@ -869,10 +890,23 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
   const premierePanel =
     state.premiere.state === 'ready' ? (
       releasedCycleIds.has(state.premiere.cycleId) ? (
-        <PublishedPlayer premiere={state.premiere} />
+        <View>
+          <PublishedPlayer premiere={state.premiere} />
+          {onOpenFilm ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => onOpenFilm(state.premiere.cycleId, 'Group premiere')}
+              style={styles.retryButton}
+              testID="demo-watch-film"
+            >
+              <Text style={styles.retryText}>Watch film</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : (
         <PremiereStatus
           premiere={{ state: 'locked', cycleId: state.premiere.cycleId }}
+          demoCompact
           reload={load}
           hasOlderReleasedMedia={state.archive.films.length > 0 || state.archive.clips.length > 0}
         />
@@ -880,6 +914,7 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
     ) : (
       <PremiereStatus
         premiere={state.premiere}
+        demoCompact
         reload={load}
         hasOlderReleasedMedia={state.archive.films.length > 0 || state.archive.clips.length > 0}
       />
@@ -897,12 +932,17 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
     ),
   };
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stack}>
+    <ScrollView
+      testID="demo-archive-scroll"
+      style={{ flex: 1 }}
+      contentContainerStyle={styles.stack}
+    >
       <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
         Archive
       </Text>
       {premierePanel}
       <ArchiveEntries
+        demoCompact
         archive={releasedArchive}
         cycles={state.cycles}
         hasMoreCycles={
@@ -914,6 +954,15 @@ function ArchiveSurface({ runtimeClient }: { runtimeClient: RuntimeClient | null
         loadMore={() => void loadMore()}
         download={download}
         notice={downloadNotice}
+        playFilm={
+          onOpenFilm
+            ? (film) =>
+                onOpenFilm(
+                  film.cycleId,
+                  `Released ${new Date(film.publishedAt).toLocaleDateString()}`,
+                )
+            : undefined
+        }
       />
     </ScrollView>
   );
@@ -923,14 +972,16 @@ function PremiereStatus({
   premiere,
   reload,
   hasOlderReleasedMedia = false,
+  demoCompact = false,
 }: {
   premiere: Exclude<Premiere, { state: 'ready' }>;
   reload: () => void;
   hasOlderReleasedMedia?: boolean;
+  demoCompact?: boolean;
 }) {
   if (premiere.state === 'failed') {
     return (
-      <View style={styles.panel} testID="archive-premiere-failed">
+      <Glass style={styles.panel} testID="archive-premiere-failed">
         <Text accessibilityRole="header" style={styles.sectionTitle}>
           Film processing failed
         </Text>
@@ -945,13 +996,14 @@ function PremiereStatus({
             Previously released group films and your clips remain available below.
           </Text>
         ) : null}
-      </View>
+      </Glass>
     );
   }
   const state = revealStateForPremiere(premiere);
   return (
-    <View style={styles.stack}>
+    <View style={[styles.stack, demoCompact && styles.demoStatusStack]}>
       <RevealEducationPanel
+        demoCompact={demoCompact}
         onAction={reload}
         state={state}
         surface="archive"
@@ -967,46 +1019,60 @@ function PremiereStatus({
 }
 
 const styles = StyleSheet.create({
-  stack: { gap: 14 },
+  stack: { gap: 14, padding: 22, paddingBottom: 32 },
+  demoStatusStack: { gap: 8, padding: 0, paddingBottom: 0 },
+  demoDownloadButton: { minWidth: 44, minHeight: 48 },
   archiveHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   panel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
+    backgroundColor: WARM.sheet,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     gap: 12,
     padding: 18,
   },
-  label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 26, fontWeight: '700' },
-  sectionTitle: { color: COLORS.ink, fontSize: 22, fontWeight: '700' },
-  subhead: { color: COLORS.ink, fontSize: 16, fontWeight: '700', marginTop: 4 },
-  bodyText: { color: COLORS.muted, fontSize: 15, lineHeight: 22 },
-  player: { backgroundColor: COLORS.deep, borderRadius: 8, height: 360, width: '100%' },
+  label: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  title: { color: WARM.ink, ...serif(30) },
+  sectionTitle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 22, fontWeight: '700' },
+  subhead: {
+    color: WARM.ink,
+    fontFamily: FONT.body,
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  bodyText: { color: WARM.muted, fontFamily: FONT.body, fontSize: 15, lineHeight: 22 },
+  player: { backgroundColor: WARM.sheet, borderRadius: 24, height: 360, width: '100%' },
   retryButton: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: COLORS.background,
-    borderColor: COLORS.edge,
-    borderRadius: 8,
+    backgroundColor: WARM.bg,
+    borderColor: WARM.line,
+    borderRadius: 24,
     borderWidth: 1,
     minHeight: 48,
     justifyContent: 'center',
     paddingHorizontal: 14,
   },
-  retryText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  entry: { borderTopColor: COLORS.line, borderTopWidth: 1, gap: 7, paddingTop: 12 },
-  entryTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '700' },
-  entryMeta: { color: COLORS.muted, fontSize: 13 },
+  retryText: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, fontWeight: '700' },
+  entry: { borderTopColor: WARM.line, borderTopWidth: 1, gap: 7, paddingTop: 12 },
+  entryTitle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 16, fontWeight: '700' },
+  entryMeta: { color: WARM.muted, fontSize: 13 },
   downloadButton: {
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: COLORS.deep,
-    borderRadius: 8,
+    backgroundColor: WARM.sheet,
+    borderRadius: 24,
     minHeight: 42,
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
-  downloadText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
-  notice: { color: COLORS.muted, fontSize: 14 },
+  downloadText: { color: WARM.ink, fontFamily: FONT.body, fontSize: 14, fontWeight: '700' },
+  notice: { color: WARM.muted, fontSize: 14 },
 });

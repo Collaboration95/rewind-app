@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
 import { createArchiveDownloadQueue } from '../archive/archive-download';
@@ -17,6 +17,7 @@ import {
 } from '../ui/primitives';
 import { FONT, serif } from '../ui/tokens';
 import { ReportSheet } from './ReportSheet';
+import { createFilmPlayback } from './film-playback';
 import { reportContent } from './safety';
 
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
@@ -68,13 +69,33 @@ export function FilmScreen({
   const [ownClips, setOwnClips] = useState<RealArchiveClip[]>([]);
   const downloads = useRef(createArchiveDownloadQueue()).current;
   const alive = useRef(true);
-  const autoStart = useRef(false);
-  useEffect(
-    () => () => {
-      alive.current = false;
-    },
+  const videoView = useRef<VideoView>(null);
+  const getWebVideo = useCallback(
+    () => (videoView.current?.nativeRef.current as HTMLVideoElement | null) ?? null,
     [],
   );
+  const onPlaybackBlocked = useCallback(() => {
+    if (alive.current) setPaused(true);
+  }, []);
+  const onPlaybackError = useCallback(() => {
+    if (alive.current) {
+      setPaused(true);
+      setStep('error');
+    }
+  }, []);
+  const playback = useMemo(() => createFilmPlayback(player), [player]);
+  useEffect(() => {
+    alive.current = true;
+    playback.connect(
+      Platform.OS === 'web' ? getWebVideo : undefined,
+      onPlaybackBlocked,
+      onPlaybackError,
+    );
+    return () => {
+      alive.current = false;
+      playback.dispose();
+    };
+  }, [getWebVideo, onPlaybackBlocked, onPlaybackError, playback]);
 
   const open = useCallback(async () => {
     setStep('loading');
@@ -95,25 +116,24 @@ export function FilmScreen({
         })
         .catch(() => undefined);
       setSegments(premiere.segments ?? null);
-      autoStart.current = true;
-      await player.replaceAsync(premiere.playbackUrl);
+      await playback.replaceAsync(premiere.playbackUrl);
       if (!alive.current) return;
       setTime(0);
       setStep('play');
-      player.play();
+      playback.play();
     } catch {
       if (alive.current) setStep('error');
     }
-  }, [client, cycleId, groupId, player]);
+  }, [client, cycleId, groupId, playback]);
   useEffect(() => {
     void Promise.resolve().then(open);
   }, [open]);
 
   const visible = useMemo(() => (segments ?? []).filter((segment) => !segment.hidden), [segments]);
   const end = useCallback(() => {
-    player.pause();
+    playback.pause();
     setStep('end');
-  }, [player]);
+  }, [playback]);
   const seekTo = useCallback(
     (seconds: number) => {
       player.seekBy(seconds - player.currentTime);
@@ -141,19 +161,10 @@ export function FilmScreen({
     const onPlaying = player.addListener('playingChange', ({ isPlaying }: { isPlaying: boolean }) =>
       setPaused(!isPlaying),
     );
-    // On the web a play() issued with the new source can be cut off by its own
-    // load; start again once the source is ready.
-    const onStatus = player.addListener('statusChange', ({ status }: { status: string }) => {
-      if (status === 'readyToPlay' && autoStart.current) {
-        autoStart.current = false;
-        player.play();
-      }
-    });
     return () => {
       onTime.remove();
       onEnd.remove();
       onPlaying.remove();
-      onStatus.remove();
     };
   }, [end, player, seekTo, segments]);
 
@@ -168,9 +179,8 @@ export function FilmScreen({
     else seekTo(visible[0].startSeconds);
   };
   const togglePause = () => {
-    if (paused) player.play();
-    else player.pause();
-    setPaused(!paused);
+    if (paused) playback.play();
+    else playback.pause();
   };
   // The end card reports the last moment someone else made (not your own).
   const others = visible.filter((segment) => !segment.mine);
@@ -233,6 +243,7 @@ export function FilmScreen({
   return (
     <View style={styles.screen} testID="real-film" {...rw('film-end')}>
       <VideoView
+        ref={videoView}
         accessibilityLabel="Group film"
         contentFit="contain"
         nativeControls={false}
@@ -284,7 +295,10 @@ export function FilmScreen({
             dark
             icon="close"
             label="Close film"
-            onPress={onClose}
+            onPress={() => {
+              playback.pause();
+              onClose();
+            }}
             testID="real-film-close"
           />
         </View>
@@ -309,7 +323,7 @@ export function FilmScreen({
                 color="#fff"
                 label="Report"
                 onPress={() => {
-                  player.pause();
+                  playback.pause();
                   setPaused(true);
                   setReporting(current);
                 }}
@@ -320,7 +334,7 @@ export function FilmScreen({
                   color="#fff"
                   label="Remove this moment"
                   onPress={() => {
-                    player.pause();
+                    playback.pause();
                     setPaused(true);
                     setRemoving(current);
                   }}
