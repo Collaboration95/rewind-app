@@ -13,7 +13,7 @@ import { ContributionLedgerSection } from '../contributions/ContributionLedgerSe
 import type { Cycle } from '../domain/cycles';
 import { revealStateForCycle, type RevealEducationState } from '../domain/reveal-education';
 import { HomeBody } from '../real/Home';
-import { cycleWeek, daysUntil, momentDay } from '../real/home-model';
+import { cycleWeek, filmCountdown, momentDay } from '../real/home-model';
 import { weekMoments } from '../real/Moments';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { useDemoSession } from '../session/DemoSessionProvider';
@@ -146,7 +146,7 @@ function ReadyDemoHome({
             <View accessibilityLabel={quotaLabel}>
               <HomeBody
                 header={null}
-                days={daysUntil(cycle.endsAt, clock())}
+                countdown={filmCountdown(cycle.endsAt, clock())}
                 week={cycleWeek(cycle, clock()).week}
                 resetDays={cycleWeek(cycle, clock()).resetDays}
                 prompt={cycle.prompt}
