@@ -80,12 +80,14 @@ export interface RuntimeClient {
     sessionId: string,
     groupId: string,
     input: ClipUploadInput,
+    signal?: AbortSignal,
   ): Promise<PendingClipUpload>;
   stageClipSource?(
     sessionId: string,
     groupId: string,
     idempotencyKey: string,
     base64: string,
+    signal?: AbortSignal,
   ): Promise<{ uri: string; byteLength: number }>;
   createSyntheticDemoClip?(sessionId: string, groupId: string): Promise<PendingClipUpload>;
   cancelClipUpload?(sessionId: string, groupId: string, jobId: string): Promise<void>;
@@ -410,6 +412,7 @@ export class LocalRuntimeClient implements RuntimeClient {
     sessionId: string,
     groupId: string,
     input: ClipUploadInput,
+    signal?: AbortSignal,
   ): Promise<PendingClipUpload> {
     const body = await this.request<{ upload: PendingClipUpload }>(
       `/contributions/upload?sessionId=${encodeURIComponent(sessionId)}&groupId=${encodeURIComponent(groupId)}`,
@@ -417,6 +420,7 @@ export class LocalRuntimeClient implements RuntimeClient {
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
+        ...(signal ? { signal } : {}),
       },
     );
     return body.upload;
@@ -640,6 +644,7 @@ export class LocalRuntimeClient implements RuntimeClient {
     groupId: string,
     idempotencyKey: string,
     base64: string,
+    signal?: AbortSignal,
   ): Promise<{ uri: string; byteLength: number }> {
     const binary = decodeBase64(base64);
     const body = await this.request<{ source: { uri: string; byteLength: number } }>(
@@ -648,6 +653,7 @@ export class LocalRuntimeClient implements RuntimeClient {
         method: 'POST',
         headers: { 'Content-Type': 'video/mp4' },
         body: binary as unknown as BodyInit,
+        ...(signal ? { signal } : {}),
       },
       MEDIA_RUNTIME_REQUEST_TIMEOUT_MS,
     );

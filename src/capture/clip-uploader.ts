@@ -15,11 +15,14 @@ export const MAX_CLIP_BYTES = 50 * 1024 * 1024;
 export const MAX_CLIP_UPLOAD_ATTEMPTS = 3;
 
 export interface ClipUploadTransport {
-  uploadClip(input: ClipUploadInput): Promise<PendingClipUpload>;
+  uploadClip(input: ClipUploadInput, signal?: AbortSignal): Promise<PendingClipUpload>;
   cancelClipUpload(jobId: string): Promise<void>;
 }
 
-export type PrepareClipUploadInput = (input: ClipUploadInput) => Promise<ClipUploadInput>;
+export type PrepareClipUploadInput = (
+  input: ClipUploadInput,
+  signal?: AbortSignal,
+) => Promise<ClipUploadInput>;
 
 export type ClipUploadProgress =
   | { status: 'idle'; percent: 0 }
@@ -113,6 +116,7 @@ export class ClipUploadSession {
   private generation = 0;
   private activeJobId: string | null = null;
   private attempts = 0;
+  private controller: AbortController | null = null;
 
   constructor(private readonly transport: ClipUploadTransport) {}
 
@@ -157,20 +161,25 @@ export class ClipUploadSession {
     onProgress?: (progress: ClipUploadProgress) => void,
     prepareInput?: PrepareClipUploadInput,
   ) {
+    this.controller?.abort();
+    const controller = new AbortController();
+    this.controller = controller;
     const generation = ++this.generation;
     this.progress = { status: 'validating', percent: 0 };
     onProgress?.(this.getProgress());
     this.progress = { status: 'uploading', percent: 10 };
     onProgress?.(this.getProgress());
     try {
-      const preparedInput = prepareInput ? await prepareInput({ ...input }) : input;
+      const preparedInput = prepareInput
+        ? await prepareInput({ ...input }, controller.signal)
+        : input;
       if (generation !== this.generation) {
         throw new ClipUploadError('The upload was cancelled.', {
           code: 'cancelled',
           retryable: false,
         });
       }
-      const upload = await this.transport.uploadClip(preparedInput);
+      const upload = await this.transport.uploadClip(preparedInput, controller.signal);
       if (generation !== this.generation) {
         await this.transport.cancelClipUpload(upload.job.id);
         throw new ClipUploadError('The upload was cancelled.', {
@@ -201,6 +210,8 @@ export class ClipUploadSession {
       // terminal rejection. The cancellation race above already creates a
       // ClipUploadError.
       throw wrapTransportError(error, message);
+    } finally {
+      if (this.controller === controller) this.controller = null;
     }
   }
 
@@ -227,6 +238,8 @@ export class ClipUploadSession {
 
   async cancel(): Promise<void> {
     this.generation += 1;
+    this.controller?.abort();
+    this.controller = null;
     const jobId = this.activeJobId;
     this.activeJobId = null;
     // Invalidate the local state before waiting on the runtime. A network

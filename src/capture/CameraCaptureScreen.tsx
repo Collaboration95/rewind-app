@@ -23,6 +23,7 @@ import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './me
 import { ExpoCameraPlatform, isCaptureCancelled } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
 import { DEFAULT_CAPTURE_MODE, type CaptureMode } from '../domain/video';
+import { LookPreview } from './LookPreview';
 import { applyRetroLookToPhoto, type RetroPhotoResult } from './retro-browser';
 import { useOptionalContributionStatus } from './contribution-status';
 import { decideInterruption } from './capture-interruption';
@@ -109,14 +110,15 @@ export function CameraCaptureScreen({
 }: CameraCaptureScreenProps = {}) {
   useAllowLandscape();
   const cameraRef = useRef<CameraView>(null);
+  const useSystemCamera = !onSubmitPhoto;
   const platform = useMemo(
     () =>
       platformProp ??
       new ExpoCameraPlatform({
-        browserSystemCamera: true,
+        browserSystemCamera: useSystemCamera,
         getCameraRef: () => cameraRef.current,
       }),
-    [platformProp],
+    [platformProp, useSystemCamera],
   );
   const resolvedFileStore = useMemo(
     () =>
@@ -556,14 +558,16 @@ export function CameraCaptureScreen({
         Add a moment
       </Text>
       {liveCamera ? (
-        <CameraView
-          accessibilityLabel="Live camera viewfinder"
-          facing="back"
-          onCameraReady={() => setCameraReady(true)}
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          testID="camera-live-preview"
-        />
+        <LookPreview mode={photoMode} testID="photo-live-look">
+          <CameraView
+            accessibilityLabel="Live camera viewfinder"
+            facing="back"
+            onCameraReady={() => setCameraReady(true)}
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            testID="camera-live-preview"
+          />
+        </LookPreview>
       ) : null}
       {viewfinder && platform.kind === 'demo' ? (
         <View accessibilityLabel="Simulator fixture viewfinder" style={styles.fixture}>
@@ -582,12 +586,14 @@ export function CameraCaptureScreen({
               <Text style={styles.fixtureSub}>No physical image was captured</Text>
             </View>
           ) : (
-            <Image
-              accessibilityLabel="Captured still preview"
-              resizeMode="contain"
-              source={{ uri: preview.uri }}
-              style={StyleSheet.absoluteFill}
-            />
+            <LookPreview mode={photoMode} testID="photo-review-look">
+              <Image
+                accessibilityLabel="Captured still preview"
+                resizeMode="contain"
+                source={{ uri: preview.uri }}
+                style={StyleSheet.absoluteFill}
+              />
+            </LookPreview>
           )}
           <CamBottom>
             {preview.metadata.source === 'file' ? <Tag>Chosen from a file</Tag> : null}
@@ -774,6 +780,13 @@ export function CameraCaptureScreen({
           <ModeSwitch mode="photo" onVideo={onRecordClip} videoTestID="camera-record-clip" />
           {viewfinder ? (
             <>
+              {onSubmitPhoto ? (
+                <LookPicker
+                  mode={photoMode}
+                  onChange={setPhotoMode}
+                  testID="photo-live-look-picker"
+                />
+              ) : null}
               <ShutterRow
                 center={
                   <Shutter
