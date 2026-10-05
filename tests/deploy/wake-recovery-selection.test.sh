@@ -27,8 +27,7 @@ cat > "$PLAN_JSON" <<'JSON'
   {"address":"aws_lightsail_instance.rewind[0]","change":{"actions":["create"]}},
   {"address":"aws_lightsail_static_ip.rewind[0]","change":{"actions":["create"]}},
   {"address":"aws_lightsail_static_ip_attachment.rewind[0]","change":{"actions":["create"]}},
-  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["create"]}},
-  {"address":"aws_lightsail_distribution.web[0]","change":{"actions":["create"]}}
+  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["create"]}}
 ]}
 JSON
 power_policy='{"Statement":[{"Sid":"ControlOnlyTheRewindDemo","Effect":"Allow","Action":["lightsail:StartInstance","lightsail:StopInstance"],"Resource":"arn:aws:lightsail:ap-southeast-1:330599756236:Instance/rewind-demo"}]}'
@@ -283,6 +282,18 @@ if output="$(run_wake --latest 2>&1)"; then
 fi
 [[ "$output" == *'unexpected resource change'* ]]
 jq '(.resource_changes[] | select(.address == "aws_iam_role_policy.power_controller[0]").change.after_unknown) = {"policy":true}' "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
+cp "$TEST_ROOT/safe-plan.json" "$PLAN_JSON"
+
+jq '.resource_changes += [{"address":"aws_s3_bucket.unexpected[0]","change":{"actions":["create"]}}]' \
+  "$PLAN_JSON" > "$TEST_ROOT/unexpected-resource-plan.json"
+cp "$TEST_ROOT/unexpected-resource-plan.json" "$PLAN_JSON"
+if output="$(run_wake --latest 2>&1)"; then
+  printf 'Unexpected resource creation passed wake allowlist.\n' >&2
+  exit 1
+fi
+[[ "$output" == *'unexpected resource change'* ]]
+jq 'del(.resource_changes[] | select(.address == "aws_s3_bucket.unexpected[0]"))' \
+  "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
 cp "$TEST_ROOT/safe-plan.json" "$PLAN_JSON"
 
 for invalid_uri in \

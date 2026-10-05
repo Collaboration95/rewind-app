@@ -242,9 +242,9 @@ describe('Expo camera adapter contract', () => {
 
   it.each([
     [
-      'portrait orientation',
-      { durationSeconds: 4, hasAudio: true, height: 720, width: 1280 },
-      'portrait video',
+      'missing video dimensions',
+      { durationSeconds: 4, hasAudio: true, height: 0, width: 1280 },
+      'no usable video',
     ],
     [
       'duration limit',
@@ -510,6 +510,31 @@ describe('Expo camera adapter contract', () => {
     await expect(platform.captureStill()).rejects.toBe(nativeFailure);
   });
 
+  it('retries a still capture while the browser camera has no frame yet (#401)', async () => {
+    const warmingUp = new Error(
+      'HTMLVideoElement does not have enough camera data to construct an image yet.',
+    );
+    const camera = cameraHandle({
+      takePictureAsync: jest
+        .fn()
+        .mockRejectedValueOnce(warmingUp)
+        .mockRejectedValueOnce(warmingUp)
+        .mockResolvedValue({ format: 'jpg', height: 1280, uri: 'blob:still', width: 720 }),
+    });
+    const wait = jest.fn().mockResolvedValue(undefined);
+    const platform = new ExpoCameraPlatform({ getCameraRef: () => camera, wait });
+
+    await expect(platform.captureStill()).resolves.toMatchObject({ sourceUri: 'blob:still' });
+    expect(camera.takePictureAsync).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(2);
+
+    const neverReady = cameraHandle({ takePictureAsync: jest.fn().mockRejectedValue(warmingUp) });
+    const stuck = new ExpoCameraPlatform({ getCameraRef: () => neverReady, wait });
+    await expect(stuck.captureStill()).rejects.toThrow(
+      'The camera is still starting. Wait a moment, then take the photo again.',
+    );
+  });
+
   it('maps video recording options and clamps a native duration above the 15-second limit', async () => {
     const recordAsync = jest.fn().mockResolvedValue({
       duration: MAX_CLIP_DURATION_SECONDS + 4,
@@ -655,6 +680,57 @@ describe('Expo camera adapter contract', () => {
     });
   });
 
+  it('uses the phone camera sheet on web for photos and videos (option 2)', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    try {
+      const picker = jest
+        .fn()
+        .mockResolvedValueOnce({ size: 3_000_000, type: 'image/jpeg' } as File)
+        .mockResolvedValueOnce({ size: 9_000_000, type: 'video/quicktime' } as File)
+        .mockResolvedValueOnce({ size: 60 * 1024 * 1024, type: 'video/quicktime' } as File);
+      const platform = new ExpoCameraPlatform({
+        browserSystemCamera: true,
+        browserFilePicker: picker,
+        browserImageDimensionsReader: jest.fn().mockResolvedValue({ height: 4032, width: 3024 }),
+        browserObjectUrlFactory: jest.fn().mockReturnValue('blob:camera'),
+        browserVideoContainerReader: jest
+          .fn()
+          .mockResolvedValue({ hasAudio: true, hasVideo: true, isMp4: true }),
+        browserVideoMetadataReader: jest
+          .fn()
+          .mockResolvedValue({ durationSeconds: 6, hasAudio: true, height: 1080, width: 1920 }),
+        getCameraRef: () => null,
+      });
+
+      expect(platform.fileFallbackIsCamera).toBe(true);
+      expect(platform.supportsLivePreview).toBe(false);
+      expect(platform.supportsVideoRecording).toBe(false);
+      await expect(platform.getCapabilities()).resolves.toEqual({
+        camera: 'unsupported',
+        microphone: 'unsupported',
+      });
+
+      await expect(platform.pickStillFile()).resolves.toMatchObject({
+        height: 4032,
+        source: 'camera',
+        width: 3024,
+      });
+      expect(picker).toHaveBeenNthCalledWith(1, 'image/jpeg,image/png', 'environment');
+
+      // A landscape camera recording is accepted; the film letterboxes it.
+      await expect(platform.pickVideoFile()).resolves.toMatchObject({
+        height: 1080,
+        source: 'camera',
+        width: 1920,
+      });
+      expect(picker).toHaveBeenNthCalledWith(2, 'video/*', 'environment');
+
+      await expect(platform.pickVideoFile()).rejects.toThrow('over 50 MB');
+    } finally {
+      platformOs.restore();
+    }
+  });
+
   it('rejects non-blob preview schemes before assigning a video source', async () => {
     const createElement = jest.fn();
     const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
@@ -752,9 +828,9 @@ describe('Expo camera adapter contract', () => {
       '15 seconds or shorter',
     ],
     [
-      'landscape',
-      { durationSeconds: 10, hasAudio: true, height: 720, width: 1280 },
-      'portrait MP4',
+      'without video dimensions',
+      { durationSeconds: 10, hasAudio: true, height: 0, width: 1280 },
+      'Choose an MP4 video',
     ],
     [
       'without audio',

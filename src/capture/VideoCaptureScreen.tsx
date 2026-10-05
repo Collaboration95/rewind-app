@@ -1,4 +1,5 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAllowLandscape } from '../runtime/PortraitGuard';
 import { CameraView } from 'expo-camera';
 import {
   AppState,
@@ -20,12 +21,16 @@ import {
 } from './real-account-video-runtime';
 import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 import { COLORS } from '../theme';
-import type {
-  CaptureMode,
-  ClipUploadInput,
-  PendingClipUpload,
-  RecordedClip,
+import {
+  CAPTURE_MODE_LABELS,
+  CAPTURE_MODES,
+  DEFAULT_CAPTURE_MODE,
+  type CaptureMode,
+  type ClipUploadInput,
+  type PendingClipUpload,
+  type RecordedClip,
 } from '../domain/video';
+import { applyRetroLookToVideo, canProcessRetroVideo, RetroProcessingError } from './retro-browser';
 import { ClipUploadError, ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
 import {
   EXHAUSTED_UPLOAD_MESSAGE,
@@ -55,6 +60,7 @@ import {
   ExpoCameraPlatform,
   readManagedRecordedClipBase64,
   removeManagedRecordedClip,
+  isCaptureCancelled,
 } from './platform';
 import type { CameraPlatform, PermissionSnapshot } from './contracts';
 
@@ -79,6 +85,9 @@ export interface VideoCaptureScreenProps {
   onBack?: () => void;
   onContributionDeleted?: () => void;
 }
+
+/** The server rejects clips over 15 seconds; keep a processed clip below it. */
+const MAX_PROCESSED_CLIP_SECONDS = 14.9;
 
 function isVideoPlatform(
   platform: CameraPlatform,
@@ -157,11 +166,14 @@ export function VideoCaptureScreen({
   runtimeClient = null,
   realAccount,
 }: VideoCaptureScreenProps = {}) {
+  useAllowLandscape();
   const cameraRef = useRef<CameraView>(null);
   const getCameraRef = useCallback(() => cameraRef.current, []);
   const platform = useMemo(
     () =>
       platformProp ??
+      // Video keeps the in-page recorder: the phone camera sheet records web
+      // video at a low preset (about 480p) that a page cannot raise.
       // eslint-disable-next-line react-hooks/refs
       new ExpoCameraPlatform({
         getCameraRef,
@@ -172,6 +184,7 @@ export function VideoCaptureScreen({
     () => (isVideoPlatform(platform) ? new BoundedVideoRecordingSession(platform) : null),
     [platform],
   );
+  const fileFallbackLabel = platform.fileFallbackIsCamera ? 'Record video' : 'Choose a video file';
   const demoSession = useOptionalDemoSession();
   const realGroupId = realAccount?.groupId;
   const authenticatedRequest = realAccount?.authenticatedRequest;
@@ -194,11 +207,19 @@ export function VideoCaptureScreen({
   const [access, setAccess] = useState<AccessStatus>('checking');
   const [error, setError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
-  const { height: viewportHeight } = useWindowDimensions();
+  const { height: viewportHeight, width: viewportWidth } = useWindowDimensions();
+  // Size the web viewfinder to the camera's real shape (tall when the phone
+  // is upright, wide when it is turned), like a camera app.
+  const [previewAspect, setPreviewAspect] = useState(9 / 16);
   const webPreviewHeight = Math.max(
     160,
-    Math.min(320, viewportHeight * 0.35) - (recording ? 96 : 0),
+    Math.min(
+      // About 45% of the screen keeps the record controls visible below it.
+      viewportHeight * 0.45 - (recording ? 96 : 0),
+      Math.max(160, viewportWidth - 48) / previewAspect,
+    ),
   );
+  const webPreviewWidth = webPreviewHeight * previewAspect;
   const [browserPreviewStream, setBrowserPreviewStream] = useState<MediaStream | null>(null);
   const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -207,7 +228,11 @@ export function VideoCaptureScreen({
   const [reviewPlayerVisible, setReviewPlayerVisible] = useState(true);
   const [startText, setStartText] = useState('0');
   const [endText, setEndText] = useState('0');
-  const [mode, setMode] = useState<CaptureMode>('soft-focus');
+  const [mode, setMode] = useState<CaptureMode>(DEFAULT_CAPTURE_MODE);
+  // Web applies the retro look on this device before upload (null when idle).
+  const [retroPercent, setRetroPercent] = useState<number | null>(null);
+  const retroAbortRef = useRef<AbortController | null>(null);
+  const processedUriRef = useRef<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<ClipUploadProgress>({
     status: 'idle',
     percent: 0,
@@ -339,11 +364,21 @@ export function VideoCaptureScreen({
     contributionWorkRef.current = false;
     activeUploadRef.current = false;
   }, []);
-  const releaseOwnedClip = useCallback(async (ownedClip: RecordedClip | null): Promise<void> => {
-    if (!ownedClip) return;
-    if (clipRef.current?.sourceUri === ownedClip.sourceUri) clipRef.current = null;
-    await removeManagedRecordedClip(ownedClip.sourceUri);
+  const releaseProcessedClip = useCallback(() => {
+    retroAbortRef.current?.abort();
+    const processedUri = processedUriRef.current;
+    processedUriRef.current = null;
+    if (processedUri) URL.revokeObjectURL(processedUri);
   }, []);
+  const releaseOwnedClip = useCallback(
+    async (ownedClip: RecordedClip | null): Promise<void> => {
+      releaseProcessedClip();
+      if (!ownedClip) return;
+      if (clipRef.current?.sourceUri === ownedClip.sourceUri) clipRef.current = null;
+      await removeManagedRecordedClip(ownedClip.sourceUri);
+    },
+    [releaseProcessedClip],
+  );
 
   const onReviewPlayerMounted = useCallback(() => {
     reviewPlayerMountedRef.current = true;
@@ -404,7 +439,7 @@ export function VideoCaptureScreen({
       setReviewPlayerVisible(true);
       setStartText('0');
       setEndText(String(selected.durationSeconds));
-      setMode('soft-focus');
+      setMode(DEFAULT_CAPTURE_MODE);
       return true;
     },
     [isCaptureActive, releaseOwnedClip, reviewStore, unmountReviewPlayer],
@@ -440,6 +475,7 @@ export function VideoCaptureScreen({
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      releaseProcessedClip();
       const currentClip = clipRef.current;
       clipRef.current = null;
       reviewRef.current = null;
@@ -449,7 +485,7 @@ export function VideoCaptureScreen({
           void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
       });
     };
-  }, [cancelActiveWork, waitForReviewPlayerUnmount]);
+  }, [cancelActiveWork, releaseProcessedClip, waitForReviewPlayerUnmount]);
 
   const refresh = useCallback(
     async (videoPermissionSnapshot?: PermissionSnapshot) => {
@@ -659,7 +695,7 @@ export function VideoCaptureScreen({
       const selected = await platform.pickVideoFile();
       await replaceClip(selected);
     } catch (fileError) {
-      if (!isCaptureActive()) return;
+      if (!isCaptureActive() || isCaptureCancelled(fileError)) return;
       setError(
         fileError instanceof Error ? fileError.message : 'The video file could not be used.',
       );
@@ -676,6 +712,7 @@ export function VideoCaptureScreen({
   };
 
   const retake = async () => {
+    retroAbortRef.current?.abort();
     const currentClip = clip;
     if (contributionWorkRef.current) invalidateContributionWork();
     if (
@@ -865,21 +902,96 @@ export function VideoCaptureScreen({
     ]);
     let pendingInput = pendingUploadInputRef.current;
     if (!pendingInput || pendingInput.signature !== signature) {
+      if (retroAbortRef.current) return;
+      let media = {
+        byteLength: clip.byteLength ?? 0,
+        clientProcessed: false,
+        height: clip.height,
+        sourceDurationSeconds: reviewMetadata.durationSeconds,
+        sourceUri: clip.sourceUri,
+        trimEndSeconds: reviewMetadata.endSeconds,
+        trimStartSeconds: reviewMetadata.startSeconds,
+        width: clip.width,
+      };
+      // Web applies the look here, before upload, and sends the already
+      // trimmed result. Native apps (and browsers that cannot re-encode)
+      // upload the original and the server applies the same look.
+      if (Platform.OS === 'web' && canProcessRetroVideo()) {
+        const controller = new AbortController();
+        retroAbortRef.current = controller;
+        setRetroPercent(0);
+        setError(null);
+        try {
+          const processed = await applyRetroLookToVideo(
+            {
+              capturedAt: new Date(),
+              endSeconds: reviewMetadata.endSeconds,
+              mode: reviewMetadata.mode,
+              sourceUri: clip.sourceUri,
+              startSeconds: reviewMetadata.startSeconds,
+            },
+            {
+              signal: controller.signal,
+              onProgress: (percent) => {
+                if (!controller.signal.aborted) setRetroPercent(percent);
+              },
+            },
+          );
+          if (controller.signal.aborted || !isCaptureActive() || clipRef.current !== clip) {
+            URL.revokeObjectURL(processed.sourceUri);
+            return;
+          }
+          if (processedUriRef.current) URL.revokeObjectURL(processedUriRef.current);
+          processedUriRef.current = processed.sourceUri;
+          const durationSeconds = Math.min(
+            Math.floor(processed.durationSeconds * 100) / 100,
+            MAX_PROCESSED_CLIP_SECONDS,
+          );
+          media = {
+            byteLength: processed.byteLength,
+            clientProcessed: true,
+            height: processed.height,
+            sourceDurationSeconds: processed.durationSeconds,
+            sourceUri: processed.sourceUri,
+            trimEndSeconds: durationSeconds,
+            trimStartSeconds: 0,
+            width: processed.width,
+          };
+        } catch (processingError) {
+          if (!isCaptureActive()) return;
+          const cancelled =
+            processingError instanceof RetroProcessingError && processingError.cancelled;
+          const detail =
+            processingError instanceof Error
+              ? processingError.message
+              : 'The retro look could not be applied.';
+          setError(
+            cancelled
+              ? 'The retro look was cancelled. Your original clip is kept; upload again to retry.'
+              : `${detail} Your original clip is kept; try uploading again.`,
+          );
+          return;
+        } finally {
+          if (retroAbortRef.current === controller) retroAbortRef.current = null;
+          if (isCaptureActive()) setRetroPercent(null);
+        }
+      }
       pendingInput = {
         signature,
         input: {
-          byteLength: clip.byteLength ?? 0,
-          durationSeconds: reviewMetadata.endSeconds - reviewMetadata.startSeconds,
+          byteLength: media.byteLength,
+          durationSeconds: media.trimEndSeconds - media.trimStartSeconds,
           hasAudio: clip.hasAudio,
-          height: clip.height,
+          height: media.height,
           idempotencyKey: `clip-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
           mimeType: clip.mimeType,
           mode: reviewMetadata.mode,
-          sourceUri: clip.sourceUri,
-          sourceDurationSeconds: reviewMetadata.durationSeconds,
-          trimEndSeconds: reviewMetadata.endSeconds,
-          trimStartSeconds: reviewMetadata.startSeconds,
-          width: clip.width,
+          ...(media.clientProcessed ? { clientProcessed: true } : {}),
+          sourceUri: media.sourceUri,
+          sourceDurationSeconds: media.sourceDurationSeconds,
+          trimEndSeconds: media.trimEndSeconds,
+          trimStartSeconds: media.trimStartSeconds,
+          width: media.width,
           ...(replacementTargetRef.current
             ? { replacesContributionId: replacementTargetRef.current }
             : {}),
@@ -894,7 +1006,7 @@ export function VideoCaptureScreen({
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
       if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
-        const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
+        const sourceData = await readManagedRecordedClipBase64(input.sourceUri);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
@@ -997,7 +1109,7 @@ export function VideoCaptureScreen({
         throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
       }
       if (activeRuntimeClient?.stageClipSource && uploadSessionId && uploadGroupId) {
-        const sourceData = await readManagedRecordedClipBase64(clip.sourceUri);
+        const sourceData = await readManagedRecordedClipBase64(input.sourceUri);
         if (!isContributionWorkActive(operation)) {
           throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
         }
@@ -1274,7 +1386,7 @@ export function VideoCaptureScreen({
         </Text>
         <Text style={styles.body} testID="video-portrait-guidance">
           {Platform.OS === 'web'
-            ? 'Keep your device upright for portrait video with microphone audio. If the page rotates, scroll to reach the controls. Maximum duration: 15 seconds.'
+            ? 'Record in portrait or landscape, with microphone audio. Maximum duration: 15 seconds.'
             : 'Portrait video with microphone audio. Maximum duration: 15 seconds.'}
         </Text>
       </View>
@@ -1291,7 +1403,7 @@ export function VideoCaptureScreen({
                 ? 'Preparing synthetic Demo clip…'
                 : 'Create synthetic Demo clip'
               : platform.supportsFileFallback && platform.pickVideoFile
-                ? 'Choose a video file'
+                ? fileFallbackLabel
                 : undefined
           }
           disabled={creatingSyntheticClip}
@@ -1305,7 +1417,9 @@ export function VideoCaptureScreen({
                 : undefined
           }
           testID="video-unsupported"
-          title="Recording is not supported here"
+          title={
+            platform.fileFallbackIsCamera ? 'Record a video' : 'Recording is not supported here'
+          }
           body={[
             platform.getVideoCaptureUnavailableReason?.(),
             platform.kind === 'demo' &&
@@ -1313,7 +1427,9 @@ export function VideoCaptureScreen({
             demoSession?.session
               ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
               : platform.supportsFileFallback && platform.pickVideoFile
-                ? 'Live recording is not supported here. Choose a portrait MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
+                ? platform.fileFallbackIsCamera
+                  ? 'Opens your phone camera. Record up to 15 seconds in portrait or landscape; the video comes back here so you can review it before you submit.'
+                  : 'Live recording is not supported here. Choose an MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
                 : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.',
           ]
             .filter((message): message is string => Boolean(message))
@@ -1324,7 +1440,7 @@ export function VideoCaptureScreen({
         <Panel
           actionLabel={
             platform.supportsFileFallback && platform.pickVideoFile
-              ? 'Choose a video file'
+              ? fileFallbackLabel
               : 'Check again'
           }
           onAction={
@@ -1348,7 +1464,7 @@ export function VideoCaptureScreen({
         <Panel
           actionLabel={
             platform.supportsFileFallback && platform.pickVideoFile
-              ? 'Choose a video file'
+              ? fileFallbackLabel
               : 'Try again'
           }
           onAction={
@@ -1385,8 +1501,14 @@ export function VideoCaptureScreen({
       {access === 'ready' && !clip ? (
         <View style={styles.captureArea}>
           {Platform.OS === 'web' ? (
-            <View style={[styles.preview, styles.webPreview, { height: webPreviewHeight }]}>
-              <BrowserVideoPreview stream={browserPreviewStream} />
+            <View
+              style={[
+                styles.preview,
+                styles.webPreview,
+                { alignSelf: 'center', height: webPreviewHeight, width: webPreviewWidth },
+              ]}
+            >
+              <BrowserVideoPreview onAspect={setPreviewAspect} stream={browserPreviewStream} />
             </View>
           ) : (
             <CameraView
@@ -1445,8 +1567,8 @@ export function VideoCaptureScreen({
           <Text style={styles.panelTitle}>Review your clip</Text>
           <Text style={styles.body}>
             {clip.source === 'file'
-              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio track detected; server verifies`
-              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} portrait · audio included`}
+              ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio track detected; server verifies`
+              : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio included`}
           </Text>
           {reviewPlayerVisible && playbackBounds ? (
             <CapturedVideoReview
@@ -1476,19 +1598,21 @@ export function VideoCaptureScreen({
             style={styles.input}
             value={endText}
           />
-          <Text style={styles.fieldLabel}>Original capture mode</Text>
+          <Text style={styles.fieldLabel}>Retro look</Text>
           <View style={styles.modeRow}>
-            {(['soft-focus', 'high-contrast'] as const).map((option) => (
+            {CAPTURE_MODES.map((option) => (
               <Pressable
                 accessibilityRole="radio"
                 accessibilityState={{ selected: mode === option }}
+                disabled={retroPercent !== null}
                 key={option}
-                onPress={() => setMode(option)}
+                onPress={() => {
+                  setMode(option);
+                  review.setMode(option);
+                }}
                 style={[styles.modeButton, mode === option && styles.modeSelected]}
               >
-                <Text style={styles.outlineText}>
-                  {option === 'soft-focus' ? 'Soft Focus' : 'High Contrast'}
-                </Text>
+                <Text style={styles.outlineText}>{CAPTURE_MODE_LABELS[option]}</Text>
               </Pressable>
             ))}
           </View>
@@ -1502,7 +1626,20 @@ export function VideoCaptureScreen({
           >
             <Text style={styles.outlineText}>Retake</Text>
           </Pressable>
-          {uploadProgress.status === 'complete' && !contributionFailed ? (
+          {retroPercent !== null ? (
+            <View testID="video-retro-processing">
+              <Text accessibilityLiveRegion="polite" style={styles.body}>
+                Applying retro look… {retroPercent}%
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => retroAbortRef.current?.abort()}
+                style={styles.outlineButton}
+              >
+                <Text style={styles.outlineText}>Cancel retro look</Text>
+              </Pressable>
+            </View>
+          ) : uploadProgress.status === 'complete' && !contributionFailed ? (
             <Text style={styles.success}>Upload queued as one pending contribution.</Text>
           ) : uploadProgress.status === 'failed' || contributionFailed ? null : (
             <Pressable
@@ -1680,12 +1817,27 @@ function CapturedVideoReview({
   );
 }
 
-function BrowserVideoPreview({ stream }: { stream: MediaStream | null }) {
+function BrowserVideoPreview({
+  onAspect,
+  stream,
+}: {
+  onAspect?: (aspect: number) => void;
+  stream: MediaStream | null;
+}) {
   const setPreviewRef = useCallback(
     (video: HTMLVideoElement | null) => {
-      if (video) video.srcObject = stream;
+      if (!video) return;
+      video.srcObject = stream;
+      // Frame size changes when the phone rotates.
+      const measure = () => {
+        if (video.videoWidth > 0 && video.videoHeight > 0) {
+          onAspect?.(video.videoWidth / video.videoHeight);
+        }
+      };
+      video.onloadedmetadata = measure;
+      video.onresize = measure;
     },
-    [stream],
+    [onAspect, stream],
   );
   return createElement('video', {
     'aria-label': 'Live camera preview',
@@ -1757,7 +1909,15 @@ const styles = StyleSheet.create({
   panelTitle: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
   captureArea: { flex: 1, gap: 14, minHeight: 0 },
   preview: { backgroundColor: COLORS.deep, borderRadius: 12, flex: 1, minHeight: 240 },
-  webPreview: { flex: 0, minHeight: 160, maxHeight: 320, overflow: 'hidden' },
+  // Height and width come from the stream's aspect ratio (see webPreviewHeight).
+  // flex: 0 would become flex-basis 0% on web and override the explicit height.
+  webPreview: {
+    flexBasis: 'auto',
+    flexGrow: 0,
+    flexShrink: 0,
+    minHeight: 160,
+    overflow: 'hidden',
+  },
   recordButton: {
     alignItems: 'center',
     backgroundColor: COLORS.accent,

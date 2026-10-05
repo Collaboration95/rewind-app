@@ -231,6 +231,27 @@ jobs:
             "$RUNNER_TEMP/rewind-release.tar" deploy/release.py deploy/release-host.sh \
             "ubuntu@$REWIND_HOST_IP:/tmp/"
 
+      - name: Apply hosted settings
+        env:
+          # Repository variable set from `terraform output hosted_env_uri`.
+          REWIND_HOSTED_ENV_URI: ${{ vars.REWIND_HOSTED_ENV_URI }}
+        run: |
+          set -Eeuo pipefail
+          # Terraform (infra/terraform/media) writes the allowlisted settings,
+          # including the runtime's S3 credentials, to a private object; this
+          # step streams it to the host without printing or storing it.
+          if [ -z "$REWIND_HOSTED_ENV_URI" ]; then
+            echo 'REWIND_HOSTED_ENV_URI is not set; keeping the host settings unchanged.'
+            exit 0
+          fi
+          # Once configured, a read failure (access, network, missing object)
+          # fails the deploy instead of shipping stale settings.
+          # Read fully before sending so a partial download is never applied.
+          settings="$(aws s3 cp "$REWIND_HOSTED_ENV_URI" -)"
+          # shellcheck disable=SC2086
+          printf '%s\n' "$settings" |
+            ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" 'bash /tmp/release-host.sh configure'
+
       - name: Install the release on the host
         run: |
           set -Eeuo pipefail
@@ -240,7 +261,11 @@ jobs:
           ssh $REWIND_SSH_OPTS "ubuntu@$REWIND_HOST_IP" '
             set -Eeuo pipefail
             test "$(sha256sum /tmp/rewind-release.tar | cut -d " " -f 1)" = "'"$(sha256sum "$RUNNER_TEMP/rewind-release.tar" | cut -d ' ' -f 1)"'"
-            bash /tmp/release-host.sh install /tmp/rewind-release.tar
+            status=0
+            bash /tmp/release-host.sh install /tmp/rewind-release.tar || status=$?
+            # The installed copy lives under /srv/rewind/releases; drop the upload.
+            rm -f /tmp/rewind-release.tar
+            exit "$status"
           '
 
       - name: Verify the public health endpoint

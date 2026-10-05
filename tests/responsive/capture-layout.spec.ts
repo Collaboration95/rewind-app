@@ -37,20 +37,22 @@ async function expectReachable(page: Page, control: Locator) {
   await control.click({ trial: true });
 }
 
-test('permission CTA and navigation remain reachable from portrait through short landscape', async ({
+test('camera CTA and navigation remain reachable from portrait through short landscape', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 393, height: 852 });
   await openCamera(page);
-  const allow = page.getByRole('button', { name: 'Allow camera access', exact: true });
+  // Option 2: the web app opens the phone's own camera; no in-page permission step.
+  const allow = page.getByRole('button', { name: 'Open camera', exact: true });
   await expectReachable(page, allow);
   await page.setViewportSize({ width: 852, height: 300 });
   await expectReachable(page, allow);
+  // Outside the camera, phone landscape is covered by the rotate prompt (#327).
+  await page.setViewportSize({ width: 393, height: 852 });
   await page.getByTestId('nav-home').click();
   await expect(page.getByTestId('camera-screen')).toHaveCount(0);
   await expect(page.getByTestId('nav-home')).toContainText('SELECTED');
   await page.getByTestId('nav-camera').click();
-  await page.setViewportSize({ width: 393, height: 852 });
   await expectReachable(page, allow);
 });
 
@@ -59,7 +61,7 @@ test('short landscape file review keeps retake and discard usable above navigati
 }) => {
   await page.setViewportSize({ width: 393, height: 852 });
   await openCamera(page, 'denied');
-  const choose = page.getByRole('button', { name: 'Choose an image file', exact: true });
+  const choose = page.getByRole('button', { name: 'Open camera', exact: true });
   async function selectImage() {
     const chooser = page.waitForEvent('filechooser');
     await choose.click();
@@ -73,14 +75,17 @@ test('short landscape file review keeps retake and discard usable above navigati
   await expectReachable(page, retake);
   await retake.click();
   await expect(page.getByTestId('camera-preview-panel')).toHaveCount(0);
-  // Re-enter to refresh denied access after retake's existing ready state.
+  // Re-enter in portrait: outside the camera, phone landscape shows the rotate prompt.
+  await page.setViewportSize({ width: 393, height: 852 });
   await page.getByTestId('nav-home').click();
   await page.getByTestId('nav-camera').click();
   await selectImage();
+  await page.setViewportSize({ width: 852, height: 300 });
   const discard = page.getByRole('button', { name: 'Discard', exact: true });
   await expectReachable(page, discard);
   await discard.click();
   await expect(page.getByTestId('camera-preview-panel')).toHaveCount(0);
+  await page.setViewportSize({ width: 393, height: 852 });
   await page.getByTestId('nav-home').click();
   await expect(page.getByTestId('camera-screen')).toHaveCount(0);
   await expect(page.getByTestId('nav-home')).toContainText('SELECTED');

@@ -179,8 +179,8 @@ test('real photo upload is idempotent, private, and processed as a three-second 
       outputPath,
     ]);
     const output = JSON.parse(stdout);
-    assert.equal(output.streams.find((stream) => stream.codec_type === 'video').width, 180);
-    assert.equal(output.streams.find((stream) => stream.codec_type === 'video').height, 320);
+    assert.equal(output.streams.find((stream) => stream.codec_type === 'video').width, 720);
+    assert.equal(output.streams.find((stream) => stream.codec_type === 'video').height, 1280);
     assert.ok(output.streams.some((stream) => stream.codec_type === 'audio'));
     assert.ok(Math.abs(Number(output.format.duration) - 3) < 0.1);
     const forbidden = await fetch(

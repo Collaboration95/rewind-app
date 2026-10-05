@@ -2454,8 +2454,9 @@ export async function handleRequest(
       width: typeof body?.width === 'number' ? body.width : Number.NaN,
       height: typeof body?.height === 'number' ? body.height : Number.NaN,
       hasAudio: body?.hasAudio === true,
-      ...(typeof body?.mode === 'string'
-        ? { mode: body.mode as 'soft-focus' | 'high-contrast' }
+      ...(typeof body?.mode === 'string' ? { mode: body.mode as ClipUploadInput['mode'] } : {}),
+      ...(body?.clientProcessed !== undefined
+        ? { clientProcessed: body.clientProcessed as boolean }
         : {}),
       ...(typeof body?.trimStartSeconds === 'number'
         ? { trimStartSeconds: body.trimStartSeconds }
@@ -2503,7 +2504,7 @@ export async function handleRequest(
                   ? 'Provide a retryable upload key.'
                   : result.reason === 'invalid_mode'
                     ? 'Choose a supported original capture mode.'
-                    : 'The clip must be an MP4 portrait video with audio, within 15 seconds and 50 MB.',
+                    : 'The clip must be an MP4 video with audio, within 15 seconds and 50 MB.',
       });
       return;
     }
@@ -3761,6 +3762,7 @@ async function handleRealGroupRequest(
           'trimStartSeconds',
           'trimEndSeconds',
           'mode',
+          'clientProcessed',
           'replacesContributionId',
         ];
     if (!body || Object.keys(body).some((key) => !keys.includes(key)))
@@ -4057,6 +4059,7 @@ async function handleRealGroupRequest(
           timeZone: body.timeZone,
         },
         now,
+        config.realCycleDurationMs,
       );
     } catch {
       authJson(request, response, config, 409, {
@@ -4332,6 +4335,8 @@ export function createRuntimeServer(
     response.setHeader('X-Request-Id', observation.requestId);
     response.once('finish', () => {
       if (response.statusCode >= 500) observation.failure(response.statusCode);
+      if (config.requestTiming)
+        observation.timing(request.method, request.url, response.statusCode);
     });
     void handleRequest(request, response, config, database, {
       ...options,

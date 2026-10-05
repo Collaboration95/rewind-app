@@ -81,6 +81,8 @@ import { ArchiveScreen } from './src/archive/ArchiveScreen';
 import { ReminderSettings } from './src/reminders/ReminderSettings';
 import { RealAccountProvider, useRealAccount } from './src/auth/RealAccountProvider';
 import { RealAccountGroupExperience } from './src/groups/RealAccountGroupExperience';
+import { PortraitGuard } from './src/runtime/PortraitGuard';
+import { markLaunchReady } from './src/runtime/timing';
 
 const lockedMoments = [1, 2, 3];
 const COLD_LAUNCH_MINIMUM_MS = 600;
@@ -145,14 +147,16 @@ export default function App({
           {...(sessionStore ? { store: sessionStore } : {})}
         >
           <DemoProfileProvider>
-            <SessionGate
-              clock={clock}
-              cycleRepository={cycleRepository}
-              groupRepository={groupRepository}
-              inviteLink={inviteLink}
-              runtimeClient={configuredRuntime?.client ?? null}
-              cameraPlatform={cameraPlatform}
-            />
+            <PortraitGuard>
+              <SessionGate
+                clock={clock}
+                cycleRepository={cycleRepository}
+                groupRepository={groupRepository}
+                inviteLink={inviteLink}
+                runtimeClient={configuredRuntime?.client ?? null}
+                cameraPlatform={cameraPlatform}
+              />
+            </PortraitGuard>
           </DemoProfileProvider>
         </DemoSessionProvider>
       </RealAccountProvider>
@@ -222,7 +226,15 @@ function SessionGate({
     () => (runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null),
     [runtimeClient, session],
   );
-  if (!coldLaunchMinimumElapsed || realAccount.state === 'loading' || status === 'loading') {
+  const launchReady =
+    coldLaunchMinimumElapsed && realAccount.state !== 'loading' && status !== 'loading';
+  const realAccountActive = realAccount.state === 'active' && Boolean(realAccount.session);
+  useEffect(() => {
+    // A signed-in member is ready once the group screen loads (see
+    // RealAccountGroupExperience); other entry screens are ready here.
+    if (launchReady && !realAccountActive) markLaunchReady();
+  }, [launchReady, realAccountActive]);
+  if (!launchReady) {
     return <SessionLoadingScreen />;
   }
   if (realAccount.state === 'active' && realAccount.session)

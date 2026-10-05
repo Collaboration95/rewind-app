@@ -47,11 +47,20 @@ export const secureTokenStore: TokenStore = {
   clear: () => SecureStore.deleteItemAsync(SECURE_SESSION_KEY),
 };
 
-export function isSecureAuthUrl(baseUrl: string): boolean {
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+// Dev builds only (`make run-real`): a same-origin plain-HTTP loopback API is
+// accepted because the local server allows HTTP auth only from loopback.
+function isLocalDevAuthUrl(url: URL, devBuild: boolean): boolean {
+  return devBuild && url.protocol === 'http:' && LOOPBACK_HOSTNAMES.has(url.hostname);
+}
+
+export function isSecureAuthUrl(baseUrl: string, devBuild = __DEV__): boolean {
   try {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const url = new URL(baseUrl, window.location.href);
-      return url.protocol === 'https:' && url.origin === window.location.origin;
+      if (url.origin !== window.location.origin) return false;
+      return url.protocol === 'https:' || isLocalDevAuthUrl(url, devBuild);
     }
     return new URL(baseUrl).protocol === 'https:';
   } catch {
@@ -330,7 +339,11 @@ export interface RealAccountArchiveClient {
 }
 
 /** Resolve a server-issued capability at the configured public API origin. */
-export function resolvePublicMediaPath(baseUrl: string, capabilityPath: string): string {
+export function resolvePublicMediaPath(
+  baseUrl: string,
+  capabilityPath: string,
+  devBuild = __DEV__,
+): string {
   let base: URL;
   let capability: URL;
   let target: URL;
@@ -343,8 +356,10 @@ export function resolvePublicMediaPath(baseUrl: string, capabilityPath: string):
     throw new AuthRequestError(502, 'response');
   }
 
+  const secureOrLocalDev = (url: URL) =>
+    url.protocol === 'https:' || isLocalDevAuthUrl(url, devBuild);
   if (
-    base.protocol !== 'https:' ||
+    !secureOrLocalDev(base) ||
     base.username.length > 0 ||
     base.password.length > 0 ||
     base.search.length > 0 ||
@@ -355,7 +370,7 @@ export function resolvePublicMediaPath(baseUrl: string, capabilityPath: string):
     capability.hash.length > 0 ||
     !/^\/media\/access\/[A-Za-z0-9_-]{43}$/.test(capability.pathname) ||
     target.origin !== base.origin ||
-    target.protocol !== 'https:' ||
+    !secureOrLocalDev(target) ||
     target.search.length > 0 ||
     target.hash.length > 0
   ) {

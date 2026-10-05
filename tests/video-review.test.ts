@@ -50,7 +50,7 @@ describe('video review and trim', () => {
     expect(saved).toMatchObject({
       clipId: 'clip-1',
       endSeconds: 8,
-      mode: 'high-contrast',
+      mode: 'ccd',
       startSeconds: 2,
     });
     expect(await store.load('clip-1')).toEqual(saved);

@@ -367,7 +367,7 @@ describe('direct private transfer', () => {
     { byteLength: 50 * 1024 * 1024 + 1 },
     { mimeType: 'video/webm' },
     { durationSeconds: 16 },
-    { width: 1280 },
+    { width: 0 },
     { hasAudio: false },
     { trimEndSeconds: 16 },
     { sourceDurationSeconds: 0.5 },

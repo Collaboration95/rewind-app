@@ -140,11 +140,9 @@ The live-Demo owners accepted the following operating model on 23 September
   disposable compute is deleted without a fresh verified recovery point. A
   failed restore preserves every recovery artifact and does not replace
   known-good data.
-- Public acceptance uses the provider-generated HTTPS hostname and no custom
-  domain. To minimize recurring cost, the optional distribution is retained
-  only while the public Demo is required, then removed before the normal
-  backup-gated hibernation. A later wake may therefore receive a different
-  generated hostname and static IP.
+- Public acceptance uses the single HTTPS entry point documented below. The
+  retired optional Lightsail distribution is not part of current deployment or
+  hibernation guidance.
 - Andrew owns the non-author acceptance run for the hosted journey.
 
 An apply still requires Andrew to review the exact Terraform plan. These
@@ -190,8 +188,10 @@ records those objects in Terraform state; it does **not** recreate them.
 - The active Demo uses one `micro_3_0` Lightsail instance. Hibernated state has
   no instance or static IP; static-IP retention is intentionally out of scope
   for the current sprint and may be revisited later.
-- No RDS, NAT gateway, load balancer, ECR, or extra compute is declared here;
-  the public HTTPS distribution is optional and disabled by default.
+- No RDS, NAT gateway, load balancer, ECR, or extra compute is declared here.
+- The hosted Demo is accessed at
+  `https://d2m6kz76y4kuvm.cloudfront.net`; local Terraform defaults do not
+  create a second public HTTPS endpoint.
 - The $10 actual-cost warning and $15 actual-cost critical alert are code.
 - Backup data expires after 30 days, superseded versions after 7 days, and the
   temporary release archive prefix after 3 days. CloudTrail has matching
@@ -252,33 +252,11 @@ Budgets notify after AWS has observed cost; they cannot impose a guaranteed
 hard spending ceiling. The practical cap is the small resource allowlist and
 manual apply review.
 
-## Optional public HTTPS Demo surface
-
-The Demo web image already serves the Expo artifact and `/api` through the
-same Nginx origin. The optional `aws_lightsail_distribution.web` resource puts
-that existing origin behind the approved Lightsail HTTPS distribution without
-introducing a second application boundary:
-
-- `public_https_distribution_enabled` defaults to `false`, so the default
-  Terraform state creates no distribution and has no distribution charge.
-- Enabling it creates the fixed low-cost `small_1_0` distribution named
-  `rewind-demo-web`, only when `demo_instance_enabled` is also true.
-- Enabling it also requires the explicit cost-safety allowlist entry
-  `cost_safety_expected_distributions = { "rewind-demo-web" = "rewind-demo" }`.
-  This keeps the periodic inventory audit and Terraform approval in agreement.
-- The distribution uses the instance's existing HTTP Nginx origin. Lightsail
-  distribution default domains are HTTPS-enabled and automatically redirect
-  HTTP requests to HTTPS; no custom certificate or DNS change is part of this
-  Demo issue.
-- `/index.html`, `/api`, and `/api/*` are explicitly `dont-cache`; query
-  strings and the existing CORS/realtime headers are forwarded to the origin.
-  The default behavior can cache immutable Expo assets using their origin
-  cache headers, while Nginx continues to provide SPA fallback.
-
-The first enablement should be reviewed with a no-apply plan using the normal
-Terraform workflow. The resulting HTTPS domain is exposed as
-`public_https_distribution_domain`. Do not create or modify a distribution in
-the console or with an AWS CLI command; Terraform remains the source of truth.
+The hosted Demo's single public entry point is
+`https://d2m6kz76y4kuvm.cloudfront.net`. Do not enable or recreate the retired
+optional Lightsail distribution to publish another hostname. Local development
+may use HTTP loopback addresses; those are internal development endpoints and
+are not hosted URLs.
 
 ## Coding-agent profile
 
@@ -474,3 +452,45 @@ trust, bucket privacy/versioning, actual AWS conditional writes, remote-state
 separation, provider permission coverage or real environment approval. Human
 review, provisioning, private-plan operational acceptance and safe read-only
 PR-plan acceptance remain open under #174; this preparation does not close it.
+
+## Media root (`media/`)
+
+Private, versioned, SSE-S3 encrypted media bucket for the hosted server, plus a
+runtime IAM user limited to that bucket (Lightsail cannot use instance roles).
+Browsers upload with signed PUT URLs; CORS allows only the hosted app and
+`make run-real`. State lives at `rewind/media/terraform.tfstate`, separate from
+the live demo root.
+
+```sh
+cd infra/terraform/media && cp backend.hcl.example backend.hcl
+AWS_PROFILE=rewind-terraform-apply terraform init -backend-config=backend.hcl
+AWS_PROFILE=rewind-terraform-apply terraform plan
+```
+
+Terraform also writes the hosted settings (bucket, runtime credentials, web push
+subject) to the private object `s3://<bucket>/_config/dev.env`, which only the
+dev deploy role may read. Each dev deploy streams it to
+`deploy/release-host.sh configure`; the server generates its own web push keys
+once and keeps them. No one copies credentials by hand.
+
+## Host alarms (`infra/scripts/lightsail-alarms.sh`)
+
+Terraform's AWS provider has no Lightsail contact-method or alarm resources, so
+this idempotent script is the source of truth for the dev host's alarms:
+failed status checks, sustained CPU above 90% and burst capacity below 10%,
+emailed to `REWIND_ALERT_EMAIL` (AWS sends a one-time verification link).
+Budget alerts stay in `demo/observability.tf`. With `REWIND_REQUEST_TIMING=true`
+the runtime logs one `api.request` JSON line per request (method, route
+template, status, duration) next to the existing `api.failure` lines.
+
+## Release environment (`release/`)
+
+A second, independent environment (#230) next to dev: Lightsail host
+`rewind-release`, its own CloudFront HTTPS URL, its own media bucket and
+runtime user (the `media/` root reused as a module with `environment=release`),
+and a deploy role trusted only for the GitHub `release` environment on `main`.
+`.github/workflows/deploy-release.yml` deploys qualified `main` commits; the
+human gate is `main`'s required review. The release host never receives dev
+backup settings, so it cannot read or restore dev backups. State lives at
+`rewind/release/terraform.tfstate`. Extra cost is about US$7 per month (micro
+instance and static IP) plus CloudFront usage.

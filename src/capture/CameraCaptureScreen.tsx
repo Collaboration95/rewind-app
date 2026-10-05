@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useAllowLandscape } from '../runtime/PortraitGuard';
 import { CameraView } from 'expo-camera';
 import {
   AppState,
@@ -29,11 +30,25 @@ import {
 } from './capture-state';
 import { ExpoCaptureFileStore, InMemoryCaptureFileStore, WebCaptureFileStore } from './file-store';
 import { AsyncStorageImageMetadataStore, InMemoryImageMetadataStore } from './metadata-store';
-import { ExpoCameraPlatform } from './platform';
+import { ExpoCameraPlatform, isCaptureCancelled } from './platform';
 import { StillImageCaptureSession } from './still-image-session';
+import {
+  CAPTURE_MODE_LABELS,
+  CAPTURE_MODES,
+  DEFAULT_CAPTURE_MODE,
+  type CaptureMode,
+} from '../domain/video';
+import { applyRetroLookToPhoto, type RetroPhotoResult } from './retro-browser';
 import { ContributionStatusPanel, useOptionalContributionStatus } from './contribution-status';
 import { decideInterruption } from './capture-interruption';
 import { runCaptureRestartRecovery } from './reset';
+
+/** How the chosen retro look reaches the server for one photo. */
+export interface PhotoRetroLook {
+  mode: CaptureMode;
+  /** True when this device already applied the look (web). */
+  clientProcessed: boolean;
+}
 
 export interface CameraCaptureScreenProps {
   /** Display context only; group authorization belongs to the caller. */
@@ -51,6 +66,7 @@ export interface CameraCaptureScreenProps {
     base64: string,
     onProgress: (status: import('./contribution-status').ContributionStatus) => void,
     replacesContributionId?: string,
+    look?: PhotoRetroLook,
   ) => Promise<import('./contribution-status').ContributionStatus>;
   onDeletePhotoContribution?: (contributionId: string) => Promise<void>;
   onOpenArchive?: () => void;
@@ -78,11 +94,13 @@ export function CameraCaptureScreen({
   platform: platformProp,
   revealState = 'locked',
 }: CameraCaptureScreenProps = {}) {
+  useAllowLandscape();
   const cameraRef = useRef<CameraView>(null);
   const platform = useMemo(
     () =>
       platformProp ??
       new ExpoCameraPlatform({
+        browserSystemCamera: true,
         getCameraRef: () => cameraRef.current,
       }),
     [platformProp],
@@ -121,6 +139,9 @@ export function CameraCaptureScreen({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [photoSubmitPending, setPhotoSubmitPending] = useState(false);
   const [photoSubmitError, setPhotoSubmitError] = useState<string | null>(null);
+  const [photoMode, setPhotoMode] = useState<CaptureMode>(DEFAULT_CAPTURE_MODE);
+  // A retried submit reuses the same graded bytes under the same capture key.
+  const retroPhotoRef = useRef<{ key: string; result: RetroPhotoResult } | null>(null);
   const contributionStatusContext = useOptionalContributionStatus();
   const contributionStatus = contributionStatusContext?.status ?? null;
   // Captures are asynchronous and the platform may resolve one after the route
@@ -301,12 +322,26 @@ export function CameraCaptureScreen({
 
   const pickStillFile = useCallback(async () => {
     if (!platform.pickStillFile) return;
-    await captureImage(() => platform.pickStillFile!(), false);
+    // Wait for the chooser or camera sheet before entering the capturing
+    // state; closing it without a photo leaves the screen unchanged.
+    let picked: Awaited<ReturnType<NonNullable<typeof platform.pickStillFile>>>;
+    try {
+      picked = await platform.pickStillFile();
+    } catch (error) {
+      if (isCaptureCancelled(error)) return;
+      await captureImage(() => Promise.reject(error), false);
+      return;
+    }
+    await captureImage(() => Promise.resolve(picked), false);
   }, [captureImage, platform]);
 
   const fallbackAction = platform.kind === 'demo' ? useSyntheticStill : pickStillFile;
   const fallbackLabel =
-    platform.kind === 'demo' ? 'Use synthetic still fixture' : 'Choose an image file';
+    platform.kind === 'demo'
+      ? 'Use synthetic still fixture'
+      : platform.fileFallbackIsCamera
+        ? 'Open camera'
+        : 'Choose an image file';
   const hasFileFallback = platform.supportsFileFallback === true && Boolean(platform.pickStillFile);
   const hasFallback = platform.kind === 'demo' || hasFileFallback;
 
@@ -407,17 +442,55 @@ export function CameraCaptureScreen({
     };
     try {
       await session.retainForUpload();
-      const base64 = await resolvedFileStore.readAsBase64(active.previewUri);
+      let base64 = await resolvedFileStore.readAsBase64(active.previewUri);
+      let metadata = active.metadata;
+      const mode = photoMode;
+      // Web applies the retro look here, before upload; native uploads the
+      // original and the server applies the same look.
+      const clientProcessed = Platform.OS === 'web';
+      if (clientProcessed) {
+        const key = `${active.metadata.id}|${mode}`;
+        let graded = retroPhotoRef.current?.key === key ? retroPhotoRef.current.result : null;
+        if (!graded) {
+          try {
+            graded = await applyRetroLookToPhoto({
+              base64,
+              capturedAt: new Date(active.metadata.capturedAt),
+              mimeType: active.metadata.mimeType,
+              mode,
+              seed: active.metadata.id,
+            });
+          } catch (error) {
+            throw new Error(
+              `${
+                error instanceof Error ? error.message : 'The retro look could not be applied.'
+              } Your original photo is kept; try again.`,
+            );
+          }
+          retroPhotoRef.current = { key, result: graded };
+        }
+        base64 = graded.base64;
+        metadata = {
+          ...active.metadata,
+          byteLength: graded.byteLength,
+          format: 'jpg',
+          height: graded.height,
+          mimeType: graded.mimeType,
+          width: graded.width,
+        };
+      }
       contributionStatusContext?.setStatus(latestStatus);
       const submittedStatus = await onSubmitPhoto(
-        active.metadata,
+        metadata,
         base64,
         (status) => {
           latestStatus = status;
           contributionStatusContext?.setStatus(status);
         },
         replacementTarget.current,
+        { mode, clientProcessed },
       );
+      retroPhotoRef.current = null;
       replacementTarget.current = undefined;
       contributionStatusContext?.setStatus(submittedStatus);
       await contributionStatusContext?.refreshStatus();
@@ -443,7 +516,7 @@ export function CameraCaptureScreen({
     } finally {
       setPhotoSubmitPending(false);
     }
-  }, [contributionStatusContext, onSubmitPhoto, resolvedFileStore, session]);
+  }, [contributionStatusContext, onSubmitPhoto, photoMode, resolvedFileStore, session]);
 
   const deletePhotoForReplacement = useCallback(async () => {
     if (
@@ -501,8 +574,10 @@ export function CameraCaptureScreen({
               {onBack ? (
                 <Pressable
                   accessibilityRole="button"
+                  hitSlop={12}
                   onPress={onBack}
                   style={styles.viewfinderBack}
+                  testID="capture-back-to-group"
                 >
                   <Text style={styles.viewfinderBackText}>Back to group</Text>
                 </Pressable>
@@ -568,7 +643,13 @@ export function CameraCaptureScreen({
       {!showingViewfinder ? (
         <ScrollView style={styles.panelScroll} contentContainerStyle={styles.panelContent}>
           {onBack ? (
-            <Pressable accessibilityRole="button" onPress={onBack}>
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={12}
+              onPress={onBack}
+              style={styles.back}
+              testID="capture-panel-back-to-group"
+            >
               <Text style={styles.backText}>Back to group</Text>
             </Pressable>
           ) : null}
@@ -666,12 +747,18 @@ export function CameraCaptureScreen({
                 hasFallback
                   ? platform.kind === 'demo'
                     ? 'This simulator cannot provide a physical camera. The labelled synthetic fixture is available for the local Demo.'
-                    : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
+                    : platform.fileFallbackIsCamera
+                      ? 'Opens your phone camera. The photo comes back here so you can review it before you submit.'
+                      : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
                   : 'This device cannot provide the camera needed for a still moment. Use a physical device with camera access.'
               }
               onAction={hasFallback ? fallbackAction : undefined}
               testID="camera-unsupported"
-              title="Camera capture is not supported here"
+              title={
+                platform.fileFallbackIsCamera
+                  ? 'Take a photo'
+                  : 'Camera capture is not supported here'
+              }
             />
           ) : state.status === 'permission-undecided' ? (
             <StatusPanel
@@ -721,6 +808,8 @@ export function CameraCaptureScreen({
               metadata={state.activePreview.metadata}
               onAccept={accept}
               onSubmit={onSubmitPhoto ? submitPhoto : undefined}
+              mode={photoMode}
+              onModeChange={setPhotoMode}
               submitError={photoSubmitError}
               submitting={photoSubmitPending}
               onDiscard={discard}
@@ -729,6 +818,25 @@ export function CameraCaptureScreen({
               saving={state.status === 'saving'}
               saved={state.status === 'saved'}
             />
+          ) : platform.fileFallbackIsCamera ? (
+            // Web uses the phone's own camera sheet, so there is no in-page
+            // viewfinder or access step; one button opens the camera.
+            <View style={styles.captureArea}>
+              <Pressable
+                accessibilityHint="Opens your phone camera; the photo comes back here for review"
+                accessibilityLabel="Open camera"
+                accessibilityRole="button"
+                accessibilityState={{ busy: state.status === 'capturing' }}
+                disabled={state.status === 'capturing'}
+                onPress={pickStillFile}
+                style={[styles.shutter, state.status === 'capturing' && styles.disabledControl]}
+                testID="camera-capture"
+              >
+                <Text style={styles.shutterText}>
+                  {state.status === 'capturing' ? 'Preparing photo…' : 'Open camera'}
+                </Text>
+              </Pressable>
+            </View>
           ) : (
             <View style={styles.captureArea}>
               <View accessibilityLabel="Camera access granted" style={styles.accessGranted}>
@@ -816,6 +924,8 @@ function StatusPanel({
 function PreviewPanel({
   demo,
   metadata,
+  mode,
+  onModeChange,
   onAccept,
   onSubmit,
   submitError,
@@ -828,6 +938,8 @@ function PreviewPanel({
 }: {
   demo: boolean;
   metadata: NonNullable<CaptureState['activePreview']>['metadata'];
+  mode: CaptureMode;
+  onModeChange: (mode: CaptureMode) => void;
   onAccept: () => void | Promise<void>;
   onSubmit?: () => void | Promise<void>;
   submitError?: string | null;
@@ -864,6 +976,22 @@ function PreviewPanel({
       <Text style={styles.previewMeta}>
         {metadata.width} × {metadata.height} · {metadata.format.toUpperCase()}
       </Text>
+      {onSubmit && !saved ? (
+        <View style={styles.previewActions} testID="camera-retro-look">
+          {CAPTURE_MODES.map((option) => (
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityState={{ selected: mode === option, disabled: Boolean(submitting) }}
+              disabled={Boolean(submitting)}
+              key={option}
+              onPress={() => onModeChange(option)}
+              style={[styles.secondaryButton, mode === option && styles.selectedLook]}
+            >
+              <Text style={styles.secondaryButtonText}>{CAPTURE_MODE_LABELS[option]}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       {submitError ? (
         <Text accessibilityLiveRegion="assertive" style={styles.errorText}>
           {submitError}
@@ -930,7 +1058,10 @@ const styles = StyleSheet.create({
     paddingTop: 28,
   },
   viewfinderTop: { alignItems: 'center', gap: 8 },
-  viewfinderBack: { alignSelf: 'flex-start' },
+  // Back controls keep a 44pt tap target; on an installed iPhone web app they
+  // sit near the status bar, where a text-height target is easy to miss.
+  viewfinderBack: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: 44 },
+  back: { alignSelf: 'flex-start', justifyContent: 'center', minHeight: 44 },
   viewfinderBackText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   backText: { color: COLORS.accent, fontSize: 16, fontWeight: '700' },
   viewfinderTitle: { color: '#fff', fontSize: 20, fontWeight: '700' },
@@ -990,6 +1121,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   actionButtonText: { color: COLORS.deep, fontSize: 14, fontWeight: '800' },
+  selectedLook: { backgroundColor: COLORS.accent },
   secondaryButton: {
     alignItems: 'center',
     borderColor: COLORS.edge,

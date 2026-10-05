@@ -8,14 +8,26 @@ import { linkContributionReplacement } from '../contributions/ledger';
 import { getCurrentCycle, isMember } from '../db';
 import type { RewindDatabase } from '../db';
 import { isActiveDemoSession } from '../session';
+import {
+  DEFAULT_CAPTURE_MODE,
+  isCaptureMode,
+  processingModeFor,
+  type CaptureMode,
+  type ProcessingMode,
+} from '../ffmpeg';
+
+export {
+  DEFAULT_CAPTURE_MODE,
+  SUPPORTED_CAPTURE_MODES,
+  type CaptureMode,
+  type ProcessingMode,
+} from '../ffmpeg';
 
 export const MAX_CLIP_BYTES = 50 * 1024 * 1024;
 export const MAX_CLIP_DURATION_SECONDS = 15;
 export const MIN_CLIP_DURATION_SECONDS = 0.5;
 /** A body/probe claim is kept alive long enough for a bounded local upload. */
 export const STAGED_SOURCE_LEASE_MS = 2 * 60 * 60 * 1000;
-export const SUPPORTED_CAPTURE_MODES = ['soft-focus', 'high-contrast'] as const;
-export type CaptureMode = (typeof SUPPORTED_CAPTURE_MODES)[number];
 
 export interface ClipUploadInput {
   mediaType?: 'video' | 'photo';
@@ -29,6 +41,8 @@ export interface ClipUploadInput {
   hasAudio: boolean;
   /** Optional review metadata. The duration remains the quota duration. */
   mode?: CaptureMode;
+  /** The client already applied `mode` before upload; the worker only normalizes. */
+  clientProcessed?: boolean;
   trimStartSeconds?: number;
   trimEndSeconds?: number;
   /** Aliases accepted for clients that use the review metadata names. */
@@ -121,7 +135,7 @@ interface StagedSourceRecord {
 export type StagedSource = StagedSourceRecord;
 
 export interface ClipProcessingMetadata {
-  mode: CaptureMode;
+  mode: ProcessingMode;
   trimStartSeconds: number;
   trimEndSeconds: number;
 }
@@ -764,7 +778,6 @@ export function recordClipMediaMetadata(
     metadata.width <= 0 ||
     !Number.isInteger(metadata.height) ||
     metadata.height <= 0 ||
-    (mediaType === 'video' && metadata.width >= metadata.height) ||
     metadata.hasAudio !== true
   ) {
     throw new RangeError('Server media metadata does not describe an acceptable clip.');
@@ -852,7 +865,7 @@ export function getClipProcessingMetadata(input: ClipUploadInput): ClipProcessin
   const trimStartSeconds = input.trimStartSeconds ?? input.startSeconds ?? 0;
   const trimEndSeconds = input.trimEndSeconds ?? input.endSeconds ?? input.durationSeconds;
   return {
-    mode: input.mode ?? 'soft-focus',
+    mode: processingModeFor(input.mode ?? DEFAULT_CAPTURE_MODE, input.clientProcessed === true),
     trimStartSeconds,
     trimEndSeconds,
   };
@@ -887,16 +900,18 @@ export function validateClipUpload(
     input.width <= 0 ||
     !Number.isInteger(input.height) ||
     input.height <= 0 ||
-    (!isPhoto && input.width >= input.height) ||
     (isPhoto && (input.durationSeconds !== 3 || input.width > 12000 || input.height > 12000)) ||
     input.hasAudio !== true
   ) {
     return { ok: false, reason: 'invalid_media' };
   }
-  const metadata = getClipProcessingMetadata(input);
-  if (!SUPPORTED_CAPTURE_MODES.includes(metadata.mode)) {
+  if (
+    !isCaptureMode(input.mode ?? DEFAULT_CAPTURE_MODE) ||
+    (input.clientProcessed !== undefined && typeof input.clientProcessed !== 'boolean')
+  ) {
     return { ok: false, reason: 'invalid_mode' };
   }
+  const metadata = getClipProcessingMetadata(input);
   if (
     !Number.isFinite(metadata.trimStartSeconds) ||
     !Number.isFinite(metadata.trimEndSeconds) ||

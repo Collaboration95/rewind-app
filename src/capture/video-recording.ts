@@ -36,10 +36,9 @@ export function validateRecordedClip(clip: RecordedClip): void {
     !Number.isInteger(clip.width) ||
     clip.width <= 0 ||
     !Number.isInteger(clip.height) ||
-    clip.height <= 0 ||
-    clip.width >= clip.height
+    clip.height <= 0
   ) {
-    throw new VideoRecordingError('Recordings must use portrait orientation.');
+    throw new VideoRecordingError('The recorded clip has no usable video.');
   }
   if (!clip.hasAudio) throw new VideoRecordingError('Microphone audio is required for a clip.');
 }

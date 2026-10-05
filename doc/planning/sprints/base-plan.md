@@ -22,6 +22,15 @@ Sources: this repository, its GitHub issues, and the official AWS references lin
 
 This document is a plan; it does not itself authorize provisioning, code changes, or AWS operations.
 
+**Current Demo status (1 October 2026):** the hosted app's sole public entry
+point is [https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net).
+The former optional Lightsail distribution has been deleted. The dated
+Lightsail observations below describe the former setup and do not verify or
+describe the current CloudFront host. The future dev/prod architecture,
+distribution choices, cost estimates, and migration steps in this plan remain
+proposals; review and revise them against current infrastructure before using
+them as implementation guidance.
+
 ---
 
 ## 1. Summary
@@ -84,24 +93,29 @@ This document is a plan; it does not itself authorize provisioning, code changes
 
 The read-only AWS check on 28 September 2026 found `rewind-demo` running with
 its static IP, `rewind-demo-web` deployed, and no Lightsail object-storage
-buckets in Singapore. This is a dated snapshot, not a complete inventory of
-application data or Terraform state. Complete §2.1 before importing, changing,
-stopping, replacing, or deleting anything.
+buckets in Singapore. This is a dated snapshot of the former Lightsail setup;
+the distribution has since been deleted, and the check did not verify the
+current CloudFront host. It is not a complete inventory of application data or
+Terraform state. Complete §2.1 before importing, changing, stopping,
+replacing, or deleting anything.
 
 **Defects and assumptions found in the review.** Each one is addressed below.
+The distribution observations in F1–F3 describe the former Lightsail
+distribution; they are historical and do not establish current CloudFront
+behavior.
 
-| #   | Defect                                                                                                                                                                                                                                               | Addressed in   |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| F1  | The distribution forwards no cookies, and forwards only the `Accept` and `Origin` headers ([web-distribution.tf](../../../infra/terraform/demo/web-distribution.tf)). Web session cookies and native `Authorization` headers never reach the server. | §6             |
-| F2  | The server sees plain HTTP from the distribution, so it can't tell whether the viewer used HTTPS.                                                                                                                                                    | §6             |
-| F3  | Deleting and recreating a distribution changes its hostname, which breaks invite links and client configuration.                                                                                                                                     | §6, §9         |
-| F4  | Hosted video uploads fail in the proxy chain (§5.1).                                                                                                                                                                                                 | §5             |
-| F5  | Images built on the Mac were arm64; the host needs amd64. An image-ID check didn't survive `docker load` ([#190](https://github.com/Collaboration95/rewind-app/issues/190)).                                                                         | §8             |
-| F6  | Host scripts failed because of file ownership and permissions when run as `ubuntu` ([#190](https://github.com/Collaboration95/rewind-app/issues/190)).                                                                                               | §8             |
-| F7  | The lifecycle depends on one person's machine and IP address.                                                                                                                                                                                        | §7, §8         |
-| F8  | Presigned PUTs are replayable and can overwrite the key; declaring a size does not itself prove strict size enforcement.                                                                                                                             | §5, §14        |
-| F9  | A directly reachable HTTP origin can receive a forged forwarded-HTTPS header.                                                                                                                                                                        | §6, §14        |
-| F10 | The plan excluded cost despite target resources and live-Demo overlap.                                                                                                                                                                               | §2.2, §12, §13 |
+| #   | Defect                                                                                                                                                                                                                               | Addressed in   |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| F1  | The former Lightsail distribution forwarded no cookies, and forwarded only the `Accept` and `Origin` headers. Web session cookies and native `Authorization` headers did not reach the server through that historical configuration. | §6             |
+| F2  | The server sees plain HTTP from the distribution, so it can't tell whether the viewer used HTTPS.                                                                                                                                    | §6             |
+| F3  | Deleting and recreating a distribution changes its hostname, which breaks invite links and client configuration.                                                                                                                     | §6, §9         |
+| F4  | Hosted video uploads fail in the proxy chain (§5.1).                                                                                                                                                                                 | §5             |
+| F5  | Images built on the Mac were arm64; the host needs amd64. An image-ID check didn't survive `docker load` ([#190](https://github.com/Collaboration95/rewind-app/issues/190)).                                                         | §8             |
+| F6  | Host scripts failed because of file ownership and permissions when run as `ubuntu` ([#190](https://github.com/Collaboration95/rewind-app/issues/190)).                                                                               | §8             |
+| F7  | The lifecycle depends on one person's machine and IP address.                                                                                                                                                                        | §7, §8         |
+| F8  | Presigned PUTs are replayable and can overwrite the key; declaring a size does not itself prove strict size enforcement.                                                                                                             | §5, §14        |
+| F9  | A directly reachable HTTP origin can receive a forged forwarded-HTTPS header.                                                                                                                                                        | §6, §14        |
+| F10 | The plan excluded cost despite target resources and live-Demo overlap.                                                                                                                                                               | §2.2, §12, §13 |
 
 ### 2.1 Live Demo inventory before retirement
 

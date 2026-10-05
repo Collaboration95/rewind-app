@@ -24,7 +24,7 @@ async function openVideoFallback(page: Page) {
     'This browser cannot record the MP4 format required for upload.',
   );
   await expect(unsupported).toContainText(
-    'Choose a portrait MP4 no longer than 15 seconds with an audio track',
+    'Choose an MP4 no longer than 15 seconds with an audio track',
   );
 }
 
@@ -63,7 +63,7 @@ test('accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadat
   const review = page.getByTestId('video-review');
   await expect(review).toBeVisible();
   await expect(review).toContainText(
-    /Selected MP4 2\.3 seconds · 720 × 1280 portrait · audio track detected; server verifies/,
+    /Selected MP4 2\.3 seconds · 720 × 1280 · audio track detected; server verifies/,
   );
   await expect(review).toContainText('FILE FALLBACK · selected locally, not recorded in Rewind');
   await expect(review).not.toContainText('audio verified');
@@ -288,15 +288,14 @@ test('records from browser camera and microphone after the member action and upl
   await expect(page.getByText('Upload queued as one pending contribution.')).toBeVisible();
 });
 
-test('portrait guidance and video fallback controls stay reachable through short landscape rotation', async ({
+test('orientation guidance and video fallback controls stay reachable through short landscape rotation', async ({
   page,
 }) => {
   // Layout and file-choice only: no camera grant, recording or actual Safari lock evidence.
   await page.setViewportSize({ width: 393, height: 852 });
   await openVideoFallback(page);
   const guidance = page.getByTestId('video-portrait-guidance');
-  await expect(guidance).toContainText('Keep your device upright for portrait video');
-  await expect(guidance).toContainText('If the page rotates, scroll to reach the controls.');
+  await expect(guidance).toContainText('Record in portrait or landscape');
   await page.setViewportSize({ width: 852, height: 300 });
   const navigation = page.getByTestId('main-navigation');
   const choose = page.getByRole('button', { name: 'Choose a video file', exact: true });

@@ -9,6 +9,7 @@ import { cleanupOrphanedStagedSources } from './jobs';
 import { configureRuntimeMedia } from './media/configured-runtime';
 import { createConfiguredReminderProviders } from './reminders/providers';
 import { runReminderOutboxTick, scanDueReminderJobs } from './reminders/outbox';
+import { startReminderLoop } from './reminders/loop';
 import {
   runWorkerTick,
   safeWorkerErrorLabel,
@@ -621,6 +622,12 @@ async function start(config: RuntimeConfig): Promise<void> {
     reminderWebPushPublicKey: config.reminders?.webpush?.publicKey,
   });
   let scheduler: ReturnType<typeof startCycleSchedulerLoop> | undefined;
+  // Weekly reminders send only when a provider (for example web push) is set.
+  const reminderLoop = Object.keys(reminderProviders).length
+    ? startReminderLoop(() => openRuntimeDatabase(config), reminderProviders, {
+        onError: (message) => console.error(message),
+      })
+    : null;
   let closing: Promise<void> | undefined;
   const close = () => {
     if (closing) return closing;
@@ -628,6 +635,7 @@ async function start(config: RuntimeConfig): Promise<void> {
       // Stop claims and finish in-flight media work before closing its connection.
       await Promise.all([
         scheduler?.stop().catch(() => undefined),
+        reminderLoop?.stop().catch(() => undefined),
         new Promise<void>((resolveClose) => server.close(() => resolveClose())),
       ]);
       schedulerDatabase.close();

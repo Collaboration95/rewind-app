@@ -443,7 +443,7 @@ these answers on Day 1:
 
 ## 13. Baseline traceability
 
-- [AWS, IaC, and SCP execution plan](./aws-iac-scp-execution-plan.md)
+- [AWS, IaC, and SCP execution plan](../archive/aws-iac-scp-execution-plan.md)
 - [Sprint 0 plan](./sprint-0-plan.md)
 - [Sprint 0 extension and Sprint 0 plan](./sprint-0-plan-extension.md)
 - [Archived Sprint 1 progress report draft](../sprint-1-progress-report-evidence-archived.txt)

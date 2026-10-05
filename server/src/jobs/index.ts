@@ -36,7 +36,7 @@ import {
   processPhotoWithFfmpeg,
   probeClipWithFfmpeg,
   resolveStagedMediaPath,
-  type CaptureMode,
+  type ProcessingMode,
   FfmpegProcessingError,
 } from '../ffmpeg';
 
@@ -1689,7 +1689,7 @@ async function processClipJobInternal(
           await processPhotoWithFfmpeg(options.ffmpegBin, {
             inputPath: sourcePath,
             outputPath,
-            mode: row.mode as CaptureMode,
+            mode: row.mode as ProcessingMode,
           });
         } else {
           await processClipWithFfmpeg(options.ffmpegBin, {
@@ -1697,7 +1697,7 @@ async function processClipJobInternal(
             outputPath,
             trimStartSeconds: Number(row.trimStartSeconds),
             trimEndSeconds: Number(row.trimEndSeconds),
-            mode: row.mode as CaptureMode,
+            mode: row.mode as ProcessingMode,
           });
         }
         if (!markOutputPrepared(database, row, outputPath)) {
@@ -2044,7 +2044,7 @@ async function processStoredClip(
         await processPhotoWithFfmpeg(options.ffmpegBin, {
           inputPath: materialized.path,
           outputPath: temp,
-          mode: row.mode as CaptureMode,
+          mode: row.mode as ProcessingMode,
         });
       else
         await processClipWithFfmpeg(options.ffmpegBin, {
@@ -2052,7 +2052,7 @@ async function processStoredClip(
           outputPath: temp,
           trimStartSeconds: row.trimStartSeconds!,
           trimEndSeconds: row.trimEndSeconds!,
-          mode: row.mode as CaptureMode,
+          mode: row.mode as ProcessingMode,
         });
       await probeClipWithFfmpeg(options.ffmpegBin, temp);
       output = await putProcessedFile(store, scope, temp, 'processed');
