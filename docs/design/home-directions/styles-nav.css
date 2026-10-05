@@ -122,3 +122,13 @@
 .tabs {
   position: relative;
 }
+/* Dock icons: warm duotone. .d is the warm accent, .f is filled ink (the reel's hub) */
+.ic .f {
+  fill: currentColor;
+  stroke: none;
+}
+.ic .d {
+  fill: var(--accent);
+  stroke: none;
+  opacity: 0.9;
+}

@@ -53,7 +53,6 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
   - Chat: new messages, tap a message, reply, no messages yet, reconnecting, offline, not sent, couldn't load, and after the premiere.
   - Archive: collecting, the premiere, developing, a film playing in its card, the first cycle and couldn't load.
 - **App icon**: the chosen icon, Campfire, on the launch screen opening into Home, the home screen, in sizes and in a notification, with the App Store export rules. `#mix` opens it.
-- **Dock icons**: try six icon sets in the dock. `#dock=ios` links to a set.
 
 ## Home states
 
@@ -89,7 +88,6 @@ The retro modes are not designed yet: the prototype keeps the looks `dev` has to
 | `tabs.js`, `styles-tabs.css`                             | Chat, Archive and the group menu                                      |
 | `mix.js`, `styles-mix.css`, `icons.js`                   | App icon tab, page tabs, and the Campfire icon as SVG                 |
 | `final.js`, `styles-final.css`                           | Final tab: diagram, transition rules and every screen with its notes  |
-| `dockicons.js`, `styles-dock.css`                        | Dock icons tab                                                        |
 | `i18n.js`                                                | Page text                                                             |
 | `styles.css`, `styles-r2.css`, `styles-r3.css`           | Page and phone shell, Warm Glass                                      |
 | `styles-glass.css`                                       | iOS glass for the dock, shutter, cards and buttons                    |

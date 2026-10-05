@@ -3,13 +3,15 @@
 // Display-only prototype: no camera access; it only shows the Warm Glass Home design and interactions.
 const $ = (id) => document.getElementById(id);
 
+// Dock icons: warm duotone (outline plus one accent, .d) with a film reel for Archive (.f is filled ink)
 const I = {
-  home: '<path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/>',
-  chat: '<path d="M20 12a7.5 7.5 0 0 1-11 6.6L4 20l1.4-4.6A7.5 7.5 0 1 1 20 12Z"/>',
+  home: '<rect class="d" x="10" y="14.8" width="4" height="5.2" rx=".8"/><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/>',
+  chat: '<path d="M20 12a7.5 7.5 0 0 1-11 6.6L4 20l1.4-4.6A7.5 7.5 0 1 1 20 12Z"/><circle class="d" cx="12" cy="12" r="2.3"/>',
+  // Reel: a hub in the middle and four holes around it (three would look like a face)
   archive:
-    '<rect x="3.5" y="4.5" width="17" height="4" rx="1"/><path d="M5 8.5V18a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 18V8.5M10 12h4"/>',
+    '<circle cx="11" cy="12" r="7.5"/><circle class="f" cx="11" cy="12" r="1"/><circle cx="11" cy="8.3" r="1.5"/><circle cx="14.7" cy="12" r="1.5"/><circle cx="11" cy="15.7" r="1.5"/><circle cx="7.3" cy="12" r="1.5"/><path d="M11 19.5h9"/>',
   camera:
-    '<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.3l1.4-2h5.6l1.4 2h2.3A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.5"/>',
+    '<path d="M4 8.5A1.5 1.5 0 0 1 5.5 7h2.3l1.4-2h5.6l1.4 2h2.3A1.5 1.5 0 0 1 20 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5z"/><circle cx="12" cy="12.5" r="3.5"/><circle class="d" cx="12" cy="12.5" r="2"/>',
   lock: '<rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
   chev: '<path d="m7 10 5 5 5-5"/>',
   swap: '<path d="M7 8h12l-3.5-3.5M17 16H5l3.5 3.5"/>',
@@ -20,12 +22,8 @@ const I = {
   check: '<path d="m5.5 12.5 4.2 4.2L18.5 8"/>',
   play: '<path d="M8.5 5.8v12.4a.6.6 0 0 0 .9.5l10-6.2a.6.6 0 0 0 0-1l-10-6.2a.6.6 0 0 0-.9.5Z"/>',
 };
-// Dock icon set (swapped in temporarily by the dock icons page); null uses the originals above
-let ICON_SET = null;
-const ic = (n, cls = '') => {
-  const o = ICON_SET?.icons?.[n];
-  return `<svg class="ic ${cls}${o ? ' set-' + ICON_SET.style : ''}" viewBox="0 0 24 24" aria-hidden="true">${o || I[n]}</svg>`;
-};
+const ic = (n, cls = '') =>
+  `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
 
 /* ---------- Shared data: every number is derived from here, nothing hard-coded ---------- */
 // Per-member colour (borrowed from Reveal: one colour per person across avatar, quota ring and film captions)

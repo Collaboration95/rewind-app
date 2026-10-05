@@ -60,7 +60,7 @@ const mixHash = () => '#mix';
 const readHash = () => /^#mix(=.*)?$/.test(location.hash);
 
 /* ---------- Page tabs ---------- */
-const VIEWS = ['final', 'states', 'screens', 'mix', 'dockicons'];
+const VIEWS = ['final', 'states', 'screens', 'mix'];
 function setView(v) {
   const view = VIEWS.includes(v) ? v : 'home';
   VIEWS.forEach((k) => document.body.classList.toggle('view-' + k, view === k));
@@ -76,7 +76,6 @@ function setView(v) {
         mix: mixHash,
         states: () => statesHash(), // states.js
         screens: () => '#screens',
-        dockicons: () => dockHash(), // dockicons.js
         final: () => '#final',
       }[view]?.() || location.pathname + location.search,
     );
@@ -90,7 +89,6 @@ function rerenderView() {
   if (on('mix')) renderMix();
   if (on('states')) window.renderStatesView?.();
   if (on('screens')) window.renderScreensView?.();
-  if (on('dockicons')) window.renderDockView?.();
   if (on('final')) window.renderFinalView?.();
 }
 const relangMix = rerenderView;
