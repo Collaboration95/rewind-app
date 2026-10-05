@@ -18,3 +18,15 @@ CREATE INDEX IF NOT EXISTS member_reports_created_idx ON member_reports (created
 ALTER TABLE contributions ADD COLUMN removed_at TEXT;
 ALTER TABLE contributions ADD COLUMN removed_by_account_id TEXT
   REFERENCES real_accounts(id) ON DELETE SET NULL;
+
+-- Segment timing of each compiled film, frozen the first time it is read or
+-- before an author's account is deleted. The film bytes never change, so the
+-- offsets must not shift when a deleted account cascades its contributions.
+CREATE TABLE IF NOT EXISTS film_segments (
+  film_job_id TEXT NOT NULL REFERENCES media_jobs(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  contribution_id TEXT REFERENCES contributions(id) ON DELETE SET NULL,
+  start_seconds REAL NOT NULL,
+  duration_seconds REAL NOT NULL,
+  PRIMARY KEY (film_job_id, position)
+);

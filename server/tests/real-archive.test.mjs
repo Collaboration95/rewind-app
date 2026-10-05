@@ -10,6 +10,7 @@ import { parseConfig } from '../dist/config.js';
 import { openDatabase } from '../dist/db.js';
 import { createRuntimeServer } from '../dist/http.js';
 import { createRealAccount, revokeRealSession } from '../dist/auth/index.js';
+import { purgeRealAccount } from '../dist/auth/deletion.js';
 import { createRealGroup } from '../dist/groups/real.js';
 import { createRealGroupInvite, acceptRealGroupInvite } from '../dist/groups/invites.js';
 import { encodeMediaRef } from '../dist/media/store.js';
@@ -499,4 +500,17 @@ test('film segments hide blocked, reported and owner-removed moments per viewer'
     const encoded = JSON.stringify(await segments(member));
     assert.equal(encoded.includes('/media/'), false);
     assert.equal(encoded.includes(ownerProfile), false);
+
+    // Deleting an author's account keeps the film's offsets in place.
+    purgeRealAccount(database, member.account.id);
+    const afterDelete = (
+      await (await request(owner, scoped(`/cycles/${group.cycle.id}/premiere`))).json()
+    ).premiere.segments;
+    assert.deepEqual(
+      afterDelete.map((entry) => [entry.startSeconds, entry.durationSeconds, entry.hidden]),
+      [
+        [0, 2.5, true],
+        [2.5, 3, true],
+      ],
+    );
   }));

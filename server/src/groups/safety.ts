@@ -114,21 +114,60 @@ export interface FilmSegment {
   mine: boolean;
 }
 
-/** The moments in a compiled film, in order, from its frozen inputs. A
+/** Freeze a compiled film's segment timing from its inputs, once. Call it
+ * before anything can delete a contribution row the film was built from. */
+export function freezeFilmSegments(database: RewindDatabase, filmId: string): void {
+  const frozen = database
+    .prepare('SELECT 1 AS done FROM film_segments WHERE film_job_id = ? LIMIT 1')
+    .get(filmId) as { done?: number } | undefined;
+  if (frozen?.done) return;
+  const rows = database
+    .prepare(
+      `SELECT i.contribution_id AS contributionId,
+              CASE WHEN clip.media_type = 'photo' THEN 3
+                   ELSE COALESCE(clip.trim_end_seconds - clip.trim_start_seconds,
+                                 c.duration_seconds) END AS durationSeconds
+       FROM compilation_job_inputs i
+       JOIN media_jobs clip ON clip.id = i.clip_job_id
+       JOIN contributions c ON c.id = i.contribution_id
+       WHERE i.job_id = ?
+       ORDER BY i.position ASC, i.clip_job_id ASC`,
+    )
+    .all(filmId) as { contributionId: string; durationSeconds: number }[];
+  const insert = database.prepare(
+    `INSERT OR IGNORE INTO film_segments
+       (film_job_id, position, contribution_id, start_seconds, duration_seconds)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  let startSeconds = 0;
+  rows.forEach((row, position) => {
+    const durationSeconds = Math.round(Math.max(0, Number(row.durationSeconds)) * 1000) / 1000;
+    insert.run(
+      filmId,
+      position,
+      row.contributionId,
+      Math.round(startSeconds * 1000) / 1000,
+      durationSeconds,
+    );
+    startSeconds += durationSeconds;
+  });
+}
+
+/** The moments in a compiled film, in order, from its frozen timing. A
  * segment is hidden for this viewer when its author is blocked, the viewer
- * reported it, or it was deleted or removed. Photos render as 3 seconds. */
+ * reported it, or it was deleted, removed or its author's account is gone.
+ * Photos render as 3 seconds. */
 export function filmSegments(
   database: RewindDatabase,
   filmId: string,
   viewerProfileId: string,
 ): FilmSegment[] {
+  freezeFilmSegments(database, filmId);
   const rows = database
     .prepare(
-      `SELECT c.id AS contributionId, c.member_id = ? AS mine,
-              CASE WHEN clip.media_type = 'photo' THEN 3
-                   ELSE COALESCE(clip.trim_end_seconds - clip.trim_start_seconds,
-                                 c.duration_seconds) END AS durationSeconds,
-              (c.deleted_at IS NOT NULL OR c.removed_at IS NOT NULL
+      `SELECT s.position, c.id AS contributionId, s.start_seconds AS startSeconds,
+              s.duration_seconds AS durationSeconds, COALESCE(c.member_id = ?, 0) AS mine,
+              (c.id IS NULL OR c.deleted_at IS NOT NULL OR c.removed_at IS NOT NULL
                OR EXISTS (SELECT 1 FROM account_blocks b
                           JOIN real_profiles viewer ON viewer.account_id = b.blocker_account_id
                           JOIN real_profiles author ON author.account_id = b.blocked_account_id
@@ -136,31 +175,26 @@ export function filmSegments(
                OR EXISTS (SELECT 1 FROM content_reports r
                           JOIN real_profiles viewer ON viewer.account_id = r.reporter_account_id
                           WHERE viewer.id = ? AND r.contribution_id = c.id)) AS hidden
-       FROM compilation_job_inputs i
-       JOIN media_jobs clip ON clip.id = i.clip_job_id
-       JOIN contributions c ON c.id = i.contribution_id
-       WHERE i.job_id = ?
-       ORDER BY i.position ASC, i.clip_job_id ASC`,
+       FROM film_segments s
+       LEFT JOIN contributions c ON c.id = s.contribution_id
+       WHERE s.film_job_id = ?
+       ORDER BY s.position ASC`,
     )
     .all(viewerProfileId, viewerProfileId, viewerProfileId, filmId) as {
-    contributionId: string;
-    mine: number;
+    position: number;
+    contributionId: string | null;
+    startSeconds: number;
     durationSeconds: number;
+    mine: number;
     hidden: number;
   }[];
-  let startSeconds = 0;
-  return rows.map((row) => {
-    const durationSeconds = Math.round(Math.max(0, Number(row.durationSeconds)) * 1000) / 1000;
-    const segment = {
-      contributionId: row.contributionId,
-      startSeconds: Math.round(startSeconds * 1000) / 1000,
-      durationSeconds,
-      hidden: Boolean(row.hidden),
-      mine: Boolean(row.mine),
-    };
-    startSeconds += durationSeconds;
-    return segment;
-  });
+  return rows.map((row) => ({
+    contributionId: row.contributionId ?? `deleted-${row.position}`,
+    startSeconds: Number(row.startSeconds),
+    durationSeconds: Number(row.durationSeconds),
+    hidden: Boolean(row.hidden),
+    mine: Boolean(row.mine),
+  }));
 }
 
 /** Block a member, by profile id, who shares at least one group with the blocker. */
