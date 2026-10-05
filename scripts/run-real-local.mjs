@@ -9,7 +9,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { apiTarget } from './production-web-proxy.mjs';
+import { apiTarget, legalPagePath } from './production-web-proxy.mjs';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiPort = Number(process.env.REWIND_PORT || 8787);
@@ -91,7 +91,7 @@ function startProxy() {
     // reference would let a request choose the upstream host.
     const target = isApi ? apiTarget(runtimeOrigin, url) : new URL(metroOrigin);
     if (!isApi) {
-      target.pathname = url.pathname;
+      target.pathname = legalPagePath(url.pathname) ?? url.pathname;
       target.search = url.search;
     }
     const upstream = httpRequest(

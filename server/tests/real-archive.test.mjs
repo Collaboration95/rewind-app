@@ -394,3 +394,109 @@ test('stored publication refuses an asset changed during its verified read', asy
       'unpublished',
     );
   }, true));
+
+test('film segments hide blocked, reported and owner-removed moments per viewer', async () =>
+  fixture(async (c) => {
+    const { request, scoped, publish, group, owner, member, outsider, database } = c;
+    database
+      .prepare(
+        "UPDATE media_jobs SET trim_start_seconds=1, trim_end_seconds=3.5 WHERE id='owner-clip'",
+      )
+      .run();
+    database.prepare("UPDATE media_jobs SET media_type='photo' WHERE id='member-clip'").run();
+    for (const [position, id] of ['owner-clip', 'member-clip'].entries())
+      database
+        .prepare(
+          "INSERT INTO compilation_job_inputs(job_id,clip_job_id,contribution_id,position) VALUES('archive-film',?,?,?)",
+        )
+        .run(id, id, position);
+    publish();
+    const post = (person, path, body) =>
+      request(person, path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const segments = async (person) => {
+      const premiere = (
+        await (await request(person, scoped(`/cycles/${group.cycle.id}/premiere`))).json()
+      ).premiere;
+      assert.equal(premiere.state, 'ready');
+      const archive = (await (await request(person, scoped('/archive'))).json()).archive;
+      assert.deepEqual(archive.films[0].segments, premiere.segments);
+      return premiere.segments;
+    };
+    const segment = (contributionId, startSeconds, durationSeconds, hidden, mine) => ({
+      contributionId,
+      startSeconds,
+      durationSeconds,
+      hidden,
+      mine,
+    });
+    assert.deepEqual(await segments(member), [
+      segment('owner-clip', 0, 2.5, false, false),
+      segment('member-clip', 2.5, 3, false, true),
+    ]);
+    const ownerProfile = group.memberId;
+    assert.equal((await post(member, '/real/blocks', { profileId: ownerProfile })).status, 201);
+    assert.equal((await segments(member))[0].hidden, true);
+    assert.equal((await segments(owner))[0].hidden, false);
+    assert.equal(
+      (await request(member, `/real/blocks/${ownerProfile}`, { method: 'DELETE' })).status,
+      200,
+    );
+    assert.equal(
+      (
+        await post(owner, `/real/groups/${group.group.id}/reports`, {
+          contributionId: 'member-clip',
+        })
+      ).status,
+      201,
+    );
+    assert.deepEqual(
+      (await segments(owner)).map((entry) => entry.hidden),
+      [false, true],
+    );
+    assert.equal((await segments(member))[1].hidden, false);
+
+    const remove = (person, groupId, id) =>
+      post(person, `/real/groups/${groupId}/contributions/${id}/remove`, {});
+    const memberRemove = await remove(member, group.group.id, 'owner-clip');
+    assert.equal(memberRemove.status, 403);
+    assert.equal((await memberRemove.json()).error, 'forbidden');
+    assert.equal((await remove(outsider, group.group.id, 'owner-clip')).status, 404);
+    assert.equal((await remove(owner, group.group.id, 'missing')).status, 404);
+    const elsewhere = createRealGroup(
+      database,
+      outsider.account,
+      { name: 'Elsewhere', prompt: 'Other', maxMembers: 3 },
+      new Date('2026-10-02T12:00:00Z'),
+    );
+    database
+      .prepare(
+        "INSERT INTO contributions(id,cycle_id,member_id,duration_seconds,created_at) VALUES('foreign-clip',?,?,1,?)",
+      )
+      .run(elsewhere.cycle.id, elsewhere.memberId, '2026-10-02T12:00:00Z');
+    assert.equal((await remove(owner, group.group.id, 'foreign-clip')).status, 404);
+    const allowance = () =>
+      database
+        .prepare('SELECT count_used AS count, seconds_used AS seconds FROM cycles WHERE id=?')
+        .get(group.cycle.id);
+    const before = allowance();
+    const removed = await remove(owner, group.group.id, 'owner-clip');
+    assert.equal(removed.status, 200);
+    assert.deepEqual(await removed.json(), { removed: true });
+    assert.deepEqual(allowance(), before);
+    const row = database
+      .prepare(
+        "SELECT deleted_at AS deletedAt, removed_at AS removedAt, removed_by_account_id AS removedBy FROM contributions WHERE id='owner-clip'",
+      )
+      .get();
+    assert.equal(row.deletedAt, null);
+    assert.equal(row.removedBy, owner.account.id);
+    assert.ok(row.removedAt);
+    for (const person of [owner, member]) assert.equal((await segments(person))[0].hidden, true);
+    const encoded = JSON.stringify(await segments(member));
+    assert.equal(encoded.includes('/media/'), false);
+    assert.equal(encoded.includes(ownerProfile), false);
+  }));

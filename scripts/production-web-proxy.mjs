@@ -51,10 +51,17 @@ function contentType(path) {
   return CONTENT_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream';
 }
 
+/** Public legal pages answer at their extensionless path without sign-in,
+ * instead of falling through to the SPA shell. */
+export function legalPagePath(pathname) {
+  const match = /^\/(privacy|support|terms)$/.exec(pathname);
+  return match ? `/${match[1]}.html` : null;
+}
+
 async function resolveStaticFile(staticRoot, pathname) {
   let decodedPath;
   try {
-    decodedPath = decodeURIComponent(pathname);
+    decodedPath = legalPagePath(pathname) ?? decodeURIComponent(pathname);
   } catch {
     return { error: 400 };
   }

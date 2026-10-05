@@ -3,27 +3,58 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#252326" />
+    <meta name="theme-color" content="#f6ede3" />
     <title>Rewind privacy policy</title>
     <style>
       :root {
-        color-scheme: dark;
-        font-family: system-ui, sans-serif;
-        background: #252326;
-        color: #f9ebd5;
+        color-scheme: light;
+        font-family:
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        background: #f6ede3;
+        color: #33231a;
       }
       body {
         margin: 0 auto;
         max-width: 40rem;
-        padding: 32px 16px;
-        line-height: 1.5;
+        padding: 40px 16px 56px;
+        line-height: 1.55;
+        background: #f6ede3;
+      }
+      h1,
+      h2 {
+        font-family: Fraunces, Georgia, serif;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      h1 {
+        font-size: 2rem;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin: 32px 0 8px;
       }
       p,
       li {
-        color: #d8cabe;
+        color: rgba(51, 35, 26, 0.74);
+      }
+      strong {
+        color: #33231a;
       }
       a {
-        color: #f9ebd5;
+        color: #e0703a;
+        text-underline-offset: 2px;
+      }
+      nav {
+        margin-top: 40px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(51, 35, 26, 0.16);
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
       }
     </style>
   </head>
@@ -39,7 +70,8 @@
       <ul>
         <li>
           Your username, display name and a salted hash of your password. We never store the
-          password itself.
+          password itself. You sign up with a username and password only; Rewind does not ask for
+          your email address or phone number.
         </li>
         <li>The groups you create or join, and your role in each group.</li>
         <li>The photos and videos you capture, including the sound in videos.</li>
@@ -48,7 +80,7 @@
           Reminder settings, the group time zone and, if you turn on reminders, a push subscription
           for your device.
         </li>
-        <li>Reports you make and members you block.</li>
+        <li>Reports you make, members you block and moments a group owner removes.</li>
         <li>
           Short-lived security records, such as hashed sign-in tokens and failed sign-in counts.
         </li>
@@ -63,7 +95,9 @@
       <h2>Who can see it</h2>
       <p>
         Only the members of a group can see that group's moments, film and chat. The people who
-        operate Rewind can access stored data to keep the service running and to act on reports.
+        operate Rewind can access stored data to keep the service running and to act on reports. We
+        review reports within 24 hours. When you block someone, their messages and moments are
+        hidden from you.
       </p>
       <h2>Where it is stored</h2>
       <p>
@@ -74,20 +108,25 @@
       <p>We keep your data while your account exists.</p>
       <h2>Deleting your account</h2>
       <p>
-        You can delete your account in the app. Deletion is permanent. It removes your account, your
-        sign-ins, your chat messages and reactions, your photos and videos, your reports and your
-        blocks. An upload that never finished is removed from storage within two days. A group you
-        own passes to its longest-standing other member. A group with no other members is deleted
-        with all its content. A group film that was already made with your moments stays with that
-        group.
+        You can delete your account in the app under <strong>Settings → Delete account</strong>.
+        Deletion is permanent. It removes your account, your sign-ins, your chat messages and
+        reactions, your photos and videos, your reports and your blocks. An upload that never
+        finished is removed from storage within two days. A group you own passes to its
+        longest-standing other member. A group with no other members is deleted with all its
+        content. A group film that was already made with your moments stays with that group.
       </p>
       <h2>Children</h2>
       <p>Rewind is not for children under 13.</p>
       <h2>Changes and contact</h2>
       <p>
         We will update this page when this policy changes. For questions or requests, use the
-        <a href="/support.html">support page</a>.
+        <a href="/support">support page</a>.
       </p>
+      <nav aria-label="Rewind legal pages">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms of use</a>
+        <a href="/support">Support</a>
+      </nav>
     </main>
   </body>
 </html>

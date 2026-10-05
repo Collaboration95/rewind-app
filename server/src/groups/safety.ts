@@ -4,26 +4,49 @@ import type { RewindDatabase } from '../db';
 
 const REASON_MAX_LENGTH = 500;
 
-/** Report one chat message or contribution in a group the reporter belongs to.
- * Reporting the same item twice is accepted and stores one report. */
+/** Report one chat message, contribution or member (by profile id) in a group
+ * the reporter belongs to. Reporting the same item twice stores one report. */
 export function reportContent(
   database: RewindDatabase,
   accountId: string,
   groupId: string,
-  input: { messageId?: unknown; contributionId?: unknown; reason?: unknown },
+  input: { messageId?: unknown; contributionId?: unknown; memberId?: unknown; reason?: unknown },
   now = new Date(),
 ): 'reported' | 'invalid' | 'not_found' {
-  const messageId = typeof input.messageId === 'string' && input.messageId ? input.messageId : null;
-  const contributionId =
-    typeof input.contributionId === 'string' && input.contributionId ? input.contributionId : null;
-  if (input.messageId === '' || input.contributionId === '') return 'invalid';
+  const id = (value: unknown) => (typeof value === 'string' && value ? value : null);
+  const messageId = id(input.messageId);
+  const contributionId = id(input.contributionId);
+  const memberId = id(input.memberId);
+  if (input.messageId === '' || input.contributionId === '' || input.memberId === '')
+    return 'invalid';
   const reason = input.reason === undefined ? '' : input.reason;
   if (
-    Boolean(messageId) === Boolean(contributionId) ||
+    [messageId, contributionId, memberId].filter(Boolean).length !== 1 ||
     typeof reason !== 'string' ||
     reason.length > REASON_MAX_LENGTH
   )
     return 'invalid';
+  const member = database
+    .prepare('SELECT 1 FROM real_group_memberships WHERE group_id = ? AND account_id = ?')
+    .get(groupId, accountId);
+  if (!member) return 'not_found';
+  if (memberId) {
+    const reported = database
+      .prepare(
+        `SELECT account_id AS accountId FROM real_group_memberships
+         WHERE group_id = ? AND profile_id = ? AND account_id <> ?`,
+      )
+      .get(groupId, memberId, accountId) as { accountId: string } | undefined;
+    if (!reported) return 'not_found';
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO member_reports
+         (id, reporter_account_id, group_id, reported_account_id, reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(randomUUID(), accountId, groupId, reported.accountId, reason.trim(), now.toISOString());
+    return 'reported';
+  }
   const target = messageId
     ? database
         .prepare('SELECT 1 FROM messages WHERE id = ? AND group_id = ?')
@@ -34,10 +57,7 @@ export function reportContent(
            WHERE c.id = ? AND cy.group_id = ? AND c.deleted_at IS NULL`,
         )
         .get(contributionId, groupId);
-  const member = database
-    .prepare('SELECT 1 FROM real_group_memberships WHERE group_id = ? AND account_id = ?')
-    .get(groupId, accountId);
-  if (!target || !member) return 'not_found';
+  if (!target) return 'not_found';
   database
     .prepare(
       `INSERT OR IGNORE INTO content_reports
@@ -54,6 +74,93 @@ export function reportContent(
       now.toISOString(),
     );
   return 'reported';
+}
+
+/** The group owner removes a moment for everyone. The author's allowance and
+ * own correction are untouched; who removed it and when stay on the row. */
+export function removeContribution(
+  database: RewindDatabase,
+  accountId: string,
+  groupId: string,
+  contributionId: string,
+  now = new Date(),
+): 'removed' | 'forbidden' | 'not_found' {
+  const role = database
+    .prepare('SELECT role FROM real_group_memberships WHERE group_id = ? AND account_id = ?')
+    .get(groupId, accountId) as { role: string } | undefined;
+  if (!role) return 'not_found';
+  if (role.role !== 'owner') return 'forbidden';
+  const found = database
+    .prepare(
+      `SELECT 1 FROM contributions c JOIN cycles cy ON cy.id = c.cycle_id
+       WHERE c.id = ? AND cy.group_id = ?`,
+    )
+    .get(contributionId, groupId);
+  if (!found) return 'not_found';
+  database
+    .prepare(
+      `UPDATE contributions SET removed_at = ?, removed_by_account_id = ?
+       WHERE id = ? AND removed_at IS NULL`,
+    )
+    .run(now.toISOString(), accountId, contributionId);
+  return 'removed';
+}
+
+export interface FilmSegment {
+  contributionId: string;
+  startSeconds: number;
+  durationSeconds: number;
+  hidden: boolean;
+  mine: boolean;
+}
+
+/** The moments in a compiled film, in order, from its frozen inputs. A
+ * segment is hidden for this viewer when its author is blocked, the viewer
+ * reported it, or it was deleted or removed. Photos render as 3 seconds. */
+export function filmSegments(
+  database: RewindDatabase,
+  filmId: string,
+  viewerProfileId: string,
+): FilmSegment[] {
+  const rows = database
+    .prepare(
+      `SELECT c.id AS contributionId, c.member_id = ? AS mine,
+              CASE WHEN clip.media_type = 'photo' THEN 3
+                   ELSE COALESCE(clip.trim_end_seconds - clip.trim_start_seconds,
+                                 c.duration_seconds) END AS durationSeconds,
+              (c.deleted_at IS NOT NULL OR c.removed_at IS NOT NULL
+               OR EXISTS (SELECT 1 FROM account_blocks b
+                          JOIN real_profiles viewer ON viewer.account_id = b.blocker_account_id
+                          JOIN real_profiles author ON author.account_id = b.blocked_account_id
+                          WHERE viewer.id = ? AND author.id = c.member_id)
+               OR EXISTS (SELECT 1 FROM content_reports r
+                          JOIN real_profiles viewer ON viewer.account_id = r.reporter_account_id
+                          WHERE viewer.id = ? AND r.contribution_id = c.id)) AS hidden
+       FROM compilation_job_inputs i
+       JOIN media_jobs clip ON clip.id = i.clip_job_id
+       JOIN contributions c ON c.id = i.contribution_id
+       WHERE i.job_id = ?
+       ORDER BY i.position ASC, i.clip_job_id ASC`,
+    )
+    .all(viewerProfileId, viewerProfileId, viewerProfileId, filmId) as {
+    contributionId: string;
+    mine: number;
+    durationSeconds: number;
+    hidden: number;
+  }[];
+  let startSeconds = 0;
+  return rows.map((row) => {
+    const durationSeconds = Math.round(Math.max(0, Number(row.durationSeconds)) * 1000) / 1000;
+    const segment = {
+      contributionId: row.contributionId,
+      startSeconds: Math.round(startSeconds * 1000) / 1000,
+      durationSeconds,
+      hidden: Boolean(row.hidden),
+      mine: Boolean(row.mine),
+    };
+    startSeconds += durationSeconds;
+    return segment;
+  });
 }
 
 /** Block a member, by profile id, who shares at least one group with the blocker. */
