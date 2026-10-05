@@ -366,6 +366,8 @@ export interface ExpoCameraPlatformOptions {
   browserPermissionReader?: () => Promise<PermissionSnapshot>;
   /** Waits between still-capture attempts while a browser camera warms up. */
   wait?: (milliseconds: number) => Promise<void>;
+  /** Web only: the live preview <video> expo-camera renders inside CameraView. */
+  browserPreviewVideo?: () => HTMLVideoElement | null;
 }
 
 // iPhone Safari can report the camera ready before its video element holds a
@@ -375,6 +377,38 @@ const CAMERA_WARMUP_DELAY_MS = 200;
 
 function isCameraWarmingUp(error: unknown): boolean {
   return error instanceof Error && /enough camera data/i.test(error.message);
+}
+
+const HAVE_ENOUGH_DATA = 4;
+const CAMERA_FRAME_TIMEOUT_MS = 3000;
+
+function findBrowserPreviewVideo(): HTMLVideoElement | null {
+  // expo-camera renders its preview as <video autoplay playsinline muted>.
+  return globalThis.document?.querySelector?.<HTMLVideoElement>('video[playsinline]') ?? null;
+}
+
+/**
+ * expo-camera's web takePicture demands readyState === HAVE_ENOUGH_DATA.
+ * iPhone Safari can fire onCameraReady (and pause the preview after a
+ * background/foreground) before that, so wait for a frame, nudging a paused
+ * preview to play. Resolves after a bounded timeout; the retry loop remains.
+ */
+function waitForVideoFrame(video: HTMLVideoElement, timeoutMs: number): Promise<void> {
+  if (video.readyState >= HAVE_ENOUGH_DATA) return Promise.resolve();
+  if (video.paused) void video.play?.()?.catch?.(() => undefined);
+  return new Promise((resolve) => {
+    const events = ['loadeddata', 'canplay', 'canplaythrough', 'playing'] as const;
+    const done = () => {
+      clearTimeout(timer);
+      for (const name of events) video.removeEventListener(name, check);
+      resolve();
+    };
+    const check = () => {
+      if (video.readyState >= HAVE_ENOUGH_DATA) done();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    for (const name of events) video.addEventListener(name, check);
+  });
 }
 
 /** Expo SDK 57 adapter. No Expo or React Native types cross the capture port. */
@@ -716,6 +750,8 @@ export class ExpoCameraPlatform implements CameraPlatform {
   async captureStill(): Promise<PlatformStillImage> {
     const camera = this.options.getCameraRef();
     if (!camera) throw new Error('The camera preview is not ready. Try again.');
+    const video = (this.options.browserPreviewVideo ?? findBrowserPreviewVideo)();
+    if (video) await waitForVideoFrame(video, CAMERA_FRAME_TIMEOUT_MS);
 
     const wait =
       this.options.wait ??

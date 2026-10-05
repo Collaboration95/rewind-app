@@ -535,6 +535,37 @@ describe('Expo camera adapter contract', () => {
     );
   });
 
+  it('waits for the browser preview to hold a frame before taking the still (#401)', async () => {
+    const video = Object.assign(new EventTarget(), {
+      paused: true,
+      play: jest.fn().mockResolvedValue(undefined),
+      readyState: 2,
+    });
+    const notReady = new Error(
+      'HTMLVideoElement does not have enough camera data to construct an image yet.',
+    );
+    const camera = cameraHandle({
+      takePictureAsync: jest.fn(async () => {
+        if (video.readyState < 4) throw notReady;
+        return { format: 'jpg' as const, height: 1280, uri: 'blob:still', width: 720 };
+      }),
+    });
+    const platform = new ExpoCameraPlatform({
+      browserPreviewVideo: () => video as unknown as HTMLVideoElement,
+      getCameraRef: () => camera,
+      wait: jest.fn().mockResolvedValue(undefined),
+    });
+
+    const capture = platform.captureStill();
+    await Promise.resolve();
+    expect(video.play).toHaveBeenCalled();
+    video.readyState = 4;
+    video.dispatchEvent(new Event('canplaythrough'));
+
+    await expect(capture).resolves.toMatchObject({ sourceUri: 'blob:still' });
+    expect(camera.takePictureAsync).toHaveBeenCalledTimes(1);
+  });
+
   it('maps video recording options and clamps a native duration above the 15-second limit', async () => {
     const recordAsync = jest.fn().mockResolvedValue({
       duration: MAX_CLIP_DURATION_SECONDS + 4,
