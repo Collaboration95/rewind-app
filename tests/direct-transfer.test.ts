@@ -339,6 +339,31 @@ describe('direct private transfer', () => {
     }
   });
 
+  it('keeps capacity throttling retryable through the actual authenticated client', async () => {
+    const c = fixture();
+    const appFetch = jest
+      .fn()
+      .mockImplementation(
+        async () => new Response(JSON.stringify({ error: 'concurrency_limit' }), { status: 429 }),
+      );
+    const auth = new RealAccountClient(
+      'https://api.rewind.example',
+      { read: async () => null, write: async () => {}, clear: async () => {} },
+      appFetch,
+    );
+    const client = createDirectTransferClient(
+      (path, init) => auth.request(path, init ?? {}, 't'.repeat(43)),
+      c.options,
+    );
+    await expect(client.transferContribution('group-1', input, c.source())).rejects.toMatchObject({
+      code: 'concurrency_limit',
+      status: 429,
+      retryable: true,
+    });
+    expect(appFetch).toHaveBeenCalled();
+    expect(c.storageFetch).not.toHaveBeenCalled();
+  });
+
   it('pins photo duration to three seconds and uses the same protocol', async () => {
     const c = fixture();
     await c.client.transferContribution(

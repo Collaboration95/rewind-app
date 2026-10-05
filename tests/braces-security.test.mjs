@@ -62,12 +62,18 @@ function filesIn(directory, prefix = '') {
   });
 }
 
+// Fix the stack budget so V8 optimization cannot make the negative control
+// depend on the host Node version; guarded and benign inputs use this same budget.
 function child(source) {
-  return spawnSync(process.execPath, ['--max-old-space-size=128', '-e', source], {
-    timeout: 10000,
-    encoding: 'utf8',
-    env: { ...process.env, NODE_PATH: join(root, 'node_modules') },
-  });
+  return spawnSync(
+    process.execPath,
+    ['--max-old-space-size=128', '--stack-size=512', '-e', source],
+    {
+      timeout: 10000,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_PATH: join(root, 'node_modules') },
+    },
+  );
 }
 
 test('fork retains every upstream file, MIT license, authors and pinned provenance', () => {

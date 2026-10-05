@@ -65,6 +65,7 @@ const MIGRATIONS = [
   { version: 27, key: 'reminder-outbox-v1', fileName: '027-reminder-outbox.sql' },
   { version: 28, key: 'content-safety-v1', fileName: '028-content-safety.sql' },
   { version: 29, key: 'member-reports-v1', fileName: '029-member-reports.sql' },
+  { version: 30, key: 'moderation-records-v1', fileName: '030-moderation-records.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
@@ -171,7 +172,10 @@ export function migrateDatabase(database: RewindDatabase): void {
     const needsRepair = migrationNeedsRepair(database, migration.key);
     if (marked?.applied && applied?.applied && !needsRepair) continue;
 
-    const rebuildProfileReferences = migration.key === 'real-media-profile-bridge-v1';
+    const rebuildProfileReferences = [
+      'real-media-profile-bridge-v1',
+      'moderation-records-v1',
+    ].includes(migration.key);
     if (rebuildProfileReferences) database.exec('PRAGMA foreign_keys = OFF;');
     try {
       beginMigrationTransaction(database);
@@ -238,7 +242,7 @@ export function migrateDatabase(database: RewindDatabase): void {
       if (rebuildProfileReferences) {
         const violations = database.prepare('PRAGMA foreign_key_check').all();
         if (violations.length > 0) {
-          throw new Error('The real media profile migration would break existing references.');
+          throw new Error('The table rebuild migration would break existing references.');
         }
       }
       database.exec('COMMIT');

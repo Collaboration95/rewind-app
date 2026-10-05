@@ -28,7 +28,7 @@ import {
   type PrivateReminderClient,
 } from '../reminders/private-reminder-client';
 import { subscribeToReminderIntents } from '../reminders/reminder-intents';
-import { createRealAccountArchiveClient } from '../auth/real-account-client';
+import { createRealAccountArchiveClient, rateLimitMessage } from '../auth/real-account-client';
 import { ArchiveScreen } from '../real/Archive';
 import { FilmScreen } from '../real/Film';
 import { markEnd, markLaunchReady, markStart } from '../runtime/timing';
@@ -575,7 +575,12 @@ export function RealAccountGroupExperience({
         body: JSON.stringify({ name: cleanName, prompt: cleanPrompt, maxMembers }),
       });
       if (!response.ok)
-        throw new Error('The group could not be created. Check the details and retry.');
+        throw new Error(
+          await rateLimitMessage(
+            response,
+            'The group could not be created. Check the details and retry.',
+          ),
+        );
       const created = (await response.json()) as RealGroup;
       if (!currentMutationAccount()) return;
       const contextVersion = ++groupContextVersion.current;

@@ -339,3 +339,44 @@ test('members can report a person in their group, once, but not themselves or ou
     assert.equal(database.prepare('SELECT COUNT(*) AS n FROM content_reports').get().n, 0);
   });
 });
+
+test('moderation records retain reporter, reason and time after the target account and group disappear', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const target = await provision(baseUrl, database, 'reported-target');
+    const reporter = await provision(baseUrl, database, 'surviving-reporter');
+    const groupId = await createGroup(baseUrl, target, 'Preserve reports');
+    await joinGroup(baseUrl, target, reporter, groupId);
+    const messageId = await sendMessage(baseUrl, target, groupId, 'reported message');
+    const memberId = database
+      .prepare('SELECT id FROM real_profiles WHERE account_id = ?')
+      .get(target.account.id).id;
+    const reports = `/real/groups/${groupId}/reports`;
+    assert.equal(
+      (await post(baseUrl, reports, reporter, { memberId, reason: 'abusive person' })).status,
+      201,
+    );
+    assert.equal(
+      (await post(baseUrl, reports, reporter, { messageId, reason: 'abusive message' })).status,
+      201,
+    );
+    const before = database.prepare('SELECT created_at FROM member_reports').get().created_at;
+    assert.equal(
+      (await post(baseUrl, '/auth/account/delete', target, { password: PASSWORD })).status,
+      200,
+    );
+    const member = database.prepare('SELECT * FROM member_reports').get();
+    assert.equal(member.reported_account_id, null);
+    assert.equal(member.reporter_account_id, reporter.account.id);
+    assert.equal(member.reason, 'abusive person');
+    assert.equal(member.created_at, before);
+    const content = database.prepare('SELECT * FROM content_reports').get();
+    assert.equal(content.message_id, null);
+    assert.equal(content.reporter_account_id, reporter.account.id);
+    assert.equal(content.reason, 'abusive message');
+    assert.equal(content.created_at, before);
+    database.prepare('DELETE FROM groups WHERE id = ?').run(groupId);
+    assert.equal(database.prepare('SELECT group_id FROM member_reports').get().group_id, null);
+    assert.equal(database.prepare('SELECT group_id FROM content_reports').get().group_id, null);
+    assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+  });
+});
