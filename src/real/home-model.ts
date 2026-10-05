@@ -39,6 +39,16 @@ export function daysUntil(iso: string, now: number): number {
   return Math.ceil(ms / DAY_MS);
 }
 
+/** Use hours in the final day and minutes in the final hour. */
+export function filmCountdown(iso: string, now: number): { count: number; unit: string } {
+  const remaining = Math.max(0, Date.parse(iso) - now);
+  if (!Number.isFinite(remaining)) return { count: 0, unit: 'minute' };
+  if (remaining >= DAY_MS) return { count: Math.ceil(remaining / DAY_MS), unit: 'day' };
+  if (remaining >= 60 * 60 * 1000)
+    return { count: Math.ceil(remaining / (60 * 60 * 1000)), unit: 'hour' };
+  return { count: Math.ceil(remaining / (60 * 1000)), unit: 'minute' };
+}
+
 /**
  * The week of the 4-week cycle and when the allowance resets. The server
  * resets allowances every 7 days from the cycle start; short local cycles

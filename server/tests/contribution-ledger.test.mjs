@@ -705,3 +705,19 @@ test('current-week allowance does not inherit usage or correction from the previ
     });
   });
 });
+
+test('ledger preserves the sealed fractional duration for nearest-second UI rounding', () => {
+  return withLedgerDatabase(async ({ database }) => {
+    insertContribution(database, {
+      id: 'rounded-sealed',
+      jobId: 'rounded-job',
+      jobStatus: 'ready',
+      durationSeconds: 3.96,
+    });
+    const page = listContributionLedger(database, { groupId: 'demo-group', memberId: 'demo-1' });
+    const entry = page.entries.find((entry) => entry.contributionId === 'rounded-sealed');
+    assert.equal(entry.state, 'sealed');
+    assert.equal(entry.durationSeconds, 3.96);
+    assert.equal(Math.round(entry.durationSeconds), 4);
+  });
+});

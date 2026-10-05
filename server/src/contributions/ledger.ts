@@ -362,7 +362,11 @@ function mapEntry(row: LedgerRow): LedgerEntry {
             : rawStatus === 'pending'
               ? 'queued'
               : 'failed';
-  const durationSeconds = boundedNumber(row.durationSeconds, 0, Number.MAX_SAFE_INTEGER);
+  // Preserve the sealed measurement; display rounding belongs to the client.
+  const measuredDuration = Number(row.durationSeconds);
+  const durationSeconds = Number.isFinite(measuredDuration)
+    ? Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, measuredDuration))
+    : 0;
   const createdAt = String(row.createdAt ?? '');
   return {
     contributionId: String(row.contributionId ?? ''),

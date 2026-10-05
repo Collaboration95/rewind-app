@@ -158,7 +158,11 @@ test('only the owner can revoke an active short code; revoked codes cannot be ac
       body: JSON.stringify({ code: invite.code }),
     });
     assert.equal(accepted.status, 400);
-    assert.equal((await accepted.json()).status, 'expired');
+    assert.deepEqual(await accepted.json(), {
+      status: 'expired',
+      error: 'invite_expired',
+      message: "That code isn't valid or has expired.",
+    });
     assert.equal(
       database
         .prepare('SELECT 1 FROM real_group_memberships WHERE group_id = ? AND account_id = ?')
@@ -284,6 +288,29 @@ test('real invite acceptance keeps legacy eight-character codes working', async 
   });
 });
 
+test('unknown well-formed codes explain invalid or expired without creating a membership', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const recipient = await provision(baseUrl, database, 'unknown-invite-recipient');
+    const response = await fetch(`${baseUrl}/real/invites/accept`, {
+      method: 'POST',
+      headers: { Authorization: recipient.authorization, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: 'ZZZ-ZZZ' }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      status: 'malformed',
+      error: 'invite_malformed',
+      message: "That code isn't valid or has expired.",
+    });
+    assert.equal(
+      database
+        .prepare('SELECT COUNT(*) AS count FROM real_group_memberships WHERE account_id = ?')
+        .get(recipient.account.id).count,
+      0,
+    );
+  });
+});
+
 test('real invite acceptance reports malformed and expired invitations safely', async () => {
   await withRuntime(async ({ baseUrl, database, setNow }) => {
     const owner = await provision(baseUrl, database, 'invite-status-owner');
@@ -311,7 +338,11 @@ test('real invite acceptance reports malformed and expired invitations safely', 
       body: JSON.stringify({ code: expiredInvite.code }),
     });
     assert.equal(expired.status, 400);
-    assert.equal((await expired.json()).status, 'expired');
+    assert.deepEqual(await expired.json(), {
+      status: 'expired',
+      error: 'invite_expired',
+      message: "That code isn't valid or has expired.",
+    });
     assert.equal(
       database
         .prepare('SELECT status FROM real_group_invites WHERE code = ?')

@@ -50,7 +50,6 @@ import {
   ListGroup,
   ListRow,
   SubHeader,
-  TextLink,
   ToastProvider,
   rw,
   useScreenInsets,
@@ -385,7 +384,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
           : auth.notice === 'sign-in-failed'
             ? 'Wrong username or password.'
             : auth.notice === 'offline'
-              ? 'You’re offline. Try again when you’re connected.'
+              ? "You're offline. Sign in again when you're connected."
               : auth.notice === 'revocation-unconfirmed'
                 ? Platform.OS === 'web'
                   ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
@@ -408,9 +407,9 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     // The "account is ready" banner has done its job once they try to sign in.
     setRegistrationComplete(false);
     setAuthPending(true);
-    await auth.signIn(username.trim(), password);
+    const signedIn = await auth.signIn(username.trim(), password);
     setAuthPending(false);
-    setPassword('');
+    if (signedIn) setPassword('');
   };
 
   const submitRegistration = async () => {
@@ -485,7 +484,8 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
       auth.notice === 'sign-out-recovery-pending' ||
       auth.notice === 'sign-out-marker-cleanup-failed' ||
       auth.notice === 'sign-out-marker-unavailable') &&
-    (visibleMode === 'demo' ||
+    (visibleMode === 'welcome' ||
+      visibleMode === 'demo' ||
       visibleMode === 'create-account' ||
       auth.notice === 'sign-out-incomplete' ||
       auth.notice === 'sign-out-recovery-pending' ||
@@ -721,13 +721,6 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             ) : (
               <ErrorText />
             )}
-            {auth.notice === 'offline' ? (
-              <TextLink
-                label="Retry session check"
-                onPress={auth.retryRestore}
-                style={styles.warmRetry}
-              />
-            ) : null}
             <Button
               busy={authPending}
               busyLabel="Signing in…"

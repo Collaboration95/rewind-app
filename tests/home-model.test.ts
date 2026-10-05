@@ -3,6 +3,7 @@ import { parseFilmSegments } from '../src/domain/premiere';
 import {
   cycleWeek,
   daysUntil,
+  filmCountdown,
   DAY_MS,
   homeCards,
   premiereLeft,
@@ -81,4 +82,20 @@ it('counts only moments from the current weekly window', () => {
   expect(
     weekMoments(page, Date.parse('2026-10-08T00:00:00Z')).map((m) => m.contributionId),
   ).toEqual(['this-week']);
+});
+
+it('uses days, hours and minutes at the countdown boundaries', () => {
+  const end = Date.parse(cycle.endsAt);
+  expect(filmCountdown(cycle.endsAt, end - DAY_MS)).toEqual({ count: 1, unit: 'day' });
+  expect(filmCountdown(cycle.endsAt, end - 23.5 * 60 * 60 * 1000)).toEqual({
+    count: 24,
+    unit: 'hour',
+  });
+  expect(filmCountdown(cycle.endsAt, end - 60 * 60 * 1000)).toEqual({ count: 1, unit: 'hour' });
+  expect(filmCountdown(cycle.endsAt, end - 59.2 * 60 * 1000)).toEqual({
+    count: 60,
+    unit: 'minute',
+  });
+  expect(filmCountdown(cycle.endsAt, end - 1000)).toEqual({ count: 1, unit: 'minute' });
+  expect(filmCountdown(cycle.endsAt, end)).toEqual({ count: 0, unit: 'minute' });
 });
