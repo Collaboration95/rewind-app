@@ -171,6 +171,21 @@ html [data-rw~="no-scrollbar"] { scrollbar-width: none; }
 html [data-rw~="no-scrollbar"]::-webkit-scrollbar { display: none; }
 html textarea[data-rw~="bare"], html input[data-rw~="bare"] { outline: none; }
 
+html [data-rw~="capture-top"] {
+  background: linear-gradient(to bottom, rgba(8,5,4,.86), rgba(8,5,4,.55) 70%, transparent);
+}
+html [data-rw~="capture-bottom"] {
+  background: linear-gradient(to top, rgba(8,5,4,.92), rgba(8,5,4,.72) 80%, transparent);
+}
+html [data-rw~="look-chip"] { background: rgba(8,5,4,.82); }
+html [data-rw~="look-grain"] { animation: rw-grain .25s steps(2) infinite; }
+@keyframes rw-grain {
+  0%,100% { background-position: 0 0; }
+  25% { background-position: 32px -16px; }
+  50% { background-position: -24px 40px; }
+  75% { background-position: 16px 24px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html [data-rw] { animation: none !important; transition: none !important; }
   html [data-rw] > div { animation: none !important; }
