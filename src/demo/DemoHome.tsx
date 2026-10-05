@@ -146,6 +146,7 @@ function ReadyDemoHome({
             <View accessibilityLabel={quotaLabel}>
               <HomeBody
                 header={null}
+                demoCompact
                 countdown={filmCountdown(cycle.endsAt, clock())}
                 week={cycleWeek(cycle, clock()).week}
                 resetDays={cycleWeek(cycle, clock()).resetDays}

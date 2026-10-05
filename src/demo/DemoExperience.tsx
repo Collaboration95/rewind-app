@@ -270,32 +270,38 @@ export function DemoExperience({
       <SafeAreaFrame>
         <TabColumn>
           <Glow />
-          {activeRoute !== 'film' && activeRoute !== 'camera' && activeRoute !== 'video' && (
-            <View nativeID="demo-header" style={[styles.demoTop, { paddingTop: insets.top }]}>
-              <View style={{ width: 36 }} />
-              <Text
-                accessibilityRole={activeRoute === 'home' ? 'header' : undefined}
-                testID={activeRoute === 'home' && group ? 'route-heading-home' : undefined}
-                style={styles.demoBrand}
-              >
-                {activeRoute === 'home' ? (group?.name ?? 'Rewind') : 'Rewind'}
-              </Text>
-              <View accessibilityRole="tablist">
-                <Pressable
-                  accessibilityLabel="Settings"
-                  accessibilityRole="tab"
-                  aria-selected={activeRoute === 'settings' || activeRoute === 'create-group'}
-                  accessibilityState={{
-                    selected: activeRoute === 'settings' || activeRoute === 'create-group',
-                  }}
-                  onPress={() => navigate('settings')}
-                  testID="nav-settings"
+          {activeRoute !== 'film' &&
+            activeRoute !== 'camera' &&
+            activeRoute !== 'video' &&
+            activeRoute !== 'moments' && (
+              <View nativeID="demo-header" style={[styles.demoTop, { paddingTop: insets.top }]}>
+                <View style={{ width: 36 }} />
+                <Text
+                  accessibilityRole={activeRoute === 'home' ? 'header' : undefined}
+                  testID={activeRoute === 'home' && group ? 'route-heading-home' : undefined}
+                  style={styles.demoBrand}
                 >
-                  <Avatar glass name={session?.actor.displayName ?? 'Demo'} />
-                </Pressable>
+                  {activeRoute === 'home' || activeRoute === 'chat' || activeRoute === 'archive'
+                    ? (group?.name ?? 'Rewind')
+                    : 'Rewind'}
+                </Text>
+                <View accessibilityRole="tablist">
+                  <Pressable
+                    accessibilityLabel="Settings"
+                    accessibilityRole="tab"
+                    aria-selected={activeRoute === 'settings' || activeRoute === 'create-group'}
+                    accessibilityState={{
+                      selected: activeRoute === 'settings' || activeRoute === 'create-group',
+                    }}
+                    onPress={() => navigate('settings')}
+                    style={styles.demoSettingsButton}
+                    testID="nav-settings"
+                  >
+                    <Avatar glass name={session?.actor.displayName ?? 'Demo'} />
+                  </Pressable>
+                </View>
               </View>
-            </View>
-          )}
+            )}
           <Animated.View
             nativeID={`screen-route-${activeRoute}`}
             style={[styles.routeContent, { transform: [{ translateY: routeOffset }] }]}
@@ -1348,6 +1354,12 @@ const styles = StyleSheet.create({
     zIndex: 8,
   },
   demoBrand: { color: WARM.ink, ...serif(22), flex: 1, textAlign: 'center' },
+  demoSettingsButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 44,
+    minHeight: 44,
+  },
   demoShutter: {
     alignItems: 'center',
     justifyContent: 'center',

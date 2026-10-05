@@ -36,6 +36,7 @@ export function HomeBody({
   retryPending,
   rollKey,
   notices,
+  demoCompact = false,
 }: {
   header: ReactNode;
   countdown: { count: number; unit: string };
@@ -56,8 +57,10 @@ export function HomeBody({
   /** Bumped after sealing: the allowance row rolls in. */
   rollKey?: number;
   notices?: ReactNode;
+  /** Demo's separate header leaves less space on short screens. */
+  demoCompact?: boolean;
 }) {
-  const compact = useWindowDimensions().height < 720 && cards.length > 0;
+  const compact = useWindowDimensions().height < 720 && (cards.length > 0 || demoCompact);
   const used = countUsed ?? 0;
   const secs = secondsUsed ?? 0;
   return (

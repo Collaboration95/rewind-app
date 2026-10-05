@@ -76,7 +76,9 @@ function ArchiveEntries({
   loadingMore,
   loadMore,
   playFilm,
+  demoCompact = false,
 }: {
+  demoCompact?: boolean;
   archive: ReleasedArchive;
   cycles: CycleHistoryEntry[];
   hasMoreCycles: boolean;
@@ -122,7 +124,7 @@ function ArchiveEntries({
               accessibilityLabel="Download released group film"
               accessibilityRole="button"
               onPress={() => download(film)}
-              style={styles.downloadButton}
+              style={[styles.downloadButton, demoCompact && styles.demoDownloadButton]}
             >
               <Text style={styles.downloadText}>Download film</Text>
             </Pressable>
@@ -145,7 +147,7 @@ function ArchiveEntries({
               accessibilityLabel="Download your released clip"
               accessibilityRole="button"
               onPress={() => download(clip)}
-              style={styles.downloadButton}
+              style={[styles.downloadButton, demoCompact && styles.demoDownloadButton]}
             >
               <Text style={styles.downloadText}>Download clip</Text>
             </Pressable>
@@ -904,6 +906,7 @@ function ArchiveSurface({
       ) : (
         <PremiereStatus
           premiere={{ state: 'locked', cycleId: state.premiere.cycleId }}
+          demoCompact
           reload={load}
           hasOlderReleasedMedia={state.archive.films.length > 0 || state.archive.clips.length > 0}
         />
@@ -911,6 +914,7 @@ function ArchiveSurface({
     ) : (
       <PremiereStatus
         premiere={state.premiere}
+        demoCompact
         reload={load}
         hasOlderReleasedMedia={state.archive.films.length > 0 || state.archive.clips.length > 0}
       />
@@ -928,12 +932,17 @@ function ArchiveSurface({
     ),
   };
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.stack}>
+    <ScrollView
+      testID="demo-archive-scroll"
+      style={{ flex: 1 }}
+      contentContainerStyle={styles.stack}
+    >
       <Text accessibilityRole="header" style={styles.title} testID="route-heading-archive">
         Archive
       </Text>
       {premierePanel}
       <ArchiveEntries
+        demoCompact
         archive={releasedArchive}
         cycles={state.cycles}
         hasMoreCycles={
@@ -963,10 +972,12 @@ function PremiereStatus({
   premiere,
   reload,
   hasOlderReleasedMedia = false,
+  demoCompact = false,
 }: {
   premiere: Exclude<Premiere, { state: 'ready' }>;
   reload: () => void;
   hasOlderReleasedMedia?: boolean;
+  demoCompact?: boolean;
 }) {
   if (premiere.state === 'failed') {
     return (
@@ -990,8 +1001,9 @@ function PremiereStatus({
   }
   const state = revealStateForPremiere(premiere);
   return (
-    <View style={styles.stack}>
+    <View style={[styles.stack, demoCompact && styles.demoStatusStack]}>
       <RevealEducationPanel
+        demoCompact={demoCompact}
         onAction={reload}
         state={state}
         surface="archive"
@@ -1008,6 +1020,8 @@ function PremiereStatus({
 
 const styles = StyleSheet.create({
   stack: { gap: 14, padding: 22, paddingBottom: 32 },
+  demoStatusStack: { gap: 8, padding: 0, paddingBottom: 0 },
+  demoDownloadButton: { minWidth: 44, minHeight: 48 },
   archiveHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   panel: {
     backgroundColor: WARM.sheet,

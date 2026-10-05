@@ -18,7 +18,7 @@ import type { DemoSession } from '../domain/session';
 import type { RuntimeClient } from '../runtime/local-runtime-client';
 import { useDemoSession } from '../session/DemoSessionProvider';
 import { Glass } from '../ui/primitives';
-import { FONT, WARM } from '../ui/tokens';
+import { FONT, WARM, serif } from '../ui/tokens';
 import { useOptionalChatUnread } from './ChatUnreadProvider';
 import {
   createChatMessageDraft,
@@ -480,15 +480,16 @@ export function ChatSessionSurface({
         extraData={{ reactionActive, reactionBusy, memberId: session?.actor.memberId }}
         keyExtractor={({ message }) => message.id}
         ListHeaderComponent={
-          <View style={styles.content}>
+          <View style={styles.headerContent}>
             <View style={styles.header}>
-              <Text style={styles.label}>GROUP CHAT</Text>
               <Text accessibilityRole="header" style={styles.title} testID="route-heading-chat">
                 Chat
               </Text>
-              <Text style={styles.bodyText}>
-                {group?.name ?? 'Messages are visible only to authorised group members.'}
-              </Text>
+              {!group ? (
+                <Text style={styles.bodyText}>
+                  Messages are visible only to authorised group members.
+                </Text>
+              ) : null}
             </View>
 
             {accessState !== 'loading' ? (
@@ -645,7 +646,6 @@ export function ChatSessionSurface({
 
       {showComposer && !subscriptionDenied && runtimeClient?.sendChatMessage && group && session ? (
         <View style={styles.composer}>
-          <Text style={styles.fieldLabel}>MESSAGE</Text>
           {replyTarget ? (
             <View accessible={false} style={styles.composerReply} testID="chat-reply-target">
               <Text style={styles.replyLabel}>REPLYING TO</Text>
@@ -710,7 +710,8 @@ export function ChatSessionSurface({
 const styles = StyleSheet.create({
   screen: { flex: 1 },
   timelineScroll: { flex: 1 },
-  content: { gap: 14, padding: 24, paddingBottom: 20 },
+  content: { gap: 12, paddingHorizontal: 22, paddingTop: 12, paddingBottom: 16 },
+  headerContent: { gap: 8, paddingBottom: 12 },
   header: { gap: 4 },
   label: {
     color: WARM.muted,
@@ -719,7 +720,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1,
   },
-  title: { color: WARM.ink, fontFamily: FONT.body, fontSize: 30, fontWeight: '700', marginTop: 2 },
+  title: { color: WARM.ink, ...serif(24) },
   bodyText: { color: WARM.muted, fontFamily: FONT.body, fontSize: 14, lineHeight: 21 },
   connectionStatus: { color: WARM.muted, fontFamily: FONT.body, fontSize: 12, fontWeight: '700' },
   statePanel: {
@@ -757,7 +758,8 @@ const styles = StyleSheet.create({
     borderColor: WARM.line,
     borderRadius: 6,
     borderWidth: 1,
-    minHeight: 32,
+    minHeight: 48,
+    minWidth: 48,
     justifyContent: 'center',
     paddingHorizontal: 9,
     paddingVertical: 5,
@@ -786,8 +788,9 @@ const styles = StyleSheet.create({
     backgroundColor: WARM.bg,
     borderColor: WARM.line,
     borderTopWidth: 1,
-    gap: 8,
-    padding: 16,
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
   fieldLabel: {
     color: WARM.muted,
@@ -812,7 +815,7 @@ const styles = StyleSheet.create({
     color: WARM.ink,
     fontFamily: FONT.body,
     fontSize: 16,
-    minHeight: 72,
+    minHeight: 44,
     paddingHorizontal: 12,
     paddingVertical: 10,
     textAlignVertical: 'top',
