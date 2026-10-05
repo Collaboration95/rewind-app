@@ -1203,7 +1203,7 @@ export function RealAccountGroupExperience({
 
   const docked = screen === 'ready' && group;
   return (
-    <View style={styles.root}>
+    <View style={styles.root} {...rw('clip')}>
       {tab === 'home' || !group ? <Glow /> : null}
       <TabColumn>{body}</TabColumn>
       {docked ? <ScreenFades /> : null}

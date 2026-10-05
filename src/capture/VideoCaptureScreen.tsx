@@ -1831,7 +1831,7 @@ function CapturedVideoReview({
         nativeControls={false}
         player={player}
         playsInline
-        style={StyleSheet.absoluteFill}
+        style={styles.fillVideo}
         testID="video-review-player"
       />
       <View pointerEvents="box-none" style={styles.playLayer} testID="video-review-playback">
@@ -1904,6 +1904,16 @@ function BrowserVideoPreview({
 }
 
 const styles = StyleSheet.create({
+  // A web <video> keeps its intrinsic size inside absolute insets; size it explicitly.
+  fillVideo: {
+    bottom: 0,
+    height: '100%',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: '100%',
+  },
   timer: {
     alignItems: 'center',
     alignSelf: 'center',

@@ -126,6 +126,9 @@ html [data-rw~="mo-core"] {
 }
 html [data-rw~="muted-motif"] { opacity: .35; filter: grayscale(.6); }
 
+/* Hidden overflow can still be scrolled by the browser (focus, media sizing), which
+   once left a pushed screen shifted sideways. Clip cannot scroll at all. */
+html [data-rw~="clip"] { overflow: clip; }
 html [data-rw~="push"] { animation: rw-push .35s cubic-bezier(.2,.8,.2,1) both; }
 html [data-rw~="menu-in"] { transform-origin: 50% 0; animation: rw-menu .22s cubic-bezier(.2,.8,.2,1) both; }
 html [data-rw~="dlg-in"] { animation: rw-up .3s cubic-bezier(.2,.8,.2,1) both; }

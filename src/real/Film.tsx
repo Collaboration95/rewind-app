@@ -60,13 +60,15 @@ export function FilmScreen({
   const [filmId, setFilmId] = useState<string | null>(null);
   const [segments, setSegments] = useState<FilmSegment[] | null>(null);
   const [time, setTime] = useState(0);
-  const [paused, setPaused] = useState(false);
+  // Paused until the player reports that it is playing.
+  const [paused, setPaused] = useState(true);
   const [reporting, setReporting] = useState<FilmSegment | null>(null);
   const [removing, setRemoving] = useState<FilmSegment | null>(null);
   const [removePending, setRemovePending] = useState(false);
   const [ownClips, setOwnClips] = useState<RealArchiveClip[]>([]);
   const downloads = useRef(createArchiveDownloadQueue()).current;
   const alive = useRef(true);
+  const autoStart = useRef(false);
   useEffect(
     () => () => {
       alive.current = false;
@@ -93,10 +95,10 @@ export function FilmScreen({
         })
         .catch(() => undefined);
       setSegments(premiere.segments ?? null);
+      autoStart.current = true;
       await player.replaceAsync(premiere.playbackUrl);
       if (!alive.current) return;
       setTime(0);
-      setPaused(false);
       setStep('play');
       player.play();
     } catch {
@@ -134,9 +136,24 @@ export function FilmScreen({
       }
     });
     const onEnd = player.addListener('playToEnd', end);
+    // Follow the player, not our request: a browser that blocks autoplay leaves
+    // the film paused, so the button must offer Play.
+    const onPlaying = player.addListener('playingChange', ({ isPlaying }: { isPlaying: boolean }) =>
+      setPaused(!isPlaying),
+    );
+    // On the web a play() issued with the new source can be cut off by its own
+    // load; start again once the source is ready.
+    const onStatus = player.addListener('statusChange', ({ status }: { status: string }) => {
+      if (status === 'readyToPlay' && autoStart.current) {
+        autoStart.current = false;
+        player.play();
+      }
+    });
     return () => {
       onTime.remove();
       onEnd.remove();
+      onPlaying.remove();
+      onStatus.remove();
     };
   }, [end, player, seekTo, segments]);
 
@@ -155,8 +172,14 @@ export function FilmScreen({
     else player.pause();
     setPaused(!paused);
   };
+  // The end card reports the last moment someone else made (not your own).
+  const others = visible.filter((segment) => !segment.mine);
   const lastVisible =
-    visibleIndex >= 0 ? visible[visibleIndex] : (visible[visible.length - 1] ?? null);
+    (visibleIndex >= 0
+      ? others
+          .filter((segment) => segment.startSeconds <= visible[visibleIndex].startSeconds)
+          .at(-1)
+      : others.at(-1)) ?? null;
 
   const saveFilm = async () => {
     if (!filmId) return;
@@ -214,7 +237,7 @@ export function FilmScreen({
         contentFit="contain"
         nativeControls={false}
         player={player}
-        style={[StyleSheet.absoluteFill, step === 'end' && styles.dimmed]}
+        style={[styles.fillVideo, step === 'end' && styles.dimmed]}
         testID="real-film-video"
       />
       {step === 'play' ? (
@@ -280,7 +303,7 @@ export function FilmScreen({
           style={[styles.controls, { paddingBottom: insets.bottom + 10 }]}
           pointerEvents="box-none"
         >
-          {current && !current.hidden ? (
+          {current && !current.hidden && !current.mine ? (
             <View style={styles.moment}>
               <TextLink
                 color="#fff"
@@ -292,7 +315,7 @@ export function FilmScreen({
                 }}
                 testID="real-film-report"
               />
-              {isOwner && !current.mine ? (
+              {isOwner ? (
                 <TextLink
                   color="#fff"
                   label="Remove this moment"
@@ -425,7 +448,18 @@ export function FilmScreen({
 }
 
 const styles = StyleSheet.create({
-  screen: { backgroundColor: '#0f0a07', flex: 1 },
+  screen: { backgroundColor: '#0f0a07', flex: 1, overflow: 'hidden' },
+  // A web <video> keeps its intrinsic size inside absolute insets; size it explicitly.
+  fillVideo: {
+    bottom: 0,
+    height: '100%',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    width: '100%',
+  },
+
   dimmed: { opacity: 0.25 },
   zoneLeft: { bottom: 120, left: 0, position: 'absolute', top: 90, width: '33%' },
   zoneRight: { bottom: 120, position: 'absolute', right: 0, top: 90, width: '67%' },
