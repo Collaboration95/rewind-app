@@ -14,7 +14,7 @@ export interface RealAccount {
 export interface RealAccountSession {
   account: RealAccount;
   idleExpiresAt: string;
-  absoluteExpiresAt: string;
+  absoluteExpiresAt?: string;
 }
 
 export type AuthState = 'loading' | 'entry' | 'active' | 'error';
@@ -148,7 +148,12 @@ export class RealAccountClient {
   async login(
     username: string,
     password: string,
-  ): Promise<{ account: RealAccount; token?: string; expiresAt: string }> {
+  ): Promise<{
+    account: RealAccount;
+    token?: string;
+    expiresAt: string;
+    absoluteExpiresAt?: string;
+  }> {
     this.assertSecureTransport();
     const response = await this.fetcher(
       authUrl(this.baseUrl, '/auth/login'),
@@ -183,7 +188,14 @@ export class RealAccountClient {
       }
       this.activeToken = token;
     }
-    return { account: body.account, expiresAt: body.expiresAt, ...(token ? { token } : {}) };
+    return {
+      account: body.account,
+      expiresAt: body.expiresAt,
+      ...(typeof body.absoluteExpiresAt === 'string'
+        ? { absoluteExpiresAt: body.absoluteExpiresAt }
+        : {}),
+      ...(token ? { token } : {}),
+    };
   }
 
   async restore(): Promise<RealAccountSession | null> {
@@ -269,6 +281,14 @@ export class RealAccountClient {
       requestOptions(init, token ?? this.activeToken),
     );
     if (response.status === 401) throw new AuthRequestError(401, 'expired');
+    if (response.status === 429) {
+      const body = await readJson(response);
+      throw new AuthRequestError(
+        429,
+        'response',
+        typeof body.message === 'string' ? body.message : 'Please wait before trying again.',
+      );
+    }
     return response;
   }
 
@@ -306,11 +326,13 @@ export class AuthRequestError extends Error {
       | 'secure-storage'
       | 'registration'
       | 'logout',
+    message?: string,
   ) {
     super(
-      reason === 'expired'
-        ? 'Your sign-in has expired or was reset.'
-        : 'Authentication request failed.',
+      message ??
+        (reason === 'expired'
+          ? 'Your sign-in has expired or was reset.'
+          : 'Authentication request failed.'),
     );
     this.name = 'AuthRequestError';
   }

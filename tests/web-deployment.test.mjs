@@ -11,6 +11,10 @@ import test from 'node:test';
 
 import { apiTarget, createProductionWebServer } from '../scripts/production-web-proxy.mjs';
 
+const securityHeaders = await readFile(
+  new URL('../deploy/security-headers.conf', import.meta.url),
+  'utf8',
+);
 const nginx = await readFile(new URL('../deploy/nginx.conf', import.meta.url), 'utf8');
 const compose = await readFile(new URL('../deploy/compose.yaml', import.meta.url), 'utf8');
 const dockerfile = await readFile(new URL('../deploy/web.Dockerfile', import.meta.url), 'utf8');
@@ -120,7 +124,7 @@ test('runtime-unavailable API responses stay JSON and never fall back to the she
 test('public legal pages resolve at extensionless paths without the SPA shell', async () => {
   assert.match(
     nginx,
-    /location ~ \^\/\(privacy\|support\|terms\)\$ \{\s*try_files \/\$1\.html =404;/,
+    /location ~ \^\/\(privacy\|support\|terms\)\$ \{\s*include \/etc\/nginx\/security-headers\.conf;\s*try_files \/\$1\.html =404;/,
   );
   for (const page of ['privacy', 'support', 'terms'])
     await access(new URL(`../public/${page}.html`, import.meta.url));
@@ -243,6 +247,8 @@ test(
         network,
         '-v',
         `${join(root, 'default.conf')}:/etc/nginx/conf.d/default.conf:ro`,
+        '-v',
+        `${new URL('../deploy/security-headers.conf', import.meta.url).pathname}:/etc/nginx/security-headers.conf:ro`,
         process.env.REWIND_NGINX_TEST_IMAGE,
       );
       await docker('exec', web, 'nginx', '-t');
@@ -272,6 +278,10 @@ test(
         assert.equal(response.status, 503);
         assert.match(response.headers['content-type'], /application\/json/);
         assert.equal(response.headers['cache-control'], 'no-store');
+        assert.equal(response.headers['x-content-type-options'], 'nosniff');
+        assert.equal(response.headers['x-frame-options'], 'DENY');
+        assert.equal(response.headers['content-security-policy'], "frame-ancestors 'none'");
+        assert.equal(response.headers['strict-transport-security'], 'max-age=31536000');
         if (path === '/api' || path.endsWith('upload-intents')) {
           assert.equal(response.body, body);
           assert.equal(response.headers['retry-after'], '30');
@@ -292,3 +302,24 @@ test(
     }
   },
 );
+
+test('every nginx location includes the shared always-on security headers', () => {
+  const locations = [...nginx.matchAll(/location [^\n]+ \{([\s\S]*?)\n    \}/g)];
+  assert.equal(locations.length, 7);
+  for (const [, location] of locations) {
+    assert.match(location, /include \/etc\/nginx\/security-headers\.conf;/);
+  }
+  for (const [name, value] of [
+    ['X-Content-Type-Options', 'nosniff'],
+    ['Referrer-Policy', 'strict-origin-when-cross-origin'],
+    ['X-Frame-Options', 'DENY'],
+    ['Strict-Transport-Security', 'max-age=31536000'],
+    ['Content-Security-Policy', "frame-ancestors 'none'"],
+  ])
+    assert.ok(securityHeaders.includes(`add_header ${name} "${value}" always;`));
+  assert.match(securityHeaders, /Content-Security-Policy-Report-Only "default-src 'self';/);
+  assert.match(
+    dockerfile,
+    /COPY deploy\/security-headers\.conf \/etc\/nginx\/security-headers\.conf/,
+  );
+});

@@ -341,3 +341,20 @@ describe('real-account client transport and storage', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+test('account write limits preserve the server message and keep the credential active', async () => {
+  const token = 't'.repeat(43);
+  storedToken = token;
+  const fetcher = jest.fn().mockResolvedValue(
+    response(429, {
+      error: 'rate_limited',
+      message: 'You have reached the group creation limit. Please try again later.',
+    }),
+  );
+  const client = new RealAccountClient('https://api.rewind.example', tokenStore, fetcher);
+  await expect(client.request('/real/groups', { method: 'POST' }, token)).rejects.toMatchObject({
+    status: 429,
+    message: 'You have reached the group creation limit. Please try again later.',
+  });
+  expect(storedToken).toBe(token);
+});
