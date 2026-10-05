@@ -53,8 +53,12 @@ function noticeFor(error: unknown): AuthNotice {
   return 'offline';
 }
 
-function accountSession(account: RealAccount, idleExpiresAt: string): RealAccountSession {
-  return { account, idleExpiresAt, absoluteExpiresAt: idleExpiresAt };
+function accountSession(
+  account: RealAccount,
+  idleExpiresAt: string,
+  absoluteExpiresAt?: string,
+): RealAccountSession {
+  return { account, idleExpiresAt, ...(absoluteExpiresAt ? { absoluteExpiresAt } : {}) };
 }
 
 export function RealAccountProvider({
@@ -192,7 +196,7 @@ export function RealAccountProvider({
         const result = await client.login(username, password);
         if (!mounted.current) return false;
         tokenRef.current = result.token;
-        setSession(accountSession(result.account, result.expiresAt));
+        setSession(accountSession(result.account, result.expiresAt, result.absoluteExpiresAt));
         setState('active');
         return true;
       } catch (error) {
@@ -421,15 +425,23 @@ export function RealAccountProvider({
   );
 
   useEffect(() => {
-    if (state !== 'active' || !session) return;
-    const remaining = Date.parse(session.idleExpiresAt) - Date.now();
-    const timer = setTimeout(
-      () => {
+    if (state !== 'active' || !session?.absoluteExpiresAt) return;
+    // Idle expiry rolls forward on the server. Only a supplied absolute expiry
+    // is safe to schedule locally; every server 401 remains authoritative.
+    const remaining = Date.parse(session.absoluteExpiresAt) - Date.now();
+    if (!Number.isFinite(remaining)) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const checkAbsoluteExpiry = () => {
+      const delay = Date.parse(session.absoluteExpiresAt!) - Date.now();
+      if (delay <= 0) {
         setNotice('expired');
         void clearLocalSession();
-      },
-      Math.max(0, Number.isFinite(remaining) ? remaining : 0),
-    );
+        return;
+      }
+      // Longer delays overflow the signed 32-bit JS timer and fire immediately.
+      timer = setTimeout(checkAbsoluteExpiry, Math.min(delay, 2_147_483_647));
+    };
+    checkAbsoluteExpiry();
     return () => clearTimeout(timer);
   }, [clearLocalSession, session, state]);
 
