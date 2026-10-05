@@ -682,8 +682,31 @@ export function Dialog({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onDismiss]);
+  // Web keyboard modality: the rest of the page goes inert, focus moves into
+  // the dialog and returns to the control that opened it.
+  const layerRef = useRef<View>(null);
+  useEffect(() => {
+    const node = layerRef.current as unknown as HTMLElement | null;
+    if (!isWeb || typeof document === 'undefined' || !node) return;
+    const opener = document.activeElement as HTMLElement | null;
+    const others = Array.from(document.body.children).filter(
+      (element): element is HTMLElement =>
+        element !== node && element instanceof HTMLElement && !element.inert,
+    );
+    for (const element of others) element.inert = true;
+    node
+      .querySelector<HTMLElement>(
+        '[role="dialog"] input, [role="dialog"] textarea, [role="dialog"] [tabindex="0"]',
+      )
+      ?.focus();
+    return () => {
+      for (const element of others) element.inert = false;
+      opener?.focus?.();
+    };
+  }, []);
   const layer = (
     <View
+      ref={layerRef}
       style={[StyleSheet.absoluteFill, isWeb && styles.dialogLayerWeb]}
       testID={testID ? `${testID}-layer` : undefined}
     >

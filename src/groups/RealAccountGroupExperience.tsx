@@ -874,7 +874,7 @@ export function RealAccountGroupExperience({
     chatActive: tab === 'chat' && !top,
   });
   const week = group ? cycleWeek(group.cycle, now) : null;
-  const moments = weekMoments(ledger);
+  const moments = weekMoments(ledger, week?.windowStart ?? 0);
   const failedMoment = moments.find((entry) => entry.state === 'failed') ?? null;
   const allowance = ledger?.allowance ?? null;
   const shutter = group && week ? shutterState(allowance, week.resetDays) : null;
@@ -1148,6 +1148,7 @@ export function RealAccountGroupExperience({
       <MomentsScreen
         error={ledgerError}
         onBack={popScreen}
+        onReload={() => void refreshLedger()}
         onDelete={async (entry) => {
           if (!group) return;
           await mediaClient.deleteContribution(
@@ -1168,6 +1169,7 @@ export function RealAccountGroupExperience({
         }}
         page={ledger}
         resetDays={week?.resetDays ?? 7}
+        windowStart={week?.windowStart ?? 0}
       />
     );
   else if (top?.kind === 'join')

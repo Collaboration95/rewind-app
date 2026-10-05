@@ -1,3 +1,4 @@
+import type { ContributionLedgerEntry, ContributionLedgerPage } from '../src/domain/contributions';
 import { parseFilmSegments } from '../src/domain/premiere';
 import {
   cycleWeek,
@@ -7,6 +8,7 @@ import {
   premiereLeft,
   shutterState,
 } from '../src/real/home-model';
+import { weekMoments } from '../src/real/Moments';
 
 const start = Date.parse('2026-09-28T00:00:00Z');
 const cycle = { id: 'c2', startsAt: '2026-09-28T00:00:00Z', endsAt: '2026-10-26T00:00:00Z' };
@@ -64,4 +66,19 @@ it('rejects a malformed segment list as a whole', () => {
   expect(parseFilmSegments([good])).toEqual([good]);
   expect(parseFilmSegments([good, { ...good, durationSeconds: 0 }])).toBeUndefined();
   expect(parseFilmSegments('nope')).toBeUndefined();
+});
+
+it('counts only moments from the current weekly window', () => {
+  const entry = (contributionId: string, createdAt: string, state = 'sealed') =>
+    ({ contributionId, createdAt, state }) as ContributionLedgerEntry;
+  const page = {
+    entries: [
+      entry('last-week', '2026-10-01T10:00:00Z'),
+      entry('this-week', '2026-10-09T10:00:00Z'),
+      entry('deleted', '2026-10-09T11:00:00Z', 'deleted'),
+    ],
+  } as ContributionLedgerPage;
+  expect(
+    weekMoments(page, Date.parse('2026-10-08T00:00:00Z')).map((m) => m.contributionId),
+  ).toEqual(['this-week']);
 });

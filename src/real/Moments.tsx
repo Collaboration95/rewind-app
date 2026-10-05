@@ -21,9 +21,16 @@ import {
 import { FONT, WARM, serif } from '../ui/tokens';
 import { momentDay, plural } from './home-model';
 
-/** Moments that count this week: sealed, or still on their way, or failed. */
-export function weekMoments(page: ContributionLedgerPage | null): ContributionLedgerEntry[] {
-  return (page?.entries ?? []).filter((entry) => !['deleted', 'replaced'].includes(entry.state));
+/** Moments that count this week: sealed, or still on their way, or failed.
+ * The ledger spans the whole cycle; only the current seven-day window counts. */
+export function weekMoments(
+  page: ContributionLedgerPage | null,
+  windowStart: number,
+): ContributionLedgerEntry[] {
+  return (page?.entries ?? []).filter(
+    (entry) =>
+      !['deleted', 'replaced'].includes(entry.state) && Date.parse(entry.createdAt) >= windowStart,
+  );
 }
 
 /** M1–M4: metadata only. Delete one a week and retake it. */
@@ -31,25 +38,29 @@ export function MomentsScreen({
   page,
   error,
   resetDays,
+  windowStart,
   onBack,
   onDelete,
   onRetry,
   onRetake,
+  onReload,
 }: {
   page: ContributionLedgerPage | null;
   error: string | null;
   resetDays: number;
+  windowStart: number;
   onBack: () => void;
   onDelete: (entry: ContributionLedgerEntry) => Promise<void>;
   onRetry: (entry: ContributionLedgerEntry) => Promise<void>;
   onRetake: () => void;
+  onReload: () => void;
 }) {
   const toast = useToast();
   const [pick, setPick] = useState<ContributionLedgerEntry | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [deleted, setDeleted] = useState(false);
-  const moments = weekMoments(page);
+  const moments = weekMoments(page, windowStart);
   const allowance = page?.allowance;
   const usedDelete = allowance ? allowance.deletionAvailability !== 'available' : true;
   const reset = plural(resetDays, 'day');
@@ -92,7 +103,12 @@ export function MomentsScreen({
           </Text>
         </Glass>
         <Lead>Sealed until the film. You can see when, not what.</Lead>
-        {error ? <ErrorText>{error}</ErrorText> : null}
+        {error ? (
+          <>
+            <ErrorText>{error}</ErrorText>
+            <Button label="Try again" onPress={onReload} testID="real-moments-reload" />
+          </>
+        ) : null}
         {page && moments.length === 0 ? <Lead>Nothing sealed yet this week.</Lead> : null}
         {moments.length ? (
           <ListGroup testID="real-moments-list">

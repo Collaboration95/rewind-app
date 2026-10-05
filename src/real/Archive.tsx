@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { VideoView, useVideoPlayer } from 'expo-video';
 
 import type {
   RealAccountArchiveClient,
@@ -42,7 +41,6 @@ export function ArchiveScreen({
   const [page, setPage] = useState<RealArchivePage | null>(null);
   const [failed, setFailed] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [playing, setPlaying] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setFailed(false);
@@ -216,12 +214,9 @@ export function ArchiveScreen({
                     <FilmCard
                       film={film}
                       key={film.id}
-                      onFullScreen={() => {
-                        setPlaying(null);
-                        onOpenFilm(film.cycleId, `Released ${shortDate(film.publishedAt)}`);
-                      }}
-                      onPlay={() => setPlaying(film.id)}
-                      playing={playing === film.id}
+                      onOpen={() =>
+                        onOpenFilm(film.cycleId, `Released ${shortDate(film.publishedAt)}`)
+                      }
                     />
                   ))}
                 </View>
@@ -253,17 +248,7 @@ export function ArchiveScreen({
   );
 }
 
-function FilmCard({
-  film,
-  playing,
-  onPlay,
-  onFullScreen,
-}: {
-  film: RealArchiveFilm;
-  playing: boolean;
-  onPlay: () => void;
-  onFullScreen: () => void;
-}) {
+function FilmCard({ film, onOpen }: { film: RealArchiveFilm; onOpen: () => void }) {
   const moments = film.segments?.filter((segment) => !segment.hidden).length;
   const info = (
     <View style={styles.info}>
@@ -272,32 +257,13 @@ function FilmCard({
       {moments ? <Text style={styles.meta}>{plural(moments, 'moment')}</Text> : null}
     </View>
   );
-  if (playing && film.playbackUrl)
-    return (
-      <Glass style={styles.filmOn} testID={`real-archive-film-${film.id}`}>
-        <InlinePlayer url={film.playbackUrl} />
-        <View style={styles.filmRow}>
-          {info}
-          <Pressable
-            accessibilityLabel="Full screen"
-            accessibilityRole="button"
-            onPress={onFullScreen}
-            style={styles.pill}
-            testID={`real-archive-full-${film.id}`}
-          >
-            <Icon name="expand" size={16} />
-            <Text style={styles.pillText}>Full screen</Text>
-          </Pressable>
-        </View>
-      </Glass>
-    );
   return (
     <Glass style={styles.film} testID={`real-archive-film-${film.id}`}>
       <Pressable
         accessibilityLabel={`Play the film released ${shortDate(film.publishedAt)}`}
         accessibilityRole="button"
         disabled={!film.playbackUrl}
-        onPress={onPlay}
+        onPress={onOpen}
         style={styles.thumb}
         {...rw('bokeh')}
       >
@@ -309,7 +275,7 @@ function FilmCard({
           <Pressable
             accessibilityRole="button"
             disabled={!film.playbackUrl}
-            onPress={onPlay}
+            onPress={onOpen}
             style={styles.pill}
             testID={`real-archive-watch-${film.id}`}
           >
@@ -319,24 +285,6 @@ function FilmCard({
         </View>
       </View>
     </Glass>
-  );
-}
-
-/** R4: one film plays at a time, right in its card. Streamed, nothing downloaded. */
-function InlinePlayer({ url }: { url: string }) {
-  const player = useVideoPlayer(url, (instance) => {
-    instance.loop = false;
-    instance.play();
-  });
-  return (
-    <VideoView
-      accessibilityLabel="Group film player"
-      contentFit="contain"
-      nativeControls
-      player={player}
-      style={styles.inline}
-      testID="real-archive-video-player"
-    />
   );
 }
 
@@ -412,8 +360,6 @@ const styles = StyleSheet.create({
   },
   list: { gap: 12 },
   film: { borderRadius: 24, flexDirection: 'row', gap: 14, padding: 12 },
-  filmOn: { borderRadius: 24, gap: 10, padding: 10 },
-  filmRow: { alignItems: 'center', flexDirection: 'row', gap: 10, paddingHorizontal: 4 },
   thumb: {
     alignItems: 'center',
     backgroundColor: '#7a3a2a',
@@ -436,13 +382,6 @@ const styles = StyleSheet.create({
     paddingRight: 12,
   },
   pillText: { color: WARM.ink, fontFamily: FONT.body, fontSize: 12.5, fontWeight: '600' },
-  inline: {
-    aspectRatio: 9 / 16,
-    backgroundColor: '#000',
-    borderRadius: 18,
-    maxHeight: 420,
-    width: '100%',
-  },
   older: { marginTop: 14 },
   state: { alignItems: 'center', gap: 6, marginTop: 40 },
   stateTitle: { color: WARM.ink, textAlign: 'center', ...serif(24) },

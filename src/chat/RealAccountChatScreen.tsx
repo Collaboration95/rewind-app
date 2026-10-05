@@ -317,6 +317,9 @@ export function RealAccountChatScreen({
   const [now] = useState(() => Date.now());
   const [freshFrom] = useState(unreadOnOpen);
   const scroller = useRef<ScrollView>(null);
+  // Follow the newest message only; loading history or opening a message's
+  // actions changes the content size without moving the reader.
+  const scrolledTo = useRef<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const offsets = useRef(new Map<string, number>());
@@ -366,6 +369,17 @@ export function RealAccountChatScreen({
     if (!reporting) return null;
     try {
       await reportContent(authenticatedRequest, groupId, { messageId: reporting.id }, reason);
+      // The server hides a reported message and its quotes from now on; match it here.
+      const reportedId = reporting.id;
+      setRows((current) =>
+        current
+          .filter(({ message }) => message.id !== reportedId)
+          .map((row) =>
+            row.message.replyTo?.id === reportedId
+              ? { ...row, message: { ...row.message, replyTo: null } }
+              : row,
+          ),
+      );
       if (alsoBlock) {
         await blockMember(authenticatedRequest, reporting.memberId);
         onBlocked?.(reporting.memberId);
@@ -481,7 +495,12 @@ export function RealAccountChatScreen({
       <ScrollView
         contentContainerStyle={styles.list}
         keyboardShouldPersistTaps="handled"
-        onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: false })}
+        onContentSizeChange={() => {
+          const newest = `${rows[rows.length - 1]?.message.id ?? ''}:${failed.length}`;
+          if (newest === scrolledTo.current) return;
+          scrolledTo.current = newest;
+          scroller.current?.scrollToEnd({ animated: false });
+        }}
         ref={scroller}
         style={styles.timeline}
         testID="real-chat-timeline"

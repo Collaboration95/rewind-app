@@ -288,6 +288,58 @@ describe('real-account chat', () => {
     expect(onUnknownAuthor).toHaveBeenCalledTimes(1);
   });
 
+  it('drops a reported message and quotes of it from the open timeline', async () => {
+    const reported = { ...savedMessage, id: 'reported', body: 'Reported words' };
+    const reply = {
+      ...savedMessage,
+      id: 'reply',
+      body: 'A reply',
+      replyTo: { id: 'reported', memberId: savedMessage.memberId, body: 'Reported words' },
+    };
+    const authenticatedRequest = jest.fn(async (path: string) =>
+      path.endsWith('/reports')
+        ? response({ reported: true }, 201)
+        : response({
+            events: [reported, reply].map((message, index) => ({
+              eventId: index + 1,
+              type: 'message',
+              occurredAt: message.createdAt,
+              message,
+            })),
+            nextCursor: null,
+            watermarkEventId: 2,
+            hasMore: false,
+          }),
+    );
+    (useRealAccount as jest.Mock).mockReturnValue({
+      baseUrl: 'https://runtime.example',
+      session: { account: { id: 'account-id', displayName: 'Member' } },
+      authenticatedRequest,
+      realtimeAuthorizationHeader: () => undefined,
+    });
+    const result = await render(
+      <RealAccountChatScreen
+        currentMemberId="real-profile-member"
+        groupId="real-group-a"
+        groupName="Saturday table"
+        members={[]}
+      />,
+    );
+    await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(2));
+    expect(result.getAllByText('Reported words')).toHaveLength(2);
+    await fireEvent.press(result.getByTestId('real-chat-message-reported'));
+    await fireEvent.press(result.getByTestId('real-chat-report-reported'));
+    await fireEvent.press(result.getByTestId('report-send'));
+    await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(1));
+    expect(result.queryByText('Reported words')).toBeNull();
+    expect(result.getByText('A reply')).toBeTruthy();
+    expect(authenticatedRequest).toHaveBeenCalledWith(
+      '/real/groups/real-group-a/reports',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    await result.unmount();
+  });
+
   it('shows an explicit denied state when group history is forbidden', async () => {
     const authenticatedRequest = jest.fn(async () => response({ message: 'forbidden' }, 403));
     (useRealAccount as jest.Mock).mockReturnValue({
