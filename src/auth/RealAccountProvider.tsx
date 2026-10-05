@@ -18,6 +18,7 @@ import {
   type RealAccount,
   type RealAccountSession,
   type RegistrationOutcome,
+  invalidRegistrationOutcome,
 } from './real-account-client';
 import { signOutMarkerStore, type SignOutMarker } from './sign-out-marker';
 
@@ -210,7 +211,9 @@ export function RealAccountProvider({
         if (error instanceof AuthRequestError) {
           if (error.status === 409) return 'duplicate';
           if (error.status === 429) return 'rate-limited';
-          if (error.status === 400 || error.status === 422) return 'invalid';
+          if (error.status === 400 || error.status === 422) {
+            return invalidRegistrationOutcome(username, password);
+          }
         }
         return 'unavailable';
       } finally {
