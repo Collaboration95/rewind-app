@@ -6,8 +6,26 @@ import { COLORS } from '../theme';
 // Phones held sideways are shorter than this; tablets and desktops are not.
 const PHONE_LANDSCAPE_MAX_HEIGHT = 500;
 
-export function isPhoneLandscape(width: number, height: number): boolean {
+/** `held` is how the device itself is held, when the browser knows. The
+ * window alone is not enough: the iPhone keyboard shortens it until a phone
+ * held upright looks sideways. */
+export function isPhoneLandscape(
+  width: number,
+  height: number,
+  held?: 'portrait' | 'landscape',
+): boolean {
+  if (held === 'portrait') return false;
   return width > height && height < PHONE_LANDSCAPE_MAX_HEIGHT;
+}
+
+function heldOrientation(): 'portrait' | 'landscape' | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const type = window.screen?.orientation?.type;
+  if (type) return type.startsWith('portrait') ? 'portrait' : 'landscape';
+  // Safari before 16.4 has only the legacy angle.
+  const angle = (window as { orientation?: number }).orientation;
+  if (typeof angle === 'number') return Math.abs(angle) === 90 ? 'landscape' : 'portrait';
+  return undefined;
 }
 
 const LandscapeAllowance = createContext<() => () => void>(() => () => undefined);
@@ -30,7 +48,9 @@ export function PortraitGuard({ children }: { children: ReactNode }) {
     return () => setLandscapeScreens((count) => count - 1);
   }, []);
   const covered =
-    Platform.OS === 'web' && isPhoneLandscape(width, height) && landscapeScreens === 0;
+    Platform.OS === 'web' &&
+    isPhoneLandscape(width, height, heldOrientation()) &&
+    landscapeScreens === 0;
   return (
     <LandscapeAllowance.Provider value={register}>
       <View style={styles.root}>

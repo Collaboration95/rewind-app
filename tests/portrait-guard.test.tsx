@@ -29,6 +29,9 @@ describe('portrait guard (#327)', () => {
     expect(isPhoneLandscape(428, 926)).toBe(false); // portrait
     expect(isPhoneLandscape(1180, 820)).toBe(false); // tablet landscape
     expect(isPhoneLandscape(1440, 900)).toBe(false); // desktop
+    // The keyboard shortens an upright iPhone's window until it looks sideways.
+    expect(isPhoneLandscape(402, 380, 'portrait')).toBe(false);
+    expect(isPhoneLandscape(874, 402, 'landscape')).toBe(true);
   });
 
   it('covers ordinary screens in phone landscape', async () => {
