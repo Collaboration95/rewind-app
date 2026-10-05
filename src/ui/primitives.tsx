@@ -213,7 +213,8 @@ export function IconButton({
   label,
   onPress,
   dark,
-  size = 40,
+  // 44 pt: react-native-web ignores hitSlop, so the button itself is the target.
+  size = 44,
   testID,
   disabled,
   filled,
@@ -837,7 +838,8 @@ export const styles = StyleSheet.create({
   buttonText: { fontFamily: FONT.body, fontSize: 15, fontWeight: '600' },
   inactive: { opacity: 0.5 },
   pressed: { opacity: 0.82, transform: [{ scale: 0.98 }] },
-  link: { alignSelf: 'center', minHeight: 24, justifyContent: 'center' },
+  // hitSlop widens the target on native only; on the web the link itself must be 44 pt.
+  link: { alignSelf: 'center', minHeight: isWeb ? 44 : 24, justifyContent: 'center' },
   linkText: {
     fontFamily: FONT.body,
     fontWeight: '600',

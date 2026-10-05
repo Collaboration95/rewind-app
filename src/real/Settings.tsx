@@ -492,7 +492,9 @@ function ReminderBlock({
       return;
     }
     // This device can't take push (no support or not installed); the row says why.
-    await save(true, null, 'Sunday 7 PM reminders are on.');
+    const saved = await save(true, null, 'Sunday 7 PM reminders are on.');
+    // iPhone Safari only gets push from the Home Screen app: show how, now.
+    if (saved && isIphoneSafari() && active.current) setDialog('install');
   };
   const allow = async () => {
     setDialog(null);
