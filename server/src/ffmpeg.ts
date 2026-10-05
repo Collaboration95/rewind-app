@@ -9,9 +9,10 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 /** The four original retro looks offered for new captures. */
-/** H.264 every iPhone decodes in hardware. Browser recordings carry a
- * variable frame rate and photos are full range; left alone, x264 marks the
- * output full range at level 6.2, which iOS Safari refuses to play. Filters
+/** H.264 every iPhone decodes in hardware, for outputs normalized to
+ * 720×1280 at 30 fps or less (photos and films). Browser recordings carry a
+ * variable frame rate and photos are full range; left alone, x264 marked a
+ * film full range at level 6.2, which iOS Safari refuses to play. Filters
  * convert to TV range with scale's out_range=tv; these flags pin the rest. */
 const IPHONE_H264 = ['-profile:v', 'high', '-level:v', '4.0', '-color_range', 'tv'];
 
@@ -315,7 +316,9 @@ export async function processClipWithFfmpeg(
         '0',
         '-pix_fmt',
         'yuv420p',
-        ...IPHONE_H264,
+        // Clips keep their source size and rate, so x264 picks the level.
+        '-color_range',
+        'tv',
         '-c:a',
         'aac',
         '-movflags',

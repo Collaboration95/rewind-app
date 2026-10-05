@@ -282,6 +282,7 @@ export function RealAccountProvider({
       } catch {
         // Keep the active session visible and truthful if durable recovery
         // state cannot be written. No request or credential deletion starts.
+        signingOut.current = false;
         setPending(false);
         setNotice('sign-out-marker-unavailable');
         return;
@@ -307,6 +308,7 @@ export function RealAccountProvider({
       } else {
         // HttpOnly cookies cannot be cleared in JavaScript. Keep this browser
         // session active until the server confirms revocation.
+        signingOut.current = false;
         setPending(false);
         setNotice('revocation-unconfirmed');
       }
