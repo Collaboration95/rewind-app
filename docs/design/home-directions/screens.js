@@ -83,6 +83,7 @@ const SET = {
   custom: '',
   reminder: true,
   snoozed: false,
+  tz: 'Asia/Singapore',
   time: '7 PM',
 };
 const PROMPTS = [
@@ -121,7 +122,7 @@ const GROUPS0 = () => [
 SET.list = GROUPS0();
 // Prototype invite codes: BOOKCLUB joins; the others demo join failures
 const INVITES = {
-  BOOKCLUB: {
+  BOOKCL: {
     id: 'g3',
     name: 'Book club',
     owner: false,
@@ -131,17 +132,19 @@ const INVITES = {
     prompt: 2,
     clips: [],
   },
-  EXPIRED1: 'expired',
-  USEDCODE: 'used',
-  FULLFULL: 'full',
+  EXPIRD: 'expired',
+  USEDUP: 'used',
+  FULLGP: 'full',
 };
 const JOIN_ERR = {
-  none: 'That code doesn’t match a group. Check it with your friend.',
-  expired: 'This invite has expired. Ask your friend for a new one.',
-  used: 'This invite was already used. Ask your friend for a new one.',
-  full: 'That group is full (10 of 10). Ask the owner.',
+  none: 'Enter a valid invitation code.',
+  expired: 'This invitation has expired. Ask the owner for a new code.',
+  used: 'This invitation has already been used. Ask the owner for a new code.',
+  full: 'This group has reached its member limit.',
 };
 const grp = () => SET.list[SET.gi];
+// The owner sets the member limit (2–10, including the owner) when creating the group
+const limitOf = () => grp()?.limit ?? 10;
 const isSample = () => !!grp()?.sample;
 const groupName = () => grp()?.name ?? '';
 // In the sample group Alex is the owner; other groups use their record
@@ -164,7 +167,7 @@ const sampleAccount = () => Object.assign(SET, { who: null, list: GROUPS0(), gi:
    Real accounts use an admin-created username and password (the prototype password is rewind); Try Demo is a separate path where you pick a demo member marked synthetic */
 function signinHTML(step) {
   if (/^up/.test(step)) return signupHTML(step);
-  const form = ['form', 'wrong', 'offline', 'forgot'].includes(step);
+  const form = ['form', 'wrong', 'offline', 'forgot', 'created'].includes(step);
   const invite = step === 'invite';
   const errText = {
     wrong: 'Wrong username or password.',
@@ -173,22 +176,27 @@ function signinHTML(step) {
   const welcome =
     `<section class="si-brand">${iconHTML(96)}<h1>Rewind</h1><p>Small moments with your people, opened together every 4 weeks.</p></section>` +
     (step === 'expired'
-      ? `<p class="si-alert" role="status">You were signed out. Please sign in again.</p>`
+      ? `<p class="si-alert" role="status">Your session expired or an administrator reset your password. Sign in again to continue.</p>`
       : '') +
     // Opened from an invite link while signed out: the invite is kept through sign-in or sign-up
     (invite
       ? `<section class="glass si-inv"><span class="avatar sm" style="--mc:${POOL[1].col}">B</span><div><b>Bea invited you to Book club</b><small>6 of 10 people · expires in 23 h</small></div></section>`
       : '') +
     `<button type="button" class="set-btn primary si-go" data-si-go="form">${invite ? 'Sign in to join' : 'Sign in'}</button>` +
-    `<button type="button" class="set-btn si-up" data-si-go="up">${invite ? 'Create an account to join' : 'Create an account'}</button>`;
+    `<button type="button" class="set-btn si-up" data-si-go="${invite ? 'up' : 'upuser'}">${invite ? 'Create an account to join' : 'Create an account'}</button>`;
   const login =
     `<header class="sub-h"><button type="button" class="sub-back" data-si-go="welcome" aria-label="Back">${ic('back')}</button><h1>Sign in</h1><span></span></header>` +
-    `<label class="glass set-field"><span>Email, phone or username</span><input data-si-user autocomplete="username" autocapitalize="none" spellcheck="false" value="${errText ? 'alex' : ''}" /></label>` +
+    (step === 'created'
+      ? `<p class="si-alert" role="status">Your account is ready. Sign in to continue.</p>`
+      : '') +
+    `<label class="glass set-field"><span>Username</span><input data-si-user autocomplete="username" autocapitalize="none" spellcheck="false" value="${errText ? 'alex' : ''}" /></label>` +
     `<label class="glass set-field si-pass"><span>Password</span><input data-si-pass type="password" autocomplete="current-password" value="${step === 'offline' ? 'notright' : ''}" /></label>` +
     `<p class="set-err" role="alert">${errText || ''}</p>` +
     `<button type="button" class="set-btn primary" data-si-submit data-busy="Signing in…">Sign in</button>` +
-    `<p class="si-note">Forgot your password? <button type="button" class="up-link" data-si-forgot>Reset it</button></p>` +
-    `<p class="si-note">New here? <button type="button" class="up-link" data-si-go="up">Create an account</button></p>` +
+    (step === 'forgot'
+      ? `<p class="si-note">Forgot your password? <button type="button" class="up-link" data-si-forgot>Reset it</button></p>`
+      : '') +
+    `<p class="si-note">New here? <button type="button" class="up-link" data-si-go="upuser">Create an account</button></p>` +
     (step === 'forgot'
       ? `<div class="set-dim" data-si-go="form"></div><section class="glass set-dlg" role="dialog" aria-label="Reset your password">` +
         `<h2>Reset your password</h2><p>We’ll send a 6-digit code to the email or phone on your account. If the Rewind admin made your account, ask them instead.</p>` +
@@ -225,6 +233,15 @@ function signupHTML(step) {
   const email = UP.via === 'email';
   const shown = email ? UP.to : `${UP.cc} ${UP.to}`;
   const pages = {
+    upuser: () =>
+      upHead('Create account', 'welcome') +
+      `<label class="glass set-field"><span>Username</span><input data-up-user autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" placeholder="3–32 letters, numbers, . _ -" value="${step === 'upuserbad' ? 'alex' : ''}" /></label>` +
+      `<label class="glass set-field si-pass"><span>Password</span><input data-up-pw type="password" autocomplete="new-password" placeholder="At least 12 characters" /></label>` +
+      `<label class="glass set-field si-pass"><span>Confirm password</span><input data-up-pw2 type="password" autocomplete="new-password" /></label>` +
+      `<p class="set-err" role="alert">${step === 'upuserbad' ? 'That username is taken. Try another.' : ''}</p>` +
+      `<button type="button" class="set-btn primary" data-up-make data-busy="Creating account…">Create account</button>` +
+      `<p class="si-note si-terms">By creating an account you agree to the <button type="button" class="up-link" data-set-toast="terms">Terms</button> and <button type="button" class="up-link" data-set-toast="privacy">Privacy Policy</button>. Rewind doesn’t allow objectionable content or abusive behaviour.</p>` +
+      `<p class="si-note">Already have an account? <button type="button" class="up-link" data-si-go="form">Sign in</button></p>`,
     up: () =>
       upHead('Create account', 'welcome') +
       `<div class="up-via" role="tablist" aria-label="Sign up with">` +
@@ -271,7 +288,7 @@ function signupHTML(step) {
       `<button type="button" class="set-btn primary" data-up-create data-busy="Creating account…">Create account</button>` +
       `<p class="si-note si-terms">By creating an account you agree to the <button type="button" class="up-link" data-set-toast="terms">Terms</button> and <button type="button" class="up-link" data-set-toast="privacy">Privacy Policy</button>. Rewind doesn’t allow objectionable content or abusive behaviour.</p>`,
   };
-  const page = { upbad: 'up', upcodebad: 'upcode' }[step] || step;
+  const page = { upbad: 'up', upcodebad: 'upcode', upuserbad: 'upuser' }[step] || step;
   return (
     `<div class="scroll si-scroll form up-${page}"><div class="glow" aria-hidden="true"><i></i><i></i><i></i></div>` +
     pages[page]() +
@@ -346,7 +363,7 @@ const promptPicker = (sel) => {
 
 function settingsHTML(d, step, o = {}) {
   const me = acting();
-  const full = d.n >= 10;
+  const full = d.n >= limitOf();
   const owner = isOwner();
   // No group yet: the group section only has join and create
   const noGroup = () =>
@@ -361,36 +378,35 @@ function settingsHTML(d, step, o = {}) {
     reminderBlock();
   const groupBlock = () =>
     `<p class="set-k">Group</p><ul class="glass set-list">` +
-    `<li class="set-grp"><div><strong>${esc(groupName())}</strong><small>${owner ? 'Owner' : 'Member'} · ${d.n} of 10 members</small></div><div class="stack">${d.members
+    `<li class="set-grp"><div><strong>${esc(groupName())}</strong><small>${owner ? 'Owner' : 'Member'} · ${d.n} of ${limitOf()} members</small></div><div class="stack">${d.members
       .map((x) => `<span class="av" style="--mc:${x.col}">${x.name[0]}</span>`)
       .join('')}</div></li>` +
     (owner
-      ? setRow('pen', 'Group name', esc(groupName()), ' data-set-go="rename"') +
-        setRow('quote', 'Prompt', promptText(), ' data-set-go="prompt"') +
+      ? setRow('quote', 'Prompt', promptText(), ' data-set-go="prompt"') +
+        setRow('clock', 'Time zone', SET.tz, ' data-set-go="tz"') +
         (full
-          ? `<li><div class="set-row off">${ic('link')}<span>Invite friends<small>The group is full · 10 of 10</small></span></div></li>`
+          ? `<li><div class="set-row off">${ic('link')}<span>Invite friends<small>The group is full · ${d.n} of ${limitOf()}</small></span></div></li>`
           : setRow('link', 'Invite friends', '', ' data-set-go="invite"'))
       : `<li><div class="set-row off">${ic('quote')}<span>Prompt<small>${promptText()}</small></span></div></li>` +
-        `<li class="set-hint">Only the owner can change the prompt or invite friends.</li>`) +
+        `<li><div class="set-row off">${ic('clock')}<span>Time zone<small>${SET.tz}</small></span></div></li>` +
+        `<li class="set-hint">Only the owner can change the prompt, the time zone or invite friends.</li>`) +
     `</ul><ul class="glass set-list set-more">` +
-    setRow('users', 'Members', `${d.n} of 10`, ' data-set-go="members"') +
+    setRow('users', 'Members', `${d.n} of ${limitOf()}`, ' data-set-go="members"') +
     setRow('users', 'Switch group', plural(SET.list.length, 'group'), ' data-set-go="groups"') +
     setRow('key', 'Have an invite?', '', ' data-set-go="join"') +
     setRow('plus', 'Create a group', '', ' data-set-go="create"') +
     `</ul>`;
   const reminderBlock = () =>
     `<p class="set-k">Reminder</p><ul class="glass set-list">` +
-    `<li><label class="set-row">${ic('bell')}<span>Weekly reminder<small>${SET.reminder ? (SET.snoozed ? 'Snoozed until next Sunday' : `Sundays at ${SET.time}`) : 'Off'}</small></span>` +
+    `<li><label class="set-row">${ic('bell')}<span>Weekly reminder<small>${SET.reminder ? (SET.snoozed ? 'Snoozed for 7 days' : 'Sundays at 7 PM, group time') : 'Off'}</small></span>` +
     `<input type="checkbox" role="switch" class="sw" data-set-rem${SET.reminder ? ' checked' : ''} /></label></li>` +
     (SET.reminder
-      ? setRow('clock', 'Time', `Sundays at ${SET.time}`, ' data-set-go="time"') +
-        setRow(
+      ? setRow(
           'snooze',
-          SET.snoozed ? 'Undo snooze' : 'Snooze this week',
+          SET.snoozed ? 'End snooze' : 'Snooze for 7 days',
           '',
           ` data-set-snooze aria-pressed="${SET.snoozed}"`,
-        ) +
-        setRow('send', 'Send a test reminder', '', ' data-set-test')
+        )
       : '') +
     `</ul><p class="set-k">Help and privacy</p><ul class="glass set-list">` +
     setRow('chat', 'Help and support', '', ' data-set-toast="help"') +
@@ -410,6 +426,7 @@ function settingsHTML(d, step, o = {}) {
     (SET.demo
       ? `<p class="set-k">Demo</p><ul class="glass set-list set-demo">` +
         setRow('users', 'Switch demo member', me.name, ' data-set-go="member"') +
+        setRow('send', 'Send a test reminder', '', ' data-set-test') +
         setRow('trash', 'Reset local Demo data', '', ' data-set-go="reset"', ' out') +
         `</ul>`
       : '') +
@@ -418,6 +435,19 @@ function settingsHTML(d, step, o = {}) {
     main,
     reset: main,
     signout: main,
+    tz: () =>
+      setHead('Time zone') +
+      `<p class="set-lead">The Sunday 7 PM reminder follows the group’s time zone.</p>` +
+      `<label class="glass set-field"><span>Time zone</span><select data-set-tz>${[
+        'Asia/Singapore',
+        'Asia/Kuala_Lumpur',
+        'Asia/Shanghai',
+        'Europe/London',
+        'America/New_York',
+        'UTC',
+      ]
+        .map((z) => `<option${z === SET.tz ? ' selected' : ''}>${z}</option>`)
+        .join('')}</select></label>`,
     members: () =>
       setHead('Members') +
       `<ul class="glass set-list">` +
@@ -428,8 +458,6 @@ function settingsHTML(d, step, o = {}) {
             : `<li><button type="button" class="set-row" data-set-person="${i}">${avatarOf(x, ' sm')}<span>${esc(x.name)}<small>${i === 0 ? 'Owner' : 'Member'}${isBlocked(POOL.indexOf(POOL.find((p) => p.name === x.name))) ? ' · blocked' : ''}</small></span>${ic('chev', 'go')}</button></li>`,
         )
         .join('') +
-      `</ul><ul class="glass set-list set-more">` +
-      setRow('out', 'Leave group', '', ' data-set-go="leave"', ' out') +
       `</ul><p class="set-foot">Blocking hides someone’s messages and moments from you. They aren’t told.</p>`,
     person: () => pages.members(),
     report: () => pages.members(),
@@ -475,19 +503,19 @@ function settingsHTML(d, step, o = {}) {
     },
     invite: () =>
       setHead('Invite friends') +
-      `<section class="glass set-card set-inv"><p class="set-k">Invite code</p><b class="inv-code">7K2Q X9MB</b>` +
+      `<section class="glass set-card set-inv"><p class="set-k">Invite code</p><b class="inv-code">KQM-TRZ</b>` +
       `<p class="set-note">Works once · expires in 24 hours</p></section>` +
-      `<button type="button" class="set-btn primary" data-set-toast="share">${ic('share')}Share invite link</button>` +
-      `<div class="set-two"><button type="button" class="set-btn" data-set-toast="link">${ic('link')}Copy link</button>` +
+      `<div class="set-two"><button type="button" class="set-btn primary" data-set-toast="share">${ic('share')}Share code</button>` +
       `<button type="button" class="set-btn" data-set-toast="code">${ic('copy')}Copy code</button></div>` +
-      `<p class="set-foot">${d.n} of 10 members in ${esc(groupName())}</p>`,
+      `<button type="button" class="up-link set-revoke" data-set-toast="revoke">Revoke this code</button>` +
+      `<p class="set-foot">${d.n} of ${limitOf()} members in ${esc(groupName())}</p>`,
     join: () =>
       setHead('Have an invite?', o.back) +
-      `<p class="set-lead">Enter the 8-character code a friend sent you.</p>` +
-      `<label class="glass set-field"><span>Invite code</span><input data-set-code maxlength="9" placeholder="8-character code" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${o.joinErr ? 'EXPI RED1' : ''}" /></label>` +
+      `<p class="set-lead">Enter the six-letter code the group owner sent you.</p>` +
+      `<label class="glass set-field"><span>Invite code</span><input data-set-code maxlength="7" placeholder="ABC-DEF" autocomplete="off" autocapitalize="characters" spellcheck="false" value="${o.joinErr ? 'EXP-IRD' : ''}" /></label>` +
       `<p class="set-err" role="alert">${o.joinErr ? JOIN_ERR[o.joinErr] : ''}</p>` +
       `<button type="button" class="set-btn primary" data-set-join data-busy="Joining…">Accept invitation</button>` +
-      `<p class="set-foot">In the prototype, BOOK CLUB joins a group; EXPIRED1, USEDCODE and FULLFULL show what goes wrong.</p>`,
+      `<p class="set-foot">In the prototype, BOO-KCL joins a group; EXP-IRD, USE-DUP and FUL-LGP show what goes wrong.</p>`,
     joined: () =>
       setHead('Have an invite?') +
       `<section class="glass set-card set-ok"><span class="set-okic">${ic('check')}</span><h2>Joined ${esc(SET.list[SET.joined]?.name || 'Book club')}</h2>` +
@@ -497,7 +525,9 @@ function settingsHTML(d, step, o = {}) {
       setHead('New group', o.back) +
       `<label class="glass set-field"><span>Group name</span><input data-set-name maxlength="80" placeholder="e.g. Saturday table" autocomplete="off" /></label>` +
       `<p class="set-k">Prompt</p>${promptPicker(0)}` +
+      `<div class="glass set-field set-lim"><span>Member limit<small>2–10, including you</small></span><div><button type="button" data-set-lim="-1" aria-label="Fewer">−</button><b data-set-limv>10</b><button type="button" data-set-lim="1" aria-label="More">+</button></div></div>` +
       `<p class="set-err" role="alert"></p>` +
+      `<p class="set-lead">You’ll be the owner. The first cycle lasts four weeks and starts now.</p>` +
       `<button type="button" class="set-btn primary" data-set-create${o.back === 'close' ? ' data-close' : ''} data-busy="Creating group…">Create group</button>`,
     rename: () =>
       setHead('Group name') +
@@ -542,9 +572,6 @@ function settingsHTML(d, step, o = {}) {
             `<span class="set-okic" style="background:${x.col}">${x.name[0]}</span><h2>${esc(x.name)}</h2>` +
             `<button type="button" class="set-btn" data-set-report="${o.person ?? 1}">Report</button>` +
             `<button type="button" class="set-btn" data-set-block="${pi}">${isBlocked(pi) ? 'Unblock' : 'Block'}</button>` +
-            (isOwner()
-              ? `<button type="button" class="set-btn danger" data-set-remove="${esc(x.name)}">Remove from group</button>`
-              : '') +
             `<button type="button" class="set-btn" data-set-go="members">Cancel</button></section>`
           );
         })()
@@ -576,7 +603,7 @@ function settingsHTML(d, step, o = {}) {
     // Turning the reminder on the first time: say what comes before the browser asks
     (step === 'notify'
       ? `<div class="set-dim"></div><section class="glass set-dlg" role="dialog" aria-label="Allow notifications">` +
-        `<h2>Get the Sunday reminder?</h2><p>One notification a week, Sundays at ${SET.time}, and one when your film premieres. Your phone asks next.</p>` +
+        `<h2>Get the Sunday reminder?</h2><p>One notification a week, Sundays at 7 PM in your group’s time zone. Your phone asks next.</p>` +
         `<button type="button" class="set-btn primary" data-set-allow>Continue</button>` +
         `<button type="button" class="up-link" data-set-go="install">On iPhone? Add Rewind to your Home Screen first</button></section>`
       : '') +
@@ -651,7 +678,7 @@ function cameraHTML(d, mode, step, o = {}) {
     // No permission: video needs camera and microphone, photo only the camera
     (step === 'denied'
       ? `<section class="cam-perm glass"><h2>${video ? 'Camera or mic is off' : 'The camera is off'}</h2><p>Turn ${video ? 'Camera and Microphone' : 'Camera'} on for Rewind in your phone’s Settings, then come back. Nothing was recorded.</p>` +
-        `<button type="button" class="cam-allow" data-set-toast="settings">Open Settings</button><button type="button" class="cam-fin" data-sub-back>Not now</button></section>`
+        `<button type="button" class="cam-allow" data-set-toast="settings">Open Settings</button><button type="button" class="cam-fin" data-cam-allow>Check again</button></section>`
       : `<section class="cam-perm glass"><h2>${video ? 'Allow camera and mic' : 'Allow the camera'}</h2><p>${video ? 'Rewind records short videos with sound.' : 'Rewind needs the camera to take a photo.'}</p>` +
         `<button type="button" class="cam-allow" data-cam-allow>Continue</button></section>`) +
     // Framing, recording
@@ -669,13 +696,14 @@ function cameraHTML(d, mode, step, o = {}) {
         `<span class="trim-win" style="left:0%;right:0%"><b class="h l" data-trim="l"></b><b class="h r" data-trim="r"></b></span></div>` +
         `<p class="trim-t">0.0 – ${len.toFixed(1)} s · ${len.toFixed(1)} s</p>` +
         `<div class="looks" role="group" aria-label="Look">${[
-          ['none', 'Original'],
-          ['soft', 'Soft focus'],
-          ['contrast', 'High contrast'],
+          ['flash', 'Disposable Flash'],
+          ['compact', 'Compact Digital'],
+          ['8mm', '8mm Home Movie'],
+          ['vhs', 'VHS Camcorder'],
         ]
           .map(
-            ([k, l], i) =>
-              `<button type="button" data-look="${k}" aria-pressed="${i === 0}">${l}</button>`,
+            ([k, l]) =>
+              `<button type="button" data-look="${k}" aria-pressed="${k === 'compact'}">${l}</button>`,
           )
           .join('')}</div>`
       : `<p class="trim-t">Counts as one moment · ${PHOTO_SECS} s in the film</p>`) +
@@ -693,9 +721,13 @@ function cameraHTML(d, mode, step, o = {}) {
     // Sealed
     `<section class="cam-done" role="status"><span class="cam-ok">${ic('check')}</span><h2>Sealed</h2>` +
     `<p>${Math.max(0, left5(d) - 1)} left · finishing in the background</p>` +
-    `<div class="cam-tell"><button type="button" class="set-btn primary" data-cam-tell>${ic('chat')}Tell the group</button>` +
-    `<button type="button" class="cam-fin" data-cam-done>Done</button></div>` +
-    `<p class="cam-hint">Only your words go to Chat. The ${video ? 'video' : 'photo'} stays sealed.</p></section>`
+    (o.tell
+      ? `<div class="cam-tell"><button type="button" class="set-btn primary" data-cam-tell>${ic('chat')}Tell the group</button>` +
+        `<button type="button" class="cam-fin" data-cam-done>Done</button></div>` +
+        `<p class="cam-hint">Only your words go to Chat. The ${video ? 'video' : 'photo'} stays sealed.</p>`
+      : `<div class="cam-tell"><button type="button" class="set-btn primary" data-cam-done>Done</button></div>` +
+        `<p class="cam-hint">Nobody sees it before the film, not even you.</p>`) +
+    `</section>`
   );
 }
 
@@ -712,7 +744,7 @@ function filmHTML(d, o = {}) {
   const who = d.members.filter((x) => x.c > 0);
   const moments = who.flatMap((x) => Array.from({ length: x.c }, () => x));
   // When the film runs short, tile 3 is padded with an old moment marked From the archive
-  moments.splice(2, 0, { filler: true });
+  if (o.filler) moments.splice(2, 0, { filler: true });
   return (
     `<div class="fm-frames" aria-hidden="true">${moments.map(frame).join('')}</div>` +
     // While a padding archive moment plays, mark it in the corner (the label isn't placed over the blurred image)
@@ -724,7 +756,7 @@ function filmHTML(d, o = {}) {
     `<div class="fm-ctl"><button type="button" class="glass-btn" data-fm-chat>${ic('chat')}Talk about it</button>` +
     `<button type="button" class="cam-ic" data-fm-pause aria-label="Pause">${ic('pause')}</button></div>` +
     // End credits
-    `<section class="fm-end"><h2>Your film</h2><p>${plural(moments.length - 1, 'moment')} · ${filmLen(moments.length - 1)}</p>` +
+    `<section class="fm-end"><h2>Your film</h2><p>${plural(moments.length - (o.filler ? 1 : 0), 'moment')} · ${filmLen(moments.length - (o.filler ? 1 : 0))}</p>` +
     `<div class="fm-cast">${who.map((x) => `<span><i class="av" style="--mc:${x.col}">${x.name[0]}</i>${x.me ? 'You' : x.name}</span>`).join('')}</div>` +
     // The most natural next step after watching: go to chat
     `<button type="button" class="set-btn primary fm-chat" data-fm-chat>${ic('chat')}Talk about it in Chat</button>` +
@@ -1000,8 +1032,8 @@ function signedIn(scr, idx, demo, name) {
 document.addEventListener('click', (e) => {
   const b = e.target.closest(
     '[data-sub-back],[data-set-gojoined],[data-mine-retry],[data-cam-tell],[data-cam-done],[data-cam-shoot],[data-cam-mode],[data-cam-allow],[data-cam-retake],[data-cam-seal],[data-cam-cancel],[data-cam-mine],[data-look],' +
-      '[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-allow],[data-set-person],[data-set-report],[data-set-block],[data-set-remove],[data-set-leave],[data-set-delete],[data-set-snooze],[data-set-join],[data-set-create],[data-set-rename],[data-set-prompt],[data-set-group],[data-set-me],[data-set-reset],' +
-      '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-si-forgot],[data-si-reset],[data-up-via],[data-up-send],[data-up-resend],[data-up-verify],[data-up-create],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
+      '[data-set-go],[data-set-toast],[data-set-test],[data-set-out],[data-set-allow],[data-set-person],[data-set-report],[data-set-block],[data-set-remove],[data-set-leave],[data-set-delete],[data-set-snooze],[data-set-join],[data-set-create],[data-set-lim],[data-set-rename],[data-set-prompt],[data-set-group],[data-set-me],[data-set-reset],' +
+      '[data-si-go],[data-si-sheet],[data-si-as],[data-si-submit],[data-si-forgot],[data-si-reset],[data-up-via],[data-up-send],[data-up-resend],[data-up-verify],[data-up-create],[data-up-make],[data-mine-pick],[data-mine-keep],[data-mine-del],[data-mine-retake],' +
       '[data-fm-pause],[data-fm-replay],[data-fm-save],[data-fm-chat],[data-fm-report],[data-rep-send],[data-rep-cancel]',
   );
   if (!b || b.disabled) return;
@@ -1134,8 +1166,8 @@ document.addEventListener('click', (e) => {
   }
   if ('setJoin' in d) {
     const code = normCode(scr.querySelector('[data-set-code]').value);
-    if (!/^(?:[A-Z0-9]{8}|[A-Z]{6})$/.test(code))
-      return err(scr, 'Enter the eight-character invite code using letters and numbers.');
+    if (!/^[A-Z]{6}$/.test(code))
+      return err(scr, 'Enter the six-letter invitation code, like ABC-DEF.');
     return busy(b, 700, () => {
       const inv = INVITES[code];
       if (!inv) return err(scr, JOIN_ERR.none);
@@ -1145,6 +1177,11 @@ document.addEventListener('click', (e) => {
       SET.joined = SET.list.length - 1;
       redraw(scr, 'settings', { step: 'joined' });
     });
+  }
+  if (d.setLim) {
+    const v = scr.querySelector('[data-set-limv]');
+    v.textContent = Math.min(10, Math.max(2, Number(v.textContent) + Number(d.setLim)));
+    return;
   }
   if ('setCreate' in d) {
     const name = scr.querySelector('[data-set-name]').value.trim();
@@ -1159,6 +1196,7 @@ document.addEventListener('click', (e) => {
         owner: true,
         n: 1,
         no: 1,
+        limit: Number(scr.querySelector('[data-set-limv]').textContent),
         cyc: { week: 1, days: 28, reset: 7 },
         ...(typeof p === 'number' ? { prompt: p } : { prompt: 'custom', custom: p.custom }),
         clips: [],
@@ -1258,6 +1296,20 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (d.siAs) return signedIn(scr, Number(d.siAs), true, POOL[Number(d.siAs)].name);
+  if ('upMake' in d) {
+    const user = scr.querySelector('[data-up-user]').value.trim();
+    const pw = scr.querySelector('[data-up-pw]').value;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/.test(user))
+      return err(scr, 'Use 3–32 letters, numbers, dots, dashes or underscores.');
+    if (pw.length < 12) return err(scr, 'Use at least 12 characters for the password.');
+    if (pw !== scr.querySelector('[data-up-pw2]').value)
+      return err(scr, 'The passwords don’t match.');
+    return busy(b, 800, () => {
+      if (POOL.some((x) => x.name.toLowerCase() === user.toLowerCase()))
+        return err(scr, 'That username is taken. Try another.');
+      redraw(scr, 'signin', { step: 'created' });
+    });
+  }
   if ('siSubmit' in d) {
     const user = scr.querySelector('[data-si-user]').value.trim();
     const pass = scr.querySelector('[data-si-pass]').value;
@@ -1353,6 +1405,10 @@ document.addEventListener('pointerdown', (e) => {
 
 document.addEventListener('change', (e) => {
   const el = e.target;
+  if (el.matches('[data-set-tz]')) {
+    SET.tz = el.value;
+    return rvToast(t('scr.toast.saved'));
+  }
   if (el.matches('[data-set-rem]')) {
     // The first time it's turned on, explain before the browser's permission prompt
     if (el.checked && !SET.asked)
@@ -1395,8 +1451,10 @@ document.addEventListener('input', (e) => {
   if (e.target.matches('[data-up-code]'))
     e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
   if (!e.target.matches('[data-set-code]')) return;
-  const v = normCode(e.target.value).slice(0, 8);
-  e.target.value = v.length > 4 ? v.slice(0, 4) + ' ' + v.slice(4) : v;
+  const v = normCode(e.target.value)
+    .replace(/[^A-Z]/g, '')
+    .slice(0, 6);
+  e.target.value = v.length > 3 ? v.slice(0, 3) + '-' + v.slice(3) : v;
 });
 
 /* ---------- "Screens" page: each flow's key steps side by side ---------- */
@@ -1411,11 +1469,8 @@ const FLOWS = [
       ['offline', { step: 'offline' }],
       ['expired', { step: 'expired' }],
       ['demo', { step: 'demo' }],
-      ['up', { step: 'up' }],
-      ['upbad', { step: 'upbad' }],
-      ['upcode', { step: 'upcode' }],
-      ['upcodebad', { step: 'upcodebad' }],
-      ['upname', { step: 'upname' }],
+      ['upuser', { step: 'upuser' }],
+      ['upuserbad', { step: 'upuserbad' }],
     ],
   ],
   [
@@ -1424,8 +1479,7 @@ const FLOWS = [
     [
       ['main', {}],
       ['groups', { step: 'groups' }],
-      ['time', { step: 'time' }],
-      ['timeown', { step: 'time', own: true }],
+      ['tz', { step: 'tz' }],
       ['invite', { step: 'invite' }],
       ['join', { step: 'join' }],
       ['joinbad', { step: 'join', joinErr: 'expired' }],
@@ -1476,7 +1530,6 @@ const FLOWS = [
     'film',
     [
       ['play', { step: 'play' }],
-      ['filler', { step: 'play', at: 2 }],
       ['end', { step: 'end' }],
     ],
   ],

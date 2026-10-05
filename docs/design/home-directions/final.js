@@ -24,7 +24,6 @@ const FINAL = [
           ['Saved session, no group yet', 'D1'],
           ['No session on this device', 'A2'],
           ['Session expired', 'A3'],
-          ['Opened from an invite link', 'A4'],
         ],
         [
           'Only the app icon and the name on cream. No buttons, no spinner at first.',
@@ -42,7 +41,7 @@ const FINAL = [
         'No session',
         [
           ['Sign in', 'B1'],
-          ['Create an account', 'C1'],
+          ['Create an account', 'C6'],
           ['Pull up Try Demo', 'A5'],
         ],
         [
@@ -114,14 +113,13 @@ const FINAL = [
           ['Correct, no group', 'D1'],
           ['Wrong details', 'B2'],
           ['No connection', 'B3'],
-          ['Reset it', 'B4'],
-          ['Create an account', 'C1'],
+          ['Create an account', 'C6'],
           ['Back', 'A2'],
         ],
         [
           'The first field is focused. Return moves to the password, Return again signs in.',
           'While waiting the button reads “Signing in…” and the form is locked.',
-          'Coming from an invite (A4): after signing in go to D4, not Home.',
+          'Username and password only; there is no password reset in the app (an administrator resets it).',
         ],
       ],
       [
@@ -147,6 +145,15 @@ const FINAL = [
         ['Nothing is sent. The button works again as soon as the connection is back.'],
       ],
       [
+        'B5',
+        'signin',
+        { step: 'created' },
+        'Account ready',
+        'Create account succeeds',
+        [['Sign in', 'D1']],
+        ['“Your account is ready. Sign in to continue.” above the form.'],
+      ],
+      [
         'B4',
         'signin',
         { step: 'forgot' },
@@ -167,8 +174,35 @@ const FINAL = [
   {
     k: 'C',
     title: 'Create an account',
-    p: 'Email or phone, a 6-digit code, then a name and password.',
+    p: 'A username and a password, on one screen. The username is also the name the group sees.',
     steps: [
+      [
+        'C6',
+        'signin',
+        { step: 'upuser' },
+        'Create account',
+        'Create an account on Welcome',
+        [
+          ['Create account', 'B5'],
+          ['Username taken', 'C7'],
+          ['Sign in', 'B1'],
+          ['Back', 'A2'],
+        ],
+        [
+          'Username 3–32 characters: letters, numbers, dots, dashes, underscores, starting with a letter or number.',
+          'Password at least 12 characters, typed twice. Errors show under the fields.',
+          'The Terms and Privacy Policy line sits under the button; both open in an in-app browser.',
+        ],
+      ],
+      [
+        'C7',
+        'signin',
+        { step: 'upuserbad' },
+        'Username taken',
+        'The username is in use',
+        [['Try another', 'C6']],
+        ['The username stays in the field so it can be changed.'],
+      ],
       [
         'C1',
         'signin',
@@ -275,8 +309,8 @@ const FINAL = [
           ['Back', 'D1'],
         ],
         [
-          '8 characters; spaces and case don’t matter, shown as XXXX XXXX.',
-          'Pasting the whole invite link works too.',
+          'Six letters, shown as ABC-DEF; case and the dash don’t matter.',
+          'A wrong format says “Enter the six-letter invitation code, like ABC-DEF.” before anything is sent.',
         ],
       ],
       [
@@ -286,7 +320,10 @@ const FINAL = [
         'Code doesn’t work',
         'Unknown, expired, used or full',
         [['Fix the code', 'D2']],
-        ['Four messages: unknown, expired, already used, group full. Each says what to do next.'],
+        [
+          'Messages: “Enter a valid invitation code.”, “This invitation has expired.”, “This invitation has already been used.”, “This group has reached its member limit.”',
+          'Too many tries: “Too many invitation attempts. Try again later.”',
+        ],
       ],
       [
         'D4',
@@ -311,8 +348,9 @@ const FINAL = [
           ['Back', 'D1'],
         ],
         [
-          'Name is required (up to 80). Pick a prompt or write one (up to 160).',
-          'You are the owner; week 1 starts today. Next step for an owner: invite friends (S4).',
+          'Name is required (up to 80). Pick one of three prompts or write one (up to 160).',
+          'Member limit 2–10, including the owner.',
+          'You are the owner and the first 4-week cycle starts at once; there is no separate start step.',
         ],
       ],
     ],
@@ -401,7 +439,7 @@ const FINAL = [
         'Taking longer',
         'The film isn’t ready 2 hours after the cycle ended',
         [['Shutter', 'V1']],
-        ['Everyone gets a notification when it’s ready (N1).'],
+        ['The card stays until the film is ready; there is no separate notification for it.'],
       ],
       [
         'H7',
@@ -483,7 +521,8 @@ const FINAL = [
         'Permission blocked',
         [
           ['Open Settings', ''],
-          ['Not now', 'H1'],
+          ['Check again', 'V3'],
+          ['Close', 'H1'],
         ],
         [
           'iOS never shows the prompt twice, so Open Settings goes straight to Rewind in the Settings app.',
@@ -531,8 +570,8 @@ const FINAL = [
           ['Retake', 'V3'],
         ],
         [
-          'Plays on a loop, muted until tapped. Trim handles, 1 s minimum.',
-          'Looks: Original, Soft focus, High contrast.',
+          'Plays on a loop, muted until tapped. Trim handles, 0.5 s minimum.',
+          'Looks: Disposable Flash, Compact Digital (picked first), 8mm Home Movie, VHS Camcorder.',
           'Closing here asks “Discard this video?”.',
         ],
       ],
@@ -568,13 +607,10 @@ const FINAL = [
         { step: 'sealed' },
         'Sealed',
         'Upload finishes',
-        [
-          ['Tell the group', 'T7'],
-          ['Done', 'H1'],
-        ],
+        [['Done', 'H1']],
         [
           'From now on nobody sees it before the film, not even you.',
-          'Tell the group sends only words; the moment stays sealed.',
+          'Done returns to where the camera opened.',
         ],
       ],
     ],
@@ -710,13 +746,12 @@ const FINAL = [
         'Settings',
         'Avatar',
         [
-          ['Group name', 'S2'],
           ['Prompt', 'S3'],
           ['Invite friends', 'S4'],
           ['Members', 'S15'],
           ['Switch group', 'S7'],
           ['Turn the reminder on', 'S10'],
-          ['Time', 'S8'],
+          ['Time zone (owner)', 'S21'],
           ['Help, Privacy Policy, Terms', ''],
           ['Sign out', 'S12'],
           ['Delete account', 'S19'],
@@ -724,7 +759,8 @@ const FINAL = [
         ],
         [
           'Back returns to the tab the avatar was tapped on.',
-          'Snooze this week and Send a test reminder act in place with a toast.',
+          'Snooze for 7 days and End snooze act in place with a toast. The reminder is always Sunday 7 PM in the group’s time zone.',
+          'Send a test reminder only exists in a Demo session.',
         ],
       ],
       [
@@ -756,8 +792,8 @@ const FINAL = [
           ['Copy link or code', ''],
         ],
         [
-          'Share opens the system share sheet. A code works once and expires in 24 hours.',
-          'The link opens A4 for someone signed out, D4 for someone signed in.',
+          'A six-letter code like ABC-DEF. Works once and expires in 24 hours. Share opens the system share sheet.',
+          'Revoke cancels the code at once. There are no invite links.',
         ],
       ],
       [
@@ -765,9 +801,11 @@ const FINAL = [
         'settings',
         { size: 10 },
         'Group is full',
-        '10 of 10 members',
+        'The group reached the owner’s member limit',
         [['Invite friends is off', '']],
-        ['The row stays visible but greyed, with “The group is full · 10 of 10”.'],
+        [
+          'The row stays visible but greyed, with “The group is full · 10 of 10” (or the limit the owner set).',
+        ],
       ],
       [
         'S6',
@@ -874,7 +912,6 @@ const FINAL = [
         'Members, in Settings',
         [
           ['Tap a person', 'S16'],
-          ['Leave group', 'S18'],
           ['Back', 'S1'],
         ],
         ['Everyone in the group, owner first. Blocked people say so under their name.'],
@@ -888,12 +925,10 @@ const FINAL = [
         [
           ['Report', 'S17'],
           ['Block or Unblock', 'S15'],
-          ['Remove from group (owner)', 'S15'],
           ['Cancel', 'S15'],
         ],
         [
           'Blocking hides their messages and their moments in your film. They aren’t told and stay in the group.',
-          'Removing takes them out at once; their sealed moments stay in this cycle’s film.',
         ],
       ],
       [
@@ -946,6 +981,15 @@ const FINAL = [
         [
           ['Delete for good', 'A2'],
           ['Keep my account', 'S19'],
+        ],
+        [
+          'S21',
+          'settings',
+          { step: 'tz' },
+          'Time zone',
+          'Owner taps Time zone',
+          [['Pick a zone', 'S1']],
+          ['Sets when the Sunday 7 PM reminder fires for the whole group. Saved when picked.'],
         ],
         ['Signs out everywhere and lands on Welcome with “Your account is deleted.”'],
       ],
@@ -1172,7 +1216,7 @@ const FINAL = [
       [
         'F2',
         'film',
-        { step: 'play', at: 2 },
+        { step: 'play', at: 2, filler: true },
         'From the archive',
         'A short film uses an older moment',
         [['Keeps playing', 'F3']],
@@ -1214,20 +1258,17 @@ const FINAL = [
   {
     k: 'N',
     title: 'Outside the app',
-    p: 'Push through APNs in the App Store app; web push in the browser or the Home Screen web app.',
+    p: 'The weekly reminder: APNs in the App Store app, web push in the browser or the Home Screen web app. It is the only notification.',
     steps: [
       [
         'N1',
         'notif',
         {},
         'Notifications',
-        'Sunday at the reminder time, or the film is ready',
+        'Sunday, 7 PM in the group’s time zone',
+        [['Tap the reminder', 'H1']],
         [
-          ['Tap the reminder', 'H1'],
-          ['Tap the premiere one', 'F1'],
-        ],
-        [
-          'The reminder goes only to members with moments left this week; snoozed weeks are skipped.',
+          'Goes to members who turned the reminder on; snoozed members are skipped for 7 days.',
           'Tapping a notification for another group switches to that group first.',
         ],
       ],
@@ -1279,20 +1320,17 @@ const FIN_RULES = [
 const FIN_DIAGRAM = `flowchart LR
   A1([A1 Launch]) --> |no session| A2[A2 Welcome]
   A1 --> |expired| A3[A3 Signed out]
-  A1 --> |invite link| A4[A4 Invite link]
   A1 ==> |session| H1
-  A2 --> |Sign in| B1[B1 Sign in<br/><small>B2–B4</small>]
-  A2 --> |Create an account| C1[C1 Create account<br/><small>C2–C5</small>]
+  A2 --> |Sign in| B1[B1 Sign in<br/><small>B2–B3</small>]
+  A2 --> |Create an account| C6[C6 Create account<br/><small>C7</small>]
   A2 --> |Try Demo| A5[A5 Demo member]
   A3 --> B1
-  A4 --> B1 & C1
+  C6 --> B5[B5 Account ready]
+  B5 --> |signs in| D1
   B1 --> |no group| D1[D1 No group yet]
-  C1 --> D1
-  B1 -.-> |from an invite| D4[D4 Joined]
-  C1 -.-> |from an invite| D4
   D1 --> |Join| D2[D2 Invite code<br/><small>D3</small>]
   D1 --> |Create| D5[D5 New group]
-  D2 --> D4
+  D2 --> D4[D4 Joined]
   B1 ==> |has a group| H1
   A5 --> H1
   D4 & D5 --> H1
@@ -1300,17 +1338,16 @@ const FIN_DIAGRAM = `flowchart LR
   H1 --> |Shutter| V1[V1–V8 Camera<br/><small>P1–P2 photo</small>]
   H1 --> |Allowance| M1[M1–M4 Your moments]
   H1 --> |Group name| G1[G1–G2 Group menu]
-  H1 --> |Avatar| S1[S1–S14 Settings]
-  H1 --> |Chat tab| T1[T1–T10 Chat]
+  H1 --> |Avatar| S1[S1–S21 Settings]
+  H1 --> |Chat tab| T1[T1–T11 Chat]
   H1 --> |Archive tab| R1[R1–R6 Archive]
-  H1 --> |Watch| F1[F1–F3 Film]
-  V1 --> |Tell the group| T1
+  H1 --> |Watch| F1[F1–F4 Film]
   M1 --> |Retake| V1
   R1 --> |Play| F1
   F1 --> |Talk about it| T1
   G1 --> |Join or create| D2
-  S1 --> |Sign out| A2
-  N1>N1 Notification] --> H1 & F1
+  S1 --> |Sign out or delete account| A2
+  N1>N1 Sunday reminder] --> H1
   classDef hub fill:#ffd9b8,stroke:#e08a5c,stroke-width:2px,color:#3a2a22,font-weight:600
   class H1 hub`;
 
@@ -1322,10 +1359,15 @@ const APPSTORE = {
   ],
   A2: [
     'App Review needs a working sign-in: add a review account in App Store Connect › App Review Information (2.1). Try Demo also has to work.',
-    'Sign in with Apple isn’t required while Rewind only uses its own email, phone and username accounts with no Google or Facebook sign-in (4.8).',
+    'Sign in with Apple isn’t required while Rewind only uses its own username accounts with no Google or Facebook sign-in (4.8).',
   ],
   A4: [
     'Invite links open the app as Universal Links (apple-app-site-association on the invite domain); without the app they open the web page.',
+  ],
+  C6: [
+    'Apps with user content must have people agree to terms that forbid objectionable content and abusive users (1.2).',
+    'The Privacy Policy is linked here and in Settings, and its URL goes in App Store Connect (5.1.1(i)).',
+    'Only the username is collected: declare it as a user ID in the App Privacy labels (5.1.2).',
   ],
   C1: [
     'Email and phone are used only for sign-in: declare them as Contact Info, not tracking, in the App Privacy labels (5.1.2).',
@@ -1335,7 +1377,7 @@ const APPSTORE = {
     'The Privacy Policy is linked here and in Settings, and its URL goes in App Store Connect (5.1.1(i)).',
   ],
   H1: [
-    'The App Store build is a native app (camera, APNs push, Universal Links), not a wrapped website, which Apple rejects (4.2).',
+    'The App Store build is a native app (camera, APNs push), not a wrapped website, which Apple rejects (4.2).',
   ],
   V1: [
     'The button says Continue, never Allow, and there is no skip: it always leads to the system prompt (5.1.1(iv)).',
@@ -1397,7 +1439,7 @@ const APPSTORE_LIST = [
   [
     '1.2 User content',
     'Terms that forbid objectionable content, report, block, remove members, act on reports within 24 hours, a contact link',
-    ['C5', 'T11', 'F4', 'S16', 'S17', 'S1'],
+    ['C6', 'T11', 'F4', 'S16', 'S17', 'S1'],
   ],
   [
     '2.1 Completeness',
@@ -1411,7 +1453,7 @@ const APPSTORE_LIST = [
   ],
   [
     '4.2 Minimum functionality',
-    'A native app with the camera, push and Universal Links, not a website in a wrapper. The current plan ships iOS as a PWA, so App Store needs a native shell',
+    'A native app with the camera and push, not a website in a wrapper. The current plan ships iOS as a PWA, so App Store needs a native shell',
     ['H1'],
   ],
   [
@@ -1419,7 +1461,7 @@ const APPSTORE_LIST = [
     'Not needed while there is no third-party sign-in. Required if Google or Facebook sign-in is ever added',
     ['A2'],
   ],
-  ['5.1.1(i) Privacy Policy', 'Linked in the app and in App Store Connect', ['C5', 'S1']],
+  ['5.1.1(i) Privacy Policy', 'Linked in the app and in App Store Connect', ['C6', 'S1']],
   [
     '5.1.1(iv) Permissions',
     'Ask in context; pre-prompts say Continue and have no skip; purpose strings for camera, microphone and Add to Photos',
@@ -1428,8 +1470,8 @@ const APPSTORE_LIST = [
   ['5.1.1(v) Account deletion', 'Delete account inside the app, deleting the data', ['S19', 'S20']],
   [
     '5.1.2 App Privacy labels',
-    'Contact info (email or phone), name, photos and videos, other user content (chat); no tracking, so no App Tracking Transparency prompt',
-    ['C1'],
+    'User ID (username), photos and videos, other user content (chat); no tracking, so no App Tracking Transparency prompt',
+    ['C6'],
   ],
   [
     'Age rating',
@@ -1444,7 +1486,63 @@ const APPSTORE_LIST = [
   ],
 ];
 
+// Screens taken out of the app for now, with why. They keep their codes and stay drawn in the
+// Archived section at the bottom; deleting a line here puts the screen back in its flow.
+const ARCHIVED = {
+  A4: 'Invites are six-letter codes (ABC-DEF). There are no invite links.',
+  B4: 'There is no forgot or reset password in the app; an administrator resets passwords.',
+  C1: 'Sign-up is a username and password. No email or phone.',
+  C2: 'No email or phone, so no “already used” for them. C7 covers a taken username.',
+  C3: 'There is no verification code step.',
+  C4: 'There is no verification code step.',
+  C5: 'There is no separate name step: the username is the name the group sees.',
+  H8: 'Creating a group starts its first cycle. There is no “Start a capsule”.',
+  H9: 'Creating a group starts its first cycle, so members never wait for one.',
+  S2: 'Renaming a group is not built or planned.',
+  S8: 'The reminder is fixed: Sunday 7 PM in the group’s time zone.',
+  S9: 'The reminder is fixed: Sunday 7 PM in the group’s time zone.',
+  S18: 'Leaving a group is not built or planned.',
+  T7: 'There is no “Tell the group” after sealing.',
+  F2: 'Films don’t fill gaps with older moments.',
+};
+// Build status against dev. Anything not listed is built on dev.
+const STATUS = {
+  A1: ['planned', 'Native launch screen, in the Sprint 2 plan'],
+  G1: ['design', 'dev lists groups on Home; this header menu replaces that list'],
+  G2: ['design', 'dev lists groups on Home; this header menu replaces that list'],
+  S1: ['partial', 'Help, Privacy Policy and Terms: #430. Delete account: #428'],
+  S10: ['planned', 'Device subscription: #348'],
+  S11: ['design', 'Web only'],
+  S12: ['design', 'dev signs out without asking'],
+  S16: ['planned', 'Block and report: #429 (block has server routes)'],
+  S17: ['planned', '#429'],
+  S19: ['planned', '#428 (the server route exists)'],
+  S20: ['planned', '#428'],
+  T1: ['partial', 'No unread badge for real accounts yet'],
+  T10: ['design', 'Premiere banner in Chat'],
+  T11: ['store', 'Needed for App Store 1.2; #429 covers moments only'],
+  F3: ['design', 'End screen and cast. Download film and clips exist in Archive'],
+  F4: ['planned', '#429'],
+  N1: ['planned', 'Server sends it; device subscription: #348'],
+};
+const ST_LABEL = {
+  built: 'Built',
+  planned: 'Planned',
+  partial: 'Partly built',
+  design: 'Design only',
+  store: 'App Store need',
+};
+const isArchived = (code) => code in ARCHIVED;
 const finAll = () => FINAL.flatMap((f) => f.steps);
+// The main flows, and the archived screens grouped by the flow they came from
+const finLanes = () =>
+  FINAL.map((f) => ({ ...f, steps: f.steps.filter((x) => !isArchived(x[0])) })).filter(
+    (f) => f.steps.length,
+  );
+const archLanes = () =>
+  FINAL.map((f) => ({ ...f, steps: f.steps.filter((x) => isArchived(x[0])) })).filter(
+    (f) => f.steps.length,
+  );
 const finStep = (code) => finAll().find((s) => s[0] === code);
 
 /* ---------- Two screens that only exist here ---------- */
@@ -1495,7 +1593,14 @@ function finFigure(st) {
   return (
     `<figure class="fn-ph" id="fin-${code}"${live ? ` data-sub="${kind}" data-opts='${JSON.stringify(o)}'` : ''}>` +
     `<div class="card sv-card" data-id="${concepts[0].id}"><div class="phone-wrap"></div></div>` +
-    `<figcaption><p class="fn-t"><code>${code}</code>${title}</p><p class="fn-via">${via}</p>` +
+    `<figcaption><p class="fn-t"><code>${code}</code>${title}</p>` +
+    (isArchived(code)
+      ? `<p class="fn-arch"><b>Archived</b> ${ARCHIVED[code]}</p>`
+      : (() => {
+          const [k, note] = STATUS[code] || ['built', ''];
+          return `<p class="fn-st st-${k}"><b>${ST_LABEL[k]}</b>${note ? ` ${note}` : ''}</p>`;
+        })()) +
+    `<p class="fn-via">${via}</p>` +
     `<p class="fn-k">Actions</p><ul class="fn-acts">${acts.map(act).join('')}</ul>` +
     (notes.length
       ? `<p class="fn-k">Behaviour</p><ul class="fn-notes">${notes.map((n) => `<li>${n}</li>`).join('')}</ul>`
@@ -1576,6 +1681,8 @@ async function drawDiagram() {
 function finGo(code) {
   const fig = document.getElementById('fin-' + code);
   if (!fig) return;
+  const arch = fig.closest('details');
+  if (arch) arch.open = true;
   fillLane(fig.closest('.fn-lane'));
   fig.scrollIntoView({ block: 'center', inline: 'center' });
   fx(fig, 'fn-flash', 1600);
@@ -1585,7 +1692,18 @@ window.finGo = finGo;
 function renderFinalView() {
   const root = $('final-view');
   if (!root) return;
-  const n = finAll().length;
+  const lane = (f) =>
+    `<section class="fn-flow" id="fin-flow-${f.k}${f.arch ? '-x' : ''}"><h2 class="fn-h"><span>${f.k}</span>${f.title}</h2>${f.arch ? '' : `<p class="hint">${f.p}</p>`}` +
+    `<div class="fn-lane">${f.steps
+      .map(
+        (s, i) =>
+          (i ? `<span class="fn-arrow" aria-hidden="true"><i>${s[4]}</i></span>` : '') +
+          finFigure(s),
+      )
+      .join('')}</div></section>`;
+  const main = finLanes();
+  const arch = archLanes().map((f) => ({ ...f, arch: true }));
+  const n = main.reduce((a, f) => a + f.steps.length, 0);
   root.innerHTML =
     `<header class="main-h"><p class="k">FINAL · BUILD SPEC</p><h1>Every screen, and how you get there</h1>` +
     `<p>${n} screens. Each has a code, what leads to it, every action and where it goes, and how it behaves at the edges. The phones are live. Tap a node in the diagram or an action to jump to that screen.</p></header>` +
@@ -1598,21 +1716,24 @@ function renderFinalView() {
       ([g, what, codes]) =>
         `<div><b>${g}</b><p>${what}</p>${codes.length ? `<span>${codes.map((c) => `<button type="button" data-fin-go="${c}">${c}</button>`).join('')}</span>` : ''}</div>`,
     ).join('')}</div></section>` +
-    `<nav class="fn-index" aria-label="All screens">${FINAL.map(
-      (f) =>
-        `<div><b>${f.k} · ${f.title}</b>${f.steps.map((s) => `<button type="button" data-fin-go="${s[0]}">${s[0]} ${s[3]}</button>`).join('')}</div>`,
-    ).join('')}</nav>` +
-    FINAL.map(
-      (f) =>
-        `<section class="fn-flow" id="fin-flow-${f.k}"><h2 class="fn-h"><span>${f.k}</span>${f.title}</h2><p class="hint">${f.p}</p>` +
-        `<div class="fn-lane">${f.steps
-          .map(
-            (s, i) =>
-              (i ? `<span class="fn-arrow" aria-hidden="true"><i>${s[4]}</i></span>` : '') +
-              finFigure(s),
-          )
-          .join('')}</div></section>`,
-    ).join('');
+    `<section class="fn-block"><h2 class="fn-h">Build status</h2><p class="hint">Every screen says how far dev is with it.</p><div class="fn-stkey">${Object.entries(
+      ST_LABEL,
+    )
+      .map(
+        ([k, l]) =>
+          `<p class="fn-st st-${k}"><b>${l}</b>${{ built: 'on dev today', planned: 'an open issue covers it', partial: 'some of it is on dev', design: 'a design change over what dev has', store: 'needed for the App Store, no issue yet' }[k]}</p>`,
+      )
+      .join('')}</div></section>` +
+    `<nav class="fn-index" aria-label="All screens">${main
+      .map(
+        (f) =>
+          `<div><b>${f.k} · ${f.title}</b>${f.steps.map((s) => `<button type="button" data-fin-go="${s[0]}">${s[0]} ${s[3]}</button>`).join('')}</div>`,
+      )
+      .join('')}</nav>` +
+    main.map(lane).join('') +
+    `<details class="fn-archive"><summary><b>Archived screens</b><span>${arch.reduce((a, f) => a + f.steps.length, 0)} screens not in the app now. They keep their codes; to bring one back, remove it from ARCHIVED in final.js.</span></summary>` +
+    arch.map(lane).join('') +
+    `</details>`;
   watchLanes(root);
   drawDiagram();
 }

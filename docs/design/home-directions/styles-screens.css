@@ -1751,3 +1751,53 @@ body.view-screens main {
   font-size: 12.5px;
   opacity: 0.7;
 }
+/* Create group: member limit stepper */
+.set-lim {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.set-lim small {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+.set-lim div {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.set-lim button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 18px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.set-lim b {
+  min-width: 20px;
+  text-align: center;
+  font-size: 16px;
+}
+.set-revoke {
+  justify-self: center;
+  font-size: 13px;
+}
+/* Four looks: wrap to two rows */
+.looks {
+  flex-wrap: wrap;
+}
+.looks button {
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.screen[data-look='flash'] .cam-view {
+  filter: contrast(1.25) brightness(1.12) saturate(1.1);
+}
+.screen[data-look='8mm'] .cam-view {
+  filter: sepia(0.45) saturate(1.2) contrast(1.05);
+}
+.screen[data-look='vhs'] .cam-view {
+  filter: saturate(1.4) hue-rotate(-8deg) blur(1px);
+}

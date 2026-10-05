@@ -392,3 +392,76 @@ body.view-final main {
   color: #fff;
   background: #c0623c;
 }
+
+/* Build status chip under each screen title, and the archive */
+.fn-st,
+.fn-arch {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.fn-st b,
+.fn-arch b {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.st-built b {
+  color: #24553a;
+  background: #d7eedd;
+}
+.st-planned b {
+  color: #2f4d7a;
+  background: #dbe6f6;
+}
+.st-partial b {
+  color: #6a4a10;
+  background: #f6e6c2;
+}
+.st-design b {
+  color: #6a3d64;
+  background: #f0dcec;
+}
+.st-store b {
+  color: #fff;
+  background: #c0623c;
+}
+.fn-arch b {
+  color: #fff;
+  background: #6d675e;
+}
+.fn-stkey {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin-top: 10px;
+}
+.fn-archive {
+  margin-top: 40px;
+  padding-top: 18px;
+  border-top: 2px dashed var(--page-line);
+}
+.fn-archive summary {
+  display: grid;
+  gap: 2px;
+  cursor: pointer;
+  list-style: none;
+}
+.fn-archive summary::-webkit-details-marker {
+  display: none;
+}
+.fn-archive summary b {
+  font:
+    500 22px/1.2 'Fraunces',
+    serif;
+}
+.fn-archive summary span {
+  font-size: 13px;
+  color: var(--page-muted);
+}
+.fn-archive .fn-ph {
+  opacity: 0.82;
+}
