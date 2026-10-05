@@ -297,7 +297,7 @@ function reconcileCompilationJobInputsLocked(
       `SELECT i.clip_job_id AS clipJobId, i.contribution_id AS contributionId,
               i.position AS position,
               CASE WHEN c.id IS NOT NULL
-                    AND c.deleted_at IS NULL
+                    AND c.deleted_at IS NULL AND c.removed_at IS NULL
                     AND cy.group_id = film.group_id
                     AND (c.cycle_id = film.cycle_id
                       OR (c.cycle_id <> film.cycle_id
@@ -391,7 +391,7 @@ function eligibleCompilationInputs(
         AND clip.kind = 'clip' AND clip.status = 'ready'
         AND clip.deleted_at IS NULL
        WHERE c.cycle_id = ?
-         AND c.deleted_at IS NULL
+         AND c.deleted_at IS NULL AND c.removed_at IS NULL
          -- A ready clip has completed processing only when its raw staged
          -- path is no longer retained. No source path is copied to the film
          -- job or its input snapshot.
@@ -415,7 +415,7 @@ function eligibleCompilationInputs(
                AND cy.status = 'archived'
                AND cy.release_status = 'published'
                AND cy.release_published_at IS NOT NULL
-               AND c.deleted_at IS NULL
+               AND c.deleted_at IS NULL AND c.removed_at IS NULL
                AND clip.source_path IS NULL
                AND clip.output_path IS NOT NULL
              ORDER BY cy.release_published_at DESC, c.created_at DESC, c.id DESC, clip.id DESC
@@ -441,7 +441,7 @@ function acceptedCompilationInputs(
     FROM contributions c JOIN cycles cy ON cy.id = c.cycle_id AND cy.group_id = ?
     LEFT JOIN media_jobs clip ON clip.contribution_id = c.id AND clip.kind = 'clip'
       AND clip.group_id = cy.group_id AND clip.deleted_at IS NULL
-    WHERE c.cycle_id = ? AND c.deleted_at IS NULL
+    WHERE c.cycle_id = ? AND c.deleted_at IS NULL AND c.removed_at IS NULL
     ORDER BY c.created_at, c.id, clip.id`,
     )
     .all(job.groupId, job.cycleId) as {
