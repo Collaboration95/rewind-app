@@ -29,3 +29,9 @@ output "hosted_env_uri" {
   description = "Settings object the dev deploy streams to the server."
   value       = "s3://${aws_s3_bucket.media.id}/${aws_s3_object.hosted_env.key}"
 }
+
+output "admin_password" {
+  description = "Password for the read-only /admin table browser (user admin)."
+  value       = random_password.admin.result
+  sensitive   = true
+}
