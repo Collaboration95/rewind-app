@@ -15,6 +15,7 @@ import {
   REMINDER_PROVIDER_RESPONSE_MAX_BYTES,
 } from '../dist/reminders/providers.js';
 import { validateReminderVapidConfig } from '../dist/reminders/config.js';
+import { validReminderDestination } from '../dist/reminders/outbox.js';
 
 const token = 'ExpoPushToken[synthetic_reminder_token]';
 const payload = {
@@ -45,6 +46,27 @@ const config = {
   publicKey: subscription.keys.p256dh,
   privateKey: privateBytes.toString('base64url'),
 };
+
+test('web push destinations accept the Safari, Firefox, Chrome and Edge push services only', () => {
+  for (const host of [
+    'web.push.apple.com',
+    'updates.push.services.mozilla.com',
+    'fcm.googleapis.com',
+    'wns2-par02p.notify.windows.com',
+  ])
+    assert.equal(
+      validReminderDestination('webpush', { ...subscription, endpoint: `https://${host}/w/x` })
+        ?.endpoint,
+      `https://${host}/w/x`,
+    );
+  for (const endpoint of [
+    'https://notify.windows.com.attacker.invalid/w/x',
+    'https://attacker-notify.windows.com/w/x',
+    'https://wns2-par02p.notify.windows.com:8443/w/x',
+    'https://permanently-removed.invalid/fcm/send/x',
+  ])
+    assert.equal(validReminderDestination('webpush', { ...subscription, endpoint }), null);
+});
 
 test('valid VAPID scalars with leading zero bytes retain their fixed-width encoding', async () => {
   const privateKey = Buffer.alloc(32);
