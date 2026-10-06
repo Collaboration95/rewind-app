@@ -61,7 +61,7 @@
   <body>
     <main>
       <h1>Rewind privacy policy</h1>
-      <p>Effective 5 October 2026.</p>
+      <p>Effective 6 October 2026.</p>
       <p>
         Rewind is a private time capsule for small groups. This policy says what Rewind stores, why,
         and how you delete it.
@@ -101,19 +101,28 @@
       </p>
       <h2>Where it is stored</h2>
       <p>
-        Data is stored on Amazon Web Services servers and sent over encrypted (HTTPS) connections.
-        Web push reminders pass through your browser or device maker's push service.
+        Photos, videos and group films are stored in private Amazon Web Services (AWS) S3 storage.
+        Account details, group membership, chat and reminder settings are stored in the hosted
+        database on AWS. Data is sent over encrypted (HTTPS) connections. Web push reminders pass
+        through your browser or device maker's push service.
       </p>
       <h2>How long we keep it</h2>
-      <p>We keep your data while your account exists.</p>
+      <p>
+        We keep your account data while your account exists, unless you delete content sooner. Group
+        films that have already been made stay with the group after account deletion. Unfinished
+        uploads expire through scheduled cleanup and storage expiration rules; storage removal may
+        take additional time after an upload expires. Recovery backups may contain earlier copies
+        until they expire under the configured backup retention rules.
+      </p>
       <h2>Deleting your account</h2>
       <p>
         You can delete your account in the app under <strong>Settings → Delete account</strong>.
         Deletion is permanent. It removes your account, your sign-ins, your chat messages and
-        reactions, your photos and videos, your reports and your blocks. An upload that never
-        finished is removed from storage within two days. A group you own passes to its
-        longest-standing other member. A group with no other members is deleted with all its
-        content. A group film that was already made with your moments stays with that group.
+        reactions, your photos and videos, your reports and your blocks. Access is revoked when
+        deletion completes; stored media is then removed through deletion and cleanup. A group you
+        own passes to its longest-standing other member. A group with no other members is deleted
+        with all its content. A group film that was already made with your moments stays with that
+        group.
       </p>
       <h2>Children</h2>
       <p>Rewind is not for children under 13.</p>

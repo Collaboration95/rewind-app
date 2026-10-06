@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { isMember, type RewindDatabase } from '../db';
+import { canInteractWithChatMessage } from '../groups/safety';
 
 export const CHAT_MESSAGE_MAX_LENGTH = 2_000;
 export const SUPPORTED_CHAT_REACTION = '✨' as const;
@@ -310,6 +311,23 @@ export function createChatMessage(
       database.exec('ROLLBACK');
       return { ok: false, reason: 'membership_denied' };
     }
+    if (input.replyToMessageId) {
+      const parent = database
+        .prepare(
+          `SELECT id, member_id AS memberId, reply_to_message_id AS replyToMessageId
+           FROM messages WHERE id = ? AND group_id = ?`,
+        )
+        .get(input.replyToMessageId, input.groupId) as
+        { id: string; memberId: string; replyToMessageId?: string | null } | undefined;
+      if (!parent || !canInteractWithChatMessage(database, input.memberId, parent)) {
+        database.exec('ROLLBACK');
+        return { ok: false, reason: 'reply_not_found' };
+      }
+      if (parent.replyToMessageId) {
+        database.exec('ROLLBACK');
+        return { ok: false, reason: 'nested_reply_not_allowed' };
+      }
+    }
     // A client may have persisted the message but lost the HTTP response. A
     // retry with the same client-generated id must return that event rather
     // than inserting another message or publishing it twice.
@@ -342,23 +360,6 @@ export function createChatMessage(
         deduplicated: true,
         event: mapEvent(existing, reactionCounts(database, String(existing.id))),
       };
-    }
-    if (input.replyToMessageId) {
-      const parent = database
-        .prepare(
-          `SELECT reply_to_message_id AS replyToMessageId
-           FROM messages WHERE id = ? AND group_id = ?`,
-        )
-        .get(input.replyToMessageId, input.groupId) as
-        { replyToMessageId?: string | null } | undefined;
-      if (!parent) {
-        database.exec('ROLLBACK');
-        return { ok: false, reason: 'reply_not_found' };
-      }
-      if (parent.replyToMessageId) {
-        database.exec('ROLLBACK');
-        return { ok: false, reason: 'nested_reply_not_allowed' };
-      }
     }
     database
       .prepare(
@@ -432,9 +433,9 @@ export function toggleChatReaction(
       return { ok: false, reason: 'membership_denied' };
     }
     const message = database
-      .prepare('SELECT id FROM messages WHERE id = ? AND group_id = ?')
-      .get(input.messageId, input.groupId);
-    if (!message) {
+      .prepare('SELECT id, member_id AS memberId FROM messages WHERE id = ? AND group_id = ?')
+      .get(input.messageId, input.groupId) as { id: string; memberId: string } | undefined;
+    if (!message || !canInteractWithChatMessage(database, input.memberId, message)) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'message_not_found' };
     }

@@ -101,6 +101,7 @@ import {
 import { purgeRealAccount, removeStoredMedia } from './auth/deletion';
 import {
   blockMember,
+  canInteractWithChatMessage,
   filmSegments,
   listBlockedMembers,
   removeContribution,
@@ -1688,6 +1689,7 @@ export async function handleRequest(
     });
     if (!result.ok) {
       if (result.reason === 'membership_denied') return sendDenied(response, config);
+      if (result.reason === 'reply_not_found') return sendNotFound(response, config);
       sendJson(response, config, result.reason === 'duplicate_message' ? 409 : 400, {
         error: `message_${result.reason}`,
         message:
@@ -1699,9 +1701,7 @@ export async function handleRequest(
                 ? 'The message timestamp is invalid.'
                 : result.reason === 'duplicate_message'
                   ? 'This message retry conflicts with an existing message.'
-                  : result.reason === 'reply_not_found'
-                    ? 'The message you are replying to is not available in this group.'
-                    : 'Replies can only target an original message.',
+                  : 'Replies can only target an original message.',
       });
       return;
     }
@@ -1738,8 +1738,11 @@ export async function handleRequest(
     if (!identity) return;
     if (request.method === 'GET') {
       const message = getMessage(database, groupId, messageId);
-      if (!message) return sendNotFound(response, config);
-      sendJson(response, config, 200, { message });
+      if (!message || !canInteractWithChatMessage(database, identity.memberId, message))
+        return sendNotFound(response, config);
+      const visible = visibleChatEvent(database, identity.accountId, { message });
+      if (!visible) return sendNotFound(response, config);
+      sendJson(response, config, 200, visible);
       return;
     }
     const body = await requestBody(request, config);
@@ -1781,7 +1784,9 @@ export async function handleRequest(
       });
       return;
     }
-    sendJson(response, config, 200, result);
+    const visible = visibleChatEvent(database, identity.accountId, { message: result.message });
+    if (!visible) return sendNotFound(response, config);
+    sendJson(response, config, 200, { ...result, message: visible.message });
     return;
   }
 

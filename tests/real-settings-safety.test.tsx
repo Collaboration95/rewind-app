@@ -103,6 +103,8 @@ function useSafetyApi(deleteStatus = 200) {
       });
     if (path === '/real/blocks')
       return json(200, init?.method === 'POST' ? { blocked: true } : { blocked: [] });
+    if (path === '/real/blocks/friend-profile' && init?.method === 'DELETE')
+      return json(200, { blocked: false });
     if (path === '/real/groups/safety-group/reports') return json(201, { reported: true });
     throw new Error(`Unexpected safety request: ${path}`);
   });
@@ -244,4 +246,38 @@ it('reports and blocks after toggling Also block back on', async () => {
   expect(
     within(result.getByTestId('real-group-member-1')).getByText('Member · blocked'),
   ).toBeTruthy();
+});
+
+it('returns to entry and clears the credential when deletion finds a revoked session', async () => {
+  const fetcher = useSafetyApi(401);
+  const result = await openSettings();
+  await fireEvent.press(result.getByTestId('real-settings-delete'));
+  await fireEvent.changeText(result.getByTestId('real-delete-password'), 'correct safety password');
+  await fireEvent.press(result.getByTestId('real-delete-account'));
+  await fireEvent.press(result.getByTestId('real-delete-confirm'));
+  expect(await result.findByTestId('welcome-entry')).toBeTruthy();
+  expectPost(fetcher, '/auth/account/delete', { password: 'correct safety password' });
+  await waitFor(() => expect(secureStoreMock.token).toBeNull());
+  expect(result.queryByTestId('real-delete-error')).toBeNull();
+  expect(result.queryByText('Your account is deleted.')).toBeNull();
+});
+
+it('unblocks a member after blocking them in Members', async () => {
+  const fetcher = useSafetyApi();
+  const result = await openSettings();
+  await openPerson(result);
+  await fireEvent.press(result.getByTestId('real-person-block'));
+  await waitFor(() => expect(result.queryByTestId('real-person-dialog')).toBeNull());
+  await fireEvent.press(result.getByTestId('real-group-member-1'));
+  expect(result.getByRole('button', { name: /^Unblock$/ })).toBeTruthy();
+  await fireEvent.press(result.getByTestId('real-person-block'));
+  await waitFor(() => expect(result.queryByTestId('real-person-dialog')).toBeNull());
+  expect(fetcher).toHaveBeenCalledWith(
+    'https://rewind.example/real/blocks/friend-profile',
+    expect.objectContaining({ method: 'DELETE' }),
+  );
+  expect(within(result.getByTestId('real-group-member-1')).getByText('Member')).toBeTruthy();
+  expect(
+    within(result.getByTestId('real-group-member-1')).queryByText('Member · blocked'),
+  ).toBeNull();
 });

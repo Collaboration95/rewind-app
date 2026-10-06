@@ -674,12 +674,46 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             Signing in…
           </Text>
         ) : null}
+        <View style={styles.entryLegal}>
+          <Text
+            accessibilityRole="link"
+            onPress={() => openLegalPage('/privacy')}
+            style={styles.entryLegalLink}
+            testID="entry-privacy"
+          >
+            Privacy policy
+          </Text>
+          <Text
+            accessibilityRole="link"
+            onPress={() => openLegalPage('/support')}
+            style={styles.entryLegalLink}
+            testID="entry-support"
+          >
+            Help and support
+          </Text>
+        </View>
       </Animated.ScrollView>
     </WarmFrame>
   );
 }
 
 const styles = StyleSheet.create({
+  entryLegal: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+    marginTop: 16,
+  },
+  entryLegalLink: {
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 13,
+    paddingHorizontal: 8,
+    paddingVertical: 14,
+    textDecorationLine: 'underline',
+  },
   warmPage: { backgroundColor: WARM.bg, flex: 1 },
   launch: {
     alignItems: 'center',

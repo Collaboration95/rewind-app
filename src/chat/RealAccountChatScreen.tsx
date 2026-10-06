@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { useRealAccount } from '../auth/RealAccountProvider';
 import { ReportSheet } from '../real/ReportSheet';
@@ -775,6 +775,11 @@ export function RealAccountChatScreen({
               accessibilityRole="button"
               accessibilityState={{ disabled: sending || !draft.trim() || !canSend }}
               disabled={sending || !draft.trim() || !canSend}
+              onPointerDown={(event) => {
+                // Keep Safari's keyboard open until the send click completes;
+                // blurring first moves this button back down with the dock.
+                if (Platform.OS === 'web') event.preventDefault();
+              }}
               onPress={() => void send()}
               style={[styles.send, (sending || !draft.trim() || !canSend) && styles.sendOff]}
               testID="real-chat-send"
@@ -1039,7 +1044,9 @@ const styles = StyleSheet.create({
     color: WARM.ink,
     flex: 1,
     fontFamily: FONT.body,
-    fontSize: 15,
+    // iOS Safari zooms smaller inputs on focus, shrinking the visual viewport
+    // while the fixed group shell still spans the layout viewport.
+    fontSize: Platform.OS === 'web' ? 16 : 15,
     lineHeight: 20,
     maxHeight: 96,
     minHeight: 42,
