@@ -36,7 +36,12 @@
       ],
       "expo-video",
       "expo-notifications",
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
       "expo-font"
     ],
     "ios": {
