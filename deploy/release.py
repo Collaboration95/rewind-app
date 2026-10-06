@@ -116,8 +116,9 @@ def build(output, green_sha, config_version, branch):
         with open(temp / "source.tar", "wb") as stream:
             subprocess.run(("git", "archive", sha, "deploy", "infra/terraform/demo/cloud-init.sh"), cwd=ROOT, check=True, stdout=stream)
         for name, dockerfile, image in (("runtime", "deploy/Dockerfile", "rewind-demo"), ("web", "deploy/web.Dockerfile", "rewind-demo-web")):
-            build_args = ("--build-arg", f"REWIND_BUILD_SHA={sha}",
-                          "--build-arg", f"REWIND_BUILD_BRANCH={branch}") if name == "web" else ()
+            # The version shows on every build except main (prod) (#491)
+            build_args = ("--build-arg", f"REWIND_CURRENT_VERSION={branch}-{sha[:7]}",
+                          "--build-arg", f"REWIND_DISPLAY_CURRENT_VERSION={str(branch != 'main').lower()}") if name == "web" else ()
             run("docker", "build", "--label", f"org.opencontainers.image.revision={sha}",
                 *build_args, "-f", dockerfile, "-t", f"{image}:{sha}", ".")
             run("docker", "save", "-o", str(temp / f"{name}.tar"), f"{image}:{sha}")

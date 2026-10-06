@@ -333,34 +333,49 @@ export const Field = forwardRef<
     containerTestID?: string;
   }
 >(function Field({ label, mono, style, containerStyle, containerTestID, ...props }, ref) {
-  // Password fields get a Show/Hide toggle so long passwords can be checked.
-  const [revealed, setRevealed] = useState(false);
+  // Password fields get a show/hide eye; masked text uses smaller dots.
+  const secret = Boolean(props.secureTextEntry);
+  const [shown, setShown] = useState(false);
+  const masked = secret && !shown;
+  const input = (
+    <TextInput
+      accessibilityLabel={props.accessibilityLabel ?? label}
+      placeholderTextColor="rgba(51, 35, 26, 0.5)"
+      ref={ref}
+      {...props}
+      secureTextEntry={masked}
+      style={[
+        styles.fieldInput,
+        mono && styles.fieldMono,
+        masked && props.value && styles.fieldMasked,
+        secret && styles.fieldGrow,
+        style,
+      ]}
+      {...rw('bare')}
+    />
+  );
   return (
     <Glass style={[styles.field, containerStyle]} testID={containerTestID}>
-      <View style={styles.fieldHeader}>
-        <Text style={styles.fieldLabel}>{label}</Text>
-        {props.secureTextEntry ? (
+      <Text style={styles.fieldLabel}>{label}</Text>
+      {secret ? (
+        <View style={styles.fieldRow}>
+          {input}
           <Pressable
             accessibilityLabel={
-              revealed ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`
+              shown ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`
             }
             accessibilityRole="button"
-            hitSlop={12}
-            onPress={() => setRevealed((value) => !value)}
+            accessibilityState={{ selected: shown }}
+            onPress={() => setShown((value) => !value)}
+            style={styles.fieldEye}
+            testID={props.testID ? `${props.testID}-toggle` : undefined}
           >
-            <Text style={styles.fieldToggle}>{revealed ? 'Hide' : 'Show'}</Text>
+            <Icon color={WARM.muted} name={shown ? 'eyeOff' : 'eye'} size={20} />
           </Pressable>
-        ) : null}
-      </View>
-      <TextInput
-        accessibilityLabel={props.accessibilityLabel ?? label}
-        placeholderTextColor="rgba(51, 35, 26, 0.5)"
-        ref={ref}
-        {...props}
-        secureTextEntry={props.secureTextEntry && !revealed}
-        style={[styles.fieldInput, mono && styles.fieldMono, style]}
-        {...rw('bare')}
-      />
+        </View>
+      ) : (
+        input
+      )}
     </Glass>
   );
 });
@@ -903,9 +918,25 @@ export const styles = StyleSheet.create({
   },
   errorSpace: { height: 36 },
   field: { borderRadius: 18, gap: 6, marginBottom: 10, paddingHorizontal: 16, paddingVertical: 12 },
-  fieldHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  fieldLabel: { color: WARM.muted, fontFamily: FONT.body, fontSize: 12 },
-  fieldToggle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 12, fontWeight: '600' },
+  fieldLabel: {
+    color: WARM.ink,
+    fontFamily: FONT.body,
+    fontSize: 13,
+    fontWeight: '600',
+    opacity: 0.78,
+  },
+  fieldRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+  fieldGrow: { flex: 1 },
+  // 16 px is the floor: iOS Safari zooms the page when a smaller input is focused.
+  fieldMasked: { fontSize: 16, letterSpacing: 2 },
+  fieldEye: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    marginRight: -12,
+    marginVertical: -10,
+    width: 44,
+  },
   fieldInput: {
     color: WARM.ink,
     fontFamily: FONT.body,

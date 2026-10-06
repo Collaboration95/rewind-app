@@ -49,7 +49,7 @@ For a list or `next`, write a queue file before starting, for example
 8. **Review agent.** Run one review pass and fix the blocking findings:
    - Codex: `codex exec review --base dev -m gpt-6-luna`.
    - For auth, private media, migrations, deploy or infra, use
-     `-m gpt-6.1-sol`
+     `-m gpt-6.1-sol`.
 9. **Merge.** When Quality is green:
    - Routine PR: `gh pr merge <pr> --merge --delete-branch`.
    - Auth, private media, migrations, deploy or infra: leave the merge to the

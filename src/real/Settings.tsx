@@ -35,6 +35,7 @@ import { ReportSheet } from './ReportSheet';
 import { blockMember, openLegalPage, reportContent, unblockMember } from './safety';
 import type { MenuGroup } from './Shell';
 import { userMessage } from '../domain/user-message';
+import { CURRENT_VERSION, DISPLAY_CURRENT_VERSION } from '../runtime/version';
 
 export type SettingsStep = 'main' | 'members' | 'groups' | 'invite' | 'prompt' | 'tz' | 'delete';
 
@@ -370,7 +371,10 @@ function SettingsMain<T extends SettingsGroup>({
             testID="real-settings-delete"
           />
         </ListGroup>
-        <Foot>Rewind · signed in as {account.username}</Foot>
+        <Foot>
+          Rewind · signed in as {account.username}
+          {DISPLAY_CURRENT_VERSION ? ` · ${CURRENT_VERSION}` : ''}
+        </Foot>
       </ScreenScroll>
       {signOutOpen ? (
         <Dialog

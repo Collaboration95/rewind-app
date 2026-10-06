@@ -23,6 +23,7 @@ import {
 import { openLegalPage } from './src/real/safety';
 import { getConfiguredInviteWebOrigin, getLocalRuntimeBaseUrl } from './src/runtime/config';
 import { PortraitGuard } from './src/runtime/PortraitGuard';
+import { CURRENT_VERSION, DISPLAY_CURRENT_VERSION } from './src/runtime/version';
 import { markLaunchReady } from './src/runtime/timing';
 import { useWarmFonts } from './src/ui/fonts';
 import {
@@ -703,6 +704,11 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             Help and support
           </Text>
         </View>
+        {DISPLAY_CURRENT_VERSION ? (
+          <Text style={styles.entryVersion} testID="entry-version">
+            {CURRENT_VERSION}
+          </Text>
+        ) : null}
       </Animated.ScrollView>
     </WarmFrame>
   );
@@ -716,6 +722,12 @@ const styles = StyleSheet.create({
     gap: 8,
     justifyContent: 'center',
     marginTop: 16,
+  },
+  entryVersion: {
+    color: WARM.muted,
+    fontFamily: FONT.monoMedium,
+    fontSize: 11,
+    textAlign: 'center',
   },
   entryLegalLink: {
     color: WARM.muted,
