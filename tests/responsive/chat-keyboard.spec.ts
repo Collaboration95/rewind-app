@@ -11,6 +11,14 @@ for (const viewport of [
   test(`${viewport.width}×${viewport.height} keeps the composer inside gutters and sends without losing keyboard focus`, async ({
     page,
   }) => {
+    // A desktop context keeps its physical landscape orientation even when
+    // resized. Model the upright phone as well as its keyboard viewport.
+    await page.addInitScript(() => {
+      Object.defineProperty(window.screen.orientation, 'type', {
+        configurable: true,
+        value: 'portrait-primary',
+      });
+    });
     await page.setViewportSize(viewport);
     await openGroupHome(page);
     await page.getByTestId('real-group-nav-chat').click();
