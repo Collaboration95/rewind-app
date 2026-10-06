@@ -394,7 +394,11 @@ export function RealAccountProvider({
         await clearLocalSession();
         if (mounted.current) setNotice('deleted');
         return 'deleted';
-      } catch {
+      } catch (error) {
+        if (error instanceof AuthRequestError && error.status === 401) {
+          await clearLocalSession();
+          if (mounted.current) setNotice('revoked');
+        }
         return 'unavailable';
       } finally {
         if (mounted.current) setPending(false);

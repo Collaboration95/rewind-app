@@ -272,6 +272,27 @@ export function isChatEventHidden(
   );
 }
 
+/** Direct replies and reactions require a visible target and no block in
+ * either direction. Shared group messages keep their existing visibility. */
+export function canInteractWithChatMessage(
+  database: RewindDatabase,
+  viewerProfileId: string,
+  message: { id: string; memberId: string },
+): boolean {
+  const viewer = database
+    .prepare('SELECT account_id AS accountId FROM real_profiles WHERE id = ?')
+    .get(viewerProfileId) as { accountId: string } | undefined;
+  if (!viewer) return true;
+  if (isChatEventHidden(database, viewer.accountId, message)) return false;
+  return !database
+    .prepare(
+      `SELECT 1 FROM account_blocks b
+       JOIN real_profiles author ON author.account_id = b.blocker_account_id
+       WHERE author.id = ? AND b.blocked_account_id = ? LIMIT 1`,
+    )
+    .get(message.memberId, viewer.accountId);
+}
+
 /** The chat event as this viewer may see it: null when the message itself is
  * hidden, or without its reply preview when the quoted message is hidden. */
 export function visibleChatEvent<

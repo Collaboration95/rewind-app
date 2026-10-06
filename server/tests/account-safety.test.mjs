@@ -107,6 +107,17 @@ test('deleting an account needs the password, removes its data and media, and ha
   await withRuntime(async ({ baseUrl, database, dataDir, server }) => {
     const owner = await provision(baseUrl, database, 'deleting-owner');
     const member = await provision(baseUrl, database, 'staying-member');
+    const browserLogin = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'deleting-owner',
+        password: PASSWORD,
+        clientType: 'browser',
+      }),
+    });
+    assert.equal(browserLogin.status, 200);
+    const browserHeaders = { Cookie: browserLogin.headers.get('set-cookie').split(';')[0] };
     const soloGroup = await createGroup(baseUrl, owner, 'Only me');
     const sharedGroup = await createGroup(baseUrl, owner, 'Shared');
     await joinGroup(baseUrl, owner, member, sharedGroup);
@@ -160,6 +171,9 @@ test('deleting an account needs the password, removes its data and media, and ha
 
     const wrong = await post(baseUrl, '/auth/account/delete', owner, { password: 'not it' });
     assert.equal(wrong.status, 403);
+    for (const headers of [owner.headers, browserHeaders])
+      assert.equal((await fetch(`${baseUrl}/auth/session`, { headers })).status, 200);
+    await access(sourcePath);
     const unauthenticated = await post(
       baseUrl,
       '/auth/account/delete',
@@ -176,6 +190,13 @@ test('deleting an account needs the password, removes its data and media, and ha
 
     const session = await fetch(`${baseUrl}/auth/session`, { headers: owner.headers });
     assert.equal(session.status, 401);
+    assert.equal((await fetch(`${baseUrl}/auth/session`, { headers: browserHeaders })).status, 401);
+    assert.equal(
+      database
+        .prepare('SELECT COUNT(*) AS n FROM real_account_sessions WHERE account_id = ?')
+        .get(owner.account.id).n,
+      0,
+    );
     assert.equal((await login(baseUrl, 'deleting-owner')).status, 401);
     assert.equal(
       database.prepare('SELECT COUNT(*) AS n FROM real_accounts WHERE id = ?').get(owner.account.id)
@@ -378,5 +399,145 @@ test('moderation records retain reporter, reason and time after the target accou
     assert.equal(database.prepare('SELECT group_id FROM member_reports').get().group_id, null);
     assert.equal(database.prepare('SELECT group_id FROM content_reports').get().group_id, null);
     assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(), []);
+  });
+});
+
+test('direct chat interactions deny both sides of a block and recover after unblock', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const owner = await provision(baseUrl, database, 'interaction-owner');
+    const member = await provision(baseUrl, database, 'interaction-member');
+    const third = await provision(baseUrl, database, 'interaction-third');
+    const groupId = await createGroup(baseUrl, owner, 'Direct interaction safety');
+    await joinGroup(baseUrl, owner, member, groupId);
+    await joinGroup(baseUrl, owner, third, groupId);
+    const ownerMessage = await sendMessage(baseUrl, owner, groupId, 'owner original');
+    const memberMessage = await sendMessage(baseUrl, member, groupId, 'member original');
+    const thirdMessage = await sendMessage(baseUrl, third, groupId, 'third original');
+    const ownerProfile = database
+      .prepare('SELECT id FROM real_profiles WHERE account_id = ?')
+      .get(owner.account.id).id;
+    const reactions = (id) => `/realtime/groups/${groupId}/messages/${id}/reactions`;
+    const reactionRequest = (person, id, method = 'GET') =>
+      fetch(`${baseUrl}${reactions(id)}`, {
+        method,
+        headers: { ...person.headers, 'Content-Type': 'application/json' },
+        ...(method === 'GET' ? {} : { body: JSON.stringify({ active: true }) }),
+      });
+    const reply = (person, id, messageId) =>
+      post(baseUrl, `/realtime/groups/${groupId}/messages`, person, {
+        body: 'a direct reply',
+        replyToMessageId: id,
+        ...(messageId ? { messageId } : {}),
+      });
+    const beforeReply = await reply(owner, memberMessage, 'retry-before-block');
+    assert.equal(beforeReply.status, 201);
+    assert.equal((await reactionRequest(owner, memberMessage, 'POST')).status, 200);
+    const missing = await reactionRequest(member, 'missing');
+    assert.equal(missing.status, 404);
+    const notFound = await missing.json();
+    const counts = () => ({
+      messages: database
+        .prepare('SELECT COUNT(*) AS n FROM messages WHERE group_id = ?')
+        .get(groupId).n,
+      events: database
+        .prepare('SELECT COUNT(*) AS n FROM realtime_events WHERE group_id = ?')
+        .get(groupId).n,
+      reactions: database.prepare('SELECT COUNT(*) AS n FROM reactions').get().n,
+    });
+    assert.equal(
+      (await post(baseUrl, '/real/blocks', member, { profileId: ownerProfile })).status,
+      201,
+    );
+    const blockedCounts = counts();
+    for (const [person, target] of [
+      [member, ownerMessage],
+      [owner, memberMessage],
+    ]) {
+      for (const method of ['GET', 'POST', 'DELETE']) {
+        const response = await reactionRequest(person, target, method);
+        assert.equal(response.status, 404);
+        assert.deepEqual(await response.json(), notFound);
+      }
+      const response = await reply(person, target);
+      assert.equal(response.status, 404);
+      assert.deepEqual(await response.json(), notFound);
+    }
+    const retry = await reply(owner, memberMessage, 'retry-before-block');
+    assert.equal(retry.status, 404);
+    assert.deepEqual(await retry.json(), notFound);
+    assert.deepEqual(counts(), blockedCounts);
+    // A block limits direct interactions, not conversation with the whole group.
+    const shared = await sendMessage(baseUrl, owner, groupId, 'ordinary group chat');
+    assert((await chatBodies(baseUrl, third, groupId)).includes('ordinary group chat'));
+    assert.equal((await reactionRequest(third, shared, 'POST')).status, 200);
+    assert.equal((await reply(owner, thirdMessage)).status, 201);
+    assert.equal((await reactionRequest(member, thirdMessage, 'POST')).status, 200);
+    assert.equal(
+      (
+        await fetch(`${baseUrl}/real/blocks/${ownerProfile}`, {
+          method: 'DELETE',
+          headers: member.headers,
+        })
+      ).status,
+      200,
+    );
+    for (const [person, target] of [
+      [member, ownerMessage],
+      [owner, memberMessage],
+    ]) {
+      assert.equal((await reactionRequest(person, target)).status, 200);
+      assert.equal((await reactionRequest(person, target, 'POST')).status, 200);
+      assert.equal((await reactionRequest(person, target, 'DELETE')).status, 200);
+      assert.equal((await reply(person, target)).status, 201);
+    }
+    assert.equal((await reply(owner, memberMessage, 'retry-before-block')).status, 200);
+  });
+});
+
+test('reported messages deny direct reaction access without exposing hidden reply previews', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const owner = await provision(baseUrl, database, 'reported-interaction-owner');
+    const member = await provision(baseUrl, database, 'reported-interaction-member');
+    const groupId = await createGroup(baseUrl, owner, 'Report privacy');
+    await joinGroup(baseUrl, owner, member, groupId);
+    const root = await sendMessage(baseUrl, owner, groupId, 'reported original body');
+    const replied = await post(baseUrl, `/realtime/groups/${groupId}/messages`, owner, {
+      body: 'visible reply',
+      replyToMessageId: root,
+    });
+    assert.equal(replied.status, 201);
+    const replyId = (await replied.json()).message.id;
+    assert.equal(
+      (await post(baseUrl, `/real/groups/${groupId}/reports`, member, { messageId: root })).status,
+      201,
+    );
+    const reactionPath = (id) => `/realtime/groups/${groupId}/messages/${id}/reactions`;
+    const request = (person, id, method) =>
+      fetch(`${baseUrl}${reactionPath(id)}`, {
+        method,
+        headers: { ...person.headers, 'Content-Type': 'application/json' },
+        ...(method === 'GET' ? {} : { body: '{}' }),
+      });
+    const missing = await request(member, 'missing', 'GET');
+    const notFound = await missing.json();
+    for (const method of ['GET', 'POST', 'DELETE']) {
+      const denied = await request(member, root, method);
+      assert.equal(denied.status, 404);
+      assert.deepEqual(await denied.json(), notFound);
+    }
+    const deniedReply = await post(baseUrl, `/realtime/groups/${groupId}/messages`, member, {
+      body: 'reply to report',
+      replyToMessageId: root,
+    });
+    assert.equal(deniedReply.status, 404);
+    assert.deepEqual(await deniedReply.json(), notFound);
+    assert.equal((await request(owner, root, 'GET')).status, 200);
+    for (const method of ['GET', 'POST', 'DELETE']) {
+      const response = await request(member, replyId, method);
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.message.replyTo, null);
+      assert.equal(JSON.stringify(body).includes('reported original body'), false);
+    }
   });
 });
