@@ -71,6 +71,18 @@ describe('bounded video metadata', () => {
     });
     expectReleased(video);
   });
+  it('treats an empty WebKit audioTracks list at loadedmetadata as unknown audio', async () => {
+    const video = { ...metadataVideo(), audioTracks: { length: 0 } };
+    install(video);
+    const pending = readVideoMetadata('blob:webkit');
+    video.onloadedmetadata!();
+    await expect(pending).resolves.toEqual({
+      durationSeconds: 2,
+      height: 1280,
+      width: 720,
+      hasAudio: null,
+    });
+  });
   it.each(['error', 'abort', 'bad duration', 'Infinity timeout'])(
     'cleans up after %s',
     async (reason) => {
