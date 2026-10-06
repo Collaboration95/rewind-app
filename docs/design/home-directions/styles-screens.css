@@ -325,9 +325,11 @@
   padding: 12px 16px;
   border-radius: 18px;
 }
-.set-field span {
-  font-size: 12px;
-  color: var(--muted);
+.set-field > span {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  opacity: 0.78;
 }
 .set-field input {
   width: 100%;
@@ -1412,6 +1414,38 @@
 }
 .c6 .set-field.si-pass {
   margin-top: 10px;
+}
+/* Password: smaller masking dots, eye toggle on the right */
+.pw-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.set-field input[type='password'] {
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  height: 22px;
+}
+.set-field input[type='password']::placeholder {
+  font-size: 18px;
+  letter-spacing: 0;
+}
+.pw-eye {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -6px -6px -6px 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.pw-eye .ic {
+  width: 20px;
+  height: 20px;
 }
 .si-alert {
   margin: 28px 0 -30px;

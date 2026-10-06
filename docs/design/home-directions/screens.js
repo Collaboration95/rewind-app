@@ -162,6 +162,11 @@ const promptText = () => {
 // Switch back to the sample account (sign-in, Demo, clear data): the group returns to the sample too
 const sampleAccount = () => Object.assign(SET, { who: null, list: GROUPS0(), gi: 0 });
 
+// Password field with a show/hide eye; attrs go on the input
+const pwField = (label, attrs) =>
+  `<label class="glass set-field si-pass"><span>${label}</span><div class="pw-row"><input type="password" ${attrs} />` +
+  `<button type="button" class="pw-eye" data-pw-eye aria-label="Show password" aria-pressed="false">${ic('eye')}</button></div></label>`;
+
 /* ---------- Welcome and sign-in ----------
    step: welcome | form | wrong | offline | expired | demo
    Real accounts use an admin-created username and password (the prototype password is rewind); Try Demo is a separate path where you pick a demo member marked synthetic */
@@ -190,7 +195,7 @@ function signinHTML(step) {
       ? `<p class="si-alert" role="status">Your account is ready. Sign in to continue.</p>`
       : '') +
     `<label class="glass set-field"><span>Username</span><input data-si-user autocomplete="username" autocapitalize="none" spellcheck="false" value="${errText ? 'alex' : ''}" /></label>` +
-    `<label class="glass set-field si-pass"><span>Password</span><input data-si-pass type="password" autocomplete="current-password" value="${step === 'offline' ? 'notright' : ''}" /></label>` +
+    pwField('Password', `data-si-pass autocomplete="current-password" value="${step === 'offline' ? 'notright' : ''}"`) +
     `<p class="set-err" role="alert">${errText || ''}</p>` +
     `<button type="button" class="set-btn primary" data-si-submit data-busy="Signing in…">Sign in</button>` +
     (step === 'forgot'
@@ -236,8 +241,8 @@ function signupHTML(step) {
     upuser: () =>
       upHead('Create account', 'welcome') +
       `<label class="glass set-field"><span>Username</span><input data-up-user autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32" placeholder="3–32 letters, numbers, . _ -" value="${step === 'upuserbad' ? 'alex' : ''}" /></label>` +
-      `<label class="glass set-field si-pass"><span>Password</span><input data-up-pw type="password" autocomplete="new-password" placeholder="At least 12 characters" /></label>` +
-      `<label class="glass set-field si-pass"><span>Confirm password</span><input data-up-pw2 type="password" autocomplete="new-password" /></label>` +
+      pwField('Password', 'data-up-pw autocomplete="new-password" placeholder="At least 12 characters"') +
+      pwField('Confirm password', 'data-up-pw2 autocomplete="new-password"') +
       `<p class="set-err" role="alert">${step === 'upuserbad' ? 'That username is taken. Try another.' : ''}</p>` +
       `<button type="button" class="set-btn primary" data-up-make data-busy="Creating account…">Create account</button>` +
       `<p class="si-note si-terms">By creating an account you agree to the <button type="button" class="up-link" data-set-toast="terms">Terms</button> and <button type="button" class="up-link" data-set-toast="privacy">Privacy Policy</button>. Rewind doesn’t allow objectionable content or abusive behaviour.</p>` +
@@ -283,7 +288,7 @@ function signupHTML(step) {
       upHead('About you', 'up') +
       `<p class="set-lead">Your group sees your name.</p>` +
       `<label class="glass set-field"><span>Name</span><input data-up-name autocomplete="name" maxlength="40" placeholder="Your name" /></label>` +
-      `<label class="glass set-field si-pass"><span>Password</span><input data-up-pass type="password" autocomplete="new-password" placeholder="At least 8 characters" /></label>` +
+      pwField('Password', 'data-up-pass autocomplete="new-password" placeholder="At least 8 characters"') +
       `<p class="set-err" role="alert"></p>` +
       `<button type="button" class="set-btn primary" data-up-create data-busy="Creating account…">Create account</button>` +
       `<p class="si-note si-terms">By creating an account you agree to the <button type="button" class="up-link" data-set-toast="terms">Terms</button> and <button type="button" class="up-link" data-set-toast="privacy">Privacy Policy</button>. Rewind doesn’t allow objectionable content or abusive behaviour.</p>`,
@@ -467,7 +472,7 @@ function settingsHTML(d, step, o = {}) {
       `<section class="glass set-card"><p class="set-lead">This deletes your account for good:</p>` +
       `<ul class="set-bul"><li>your name, email or phone, and password</li><li>your chat messages</li><li>your moments, including in past films (within 30 days)</li></ul></section>` +
       `<p class="set-lead">Groups you own pass to the member who joined next. Saved copies on people’s phones stay theirs.</p>` +
-      `<label class="glass set-field si-pass"><span>Password</span><input type="password" autocomplete="current-password" /></label>` +
+      pwField('Password', 'autocomplete="current-password"') +
       `<button type="button" class="set-btn danger" data-set-go="delconf">Delete account</button>`,
     delconf: () => pages.delete(),
     notify: main,
@@ -1386,6 +1391,19 @@ document.addEventListener('click', (e) => {
     if (isSample()) SEEN.chat = true;
     return closeSub(scr);
   }
+});
+
+// Show or hide a password; the input keeps focus and caret
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-pw-eye]');
+  if (!b) return;
+  e.preventDefault();
+  const inp = b.parentElement.querySelector('input');
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  b.setAttribute('aria-pressed', show);
+  b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  b.innerHTML = ic(show ? 'eyeOff' : 'eye');
 });
 
 // The Try Demo panel can also be dragged up to open and down to close
