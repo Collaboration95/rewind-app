@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import type { RuntimeConfig } from './config';
 import type { RewindDatabase } from './db';
 
@@ -51,11 +51,10 @@ export function handleAdminRequest(
 function credentialsMatch(header: string | undefined, password: string): boolean {
   const encoded = /^Basic ([A-Za-z0-9+/=]+)$/.exec(header ?? '')?.[1];
   if (!encoded) return false;
-  const digest = (value: string) => createHash('sha256').update(value).digest();
-  return timingSafeEqual(
-    digest(Buffer.from(encoded, 'base64').toString('utf8')),
-    digest(`admin:${password}`),
-  );
+  // Same comparison as the origin secret check in http.ts.
+  const expected = Buffer.from(`admin:${password}`);
+  const received = Buffer.from(encoded, 'base64');
+  return expected.length === received.length && timingSafeEqual(expected, received);
 }
 
 function indexPage(database: RewindDatabase, tables: string[]): string {
