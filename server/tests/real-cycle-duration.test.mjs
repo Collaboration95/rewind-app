@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 const { createRealGroup, REAL_CYCLE_DURATION_MS } = await import('../dist/groups/real.js');
 
@@ -22,7 +22,7 @@ test('REWIND_REAL_CYCLE_MINUTES sets the real cycle length, defaulting to four w
 
 test('a new real group uses the configured first-cycle length', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-real-cycle-`);
-  const database = openDatabase(parseConfig({ REWIND_DATA_DIR: dataDir }));
+  const database = openFixtureDatabase(parseConfig({ REWIND_DATA_DIR: dataDir }));
   try {
     const owner = await createRealAccount(
       database,

@@ -31,13 +31,12 @@ LockState = locked | unlocked
 MemberProfile = {
   id: MemberId,
   displayName: non-empty string,
-  avatarLabel: non-empty accessible string,
-  isSynthetic: true
+  avatarLabel: non-empty accessible string
 }
 ```
 
-`isSynthetic` is explicit so a local fixture cannot be mistaken for a real
-identity. Sprint 0 seeds exactly five profiles.
+Profiles belong to real accounts; the synthetic Sprint 0 profiles were removed
+with the Demo on 6 October 2026.
 
 ## Group contract
 
@@ -70,9 +69,8 @@ Cycle = {
 }
 ```
 
-The Sprint 0 seed uses `status = collecting`, `lockState = locked`,
-`quota.maxCount = 5`, `quota.maxSeconds = 30`, and zero used contributions for
-the selected demo member. `contributionUsage` is scoped to the acting member
+A new cycle starts with `status = collecting`, `lockState = locked`, and zero
+used contributions for each member. `contributionUsage` is scoped to the acting member
 passed to the repository read. Countdown presentation is a view concern
 derived from the cycle instants; the UI must not own a second set of quota
 values.
@@ -92,14 +90,13 @@ CycleRepository.getCurrentCycle(
 ) -> Cycle | MembershipDenied | NotFound | RecoverableFailure
 ```
 
-The local HTTP adapter implements the same group contract asynchronously; the
-UI boundary awaits either the synchronous offline fixture or the async adapter.
+The HTTP adapter implements the same group contract asynchronously.
 
 `MembershipDenied` is a distinct negative result. `NotFound` and
 `RecoverableFailure` support honest empty and retry states in later UI work.
 No contract returns media URIs, thumbnails, or player data while a cycle is
 locked.
 
-The explicit local Demo access lifecycle is defined in
+The account session boundary is defined in
 [`session-contract.md`](./session-contract.md), and safe operational events
 are defined in [`audit-contract.md`](./audit-contract.md).

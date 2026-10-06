@@ -1,16 +1,3 @@
-import { LocalRuntimeClient, type RuntimeClient } from './local-runtime-client';
-
-export interface ConfiguredRuntime {
-  baseUrl: string;
-  client: RuntimeClient;
-}
-
-/** Demo access is available by default and can be hidden for a release build. */
-export function isDemoAccessEnabled(): boolean {
-  if (typeof process === 'undefined') return true;
-  return process.env.EXPO_PUBLIC_DEMO_ACCESS !== 'disabled';
-}
-
 function readExpoRuntimeUrl(): string | undefined {
   // Expo replaces EXPO_PUBLIC_* references at bundle time. The guard keeps
   // tests and non-Expo tooling safe when process.env is unavailable.
@@ -48,9 +35,4 @@ export function getConfiguredInviteWebOrigin(): string | null {
 export function getLocalRuntimeBaseUrl(): string | null {
   const value = readExpoRuntimeUrl()?.trim();
   return value ? value.replace(/\/$/, '') : null;
-}
-
-export function createConfiguredRuntime(): ConfiguredRuntime | null {
-  const baseUrl = getLocalRuntimeBaseUrl();
-  return baseUrl ? { baseUrl, client: new LocalRuntimeClient(baseUrl) } : null;
 }

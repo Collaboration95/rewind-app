@@ -122,10 +122,11 @@ three things only:
 
 ## Product decisions (4 October 2026)
 
-- The real-account app is the product. The synthetic Demo is frozen: keep it
-  working for tests and local runs, but add no features to it and do not keep
-  it in parity. Git tag `demo-frozen-20261004` marks the last state where both
-  were maintained, in case the Demo needs restoring or rebuilding.
+- The real-account app is the product. The synthetic Demo was removed on
+  6 October 2026. Git tag `demo-frozen-20261004` still marks the last state
+  where the Demo existed, in case it needs restoring. The hosted dev host and
+  its Terraform, scripts and variables keep the historical `demo` name; do not
+  rename them.
 - Photo and video capture both stay.
 - Reminders use web push only (browser and installed iPhone Home Screen app).
   Expo/native push is paused; leave its code disabled, do not extend it.

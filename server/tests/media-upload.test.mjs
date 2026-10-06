@@ -5,11 +5,12 @@ import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 
 const execFileAsync = promisify(execFile);
 
 const { parseConfig } = await import('../dist/config.js');
-const { fixtureSummary, openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createClipUpload, recordClipMediaMetadata } = await import('../dist/media/index.js');
 
@@ -37,10 +38,25 @@ function registerMetadata(database, input = validInput) {
   });
 }
 
+/** Row counts of the group, cycle, contribution and media tables. */
+function fixtureSummary(database) {
+  const tables = ['profiles', 'groups', 'memberships', 'cycles', 'contributions', 'media_jobs'];
+  return Object.fromEntries(
+    tables.map((table) => [
+      table,
+      Number(database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count),
+    ]),
+  );
+}
+
 async function withDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-media-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   try {
     return await run({ config, database });
   } finally {
@@ -264,18 +280,13 @@ test('HTTP clip upload requires a session and cancellation releases quota for re
       });
       assert.equal(denied.status, 401);
 
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
-      });
-      const { session } = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+      const session = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
       const staged = await fetch(
         `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=clip-retry-1`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'video/mp4' },
+          headers: { ...session.headers, 'Content-Type': 'video/mp4' },
           body: await readFile(sourceUri),
         },
       );
@@ -284,14 +295,14 @@ test('HTTP clip upload requires a session and cancellation releases quota for re
       const httpInput = { ...validInput, sourceUri: source.uri, byteLength: source.byteLength };
       const created = await fetch(`${baseUrl}/contributions/upload?${query}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...session.headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(httpInput),
       });
       assert.equal(created.status, 201);
       const first = await created.json();
       const retried = await fetch(`${baseUrl}/contributions/upload?${query}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...session.headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(httpInput),
       });
       assert.equal(retried.status, 200);
@@ -299,7 +310,7 @@ test('HTTP clip upload requires a session and cancellation releases quota for re
 
       const cancelled = await fetch(
         `${baseUrl}/contributions/upload/${first.upload.job.id}?${query}`,
-        { method: 'DELETE' },
+        { method: 'DELETE', headers: session.headers },
       );
       assert.equal(cancelled.status, 200);
       assert.equal(
@@ -331,16 +342,11 @@ test('HTTP delete-and-replace is session-bound and restores the exact weekly all
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
-      });
-      const { session } = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+      const session = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
       const deleted = await fetch(
         `${baseUrl}/contributions/${encodeURIComponent(created.upload.contribution.id)}?${query}`,
-        { method: 'DELETE' },
+        { method: 'DELETE', headers: session.headers },
       );
       assert.equal(deleted.status, 200);
       assert.deepEqual((await deleted.json()).restored, { count: 1, seconds: 8 });

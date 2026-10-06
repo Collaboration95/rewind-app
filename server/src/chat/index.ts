@@ -1,8 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { isMember, type RewindDatabase } from '../db';
-import { getDemoSession } from '../session';
-import { classifyDemoSession } from '../session/contract';
 
 export const CHAT_MESSAGE_MAX_LENGTH = 2_000;
 export const SUPPORTED_CHAT_REACTION = '✨' as const;
@@ -51,8 +49,6 @@ export interface ChatHistoryPage {
 export interface CreateChatMessageInput {
   groupId: string;
   memberId: string;
-  /** The session that established the HTTP authorization context. */
-  sessionId?: string;
   body: string;
   /** A fixed timestamp for tests, or a clock evaluated inside the transaction. */
   now?: Date | (() => Date);
@@ -77,7 +73,6 @@ export type CreateChatMessageResult =
 export interface ToggleChatReactionInput {
   groupId: string;
   memberId: string;
-  sessionId?: string;
   messageId: string;
   emoji: string;
   active?: boolean;
@@ -304,7 +299,6 @@ export function createChatMessage(
     // insert. Reading the body happens before this function is called, so a
     // session can have been invalidated while a client was still uploading it.
     // BEGIN IMMEDIATE makes this check and the inserts one serialized write.
-    const currentSession = input.sessionId ? getDemoSession(database, input.sessionId) : null;
     const transactionNow =
       typeof input.now === 'function' ? input.now() : (input.now ?? new Date());
     if (!Number.isFinite(transactionNow.getTime())) {
@@ -312,18 +306,7 @@ export function createChatMessage(
       return { ok: false, reason: 'invalid_timestamp' };
     }
     const occurredAt = transactionNow.toISOString();
-    const sessionIsCurrent =
-      !input.sessionId ||
-      Boolean(
-        currentSession &&
-        currentSession.actor.memberId === input.memberId &&
-        classifyDemoSession(
-          currentSession.expiresAt,
-          currentSession.invalidatedAt,
-          transactionNow,
-        ) === 'valid',
-      );
-    if (!sessionIsCurrent || !isMember(database, input.groupId, input.memberId)) {
+    if (!isMember(database, input.groupId, input.memberId)) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'membership_denied' };
     }
@@ -444,19 +427,7 @@ export function toggleChatReaction(
       database.exec('ROLLBACK');
       return { ok: false, reason: 'invalid_timestamp' };
     }
-    const currentSession = input.sessionId ? getDemoSession(database, input.sessionId) : null;
-    const sessionIsCurrent =
-      !input.sessionId ||
-      Boolean(
-        currentSession &&
-        currentSession.actor.memberId === input.memberId &&
-        classifyDemoSession(
-          currentSession.expiresAt,
-          currentSession.invalidatedAt,
-          transactionNow,
-        ) === 'valid',
-      );
-    if (!sessionIsCurrent || !isMember(database, input.groupId, input.memberId)) {
+    if (!isMember(database, input.groupId, input.memberId)) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'membership_denied' };
     }

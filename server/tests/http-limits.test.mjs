@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { generateTestClip, REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
-const { generateSyntheticDemoClip } = await import('../dist/ffmpeg.js');
 
 const serialTest = (name, fn) => test(name, { concurrency: false }, fn);
 
@@ -55,8 +55,9 @@ async function withRuntime(run, overrides = {}) {
     REWIND_HTTP_UPLOAD_TIMEOUT_MS: String(overrides.uploadTimeoutMs ?? 2_000),
     REWIND_HTTP_MAX_CONCURRENT_INTAKES: String(overrides.maxConcurrentIntakes ?? 2),
     REWIND_HTTP_MAX_CONCURRENT_PROCESSING: String(overrides.maxConcurrentProcessing ?? 1),
+    ...REAL_AUTH_ENV,
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   const server = createRuntimeServer(config, database, {
     now: () => new Date('2026-09-10T12:00:00.000Z'),
   });
@@ -73,14 +74,9 @@ async function withRuntime(run, overrides = {}) {
   }
 }
 
-async function createSession(baseUrl) {
-  const response = await fetch(`${baseUrl}/sessions/demo`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memberId: 'demo-1' }),
-  });
-  assert.equal(response.status, 201);
-  return (await response.json()).session;
+/** A real account bound to fixture member demo-1; `headers` carries its bearer. */
+function createSession(database) {
+  return signInAs(database, 'demo-1', { now: new Date('2026-09-10T12:00:00.000Z') });
 }
 
 function readRawResponse(request) {
@@ -133,9 +129,9 @@ serialTest('HTTP policy configuration is bounded and has documented defaults', (
 serialTest('slow JSON bodies return a stable 408 contract', async () => {
   await withRuntime(
     async ({ baseUrl }) => {
-      const controlled = controlledBody(Buffer.from('{"memberId":"demo-1"'), Buffer.from('}'));
+      const controlled = controlledBody(Buffer.from('{"username":"demo-1"'), Buffer.from('}'));
       try {
-        const responsePromise = fetch(`${baseUrl}/sessions/demo`, {
+        const responsePromise = fetch(`${baseUrl}/auth/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: controlled.body,
@@ -159,14 +155,14 @@ serialTest('slow JSON bodies return a stable 408 contract', async () => {
 serialTest('an upload that exceeds its total deadline returns a stable 408 contract', async () => {
   await withRuntime(
     async ({ baseUrl, database, dataDir }) => {
-      const session = await createSession(baseUrl);
+      const session = await createSession(database);
       const controlled = controlledBody(Buffer.from('partial'), Buffer.from('tail'));
       try {
         const responsePromise = fetch(
-          `${baseUrl}/contributions/upload/source?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}&idempotencyKey=total-deadline`,
+          `${baseUrl}/contributions/upload/source?groupId=demo-group&idempotencyKey=total-deadline`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'video/mp4' },
+            headers: { ...session.headers, 'Content-Type': 'video/mp4' },
             body: controlled.body,
             duplex: 'half',
           },
@@ -201,11 +197,11 @@ serialTest(
   'staging exceptions remove the final source, release the claim, and allow retry',
   async () => {
     await withRuntime(async ({ baseUrl, config, database, dataDir }) => {
-      const session = await createSession(baseUrl);
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}&idempotencyKey=exception-cleanup-key`;
+      const session = await createSession(database);
+      const query = `groupId=demo-group&idempotencyKey=exception-cleanup-key`;
       const failed = await fetch(`${baseUrl}/contributions/upload/source?${query}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'video/mp4' },
+        headers: { ...session.headers, 'Content-Type': 'video/mp4' },
         body: Buffer.from('not an mp4'),
       });
       assert.equal(failed.status, 400);
@@ -226,10 +222,10 @@ serialTest(
       );
 
       const retrySourcePath = join(dataDir, 'exception-retry.mp4');
-      await generateSyntheticDemoClip(config.ffmpegBin, retrySourcePath);
+      await generateTestClip(config.ffmpegBin, retrySourcePath);
       const retry = await fetch(`${baseUrl}/contributions/upload/source?${query}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'video/mp4' },
+        headers: { ...session.headers, 'Content-Type': 'video/mp4' },
         body: await readFile(retrySourcePath),
       });
       assert.equal(retry.status, 201);
@@ -245,10 +241,10 @@ serialTest(
 
 serialTest('JSON bodies above the existing 64 KiB cap return a stable 413 contract', async () => {
   await withRuntime(async ({ baseUrl }) => {
-    const response = await fetch(`${baseUrl}/sessions/demo`, {
+    const response = await fetch(`${baseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memberId: 'demo-1', filler: 'x'.repeat(70 * 1024) }),
+      body: JSON.stringify({ username: 'demo-1', filler: 'x'.repeat(70 * 1024) }),
     });
     assert.equal(response.status, 413);
     assert.deepEqual(await response.json(), {
@@ -259,13 +255,14 @@ serialTest('JSON bodies above the existing 64 KiB cap return a stable 413 contra
 });
 
 serialTest('media bodies above the existing 50 MiB cap return a stable 413 contract', async () => {
-  await withRuntime(async ({ baseUrl }) => {
-    const session = await createSession(baseUrl);
+  await withRuntime(async ({ baseUrl, database }) => {
+    const session = await createSession(database);
     const request = httpRequest(
-      `${baseUrl}/contributions/upload/source?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}&idempotencyKey=oversize-media`,
+      `${baseUrl}/contributions/upload/source?groupId=demo-group&idempotencyKey=oversize-media`,
       {
         method: 'POST',
         headers: {
+          ...session.headers,
           'Content-Type': 'video/mp4',
           'Content-Length': String(50 * 1024 * 1024 + 1),
         },
@@ -285,8 +282,8 @@ serialTest('media bodies above the existing 50 MiB cap return a stable 413 contr
 serialTest('a second media intake receives a stable 429 while the first is active', async () => {
   await withRuntime(
     async ({ baseUrl, database }) => {
-      const session = await createSession(baseUrl);
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+      const session = await createSession(database);
+      const query = `groupId=demo-group`;
       let releaseFirst;
       let signalFirstChunk;
       const firstChunk = new Promise((resolve) => {
@@ -299,7 +296,7 @@ serialTest('a second media intake receives a stable 429 while the first is activ
         `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=limit-first`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'video/mp4' },
+          headers: { ...session.headers, 'Content-Type': 'video/mp4' },
           body: (async function* () {
             yield Buffer.from('partial');
             signalFirstChunk();
@@ -318,7 +315,7 @@ serialTest('a second media intake receives a stable 429 while the first is activ
         `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=limit-second`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'video/mp4' },
+          headers: { ...session.headers, 'Content-Type': 'video/mp4' },
           body: Buffer.from('second'),
         },
       );
@@ -337,14 +334,14 @@ serialTest('a second media intake receives a stable 429 while the first is activ
 
 serialTest('aborted media intake returns to a retryable staged state', async () => {
   await withRuntime(async ({ baseUrl, config, database, dataDir }) => {
-    const session = await createSession(baseUrl);
-    const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}&idempotencyKey=abort-key`;
+    const session = await createSession(database);
+    const query = `groupId=demo-group&idempotencyKey=abort-key`;
     const retrySourcePath = join(dataDir, 'abort-retry.mp4');
-    await generateSyntheticDemoClip(config.ffmpegBin, retrySourcePath);
+    await generateTestClip(config.ffmpegBin, retrySourcePath);
     const retryBody = await readFile(retrySourcePath);
     const request = httpRequest(`${baseUrl}/contributions/upload/source?${query}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'video/mp4', 'Content-Length': '1000' },
+      headers: { ...session.headers, 'Content-Type': 'video/mp4', 'Content-Length': '1000' },
     });
     const resultPromise = readRawResponse(request);
     request.write(Buffer.from('partial'));
@@ -363,7 +360,7 @@ serialTest('aborted media intake returns to a retryable staged state', async () 
 
     const retry = await fetch(`${baseUrl}/contributions/upload/source?${query}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'video/mp4' },
+      headers: { ...session.headers, 'Content-Type': 'video/mp4' },
       body: retryBody,
     });
     assert.equal(retry.status, 201);
@@ -380,16 +377,16 @@ serialTest(
   'processing concurrency returns stable 429 and releases capacity for retry',
   async () => {
     await withRuntime(
-      async ({ baseUrl, config, dataDir }) => {
-        const session = await createSession(baseUrl);
-        const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+      async ({ baseUrl, config, database, dataDir }) => {
+        const session = await createSession(database);
+        const query = `groupId=demo-group`;
         const sourcePath = join(dataDir, 'processing-limit-source.mp4');
-        const metadata = await generateSyntheticDemoClip(config.ffmpegBin, sourcePath);
+        const metadata = await generateTestClip(config.ffmpegBin, sourcePath);
         const stagedResponse = await fetch(
           `${baseUrl}/contributions/upload/source?${query}&idempotencyKey=processing-limit-source`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'video/mp4' },
+            headers: { ...session.headers, 'Content-Type': 'video/mp4' },
             body: await readFile(sourcePath),
           },
         );
@@ -397,7 +394,7 @@ serialTest(
         const { source } = await stagedResponse.json();
         const uploadResponse = await fetch(`${baseUrl}/contributions/upload?${query}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { ...session.headers, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             idempotencyKey: 'processing-limit-source',
             sourceUri: source.uri,
@@ -450,14 +447,14 @@ void main();
         await chmod(blockedFfmpeg, 0o755);
         config.ffmpegBin = blockedFfmpeg;
         const processUrl = `${baseUrl}/contributions/jobs/${encodeURIComponent(upload.job.id)}/process?${query}`;
-        const firstPromise = fetch(processUrl, { method: 'POST' });
+        const firstPromise = fetch(processUrl, { method: 'POST', headers: session.headers });
         await waitForCondition(
           () => existsSync(startedPath),
           'processing request never reached the controlled FFmpeg boundary',
           5_000,
         );
 
-        const saturated = await fetch(processUrl, { method: 'POST' });
+        const saturated = await fetch(processUrl, { method: 'POST', headers: session.headers });
         assert.equal(saturated.status, 429);
         assert.deepEqual(await saturated.json(), {
           error: 'concurrency_limit',
@@ -470,7 +467,7 @@ void main();
         assert.deepEqual(await first.json(), {
           job: { id: upload.job.id, status: 'ready' },
         });
-        const retry = await fetch(processUrl, { method: 'POST' });
+        const retry = await fetch(processUrl, { method: 'POST', headers: session.headers });
         assert.equal(retry.status, 200);
         assert.deepEqual(await retry.json(), {
           job: { id: upload.job.id, status: 'ready' },
@@ -482,16 +479,16 @@ void main();
 );
 
 serialTest('a normal bounded media upload remains successful', async () => {
-  await withRuntime(async ({ baseUrl, config, dataDir }) => {
-    const session = await createSession(baseUrl);
+  await withRuntime(async ({ baseUrl, config, database, dataDir }) => {
+    const session = await createSession(database);
     await mkdir(`${dataDir}/media/staging`, { recursive: true });
     const sourcePath = `${dataDir}/media/staging/bounded.mp4`;
-    await generateSyntheticDemoClip(config.ffmpegBin, sourcePath);
+    await generateTestClip(config.ffmpegBin, sourcePath);
     const response = await fetch(
-      `${baseUrl}/contributions/upload/source?groupId=demo-group&sessionId=${encodeURIComponent(session.id)}&idempotencyKey=bounded-upload`,
+      `${baseUrl}/contributions/upload/source?groupId=demo-group&idempotencyKey=bounded-upload`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'video/mp4' },
+        headers: { ...session.headers, 'Content-Type': 'video/mp4' },
         body: await readFile(sourcePath),
       },
     );

@@ -6,11 +6,11 @@ import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { clearDemoMedia } from './helpers/demo-media.mjs';
+import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase, openDatabaseAt } = await import('../dist/db.js');
+const { openDatabaseAt } = await import('../dist/db.js');
 const { createClipUpload } = await import('../dist/media/index.js');
 const { createCompilationJob, PROCESSING_CLAIM_LEASE_MS, processClipJob, processCompilationJob } =
   await import('../dist/jobs/index.js');
@@ -33,7 +33,7 @@ async function withDatabase(run) {
     REWIND_HOST: '127.0.0.1',
     REWIND_FFMPEG_BIN: 'ffmpeg',
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     return await run({ config, database, dataDir });
   } finally {
@@ -401,7 +401,7 @@ test('worker claim enforces the automatic clip cap after candidate selection', a
 
 test('an exhausted film job is terminal and never claimed again', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
-    clearDemoMedia(database);
+    clearFixtureMedia(database);
     database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();
     const created = createCompilationJob(database, {
       groupId: 'demo-group',

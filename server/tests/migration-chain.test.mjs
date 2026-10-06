@@ -2,14 +2,15 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { migrateDatabase, openDatabase, schemaReadiness } = await import('../dist/db.js');
+const { migrateDatabase, schemaReadiness } = await import('../dist/db.js');
 
 test('real invite and media migrations 020–024 apply once and participate in schema readiness', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-migration-chain-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     const expectedReceipts = [
       [20, 'real-group-invites-v1'],

@@ -3,13 +3,16 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase, listProfiles } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 const { createCycleWindow } = await import('../dist/cycles/engine.js');
 const { validateRealGroupInput } = await import('../dist/groups/real.js');
+
+const listProfiles = (database) =>
+  database.prepare('SELECT * FROM profiles WHERE is_synthetic = 1 ORDER BY id').all();
 
 async function withRuntime(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-real-groups-`);
@@ -19,7 +22,7 @@ async function withRuntime(run) {
     REWIND_PORT: '0',
     REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   });
-  let database = openDatabase(config);
+  let database = openFixtureDatabase(config);
   let server;
   const startServer = async () => {
     server = createRuntimeServer(config, database, {
@@ -33,7 +36,7 @@ async function withRuntime(run) {
   const restart = async () => {
     await new Promise((resolve) => server.close(resolve));
     database.close();
-    database = openDatabase(config);
+    database = openFixtureDatabase(config);
     baseUrl = await startServer();
     return baseUrl;
   };
@@ -69,13 +72,13 @@ async function provision(baseUrl, database, username = 'real-owner') {
   return { account: created.account, authorization: `Bearer ${auth.token}` };
 }
 
-test('real groups require a real session and are isolated from Demo profiles and memberships', async () => {
+test('real groups require a real session and are isolated from fixture-group profiles and memberships', async () => {
   await withRuntime(async ({ baseUrl, database, restart }) => {
     const profilesBefore = listProfiles(database);
-    const demoMembershipCount = Number(
+    const fixtureMembershipCount = Number(
       database.prepare('SELECT COUNT(*) AS n FROM memberships').get().n,
     );
-    const demoCycle = database
+    const fixtureCycle = database
       .prepare('SELECT id, starts_at, ends_at FROM cycles ORDER BY id LIMIT 1')
       .get();
     const unauthenticated = await fetch(`${baseUrl}/real/groups/current`);
@@ -122,11 +125,13 @@ test('real groups require a real session and are isolated from Demo profiles and
     assert.deepEqual(listProfiles(database), profilesBefore);
     assert.equal(
       Number(database.prepare('SELECT COUNT(*) AS n FROM memberships').get().n),
-      demoMembershipCount,
+      fixtureMembershipCount,
     );
     assert.deepEqual(
-      database.prepare('SELECT id, starts_at, ends_at FROM cycles WHERE id = ?').get(demoCycle.id),
-      demoCycle,
+      database
+        .prepare('SELECT id, starts_at, ends_at FROM cycles WHERE id = ?')
+        .get(fixtureCycle.id),
+      fixtureCycle,
     );
 
     const restartedBaseUrl = await restart();

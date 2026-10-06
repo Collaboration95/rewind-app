@@ -336,7 +336,7 @@ if [[ "$SEED" == 1 ]]; then
     lifecycle_guard_reject 'seed-mode host initialization or health verification failed.'
     exit 1
   fi
-  printf 'Demo seeded. No historical recovery point was restored; create and verify a full S3 backup before hibernating it.\n'
+  printf 'Host initialized with an empty database. No historical recovery point was restored; create and verify a full S3 backup before hibernating it.\n'
 else
   if ! scp "${SSH_OPTS[@]}" \
     "$recovery_dir/$manifest_name" "$recovery_dir/$database_name" "$recovery_dir/$media_name" \

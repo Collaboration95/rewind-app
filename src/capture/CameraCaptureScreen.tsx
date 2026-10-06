@@ -705,7 +705,7 @@ export function CameraCaptureScreen({
           body={
             hasFallback
               ? platform.kind === 'demo'
-                ? 'This simulator cannot provide a physical camera. The labelled synthetic fixture is available for the local Demo.'
+                ? 'This simulator cannot provide a physical camera. The labelled synthetic fixture is available instead.'
                 : 'Live camera capture is not supported here. Choose an image file instead; it remains labelled as a file contribution.'
               : 'This device cannot provide the camera needed for a still moment. Use a physical device with camera access.'
           }

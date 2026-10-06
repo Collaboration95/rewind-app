@@ -9,7 +9,6 @@ import {
   createRealAccountVideoRuntimeClient,
   type AuthenticatedRequest,
 } from './real-account-video-runtime';
-import { useOptionalDemoSession } from '../session/DemoSessionProvider';
 import {
   DEFAULT_CAPTURE_MODE,
   MAX_CLIP_DURATION_SECONDS,
@@ -201,7 +200,6 @@ export function VideoCaptureScreen({
     [platform],
   );
   const fileFallbackLabel = platform.fileFallbackIsCamera ? 'Record video' : 'Choose a video file';
-  const demoSession = useOptionalDemoSession();
   const realGroupId = realAccount?.groupId;
   const authenticatedRequest = realAccount?.authenticatedRequest;
   const transferMode = realAccount?.transferMode ?? 'server';
@@ -217,8 +215,8 @@ export function VideoCaptureScreen({
     () => runtimeClient ?? ownedRealRuntimeClient,
     [ownedRealRuntimeClient, runtimeClient],
   );
-  const uploadSessionId = demoSession?.session?.id ?? (realGroupId ? 'real-account-session' : null);
-  const uploadGroupId = demoSession?.session?.groupId ?? realGroupId ?? null;
+  const uploadSessionId = realGroupId ? 'real-account-session' : null;
+  const uploadGroupId = realGroupId ?? null;
   const reviewStore = useMemo(() => new InMemoryPendingClipMetadataStore(), []);
   const [access, setAccess] = useState<AccessStatus>('checking');
   const [error, setError] = useState<string | null>(null);
@@ -247,7 +245,6 @@ export function VideoCaptureScreen({
     status: 'idle',
     percent: 0,
   });
-  const [creatingSyntheticClip, setCreatingSyntheticClip] = useState(false);
   const [retryInFlight, setRetryInFlight] = useState(false);
   // V8 shows only for a seal made on this screen, never for a restored status.
   const [sealedHere, setSealedHere] = useState(false);
@@ -291,8 +288,7 @@ export function VideoCaptureScreen({
   }, [activeRuntimeClient, uploadGroupId, uploadSessionId]);
 
   // Keep the latest sessions available to the one lifecycle cleanup effect
-  // below. The upload session can be created after the first render while the
-  // Demo session is being restored, so putting it directly in a mount-only
+  // below. The upload session can be created after the first render, so putting it directly in a mount-only
   // cleanup closure would miss an in-flight upload.
   const recorderRef = useRef(recorder);
   const uploadSessionRef = useRef(uploadSession);
@@ -1240,41 +1236,6 @@ export function VideoCaptureScreen({
     }
   };
 
-  const createSyntheticDemoClip = async () => {
-    if (
-      !isCaptureActive() ||
-      platform.kind !== 'demo' ||
-      !runtimeClient?.createSyntheticDemoClip ||
-      !demoSession?.session ||
-      creatingSyntheticClip
-    )
-      return;
-    setCreatingSyntheticClip(true);
-    setError(null);
-    const operation = beginContributionWork(false);
-    try {
-      const uploaded = await runtimeClient.createSyntheticDemoClip(
-        demoSession.session.id,
-        demoSession.session.groupId,
-      );
-      if (!isContributionWorkActive(operation)) return;
-      await processUploaded(uploaded, operation);
-    } catch (syntheticError) {
-      if (!isContributionWorkActive(operation)) return;
-      const failure = classifyContributionFailure(syntheticError);
-      setContributionStatus({
-        createdAt: new Date().toISOString(),
-        ...failure,
-        retryable: false,
-        state: 'failed',
-      });
-      setError(failure.message);
-    } finally {
-      finishContributionWork(operation);
-      if (isCaptureActive()) setCreatingSyntheticClip(false);
-    }
-  };
-
   const cancelUpload = useCallback(async () => {
     if (!isCaptureActive() || !uploadSession || uploadProgress.status !== 'uploading') {
       return;
@@ -1427,9 +1388,6 @@ export function VideoCaptureScreen({
   const showFailure = inReview && contributionFailed && !failureDismissed && !uploading;
   const showSealed = sealedHere && contributionStatus?.state === 'sealed';
   const hasFileFallback = Boolean(platform.supportsFileFallback && platform.pickVideoFile);
-  const canCreateDemoClip = Boolean(
-    platform.kind === 'demo' && runtimeClient?.createSyntheticDemoClip && demoSession?.session,
-  );
   const viewfinder = access === 'ready' && !clip;
   const browserPreviewMissing = Platform.OS === 'web' && !browserPreviewStream;
   const exitTo = onClose ?? onBack;
@@ -1597,13 +1555,11 @@ export function VideoCaptureScreen({
         <CamCard
           body={[
             platform.getVideoCaptureUnavailableReason?.(),
-            canCreateDemoClip
-              ? 'Use a fresh, non-sensitive synthetic clip to exercise the local Demo. Use a physical device to record a real contribution.'
-              : hasFileFallback
-                ? platform.fileFallbackIsCamera
-                  ? 'Opens your phone camera. Record up to 15 seconds in portrait or landscape; the video comes back here so you can review it before you submit.'
-                  : 'Live recording is not supported here. Choose an MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
-                : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.',
+            hasFileFallback
+              ? platform.fileFallbackIsCamera
+                ? 'Opens your phone camera. Record up to 15 seconds in portrait or landscape; the video comes back here so you can review it before you submit.'
+                : 'Live recording is not supported here. Choose an MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
+              : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.',
           ]
             .filter((message): message is string => Boolean(message))
             .join(' ')}
@@ -1612,19 +1568,7 @@ export function VideoCaptureScreen({
             platform.fileFallbackIsCamera ? 'Record a video' : 'Recording is not supported here'
           }
         >
-          {canCreateDemoClip ? (
-            <CamButton
-              busy={creatingSyntheticClip}
-              height={48}
-              label={
-                creatingSyntheticClip
-                  ? 'Preparing synthetic Demo clip…'
-                  : 'Create synthetic Demo clip'
-              }
-              onPress={() => void createSyntheticDemoClip()}
-              soft
-            />
-          ) : hasFileFallback ? (
+          {hasFileFallback ? (
             <CamButton
               height={48}
               label={fileFallbackLabel}

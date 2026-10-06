@@ -7,7 +7,6 @@ import { releaseContributionAllowance, reserveContributionAllowance } from '../c
 import { linkContributionReplacement } from '../contributions/ledger';
 import { getCurrentCycle, isMember } from '../db';
 import type { RewindDatabase } from '../db';
-import { isActiveDemoSession } from '../session';
 import {
   DEFAULT_CAPTURE_MODE,
   isCaptureMode,
@@ -82,7 +81,6 @@ export type ClipUploadResult =
         | 'invalid_mode'
         | 'invalid_key'
         | 'not_found'
-        | 'session_inactive'
         | 'quota_exceeded'
         | 'already_member'
         | 'invalid_replacement_target'
@@ -143,7 +141,6 @@ export interface ClipProcessingMetadata {
 export interface ClipUploadOptions {
   stagingDir?: string;
   requireVerifiedMetadata?: boolean;
-  sessionId?: string;
 }
 
 export interface CancelClipUploadOptions {
@@ -993,11 +990,7 @@ export function createClipUpload(
   const existing = existingUpload(database, input.idempotencyKey, groupId, memberId);
   // Staged retries are revalidated inside the writer transaction below. A
   // preflight existing-row hit must not bypass recovery/generation checks.
-  if (
-    existing &&
-    !options.sessionId &&
-    (!isStagedSource || !['pending', 'failed'].includes(existing.job.status))
-  ) {
+  if (existing && (!isStagedSource || !['pending', 'failed'].includes(existing.job.status))) {
     return { ok: true, upload: existing };
   }
   let stagedRecord: StagedSourceRecord | null = null;
@@ -1068,10 +1061,6 @@ export function createClipUpload(
   try {
     beginImmediateWithRetry(database);
     transactionStarted = true;
-    if (options.sessionId && !isActiveDemoSession(database, options.sessionId, memberId, now)) {
-      database.exec('ROLLBACK');
-      return { ok: false, reason: 'session_inactive' };
-    }
     const retry = existingUpload(database, input.idempotencyKey, groupId, memberId);
     // Re-read every capability field while the writer lock is held. A source
     // may have been reclaimed between preflight and this transaction; using

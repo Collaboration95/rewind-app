@@ -3,9 +3,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase, migrateDatabase, schemaReadiness } = await import('../dist/db.js');
+const { migrateDatabase, schemaReadiness } = await import('../dist/db.js');
 const { createRealAccount, revokeRealSession } = await import('../dist/auth/index.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createRealGroup } = await import('../dist/groups/real.js');
@@ -22,7 +23,7 @@ async function fixture(run) {
     REWIND_PORT: '0',
     REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   });
-  let database = openDatabase(config);
+  let database = openFixtureDatabase(config);
   let server = createRuntimeServer(config, database, { now: () => NOW });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -72,7 +73,7 @@ async function fixture(run) {
   const restart = async () => {
     await new Promise((done) => server.close(done));
     database.close();
-    database = openDatabase(config);
+    database = openFixtureDatabase(config);
     server = createRuntimeServer(config, database, { now: () => NOW });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');

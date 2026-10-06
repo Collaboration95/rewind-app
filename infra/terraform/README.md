@@ -4,6 +4,11 @@ Terraform is the source of truth for AWS infrastructure. Application deployment,
 database migrations, and backup/restore scripts remain in `deploy/` because they
 operate inside the already-provisioned host rather than create cloud resources.
 
+The `demo` root and every `rewind-demo*` resource are the hosted dev host for
+the real-account app. "Demo" in their names and in this README is historical;
+the synthetic Demo product was removed on 6 October 2026. Do not rename these
+resources or the state key: that would replace the live host.
+
 ## Safety rules
 
 - This Mac stores the bootstrap credential as AWS's `default` profile;

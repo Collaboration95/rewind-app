@@ -5,14 +5,22 @@ import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase, fixtureSummary } = await import('../dist/db.js');
 const { createRuntimeServer, authClientSource, authTransportIsSecure } =
   await import('../dist/http.js');
-const { createDemoSession } = await import('../dist/session/index.js');
 const { createRealAccount, resetRealAccountPassword, revokeRealSession, validateRealSession } =
   await import('../dist/auth/index.js');
+
+function syntheticSummary(database) {
+  return Object.fromEntries(
+    ['profiles', 'groups', 'memberships', 'cycles', 'contributions', 'messages'].map((table) => [
+      table,
+      database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count,
+    ]),
+  );
+}
 
 async function withRuntime(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-real-auth-`);
@@ -22,7 +30,7 @@ async function withRuntime(run) {
     REWIND_PORT: '0',
     REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   const serverOptions = { now: () => new Date('2026-09-28T00:00:00.000Z') };
   const server = createRuntimeServer(config, database, serverOptions);
   server.listen(0, '127.0.0.1');
@@ -145,11 +153,9 @@ async function raceLoginWithReset(databasePath, account, ordering, reset) {
   }
 }
 
-test('additive auth migration and account reset preserve synthetic Demo data and sessions', async () => {
+test('additive auth migration and account reset preserve synthetic fixture-group data', async () => {
   await withRuntime(async ({ database, dataDir }) => {
-    const seededDemo = fixtureSummary(database);
-    const demoBefore = createDemoSession(database, { memberId: 'demo-1' });
-    assert.equal(demoBefore.ok, true);
+    const seeded = syntheticSummary(database);
     const first = await createRealAccount(
       database,
       'Alice_1',
@@ -167,7 +173,6 @@ test('additive auth migration and account reset preserve synthetic Demo data and
         .get(second.account.id).password_salt,
     );
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM profiles').get().count, 5);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 2);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 2);
     assert.equal(
       JSON.stringify(
@@ -175,22 +180,14 @@ test('additive auth migration and account reset preserve synthetic Demo data and
       ).includes('correct horse'),
       false,
     );
-    assert.deepEqual(fixtureSummary(database), {
-      ...seededDemo,
-      sessions: seededDemo.sessions + 1,
-    });
+    assert.deepEqual(syntheticSummary(database), seeded);
 
     const result = await resetRealAccountPassword(database, 'alice_1', 'replacement password 123');
     assert.equal(result.ok, true);
-    assert.equal(
-      database
-        .prepare('SELECT COUNT(*) AS count FROM sessions WHERE id = ?')
-        .get(demoBefore.session.id).count,
-      1,
-    );
+    assert.deepEqual(syntheticSummary(database), seeded);
 
-    // Reopening the persisted Demo database applies no destructive rebuild and
-    // keeps the new real-auth tables separate from Demo records.
+    // Reopening the persisted database applies no destructive rebuild and
+    // keeps the real-auth tables separate from the synthetic fixture records.
     const { DatabaseSync } = await import('node:sqlite');
     const { migrateDatabase } = await import('../dist/db.js');
     const reopened = new DatabaseSync(`${dataDir}/rewind.sqlite`);
@@ -204,12 +201,8 @@ test('additive auth migration and account reset preserve synthetic Demo data and
         DELETE FROM schema_migrations WHERE version = 18;`);
       migrateDatabase(reopened);
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM profiles').get().count, 5);
-      assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 2);
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 0);
-      assert.deepEqual(fixtureSummary(reopened), {
-        ...seededDemo,
-        sessions: seededDemo.sessions + 1,
-      });
+      assert.deepEqual(syntheticSummary(reopened), seeded);
     } finally {
       reopened.close();
     }
@@ -376,7 +369,6 @@ test('real login returns an opaque native token, supports current/logout, and br
       database.prepare('SELECT token_hash FROM real_account_sessions').get().token_hash,
       token,
     );
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 1);
 
     const current = await fetch(`${baseUrl}/auth/session`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -664,12 +656,9 @@ test('malformed and duplicate account input has no partial writes', async () => 
   });
 });
 
-test('public registration creates a sign-in-ready account without Demo or group membership', async () => {
+test('public registration creates a sign-in-ready account without group membership', async () => {
   await withRuntime(async ({ baseUrl, database }) => {
     const profilesBefore = database.prepare('SELECT COUNT(*) AS count FROM profiles').get().count;
-    const demoSessionsBefore = database
-      .prepare('SELECT COUNT(*) AS count FROM sessions')
-      .get().count;
     const registration = await postRegistration(
       baseUrl,
       '  new.member  ',
@@ -707,10 +696,6 @@ test('public registration creates a sign-in-ready account without Demo or group 
     assert.equal(
       database.prepare('SELECT COUNT(*) AS count FROM profiles').get().count,
       profilesBefore,
-    );
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count,
-      demoSessionsBefore,
     );
   });
 });

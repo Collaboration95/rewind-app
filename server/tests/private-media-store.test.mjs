@@ -10,8 +10,8 @@ import { s3Double, s3Store } from './helpers/private-media-store.mjs';
 import { decodeMediaRef, encodeMediaRef, verifyStoredMedia } from '../dist/media/store.js';
 import { materializeStoredMedia } from '../dist/media/store-files.js';
 import { cleanupExpiredStoredMedia } from '../dist/jobs/retention.js';
-import { openDatabase } from '../dist/db.js';
 import { parseConfig } from '../dist/config.js';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 const scope = { environment: 'test', groupId: 'demo-group' };
 const now = new Date('2026-10-02T12:00:00Z');
 const bytes = Buffer.from('private-content');
@@ -135,7 +135,7 @@ test('local rejects parent symlink escapes', async () =>
 
 test('bounded expiry cleanup protects retained output and referenced input, reports failed deletions', async () =>
   temporary(async (root) => {
-    const db = openDatabase(parseConfig({ REWIND_DATA_DIR: root }));
+    const db = openFixtureDatabase(parseConfig({ REWIND_DATA_DIR: root }));
     const double = s3Double();
     const store = s3Store(double);
     try {

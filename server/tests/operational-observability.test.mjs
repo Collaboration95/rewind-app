@@ -7,19 +7,26 @@ import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { parseConfig } from '../dist/config.js';
-import { openDatabase } from '../dist/db.js';
 import { createRuntimeServer } from '../dist/http.js';
 import { processClipJob, runAuditedJob } from '../dist/jobs/index.js';
 import { verifyMediaIntegrity, recordIntegrityFailure } from '../dist/media/integrity.js';
 import { operationalSnapshot } from '../dist/observability/index.js';
 import { accountFixture } from './helpers/upload-intents.mjs';
 import { createRealGroup } from '../dist/groups/real.js';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { REAL_AUTH_ENV } from './helpers/real-http.mjs';
+import { createRealAccount } from '../dist/auth/index.js';
 
 const execFileAsync = promisify(execFile);
 async function fixture(run) {
   const root = await mkdtemp(`${tmpdir()}/rewind-operational-`);
-  const config = parseConfig({ REWIND_DATA_DIR: root, REWIND_HOST: '127.0.0.1', REWIND_PORT: '0' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: root,
+    REWIND_HOST: '127.0.0.1',
+    REWIND_PORT: '0',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   try {
     await run({ root, config, database });
   } finally {
@@ -32,8 +39,11 @@ test('actual SQLite HTTP failure logs only generated correlation, status and dur
   await fixture(async ({ config, database }) => {
     const secret =
       '/private/media-secret.mp4?token=token-secret invite-secret person@example.test message-secret';
+    const password = 'synthetic observability password';
+    const created = await createRealAccount(database, 'ops-member', 'ops-member', password);
+    assert.equal(created.ok, true);
     database.exec(
-      `CREATE TRIGGER operational_failure BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, '${secret}'); END;`,
+      `CREATE TRIGGER operational_failure BEFORE INSERT ON real_account_sessions BEGIN SELECT RAISE(ABORT, '${secret}'); END;`,
     );
     const logs = [];
     const original = console.error;
@@ -44,19 +54,21 @@ test('actual SQLite HTTP failure logs only generated correlation, status and dur
     const base = `http://127.0.0.1:${server.address().port}`;
     try {
       for (let i = 0; i < 2; i++) {
-        const response = await fetch(
-          `${base}/sessions/demo?invite=invite-secret&token=token-secret`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Request-Id': 'client-secret',
-              Cookie: 'cookie-secret',
-              Authorization: 'Bearer auth-secret',
-            },
-            body: JSON.stringify({ memberId: 'demo-1', content: secret }),
+        const response = await fetch(`${base}/auth/login?invite=invite-secret&token=token-secret`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Request-Id': 'client-secret',
+            Cookie: 'cookie-secret',
+            Authorization: 'Bearer auth-secret',
           },
-        );
+          body: JSON.stringify({
+            username: 'ops-member',
+            password,
+            clientType: 'native',
+            content: secret,
+          }),
+        });
         assert.equal(response.status, 500);
         assert.deepEqual(await response.json(), {
           error: 'internal_error',
@@ -77,7 +89,7 @@ test('actual SQLite HTTP failure logs only generated correlation, status and dur
         assert.ok(record.durationMs >= 0 && record.durationMs <= 86_400_000);
       }
       assert.notEqual(JSON.parse(logs[0][0]).requestId, JSON.parse(logs[1][0]).requestId);
-      const denial = await fetch(`${base}/jobs?groupId=demo-group`);
+      const denial = await fetch(`${base}/contributions?groupId=demo-group`);
       assert.equal(denial.status, 401);
       await denial.json();
       assert.equal(logs.length, 2);
@@ -86,12 +98,12 @@ test('actual SQLite HTTP failure logs only generated correlation, status and dur
         /private|secret|example|stack|message|member|group/,
       );
       database.exec('DROP TRIGGER operational_failure');
-      const success = await fetch(`${base}/sessions/demo`, {
+      const success = await fetch(`${base}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
+        body: JSON.stringify({ username: 'ops-member', password, clientType: 'native' }),
       });
-      assert.equal(success.status, 201);
+      assert.equal(success.status, 200);
       await success.json();
       assert.equal(logs.length, 2);
     } finally {

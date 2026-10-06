@@ -2,57 +2,25 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { once } from 'node:events';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { migrateDatabase, openDatabase } = await import('../dist/db.js');
-const { createRuntimeServer } = await import('../dist/http.js');
+const { migrateDatabase } = await import('../dist/db.js');
 const { listQueueJobs } = await import('../dist/jobs/queue.js');
 
-const SESSION_REQUIRED = {
-  error: 'session_required',
-  message: 'Choose Demo access before changing local Demo data.',
-};
-const SAFE_DENIAL = {
-  allowed: false,
-  status: 403,
-  error: 'forbidden',
-  message: 'You do not have access to this resource.',
-};
-
-async function withRuntime(run) {
+async function withDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-queue-observability-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_PORT: '0',
-  });
-  const database = openDatabase(config);
-  const server = createRuntimeServer(config, database);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
+  const database = openFixtureDatabase(config);
   try {
-    return await run({ baseUrl, config, database });
+    return await run({ config, database });
   } finally {
-    await new Promise((resolve) => server.close(resolve));
     database.close();
     await rm(dataDir, { recursive: true, force: true });
   }
-}
-
-async function createSession(baseUrl, memberId = 'demo-1', groupId) {
-  const response = await fetch(`${baseUrl}/sessions/demo`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memberId, ...(groupId ? { groupId } : {}) }),
-  });
-  assert.equal(response.status, 201);
-  return (await response.json()).session;
 }
 
 function insertQueueFixtures(database) {
@@ -132,7 +100,7 @@ function insertQueueFixtures(database) {
 test('queue migration repairs malformed filter/order indexes after its receipt is recorded', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-queue-migration-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     database.exec(`
       DROP INDEX media_jobs_queue_group_idx;
@@ -178,37 +146,27 @@ test('queue migration repairs malformed filter/order indexes after its receipt i
   }
 });
 
-test('queue API is authenticated, group-scoped, paginated, redacted, and retry-aware', async () => {
-  await withRuntime(async ({ baseUrl, database }) => {
+test('queue read model is paginated, redacted, and retry-aware', async () => {
+  await withDatabase(async ({ database }) => {
     insertQueueFixtures(database);
-    const unauthenticated = await fetch(`${baseUrl}/jobs?groupId=demo-group`);
-    assert.equal(unauthenticated.status, 401);
-    assert.deepEqual(await unauthenticated.json(), SESSION_REQUIRED);
-
-    const session = await createSession(baseUrl);
-    const suffix = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
-    const firstPageResponse = await fetch(
-      `${baseUrl}/jobs?${suffix}&kind=clip&status=pending&limit=1`,
-    );
-    assert.equal(firstPageResponse.status, 200);
-    const firstPage = await firstPageResponse.json();
+    const query = (options) => listQueueJobs(database, { groupId: 'demo-group', ...options });
+    const firstPage = query({ kind: 'clip', status: 'pending', limit: 1 });
     assert.equal(firstPage.jobs.length, 1);
     assert.equal(firstPage.jobs[0].id, 'clip-pending-a');
     assert.equal(firstPage.jobs[0].retryable, true);
     assert.equal(firstPage.pagination.hasMore, true);
     assert.ok(firstPage.pagination.nextCursor);
-    const secondPageResponse = await fetch(
-      `${baseUrl}/jobs?${suffix}&kind=clip&status=pending&limit=1&cursor=${encodeURIComponent(firstPage.pagination.nextCursor)}`,
-    );
-    assert.equal(secondPageResponse.status, 200);
     assert.deepEqual(
-      (await secondPageResponse.json()).jobs.map((job) => job.id),
+      query({
+        kind: 'clip',
+        status: 'pending',
+        limit: 1,
+        cursor: firstPage.pagination.nextCursor,
+      }).jobs.map((job) => job.id),
       ['clip-pending-b'],
     );
 
-    const allJobsResponse = await fetch(`${baseUrl}/jobs?${suffix}&limit=10`);
-    assert.equal(allJobsResponse.status, 200);
-    const allJobs = await allJobsResponse.json();
+    const allJobs = query({ limit: 10 });
     assert.deepEqual(
       allJobs.jobs.map((job) => job.id),
       [
@@ -256,37 +214,14 @@ test('queue API is authenticated, group-scoped, paginated, redacted, and retry-a
       'updatedAt',
     ]);
 
-    const invalidCursor = await fetch(`${baseUrl}/jobs?${suffix}&cursor=not-a-cursor`);
-    assert.equal(invalidCursor.status, 400);
-    assert.deepEqual((await invalidCursor.json()).error, 'invalid_jobs_request');
-
-    const missingGroup = await fetch(
-      `${baseUrl}/jobs?sessionId=${encodeURIComponent(session.id)}&status=not-a-status`,
-    );
-    assert.equal(missingGroup.status, 403);
-    assert.deepEqual(await missingGroup.json(), SAFE_DENIAL);
-
-    database.exec(`
-      INSERT INTO profiles (id, display_name, avatar_label, is_synthetic)
-        VALUES ('queue-outsider', 'Queue Outsider', 'Queue Outsider', 1);
-      INSERT INTO groups (id, name, current_cycle_id)
-        VALUES ('queue-other-group', 'Queue Other Group', NULL);
-      INSERT INTO memberships (group_id, member_id, role, accepted_at)
-        VALUES ('queue-other-group', 'queue-outsider', 'member', '2026-09-01T00:00:00.000Z');
-    `);
-    const foreignSession = await createSession(baseUrl, 'queue-outsider', 'queue-other-group');
-    const crossGroup = await fetch(
-      `${baseUrl}/jobs?groupId=demo-group&sessionId=${encodeURIComponent(foreignSession.id)}&status=not-a-status`,
-    );
-    assert.equal(crossGroup.status, 403);
-    assert.deepEqual(await crossGroup.json(), SAFE_DENIAL);
+    assert.throws(() => query({ cursor: 'not-a-cursor' }), { name: 'QueueQueryError' });
   });
 });
 
 test('jobs CLI emits the same redacted bounded contract', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-queue-cli-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   database
     .prepare(
       `INSERT INTO media_jobs
@@ -323,7 +258,7 @@ test('jobs CLI emits the same redacted bounded contract', async () => {
 test('queue read model uses keyset order without exposing ready or download rows', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-queue-model-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     insertQueueFixtures(database);
     const page = listQueueJobs(database, { groupId: 'demo-group', limit: 2 });

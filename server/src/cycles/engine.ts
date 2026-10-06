@@ -2,9 +2,9 @@
  * Framework-free cycle timing engine for the local runtime.
  *
  * The engine accepts its clock as a dependency so policy and lifecycle tests
- * never need to wait for wall-clock time. Advancing a demo cycle moves its
+ * never need to wait for wall-clock time. Advancing a cycle window moves its
  * boundaries backwards by the requested amount: the wall clock therefore
- * observes the same cycle as if the demonstration clock had moved forwards.
+ * observes the same cycle as if the clock had moved forwards.
  */
 
 export const CYCLE_DURATION_MS = Object.freeze({

@@ -3,48 +3,37 @@
 Rewind is a local-first SWE5006 prototype for collecting short shared moments
 through a group cycle, then experiencing them together after a delayed reveal.
 
-The local Demo started below uses synthetic data. It is not authentication,
-a secure account, public hosting, or a cloud media service. The separately
-hosted app supports real-account sign-in and is available at:
+The hosted app supports real-account sign-in and is available at:
 
 [https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net)
 
-Use that HTTPS address for the hosted app; the local Expo URL below is only for
+Use that HTTPS address for the hosted app; the local URLs below are only for
 development.
 
 ## Start the app
 
-Use the Node.js 22 version in `.nvmrc` (22.23.3), npm 10 or newer, and a
-current Chromium-based browser for the Expo web demo. With nvm, run
-`nvm use` before `npm ci`; the CI workflow reads the same version file.
+Use the Node.js 22 version in `.nvmrc` (22.23.3), npm 10 or newer, an
+available `ffmpeg` executable, and a current Chromium-based browser. With nvm,
+run `nvm use` before `npm ci`; the CI workflow reads the same version file.
 
 ```sh
 npm ci
 npm run check
-npm run web
+make run-real
 ```
 
-Open the Expo URL printed in the terminal (normally `http://localhost:8081`).
-This offline Demo needs no AWS credentials, account, private media, or deployed
-service.
-
-For a reproducible UI review, use the explicitly labelled fixture camera:
-
-```sh
-EXPO_PUBLIC_CAMERA_MODE=demo npm run web
-```
-
-Use `EXPO_PUBLIC_CAMERA_MODE=demo-denied` to review the denied-permission
-state. Leave it unset for the native camera boundary; real capture and clip
-upload require a physical device and the optional local runtime. Set
-`EXPO_PUBLIC_DEMO_ACCESS=entry` to start at the Demo member chooser instead of
-the default synthetic Amber session.
+`make run-real` starts the local server with SQLite in `.local-data/real` and
+the Expo web app behind one same-origin proxy. Open
+`http://localhost:8090`, create an account, and sign in. New local groups use
+10-minute cycles so reveal and Archive can be tested. Real sign-in normally
+requires HTTPS; the local exception covers plain HTTP on localhost only, so use
+a browser on the same machine. Press Ctrl-C to stop everything.
 
 ## Optional local runtime
 
 The companion Node service adds local SQLite persistence, media processing,
 and the full capsule flow. It is intended for a trusted development machine or
-LAN only; it is not a hosted service.
+LAN only; it is not a hosted service. Use non-sensitive test clips only.
 
 For a physical iPhone or a browser connected to the **same local backend**, use
 one command after `npm ci`:
@@ -59,17 +48,12 @@ press `w` in the terminal for the web UI. The Mac and iPhone must be on the same
 trusted Wi-Fi network, and both Expo CLI and iPhone Expo Go must be signed in to
 the same Expo account. Open the printed `/health` URL in iPhone Safari first if
 the app cannot connect. Set `REWIND_LAN_IP` to the Mac's reachable IPv4 address
-if the command selects the wrong network interface. Use `make run-demo` for the
-labelled synthetic camera path. The default `make run` leaves real camera
-capture enabled. Press Ctrl-C to stop Expo and the runtime together.
-
-This route uses the local synthetic members and SQLite service, not real user
-authentication or private cloud media. Use non-sensitive test clips only.
+if the command selects the wrong network interface. Press Ctrl-C to stop Expo
+and the runtime together.
 
 ```sh
 npm run server:preflight  # validate SQLite, LAN binding, and FFmpeg
 npm run server:start      # build and run the local service
-npm run server:reset      # restore the deterministic five-member fixture
 ```
 
 Point an iOS simulator at localhost, or a physical device at your trusted LAN
@@ -79,7 +63,6 @@ address, before starting Expo:
 EXPO_PUBLIC_LOCAL_BASE_URL=http://127.0.0.1:8787 npm start -- --ios --lan --clear
 ```
 
-When this variable is absent, the app remains on the offline synthetic Demo.
 If the runtime is unavailable, the app keeps an explicit retryable state rather
 than claiming the service is connected.
 
@@ -147,12 +130,12 @@ separate prerequisites; this command does not provision or schedule a worker.
 
 ## Current scope and limits
 
-- The Demo has five synthetic members and local-only session state.
-- Real capture requires a physical device. The fixture camera is clearly
-  labelled and does not claim to capture a physical image.
-- Group media stays on the local runtime. Do not use real or sensitive media.
-- The hosted-Demo persistence and recovery procedure is separate from this
-  local quick start; follow the guarded deployment guide before operating it.
+- Real capture requires a camera; iPhone camera capture needs the hosted HTTPS
+  app.
+- Locally, group media stays on the local runtime. Do not use real or
+  sensitive media.
+- Hosted persistence and recovery are separate from this local quick start;
+  follow the guarded deployment guide before operating the hosted host.
 
 ## Checks
 
@@ -167,7 +150,6 @@ npm run server:preflight  # local runtime, SQLite, LAN, and FFmpeg readiness
 - [Local-first boundary](docs/architecture/ADR-0001-local-first-sprint-0.md)
 - [Camera capture boundary](docs/architecture/ADR-0002-camera-capture-boundary.md)
 - [Domain contracts](docs/domain/contracts.md)
-- [Local Demo runbook](docs/local-demo-runbook.md)
-- [Hosted Demo persistence](docs/architecture/hosted-demo-persistence.md)
+- [Hosted persistence](docs/architecture/hosted-demo-persistence.md)
 - [Hosted deployment, backup, and recovery](deploy/README.md)
 - [Sprint planning index and canonical dates](doc/README.md)

@@ -118,10 +118,9 @@ export RUNTIME_UID
 grep -Fq 'persistent ownership contract failed' <<<"$wrong_owner_output"
 [[ "$wrong_owner_output" != *"$TEST_ROOT"* ]]
 
-# Fresh/reset paths use the same runtime umask and the same post-transition
-# assertions in reset-with-backup.sh and migrate-with-backup.sh.
+# Fresh paths use the same runtime umask and the same post-transition
+# assertions in migrate-with-backup.sh.
 grep -Fq 'umask 027' "$SCRIPT_DIR/deploy/Dockerfile"
-grep -Fq "assert_persistent_tree_contract \"\$DATA_DIR\" 'SQLite data'" "$SCRIPT_DIR/deploy/reset-with-backup.sh"
 grep -Fq "assert_persistent_tree_contract \"\$DATA_DIR\" 'SQLite data'" "$SCRIPT_DIR/deploy/migrate-with-backup.sh"
 
 printf 'persistent ownership contract fixture tests passed\n'

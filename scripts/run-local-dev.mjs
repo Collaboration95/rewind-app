@@ -48,8 +48,6 @@ const runtimeEnv = { ...process.env, REWIND_HOST: '0.0.0.0', REWIND_PORT: String
 const expoEnv = {
   ...process.env,
   EXPO_PUBLIC_LOCAL_BASE_URL: runtimeUrl,
-  EXPO_PUBLIC_DEMO_ACCESS: 'entry',
-  EXPO_PUBLIC_CAMERA_MODE: process.env.EXPO_PUBLIC_CAMERA_MODE || '',
 };
 const children = new Set();
 let stopping = false;

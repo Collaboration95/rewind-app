@@ -6,7 +6,6 @@ import {
   Image,
   Linking,
   Platform,
-  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -15,46 +14,28 @@ import {
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { RealAccountProvider, useRealAccount } from './src/auth/RealAccountProvider';
-import { CapsuleProvider } from './src/capsule/CapsuleProvider';
-import { ContributionStatusProvider, type CameraPlatform } from './src/capture';
-import { DemoExperience } from './src/demo/DemoExperience';
-import type { CycleRepository } from './src/domain/cycles';
-import type { AsyncGroupRepository, GroupRepository } from './src/domain/profiles';
-import type { DemoSessionStore } from './src/domain/session';
 import { RealAccountGroupExperience } from './src/groups/RealAccountGroupExperience';
 import {
   isInviteLinkCandidate,
   parseInviteLink,
   type InviteLinkParseResult,
 } from './src/invites/deep-links';
-import { DemoProfileProvider } from './src/profiles/DemoProfileProvider';
 import { openLegalPage } from './src/real/safety';
-import {
-  createConfiguredRuntime,
-  getConfiguredInviteWebOrigin,
-  isDemoAccessEnabled,
-} from './src/runtime/config';
-import type { RuntimeClient } from './src/runtime/local-runtime-client';
+import { getConfiguredInviteWebOrigin, getLocalRuntimeBaseUrl } from './src/runtime/config';
 import { PortraitGuard } from './src/runtime/PortraitGuard';
-import { createRuntimeRepositories } from './src/runtime/runtime-repositories';
 import { markLaunchReady } from './src/runtime/timing';
-import { DemoSessionProvider, useDemoSession } from './src/session/DemoSessionProvider';
 import { useWarmFonts } from './src/ui/fonts';
 import {
-  Avatar,
   Button,
   ErrorText,
   Field,
-  Glass,
   Glow,
-  ListGroup,
-  ListRow,
   SubHeader,
   ToastProvider,
   rw,
   useScreenInsets,
 } from './src/ui/primitives';
-import { FONT, LAYOUT, WARM, memberColor, serif } from './src/ui/tokens';
+import { FONT, LAYOUT, WARM, serif } from './src/ui/tokens';
 import { ensureWebStyles } from './src/ui/web-styles';
 
 ensureWebStyles();
@@ -63,54 +44,23 @@ const COLD_LAUNCH_MINIMUM_MS = 600;
 type InviteLinkIntent = InviteLinkParseResult & { intentId: number };
 
 export interface AppProps {
-  clock?: () => number;
-  cycleRepository?: CycleRepository;
-  groupRepository?: GroupRepository | AsyncGroupRepository;
-  runtimeClient?: RuntimeClient | null;
-  /** Inject a deterministic fixture platform for simulator evidence/tests. */
-  cameraPlatform?: CameraPlatform;
-  /** Session persistence adapter for deterministic restoration and entry flows. */
-  sessionStore?: DemoSessionStore;
+  /** Service override for tests; `null` means no configured service. */
+  runtimeClient?: { readonly baseUrl: string } | null;
 }
 
-export default function App({
-  clock = Date.now,
-  cycleRepository,
-  groupRepository,
-  runtimeClient,
-  cameraPlatform,
-  sessionStore,
-}: AppProps = {}) {
+export default function App({ runtimeClient }: AppProps = {}) {
   const inviteLink = useInviteLinkIntent();
-  const configuredRuntime = useMemo(
+  const baseUrl = useMemo(
     () =>
-      runtimeClient === undefined
-        ? createConfiguredRuntime()
-        : runtimeClient
-          ? { baseUrl: runtimeClient.baseUrl, client: runtimeClient }
-          : null,
+      runtimeClient === undefined ? getLocalRuntimeBaseUrl() : (runtimeClient?.baseUrl ?? null),
     [runtimeClient],
   );
   return (
     <SafeAreaProvider>
-      <RealAccountProvider baseUrl={configuredRuntime?.baseUrl ?? null}>
-        <DemoSessionProvider
-          runtimeClient={configuredRuntime?.client ?? null}
-          {...(sessionStore ? { store: sessionStore } : {})}
-        >
-          <DemoProfileProvider>
-            <PortraitGuard>
-              <SessionGate
-                clock={clock}
-                cycleRepository={cycleRepository}
-                groupRepository={groupRepository}
-                inviteLink={inviteLink}
-                runtimeClient={configuredRuntime?.client ?? null}
-                cameraPlatform={cameraPlatform}
-              />
-            </PortraitGuard>
-          </DemoProfileProvider>
-        </DemoSessionProvider>
+      <RealAccountProvider baseUrl={baseUrl}>
+        <PortraitGuard>
+          <SessionGate inviteLink={inviteLink} />
+        </PortraitGuard>
       </RealAccountProvider>
     </SafeAreaProvider>
   );
@@ -150,22 +100,7 @@ function useInviteLinkIntent(): InviteLinkIntent | null {
   return inviteLink;
 }
 
-function SessionGate({
-  clock,
-  cycleRepository,
-  groupRepository,
-  inviteLink,
-  runtimeClient,
-  cameraPlatform,
-}: {
-  clock: () => number;
-  cycleRepository?: CycleRepository;
-  groupRepository?: GroupRepository | AsyncGroupRepository;
-  inviteLink: InviteLinkIntent | null;
-  runtimeClient: RuntimeClient | null;
-  cameraPlatform?: CameraPlatform;
-}) {
-  const { status, session } = useDemoSession();
+function SessionGate({ inviteLink }: { inviteLink: InviteLinkIntent | null }) {
   const realAccount = useRealAccount();
   const fontsReady = useWarmFonts();
   const [coldLaunchMinimumElapsed, setColdLaunchMinimumElapsed] = useState(false);
@@ -176,15 +111,7 @@ function SessionGate({
     const timeout = setTimeout(() => setColdLaunchMinimumElapsed(true), COLD_LAUNCH_MINIMUM_MS);
     return () => clearTimeout(timeout);
   }, []);
-  const sessionRepositories = useMemo(
-    () => (runtimeClient && session ? createRuntimeRepositories(runtimeClient, session.id) : null),
-    [runtimeClient, session],
-  );
-  const launchReady =
-    coldLaunchMinimumElapsed &&
-    fontsReady &&
-    realAccount.state !== 'loading' &&
-    status !== 'loading';
+  const launchReady = coldLaunchMinimumElapsed && fontsReady && realAccount.state !== 'loading';
   useEffect(() => {
     if (!launchReady) return;
     // A1: the launch screen fades over the first screen, then leaves.
@@ -224,36 +151,8 @@ function SessionGate({
       </WarmFrame>
     );
   if (inviteLink?.kind === 'valid' && inviteLink.groupId)
-    return <DemoAccessEntry key={inviteLink.intentId} inviteGroupId={inviteLink.groupId} />;
-  if (realAccount.state === 'error') return <DemoAccessEntry />;
-  if (status === 'entry' || status === 'error' || !session) return <DemoAccessEntry />;
-  return (
-    <ContributionStatusProvider
-      scope={{
-        groupId: session.groupId,
-        memberId: session.actor.memberId,
-        sessionId: session.id,
-      }}
-    >
-      <CapsuleProvider
-        groupRepository={groupRepository ?? sessionRepositories?.groupRepository}
-        cycleRepository={cycleRepository ?? sessionRepositories?.cycleRepository}
-      >
-        <DemoExperience
-          key={inviteLinkKey(inviteLink)}
-          cameraPlatform={cameraPlatform}
-          clock={clock}
-          inviteLink={inviteLink}
-          runtimeClient={runtimeClient}
-        />
-      </CapsuleProvider>
-    </ContributionStatusProvider>
-  );
-}
-
-function inviteLinkKey(inviteLink: InviteLinkIntent | null): string {
-  if (!inviteLink) return 'no-invite-link';
-  return `invite-link-intent-${inviteLink.intentId}`;
+    return <AccountEntry key={inviteLink.intentId} inviteGroupId={inviteLink.groupId} />;
+  return <AccountEntry />;
 }
 
 const MOTION_LAUNCH_FADE_MS = 500;
@@ -308,13 +207,12 @@ function SessionLoadingScreen() {
   );
 }
 
-function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
-  const { profiles, chooseMember, error, entryReason, pending, retryRestore } = useDemoSession();
+function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const auth = useRealAccount();
   const [entryOffset] = useState(() => new Animated.Value(0));
   const entryModeMounted = useRef(false);
   const [reduceMotion, setReduceMotion] = useState(false);
-  const [mode, setMode] = useState<'welcome' | 'demo' | 'sign-in' | 'create-account'>(
+  const [mode, setMode] = useState<'welcome' | 'sign-in' | 'create-account'>(
     inviteGroupId ? 'sign-in' : 'welcome',
   );
   const [username, setUsername] = useState('');
@@ -336,10 +234,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     | 'password-mismatch'
     | null
   >(null);
-  const [selectedDemoMemberId, setSelectedDemoMemberId] = useState<string | null>(null);
   const visibleMode = mode;
-  const demoAccessEnabled = isDemoAccessEnabled();
-  const canRetryDemoStart = visibleMode === 'demo' && selectedDemoMemberId !== null;
 
   useEffect(() => {
     let mounted = true;
@@ -440,11 +335,6 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     setRegistrationError(outcome);
   };
 
-  const startDemo = (memberId: string) => {
-    setSelectedDemoMemberId(memberId);
-    void chooseMember(memberId);
-  };
-
   const registrationMessage =
     registrationError === 'password-mismatch'
       ? 'Passwords do not match.'
@@ -485,15 +375,13 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
       auth.notice === 'sign-out-marker-cleanup-failed' ||
       auth.notice === 'sign-out-marker-unavailable') &&
     (visibleMode === 'welcome' ||
-      visibleMode === 'demo' ||
       visibleMode === 'create-account' ||
       auth.notice === 'sign-out-incomplete' ||
       auth.notice === 'sign-out-recovery-pending' ||
       auth.notice === 'sign-out-marker-cleanup-failed' ||
       auth.notice === 'sign-out-marker-unavailable' ||
       auth.notice === 'local-credential-removal-failed') &&
-    !(auth.notice === 'offline' && !auth.secureTransportAvailable) &&
-    !(auth.notice === 'offline' && error);
+    !(auth.notice === 'offline' && !auth.secureTransportAvailable);
 
   return (
     <WarmFrame>
@@ -503,13 +391,13 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
         contentContainerStyle={[
           styles.warmEntry,
           { paddingTop: entryInsets.top + 8, paddingBottom: entryInsets.bottom + 140 },
-          visibleMode === 'welcome' || visibleMode === 'demo' ? styles.warmWelcome : null,
+          visibleMode === 'welcome' ? styles.warmWelcome : null,
         ]}
         keyboardShouldPersistTaps="handled"
         style={{ transform: [{ translateY: entryOffset }] }}
         testID="entry-mode-content"
       >
-        {visibleMode === 'welcome' || visibleMode === 'demo' ? (
+        {visibleMode === 'welcome' ? (
           <View style={styles.warmBrand} testID="entry-brand">
             <Image
               accessibilityLabel="Rewind mark"
@@ -524,7 +412,7 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             </Text>
           </View>
         ) : null}
-        {visibleMode === 'welcome' || visibleMode === 'demo' ? (
+        {visibleMode === 'welcome' ? (
           <View style={styles.warmActions} testID="welcome-entry">
             {welcomeBanner ? (
               <Text
@@ -747,28 +635,6 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             </Text>
           </View>
         )}
-        {error && visibleMode !== 'welcome' ? (
-          <View
-            accessible={false}
-            accessibilityLabel={entryReason === 'offline' ? 'Offline status' : 'Session status'}
-            style={styles.warmPanel}
-            testID="entry-session-status"
-          >
-            <ErrorText>{error}</ErrorText>
-            <Button
-              disabled={pending || authPending}
-              label={canRetryDemoStart ? 'Retry Demo start' : 'Retry session check'}
-              onPress={() => {
-                if (canRetryDemoStart && selectedDemoMemberId) {
-                  void chooseMember(selectedDemoMemberId);
-                } else {
-                  retryRestore();
-                }
-              }}
-              testID={canRetryDemoStart ? 'retry-demo-start' : 'retry-session-check'}
-            />
-          </View>
-        ) : null}
         {recoveryNotice ? (
           <View
             style={styles.warmPanel}
@@ -803,68 +669,12 @@ function DemoAccessEntry({ inviteGroupId }: { inviteGroupId?: string }) {
             ) : null}
           </View>
         ) : null}
-        {pending || authPending ? (
+        {authPending ? (
           <Text accessibilityLiveRegion="polite" style={styles.warmNote}>
-            {authPending ? 'Signing in…' : 'Starting the sample Demo…'}
+            Signing in…
           </Text>
         ) : null}
       </Animated.ScrollView>
-      {(visibleMode === 'welcome' || visibleMode === 'demo') &&
-      demoAccessEnabled &&
-      !inviteGroupId ? (
-        <Glass
-          accessibilityLabel="Try Demo"
-          style={[styles.demoSheet, { paddingBottom: entryInsets.bottom + 12 }]}
-          variant="sheet"
-        >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: visibleMode === 'demo' }}
-            // The web build drops a false expanded state; say it explicitly.
-            aria-expanded={visibleMode === 'demo'}
-            disabled={authPending}
-            onPress={() => {
-              setSelectedDemoMemberId(null);
-              setMode(visibleMode === 'demo' ? 'welcome' : 'demo');
-            }}
-            style={styles.demoGrab}
-            testID="try-demo"
-          >
-            <View style={styles.demoHandle} />
-            <Text style={styles.demoTitle}>Try Demo</Text>
-          </Pressable>
-          {visibleMode === 'demo' ? (
-            <>
-              <Text accessibilityRole="header" style={styles.demoHeader}>
-                Choose a Demo member
-              </Text>
-              <Text style={styles.demoSub}>Synthetic members, kept apart from real accounts.</Text>
-              <ListGroup>
-                {profiles.map((profile, index) => (
-                  <ListRow
-                    accessibilityHint="Starts local Demo access for this synthetic member"
-                    accessibilityLabel={`Enter Demo as ${profile.displayName}, sample member`}
-                    disabled={pending}
-                    first={index === 0}
-                    key={profile.id}
-                    label={profile.displayName}
-                    leading={
-                      <Avatar
-                        color={memberColor(profile.id)}
-                        name={profile.displayName}
-                        size={32}
-                      />
-                    }
-                    note={`${index === 0 ? 'Owner' : 'Member'} · synthetic`}
-                    onPress={() => startDemo(profile.id)}
-                    testID={`demo-entry-${profile.id}`}
-                  />
-                ))}
-              </ListGroup>
-            </>
-          ) : null}
-        </Glass>
-      ) : null}
     </WarmFrame>
   );
 }
@@ -933,29 +743,6 @@ const styles = StyleSheet.create({
   warmLink: { color: WARM.ink, fontWeight: '600', textDecorationLine: 'underline' },
   warmRetry: { alignSelf: 'center', marginBottom: 8 },
   warmPanel: { gap: 8, marginTop: 18 },
-  demoSheet: {
-    alignSelf: 'center',
-    borderBottomLeftRadius: 0,
-    borderBottomRightRadius: 0,
-    borderRadius: 28,
-    bottom: 0,
-    gap: 10,
-    maxWidth: LAYOUT.maxWidth,
-    paddingHorizontal: 18,
-    position: 'absolute',
-    width: '100%',
-  },
-  demoGrab: { alignItems: 'center', gap: 6, minHeight: 52, paddingTop: 10 },
-  demoHandle: { backgroundColor: 'rgba(51, 35, 26, 0.25)', borderRadius: 3, height: 5, width: 40 },
-  demoHeader: { color: WARM.ink, textAlign: 'center', ...serif(20) },
-  demoSub: {
-    color: WARM.muted,
-    fontFamily: FONT.body,
-    fontSize: 13,
-    marginBottom: 4,
-    textAlign: 'center',
-  },
-  demoTitle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 15, fontWeight: '600' },
   page: {
     alignItems: 'center',
     backgroundColor: WARM.bg,

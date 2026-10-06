@@ -3,9 +3,9 @@ import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 const { createRealGroup } = await import('../dist/groups/real.js');
@@ -19,7 +19,7 @@ async function runtime(run, env = {}) {
     REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
     ...env,
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   let time = new Date('2026-09-10T12:00:00Z');
   const server = createRuntimeServer(config, database, { now: () => time });
   server.listen(0, '127.0.0.1');

@@ -85,7 +85,7 @@ function mapRealtimeState(state: RealtimeConnectionState): ChatConnectionState {
  * by the persisted monotonic event id, and never retains message text.
  *
  * The class is framework-free so its lifecycle can be driven directly in tests.
- * The React binding lives in ChatUnreadProvider and reads this object through
+ * The React binding lives in useRealChatUnread and reads this object through
  * useSyncExternalStore, which also keeps mutable state out of render.
  */
 export class ChatUnreadOwner {

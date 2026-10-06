@@ -8,7 +8,6 @@ import {
   NATIVE_SSE_MAX_RESPONSE_CHARS,
   createRuntimeEventSource,
 } from '../src/chat/native-event-source';
-import { LocalRuntimeClient } from '../src/runtime/local-runtime-client';
 
 class FakeXhr {
   readyState = 0;
@@ -81,7 +80,6 @@ test('native SSE adapter parses framed events, reports open, and aborts on close
 
 test('real-account SSE sends native bearer authority in a header and omits it from the URL', () => {
   const client = new RealtimeChatClient('https://runtime.example', fetch, {
-    sessionIdInQuery: false,
     eventSourceFactory: (url) =>
       new NativeEventSource(url, FakeXhr, { Authorization: 'Bearer opaque-private-token' }),
   });
@@ -196,7 +194,7 @@ test('native SSE response rotation reconnects from its delivered cursor without 
 
   await new Promise((resolve) => setTimeout(resolve, 5));
   expect(urls).toHaveLength(2);
-  expect(urls[1]).toContain(`&sinceEventId=${lastDelivered}`);
+  expect(urls[1]).toMatch(new RegExp(`[?&]sinceEventId=${lastDelivered}$`));
   const replayEvent = {
     eventId: lastDelivered + 1,
     type: 'message',
@@ -238,17 +236,6 @@ test('runtime EventSource factory preserves browser EventSource and falls back t
     Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: undefined });
     Object.defineProperty(globalThis, 'XMLHttpRequest', { configurable: true, value: FakeXhr });
     expect(createRuntimeEventSource('/events')).toBeInstanceOf(NativeEventSource);
-
-    const subscription = new LocalRuntimeClient('http://127.0.0.1:8787').subscribeChat(
-      'session-1',
-      'demo-group',
-      { onEvent: () => {} },
-    );
-    expect(FakeXhr.last.opened).toEqual([
-      'GET',
-      'http://127.0.0.1:8787/realtime/groups/demo-group/events?sessionId=session-1',
-    ]);
-    subscription.close();
   } finally {
     if (previousEventSource) Object.defineProperty(globalThis, 'EventSource', previousEventSource);
     else Reflect.deleteProperty(globalThis, 'EventSource');
@@ -310,7 +297,7 @@ test('realtime client sends authenticated messages and decodes SSE events', asyn
   const sent = await client.sendMessage('session-1', 'demo-group', 'hello');
   expect(sent.message.body).toBe('hello');
   expect(fetchImpl).toHaveBeenCalledWith(
-    'http://127.0.0.1:8787/realtime/groups/demo-group/messages?sessionId=session-1',
+    'http://127.0.0.1:8787/realtime/groups/demo-group/messages',
     expect.objectContaining({ method: 'POST' }),
   );
 
@@ -320,7 +307,7 @@ test('realtime client sends authenticated messages and decodes SSE events', asyn
     onEvent: (event) => received.push(event.message.body),
   });
   expect(factory).toHaveBeenCalledWith(
-    'http://127.0.0.1:8787/realtime/groups/demo-group/events?sessionId=session-1&sinceEventId=3',
+    'http://127.0.0.1:8787/realtime/groups/demo-group/events?sinceEventId=3',
   );
   source.emit('message', { data: JSON.stringify(sent) });
   expect(received).toEqual(['hello']);
@@ -369,7 +356,7 @@ test('reconnects from the last event without leaking another group', async () =>
   first.onerror?.({});
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(factory).toHaveBeenCalledTimes(2);
-  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=4');
+  expect(factory.mock.calls[1][0]).toMatch(/[?&]sinceEventId=4/);
   second.onopen?.();
   second.emit('message', {
     data: JSON.stringify({
@@ -421,14 +408,14 @@ test('starts a new observer at the persisted high-water mark and reconnects from
     onCheckpoint: (eventId) => checkpoints.push(eventId),
   });
 
-  expect(factory.mock.calls[0][0]).toContain('&startFromLatest=true');
+  expect(factory.mock.calls[0][0]).toMatch(/[?&]startFromLatest=true/);
   first.emit('checkpoint', { data: JSON.stringify({ eventId: 21 }) });
   expect(received).toEqual([]);
   expect(checkpoints).toEqual([21]);
 
   first.onerror?.({});
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=21');
+  expect(factory.mock.calls[1][0]).toMatch(/[?&]sinceEventId=21/);
   second.emit('message', {
     data: JSON.stringify({
       eventId: 22,
@@ -468,8 +455,8 @@ test('forwards and resumes from a valid zero checkpoint', async () => {
   first.onerror?.({});
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=0');
-  expect(factory.mock.calls[1][0]).not.toContain('&startFromLatest=true');
+  expect(factory.mock.calls[1][0]).toMatch(/[?&]sinceEventId=0/);
+  expect(factory.mock.calls[1][0]).not.toMatch(/[?&]startFromLatest=true/);
   subscription.close();
 });
 
@@ -486,7 +473,7 @@ test('requests and decodes metadata-only unread events', () => {
     onEvent: (event) => received.push(event),
   });
 
-  expect(factory.mock.calls[0][0]).toContain('&startFromLatest=true&metadataOnly=true');
+  expect(factory.mock.calls[0][0]).toMatch(/[?&]startFromLatest=true&metadataOnly=true/);
   source.emit('message', {
     data: JSON.stringify({
       eventId: 4,
@@ -522,8 +509,8 @@ test('keeps the latest-watermark handshake on reconnect until its checkpoint arr
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   expect(factory).toHaveBeenCalledTimes(2);
-  expect(factory.mock.calls[1][0]).toContain('&startFromLatest=true');
-  expect(factory.mock.calls[1][0]).not.toContain('&sinceEventId=0');
+  expect(factory.mock.calls[1][0]).toMatch(/[?&]startFromLatest=true/);
+  expect(factory.mock.calls[1][0]).not.toMatch(/[?&]sinceEventId=0/);
 
   second.emit('checkpoint', { data: JSON.stringify({ eventId: 21 }) });
   subscription.close();

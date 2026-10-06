@@ -22,7 +22,7 @@
       "resource": "aws_s3_bucket_server_side_encryption_configuration.backups",
       "owner": "Guruprasath",
       "expires": "2026-10-31",
-      "reason": "Accepted risk pending PR review: private, versioned synthetic Demo backups use SSE-S3 (AES256); a customer-managed KMS key adds cost and operations outside this release."
+      "reason": "Accepted risk pending PR review: private, versioned hosted dev backups use SSE-S3 (AES256); a customer-managed KMS key adds cost and operations outside this release."
     },
     {
       "id": "AWS-0132",
@@ -30,7 +30,7 @@
       "resource": "aws_s3_bucket_server_side_encryption_configuration.audit_logs",
       "owner": "Guruprasath",
       "expires": "2026-10-31",
-      "reason": "Accepted risk pending PR review: private, versioned synthetic Demo audit logs use SSE-S3 (AES256); a customer-managed KMS key adds cost and operations outside this release."
+      "reason": "Accepted risk pending PR review: private, versioned hosted dev audit logs use SSE-S3 (AES256); a customer-managed KMS key adds cost and operations outside this release."
     },
     {
       "id": "AWS-0015",
@@ -38,7 +38,7 @@
       "resource": "aws_cloudtrail.management",
       "owner": "Guruprasath",
       "expires": "2026-10-31",
-      "reason": "Accepted risk pending PR review: CloudTrail writes to a private, versioned SSE-S3 (AES256) log bucket for the synthetic Demo; a customer-managed KMS key adds cost and operations outside this release."
+      "reason": "Accepted risk pending PR review: CloudTrail writes to a private, versioned SSE-S3 (AES256) log bucket for hosted dev; a customer-managed KMS key adds cost and operations outside this release."
     },
     {
       "id": "AWS-0132",

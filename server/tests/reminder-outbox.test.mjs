@@ -7,7 +7,6 @@ import { once } from 'node:events';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { parseConfig } from '../dist/config.js';
-import { openDatabase } from '../dist/db.js';
 import { createRealGroup, selectRealGroup } from '../dist/groups/real.js';
 import { updateRealGroupSettings, updateRealReminderPreference } from '../dist/groups/settings.js';
 import { revokeRealSession } from '../dist/auth/index.js';
@@ -24,6 +23,7 @@ import {
   reminderDeliveryStatus,
 } from '../dist/reminders/outbox.js';
 import { startReminderLoop } from '../dist/reminders/loop.js';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 const token = 'ExpoPushToken[synthetic_reminder_token]';
@@ -98,7 +98,12 @@ async function fixture(run, { zone = 'UTC' } = {}) {
     REWIND_PORT: '0',
     REWIND_ORIGIN_AUTH_SECRET: 'synthetic-fixture-edge',
   });
-  const context = { root, config, now: new Date('2026-10-04T08:00:00Z'), db: openDatabase(config) };
+  const context = {
+    root,
+    config,
+    now: new Date('2026-10-04T08:00:00Z'),
+    db: openFixtureDatabase(config),
+  };
   context.session = accountFixture(context.db, 'reminder-owner', context.now);
   context.otherSession = accountFixture(context.db, 'reminder-outsider', context.now);
   context.group = createRealGroup(
@@ -190,7 +195,7 @@ test('group-local Sunday queues once across duplicate scans, DB reopen and repea
       assert.equal(scanDueReminderJobs(c.db, c.now).queued, 1);
       assert.equal(scanDueReminderJobs(c.db, c.now).queued, 0);
       c.db.close();
-      c.db = openDatabase(c.config);
+      c.db = openFixtureDatabase(c.config);
       assert.equal(scanDueReminderJobs(c.db, c.now).queued, 0);
       assert.equal((await c.tick()).state, 'accepted');
       assert.equal((await c.tick()).claimed, false);
@@ -579,10 +584,6 @@ test('HTTPS-policy API binds registration/status/disable to the current real mem
         403,
       );
       assert.equal(
-        (await fetch(`${base}${path}?sessionId=demo`, { headers: headers() })).status,
-        403,
-      );
-      assert.equal(
         (
           await fetch(`${base}${path}`, {
             method: 'POST',
@@ -697,7 +698,7 @@ test('additive outbox migration repairs an interrupted empty schema without losi
     const accounts = c.db.prepare('SELECT COUNT(*) AS n FROM real_accounts').get().n;
     c.db.exec('DROP TABLE reminder_outbox');
     c.db.close();
-    c.db = openDatabase(c.config);
+    c.db = openFixtureDatabase(c.config);
     assert.equal(c.db.prepare('SELECT COUNT(*) AS n FROM real_accounts').get().n, accounts);
     assert.equal(c.db.prepare('SELECT COUNT(*) AS n FROM reminder_outbox').get().n, 0);
     assert.equal(
@@ -712,7 +713,7 @@ test('the runtime reminder loop queues and sends a due reminder once (#347)', as
   await fixture(async (c) => {
     c.now = new Date(c.due);
     const errors = [];
-    const loop = startReminderLoop(async () => openDatabase(c.config), c.providers, {
+    const loop = startReminderLoop(async () => openFixtureDatabase(c.config), c.providers, {
       intervalMs: 60_000,
       now: () => c.now,
       onError: (message) => errors.push(message),

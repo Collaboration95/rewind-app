@@ -7,7 +7,7 @@ test.use({ serviceWorkers: 'block' });
 const filmId = 'film-playback-regression';
 const cycleId = 'film-playback-cycle';
 const playbackPath = `/films/${filmId}/play`;
-const sample = readFileSync(resolve(process.cwd(), 'server/fixtures/demo-media.mp4'));
+const sample = readFileSync(resolve(process.cwd(), 'server/fixtures/sample-clip.mp4'));
 
 // Match the runtime's byte-range endpoint so Chromium exposes a seekable MP4.
 async function filmMedia(route: Route) {

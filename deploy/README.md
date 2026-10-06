@@ -1,4 +1,8 @@
-# Hosted Demo deployment
+# Hosted deployment
+
+The hosted dev host is the Lightsail instance `rewind-demo`. Its Terraform
+stack, scripts, and repository variables keep the historical `demo` name; they
+serve the real-account app, not the synthetic Demo removed on 6 October 2026.
 
 **Public hosted URL: [https://d2m6kz76y4kuvm.cloudfront.net](https://d2m6kz76y4kuvm.cloudfront.net).**
 Use this HTTPS address for the hosted app. The HTTP loopback addresses in this
@@ -50,7 +54,7 @@ sudo install -d -m 0750 "$PERSISTENT_ROOT/data" "$PERSISTENT_ROOT/media" "$PERSI
 `deploy/operator-common.sh` is the executable ownership contract. Every
 persistent directory, including nested media directories, is runtime-owned and
 mode `0750`; every regular SQLite, WAL/SHM, and media file is runtime-owned
-and mode `0640`. Recovery staging and reset/migration transitions verify this
+and mode `0640`. Recovery staging and migration transitions verify this
 contract before reporting success. Backup archives and manifests are private
 operator artifacts (`0600`), and media is streamed through the running runtime
 for backup so the host never needs a world-readable copy. The focused fixture
@@ -162,18 +166,14 @@ The smoke suite proves a deep-link shell fallback, same-origin `/api` status
 preservation, JSON API failures, shell/asset cache headers, and loopback-only
 execution. It does not provision or contact cloud infrastructure.
 
-The browser-level reset-to-reveal proof uses the same local production-shaped
-boundary with `EXPO_PUBLIC_CAMERA_MODE=demo`. Each invocation resets a fresh
-temporary SQLite/media tree before opening the runtime, starts in Demo access
-entry mode, and drives the labelled server-owned synthetic clip control. It
-covers group invitation, sealed-before-release playback denial, owner advance,
-one released playable film, and a cross-group safe denial. The runner executes
-two independent Playwright runs; it strips cloud credential variables from
+The browser-level proof uses the same local production-shaped boundary. Each
+invocation starts from a fresh temporary SQLite/media tree before opening the
+runtime. The runner executes two independent Playwright runs; it strips cloud credential variables from
 child processes, captures no screenshots/video/traces, and writes only a small
 redacted failure summary when a test fails:
 
 ```sh
-npm run test:production-e2e
+npm run test:real-account-e2e
 ```
 
 The suite is local-only and does not use real camera media, public endpoints,
@@ -182,7 +182,7 @@ developer data directories, or retained browser/runtime state.
 The server owns the migration contract. `migrate` opens the configured
 database, creates any missing migration bookkeeping, applies only the
 versioned migrations that are not marked complete, repairs the known
-interrupted migration shapes, and seeds missing deterministic Demo rows. It
+interrupted migration shapes. It
 is additive and idempotent as supplied by `server/src/db.ts`; deployment
 scripts do not edit schema files or manufacture migration state. Back up an
 existing database before running it:
@@ -197,23 +197,6 @@ The guarded workflow requires the runtime to be running for the online
 snapshot, uploads a database-and-media backup, stops the runtime, and only
 then runs `migrate`. It leaves the runtime stopped if migration succeeds or
 fails so an operator can inspect it before starting it again.
-
-## Backup before reset
-
-Reset is for the disposable Demo fixture, not for deleting production data.
-It first performs the same verified database-and-media backup and requires an
-explicit confirmation flag:
-
-```sh
-cd /srv/rewind
-./deploy/reset-with-backup.sh --confirm
-docker compose --env-file /srv/rewind/rewind.env -f deploy/compose.yaml up -d
-```
-
-The server reset contract removes the SQLite database, its WAL/SHM files, and
-all server-owned Demo media contents while preserving the bind-mount directory
-and migrations. The next server open recreates the deterministic five-member
-Demo fixture.
 
 ## Backup and local restore
 
@@ -383,7 +366,7 @@ SHA, verify the full S3 backup, and review any migration against the previous
 image. A new schema version can block rollback to an older image. `wake-demo.sh`
 still requires `--apply --confirm` and the verified recovery point; `--seed`
 remains only for first installation. After deployment, check the host runtime,
-the public HTTPS shell and `/api/health`, and the synthetic group journey. The
+the public HTTPS shell and `/api/health`, and a real-account sign-in. The
 host records the active release only after both runtime and web health pass.
 For a later existing-host upgrade, first compare the bundle SHA-256 with the
 reviewed value, then run `./deploy/release-host.sh install /path/to/bundle.tar`
@@ -447,7 +430,7 @@ point existed, first installation can use the explicit seed path:
 ./infra/scripts/wake-demo.sh --seed --apply --confirm
 ```
 
-Seed mode creates the deterministic Demo and runs migrations; it is not a
+Seed mode starts from an empty database and runs migrations; it is not a
 historical restore or a substitute for a verified recovery point. It is the
 explicit first-install exception to the recovery-point guard and must never be
 used to replace an existing host. Run a full host backup afterward and verify
@@ -468,7 +451,7 @@ failures without AWS credentials or a real host:
 npm run test:lifecycle-guards
 ```
 
-## Repeatable disposable-Demo verification
+## Repeatable disposable host-lifecycle verification
 
 Run the hermetic host-lifecycle harness from the repository root with Docker
 available:
@@ -479,11 +462,9 @@ npm run test:host-lifecycle
 
 The command creates fresh temporary `data`, `media`, and Compose environment
 directories, chooses loopback ports, and uses a unique Compose project. It
-builds only the runtime image, runs migration/seed, checks health, creates an
-owner session, writes fixture-only persistence sentinels, stops and restarts
-the runtime, verifies the session and media survived, performs the owner reset,
-then verifies post-reset health, restored Demo rows, removal of Demo media, and
-preservation of a non-Demo sentinel. It always runs `compose down --volumes
+builds only the runtime image, runs migration, checks health, writes
+fixture-only data and media sentinels, stops and restarts the runtime, and
+verifies health and that both sentinels survived. It always runs `compose down --volumes
 --remove-orphans` and removes the temporary root, including after an assertion
 or timeout failure.
 

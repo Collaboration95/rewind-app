@@ -109,7 +109,6 @@ test('real HTTPS-policy JSON request→direct PUT→complete→process is idempo
       (await c.request(c.owner, '', 'POST', { ...input, accountId: c.outsider.account.id })).status,
       400,
     );
-    assert.equal((await c.request(c.owner, '?sessionId=forged', 'POST', input)).status, 403);
     assert.equal(
       (await c.request(c.owner, '', 'POST', input, { Origin: 'https://outsider.example' })).status,
       403,

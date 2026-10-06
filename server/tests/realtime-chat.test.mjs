@@ -4,10 +4,10 @@ import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { REAL_AUTH_ENV, realAccount, signInAs } from './helpers/real-http.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
-const { createGroup } = await import('../dist/groups/index.js');
 const { createChatMessage, listChatEventMetadata, listChatEvents, listChatHistoryPage } =
   await import('../dist/chat/index.js');
 const { createRuntimeServer } = await import('../dist/http.js');
@@ -19,6 +19,10 @@ async function startRuntime(config, database, options = {}) {
   await once(server, 'listening');
   const address = server.address();
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
+function fetchAs(member, url, init = {}) {
+  return fetch(url, { ...init, headers: { ...member.headers, ...init.headers } });
 }
 
 async function readUntilClosed(reader, timeoutMs = 500) {
@@ -39,20 +43,14 @@ async function closeRuntime(server, database, dataDir) {
   await rm(dataDir, { recursive: true, force: true });
 }
 
-async function createSession(baseUrl, memberId, groupId = 'demo-group') {
-  const response = await fetch(`${baseUrl}/sessions/demo`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memberId, groupId }),
-  });
-  assert.equal(response.status, 201);
-  return (await response.json()).session;
-}
-
 test('chat history pages are bounded, ordered, and include batched reactions', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-chat-history-page-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   try {
     const events = [];
     for (let index = 0; index < 7; index += 1) {
@@ -115,10 +113,14 @@ test('chat history pages are bounded, ordered, and include batched reactions', a
 
 test('authorized chat history HTTP pages resume after their watermark without dropping older events', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-chat-history-http-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const { server, baseUrl } = await startRuntime(config, database);
-  const session = await createSession(baseUrl, 'demo-1');
+  const session = await signInAs(database, 'demo-1');
   const persisted = [];
   for (let index = 0; index < 105; index += 1) {
     const created = createChatMessage(database, {
@@ -130,8 +132,8 @@ test('authorized chat history HTTP pages resume after their watermark without dr
     persisted.push(created.event);
   }
   try {
-    const endpoint = `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`;
-    const latestResponse = await fetch(`${endpoint}&limit=100`);
+    const endpoint = `${baseUrl}/realtime/groups/demo-group/messages`;
+    const latestResponse = await fetchAs(session, `${endpoint}?limit=100`);
     assert.equal(latestResponse.status, 200);
     const latest = await latestResponse.json();
     assert.deepEqual(
@@ -140,7 +142,10 @@ test('authorized chat history HTTP pages resume after their watermark without dr
     );
     assert.equal(latest.watermarkEventId, persisted.at(-1).eventId);
     assert.equal(latest.hasMore, true);
-    const olderResponse = await fetch(`${endpoint}&limit=100&beforeEventId=${latest.nextCursor}`);
+    const olderResponse = await fetchAs(
+      session,
+      `${endpoint}?limit=100&beforeEventId=${latest.nextCursor}`,
+    );
     const older = await olderResponse.json();
     const expectedOlderIds = database
       .prepare('SELECT id FROM realtime_events WHERE group_id = ? AND id < ? ORDER BY id ASC')
@@ -153,17 +158,15 @@ test('authorized chat history HTTP pages resume after their watermark without dr
     assert.equal(older.hasMore, false);
     assert.equal(older.watermarkEventId, latest.watermarkEventId);
 
-    const invalidCursor = await fetch(`${endpoint}&beforeEventId=0`);
+    const invalidCursor = await fetchAs(session, `${endpoint}?beforeEventId=0`);
     assert.equal(invalidCursor.status, 400);
   } finally {
     await closeRuntime(server, database, dataDir);
   }
 });
 
-function delayedMessageRequest(baseUrl, sessionId) {
-  const url = new URL(
-    `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(sessionId)}`,
-  );
+function delayedMessageRequest(baseUrl, member) {
+  const url = new URL(`${baseUrl}/realtime/groups/demo-group/messages`);
   let resolveResponse;
   let rejectResponse;
   let resolveStarted;
@@ -181,6 +184,7 @@ function delayedMessageRequest(baseUrl, sessionId) {
       path: `${url.pathname}${url.search}`,
       method: 'POST',
       headers: {
+        ...member.headers,
         'Content-Type': 'application/json',
         Expect: '100-continue',
         'Transfer-Encoding': 'chunked',
@@ -229,16 +233,18 @@ async function readSseEvent(reader, pending = '') {
 
 test('two authorised sessions receive a persisted group message over SSE', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const { server, baseUrl } = await startRuntime(config, database);
-  const first = await createSession(baseUrl, 'demo-1');
-  const second = await createSession(baseUrl, 'demo-2');
+  const first = await signInAs(database, 'demo-1');
+  const second = await signInAs(database, 'demo-2');
   const streams = await Promise.all(
     [first, second].map((session) =>
-      fetch(
-        `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=1`,
-      ),
+      fetchAs(session, `${baseUrl}/realtime/groups/demo-group/events?sinceEventId=1`),
     ),
   );
   const readers = streams.map((stream) => {
@@ -246,14 +252,11 @@ test('two authorised sessions receive a persisted group message over SSE', async
     return stream.body.getReader();
   });
   try {
-    const sent = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(first.id)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: 'A message delivered to both sessions.' }),
-      },
-    );
+    const sent = await fetchAs(first, `${baseUrl}/realtime/groups/demo-group/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: 'A message delivered to both sessions.' }),
+    });
     assert.equal(sent.status, 201);
     const sentPayload = await sent.json();
     assert.equal(sentPayload.event.message.body, 'A message delivered to both sessions.');
@@ -272,29 +275,26 @@ test('two authorised sessions receive a persisted group message over SSE', async
 
 test('a non-member cannot open a group realtime subscription or post', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-denial-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const { server, baseUrl } = await startRuntime(config, database);
-  const session = await createSession(baseUrl, 'demo-2');
+  const session = await signInAs(database, 'demo-2');
   try {
     for (const request of [
-      fetch(
-        `${baseUrl}/realtime/groups/missing-group/events?sessionId=${encodeURIComponent(session.id)}`,
-      ),
-      fetch(
-        `${baseUrl}/realtime/groups/missing-group/messages?sessionId=${encodeURIComponent(session.id)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ body: 'must not persist' }),
-        },
-      ),
+      fetchAs(session, `${baseUrl}/realtime/groups/missing-group/events`),
+      fetchAs(session, `${baseUrl}/realtime/groups/missing-group/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'must not persist' }),
+      }),
     ]) {
       const response = await request;
       assert.equal(response.status, 403);
       assert.deepEqual(await response.json(), {
-        allowed: false,
-        status: 403,
         error: 'forbidden',
         message: 'You do not have access to this resource.',
       });
@@ -312,15 +312,18 @@ test('a non-member cannot open a group realtime subscription or post', async () 
 
 test('an EventSource-compatible denial sends a terminal SSE event', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-sse-denial-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const { server, baseUrl } = await startRuntime(config, database);
-  const session = await createSession(baseUrl, 'demo-2');
+  const session = await signInAs(database, 'demo-2');
   try {
-    const response = await fetch(
-      `${baseUrl}/realtime/groups/missing-group/events?sessionId=${encodeURIComponent(session.id)}`,
-      { headers: { Accept: 'text/event-stream' } },
-    );
+    const response = await fetchAs(session, `${baseUrl}/realtime/groups/missing-group/events`, {
+      headers: { Accept: 'text/event-stream' },
+    });
     assert.equal(response.status, 200);
     const body = await response.text();
     assert.match(body, /event: access-denied/);
@@ -332,16 +335,18 @@ test('an EventSource-compatible denial sends a terminal SSE event', async () => 
 
 test('a session invalidated while the request body is delayed cannot persist a message', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-delay-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const { server, baseUrl } = await startRuntime(config, database);
-  const session = await createSession(baseUrl, 'demo-1');
+  const session = await signInAs(database, 'demo-1');
   try {
-    const delayed = delayedMessageRequest(baseUrl, session.id);
+    const delayed = delayedMessageRequest(baseUrl, session);
     await delayed.startedPromise;
-    const invalidated = await fetch(`${baseUrl}/sessions/${encodeURIComponent(session.id)}`, {
-      method: 'DELETE',
-    });
+    const invalidated = await fetchAs(session, `${baseUrl}/auth/logout`, { method: 'POST' });
     assert.equal(invalidated.status, 200);
     delayed.request.end('"}');
     const result = await delayed.responsePromise;
@@ -360,8 +365,12 @@ test('a session invalidated while the request body is delayed cannot persist a m
 
 test('realtime delivery is isolated to the subscribed group', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-isolation-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   database.exec(`
     INSERT INTO profiles (id, display_name, avatar_label, is_synthetic)
       VALUES ('demo-6', 'Fable', 'Fable, second-group member', 1);
@@ -378,27 +387,23 @@ test('realtime delivery is isolated to the subscribed group', async () => {
       VALUES ('other-group', 'demo-6', 'member', '2026-09-01T00:00:00.000Z');
   `);
   const { server, baseUrl } = await startRuntime(config, database);
-  const first = await createSession(baseUrl, 'demo-1');
-  const second = await createSession(baseUrl, 'demo-6', 'other-group');
-  const firstStream = await fetch(
-    `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(first.id)}&sinceEventId=1`,
+  const first = await signInAs(database, 'demo-1');
+  const second = await signInAs(database, 'demo-6', { groupId: 'other-group' });
+  const firstStream = await fetchAs(
+    first,
+    `${baseUrl}/realtime/groups/demo-group/events?sinceEventId=1`,
   );
-  const secondStream = await fetch(
-    `${baseUrl}/realtime/groups/other-group/events?sessionId=${encodeURIComponent(second.id)}`,
-  );
+  const secondStream = await fetchAs(second, `${baseUrl}/realtime/groups/other-group/events`);
   assert.equal(firstStream.status, 200);
   assert.equal(secondStream.status, 200);
   const firstReader = firstStream.body.getReader();
   const secondReader = secondStream.body.getReader();
   try {
-    const sent = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(first.id)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: 'only the first group sees this' }),
-      },
-    );
+    const sent = await fetchAs(first, `${baseUrl}/realtime/groups/demo-group/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: 'only the first group sees this' }),
+    });
     assert.equal(sent.status, 201);
     const received = await readSseEvent(firstReader);
     assert.equal(received.event.message.body, 'only the first group sees this');
@@ -416,16 +421,21 @@ test('realtime delivery is isolated to the subscribed group', async () => {
 
 test('heartbeat closes and removes a subscription after its session is revoked', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-revocation-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const hub = new RealtimeHub();
   const { server, baseUrl } = await startRuntime(config, database, {
     realtimeHeartbeatIntervalMs: 10,
     realtimeHub: hub,
   });
-  const session = await createSession(baseUrl, 'demo-2');
-  const stream = await fetch(
-    `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=1`,
+  const session = await signInAs(database, 'demo-2');
+  const stream = await fetchAs(
+    session,
+    `${baseUrl}/realtime/groups/demo-group/events?sinceEventId=1`,
   );
   assert.equal(stream.status, 200);
   const reader = stream.body.getReader();
@@ -433,9 +443,7 @@ test('heartbeat closes and removes a subscription after its session is revoked',
     const connected = await reader.read();
     assert.equal(connected.done, false);
     assert.equal(hub.subscriberCount('demo-group'), 1);
-    const revoked = await fetch(`${baseUrl}/sessions/${encodeURIComponent(session.id)}`, {
-      method: 'DELETE',
-    });
+    const revoked = await fetchAs(session, `${baseUrl}/auth/logout`, { method: 'POST' });
     assert.equal(revoked.status, 200);
     assert.equal(await readUntilClosed(reader), true);
     assert.equal(hub.subscriberCount('demo-group'), 0);
@@ -447,8 +455,12 @@ test('heartbeat closes and removes a subscription after its session is revoked',
 
 test('disconnect during paginated replay immediately removes the hub subscription', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-disconnect-replay-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const hub = new RealtimeHub();
   let clientRequest;
   const subscribe = hub.subscribe.bind(hub);
@@ -458,7 +470,7 @@ test('disconnect during paginated replay immediately removes the hub subscriptio
     return unsubscribe;
   };
   const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
-  const session = await createSession(baseUrl, 'demo-1');
+  const session = await signInAs(database, 'demo-1');
   for (let index = 0; index < 205; index += 1) {
     const created = createChatMessage(database, {
       groupId: 'demo-group',
@@ -469,10 +481,8 @@ test('disconnect during paginated replay immediately removes the hub subscriptio
   }
 
   try {
-    const url = new URL(
-      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=0`,
-    );
-    clientRequest = httpRequest(url, (response) => response.resume());
+    const url = new URL(`${baseUrl}/realtime/groups/demo-group/events?sinceEventId=0`);
+    clientRequest = httpRequest(url, { headers: session.headers }, (response) => response.resume());
     clientRequest.on('error', () => {});
     clientRequest.end();
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -485,12 +495,17 @@ test('disconnect during paginated replay immediately removes the hub subscriptio
 
 test('persisted message events replay after the runtime and database are reopened', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-restart-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const firstRuntime = await startRuntime(config, database);
-  const session = await createSession(firstRuntime.baseUrl, 'demo-1');
-  const sent = await fetch(
-    `${firstRuntime.baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
+  const session = await signInAs(database, 'demo-1');
+  const sent = await fetchAs(
+    session,
+    `${firstRuntime.baseUrl}/realtime/groups/demo-group/messages`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -502,10 +517,11 @@ test('persisted message events replay after the runtime and database are reopene
   await new Promise((resolve) => firstRuntime.server.close(resolve));
   database.close();
 
-  const reopened = openDatabase(config);
+  const reopened = openFixtureDatabase(config);
   const secondRuntime = await startRuntime(config, reopened);
-  const stream = await fetch(
-    `${secondRuntime.baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=1`,
+  const stream = await fetchAs(
+    session,
+    `${secondRuntime.baseUrl}/realtime/groups/demo-group/events?sinceEventId=1`,
   );
   assert.equal(stream.status, 200);
   const reader = stream.body.getReader();
@@ -521,19 +537,29 @@ test('persisted message events replay after the runtime and database are reopene
 
 test('a zero checkpoint cursor replays messages after an unread stream replacement', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-zero-checkpoint-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
-  const { server, baseUrl } = await startRuntime(config, database);
-  const created = createGroup(database, 'demo-1', {
-    name: 'Zero checkpoint test',
-    prompt: 'What is worth keeping?',
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
   });
-  assert.equal(created.ok, true);
-  const groupId = created.group.id;
-  const session = await createSession(baseUrl, 'demo-1', groupId);
+  const database = openFixtureDatabase(config);
+  const { server, baseUrl } = await startRuntime(config, database);
+  const session = await realAccount(database, 'zero-checkpoint-owner');
+  const createdResponse = await fetchAs(session, `${baseUrl}/real/groups`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Zero checkpoint test',
+      prompt: 'What is worth keeping?',
+      maxMembers: 2,
+    }),
+  });
+  assert.equal(createdResponse.status, 201);
+  const groupId = (await createdResponse.json()).group.id;
   try {
-    const initial = await fetch(
-      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(session.id)}&startFromLatest=true`,
+    const initial = await fetchAs(
+      session,
+      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?startFromLatest=true`,
     );
     assert.equal(initial.status, 200);
     const initialReader = initial.body.getReader();
@@ -545,8 +571,9 @@ test('a zero checkpoint cursor replays messages after an unread stream replaceme
       await initialReader.cancel();
     }
 
-    const sent = await fetch(
-      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages?sessionId=${encodeURIComponent(session.id)}`,
+    const sent = await fetchAs(
+      session,
+      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -556,8 +583,9 @@ test('a zero checkpoint cursor replays messages after an unread stream replaceme
     assert.equal(sent.status, 201);
     const sentPayload = await sent.json();
 
-    const resumed = await fetch(
-      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=0`,
+    const resumed = await fetchAs(
+      session,
+      `${baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/events?sinceEventId=0`,
     );
     assert.equal(resumed.status, 200);
     const resumedReader = resumed.body.getReader();
@@ -576,8 +604,12 @@ test('a zero checkpoint cursor replays messages after an unread stream replaceme
 
 test('reconnect replay drains every page and delivers events committed during the drain once', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-replay-pages-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const hub = new RealtimeHub();
   let injectedEvent;
   let injectionError;
@@ -609,7 +641,7 @@ test('reconnect replay drains every page and delivers events committed during th
     return unsubscribe;
   };
   const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
-  const session = await createSession(baseUrl, 'demo-1');
+  const session = await signInAs(database, 'demo-1');
   const persistedEvents = [];
   for (let index = 0; index < 205; index += 1) {
     const created = createChatMessage(database, {
@@ -622,8 +654,9 @@ test('reconnect replay drains every page and delivers events committed during th
   }
 
   try {
-    const response = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&sinceEventId=0`,
+    const response = await fetchAs(
+      session,
+      `${baseUrl}/realtime/groups/demo-group/events?sinceEventId=0`,
     );
     assert.equal(response.status, 200);
     const reader = response.body.getReader();
@@ -653,28 +686,30 @@ test('reconnect replay drains every page and delivers events committed during th
 
 test('metadata-only unread SSE omits message and reply bodies while timeline SSE keeps them', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-metadata-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const hub = new RealtimeHub();
   const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
-  const sender = await createSession(baseUrl, 'demo-1');
-  const observer = await createSession(baseUrl, 'demo-2');
-  const unreadResponse = await fetch(
-    `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(observer.id)}&startFromLatest=true&metadataOnly=true`,
+  const sender = await signInAs(database, 'demo-1');
+  const observer = await signInAs(database, 'demo-2');
+  const unreadResponse = await fetchAs(
+    observer,
+    `${baseUrl}/realtime/groups/demo-group/events?startFromLatest=true&metadataOnly=true`,
   );
   assert.equal(unreadResponse.status, 200);
   const unreadReader = unreadResponse.body.getReader();
   let timelineReader;
 
   async function send(body, replyToMessageId) {
-    const response = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(sender.id)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body, ...(replyToMessageId ? { replyToMessageId } : {}) }),
-      },
-    );
+    const response = await fetchAs(sender, `${baseUrl}/realtime/groups/demo-group/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body, ...(replyToMessageId ? { replyToMessageId } : {}) }),
+    });
     assert.equal(response.status, 201);
     return (await response.json()).event;
   }
@@ -683,8 +718,9 @@ test('metadata-only unread SSE omits message and reply bodies while timeline SSE
     const checkpoint = await readSseEvent(unreadReader);
     assert.equal(checkpoint.eventName, 'checkpoint');
     assert.equal(Number.isSafeInteger(checkpoint.event.eventId), true);
-    const timelineResponse = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(observer.id)}&sinceEventId=${checkpoint.event.eventId}`,
+    const timelineResponse = await fetchAs(
+      observer,
+      `${baseUrl}/realtime/groups/demo-group/events?sinceEventId=${checkpoint.event.eventId}`,
     );
     assert.equal(timelineResponse.status, 200);
     timelineReader = timelineResponse.body.getReader();
@@ -725,24 +761,26 @@ test('metadata-only unread SSE omits message and reply bodies while timeline SSE
 
 test('a new unread observer skips persisted history but receives messages after its checkpoint', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-latest-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const { server, baseUrl } = await startRuntime(config, database);
-  const session = await createSession(baseUrl, 'demo-1');
+  const session = await signInAs(database, 'demo-1');
   try {
-    const historical = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: 'already present before unread subscription' }),
-      },
-    );
+    const historical = await fetchAs(session, `${baseUrl}/realtime/groups/demo-group/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: 'already present before unread subscription' }),
+    });
     assert.equal(historical.status, 201);
     const historicalEvent = (await historical.json()).event;
 
-    const response = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/events?sessionId=${encodeURIComponent(session.id)}&startFromLatest=true`,
+    const response = await fetchAs(
+      session,
+      `${baseUrl}/realtime/groups/demo-group/events?startFromLatest=true`,
     );
     assert.equal(response.status, 200);
     const reader = response.body.getReader();
@@ -752,14 +790,11 @@ test('a new unread observer skips persisted history but receives messages after 
       assert.equal(Number(checkpoint.eventId), historicalEvent.eventId);
       assert.deepEqual(checkpoint.event, { eventId: historicalEvent.eventId });
 
-      const next = await fetch(
-        `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ body: 'arrived after unread subscription' }),
-        },
-      );
+      const next = await fetchAs(session, `${baseUrl}/realtime/groups/demo-group/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'arrived after unread subscription' }),
+      });
       assert.equal(next.status, 201);
       const nextEvent = (await next.json()).event;
       const received = await readSseEvent(reader);
@@ -776,22 +811,23 @@ test('a new unread observer skips persisted history but receives messages after 
 
 test('retrying the same client message id replays one persisted event', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-realtime-idempotency-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const hub = new RealtimeHub();
   const { server, baseUrl } = await startRuntime(config, database, { realtimeHub: hub });
-  const session = await createSession(baseUrl, 'demo-1');
+  const session = await signInAs(database, 'demo-1');
   try {
     const messageId = 'client-retry-message';
     const request = () =>
-      fetch(
-        `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ body: 'retry this safely', messageId }),
-        },
-      );
+      fetchAs(session, `${baseUrl}/realtime/groups/demo-group/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: 'retry this safely', messageId }),
+      });
     const first = await request();
     assert.equal(first.status, 201);
     const firstPayload = await first.json();
@@ -811,14 +847,11 @@ test('retrying the same client message id replays one persisted event', async ()
       1,
     );
 
-    const conflict = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${encodeURIComponent(session.id)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: 'different text', messageId }),
-      },
-    );
+    const conflict = await fetchAs(session, `${baseUrl}/realtime/groups/demo-group/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: 'different text', messageId }),
+    });
     assert.equal(conflict.status, 409);
     assert.equal((await conflict.json()).error, 'message_duplicate_message');
   } finally {

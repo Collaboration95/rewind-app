@@ -8,7 +8,7 @@ AuditEvent = {
   id: string,
   eventType: session.* | job.* | media.integrity_failed | media.consistency_quarantined |
              media.consistency_repaired | media.consistency_repair_failed,
-  actorMemberId: synthetic member ID | null,
+  actorMemberId: member ID | null,
   resourceId: namespaced local ID | null,
   timestamp: ISO-8601 instant,
   result: success | failure | denied

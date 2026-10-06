@@ -3,9 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { migrateDatabase, openDatabase, schemaReadiness } = await import('../dist/db.js');
+const { migrateDatabase, schemaReadiness } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 
 const NOW = new Date('2026-09-10T12:00:00.000Z');
@@ -22,8 +24,9 @@ async function withRuntime(run) {
     REWIND_DATA_DIR: dataDir,
     REWIND_HOST: '127.0.0.1',
     REWIND_PORT: '0',
+    ...REAL_AUTH_ENV,
   });
-  const database = openDatabase(config, { seedNow: '2026-09-01T00:00:00.000Z' });
+  const database = openFixtureDatabase(config, { seedNow: '2026-09-01T00:00:00.000Z' });
   const server = createRuntimeServer(config, database, { now: () => NOW });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -37,14 +40,9 @@ async function withRuntime(run) {
   }
 }
 
-async function createSession(baseUrl, memberId = 'demo-1', groupId = 'demo-group') {
-  const response = await fetch(`${baseUrl}/sessions/demo`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memberId, groupId }),
-  });
-  assert.equal(response.status, 201);
-  return (await response.json()).session.id;
+/** Sign in a real account bound to a fixture member; returns its auth headers. */
+async function createSession(database, memberId = 'demo-1', groupId = 'demo-group') {
+  return (await signInAs(database, memberId, { groupId, now: NOW })).headers;
 }
 
 function insertContribution(database, id, memberId, status, createdAt, durationSeconds = 4) {
@@ -164,9 +162,11 @@ test('migration 016 records readiness and repairs a malformed index after receip
 test('GET /contributions is self-only, current-cycle, paginated, filterable and redacted', async () => {
   await withRuntime(async ({ baseUrl, database }) => {
     insertFixtures(database);
-    const sessionId = await createSession(baseUrl);
-    const query = `groupId=demo-group&sessionId=${encodeURIComponent(sessionId)}`;
-    const firstResponse = await fetch(`${baseUrl}/contributions?${query}&limit=2&memberId=demo-2`);
+    const headers = await createSession(database);
+    const query = 'groupId=demo-group';
+    const firstResponse = await fetch(`${baseUrl}/contributions?${query}&limit=2&memberId=demo-2`, {
+      headers,
+    });
     assert.equal(firstResponse.status, 200);
     const first = await firstResponse.json();
     assert.equal(first.cycleId, 'demo-cycle');
@@ -178,6 +178,7 @@ test('GET /contributions is self-only, current-cycle, paginated, filterable and 
     assert.equal(first.pagination.hasMore, true);
     const secondResponse = await fetch(
       `${baseUrl}/contributions?${query}&limit=2&cursor=${encodeURIComponent(first.pagination.nextCursor)}`,
+      { headers },
     );
     assert.equal(secondResponse.status, 200);
     assert.deepEqual(
@@ -185,7 +186,7 @@ test('GET /contributions is self-only, current-cycle, paginated, filterable and 
       ['clip-processing', 'clip-ready'],
     );
 
-    const allResponse = await fetch(`${baseUrl}/contributions?${query}`);
+    const allResponse = await fetch(`${baseUrl}/contributions?${query}`, { headers });
     assert.equal(allResponse.status, 200);
     assert.equal(allResponse.headers.get('cache-control'), 'no-store');
     const all = await allResponse.json();
@@ -225,26 +226,27 @@ test('GET /contributions is self-only, current-cycle, paginated, filterable and 
       false,
     );
 
-    const failed = await fetch(`${baseUrl}/contributions?${query}&state=failed`);
+    const failed = await fetch(`${baseUrl}/contributions?${query}&state=failed`, { headers });
     assert.deepEqual(
       (await failed.json()).entries.map((entry) => entry.contributionId),
       ['clip-failed'],
     );
-    const replaced = await fetch(`${baseUrl}/contributions?${query}&state=replaced`);
+    const replaced = await fetch(`${baseUrl}/contributions?${query}&state=replaced`, { headers });
     assert.deepEqual(
       (await replaced.json()).entries.map((entry) => entry.contributionId),
       ['clip-replaced'],
     );
-    const peerSession = await createSession(baseUrl, 'demo-2');
-    const peer = await fetch(
-      `${baseUrl}/contributions?groupId=demo-group&sessionId=${peerSession}`,
-    );
+    const peerHeaders = await createSession(database, 'demo-2');
+    const peer = await fetch(`${baseUrl}/contributions?groupId=demo-group`, {
+      headers: peerHeaders,
+    });
     assert.deepEqual(
       (await peer.json()).entries.map((entry) => entry.contributionId),
       ['peer-clip'],
     );
     const replay = await fetch(
-      `${baseUrl}/contributions?groupId=demo-group&sessionId=${peerSession}&limit=2&cursor=${encodeURIComponent(first.pagination.nextCursor)}`,
+      `${baseUrl}/contributions?groupId=demo-group&limit=2&cursor=${encodeURIComponent(first.pagination.nextCursor)}`,
+      { headers: peerHeaders },
     );
     assert.equal(replay.status, 400);
     assert.equal((await replay.json()).error, 'invalid_ledger_request');
@@ -263,10 +265,8 @@ test('GET /contributions exposes the latest active entry beyond its default 50-e
         1,
       );
     }
-    const sessionId = await createSession(baseUrl);
-    const response = await fetch(
-      `${baseUrl}/contributions?groupId=demo-group&sessionId=${encodeURIComponent(sessionId)}`,
-    );
+    const headers = await createSession(database);
+    const response = await fetch(`${baseUrl}/contributions?groupId=demo-group`, { headers });
     assert.equal(response.status, 200);
     const ledger = await response.json();
     assert.equal(ledger.entries.length, 50);
@@ -290,30 +290,30 @@ test('ledger denial happens before filters and hides group existence', async () 
     const noSession = await fetch(`${baseUrl}/contributions?groupId=demo-group&state=invalid`);
     assert.equal(noSession.status, 401);
     assert.equal((await noSession.json()).error, 'session_required');
-    const outsider = await createSession(baseUrl, 'outsider', 'other-group');
-    const foreign = await fetch(
-      `${baseUrl}/contributions?groupId=demo-group&sessionId=${outsider}&state=invalid`,
-    );
+    const outsider = await createSession(database, 'outsider', 'other-group');
+    const foreign = await fetch(`${baseUrl}/contributions?groupId=demo-group&state=invalid`, {
+      headers: outsider,
+    });
     assert.equal(foreign.status, 403);
     assert.deepEqual(await foreign.json(), DENIED);
-    const ownSession = await createSession(baseUrl);
+    const ownSession = await createSession(database);
     for (const groupId of ['unknown-group', '']) {
-      const denied = await fetch(
-        `${baseUrl}/contributions?groupId=${groupId}&sessionId=${ownSession}&state=invalid`,
-      );
+      const denied = await fetch(`${baseUrl}/contributions?groupId=${groupId}&state=invalid`, {
+        headers: ownSession,
+      });
       assert.equal(denied.status, 403);
       assert.deepEqual(await denied.json(), DENIED);
     }
     for (const query of ['state=invalid', 'limit=101', 'cursor=invalid']) {
-      const invalid = await fetch(
-        `${baseUrl}/contributions?groupId=demo-group&sessionId=${ownSession}&${query}`,
-      );
+      const invalid = await fetch(`${baseUrl}/contributions?groupId=demo-group&${query}`, {
+        headers: ownSession,
+      });
       assert.equal(invalid.status, 400);
       assert.equal((await invalid.json()).error, 'invalid_ledger_request');
     }
-    const ownOther = await fetch(
-      `${baseUrl}/contributions?groupId=other-group&sessionId=${outsider}`,
-    );
+    const ownOther = await fetch(`${baseUrl}/contributions?groupId=other-group`, {
+      headers: outsider,
+    });
     assert.equal(ownOther.status, 200);
     assert.deepEqual(
       (await ownOther.json()).entries.map((entry) => entry.contributionId),

@@ -68,8 +68,6 @@ export {
   type CaptureInterruptionEvent,
 } from './capture-interruption';
 export {
-  clearContributionStatusForSession,
-  resetCaptureData,
   resetCaptureRestartRecoveryGuard,
   runCaptureRestartRecovery,
   sweepOrphanedCaptureFiles,

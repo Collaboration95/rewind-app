@@ -6,9 +6,10 @@ import { resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase, getCurrentCycle } = await import('../dist/db.js');
+const { getCurrentCycle } = await import('../dist/db.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 const { createRealGroup, getCurrentRealGroup } = await import('../dist/groups/real.js');
 const { createClipUpload } = await import('../dist/media/index.js');
@@ -23,7 +24,7 @@ async function fixture(run) {
     REWIND_HOST: '127.0.0.1',
     REWIND_PORT: '0',
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   let now = new Date('2026-09-01T00:00:00.000Z');
   const account = await createRealAccount(
     database,
@@ -63,7 +64,7 @@ async function fixture(run) {
 }
 
 async function readyClip(database, group, dataDir, now) {
-  const bytes = await readFile('server/fixtures/demo-media.mp4');
+  const bytes = await readFile('server/fixtures/sample-clip.mp4');
   const path = resolve(dataDir, 'media/processed/real-scheduler-input.mp4');
   await writeFile(path, bytes);
   const uploaded = createClipUpload(

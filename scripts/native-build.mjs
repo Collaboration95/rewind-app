@@ -47,7 +47,6 @@ export function buildEnvironment(apiUrl, inviteUrl) {
   return {
     EXPO_PUBLIC_LOCAL_BASE_URL: parse(apiUrl, false),
     EXPO_PUBLIC_INVITE_WEB_ORIGIN: parse(inviteUrl, true),
-    EXPO_PUBLIC_DEMO_ACCESS: 'disabled',
   };
 }
 function git(root, ...args) {
@@ -93,11 +92,7 @@ export function validateProfiles(app, eas) {
     simulator.ios.buildConfiguration !== 'Release' ||
     !simulator.ios.withoutCredentials ||
     [android, simulator].some(
-      (p) =>
-        p.autoIncrement !== false ||
-        p.environment !== 'preview' ||
-        p.env?.EXPO_PUBLIC_DEMO_ACCESS !== 'disabled' ||
-        p.developmentClient,
+      (p) => p.autoIncrement !== false || p.environment !== 'preview' || p.developmentClient,
     )
   )
     throw new Error('Preview profiles must isolate APK and credential-free iOS simulator builds.');
