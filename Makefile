@@ -1,7 +1,7 @@
 .PHONY: run run-real issues
 
-run:
-	npm run dev:lan
+# Real sign-in needs HTTPS or loopback, so both targets use the localhost proxy.
+run: run-real
 
 run-real:
 	node scripts/run-real-local.mjs

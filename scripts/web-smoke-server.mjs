@@ -100,7 +100,6 @@ async function main() {
     const runtimeOrigin = `http://127.0.0.1:${await listen(runtimeServer)}`;
     webServer = createProductionWebServer({ staticDir: artifactDir, runtimeOrigin });
     const webPort = Number(process.env.REWIND_WEB_SMOKE_PORT || 8082);
-    await listen(webServer, '127.0.0.1', webPort);
 
     const key = join(dataDir, 'tls.key');
     const cert = join(dataDir, 'tls.crt');
@@ -133,6 +132,8 @@ async function main() {
       originAuthSecret,
     });
     await listen(secureWebServer, '127.0.0.1', httpsPort);
+    // Playwright waits on the plain listener, so open it only once HTTPS is up.
+    await listen(webServer, '127.0.0.1', webPort);
     console.log(
       `Rewind production web smoke server listening on http://127.0.0.1:${webPort} and https://localhost:${httpsPort}`,
     );
