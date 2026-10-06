@@ -366,6 +366,32 @@ test('private stored film publication and full-day Archive require verified pinn
     assert.equal((await publishCycleReleaseWithStore(c.database, input, options)).ok, false);
   }, true));
 
+test('playback alone refuses changed bytes on disk and in S3, and audits them (#475)', async () => {
+  for (const remote of [false, true])
+    await fixture(async (c) => {
+      c.publish();
+      if (remote) {
+        const ref = JSON.parse(Buffer.from(c.filmPath.slice('media-object:'.length), 'base64url'));
+        const stored = c.double.versions.get(`${ref.key}:${ref.versionId}`);
+        stored.bytes = Buffer.from(stored.bytes);
+        stored.bytes[stored.bytes.length - 1] ^= 0xff;
+      } else {
+        const bytes = Buffer.from(c.bytes);
+        bytes[bytes.length - 1] ^= 0xff;
+        await writeFile(c.filmPath, bytes);
+      }
+      const archive = await (await c.request(c.owner, c.scoped('/archive'))).json();
+      assert.equal(archive.archive.films.length, 1, 'same-size changes stay listed');
+      assert.equal((await c.request(null, archive.archive.films[0].playbackPath)).status, 404);
+      const audited = c.database
+        .prepare(
+          "SELECT count(*) AS n FROM audit_events WHERE event_type = 'media.integrity_failed'",
+        )
+        .get().n;
+      assert.equal(audited, 1);
+    }, remote);
+});
+
 test('stored publication refuses an asset changed during its verified read', async () =>
   fixture(async (c) => {
     const input = { groupId: c.group.group.id, cycleId: c.group.cycle.id, clock: () => NOW };

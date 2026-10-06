@@ -440,9 +440,12 @@ test('wrong credentials are generic, throttled by account and source, and reset 
       assert.equal(last.status, 401);
     }
     const badBody = await last.json();
+    assert.equal(badBody.error, 'sign_in_failed');
+    // A locked account says so (429 + Retry-After), even with the right password.
     const throttled = await postLogin(baseUrl, 'limit.user', 'long correct password');
-    assert.equal(throttled.status, 401);
-    assert.deepEqual(await throttled.json(), badBody);
+    assert.equal(throttled.status, 429);
+    assert.equal(throttled.headers.get('retry-after'), '900');
+    assert.equal((await throttled.json()).error, 'sign_in_throttled');
     assert.equal(
       database.prepare('SELECT MAX(cooldown_level) AS level FROM auth_login_throttles').get().level,
       1,
@@ -485,13 +488,34 @@ test('wrong credentials are generic, throttled by account and source, and reset 
   });
 });
 
+test('an unknown username locks exactly like a real one, so 429 reveals no account', async () => {
+  const lockout = async (username) =>
+    withRuntime(async ({ baseUrl, database }) => {
+      await createRealAccount(database, 'real.user', 'Real User', 'long correct password');
+      for (let attempt = 0; attempt < 5; attempt += 1)
+        assert.equal((await postLogin(baseUrl, username, 'wrong password value')).status, 401);
+      const locked = await postLogin(baseUrl, username, 'wrong password value');
+      return {
+        status: locked.status,
+        retryAfter: locked.headers.get('retry-after'),
+        body: await locked.json(),
+      };
+    });
+  const real = await lockout('real.user');
+  assert.equal(real.status, 429);
+  assert.deepEqual(await lockout('no.such.user'), real);
+});
+
 test('parallel guesses cannot race past the five-failure cooldown', async () => {
   await withRuntime(async ({ baseUrl, database }) => {
     await createRealAccount(database, 'parallel.user', 'Parallel User', 'long correct password');
     const responses = await Promise.all(
       Array.from({ length: 8 }, () => postLogin(baseUrl, 'parallel.user', 'wrong password value')),
     );
-    assert.ok(responses.every((response) => response.status === 401));
+    assert.deepEqual(
+      responses.map((response) => response.status).sort(),
+      [401, 401, 401, 401, 401, 429, 429, 429],
+    );
     assert.equal(
       database
         .prepare(`SELECT cooldown_level FROM auth_login_throttles WHERE scope = 'account'`)
@@ -499,7 +523,7 @@ test('parallel guesses cannot race past the five-failure cooldown', async () => 
       1,
     );
     const correct = await postLogin(baseUrl, 'parallel.user', 'long correct password');
-    assert.equal(correct.status, 401);
+    assert.equal(correct.status, 429);
   });
 });
 

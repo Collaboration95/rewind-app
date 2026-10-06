@@ -20,7 +20,7 @@ export function ArchiveScreen({
   groupId,
   currentCycleId,
   prompt,
-  daysLeft,
+  countdown,
   releases,
   header,
   topInset,
@@ -31,7 +31,8 @@ export function ArchiveScreen({
   groupId: string;
   currentCycleId: string;
   prompt: string;
-  daysLeft: number;
+  /** Time until the current film opens, in days, hours or minutes. */
+  countdown: { count: number; unit: string };
   releases: HomeRelease[];
   header: ReactNode;
   topInset: number;
@@ -156,7 +157,7 @@ export function ArchiveScreen({
         <View style={styles.nowText}>
           <Text style={styles.nowTitle}>This cycle · collecting</Text>
           <Text style={styles.nowNote}>
-            {prompt} · opens in {plural(daysLeft, 'day')} · sealed until then
+            {prompt} · opens in {plural(countdown.count, countdown.unit)} · sealed until then
           </Text>
         </View>
       </Glass>

@@ -16,10 +16,13 @@ import {
 } from '../ui/primitives';
 import { FONT, WARM, serif } from '../ui/tokens';
 import { PromptPicker } from './Settings';
+import { parseInviteLink } from '../invites/deep-links';
 
 /** "abcdef" or "ABC DEF" → "ABC-DEF" while typing. */
 export const formatInviteCode = (value: string) => {
-  const letters = value
+  // A pasted invite link fills in just its code.
+  const linked = parseInviteLink(value.trim());
+  const letters = (linked.kind === 'valid' ? linked.code : value)
     .replace(/[^A-Za-z]/g, '')
     .toUpperCase()
     .slice(0, 6);

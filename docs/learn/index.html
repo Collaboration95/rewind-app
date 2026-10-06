@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rewind: layered guide</title>
+    <style>
+      :root {
+        --bg: #fafaf7;
+        --fg: #1d1d1b;
+        --mut: #6b6b66;
+        --line: #c9c9c0;
+        --card: #fff;
+        --y: #ffd84d;
+        --p: #b8b3ff;
+        --b: #8ec5ff;
+        --g: #a8e6b4;
+        --r: #ffb3b3;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16161a;
+          --fg: #ececea;
+          --mut: #9a9a94;
+          --line: #44444c;
+          --card: #1e1e24;
+          --y: #7a6a1a;
+          --p: #4a468f;
+          --b: #2d5a85;
+          --g: #2d6a3e;
+          --r: #8a3a3a;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          16px/1.55 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 24px 16px 80px;
+      }
+      h1 {
+        margin: 0.2em 0;
+      }
+      h2 {
+        margin-top: 2.4em;
+        border-top: 1px solid var(--line);
+        padding-top: 0.8em;
+      }
+      .lvl {
+        display: inline-block;
+        background: var(--y);
+        color: var(--fg);
+        border-radius: 6px;
+        padding: 1px 8px;
+        font-size: 0.8em;
+        margin-right: 6px;
+      }
+      .mut {
+        color: var(--mut);
+      }
+      svg {
+        width: 100%;
+        height: auto;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      svg text {
+        fill: var(--fg);
+        font:
+          13px system-ui,
+          sans-serif;
+        text-anchor: middle;
+      }
+      svg .s {
+        fill: var(--mut);
+        font-size: 11px;
+      }
+      svg .e {
+        stroke: var(--fg);
+        stroke-width: 1.5;
+        fill: none;
+        marker-end: url(#a);
+      }
+      svg .d {
+        stroke-dasharray: 5 4;
+      }
+      svg rect.n,
+      svg path.n {
+        stroke: var(--fg);
+        stroke-width: 1.2;
+      }
+      .y {
+        fill: var(--y);
+      }
+      .p {
+        fill: var(--p);
+      }
+      .b {
+        fill: var(--b);
+      }
+      .g {
+        fill: var(--g);
+      }
+      .r {
+        fill: var(--r);
+      }
+      .w {
+        fill: var(--card);
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.93em;
+      }
+      td,
+      th {
+        border: 1px solid var(--line);
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: var(--card);
+      }
+      code {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0 4px;
+        font-size: 0.9em;
+      }
+      .tag {
+        font-size: 0.75em;
+        color: var(--mut);
+      }
+      nav a {
+        margin-right: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Rewind, layer by layer</h1>
+      <p class="mut">
+        Start at L1. Go deeper only when a doubt pulls you. Facts below come from reading the code
+        and docs on <code>dev</code> (6 Oct 2026). Things marked <b>(inferred)</b> are my reading,
+        not stated in a doc.
+      </p>
+      <nav>
+        <a href="#l1">L1 What</a><a href="#l2">L2 Boxes</a><a href="#l3">L3 Clip's life</a
+        ><a href="#l4">L4 Code map</a><a href="#l5">L5 Ship path</a
+        ><a href="#tradeoffs">Tradeoffs</a><a href="#doubts">Doubts</a>
+      </nav>
+
+      <svg width="0" height="0" style="position: absolute; border: 0">
+        <defs>
+          <marker
+            id="a"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+          >
+            <path d="M0 0L10 5L0 10z" fill="currentColor" style="fill: #888" />
+          </marker>
+        </defs>
+      </svg>
+
+      <!-- ============ L1 ============ -->
+      <h2 id="l1"><span class="lvl">L1</span>What the app does</h2>
+      <ul>
+        <li>
+          A friend <b>group</b> runs <b>cycles</b>. Everyone drops short clips/photos during the
+          cycle.
+        </li>
+        <li>
+          Nobody sees anything until the cycle ends. Then the clips are stitched into one
+          <b>film</b> and revealed together (the "premiere").
+        </li>
+        <li>
+          Films pile up in the <b>Archive</b>. There's group <b>chat</b> on the side, plus web-push
+          <b>reminders</b>.
+        </li>
+        <li>Quota (glossary): 5 contributions / 30 seconds per member per cycle.</li>
+      </ul>
+      <svg viewBox="0 0 860 190">
+        <rect class="n y" x="20" y="60" width="110" height="56" rx="8" />
+        <text x="75" y="93">Create group</text>
+        <rect class="n p" x="170" y="60" width="110" height="56" rx="8" />
+        <text x="225" y="93">Invite friends</text>
+        <rect class="n b" x="320" y="60" width="130" height="56" rx="8" />
+        <text x="385" y="86">Cycle: collecting</text>
+        <text class="s" x="385" y="104">clips locked, unseen</text>
+        <rect class="n p" x="490" y="60" width="110" height="56" rx="8" />
+        <text x="545" y="86">Cycle ends</text>
+        <text class="s" x="545" y="104">film is built</text>
+        <rect class="n g" x="640" y="60" width="100" height="56" rx="8" />
+        <text x="690" y="86">Reveal</text>
+        <text class="s" x="690" y="104">premiere</text>
+        <rect class="n y" x="770" y="60" width="70" height="56" rx="8" />
+        <text x="805" y="93">Archive</text>
+        <path class="e" d="M130 88H170" />
+        <path class="e" d="M280 88H320" />
+        <path class="e" d="M450 88H490" />
+        <path class="e" d="M600 88H640" />
+        <path class="e" d="M740 88H770" />
+        <path class="e d" d="M385 60V30H385" />
+        <rect class="n w" x="300" y="140" width="170" height="34" rx="8" />
+        <text x="385" y="162">Chat + reminders (any time)</text>
+        <path class="e d" d="M385 140V116" />
+      </svg>
+      <p class="mut">
+        Two modes exist: the <b>real-account app</b> (the product) and a synthetic
+        <b>Demo</b> (frozen: kept only for tests/local runs, git tag
+        <code>demo-frozen-20261004</code>). Many routes/files come in "demo" and "real" pairs, which
+        is why the code looks doubled.
+      </p>
+
+      <!-- ============ L2 ============ -->
+      <h2 id="l2"><span class="lvl">L2</span>The boxes (hosted dev)</h2>
+      <svg viewBox="0 0 860 330">
+        <rect class="n y" x="20" y="120" width="130" height="70" rx="8" />
+        <text x="85" y="150">Phone / browser</text>
+        <text class="s" x="85" y="170">PWA (Expo web)</text>
+        <rect class="n p" x="200" y="120" width="120" height="70" rx="8" />
+        <text x="260" y="150">CloudFront</text>
+        <text class="s" x="260" y="170">HTTPS front door</text>
+        <rect
+          class="n b"
+          x="370"
+          y="30"
+          width="470"
+          height="270"
+          rx="12"
+          style="fill: none; stroke-dasharray: 6 4"
+        />
+        <text class="s" x="605" y="50">One Lightsail VM (Docker Compose)</text>
+        <rect class="n b" x="395" y="120" width="110" height="70" rx="8" />
+        <text x="450" y="150">nginx</text>
+        <text class="s" x="450" y="170">static + /api proxy</text>
+        <rect class="n g" x="560" y="90" width="130" height="130" rx="8" />
+        <text x="625" y="120">Node runtime</text>
+        <text class="s" x="625" y="140">HTTP API · SSE chat</text>
+        <text class="s" x="625" y="156">job worker · schedulers</text>
+        <text class="s" x="625" y="172">ffmpeg</text>
+        <rect class="n w" x="725" y="70" width="95" height="56" rx="8" />
+        <text x="772" y="96">SQLite</text>
+        <text class="s" x="772" y="112">on VM disk</text>
+        <rect class="n w" x="725" y="150" width="95" height="56" rx="8" />
+        <text x="772" y="176">Media</text>
+        <text class="s" x="772" y="192">disk or S3</text>
+        <rect class="n r" x="560" y="250" width="130" height="36" rx="8" />
+        <text x="625" y="273">Web push services</text>
+        <rect class="n r" x="725" y="250" width="95" height="36" rx="8" />
+        <text x="772" y="273">S3 bucket</text>
+        <path class="e" d="M150 155H200" />
+        <path class="e" d="M320 155H395" />
+        <path class="e" d="M505 155H560" />
+        <path class="e" d="M690 110H725" />
+        <path class="e" d="M690 178H725" />
+        <path class="e" d="M625 220V250" />
+        <path class="e d" d="M772 206V250" />
+      </svg>
+      <ul>
+        <li>
+          <b>One server process</b> does everything: API, chat stream, video jobs, schedulers.
+          Monolith by design (the course brief recommends it).
+        </li>
+        <li>
+          nginx serves the built web app and forwards <code>/api/*</code> to the Node runtime.
+          CloudFront's secret header proves requests came via HTTPS.
+        </li>
+        <li>
+          DB = <code>node:sqlite</code> (built into Node 22), a single file. 28+ numbered SQL
+          migrations in <code>server/migrations</code>.
+        </li>
+        <li>
+          Media: <code>disk</code> locally, <code>s3</code> hosted (private bucket, KMS,
+          Terraform-managed).
+        </li>
+        <li>Container is hardened: read-only FS, all capabilities dropped, 768 MB cap.</li>
+      </ul>
+
+      <!-- ============ L3 ============ -->
+      <h2 id="l3"><span class="lvl">L3</span>Life of one clip</h2>
+      <svg viewBox="0 0 860 250">
+        <rect class="n y" x="15" y="30" width="110" height="52" rx="8" />
+        <text x="70" y="52">Capture</text>
+        <text class="s" x="70" y="70">camera, ≤ quota</text>
+        <rect class="n p" x="155" y="30" width="120" height="52" rx="8" />
+        <text x="215" y="52">Upload intent</text>
+        <text class="s" x="215" y="70">server issues signed PUT</text>
+        <rect class="n r" x="305" y="30" width="100" height="52" rx="8" />
+        <text x="355" y="52">Store bytes</text>
+        <text class="s" x="355" y="70">S3 / disk</text>
+        <rect class="n w" x="435" y="30" width="110" height="52" rx="8" />
+        <text x="490" y="52">Job: clip</text>
+        <text class="s" x="490" y="70">row in SQLite queue</text>
+        <rect class="n g" x="575" y="30" width="120" height="52" rx="8" />
+        <text x="635" y="52">ffmpeg</text>
+        <text class="s" x="635" y="70">normalise to libx264</text>
+        <rect class="n b" x="725" y="30" width="120" height="52" rx="8" />
+        <text x="785" y="52">Clip ready</text>
+        <text class="s" x="785" y="70">status + ledger</text>
+        <path class="e" d="M125 56H155" />
+        <path class="e" d="M275 56H305" />
+        <path class="e" d="M405 56H435" />
+        <path class="e" d="M545 56H575" />
+        <path class="e" d="M695 56H725" />
+        <text class="s" x="430" y="125" style="text-anchor: start">Then, when the cycle ends:</text>
+        <rect class="n w" x="15" y="150" width="150" height="52" rx="8" />
+        <text x="90" y="172">Scheduler sees end</text>
+        <text class="s" x="90" y="190">cycles/scheduler.ts</text>
+        <rect class="n w" x="205" y="150" width="110" height="52" rx="8" />
+        <text x="260" y="172">Job: film</text>
+        <text class="s" x="260" y="190">retries up to 3</text>
+        <rect class="n g" x="355" y="150" width="140" height="52" rx="8" />
+        <text x="425" y="172">ffmpeg concat</text>
+        <text class="s" x="425" y="190">clips → one film</text>
+        <rect class="n b" x="535" y="150" width="130" height="52" rx="8" />
+        <text x="600" y="172">Premiere</text>
+        <text class="s" x="600" y="190">reveal to group (SSE)</text>
+        <rect class="n y" x="705" y="150" width="140" height="52" rx="8" />
+        <text x="775" y="172">Archive + download</text>
+        <path class="e" d="M165 176H205" />
+        <path class="e" d="M315 176H355" />
+        <path class="e" d="M495 176H535" />
+        <path class="e" d="M665 176H705" />
+      </svg>
+      <ul>
+        <li>
+          <b>Intents</b> bind bytes + checksum + version, so the client can't upload something other
+          than what was approved.
+        </li>
+        <li>
+          Queue kinds are just <code>clip</code> and <code>film</code>; statuses
+          <code>pending / processing / failed</code>. It's a table, not Redis/SQS
+          <b>(inferred: no broker in deps)</b>.
+        </li>
+        <li>
+          Locked state: until reveal, the server returns metadata only; media access goes through an
+          authorised <code>/media/access/…</code> route.
+        </li>
+      </ul>
+
+      <!-- ============ L4 ============ -->
+      <h2 id="l4"><span class="lvl">L4</span>Code map</h2>
+      <svg viewBox="0 0 860 300">
+        <rect class="n y" x="20" y="20" width="390" height="260" rx="12" style="fill: none" />
+        <text x="215" y="42">CLIENT (repo root: App.tsx + src/)</text>
+        <rect class="n p" x="40" y="60" width="170" height="44" rx="8" />
+        <text x="125" y="87">Screens / providers</text>
+        <rect class="n g" x="230" y="60" width="160" height="44" rx="8" />
+        <text x="310" y="87">src/domain (pure)</text>
+        <rect class="n b" x="40" y="130" width="170" height="44" rx="8" />
+        <text x="125" y="150">src/runtime</text>
+        <text class="s" x="125" y="166">HTTP client + repositories</text>
+        <rect class="n w" x="230" y="130" width="160" height="44" rx="8" />
+        <text x="310" y="150">src/data</text>
+        <text class="s" x="310" y="166">demo (offline) repos</text>
+        <rect class="n w" x="40" y="200" width="350" height="60" rx="8" />
+        <text x="215" y="222">Feature folders</text>
+        <text class="s" x="215" y="240">
+          capture · chat · auth · capsule · archive · reminders · invites
+        </text>
+        <path class="e" d="M210 82H230" />
+        <path class="e" d="M125 104V130" />
+        <rect class="n y" x="450" y="20" width="390" height="260" rx="12" style="fill: none" />
+        <text x="645" y="42">SERVER (server/src)</text>
+        <rect class="n p" x="470" y="60" width="170" height="44" rx="8" />
+        <text x="555" y="80">http.ts</text>
+        <text class="s" x="555" y="96">~4.5k lines, route table</text>
+        <rect class="n g" x="660" y="60" width="160" height="44" rx="8" />
+        <text x="740" y="80">db.ts + migrations</text>
+        <text class="s" x="740" y="96">SQLite</text>
+        <rect class="n b" x="470" y="130" width="170" height="44" rx="8" />
+        <text x="555" y="150">cycles/</text>
+        <text class="s" x="555" y="166">engine (pure) · lifecycle · scheduler</text>
+        <rect class="n b" x="660" y="130" width="160" height="44" rx="8" />
+        <text x="740" y="150">jobs/ + media/</text>
+        <text class="s" x="740" y="166">queue · worker · stores</text>
+        <rect class="n w" x="470" y="200" width="350" height="60" rx="8" />
+        <text x="645" y="222">auth · groups · chat · realtime · reminders</text>
+        <text class="s" x="645" y="240">contributions · archive · audit · policy</text>
+        <path class="e" d="M640 82H660" />
+        <path class="e" d="M555 104V130" />
+        <path class="e" d="M740 104V130" />
+        <path class="e d" d="M410 150H450" />
+        <text class="s" x="430" y="140">HTTP</text>
+      </svg>
+      <ul>
+        <li>
+          <b>Ports &amp; adapters</b> on the client: UI talks to repository interfaces; Demo and
+          Runtime each implement them (ADR-0001).
+        </li>
+        <li>
+          <code>npm run architecture:check</code> enforces it: <code>src/domain</code> and
+          <code>cycles/engine.ts</code> may only import relative files (no Expo, no SQLite).
+        </li>
+        <li>Cycle engine takes an injected clock, so tests never wait on real time.</li>
+        <li>
+          Big files to know: <code>server/src/http.ts</code> (4.5k), <code>db.ts</code> (2.2k),
+          <code>jobs/index.ts</code> (2.1k). Everything routes through these.
+        </li>
+      </ul>
+
+      <!-- ============ L5 ============ -->
+      <h2 id="l5"><span class="lvl">L5</span>From PR to running server</h2>
+      <svg viewBox="0 0 860 170">
+        <rect class="n y" x="15" y="50" width="100" height="52" rx="8" />
+        <text x="65" y="72">PR to dev</text>
+        <text class="s" x="65" y="90">branch per batch</text>
+        <rect class="n p" x="145" y="50" width="120" height="52" rx="8" />
+        <text x="205" y="72">Quality check</text>
+        <text class="s" x="205" y="90">lint·types·tests</text>
+        <rect class="n w" x="295" y="50" width="110" height="52" rx="8" />
+        <text x="350" y="72">Codex review</text>
+        <text class="s" x="350" y="90">one pass</text>
+        <rect class="n g" x="435" y="50" width="100" height="52" rx="8" />
+        <text x="485" y="72">Merge</text>
+        <text class="s" x="485" y="90">to dev</text>
+        <rect class="n b" x="565" y="50" width="130" height="52" rx="8" />
+        <text x="630" y="72">deploy-dev.yml</text>
+        <text class="s" x="630" y="90">AWS role via OIDC</text>
+        <rect class="n r" x="725" y="50" width="120" height="52" rx="8" />
+        <text x="785" y="72">release-host.sh</text>
+        <text class="s" x="785" y="90">health check or rollback</text>
+        <path class="e" d="M115 76H145" />
+        <path class="e" d="M265 76H295" />
+        <path class="e" d="M405 76H435" />
+        <path class="e" d="M535 76H565" />
+        <path class="e" d="M695 76H725" />
+        <text class="s" x="430" y="140">
+          Later: dev → main by PR for release. Terraform (infra/terraform) provisions the AWS pieces
+          separately.
+        </text>
+      </svg>
+      <ul>
+        <li>
+          Only a commit that passed Quality can deploy. The new release is activated only if runtime
+          + web health checks pass; otherwise the previous release is restored.
+        </li>
+        <li>
+          No static AWS keys in CI: GitHub's OIDC token is trusted by a deploy role scoped to the
+          <code>dev</code> environment.
+        </li>
+        <li>
+          Terraform modules: <code>private-media</code> (S3+KMS), <code>environment-identity</code>;
+          roots: <code>demo</code> (the live one), <code>dev</code>, <code>prod</code> (reserved,
+          not initialised yet).
+        </li>
+        <li>
+          Docs say there are no routine application DB backups in the dev/prod plan (accepted
+          lifecycle). Worth knowing for a SQLite-on-one-disk setup.
+        </li>
+      </ul>
+
+      <!-- ============ Tradeoffs ============ -->
+      <h2 id="tradeoffs">Tradeoffs made</h2>
+      <table>
+        <tr>
+          <th>Decision</th>
+          <th>Why (stated / inferred)</th>
+          <th>What it costs</th>
+        </tr>
+        <tr>
+          <td>Monolith, one Node process</td>
+          <td>Course brief recommends it; tiny ops surface.</td>
+          <td>
+            Big files (<code>http.ts</code> 4.5k lines); video work shares the box with the API
+            (limits: 1 concurrent processor).
+          </td>
+        </tr>
+        <tr>
+          <td>SQLite on one disk</td>
+          <td>Zero ops, built into Node, migrations as plain SQL.</td>
+          <td>
+            Single writer, single host, no horizontal scale. Auth code even serialises logins
+            in-process for this reason.
+          </td>
+        </tr>
+        <tr>
+          <td>Job queue = DB table + worker</td>
+          <td>No broker to run <b>(inferred)</b>.</td>
+          <td>
+            Only works while there's one server process. Retries are hand-built (film: 3 attempts).
+          </td>
+        </tr>
+        <tr>
+          <td>SSE for chat/realtime</td>
+          <td>One-way push over plain HTTP; works through nginx/CloudFront.</td>
+          <td>Server → client only; sends go via normal POST.</td>
+        </tr>
+        <tr>
+          <td>Expo (React Native) + web PWA</td>
+          <td>
+            One codebase, iPhone works via Home Screen PWA. Native iOS out of scope (4 Oct
+            decision).
+          </td>
+          <td>HTTPS-only features (camera, push, install) can't be fully tested locally.</td>
+        </tr>
+        <tr>
+          <td>Web push only for reminders</td>
+          <td>Native/Expo push paused; PWA covers iPhone.</td>
+          <td>Dead native push code left in the repo, disabled.</td>
+        </tr>
+        <tr>
+          <td>Own auth (scrypt, cookie sessions); Cognito deferred</td>
+          <td>Ship sooner; no external IdP.</td>
+          <td>
+            You own password security: rate limits, dummy-hash timing, session expiry. All
+            hand-written.
+          </td>
+        </tr>
+        <tr>
+          <td>Signed upload intents, S3 private + KMS</td>
+          <td>Bytes can't bypass app authorisation; reveal stays locked.</td>
+          <td>Needs CORS/versioning/lifecycle verified per environment.</td>
+        </tr>
+        <tr>
+          <td>Lightsail + Docker Compose, not ECS/Lambda</td>
+          <td>Cheap, simple, matches SQLite-on-disk <b>(inferred)</b>.</td>
+          <td>Single point of failure; deploy = scripted host release with rollback.</td>
+        </tr>
+        <tr>
+          <td>Freeze the Demo</td>
+          <td>Real app is the product; parity was costing time.</td>
+          <td>Demo/real code pairs remain until someone deletes one side.</td>
+        </tr>
+        <tr>
+          <td>Strict, heavy process (ADRs, contracts, architecture check)</td>
+          <td>Course assesses design + DevSecOps, so evidence matters.</td>
+          <td>Lots of docs; some now stale (README still frames Sprint 0).</td>
+        </tr>
+      </table>
+
+      <!-- ============ Doubts ============ -->
+      <h2 id="doubts">Good next questions</h2>
+      <p class="mut">Pick any; I'll write the next layer with a focused diagram.</p>
+      <ul>
+        <li>
+          <b>Cycle lifecycle:</b> exact state machine (collecting → revealing → archived), what
+          triggers each hop.
+        </li>
+        <li><b>Auth &amp; privacy:</b> real session flow, who can fetch which media, when.</li>
+        <li><b>Realtime:</b> how SSE chat + unread counters work.</li>
+        <li><b>Data model:</b> ER diagram from the 28 migrations.</li>
+        <li><b>Terraform &amp; AWS:</b> what each root/module owns, cost safety.</li>
+        <li><b>Tests:</b> what <code>test:fast</code> vs <code>test:slow</code> really cover.</li>
+        <li><b>What changed in the last 150 issues:</b> a timeline by theme.</li>
+      </ul>
+    </main>
+  </body>
+</html>

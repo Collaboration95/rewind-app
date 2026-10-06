@@ -210,7 +210,7 @@ describe('real account entry flow', () => {
     );
   });
 
-  it('registers a new account and carries the username into its direct sign-in path', async () => {
+  it('registers a new account and signs straight in with the chosen password', async () => {
     useWebPlatform();
     const newAccount = { ...apiAccount, username: 'new.member', displayName: 'new.member' };
     globalThis.fetch = jest
@@ -235,10 +235,20 @@ describe('real account entry flow', () => {
     );
     await fireEvent.press(result.getByTestId('registration-submit'));
 
-    expect(await result.findByTestId('registration-success')).toHaveTextContent(
-      'Your account is ready. Sign in to continue.',
-    );
-    expect(secureStoreMock.token).toBeNull();
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenNthCalledWith(
+        3,
+        'https://rewind.example/auth/login',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            username: 'new.member',
+            password: 'correct horse battery staple',
+            clientType: 'browser',
+          }),
+        }),
+      );
+    });
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
       2,
       'https://rewind.example/auth/register',
@@ -251,16 +261,8 @@ describe('real account entry flow', () => {
         }),
       }),
     );
-
-    expect(result.getByLabelText('Username').props.value).toBe('new.member');
-    await fireEvent.changeText(result.getByLabelText('Password'), 'correct horse battery staple');
-    await fireEvent.press(result.getByTestId('real-account-submit'));
-    await waitFor(() => {
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        'https://rewind.example/auth/login',
-        expect.objectContaining({ method: 'POST' }),
-      );
-    });
+    await waitFor(() => expect(result.queryByTestId('welcome-entry')).toBeNull());
+    expect(result.queryByTestId('registration-success')).toBeNull();
     expect(secureStoreMock.token).toBeNull();
   });
 
@@ -507,6 +509,45 @@ describe('real account entry flow', () => {
     expect(await result.findByText('Wrong username or password.')).toBeTruthy();
     expect(secureStoreMock.token).toBeNull();
     expect(result.queryByTestId('demo-entry-demo-1')).toBeNull();
+  });
+
+  it.each([
+    {
+      status: 429,
+      body: { error: 'sign_in_throttled' },
+      text: 'Too many sign-in attempts, so sign-in is paused for a while. Try again later.',
+    },
+    {
+      status: 503,
+      body: { error: 'runtime_unavailable' },
+      text: 'Rewind is having trouble right now. Try again in a minute.',
+    },
+  ])('explains a $status sign-in response instead of blaming the password', async (scenario) => {
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValue(jsonResponse(scenario.status, scenario.body)) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.changeText(result.getByLabelText('Username'), 'pilot.user');
+    await fireEvent.changeText(result.getByLabelText('Password'), 'correct password');
+    await fireEvent.press(result.getByTestId('real-account-submit'));
+
+    expect(await result.findByText(scenario.text)).toBeTruthy();
+    expect(result.queryByText('Wrong username or password.')).toBeNull();
+  });
+
+  it('lets a password field be shown and hidden again', async () => {
+    globalThis.fetch = jest
+      .fn()
+      .mockResolvedValue(jsonResponse(401, { error: 'session_required' })) as typeof fetch;
+    const result = await render(<App runtimeClient={runtimeClient} />);
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    expect(result.getByLabelText('Password').props.secureTextEntry).toBe(true);
+    await fireEvent.press(result.getByRole('button', { name: 'Show password' }));
+    expect(result.getByLabelText('Password').props.secureTextEntry).toBe(false);
+    await fireEvent.press(result.getByRole('button', { name: 'Hide password' }));
+    expect(result.getByLabelText('Password').props.secureTextEntry).toBe(true);
   });
 
   it('routes a signed-out HTTPS invite through sign-in and retains its intent afterward', async () => {

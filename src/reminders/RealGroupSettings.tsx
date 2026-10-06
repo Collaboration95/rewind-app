@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { BUILT_IN_PROMPTS } from '../domain/groups';
 import { WARM } from '../ui/tokens';
+import { userMessage } from '../domain/user-message';
 
 interface Preference {
   enabled: boolean;
@@ -100,11 +101,7 @@ export function RealGroupSettings<T extends SettingsGroup>({
       );
     } catch (error) {
       if (context === contextVersion.current)
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : 'Settings could not be saved. Retry when connected.',
-        );
+        setMessage(userMessage(error, 'Settings could not be saved. Retry when connected.'));
     } finally {
       if (context === contextVersion.current) setPending(false);
     }

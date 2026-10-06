@@ -15,6 +15,7 @@ import {
   type RealtimeConnectionState,
 } from './realtime-client';
 import { useNetworkOnline } from './use-network-online';
+import { userMessage } from '../domain/user-message';
 
 const CHAT_MAX = 2_000;
 
@@ -52,9 +53,7 @@ function statusForError(error: unknown): number | undefined {
 }
 
 function friendlyError(error: unknown): string {
-  return error instanceof Error && error.message
-    ? error.message
-    : 'Chat could not connect. Check your connection and retry.';
+  return userMessage(error, 'Chat could not connect. Check your connection and retry.');
 }
 
 const short = (text: string, max: number) =>
@@ -398,9 +397,7 @@ export function RealAccountChatScreen({
       );
       return null;
     } catch (failure) {
-      return failure instanceof Error
-        ? failure.message
-        : 'The report could not be sent. Try again.';
+      return userMessage(failure, 'The report could not be sent. Try again.');
     }
   };
 
@@ -757,8 +754,16 @@ export function RealAccountChatScreen({
                 if (pendingDraft?.body !== value) setPendingDraft(null);
               }}
               onKeyPress={(event) => {
-                const native = event.nativeEvent as { key: string; shiftKey?: boolean };
-                if (native.key === 'Enter' && !native.shiftKey && canSend) {
+                const native = event.nativeEvent as {
+                  key: string;
+                  shiftKey?: boolean;
+                  isComposing?: boolean;
+                  keyCode?: number;
+                };
+                // Enter that confirms a Chinese/Japanese/Korean IME candidate
+                // must not send the half-typed message.
+                const composing = native.isComposing === true || native.keyCode === 229;
+                if (native.key === 'Enter' && !native.shiftKey && !composing && canSend) {
                   event.preventDefault?.();
                   void send();
                 }

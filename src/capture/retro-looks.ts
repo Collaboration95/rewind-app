@@ -70,6 +70,36 @@ export function lookPreviewStyle(mode: CaptureMode): { filter: string } {
   return { filter: RETRO_LOOKS[mode].filter };
 }
 
+// Overlay geometry shared by the sealing canvas and the web live preview, as
+// fractions of the graded frame so both scale to any size.
+
+/** The vignette starts at this fraction of the half-diagonal and peaks at the corners. */
+export const VIGNETTE_INNER = 0.45;
+/** Disposable flash: a hot centre (radius = fraction of the long edge) that falls off fast. */
+export const FLASH_BLOOM = {
+  centerY: 0.45,
+  radius: 0.6,
+  stops: [
+    [0, 'rgba(255,255,255,0.32)'],
+    [0.5, 'rgba(255,255,255,0.08)'],
+    [1, 'rgba(255,255,255,0)'],
+  ],
+} as const;
+/** Disposable flash: a warm light leak from the right edge over this fraction of the width. */
+export const FLASH_LEAK = {
+  width: 0.3,
+  stops: [
+    [0, 'rgba(255,110,40,0.35)'],
+    [1, 'rgba(255,110,40,0)'],
+  ],
+} as const;
+export const SCANLINE_ALPHA = 0.16;
+
+/** VHS scanline thickness in frame pixels; lines repeat every two steps. */
+export function scanlineStep(height: number): number {
+  return Math.max(2, Math.round(height / 360));
+}
+
 /** The grain tile edge, in pixels. */
 export const NOISE_TILE_SIZE = 128;
 
@@ -172,7 +202,7 @@ function vignette(ctx: CanvasRenderingContext2D, strength: number, width: number
   const gradient = ctx.createRadialGradient(
     width / 2,
     height / 2,
-    radius * 0.45,
+    radius * VIGNETTE_INNER,
     width / 2,
     height / 2,
     radius,
@@ -221,11 +251,12 @@ function stampText(
   ctx.restore();
 }
 
-function chromaOffset(
-  ctx: CanvasRenderingContext2D,
-  source: CanvasImageSource,
-  frame: RetroFrame,
-): void {
+/**
+ * Shift copies of the graded frame's red and blue channels. Shifting the graded
+ * pixels (not the ungraded source) keeps flat areas unchanged, so the effect is
+ * edge fringing only and the CSS live preview stays faithful without it.
+ */
+function chromaOffset(ctx: CanvasRenderingContext2D, frame: RetroFrame): void {
   const scratch = frame.scratch;
   if (!scratch) return;
   const shift = Math.max(2, Math.round(frame.width / 240));
@@ -235,7 +266,7 @@ function chromaOffset(
   ] as const) {
     scratch.save();
     scratch.globalCompositeOperation = 'source-over';
-    scratch.drawImage(source, 0, 0, frame.width, frame.height);
+    scratch.drawImage(ctx.canvas, 0, 0, frame.width, frame.height);
     scratch.globalCompositeOperation = 'multiply';
     scratch.fillStyle = color;
     scratch.fillRect(0, 0, frame.width, frame.height);
@@ -249,9 +280,9 @@ function chromaOffset(
 }
 
 function scanlines(ctx: CanvasRenderingContext2D, frame: RetroFrame) {
-  const step = Math.max(2, Math.round(frame.height / 360));
+  const step = scanlineStep(frame.height);
   ctx.save();
-  ctx.globalAlpha = 0.16;
+  ctx.globalAlpha = SCANLINE_ALPHA;
   ctx.fillStyle = '#000000';
   for (let y = 0; y < frame.height; y += step * 2) ctx.fillRect(0, y, frame.width, step);
   ctx.restore();
@@ -327,26 +358,17 @@ export function drawRetroFrame(
   ctx.restore();
   if (!frame.supportsFilter) for (const item of look.fallback) wash(ctx, item, width, height);
 
-  if (mode === 'vhs') chromaOffset(ctx, source, frame);
+  if (mode === 'vhs') chromaOffset(ctx, frame);
   if (look.tint) wash(ctx, look.tint, width, height);
 
   if (mode === 'disposable-flash') {
     // Direct on-camera flash: a hot centre that falls off fast, plus a warm leak.
-    const radius = Math.max(width, height) * 0.6;
-    const bloom = ctx.createRadialGradient(
-      width / 2,
-      height * 0.45,
-      0,
-      width / 2,
-      height * 0.45,
-      radius,
-    );
-    bloom.addColorStop(0, 'rgba(255,255,255,0.32)');
-    bloom.addColorStop(0.5, 'rgba(255,255,255,0.08)');
-    bloom.addColorStop(1, 'rgba(255,255,255,0)');
-    const leak = ctx.createLinearGradient(width, 0, width * 0.7, 0);
-    leak.addColorStop(0, 'rgba(255,110,40,0.35)');
-    leak.addColorStop(1, 'rgba(255,110,40,0)');
+    const radius = Math.max(width, height) * FLASH_BLOOM.radius;
+    const centerY = height * FLASH_BLOOM.centerY;
+    const bloom = ctx.createRadialGradient(width / 2, centerY, 0, width / 2, centerY, radius);
+    for (const [offset, color] of FLASH_BLOOM.stops) bloom.addColorStop(offset, color);
+    const leak = ctx.createLinearGradient(width, 0, width * (1 - FLASH_LEAK.width), 0);
+    for (const [offset, color] of FLASH_LEAK.stops) leak.addColorStop(offset, color);
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
     ctx.fillStyle = bloom;

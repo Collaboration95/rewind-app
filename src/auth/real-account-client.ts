@@ -44,6 +44,8 @@ export type AuthNotice =
   | 'revoked'
   | 'offline'
   | 'sign-in-failed'
+  | 'sign-in-throttled'
+  | 'unavailable'
   | 'revocation-unconfirmed'
   | 'local-credential-removal-failed'
   | 'sign-out-incomplete'

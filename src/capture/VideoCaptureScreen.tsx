@@ -71,6 +71,7 @@ import {
   allowanceLeft,
   clock,
 } from './camera-ui';
+import { userMessage } from '../domain/user-message';
 
 type AccessStatus =
   | 'checking'
@@ -132,7 +133,7 @@ function quotaFailure(code: string | undefined): boolean {
  * the upload progress because processing can fail after upload is complete.
  */
 function classifyContributionFailure(error: unknown): ContributionFailure {
-  const message = error instanceof Error ? error.message : 'The clip could not be uploaded.';
+  const message = userMessage(error, 'The clip could not be uploaded.');
   if (error instanceof ClipUploadError) {
     return {
       message,
@@ -676,9 +677,7 @@ export function VideoCaptureScreen({
     } catch (settingsError) {
       if (!isCaptureActive()) return;
       setError(
-        settingsError instanceof Error
-          ? settingsError.message
-          : 'Open this app settings to allow camera and microphone access.',
+        userMessage(settingsError, 'Open this app settings to allow camera and microphone access.'),
       );
     }
   }, [isCaptureActive, platform, refresh]);
@@ -717,11 +716,7 @@ export function VideoCaptureScreen({
       if (!isCaptureActive() || recorder.getState().status === 'cancelled') return;
       setRecording(false);
       setRecordingStartedAt(null);
-      setError(
-        recordingError instanceof Error
-          ? recordingError.message
-          : 'The clip could not be recorded.',
-      );
+      setError(userMessage(recordingError, 'The clip could not be recorded.'));
     }
   };
 
@@ -733,9 +728,7 @@ export function VideoCaptureScreen({
       await replaceClip(selected);
     } catch (fileError) {
       if (!isCaptureActive() || isCaptureCancelled(fileError)) return;
-      setError(
-        fileError instanceof Error ? fileError.message : 'The video file could not be used.',
-      );
+      setError(userMessage(fileError, 'The video file could not be used.'));
     }
   };
 
@@ -752,9 +745,7 @@ export function VideoCaptureScreen({
         await uploadSession.cancel();
       } catch (cancelError) {
         setError(
-          cancelError instanceof Error
-            ? `The queued clip could not be cancelled. ${cancelError.message}`
-            : 'The queued clip could not be cancelled. Try again.',
+          `The queued clip could not be cancelled. ${userMessage(cancelError, 'Try again.')}`,
         );
         return;
       }
@@ -898,11 +889,7 @@ export function VideoCaptureScreen({
     try {
       validateRecordedClip(clip);
     } catch (validationError) {
-      setError(
-        validationError instanceof Error
-          ? validationError.message
-          : 'The selected clip metadata could not be verified.',
-      );
+      setError(userMessage(validationError, 'The selected clip metadata could not be verified.'));
       return;
     }
     if (!clip.hasAudio || clip.mimeType !== 'video/mp4') {
@@ -982,10 +969,7 @@ export function VideoCaptureScreen({
           if (!isCaptureActive()) return;
           const cancelled =
             processingError instanceof RetroProcessingError && processingError.cancelled;
-          const detail =
-            processingError instanceof Error
-              ? processingError.message
-              : 'The retro look could not be applied.';
+          const detail = userMessage(processingError, 'The retro look could not be applied.');
           setError(
             cancelled
               ? 'The retro look was cancelled. Your original clip is kept; upload again to retry.'
@@ -1359,11 +1343,7 @@ export function VideoCaptureScreen({
           setContributionStatus({ ...contributionStatus, deletionAvailability });
         }
       }
-      setError(
-        deleteError instanceof Error
-          ? `The contribution could not be deleted. ${deleteError.message}`
-          : 'The contribution could not be deleted. Try again.',
-      );
+      setError(`The contribution could not be deleted. ${userMessage(deleteError, 'Try again.')}`);
     }
   }, [
     canDeleteContribution,
@@ -1399,15 +1379,15 @@ export function VideoCaptureScreen({
   // V7 copy by failure kind; the message itself is in the notice below it.
   const failure = contributionFailed
     ? contributionStatus.reason === 'quota_exceeded'
-      ? { title: 'Contribution limit reached', body: 'No allowance remains.' }
+      ? { title: 'No moments left', body: 'You’ve used all your moments this cycle.' }
       : contributionStatus.retryable
         ? {
             title: 'Couldn’t upload',
             body: 'It’s kept on this phone and doesn’t count until it’s sealed.',
           }
         : {
-            title: 'Contribution could not be prepared',
-            body: 'This contribution cannot be retried. Retake it to submit a new contribution.',
+            title: 'Couldn’t seal this moment',
+            body: 'This one can’t be retried. Take it again to add a new moment.',
           }
     : null;
   const guidance =
@@ -1419,7 +1399,7 @@ export function VideoCaptureScreen({
     <CameraFrame bokeh={!viewfinder && !inReview} testID="video-capture-screen">
       {viewfinder ? (
         Platform.OS === 'web' ? (
-          <LookPreview mode={mode} testID="video-live-look">
+          <LookPreview fit={previewFit} mode={mode} testID="video-live-look">
             <BrowserVideoPreview
               fit={previewFit}
               onAspect={setPreviewAspect}
@@ -1834,7 +1814,7 @@ function CapturedVideoReview({
             : styles.portraitMedia
         }
       >
-        <LookPreview mode={mode} testID="video-review-look">
+        <LookPreview fit="contain" mode={mode} testID="video-review-look">
           <VideoView
             accessible
             accessibilityLabel="Captured video preview with audio"

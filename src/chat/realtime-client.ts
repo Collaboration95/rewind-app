@@ -1,3 +1,5 @@
+import { userMessage } from '../domain/user-message';
+
 export interface ChatMessage {
   id: string;
   groupId: string;
@@ -264,9 +266,7 @@ export class RealtimeChatClient {
       if (timedOut) throw timeoutError();
       if (error instanceof RealtimeChatError) throw error;
       throw new RealtimeChatError(
-        error instanceof Error && error.message
-          ? error.message
-          : 'The realtime message could not be sent.',
+        userMessage(error, 'The realtime message could not be sent.'),
         undefined,
         'network_error',
         messageId,

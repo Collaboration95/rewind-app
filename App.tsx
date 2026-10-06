@@ -279,25 +279,29 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
           ? 'Your account is deleted.'
           : auth.notice === 'sign-in-failed'
             ? 'Wrong username or password.'
-            : auth.notice === 'offline'
-              ? "You're offline. Sign in again when you're connected."
-              : auth.notice === 'revocation-unconfirmed'
-                ? Platform.OS === 'web'
-                  ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
-                  : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'
-                : auth.notice === 'local-credential-removal-failed'
-                  ? 'The server says this session has ended, but this device could not confirm deletion of its saved sign-in. The credential may remain in SecureStore; retry local cleanup before treating this device as signed out.'
-                  : auth.notice === 'sign-out-incomplete'
-                    ? 'Sign-out is incomplete: this device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in. Retry sign out.'
-                    : auth.notice === 'sign-out-recovery-pending'
-                      ? 'Sign-out recovery is pending. This device will not restore a saved sign-in automatically until recovery finishes. Server revocation may still be unconfirmed.'
-                      : auth.notice === 'sign-out-marker-unavailable'
-                        ? auth.state === 'active'
-                          ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
-                          : 'This device could not verify sign-out recovery state, so the saved sign-in was not restored. Retry sign out to recover safely.'
-                        : auth.notice === 'sign-out-marker-cleanup-failed'
-                          ? 'The server confirmed sign-out and this device deleted its saved sign-in, but it could not clear the recovery marker. Account restore stays blocked on this device until cleanup is retried.'
-                          : null;
+            : auth.notice === 'sign-in-throttled'
+              ? 'Too many sign-in attempts, so sign-in is paused for a while. Try again later.'
+              : auth.notice === 'unavailable'
+                ? 'Rewind is having trouble right now. Try again in a minute.'
+                : auth.notice === 'offline'
+                  ? "You're offline. Sign in again when you're connected."
+                  : auth.notice === 'revocation-unconfirmed'
+                    ? Platform.OS === 'web'
+                      ? 'We could not confirm sign-out. You are still signed in on this browser; try again when the service is reachable.'
+                      : 'Signed out on this device. The server did not confirm revocation; another device may remain signed in until the session expires or an administrator resets it.'
+                    : auth.notice === 'local-credential-removal-failed'
+                      ? 'The server says this session has ended, but this device could not confirm deletion of its saved sign-in. The credential may remain in SecureStore; retry local cleanup before treating this device as signed out.'
+                      : auth.notice === 'sign-out-incomplete'
+                        ? 'Sign-out is incomplete: this device could not confirm deletion of its saved sign-in, and the server did not confirm revocation. The credential may remain and you may still be signed in. Retry sign out.'
+                        : auth.notice === 'sign-out-recovery-pending'
+                          ? 'Sign-out recovery is pending. This device will not restore a saved sign-in automatically until recovery finishes. Server revocation may still be unconfirmed.'
+                          : auth.notice === 'sign-out-marker-unavailable'
+                            ? auth.state === 'active'
+                              ? 'Sign-out did not start because this device could not save its recovery state. You are still signed in. Retry sign out.'
+                              : 'This device could not verify sign-out recovery state, so the saved sign-in was not restored. Retry sign out to recover safely.'
+                            : auth.notice === 'sign-out-marker-cleanup-failed'
+                              ? 'The server confirmed sign-out and this device deleted its saved sign-in, but it could not clear the recovery marker. Account restore stays blocked on this device until cleanup is retried.'
+                              : null;
 
   const submitSignIn = async () => {
     // The "account is ready" banner has done its job once they try to sign in.
@@ -325,14 +329,20 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     }
     setAuthPending(true);
     const outcome = await auth.registerAccount(username.trim(), password);
-    setAuthPending(false);
     if (outcome === 'created') {
+      // Sign straight in with the password just chosen; fall back to the
+      // sign-in screen only if that fails.
+      const signedIn = await auth.signIn(username.trim(), password);
+      setAuthPending(false);
       setPassword('');
       setPasswordConfirmation('');
-      setRegistrationComplete(true);
-      setMode('sign-in');
+      if (!signedIn) {
+        setRegistrationComplete(true);
+        setMode('sign-in');
+      }
       return;
     }
+    setAuthPending(false);
     setRegistrationError(outcome);
   };
 
@@ -367,6 +377,7 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
       : null;
   const recoveryNotice =
     (auth.notice === 'offline' ||
+      auth.notice === 'unavailable' ||
       auth.notice === 'expired' ||
       auth.notice === 'revoked' ||
       auth.notice === 'revocation-unconfirmed' ||
