@@ -153,6 +153,17 @@ data "aws_iam_policy_document" "runtime" {
     actions   = ["s3:ListBucket", "s3:ListBucketVersions"]
     resources = [aws_s3_bucket.media.arn]
   }
+
+  # The daily host backup uploads with these keys. Add-only: the backup
+  # bucket is versioned, so earlier backups cannot be overwritten or removed.
+  dynamic "statement" {
+    for_each = var.backup_prefix_arn == null ? [] : [var.backup_prefix_arn]
+    content {
+      sid       = "HostBackups"
+      actions   = ["s3:PutObject"]
+      resources = [statement.value]
+    }
+  }
 }
 
 resource "aws_iam_user_policy" "runtime" {
