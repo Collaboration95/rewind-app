@@ -1422,8 +1422,9 @@
   gap: 8px;
 }
 .set-field input[type='password'] {
-  font-size: 13px;
-  letter-spacing: 0.18em;
+  /* 16px is the floor: iOS Safari zooms the page when a smaller input is focused */
+  font-size: 16px;
+  letter-spacing: 0.12em;
   height: 22px;
 }
 .set-field input[type='password']::placeholder {
