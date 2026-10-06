@@ -305,7 +305,7 @@ test(
 
 test('every nginx location includes the shared always-on security headers', () => {
   const locations = [...nginx.matchAll(/location [^\n]+ \{([\s\S]*?)\n    \}/g)];
-  assert.equal(locations.length, 7);
+  assert.equal(locations.length, 8);
   for (const [, location] of locations) {
     assert.match(location, /include \/etc\/nginx\/security-headers\.conf;/);
   }

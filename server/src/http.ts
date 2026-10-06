@@ -7,6 +7,7 @@ import { isIP } from 'node:net';
 import { URL } from 'node:url';
 
 import { requestObservation } from './observability';
+import { handleAdminRequest } from './admin';
 
 import { SERVICE_VERSION, type RuntimeConfig } from './config';
 import {
@@ -1408,6 +1409,18 @@ export async function handleRequest(
           : 'rewind-my-clip.mp4'
         : undefined,
       served.releaseBudget,
+    );
+    return;
+  }
+
+  if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
+    handleAdminRequest(
+      request,
+      response,
+      config,
+      database,
+      url,
+      authTransportIsSecure(request, config),
     );
     return;
   }

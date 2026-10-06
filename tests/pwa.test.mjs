@@ -331,6 +331,13 @@ test('public legal pages load as documents, never the SPA shell', async () => {
   assert.match(await (await worker.request('/groups/group', { mode: 'navigate' })).text(), /old/);
 });
 
+test('the admin page bypasses the worker so the browser can show its sign-in prompt', async () => {
+  const worker = workerFixture();
+  for (const path of ['/admin', '/api/admin', '/api/admin/', '/api/admin/t/real_accounts?page=2'])
+    assert.equal(await worker.request(path, { mode: 'navigate' }), undefined);
+  assert.notEqual(await worker.request('/api/administrator'), undefined);
+});
+
 test('offline entry uses its installed build; an incomplete upgrade preserves the previous cache', async () => {
   const oldWorker = workerFixture(serviceWorker.replace('__BUILD_ID__', 'a'.repeat(24)));
   oldWorker.installShell('old-build');

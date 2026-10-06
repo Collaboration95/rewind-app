@@ -21,6 +21,8 @@ export interface RuntimeConfig {
   ffmpegBin: string;
   allowOrigin: string;
   originAuthSecret: string | null;
+  /** Enables the read-only /admin table browser (Basic auth, user "admin"). */
+  adminPassword?: string | null;
   allowInsecureLocalAuth: boolean;
   /** Log one JSON timing line per request (REWIND_REQUEST_TIMING). */
   requestTiming?: boolean;
@@ -86,6 +88,18 @@ function parsePositiveInteger(
   return parsed;
 }
 
+function parseAdminPassword(value: string | undefined): string | null {
+  const password = value?.trim();
+  if (!password) return null;
+  if (password.length < 16) {
+    throw new ConfigError(
+      'REWIND_ADMIN_PASSWORD must be at least 16 characters.',
+      'Use a long random value or leave it unset to disable the admin page.',
+    );
+  }
+  return password;
+}
+
 export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const dataDirInput = env.REWIND_DATA_DIR?.trim() || resolve(process.cwd(), '.local-data');
   const dataDir = isAbsolute(dataDirInput) ? dataDirInput : resolve(process.cwd(), dataDirInput);
@@ -114,6 +128,7 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
     // Only configure when a verified edge overwrites this header on every
     // origin request; it is not a substitute for enforcing viewer HTTPS.
     originAuthSecret: env.REWIND_ORIGIN_AUTH_SECRET?.trim() || null,
+    adminPassword: parseAdminPassword(env.REWIND_ADMIN_PASSWORD),
     allowInsecureLocalAuth: ['1', 'true'].includes(
       env.REWIND_ALLOW_INSECURE_LOCAL_AUTH?.trim().toLowerCase() ?? '',
     ),

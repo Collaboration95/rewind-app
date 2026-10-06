@@ -198,6 +198,22 @@ snapshot, uploads a database-and-media backup, stops the runtime, and only
 then runs `migrate`. It leaves the runtime stopped if migration succeeds or
 fails so an operator can inspect it before starting it again.
 
+## Admin table browser
+
+`https://<distribution>/admin` opens a read-only view of every SQLite table
+(newest rows first, 50 per page). Sign in at the browser prompt as `admin` with
+the password Terraform generates:
+
+```sh
+terraform -chdir=infra/terraform/media output -raw admin_password
+```
+
+Terraform writes the password into the hosted settings object, and the next
+deploy delivers it as `REWIND_ADMIN_PASSWORD`. The page is off when that is
+unset, refuses plain HTTP, runs only fixed `SELECT`s, and hides credential
+columns (hashes, salts, tokens, push destinations). For a local run, set
+`REWIND_ADMIN_PASSWORD` (16+ characters) and open `/admin` on the API port.
+
 ## Backup and local restore
 
 `backup.sh` uses SQLite `VACUUM INTO` for a consistent online snapshot,
