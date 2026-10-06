@@ -566,6 +566,11 @@
     ['am', openMvp.length, 'open on the mvp path'],
     ['', curOpen.length, `left in ${current.name} milestone`],
     ['', closedCur.length, `closed in ${current.name}`],
+    [
+      '',
+      closedCur.filter((i) => i.p).length,
+      `sub-issues closed in ${current.name} (of ${issues.filter((i) => i.p).length} total)`,
+    ],
     ['', createdCur.length, `opened in ${current.name}`],
     ['', mergedCur.length, `PRs merged in ${current.name}`],
     ['', fmt(median(mergedCur.map((p) => p.i.length))), 'median issues per PR'],

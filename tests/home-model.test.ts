@@ -2,7 +2,6 @@ import type { ContributionLedgerEntry, ContributionLedgerPage } from '../src/dom
 import { parseFilmSegments } from '../src/domain/premiere';
 import {
   cycleWeek,
-  daysUntil,
   filmCountdown,
   DAY_MS,
   homeCards,
@@ -19,8 +18,9 @@ it('counts the cycle week and the weekly reset from the cycle start', () => {
   expect(cycleWeek(cycle, start + DAY_MS)).toMatchObject({ week: 1, resetDays: 6 });
   expect(cycleWeek(cycle, start + 8 * DAY_MS)).toMatchObject({ week: 2, resetDays: 6 });
   expect(cycleWeek(cycle, start + 27.5 * DAY_MS)).toMatchObject({ week: 4, resetDays: 1 });
-  expect(daysUntil(cycle.endsAt, start + 27.5 * DAY_MS)).toBe(1);
-  expect(daysUntil(cycle.endsAt, start + 40 * DAY_MS)).toBe(0);
+  // The final day counts in hours, not "1 day" (the Archive used to say that).
+  expect(filmCountdown(cycle.endsAt, start + 27.5 * DAY_MS)).toEqual({ count: 12, unit: 'hour' });
+  expect(filmCountdown(cycle.endsAt, start + 40 * DAY_MS)).toEqual({ count: 0, unit: 'minute' });
 });
 
 it('greys the shutter on whichever limit is reached first', () => {

@@ -32,13 +32,6 @@ export type HomeCard = 'failed' | 'developing' | 'delayed' | 'released';
 
 export const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
 
-/** Whole days left, rounded up, never below 0. */
-export function daysUntil(iso: string, now: number): number {
-  const ms = Date.parse(iso) - now;
-  if (!Number.isFinite(ms) || ms <= 0) return 0;
-  return Math.ceil(ms / DAY_MS);
-}
-
 /** Use hours in the final day and minutes in the final hour. */
 export function filmCountdown(iso: string, now: number): { count: number; unit: string } {
   const remaining = Math.max(0, Date.parse(iso) - now);

@@ -838,9 +838,7 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-failed');
     expect(
-      result.getByText(
-        'This contribution cannot be retried. Retake it to submit a new contribution.',
-      ),
+      result.getByText('This one can’t be retried. Take it again to add a new moment.'),
     ).toBeTruthy();
     expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
     expect(result.queryByText('Upload queued as one pending contribution.')).toBeNull();
@@ -858,8 +856,8 @@ describe('VideoCaptureScreen', () => {
 
     await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-failed');
-    expect(result.getByText('Contribution limit reached')).toBeTruthy();
-    expect(result.getByText('No allowance remains.')).toBeTruthy();
+    expect(result.getByText('No moments left')).toBeTruthy();
+    expect(result.getByText('You’ve used all your moments this cycle.')).toBeTruthy();
     expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
     expect(result.queryByText(/Retake it/)).toBeNull();
   });

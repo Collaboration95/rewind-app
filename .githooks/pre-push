@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Mirrors Quality's test jobs (.github/workflows/quality.yml) for dev PRs:
+# static/root, server, frontend coverage gate and deploy fixtures. The browser
+# job only runs for main, so it is left to CI. Skip with `git push --no-verify`.
+set -euo pipefail
+
+base=$(git merge-base HEAD origin/dev 2>/dev/null || true)
+if [ -n "$base" ] && REWIND_CHANGE_BASE="$base" REWIND_CHANGE_HEAD="$(git rev-parse HEAD)" \
+  node scripts/classify-quality-changes.mjs | grep -q '"docsOnly":true'; then
+  echo "pre-push: documentation-only change, skipping tests (as Quality does)."
+  exit 0
+fi
+
+npm run test:root
+python3 -m unittest discover -s tests/security -p 'test_*.py'
+npm run server:test
+npx jest --runInBand --coverage
+for fixture in tests/deploy/backup-manifest.test.sh tests/deploy/wake-recovery-selection.test.sh \
+  tests/deploy/lifecycle-guards.test.sh tests/deploy/recovery-smoke.test.sh \
+  tests/deploy/restore-atomic.test.sh tests/deploy/ownership-contract.test.sh \
+  tests/deploy/host-preflight.test.sh deploy/tests/host-bootstrap.test.sh \
+  tests/deploy/*release*.test.sh deploy/tests/*release*.test.sh; do
+  if [ -f "$fixture" ]; then bash "$fixture"; fi
+done

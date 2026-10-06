@@ -3387,7 +3387,7 @@ async function handleRealGroupRequest(
     if (owned.count >= 20) {
       authJson(request, response, config, 429, {
         error: 'rate_limited',
-        message: 'You already own twenty groups. Leave or hand on a group before creating another.',
+        message: 'You can own up to twenty groups, so a new one can’t be created right now.',
       });
       finishRejectedRequest(request, response);
       return;
@@ -3585,6 +3585,21 @@ async function handleRealAuthRequest(
     }
     const source = authClientSource(request, config);
     const result = await authenticateRealAccount(database, username, password, source, now);
+    // Unknown usernames are throttled the same way, so this reveals no accounts.
+    if (result.status === 'throttled') {
+      authJson(
+        request,
+        response,
+        config,
+        429,
+        {
+          error: 'sign_in_throttled',
+          message: 'Too many sign-in attempts. Try again later.',
+        },
+        { 'Retry-After': String(result.retryAfterSeconds) },
+      );
+      return;
+    }
     if (result.status !== 'authenticated') {
       authJson(request, response, config, 401, {
         error: 'sign_in_failed',

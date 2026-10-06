@@ -50,7 +50,8 @@
     "test:focused": "node scripts/focused-test.mjs",
     "client:prepare": "node scripts/native-build.mjs prepare",
     "test:native-build": "node --test tests/native-build.test.mjs",
-    "test:root": "npm run server:build && node scripts/run-root-tests.mjs"
+    "test:root": "npm run server:build && node scripts/run-root-tests.mjs",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1146.0",

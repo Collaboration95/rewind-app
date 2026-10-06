@@ -28,6 +28,25 @@ const issues = gh([
   a: i.author?.login || '',
 }));
 
+// `gh issue list` returns sub-issues as plain issues; GraphQL adds the parent link.
+const parents = {};
+const [owner, repo] = execFileSync(
+  'gh',
+  ['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'],
+  {
+    encoding: 'utf8',
+  },
+)
+  .trim()
+  .split('/');
+for (let after = null, more = true; more;) {
+  const q = `{repository(owner:"${owner}",name:"${repo}"){issues(first:100${after ? `,after:"${after}"` : ''}){pageInfo{hasNextPage endCursor}nodes{number parent{number}}}}}`;
+  const page = gh(['api', 'graphql', '-f', `query=${q}`]).data.repository.issues;
+  for (const n of page.nodes) if (n.parent) parents[n.number] = n.parent.number;
+  ({ hasNextPage: more, endCursor: after } = page.pageInfo);
+}
+for (const i of issues) if (parents[i.n]) i.p = parents[i.n];
+
 const issueNumbers = new Set(issues.map((i) => i.n));
 
 const prs = gh([

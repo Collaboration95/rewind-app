@@ -26,7 +26,7 @@ export function uniqueUsername(prefix = 'member') {
   return `${prefix}${randomUUID().replaceAll('-', '').slice(0, 12)}`;
 }
 
-/** Register, sign in and create a group through the real entry UI. */
+/** Register (which signs in) and create a group through the real entry UI. */
 export async function signUpAndCreateGroup(page: Page, username = uniqueUsername()) {
   await page.goto(`${SECURE_ORIGIN}/`);
   await expect(page.getByTestId('welcome-entry')).toBeVisible({ timeout: 30_000 });
@@ -34,11 +34,8 @@ export async function signUpAndCreateGroup(page: Page, username = uniqueUsername
   await page.getByTestId('registration-username').fill(username);
   await page.getByTestId('registration-password').fill(password);
   await page.getByTestId('registration-password-confirmation').fill(password);
+  // Registration signs straight in.
   await page.getByTestId('registration-submit').click();
-  await expect(page.getByTestId('registration-success')).toBeVisible();
-  await page.getByTestId('real-account-username').fill(username);
-  await page.getByTestId('real-account-password').fill(password);
-  await page.getByTestId('real-account-submit').click();
   await page.getByTestId('real-group-create-choice').click();
   await page.getByTestId('real-group-name').fill(`Responsive ${username}`);
   await page.getByTestId('real-group-create-submit').click();
