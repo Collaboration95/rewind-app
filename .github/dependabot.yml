@@ -19,13 +19,13 @@ updates:
       # The Expo SDK pins these; move them with `npx expo install --fix` on an
       # SDK upgrade instead (React Native 0.87 broke jest-expo on SDK 57).
       - dependency-name: react
-        update-types: [version-update:semver-minor]
+        update-types: [version-update:semver-minor, version-update:semver-patch]
       - dependency-name: react-dom
-        update-types: [version-update:semver-minor]
+        update-types: [version-update:semver-minor, version-update:semver-patch]
       - dependency-name: '@types/react'
         update-types: [version-update:semver-minor]
       - dependency-name: react-native
-        update-types: [version-update:semver-minor]
+        update-types: [version-update:semver-minor, version-update:semver-patch]
       - dependency-name: react-native-safe-area-context
         update-types: [version-update:semver-minor]
       - dependency-name: react-native-svg
