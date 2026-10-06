@@ -7,14 +7,14 @@ Two pages, open in a browser:
 
 The table below is for `index.html`.
 
-| Level | Question it answers |
-| ----- | ------------------- |
-| L1 | What does the app do? |
-| L2 | What runs where? (CloudFront → nginx → Node + SQLite + S3) |
-| L3 | What happens to one clip, from capture to film? |
-| L4 | Where is the code? (client vs server folders) |
-| L5 | How does a merged PR reach the server? |
-| Tradeoffs | Why these choices, and what they cost |
+| Level     | Question it answers                                        |
+| --------- | ---------------------------------------------------------- |
+| L1        | What does the app do?                                      |
+| L2        | What runs where? (CloudFront → nginx → Node + SQLite + S3) |
+| L3        | What happens to one clip, from capture to film?            |
+| L4        | Where is the code? (client vs server folders)              |
+| L5        | How does a merged PR reach the server?                     |
+| Tradeoffs | Why these choices, and what they cost                      |
 
 Deeper reading already in the repo:
 
