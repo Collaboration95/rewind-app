@@ -141,7 +141,6 @@ function expectPost(fetcher: jest.Mock, path: string, body: object) {
 }
 
 beforeEach(async () => {
-  process.env.REWIND_TEST_DEMO_FIXTURE = 'false';
   secureStoreMock.token = null;
   await AsyncStorage.clear();
 });

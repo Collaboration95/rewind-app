@@ -1,10 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { RuntimeConfig } from './config';
-import { DEMO_SESSION_LIFETIME_MS } from './session/contract';
 import {
   filePathMatchesIdentity,
   hashFileWithIdentity,
@@ -70,32 +69,6 @@ const MIGRATIONS = [
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
 }));
-const FIXTURE = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'server/fixtures/demo-fixture.json'), 'utf8'),
-) as DemoFixture;
-
-export interface DemoFixture {
-  seedVersion: number;
-  profiles: { id: string; displayName: string; avatarLabel: string }[];
-  group: { id: string; name: string; currentCycleId: string };
-  cycle: {
-    id: string;
-    prompt: string;
-    startsAt: string;
-    endsAt: string;
-    status: string;
-    lockState: string;
-    maxCount: number;
-    maxSeconds: number;
-    countUsed: number;
-    secondsUsed: number;
-  };
-  acceptedAt: string;
-  message: { id: string; body: string };
-  contribution: { id: string; durationSeconds: number };
-  mediaJobs: { id: string; kind: 'clip' | 'film' | 'download'; status: 'pending' | 'ready' }[];
-}
-
 export type RewindDatabase = DatabaseSync;
 
 export interface SchemaReadiness {
@@ -105,7 +78,7 @@ export interface SchemaReadiness {
 }
 
 /**
- * The durable migration marker and version receipts are the hosted Demo's
+ * The durable migration marker and version receipts are the hosted runtime's
  * schema contract. Startup applies this contract before accepting traffic;
  * health checks repeat it so an interrupted or manually damaged migration is
  * never reported as ready.
@@ -127,20 +100,11 @@ export function schemaReadiness(database: RewindDatabase): SchemaReadiness {
   };
 }
 
-export interface SeedDatabaseOptions {
-  /** Optional clock for the seeded cycle and synthetic record timestamps. */
-  seedNow?: Date | string;
-}
-
-export function openDatabase(
-  config: RuntimeConfig,
-  options: SeedDatabaseOptions = {},
-): RewindDatabase {
+export function openDatabase(config: RuntimeConfig): RewindDatabase {
   mkdirSync(config.dataDir, { recursive: true });
   const database = new DatabaseSync(config.databasePath);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   migrateDatabase(database);
-  seedDatabase(database, options.seedNow);
   return database;
 }
 
@@ -150,7 +114,6 @@ export function openDatabaseAt(databasePath: string): RewindDatabase {
   const database = new DatabaseSync(databasePath);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   migrateDatabase(database);
-  seedDatabase(database);
   return database;
 }
 
@@ -1498,203 +1461,10 @@ function migrateLegacyStagedSources(database: RewindDatabase): void {
   database.exec('DROP TABLE staged_media_sources');
 }
 
-/** Seed stable synthetic identities and a time-relative local Demo window. */
-export function seedDatabase(database: RewindDatabase, seedNow?: Date | string): void {
-  const existing = database.prepare('SELECT COUNT(*) AS count FROM profiles').get() as {
-    count: number;
-  };
-  if (Number(existing.count) > 0) return;
-
-  const nowDate = seedNow === undefined ? new Date(FIXTURE.acceptedAt) : new Date(seedNow);
-  if (!Number.isFinite(nowDate.getTime()))
-    throw new Error('The Demo fixture seed time is invalid.');
-  const now = nowDate.toISOString();
-  const fixtureDurationMs = Date.parse(FIXTURE.cycle.endsAt) - Date.parse(FIXTURE.cycle.startsAt);
-  if (!Number.isFinite(fixtureDurationMs) || fixtureDurationMs <= 0) {
-    throw new Error('The Demo fixture cycle window is invalid.');
-  }
-  const cycleStartsAt = now;
-  const cycleEndsAt = new Date(nowDate.getTime() + fixtureDurationMs).toISOString();
-  // The sample is a bundled three-second synthetic portrait MP4 with audio.
-  // Copy actual bytes before publishing ready rows; seeding must not enqueue
-  // source-less work or require an FFmpeg process at startup/reset.
-  const databaseFile = (
-    database.prepare('PRAGMA database_list').all() as { name: string; file: string }[]
-  ).find((entry) => entry.name === 'main')?.file;
-  if (!databaseFile) throw new Error('Demo media seeding requires a file-backed database.');
-  const processedDir = resolve(databaseFile, '..', 'media', 'processed');
-  const sample = readFileSync(resolve(process.cwd(), 'server/fixtures/demo-media.mp4'));
-  const sampleSha256 = createHash('sha256').update(sample).digest('hex');
-  mkdirSync(processedDir, { recursive: true });
-  mkdirSync(resolve(databaseFile, '..', 'media', 'staging'), { recursive: true });
-  const clipPath = resolve(processedDir, 'fixture-demo-clip.mp4');
-  const filmPath = resolve(processedDir, 'fixture-demo-film.mp4');
-  writeFileSync(clipPath, sample);
-  writeFileSync(filmPath, sample);
-  database.exec('BEGIN');
-  try {
-    const profileInsert = database.prepare(
-      'INSERT INTO profiles (id, display_name, avatar_label, is_synthetic) VALUES (?, ?, ?, 1)',
-    );
-    for (const profile of FIXTURE.profiles) {
-      profileInsert.run(profile.id, profile.displayName, profile.avatarLabel);
-    }
-
-    database
-      .prepare('INSERT INTO groups (id, name, current_cycle_id) VALUES (?, ?, ?)')
-      .run(FIXTURE.group.id, FIXTURE.group.name, FIXTURE.group.currentCycleId);
-    database
-      .prepare(
-        `INSERT INTO cycles
-          (id, group_id, prompt, starts_at, ends_at, status, lock_state, max_count, max_seconds, count_used, seconds_used)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        FIXTURE.cycle.id,
-        FIXTURE.group.id,
-        FIXTURE.cycle.prompt,
-        cycleStartsAt,
-        cycleEndsAt,
-        FIXTURE.cycle.status,
-        FIXTURE.cycle.lockState,
-        FIXTURE.cycle.maxCount,
-        FIXTURE.cycle.maxSeconds,
-        FIXTURE.cycle.countUsed,
-        FIXTURE.cycle.secondsUsed,
-      );
-
-    const membershipInsert = database.prepare(
-      'INSERT INTO memberships (group_id, member_id, role, accepted_at) VALUES (?, ?, ?, ?)',
-    );
-    for (const [index, profile] of FIXTURE.profiles.entries()) {
-      membershipInsert.run(FIXTURE.group.id, profile.id, index === 0 ? 'owner' : 'member', now);
-    }
-
-    database
-      .prepare(
-        `INSERT INTO sessions
-          (id, member_id, group_id, started_at, last_seen_at, access_kind, expires_at)
-         VALUES (?, ?, ?, ?, ?, 'demo', ?)`,
-      )
-      .run(
-        'demo-session',
-        FIXTURE.profiles[0].id,
-        FIXTURE.group.id,
-        now,
-        now,
-        new Date(Date.parse(now) + DEMO_SESSION_LIFETIME_MS).toISOString(),
-      );
-    database
-      .prepare(
-        'INSERT INTO invites (id, group_id, invitee_member_id, status, created_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .run('demo-invite', FIXTURE.group.id, FIXTURE.profiles[0].id, 'accepted', now);
-    const hasQuotaWindowStart = tableColumns(database, 'contributions').has(
-      'quota_window_start_at',
-    );
-    database
-      .prepare(
-        hasQuotaWindowStart
-          ? `INSERT INTO contributions
-              (id, cycle_id, member_id, duration_seconds, created_at, quota_window_start_at)
-             VALUES (?, ?, ?, ?, ?, ?)`
-          : `INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
-             VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(
-        FIXTURE.contribution.id,
-        FIXTURE.cycle.id,
-        FIXTURE.profiles[0].id,
-        FIXTURE.contribution.durationSeconds,
-        now,
-        ...(hasQuotaWindowStart ? [cycleStartsAt] : []),
-      );
-    if (hasQuotaWindowStart && hasTable(database, 'contribution_quota_windows')) {
-      database
-        .prepare(
-          `INSERT INTO contribution_quota_windows
-            (id, cycle_id, member_id, window_start_at, window_end_at,
-             max_count, max_seconds, count_used, seconds_used)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-        )
-        .run(
-          `fixture-quota-${FIXTURE.cycle.id}-${FIXTURE.profiles[0].id}`,
-          FIXTURE.cycle.id,
-          FIXTURE.profiles[0].id,
-          cycleStartsAt,
-          new Date(Date.parse(cycleStartsAt) + 7 * 24 * 60 * 60 * 1000).toISOString(),
-          FIXTURE.cycle.maxCount,
-          FIXTURE.cycle.maxSeconds,
-          FIXTURE.contribution.durationSeconds,
-        );
-    }
-    const mediaInsert = tableColumns(database, 'media_jobs').has('updated_at')
-      ? database.prepare(
-          'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, output_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        )
-      : database.prepare(
-          'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, output_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        );
-    for (const job of FIXTURE.mediaJobs) {
-      if (tableColumns(database, 'media_jobs').has('updated_at')) {
-        mediaInsert.run(
-          job.id,
-          FIXTURE.group.id,
-          job.kind === 'clip' ? FIXTURE.contribution.id : null,
-          job.kind,
-          job.status,
-          job.kind === 'clip' ? clipPath : filmPath,
-          now,
-          now,
-        );
-      } else {
-        mediaInsert.run(
-          job.id,
-          FIXTURE.group.id,
-          job.kind === 'clip' ? FIXTURE.contribution.id : null,
-          job.kind,
-          job.status,
-          job.kind === 'clip' ? clipPath : filmPath,
-          now,
-        );
-      }
-      if (tableColumns(database, 'media_jobs').has('output_sha256')) {
-        database
-          .prepare(
-            `UPDATE media_jobs SET output_sha256 = ?, output_bytes = ?, output_verified_at = ?, progress = 100 WHERE id = ?`,
-          )
-          .run(sampleSha256, sample.byteLength, now, job.id);
-      }
-    }
-    database
-      .prepare(
-        'INSERT INTO messages (id, group_id, member_id, body, created_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .run(FIXTURE.message.id, FIXTURE.group.id, FIXTURE.profiles[0].id, FIXTURE.message.body, now);
-    if (hasTable(database, 'realtime_events')) {
-      database
-        .prepare(
-          `INSERT INTO realtime_events (group_id, message_id, event_type, occurred_at)
-           VALUES (?, ?, 'message', ?)`,
-        )
-        .run(FIXTURE.group.id, FIXTURE.message.id, now);
-    }
-    database
-      .prepare(
-        'INSERT INTO reactions (id, message_id, member_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .run('demo-reaction', FIXTURE.message.id, FIXTURE.profiles[1].id, '✨', now);
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-}
-
 export function resetDatabase(config: RuntimeConfig): void {
   // The path is resolved from the validated data directory. Reset removes
-  // Demo database and media data only; source code and migrations are never
-  // in this directory.
+  // database and media data only; source code and migrations are never in
+  // this directory.
   const mediaDir = resolve(config.dataDir, 'media');
   clearMediaDirectory(mediaDir);
   for (const path of [
@@ -1706,132 +1476,13 @@ export function resetDatabase(config: RuntimeConfig): void {
   }
 }
 
-/** Clear Demo artifacts without removing the media directory itself, which is
- * a bind-mount target in the hosted container. */
+/** Clear media without removing the media directory itself, which is a
+ * bind-mount target in the hosted container. */
 export function clearMediaDirectory(mediaDir: string): void {
   if (!existsSync(mediaDir)) return;
   for (const entry of readdirSync(mediaDir)) {
     rmSync(resolve(mediaDir, entry), { recursive: true, force: true });
   }
-}
-
-/** Restore only a disposable Demo fixture. Return false without mutation if
- * real or non-synthetic data is present. The write lock and synchronous media
- * clearing prevent registration from committing between inspection and reset.
- * Source files and migrations are never touched. */
-export function restoreFixture(
-  database: RewindDatabase,
-  seedNow?: Date | string,
-  mediaDir?: string,
-): boolean {
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const foreignData = database
-      .prepare(
-        `SELECT
-      EXISTS (SELECT 1 FROM real_accounts)
-      OR EXISTS (SELECT 1 FROM real_profiles)
-      OR EXISTS (SELECT 1 FROM real_group_metadata)
-      OR EXISTS (SELECT 1 FROM profiles WHERE is_synthetic IS NOT 1)
-      AS present`,
-      )
-      .get() as { present: number };
-    if (foreignData.present) {
-      database.exec('ROLLBACK');
-      return false;
-    }
-    if (mediaDir !== undefined) clearMediaDirectory(mediaDir);
-    for (const table of [
-      'reactions',
-      'realtime_events',
-      'messages',
-      'media_metadata',
-      'staged_sources',
-      'contribution_quota_windows',
-      'media_jobs',
-      'contributions',
-      'sessions',
-      'audit_events',
-      'invites',
-      'cycles',
-      'memberships',
-      'groups',
-      'profiles',
-    ]) {
-      database.exec(`DELETE FROM ${table}`);
-    }
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-  seedDatabase(database, seedNow);
-  return true;
-}
-
-export function fixtureSummary(database: RewindDatabase): Record<string, number> {
-  const tables = [
-    'profiles',
-    'groups',
-    'memberships',
-    'invites',
-    'cycles',
-    'sessions',
-    'contributions',
-    'media_jobs',
-    'messages',
-    'reactions',
-  ];
-  return Object.fromEntries(
-    tables.map((table) => {
-      const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as {
-        count: number;
-      };
-      return [table, Number(row.count)];
-    }),
-  );
-}
-
-export function listProfiles(database: RewindDatabase) {
-  return database
-    .prepare(
-      'SELECT id, display_name AS displayName, avatar_label AS avatarLabel, is_synthetic AS isSynthetic FROM profiles WHERE is_synthetic = 1 ORDER BY id',
-    )
-    .all()
-    .map((row) => {
-      const profile = row as Record<string, unknown>;
-      return {
-        id: String(profile.id),
-        displayName: String(profile.displayName),
-        avatarLabel: String(profile.avatarLabel),
-        isSynthetic: Number(profile.isSynthetic) === 1,
-      };
-    });
-}
-
-export function getGroup(database: RewindDatabase, groupId: string, actingMemberId?: string) {
-  const group = database
-    .prepare('SELECT id, name, current_cycle_id AS currentCycleId FROM groups WHERE id = ?')
-    .get(groupId) as Record<string, unknown> | undefined;
-  if (!group) return null;
-  const members = database
-    .prepare('SELECT member_id AS memberId FROM memberships WHERE group_id = ? ORDER BY member_id')
-    .all(groupId)
-    .map((row) => String((row as { memberId: string }).memberId));
-  const actingMemberRole = actingMemberId
-    ? (
-        database
-          .prepare('SELECT role FROM memberships WHERE group_id = ? AND member_id = ?')
-          .get(groupId, actingMemberId) as { role?: string } | undefined
-      )?.role
-    : undefined;
-  return {
-    id: String(group.id),
-    name: String(group.name),
-    currentCycleId: String(group.currentCycleId),
-    memberIds: members,
-    ...(actingMemberRole === 'owner' || actingMemberRole === 'member' ? { actingMemberRole } : {}),
-  };
 }
 
 export function getCurrentCycle(

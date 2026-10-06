@@ -5,21 +5,16 @@ import { access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { clearDemoMedia } from './helpers/demo-media.mjs';
+import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createCompilationJob, getCompilationJob, MAX_COMPILATION_ATTEMPTS, processCompilationJob } =
   await import('../dist/jobs/index.js');
-const {
-  ARCHIVE_FILLER_LABEL,
-  compileFilmWithFfmpeg,
-  generateSyntheticDemoClip,
-  probeClipWithFfmpeg,
-  processPhotoWithFfmpeg,
-} = await import('../dist/ffmpeg.js');
+const { ARCHIVE_FILLER_LABEL, compileFilmWithFfmpeg, probeClipWithFfmpeg, processPhotoWithFfmpeg } =
+  await import('../dist/ffmpeg.js');
 
 async function withDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-film-compilation-test-`);
@@ -27,9 +22,10 @@ async function withDatabase(run) {
     REWIND_DATA_DIR: dataDir,
     REWIND_HOST: '127.0.0.1',
     REWIND_FFMPEG_BIN: 'ffmpeg',
+    ...REAL_AUTH_ENV,
   });
-  const database = openDatabase(config);
-  clearDemoMedia(database);
+  const database = openFixtureDatabase(config);
+  clearFixtureMedia(database);
   try {
     return await run({ config, database, dataDir });
   } finally {
@@ -72,19 +68,6 @@ async function createProcessedClip(
   ];
   await execFileAsync('ffmpeg', args);
 }
-
-test('creates a deterministic portrait synthetic clip with audio for the local Demo', async () => {
-  await withDatabase(async ({ config, dataDir }) => {
-    const outputDir = `${dataDir}/media/staging`;
-    await mkdir(outputDir, { recursive: true });
-    const media = await generateSyntheticDemoClip(config.ffmpegBin, `${outputDir}/synthetic.mp4`);
-    assert.equal(media.mimeType, 'video/mp4');
-    assert.equal(media.width, 180);
-    assert.equal(media.height, 320);
-    assert.equal(media.hasAudio, true);
-    assert.ok(media.durationSeconds > 1.5 && media.durationSeconds < 2.5);
-  });
-});
 
 test('accepts a landscape clip at intake; the film letterboxes it into vertical 720p', async () => {
   await withDatabase(async ({ config, dataDir }) => {
@@ -624,23 +607,20 @@ process.exit(91);
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
-      });
-      assert.equal(sessionResponse.status, 201);
-      const session = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+      const { headers } = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
       const expectedNotFound = {
         error: 'not_found',
         message: 'The requested resource was not found.',
       };
-      const playback = await fetch(`${baseUrl}/films/${encodeURIComponent(jobId)}/play?${query}`);
+      const playback = await fetch(`${baseUrl}/films/${encodeURIComponent(jobId)}/play?${query}`, {
+        headers,
+      });
       assert.equal(playback.status, 404);
       assert.deepEqual(await playback.json(), expectedNotFound);
       const download = await fetch(
         `${baseUrl}/films/${encodeURIComponent(jobId)}/download?${query}`,
+        { headers },
       );
       assert.equal(download.status, 404);
       assert.deepEqual(await download.json(), expectedNotFound);

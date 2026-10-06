@@ -6,11 +6,12 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 
 const { parseConfig } = await import('../dist/config.js');
-const { migrateDatabase, openDatabase, schemaReadiness } = await import('../dist/db.js');
+const { migrateDatabase, schemaReadiness } = await import('../dist/db.js');
 const { applyConsistencyRepair, planConsistencyRepair, CONSISTENCY_SCAN_LIMIT } =
   await import('../dist/jobs/consistency.js');
 
@@ -21,7 +22,7 @@ async function fixture(run) {
   const stagingDir = resolve(dataDir, 'media', 'staging');
   await mkdir(processedDir, { recursive: true });
   await mkdir(stagingDir, { recursive: true });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     return await run({ dataDir, processedDir, stagingDir, database });
   } finally {

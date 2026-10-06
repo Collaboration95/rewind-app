@@ -1,101 +1,89 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
-async function openCamera(page: Page, permission: 'prompt' | 'denied' = 'prompt') {
-  // Layout fixtures only: no real camera request or Safari/native acceptance.
+import { openCapture, signedIn } from './helpers/real-account';
+
+test.use(signedIn);
+
+async function openCamera(page: Page, permission: 'prompt' | 'granted' = 'prompt') {
+  // Layout fixtures only: a synthetic canvas camera, no real device or Safari acceptance.
   await page.addInitScript((state) => {
     Object.defineProperty(navigator.permissions, 'query', {
       value: async () => ({ state }),
     });
-    Object.defineProperty(window, 'MediaRecorder', {
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', {
       configurable: true,
-      value: class {
-        static isTypeSupported() {
-          return true;
-        }
+      value: async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 360;
+        canvas.height = 640;
+        const drawing = canvas.getContext('2d')!;
+        setInterval(() => {
+          drawing.fillStyle = 'navy';
+          drawing.fillRect(0, 0, canvas.width, canvas.height);
+        }, 100);
+        return canvas.captureStream(10);
       },
     });
   }, permission);
-  await page.goto('/');
-  await expect(page.getByTestId('welcome-entry')).toBeVisible();
-  await page.getByRole('button', { name: 'Try Demo', exact: true }).click();
-  await page.getByTestId('demo-entry-demo-1').click();
-  await expect(page.getByTestId('main-navigation')).toBeVisible();
-  await page.getByTestId('nav-camera').click();
+  await openCapture(page);
 }
 
+// The real capture view covers the whole screen; the dock is hidden there.
 async function expectReachable(page: Page, control: Locator) {
   await control.scrollIntoViewIfNeeded();
   await expect(control).toBeInViewport({ ratio: 1 });
   const controlBox = await control.boundingBox();
-  const navBox = await page.getByTestId('main-navigation').boundingBox();
   expect(controlBox).not.toBeNull();
-  expect(navBox).not.toBeNull();
   expect(controlBox!.y).toBeGreaterThanOrEqual(0);
-  expect(controlBox!.y + controlBox!.height).toBeLessThanOrEqual(navBox!.y + 1);
-  expect(navBox!.y + navBox!.height).toBeLessThanOrEqual(page.viewportSize()!.height + 1);
+  expect(controlBox!.y + controlBox!.height).toBeLessThanOrEqual(page.viewportSize()!.height + 1);
   await control.click({ trial: true });
 }
 
-test('camera CTA and navigation remain reachable from portrait through short landscape', async ({
+async function closeToHome(page: Page) {
+  await page.getByTestId('capture-back-to-group').click();
+  await expect(page.getByTestId('camera-screen')).toHaveCount(0);
+  await expect(page.getByTestId('real-group-nav-home')).toHaveAttribute('aria-current', 'page');
+  await expect(page.locator('[role="tab"][aria-current="page"]')).toHaveCount(1);
+}
+
+test('camera permission CTA and close remain reachable from portrait through short landscape', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 393, height: 852 });
   await openCamera(page);
-  // Option 2: the web app opens the phone's own camera; no in-page permission step.
-  const allow = page.getByRole('button', { name: 'Take photo', exact: true });
+  // The real web camera asks in-page before the browser prompt.
+  await expect(page.getByTestId('camera-permission-undecided')).toBeVisible();
+  const allow = page.getByRole('button', { name: 'Continue', exact: true });
+  const close = page.getByTestId('capture-back-to-group');
   await expectReachable(page, allow);
+  await expectReachable(page, close);
   await page.setViewportSize({ width: 852, height: 300 });
   await expectReachable(page, allow);
-  // Outside the camera, phone landscape is covered by the rotate prompt (#327).
+  await expectReachable(page, close);
   await page.setViewportSize({ width: 393, height: 852 });
-  await page.getByTestId('nav-home').click();
-  await expect(page.getByTestId('camera-screen')).toHaveCount(0);
-  await expect(page.getByTestId('nav-home')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByTestId('nav-home')).toHaveCSS(
-    'background-image',
-    'linear-gradient(rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.28))',
-  );
-  await expect(page.getByRole('tab', { selected: true })).toHaveCount(1);
-  await page.getByTestId('nav-camera').click();
+  await closeToHome(page);
+  await page.getByTestId('real-group-capture-action').click();
   await expectReachable(page, allow);
 });
 
-test('short landscape file review keeps retake and discard usable above navigation', async ({
-  page,
-}) => {
+test('short landscape still review keeps seal and retake usable', async ({ page }) => {
   await page.setViewportSize({ width: 393, height: 852 });
-  await openCamera(page, 'denied');
-  const choose = page.getByRole('button', { name: 'Take photo', exact: true });
-  async function selectImage() {
-    const chooser = page.waitForEvent('filechooser');
-    await choose.click();
-    await (await chooser).setFiles('public/icons/rewind-icon-192.png');
+  await openCamera(page, 'granted');
+  const take = page.getByRole('button', { name: 'Take photo', exact: true });
+  async function takeStill() {
+    await take.click();
     await expect(page.getByTestId('camera-preview-panel')).toBeVisible();
   }
-  await selectImage();
+  await takeStill();
   await page.setViewportSize({ width: 852, height: 300 });
-  await expectReachable(page, page.getByRole('button', { name: 'Use this still', exact: true }));
+  await expectReachable(page, page.getByTestId('camera-seal'));
   const retake = page.getByRole('button', { name: 'Retake', exact: true });
   await expectReachable(page, retake);
   await retake.click();
   await expect(page.getByTestId('camera-preview-panel')).toHaveCount(0);
-  // Re-enter in portrait: outside the camera, phone landscape shows the rotate prompt.
+  await expectReachable(page, take);
+  await takeStill();
+  await expectReachable(page, page.getByTestId('capture-back-to-group'));
   await page.setViewportSize({ width: 393, height: 852 });
-  await page.getByTestId('nav-home').click();
-  await page.getByTestId('nav-camera').click();
-  await selectImage();
-  await page.setViewportSize({ width: 852, height: 300 });
-  const discard = page.getByRole('button', { name: 'Discard', exact: true });
-  await expectReachable(page, discard);
-  await discard.click();
-  await expect(page.getByTestId('camera-preview-panel')).toHaveCount(0);
-  await page.setViewportSize({ width: 393, height: 852 });
-  await page.getByTestId('nav-home').click();
-  await expect(page.getByTestId('camera-screen')).toHaveCount(0);
-  await expect(page.getByTestId('nav-home')).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByTestId('nav-home')).toHaveCSS(
-    'background-image',
-    'linear-gradient(rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.28))',
-  );
-  await expect(page.getByRole('tab', { selected: true })).toHaveCount(1);
+  await closeToHome(page);
 });

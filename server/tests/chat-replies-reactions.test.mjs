@@ -3,15 +3,20 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 
 async function withRuntime(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-chat-context-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
   const server = createRuntimeServer(config, database);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -25,27 +30,14 @@ async function withRuntime(run) {
   }
 }
 
-async function session(baseUrl, memberId, groupId = 'demo-group') {
-  const response = await fetch(`${baseUrl}/sessions/demo`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memberId, groupId }),
-  });
-  assert.equal(response.status, 201);
-  return (await response.json()).session;
-}
-
 test('members can persist one-level replies and nested replies are rejected', async () => {
   await withRuntime(async ({ baseUrl, database }) => {
-    const first = await session(baseUrl, 'demo-1');
-    const response = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${first.id}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: 'A reply', replyToMessageId: 'demo-message' }),
-      },
-    );
+    const first = await signInAs(database, 'demo-1');
+    const response = await fetch(`${baseUrl}/realtime/groups/demo-group/messages`, {
+      method: 'POST',
+      headers: { ...first.headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: 'A reply', replyToMessageId: 'demo-message' }),
+    });
     assert.equal(response.status, 201);
     const payload = await response.json();
     assert.equal(payload.event.message.replyTo.id, 'demo-message');
@@ -57,14 +49,11 @@ test('members can persist one-level replies and nested replies are rejected', as
       'demo-message',
     );
 
-    const nested = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${first.id}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: 'No nested threads', replyToMessageId: payload.message.id }),
-      },
-    );
+    const nested = await fetch(`${baseUrl}/realtime/groups/demo-group/messages`, {
+      method: 'POST',
+      headers: { ...first.headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: 'No nested threads', replyToMessageId: payload.message.id }),
+    });
     assert.equal(nested.status, 400);
     assert.equal((await nested.json()).error, 'message_nested_reply_not_allowed');
   });
@@ -72,12 +61,12 @@ test('members can persist one-level replies and nested replies are rejected', as
 
 test('supported reaction add/remove is idempotent and returns aggregate counts', async () => {
   await withRuntime(async ({ baseUrl, database }) => {
-    const first = await session(baseUrl, 'demo-1');
-    const url = `${baseUrl}/realtime/groups/demo-group/messages/demo-message/reactions?sessionId=${first.id}`;
+    const first = await signInAs(database, 'demo-1');
+    const url = `${baseUrl}/realtime/groups/demo-group/messages/demo-message/reactions`;
     const add = () =>
       fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...first.headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ emoji: '✨', active: true }),
       });
     assert.equal((await add()).status, 200);
@@ -92,7 +81,7 @@ test('supported reaction add/remove is idempotent and returns aggregate counts',
     const added = await addedResponse.json();
     assert.equal(added.message.reactionCounts['✨'], 2);
 
-    const remove = () => fetch(url, { method: 'DELETE' });
+    const remove = () => fetch(url, { method: 'DELETE', headers: first.headers });
     assert.equal((await remove()).status, 200);
     assert.equal((await remove()).status, 200);
     assert.equal(
@@ -101,14 +90,14 @@ test('supported reaction add/remove is idempotent and returns aggregate counts',
         .get('demo-message', 'demo-1').count,
       0,
     );
-    const final = await fetch(url).then((response) => response.json());
+    const final = await fetch(url, { headers: first.headers }).then((response) => response.json());
     assert.equal(final.message.reactionCounts['✨'] ?? 0, 1);
 
     // Omitting active is the viewer-safe toggle form used after a timeline remount.
     const toggle = () =>
       fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...first.headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ emoji: '✨' }),
       });
     const toggledOn = await toggle();
@@ -130,21 +119,18 @@ test('a member outside the group cannot reply or react to its messages', async (
       INSERT INTO memberships (group_id, member_id, role, accepted_at)
         VALUES ('other-group', 'demo-outside', 'member', '2026-09-13T00:00:00.000Z');
     `);
-    const outsider = await session(baseUrl, 'demo-outside', 'other-group');
-    const reply = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/messages?sessionId=${outsider.id}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: 'private reply', replyToMessageId: 'demo-message' }),
-      },
-    );
+    const outsider = await signInAs(database, 'demo-outside', { groupId: 'other-group' });
+    const reply = await fetch(`${baseUrl}/realtime/groups/demo-group/messages`, {
+      method: 'POST',
+      headers: { ...outsider.headers, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: 'private reply', replyToMessageId: 'demo-message' }),
+    });
     assert.equal(reply.status, 403);
     const reaction = await fetch(
-      `${baseUrl}/realtime/groups/demo-group/messages/demo-message/reactions?sessionId=${outsider.id}`,
+      `${baseUrl}/realtime/groups/demo-group/messages/demo-message/reactions`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...outsider.headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ emoji: '✨', active: true }),
       },
     );

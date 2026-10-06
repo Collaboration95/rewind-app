@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
 import { setTrim } from './helpers/injected-recording';
+import { openCapture, signedIn } from './helpers/real-account';
+
+test.use(signedIn);
 
 const portraitMp4 = readFileSync(join(process.cwd(), 'tests/fixtures/portrait-h264-aac.mp4'));
 const mislabeledWebm = readFileSync(join(process.cwd(), 'tests/fixtures/mislabeled-webm.mp4'));
@@ -31,20 +34,7 @@ async function openVideoFallback(page: Page) {
 }
 
 async function openVideoRoute(page: Page) {
-  await page.goto('/');
-  const navigation = page.getByTestId('main-navigation');
-  const entry = page.getByTestId('demo-entry-demo-1');
-  const welcome = page.getByTestId('welcome-entry');
-  await expect(navigation.or(entry).or(welcome)).toBeVisible();
-  if (await entry.isVisible()) {
-    await entry.click();
-  } else {
-    await page.getByRole('button', { name: 'Try Demo' }).click();
-    await entry.click();
-  }
-  await expect(navigation).toBeVisible();
-  await page.getByTestId('nav-camera').click();
-  await expect(page.getByTestId('camera-screen')).toBeVisible();
+  await openCapture(page);
   await page.getByTestId('camera-record-clip').click();
 }
 
@@ -83,12 +73,9 @@ test('accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadat
       new URL(response.url()).pathname === '/api/contributions/upload',
   );
   const uploadButton = page.getByRole('button', { name: 'Seal', exact: true });
+  // The real capture view is full screen; the dock is hidden while capturing.
   await uploadButton.scrollIntoViewIfNeeded();
-  const uploadBounds = await uploadButton.boundingBox();
-  const navigationBounds = await page.getByTestId('main-navigation').boundingBox();
-  expect(uploadBounds).not.toBeNull();
-  expect(navigationBounds).not.toBeNull();
-  expect(uploadBounds!.y + uploadBounds!.height).toBeLessThanOrEqual(navigationBounds!.y);
+  await expect(uploadButton).toBeInViewport({ ratio: 1 });
   await uploadButton.click();
   const uploadRequest = await uploadRequestPromise;
   const uploadBody = JSON.parse(uploadRequest.postData() ?? '{}') as Record<string, unknown>;
@@ -247,13 +234,7 @@ test('records from browser camera and microphone after the member action and upl
   await page.getByTestId('video-record').click();
   await expect(page.getByTestId('video-recording')).toBeVisible();
   await expect(page.getByTestId('video-live-preview')).toBeVisible();
-  const navigationTop = (await page.getByTestId('main-navigation').boundingBox())!.y;
-  for (const name of ['Stop recording']) {
-    const bounds = await page.getByRole('button', { name }).boundingBox();
-    expect(bounds).not.toBeNull();
-    expect(bounds!.y).toBeGreaterThanOrEqual(0);
-    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(navigationTop);
-  }
+  await expect(page.getByRole('button', { name: 'Stop recording' })).toBeInViewport({ ratio: 1 });
   await page.getByRole('button', { name: 'Stop recording' }).click();
   const review = page.getByTestId('video-review');
   await expect(review).toBeVisible();
@@ -270,12 +251,9 @@ test('records from browser camera and microphone after the member action and upl
       new URL(response.url()).pathname === '/api/contributions/upload',
   );
   const uploadButton = page.getByRole('button', { name: 'Seal', exact: true });
+  // The real capture view is full screen; the dock is hidden while capturing.
   await uploadButton.scrollIntoViewIfNeeded();
-  const uploadBounds = await uploadButton.boundingBox();
-  const navigationBounds = await page.getByTestId('main-navigation').boundingBox();
-  expect(uploadBounds).not.toBeNull();
-  expect(navigationBounds).not.toBeNull();
-  expect(uploadBounds!.y + uploadBounds!.height).toBeLessThanOrEqual(navigationBounds!.y);
+  await expect(uploadButton).toBeInViewport({ ratio: 1 });
   await uploadButton.click();
   const uploadRequest = await uploadRequestPromise;
   const uploadBody = JSON.parse(uploadRequest.postData() ?? '{}') as Record<string, unknown>;
@@ -297,26 +275,23 @@ test('orientation guidance and video fallback controls stay reachable through sh
   const guidance = page.getByTestId('video-portrait-guidance');
   await expect(guidance).toContainText('portrait or landscape');
   await page.setViewportSize({ width: 852, height: 300 });
-  const navigation = page.getByTestId('main-navigation');
   const choose = page.getByRole('button', { name: 'Choose a video file', exact: true });
-  // The close button returns to the photo camera.
+  // The close button leaves capture for the group's Home.
   const back = page.getByTestId('video-close');
   for (const control of [guidance, choose, back]) {
     await control.scrollIntoViewIfNeeded();
     await expect(control).toBeInViewport({ ratio: 1 });
     const bounds = await control.boundingBox();
-    const navigationBounds = await navigation.boundingBox();
     expect(bounds).not.toBeNull();
-    expect(navigationBounds).not.toBeNull();
     expect(bounds!.y).toBeGreaterThanOrEqual(0);
-    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(navigationBounds!.y + 1);
-    expect(navigationBounds!.y + navigationBounds!.height).toBeLessThanOrEqual(301);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(301);
   }
   await choose.click({ trial: true });
   await back.click();
-  await expect(page.getByTestId('camera-screen')).toBeVisible();
+  await expect(page.getByTestId('real-group-home')).toBeVisible();
   await page.setViewportSize({ width: 393, height: 852 });
-  await page.getByTestId('camera-record-clip').click();
+  // Capture reopens in the last mode used, here video.
+  await page.getByTestId('real-group-capture-action').click();
   await expect(guidance).toBeVisible();
   await expect(choose).toBeVisible();
 });

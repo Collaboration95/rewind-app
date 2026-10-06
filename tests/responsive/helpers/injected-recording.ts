@@ -176,16 +176,10 @@ export async function recordingSupport(page: Page, testInfo: TestInfo) {
   return support.types.length > 0;
 }
 
+/** From the signed-in group's Home (see recordingSupport), open real video capture. */
 export async function openInjectedCapture(page: Page) {
-  const entry = page.getByTestId('demo-entry-demo-1');
-  await expect(
-    page.getByTestId('main-navigation').or(entry).or(page.getByTestId('welcome-entry')),
-  ).toBeVisible();
-  if (!(await entry.isVisible())) {
-    await page.getByRole('button', { name: 'Try Demo', exact: true }).click();
-  }
-  await entry.click();
-  await page.getByTestId('nav-camera').click();
+  await expect(page.getByTestId('real-group-home')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('real-group-capture-action').click();
   await page.getByTestId('camera-record-clip').click();
 }
 

@@ -120,10 +120,9 @@ test('staging pins accepted base, source/config/origin and excludes ambient cred
     for (const digest of ['sourceDigest', 'configDigest', 'originDigest'])
       assert.match(result.provenance[digest], /^[a-f0-9]{64}$/);
     await assert.rejects(readFile(join(result.source, '.env')), { code: 'ENOENT' });
-    assert.equal(
-      JSON.parse(await readFile(join(result.outputRoot, 'public-env.json')))
-        .EXPO_PUBLIC_DEMO_ACCESS,
-      'disabled',
+    assert.deepEqual(
+      Object.keys(JSON.parse(await readFile(join(result.outputRoot, 'public-env.json')))).sort(),
+      ['EXPO_PUBLIC_INVITE_WEB_ORIGIN', 'EXPO_PUBLIC_LOCAL_BASE_URL'],
     );
     await assert.rejects(prepareNativeBuild(c.options), { code: 'EEXIST' });
   }));

@@ -3,9 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 
@@ -16,7 +16,7 @@ async function withRuntime(run) {
     REWIND_HOST: '127.0.0.1',
     REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   const server = createRuntimeServer(config, database, {
     now: () => new Date('2026-09-29T00:00:00.000Z'),
   });
@@ -166,10 +166,6 @@ test('real members can read, subscribe, reply and react while another group is d
       });
       assert.equal(outsiderStream.status, 200);
       assert.match(await outsiderStream.text(), /event: access-denied/);
-      const tokenInQuery = await fetch(`${prefix}/messages?sessionId=forbidden-token`, {
-        headers: owner.headers,
-      });
-      assert.equal(tokenInQuery.status, 403);
       assert.equal(
         database
           .prepare("SELECT COUNT(*) AS count FROM messages WHERE body = 'must not persist'")

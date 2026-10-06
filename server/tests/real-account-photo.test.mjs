@@ -6,10 +6,10 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import test from 'node:test';
 import { uploadFixture } from './helpers/fixture-upload.mjs';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 
@@ -22,7 +22,7 @@ async function withRuntime(run) {
     REWIND_FFMPEG_BIN: 'ffmpeg',
     REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   const server = createRuntimeServer(config, database, {
     now: () => new Date('2026-09-29T00:00:00.000Z'),
   });

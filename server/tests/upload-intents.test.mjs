@@ -786,7 +786,7 @@ test('actual photo uses three seconds in pending hold, committed quota and priva
       'error',
       '-y',
       '-i',
-      new URL('../fixtures/demo-media.mp4', import.meta.url).pathname,
+      new URL('../fixtures/sample-clip.mp4', import.meta.url).pathname,
       '-frames:v',
       '1',
       path,

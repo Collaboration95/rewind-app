@@ -22,7 +22,6 @@ export function useRealChatClient(): RealtimeChatClient | null {
         return authenticatedRequest(String(input).slice(realtimeBaseUrl.length), init);
       },
       {
-        sessionIdInQuery: false,
         eventSourceFactory: (url) => {
           const authorization = realtimeAuthorizationHeader();
           return createRuntimeEventSource(

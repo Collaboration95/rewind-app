@@ -77,8 +77,6 @@ export type RealtimeEventSourceFactory = (url: string) => RealtimeEventSource;
 export interface RealtimeChatClientOptions {
   eventSourceFactory?: RealtimeEventSourceFactory;
   reconnectDelayMs?: number;
-  /** Real-account transports use cookie/header authority without a session URL parameter. */
-  sessionIdInQuery?: boolean;
   /** Maximum time a direct message POST may remain in flight. */
   sendTimeoutMs?: number;
 }
@@ -174,7 +172,6 @@ export class RealtimeChatClient {
   private readonly eventSourceFactory: RealtimeEventSourceFactory;
   private readonly reconnectDelayMs: number;
   private readonly sendTimeoutMs: number;
-  private readonly sessionIdInQuery: boolean;
 
   constructor(
     baseUrl: string,
@@ -192,7 +189,6 @@ export class RealtimeChatClient {
       throw new RealtimeChatError('The realtime reconnect delay must not be negative.');
     }
     this.reconnectDelayMs = reconnectDelayMs;
-    this.sessionIdInQuery = options.sessionIdInQuery ?? true;
     const sendTimeoutMs = options.sendTimeoutMs ?? 10_000;
     if (!Number.isFinite(sendTimeoutMs) || sendTimeoutMs <= 0) {
       throw new RealtimeChatError('The realtime message send timeout must be greater than zero.');
@@ -236,7 +232,7 @@ export class RealtimeChatClient {
       });
       const requestPromise = (async () => {
         const response = await this.fetchImpl(
-          `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages${this.sessionIdInQuery ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
+          `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages`,
           {
             method: 'POST',
             headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -297,7 +293,7 @@ export class RealtimeChatClient {
     active?: boolean,
   ): Promise<{ reaction: ChatReactionResult; message: ChatMessage }> {
     const response = await this.fetchImpl(
-      `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(messageId)}/reactions${this.sessionIdInQuery ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
+      `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(messageId)}/reactions`,
       {
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -409,7 +405,6 @@ export class RealtimeChatClient {
         !latestCheckpointReceived &&
         lastEventId === 0;
       const queryParameters: string[] = [];
-      if (this.sessionIdInQuery) queryParameters.push(`sessionId=${encodeURIComponent(sessionId)}`);
       if (includeInitialSince || (isReconnect && !startingFromLatest) || lastEventId > 0) {
         queryParameters.push(`sinceEventId=${encodeURIComponent(String(lastEventId))}`);
       }

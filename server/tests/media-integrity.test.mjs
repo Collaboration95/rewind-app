@@ -20,10 +20,12 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { Worker } from 'node:worker_threads';
+import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { backfillMediaIntegrity, migrateDatabase, openDatabase } = await import('../dist/db.js');
+const { backfillMediaIntegrity, migrateDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createClipUpload, recordClipMediaMetadata } = await import('../dist/media/index.js');
 const {
@@ -49,8 +51,9 @@ async function withDatabase(run) {
     REWIND_DATA_DIR: dataDir,
     REWIND_HOST: '127.0.0.1',
     REWIND_FFMPEG_BIN: 'ffmpeg',
+    ...REAL_AUTH_ENV,
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     return await run({ config, database, dataDir });
   } finally {
@@ -200,15 +203,10 @@ test('a tampered finalized clip is unavailable, audited, and still not served', 
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
-      });
-      const session = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+      const session = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
 
-      const archive = await fetch(`${baseUrl}/archive?${query}`);
+      const archive = await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers });
       assert.equal(archive.status, 200);
       const archiveBody = await archive.json();
       assert.deepEqual(
@@ -217,7 +215,9 @@ test('a tampered finalized clip is unavailable, audited, and still not served', 
         'the healthy sample remains available while the tampered clip is excluded',
       );
 
-      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
+      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
+        headers: session.headers,
+      });
       assert.equal(download.status, 404);
       assert.deepEqual(await download.json(), NOT_FOUND);
 
@@ -233,7 +233,7 @@ test('a tampered finalized clip is unavailable, audited, and still not served', 
       ]);
 
       // Repeated requests must not multiply the durable audit rows.
-      await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
+      await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, { headers: session.headers });
       assert.equal(
         database
           .prepare(
@@ -401,14 +401,11 @@ test('a truncated finalized clip is unavailable and never streamed', async () =>
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
+      const session = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
+      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
+        headers: session.headers,
       });
-      const session = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
-      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
       assert.equal(download.status, 404);
       assert.deepEqual(await download.json(), NOT_FOUND);
     } finally {
@@ -450,19 +447,16 @@ for (const damage of ['deleted', 'zero-byte']) {
       const address = server.address();
       const baseUrl = `http://127.0.0.1:${address.port}`;
       try {
-        const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ memberId: 'demo-1' }),
-        });
-        const session = await sessionResponse.json();
-        const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+        const session = await signInAs(database, 'demo-1');
+        const query = 'groupId=demo-group';
         for (let attempt = 0; attempt < 2; attempt += 1) {
-          const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
+          const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
+            headers: session.headers,
+          });
           assert.equal(download.status, 404);
           assert.deepEqual(await download.json(), NOT_FOUND);
         }
-        const archive = await fetch(`${baseUrl}/archive?${query}`);
+        const archive = await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers });
         assert.equal(archive.status, 200);
         assert.equal(
           (await archive.json()).archive.clips.some((clip) => clip.id === jobId),
@@ -748,7 +742,7 @@ test('a row finalized before #157 is unverifiable and the migration backfills it
     REWIND_FFMPEG_BIN: 'ffmpeg',
   });
   try {
-    let database = openDatabase(config);
+    let database = openFixtureDatabase(config);
     const jobId = await finalizeOneClip({ database, config, dataDir }, 'integrity-backfill-1');
     const row = storedIntegrity(database, jobId);
     const bytes = await readFile(row.outputPath);
@@ -769,7 +763,7 @@ test('a row finalized before #157 is unverifiable and the migration backfills it
     raw.exec('DELETE FROM schema_migrations WHERE version = 15');
     raw.close();
 
-    database = openDatabase(config);
+    database = openFixtureDatabase(config);
     try {
       await backfillMediaIntegrity(database, config.dataDir);
       const backfilled = storedIntegrity(database, jobId);
@@ -860,7 +854,7 @@ test('legacy backfill releases writer locks while hashing and resumes after rest
 
     // Reopening reapplies only the idempotent schema and resumes the missing
     // row; the already-recorded receipt stays unchanged.
-    const resumed = openDatabase(config);
+    const resumed = openFixtureDatabase(config);
     try {
       await backfillMediaIntegrity(resumed, dataDir);
       for (const jobId of jobIds) {
@@ -1272,16 +1266,13 @@ test('a published film whose bytes changed is reported delayed and never streame
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
-      });
-      const session = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+      const session = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
 
       // Healthy bytes: the premiere is ready and the film streams.
-      const ready = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+      const ready = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`, {
+        headers: session.headers,
+      });
       const readyBody = await ready.json();
       assert.equal(readyBody.premiere.state, 'ready');
       const playback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
@@ -1291,11 +1282,15 @@ test('a published film whose bytes changed is reported delayed and never streame
       const tampered = Buffer.from(bytes);
       tampered[tampered.length - 1] ^= 0xff;
       await writeFile(filmPath, tampered);
-      const broken = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+      const broken = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`, {
+        headers: session.headers,
+      });
       assert.deepEqual(await broken.json(), {
         premiere: { state: 'delayed', cycleId: 'demo-cycle' },
       });
-      const brokenPlayback = await fetch(`${baseUrl}/films/demo-film/play?${query}`);
+      const brokenPlayback = await fetch(`${baseUrl}/films/demo-film/play?${query}`, {
+        headers: session.headers,
+      });
       assert.equal(brokenPlayback.status, 404);
       const audit = database
         .prepare(

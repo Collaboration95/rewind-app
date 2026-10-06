@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { deleteContribution } = await import('../dist/contributions/index.js');
 const {
   ContributionLedgerQueryError,
@@ -31,7 +31,7 @@ const validInput = {
 async function withLedgerDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-ledger-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   ensureContributionLedgerSchema(database);
   try {
     return await run({ config, database, dataDir });

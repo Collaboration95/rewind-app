@@ -143,10 +143,6 @@ function restorePlatform() {
   else delete (globalThis as { window?: unknown }).window;
 }
 
-beforeAll(() => {
-  process.env.REWIND_TEST_DEMO_FIXTURE = 'false';
-});
-
 beforeEach(async () => {
   secureStoreMock.token = null;
   secureStoreMock.failClear = false;

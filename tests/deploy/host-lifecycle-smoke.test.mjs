@@ -99,11 +99,10 @@ test('lifecycle smoke contract is disposable, bounded, and Compose-isolated', as
   assert.match(script, /--project-name/);
   assert.match(script, /--env-file/);
   assert.match(script, /build runtime image/);
-  assert.match(script, /migrate and seed/);
+  assert.match(script, /'migrate'/);
   assert.match(script, /initial health/);
   assert.match(script, /restart persistence/);
-  assert.match(script, /owner reset/);
-  assert.match(script, /post-reset health/);
+  assert.match(script, /post-restart health/);
   assert.match(script, /setTimeout\(/);
   assert.match(script, /finally/);
   assert.match(script, /--volumes/);

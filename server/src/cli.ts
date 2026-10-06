@@ -2,7 +2,7 @@ import { once } from 'node:events';
 import { startCycleSchedulerLoop } from './cycles/scheduler';
 import { listAuditEvents, type AuditEvent } from './audit';
 import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from './config';
-import { backfillMediaIntegrity, openDatabase, resetDatabase, fixtureSummary } from './db';
+import { backfillMediaIntegrity, openDatabase, resetDatabase, schemaReadiness } from './db';
 import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 import { cleanupOrphanedStagedSources } from './jobs';
@@ -46,7 +46,7 @@ import {
 async function openRuntimeDatabase(
   config: RuntimeConfig,
 ): Promise<ReturnType<typeof openDatabase>> {
-  const database = openDatabase(config, { seedNow: new Date() });
+  const database = openDatabase(config);
   try {
     await backfillMediaIntegrity(database, config.dataDir);
     return database;
@@ -60,7 +60,7 @@ export interface PreflightReport {
   ok: boolean;
   version: string;
   service: { ok: boolean; message: string };
-  sqlite: { ok: boolean; message: string; rows?: Record<string, number> };
+  sqlite: { ok: boolean; message: string };
   lan: { ok: boolean; message: string; address: string | null };
   ffmpeg: Awaited<ReturnType<typeof runFfmpegProbe>>;
 }
@@ -194,12 +194,9 @@ export async function runPreflight(
   let database: ReturnType<typeof openDatabase> | null = null;
   try {
     database = await openRuntimeDatabase(config);
-    const rows = fixtureSummary(database);
-    sqlite = {
-      ok: rows.profiles === 5 && rows.groups === 1 && rows.memberships === 5,
-      message: 'SQLite migrated and loaded the deterministic five-member fixture.',
-      rows,
-    };
+    sqlite = schemaReadiness(database).ready
+      ? { ok: true, message: 'SQLite migrated and ready.' }
+      : { ok: false, message: 'SQLite migrations are incomplete.' };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     sqlite = {
@@ -403,7 +400,7 @@ function parseJobsOptions(argv: string[]) {
   if (!groupId) {
     throw new ConfigError(
       'The jobs command requires a group.',
-      'Use jobs --group demo-group [--kind clip|film] [--status pending|processing|failed].',
+      'Use jobs --group <group-id> [--kind clip|film] [--status pending|processing|failed].',
     );
   }
   try {
@@ -746,16 +743,14 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     }
     if (command === 'migrate') {
       const database = await openRuntimeDatabase(config);
-      console.log(`SQLite migrated and seeded at ${config.databasePath}.`);
+      console.log(`SQLite migrated at ${config.databasePath}.`);
       database.close();
       return;
     }
     if (command === 'reset') {
       resetDatabase(config);
       const database = await openRuntimeDatabase(config);
-      console.log(
-        `Local database reset to the deterministic five-member fixture at ${config.databasePath}.`,
-      );
+      console.log(`Local database reset at ${config.databasePath}.`);
       database.close();
       return;
     }

@@ -1,26 +1,18 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
-test('fresh web install keeps Demo in its own closed sheet before any member is active', async ({
-  page,
-}) => {
+test('fresh web install offers only real-account entry, with no Demo', async ({ page }) => {
   await page.goto('/');
 
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Create an account' })).toBeVisible();
-  // A5: Try Demo is a separate bottom sheet, closed until pulled up, never inside sign-in.
-  const tryDemo = page.getByRole('button', { name: 'Try Demo' });
-  await expect(tryDemo).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: /Try Demo/i })).toHaveCount(0);
   await expect(page.getByTestId('demo-entry-demo-1')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Weekend People' })).toHaveCount(0);
+  await expect(page.getByText(/Demo member/i)).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Back to welcome' }).click();
-  await page.getByRole('button', { name: 'Try Demo' }).click();
-  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
-  await page.getByRole('button', { name: 'Enter Demo as Amber, sample member' }).click();
-  await expect(page.getByRole('heading', { name: 'Weekend People' })).toBeVisible();
+  await expect(page.getByTestId('real-account-username')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Try Demo/i })).toHaveCount(0);
 });
 
 test('mobile welcome keeps the brand and entry actions together and vertically balanced', async ({
@@ -31,17 +23,14 @@ test('mobile welcome keeps the brand and entry actions together and vertically b
 
   const brand = await page.getByTestId('entry-brand').boundingBox();
   const actions = await page.getByTestId('welcome-entry').boundingBox();
-  const sheet = await page.getByRole('button', { name: 'Try Demo' }).boundingBox();
   expect(brand).not.toBeNull();
   expect(actions).not.toBeNull();
-  expect(sheet).not.toBeNull();
 
   const gap = actions!.y - (brand!.y + brand!.height);
   const contentCenter = (brand!.y + actions!.y + actions!.height) / 2;
   expect(gap).toBeLessThan(96);
-  // Balanced in the space above the closed Try Demo sheet, which it never overlaps.
-  expect(actions!.y + actions!.height).toBeLessThanOrEqual(sheet!.y);
-  expect(Math.abs(contentCenter - sheet!.y / 2)).toBeLessThan(88);
+  expect(actions!.y + actions!.height).toBeLessThanOrEqual(844);
+  expect(Math.abs(contentCenter - 844 / 2)).toBeLessThan(120);
 });
 
 test('mobile signup starts close to the brand without a large empty band', async ({ page }) => {
@@ -82,7 +71,7 @@ test('web entry opens account registration and blocks credentials without HTTPS 
 });
 
 test('deep application routes return the exported web shell', async ({ page }) => {
-  const response = await page.goto('/groups/demo-group/capsule');
+  const response = await page.goto('/groups/any-group/archive');
 
   expect(response?.status()).toBe(200);
   expect(response?.headers()['content-type']).toContain('text/html');
@@ -162,8 +151,8 @@ test('the installed shell reloads root and starts a deep SPA route offline', asy
     await expect(page.locator('#root')).toContainText('Rewind');
 
     deepPage = await context.newPage();
-    await deepPage.goto('/groups/demo-group/capsule', { waitUntil: 'domcontentloaded' });
-    expect(new URL(deepPage.url()).pathname).toBe('/groups/demo-group/capsule');
+    await deepPage.goto('/groups/any-group/archive', { waitUntil: 'domcontentloaded' });
+    expect(new URL(deepPage.url()).pathname).toBe('/groups/any-group/archive');
     await expect(deepPage.locator('#root')).toContainText('Rewind');
   } finally {
     await deepPage?.close();

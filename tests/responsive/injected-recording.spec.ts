@@ -13,8 +13,9 @@ import {
   restoreInjectedPreview,
   setTrim,
 } from './helpers/injected-recording';
+import { signedIn } from './helpers/real-account';
 
-test.use({ viewport: { width: 390, height: 844 } });
+test.use({ ...signedIn, viewport: { width: 390, height: 844 } });
 test.setTimeout(90_000);
 
 test.afterEach(async ({ page }) => {
@@ -301,6 +302,6 @@ test('real landscape recording reaches review, overlong recording rejects, and s
   await expectRevoked(page, 2);
   await restoreInjectedPreview(page);
   // Leave the recovered live source through normal navigation; assert it stops too.
-  await page.getByTestId('nav-home').click();
+  await page.getByTestId('video-close').click();
   await expectSourceStopped(page, 3);
 });

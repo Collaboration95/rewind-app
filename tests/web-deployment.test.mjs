@@ -46,7 +46,7 @@ test('production web proxy keeps API and SPA routing boundaries explicit', () =>
   }
   assert.match(
     nginx,
-    /location @runtime_unavailable \{[\s\S]*?return 503 '\{"error":"runtime_unavailable","message":"The Demo runtime is unavailable\."\}';/,
+    /location @runtime_unavailable \{[\s\S]*?return 503 '\{"error":"runtime_unavailable","message":"The runtime is unavailable\."\}';/,
   );
   assert.match(nginx, /try_files \$uri =404/);
   assert.match(nginx, /try_files \$uri \$uri\/ \/index\.html/);
@@ -194,7 +194,7 @@ test(
     });
     const safe = JSON.stringify({
       error: 'runtime_unavailable',
-      message: 'The Demo runtime is unavailable.',
+      message: 'The runtime is unavailable.',
     });
     await writeFile(
       join(root, 'default.conf'),

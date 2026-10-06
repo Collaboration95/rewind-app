@@ -2,12 +2,15 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page, type Route } from '@playwright/test';
 
-test.use({ serviceWorkers: 'block' });
+import { openGroupHome, signedIn } from './helpers/real-account';
+
+test.use({ ...signedIn, serviceWorkers: 'block' });
 
 const filmId = 'film-playback-regression';
 const cycleId = 'film-playback-cycle';
-const playbackPath = `/films/${filmId}/play`;
-const sample = readFileSync(resolve(process.cwd(), 'server/fixtures/demo-media.mp4'));
+// A capability path in the runtime's shape (/media/access/<43 url-safe chars>).
+const playbackPath = `/media/access/${'f'.repeat(43)}`;
+const sample = readFileSync(resolve(process.cwd(), 'server/fixtures/sample-clip.mp4'));
 
 // Match the runtime's byte-range endpoint so Chromium exposes a seekable MP4.
 async function filmMedia(route: Route) {
@@ -56,7 +59,7 @@ async function filmMedia(route: Route) {
   });
 }
 
-// Keep the shared Demo runtime unchanged. Only published metadata is supplied
+// Keep the shared member's group unchanged. Only published metadata is supplied
 // by this fixture; the actual Film/Expo view decodes the bundled MP4 in-browser.
 async function publishedFilm(page: Page) {
   await page.route('**/api/archive?*', (route) =>
@@ -69,9 +72,16 @@ async function publishedFilm(page: Page) {
               cycleId,
               publishedAt: '2026-10-01T00:00:00Z',
               downloadPath: playbackPath,
+              playbackPath,
             },
           ],
           clips: [],
+        },
+        pagination: {
+          filmCursor: null,
+          clipCursor: null,
+          hasMoreFilms: false,
+          hasMoreClips: false,
         },
       },
     }),
@@ -99,12 +109,9 @@ async function publishedFilm(page: Page) {
 }
 
 async function openFilm(page: Page) {
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Try Demo', exact: true }).click();
-  await page.getByTestId('demo-entry-demo-1').click();
-  await expect(page.getByTestId('capsule-ready')).toBeVisible();
-  await page.getByTestId('nav-archive').click();
-  await page.getByTestId(`archive-play-film-${filmId}`).click();
+  await openGroupHome(page);
+  await page.getByTestId('real-group-nav-archive').click();
+  await page.getByTestId(`real-archive-watch-${filmId}`).click();
   await expect(page.getByTestId('real-film')).toBeVisible();
 }
 

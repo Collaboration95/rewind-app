@@ -31,8 +31,6 @@ const runtimeEnv = {
 const expoEnv = {
   ...process.env,
   EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
-  EXPO_PUBLIC_DEMO_ACCESS: 'disabled',
-  EXPO_PUBLIC_CAMERA_MODE: process.env.EXPO_PUBLIC_CAMERA_MODE || '',
 };
 
 const children = new Set();

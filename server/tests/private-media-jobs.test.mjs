@@ -6,7 +6,7 @@ import { mkdtemp, rm, readFile, readdir } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import test from 'node:test';
 import { parseConfig } from '../dist/config.js';
-import { openDatabase, openDatabaseAt } from '../dist/db.js';
+import { openDatabaseAt } from '../dist/db.js';
 import { createClipUpload } from '../dist/media/index.js';
 import { decodeMediaRef, encodeMediaRef } from '../dist/media/store.js';
 import {
@@ -16,14 +16,14 @@ import {
   verifyReadyJobOutput,
 } from '../dist/jobs/index.js';
 import { runWorkerTick } from '../dist/jobs/worker.js';
-import { clearDemoMedia } from './helpers/demo-media.mjs';
+import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { s3Double, s3Store } from './helpers/private-media-store.mjs';
 const scope = { environment: 'test', groupId: 'demo-group' };
 async function scenario(run) {
   const root = await mkdtemp(`${tmpdir()}/rewind-private-jobs-`);
   const config = parseConfig({ REWIND_DATA_DIR: root });
-  const database = openDatabase(config);
-  clearDemoMedia(database);
+  const database = openFixtureDatabase(config);
+  clearFixtureMedia(database);
   const double = s3Double();
   const store = s3Store(double);
   const options = {
@@ -49,7 +49,7 @@ function job(database, id) {
     .get(id);
 }
 async function enqueue(context, key = 'private-job') {
-  const bytes = await readFile(new URL('../fixtures/demo-media.mp4', import.meta.url));
+  const bytes = await readFile(new URL('../fixtures/sample-clip.mp4', import.meta.url));
   const ref = await context.store.put(scope, {
     prefix: 'incoming',
     name: key,
@@ -288,7 +288,7 @@ test('remote input without adapter fails closed; local adapter processes indepen
       context.root + '/local',
       () => new Date('2026-10-02T12:00:00Z'),
     );
-    const bytes = await readFile(new URL('../fixtures/demo-media.mp4', import.meta.url));
+    const bytes = await readFile(new URL('../fixtures/sample-clip.mp4', import.meta.url));
     const localRef = await local.put(scope, {
       prefix: 'incoming',
       name: 'local-clip',

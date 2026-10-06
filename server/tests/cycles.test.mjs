@@ -9,24 +9,18 @@ import { resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { seedLegacyFixture } from './helpers/legacy-fixture.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { getCurrentCycle, migrateDatabase, openDatabase, openDatabaseAt, seedDatabase } =
-  await import('../dist/db.js');
-const { createRuntimeServer } = await import('../dist/http.js');
-const {
-  advanceCycleLifecycle,
-  advanceDemoCycle,
-  CYCLE_DURATION_MS,
-  createCycleEngine,
-  MAX_DEMO_ADVANCE_SECONDS,
-  publishCycleRelease,
-} = await import('../dist/cycles/index.js');
+const { getCurrentCycle, migrateDatabase, openDatabaseAt } = await import('../dist/db.js');
+const { advanceCycleLifecycle, CYCLE_DURATION_MS, createCycleEngine, publishCycleRelease } =
+  await import('../dist/cycles/index.js');
 
 async function withDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-cycle-test-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     return await run({ config, database });
   } finally {
@@ -72,87 +66,6 @@ test('engine advances a cycle deterministically without changing its duration', 
   );
   assert.equal(advanced.endsAt, '2026-09-10T23:00:00.000Z');
   assert.equal(engine.remainingSeconds(advanced), 39_600);
-});
-
-test('only the persisted owner can advance a demo cycle and controls are recorded', async () => {
-  await withDatabase(async ({ database }) => {
-    const occurredAt = new Date('2026-09-10T12:00:00.000Z');
-    const original = database
-      .prepare('SELECT starts_at AS startsAt, ends_at AS endsAt FROM cycles WHERE id = ?')
-      .get('demo-cycle');
-
-    const denied = advanceDemoCycle(database, {
-      groupId: 'demo-group',
-      actingMemberId: 'demo-2',
-      advanceSeconds: 3_600,
-      clock: () => occurredAt,
-    });
-    assert.deepEqual(denied, {
-      allowed: false,
-      status: 403,
-      error: 'forbidden',
-      message: 'You do not have access to this resource.',
-    });
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM cycle_control_events').get().count,
-      0,
-    );
-
-    const advanced = advanceDemoCycle(database, {
-      groupId: 'demo-group',
-      actingMemberId: 'demo-1',
-      advanceSeconds: 3_600,
-      clock: () => occurredAt,
-    });
-    assert.equal(advanced.ok, true);
-    if (!advanced.ok) return;
-    assert.equal(advanced.advanceSeconds, 3_600);
-    assert.equal(advanced.eventId.startsWith('cycle-control-'), true);
-    assert.equal(Date.parse(advanced.cycle.endsAt), Date.parse(original.endsAt) - 3_600 * 1000);
-    const event = database
-      .prepare(
-        `SELECT cycle_id AS cycleId, group_id AS groupId, actor_member_id AS actorMemberId,
-           advance_seconds AS advanceSeconds, occurred_at AS occurredAt
-         FROM cycle_control_events WHERE id = ?`,
-      )
-      .get(advanced.eventId);
-    assert.deepEqual(
-      { ...event },
-      {
-        cycleId: 'demo-cycle',
-        groupId: 'demo-group',
-        actorMemberId: 'demo-1',
-        advanceSeconds: 3_600,
-        occurredAt: '2026-09-10T12:00:00.000Z',
-      },
-    );
-  });
-});
-
-test('owner controls reject invalid or excessive advances without changing the cycle', async () => {
-  await withDatabase(async ({ database }) => {
-    const before = database
-      .prepare('SELECT starts_at AS startsAt, ends_at AS endsAt FROM cycles WHERE id = ?')
-      .get('demo-cycle');
-    for (const advanceSeconds of [0, -1, 1.5, MAX_DEMO_ADVANCE_SECONDS + 1]) {
-      assert.deepEqual(
-        advanceDemoCycle(database, {
-          groupId: 'demo-group',
-          actingMemberId: 'demo-1',
-          advanceSeconds,
-        }),
-        { ok: false, reason: 'invalid_request' },
-      );
-    }
-    const after = database
-      .prepare('SELECT starts_at AS startsAt, ends_at AS endsAt FROM cycles WHERE id = ?')
-      .get('demo-cycle');
-    assert.deepEqual(after, before);
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM cycle_control_events').get().count,
-      0,
-    );
-  });
 });
 
 function readyFilm(database, config, cycleId) {
@@ -400,7 +313,7 @@ test('a legacy #54 version-006 lifecycle database is promoted without losing quo
         .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
         .run(version, new Date().toISOString());
     }
-    seedDatabase(database);
+    seedLegacyFixture(database);
     database.exec(
       `ALTER TABLE cycles ADD COLUMN release_status TEXT NOT NULL DEFAULT 'unpublished'
          CHECK (release_status IN ('unpublished', 'published'));
@@ -484,74 +397,6 @@ test('lifecycle migration repairs a partial DDL shape even after version 009 was
         .get('cycles', 'cycles_previous_cycle_idx') !== undefined,
       true,
     );
-  });
-});
-
-test('HTTP owner control requires a valid session and derives the actor from it', async () => {
-  await withDatabase(async ({ config, database }) => {
-    const server = createRuntimeServer(config, database);
-    server.listen(0, '127.0.0.1');
-    await new Promise((resolve) => server.once('listening', resolve));
-    const address = server.address();
-    const baseUrl = `http://127.0.0.1:${address.port}`;
-    try {
-      const denied = await fetch(
-        `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-2&advanceSeconds=60`,
-        { method: 'POST' },
-      );
-      assert.equal(denied.status, 401);
-      assert.deepEqual(await denied.json(), {
-        error: 'session_required',
-        message: 'Choose Demo access before changing local Demo data.',
-      });
-
-      for (const sessionId of ['', 'missing-session']) {
-        const missing = await fetch(
-          `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-1&sessionId=${sessionId}&advanceSeconds=60`,
-          { method: 'POST' },
-        );
-        assert.equal(missing.status, 401);
-        assert.equal((await missing.json()).error, 'session_required');
-      }
-
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
-      });
-      assert.equal(sessionResponse.status, 201);
-      const { session } = await sessionResponse.json();
-
-      const memberIdIsIgnored = await fetch(
-        `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-2&sessionId=${encodeURIComponent(session.id)}&advanceSeconds=60`,
-        { method: 'POST' },
-      );
-      assert.equal(memberIdIsIgnored.status, 200);
-
-      const nonOwnerSessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-2' }),
-      });
-      const { session: nonOwnerSession } = await nonOwnerSessionResponse.json();
-      const nonOwner = await fetch(
-        `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-1&sessionId=${encodeURIComponent(nonOwnerSession.id)}&advanceSeconds=60`,
-        { method: 'POST' },
-      );
-      assert.equal(nonOwner.status, 403);
-
-      const allowed = await fetch(
-        `${baseUrl}/cycles/demo/advance?groupId=demo-group&memberId=demo-2&sessionId=${encodeURIComponent(session.id)}&advanceSeconds=60`,
-        { method: 'POST' },
-      );
-      assert.equal(allowed.status, 200);
-      const body = await allowed.json();
-      assert.equal(body.cycle.id, 'demo-cycle');
-      assert.equal(body.advanceSeconds, 60);
-      assert.match(body.eventId, /^cycle-control-/);
-    } finally {
-      await new Promise((resolve) => server.close(resolve));
-    }
   });
 });
 

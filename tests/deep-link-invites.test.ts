@@ -3,17 +3,12 @@ import {
   isInviteLinkCandidate,
   parseInviteLink,
 } from '../src/invites/deep-links';
-import type { LocalInvite } from '../src/domain/invites';
 
 const NOW = Date.parse('2026-09-22T12:00:00.000Z');
-const ACTIVE_INVITE: LocalInvite = {
-  id: 'invite-ab12cd34',
+const ACTIVE_INVITE: Parameters<typeof createInviteLink>[0] = {
   code: 'ab12cd34',
-  groupId: 'private-group',
   status: 'active',
-  createdAt: '2026-09-22T11:00:00.000Z',
   expiresAt: '2026-09-23T12:00:00.000Z',
-  usedAt: null,
 };
 
 describe('invite deep-link contract', () => {

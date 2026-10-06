@@ -16,12 +16,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { spawn } from 'node:child_process';
-import { openDatabase } from '../dist/db.js';
 import { parseConfig } from '../dist/config.js';
 import { LocalMediaStore } from '../dist/media/local-store.js';
 import { encodeMediaRef } from '../dist/media/store.js';
 import { createBackfillManifest, backfillRetainedMedia } from '../dist/media/backfill.js';
 import { s3Double, s3Store } from './helpers/private-media-store.mjs';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 function journalRecords(path) {
   const db = new DatabaseSync(path, { readOnly: true });
@@ -38,7 +38,7 @@ const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
 async function fixture(run) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'rewind-backfill-test-')));
   const config = parseConfig({ REWIND_DATA_DIR: root });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   const stagingRoot = resolve(root, 'media/staging');
   const processedRoot = resolve(root, 'media/processed');
   const privateRoot = resolve(root, 'private');

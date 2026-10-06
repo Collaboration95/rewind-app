@@ -7,7 +7,6 @@ import { once } from 'node:events';
 import { Readable } from 'node:stream';
 import test from 'node:test';
 import { parseConfig } from '../dist/config.js';
-import { openDatabase } from '../dist/db.js';
 import { createRuntimeServer } from '../dist/http.js';
 import { createRealAccount, revokeRealSession } from '../dist/auth/index.js';
 import { purgeRealAccount } from '../dist/auth/deletion.js';
@@ -21,6 +20,7 @@ import {
   PREMIERE_DURATION_MS,
 } from '../dist/cycles/index.js';
 import { s3Double, s3Store } from './helpers/private-media-store.mjs';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 const NOW = new Date('2026-10-02T12:00:00Z');
 const ORIGIN = 'https://archive-fixture.example';
 const proxy = {
@@ -38,7 +38,7 @@ async function fixture(run, remote = false) {
     REWIND_ORIGIN_AUTH_SECRET: proxy['x-rewind-origin-auth'],
     REWIND_ALLOW_ORIGIN: ORIGIN,
   });
-  const database = openDatabase(config),
+  const database = openFixtureDatabase(config),
     double = s3Double(),
     store = s3Store(double);
   let clock = NOW;
@@ -108,7 +108,7 @@ async function fixture(run, remote = false) {
         'SELECT profile_id AS id FROM real_group_memberships WHERE account_id=? AND group_id=?',
       )
       .get(member.account.id, group.group.id).id;
-    const bytes = await readFile(new URL('../fixtures/demo-media.mp4', import.meta.url));
+    const bytes = await readFile(new URL('../fixtures/sample-clip.mp4', import.meta.url));
     const sha = createHash('sha256').update(bytes).digest('hex');
     await mkdir(root + '/media/processed', { recursive: true });
     async function output(name, prefix) {
@@ -257,7 +257,6 @@ test('real Archive seals media until release and scopes films/own clips to live 
     );
     assert.equal((await request(outsider, scoped('/archive'))).status, 403);
     assert.equal((await request(outsider, scoped('/films/archive-film'))).status, 403);
-    assert.equal((await request(owner, scoped('/archive') + '&sessionId=forged')).status, 403);
     assert.equal((await request(owner, scoped('/archive') + '&filmCursor=malformed')).status, 400);
     const preflight = await request(null, scoped('/archive'), { method: 'OPTIONS' });
     assert.match(preflight.headers.get('access-control-allow-headers'), /Authorization/);

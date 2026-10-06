@@ -177,7 +177,7 @@ function proxyApi(request, response, runtimeOrigin, url, runtimeTimeoutMs, origi
     if (!response.headersSent) {
       sendJson(response, 503, {
         error: 'runtime_unavailable',
-        message: 'The Demo runtime is unavailable.',
+        message: 'The runtime is unavailable.',
       });
     } else {
       response.destroy();

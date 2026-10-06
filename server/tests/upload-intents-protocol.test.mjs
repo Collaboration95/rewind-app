@@ -11,16 +11,17 @@ import { createRuntimeServer } from '../dist/http.js';
 import { createRealAccount } from '../dist/auth/index.js';
 import { createRealGroup } from '../dist/groups/real.js';
 import { parseConfig } from '../dist/config.js';
-import { openDatabase, openDatabaseAt } from '../dist/db.js';
+import { openDatabaseAt } from '../dist/db.js';
 import { createMediaRuntime } from '../dist/media/runtime-store.js';
 import { decodeMediaRef } from '../dist/media/store.js';
 import { cleanupUploadIntents } from '../dist/media/upload-intents.js';
 import { s3ProtocolFixture } from './helpers/s3-protocol-fixture.mjs';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 async function scenario(run) {
   const root = await mkdtemp(tmpdir() + '/rewind-intent-protocol-');
   const config = parseConfig({ REWIND_DATA_DIR: root });
-  const c = { now: new Date(), database: openDatabase(config) };
+  const c = { now: new Date(), database: openFixtureDatabase(config) };
   let storage, server, runtime;
   try {
     storage = await s3ProtocolFixture(root, () => c.now);
@@ -94,7 +95,7 @@ async function scenario(run) {
       { name: 'Protocol group', prompt: 'Private media', maxMembers: 3 },
       c.now,
     );
-    c.bytes = await readFile(new URL('../fixtures/demo-media.mp4', import.meta.url));
+    c.bytes = await readFile(new URL('../fixtures/sample-clip.mp4', import.meta.url));
     c.input = (key) => ({
       idempotencyKey: key,
       mediaType: 'video',

@@ -6,11 +6,11 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import { parseConfig } from '../dist/config.js';
-import { openDatabase } from '../dist/db.js';
 import {
   capacityFromStatfs,
   filesystemCapacity,
 } from '../dist/observability/filesystem-capacity.js';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 const unknown = { state: 'unavailable', totalBytes: null, availableBytes: null };
@@ -81,7 +81,7 @@ test('filesystem probe failures and invalid results omit paths, exceptions and r
 test('actual local statfs CLI preserves database-only output and read-only store bytes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'rewind-capacity-'));
   const config = parseConfig({ REWIND_DATA_DIR: root });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     const before = await readFile(config.databasePath);

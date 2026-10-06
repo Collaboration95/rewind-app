@@ -219,11 +219,9 @@ async function main() {
     const staticDir = join(rootDir, 'web-artifact');
     const expoCli = join(projectRoot, 'node_modules/expo/bin/cli');
     const buildEnv = localOnlyEnv(process.env, {
-      EXPO_PUBLIC_DEMO_ACCESS: 'disabled',
       EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
       EXPO_PUBLIC_INVITE_WEB_ORIGIN: '',
     });
-    delete buildEnv.EXPO_PUBLIC_CAMERA_MODE;
 
     await runChecked('npm', ['run', 'server:build']);
     await runChecked(

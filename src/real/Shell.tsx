@@ -231,7 +231,7 @@ export function Dock({
       style={[styles.dock, { bottom: Math.max(insets.bottom - 6, 16) }]}
       testID="real-group-navigation"
     >
-      <Glass style={styles.tabs} testID="real-group-tabs">
+      <Glass role="tablist" style={styles.tabs} testID="real-group-tabs">
         {TABS.map((tab) => {
           const on = tab.key === active;
           const badge =

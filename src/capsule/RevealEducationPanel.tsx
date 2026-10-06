@@ -14,14 +14,12 @@ export function RevealEducationPanel({
   state,
   surface,
   testID,
-  demoCompact = false,
 }: {
   actionLabel?: string;
   onAction: () => void | Promise<void>;
   state: RevealEducationState;
   surface: RevealEducationSurface;
   testID: string;
-  demoCompact?: boolean;
 }) {
   const copy = getRevealEducationCopy(surface, state);
   const label = actionLabel ?? copy.actionLabel;
@@ -29,17 +27,14 @@ export function RevealEducationPanel({
     <Glass
       accessible={false}
       accessibilityLabel={`${copy.title}. ${copy.body}`}
-      style={[styles.panel, demoCompact && styles.compactPanel]}
+      style={styles.panel}
       testID={testID}
     >
       <Text style={styles.label}>{state === 'released' ? 'RELEASED' : 'REVEAL STATUS'}</Text>
-      <Text accessibilityRole="header" style={[styles.title, demoCompact && styles.compactTitle]}>
+      <Text accessibilityRole="header" style={styles.title}>
         {copy.title}
       </Text>
-      <Text
-        accessibilityLiveRegion="polite"
-        style={[styles.body, demoCompact && styles.compactBody]}
-      >
+      <Text accessibilityLiveRegion="polite" style={styles.body}>
         {copy.body}
       </Text>
       <Pressable
@@ -55,9 +50,6 @@ export function RevealEducationPanel({
 }
 
 const styles = StyleSheet.create({
-  compactPanel: { gap: 6, padding: 12 },
-  compactTitle: { fontSize: 16, lineHeight: 21 },
-  compactBody: { fontSize: 13, lineHeight: 18 },
   panel: {
     backgroundColor: WARM.sheet,
     borderColor: WARM.line,

@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import test from 'node:test';
 import { uploadFixture } from './helpers/fixture-upload.mjs';
+import { openFixtureDatabase, SAMPLE_CLIP_PATH } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
-const { generateSyntheticDemoClip } = await import('../dist/ffmpeg.js');
+const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
 
 async function withRuntime(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-real-video-`);
@@ -21,7 +21,7 @@ async function withRuntime(run) {
     REWIND_FFMPEG_BIN: 'ffmpeg',
     REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   const server = createRuntimeServer(config, database, {
     now: () => new Date('2026-09-29T00:00:00.000Z'),
   });
@@ -126,7 +126,8 @@ test('real account can upload and process a clip only in its selected group', as
     const other = await account(baseUrl, database, 'video-other', 'Other member');
     const otherGroup = await createGroup(baseUrl, other.authorization, 'Other group');
     const sourcePath = `${dataDir}/phone-source.mp4`;
-    const metadata = await generateSyntheticDemoClip(config.ffmpegBin, sourcePath);
+    await copyFile(SAMPLE_CLIP_PATH, sourcePath);
+    const metadata = await probeClipWithFfmpeg(config.ffmpegBin, sourcePath);
     const bytes = await readFile(sourcePath);
     const groupId = ownerGroup.group.id;
     const idempotencyKey = 'real-video-upload-247';
@@ -198,11 +199,6 @@ test('real account can upload and process a clip only in its selected group', as
     );
     assert.equal(crossGroupStaging.status, 403);
     assert.notEqual(otherGroup.group.id, groupId);
-
-    const mixedDemoAuthority = await fetch(`${scoped(statusPath)}&sessionId=demo-session-owner`, {
-      headers: { Authorization: owner.authorization },
-    });
-    assert.equal(mixedDemoAuthority.status, 403);
 
     const ledger = await fetch(scoped('/contributions'), {
       headers: { Authorization: owner.authorization },

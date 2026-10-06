@@ -3,10 +3,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Worker } from 'node:worker_threads';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { seedLegacyFixture } from './helpers/legacy-fixture.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase, openDatabaseAt, restoreFixture, seedDatabase } =
-  await import('../dist/db.js');
+const { openDatabaseAt } = await import('../dist/db.js');
 const {
   contributionQuotaWindow,
   deleteContribution,
@@ -36,7 +37,7 @@ const validInput = {
 async function withDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-policy-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     database.exec(
       "DELETE FROM contribution_quota_windows; DELETE FROM contributions WHERE id = 'demo-contribution';",
@@ -99,7 +100,7 @@ test('upgrading a v005 database backfills the cycle-start quota ledger', async (
         .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
         .run(index + 1, new Date().toISOString());
     }
-    seedDatabase(legacy);
+    seedLegacyFixture(legacy);
     legacy
       .prepare(
         `INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
@@ -201,7 +202,7 @@ test('a legacy media-only v6 is repaired without losing its media schema', async
     legacy
       .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)')
       .run(new Date().toISOString());
-    seedDatabase(legacy);
+    seedLegacyFixture(legacy);
     const legacySourceUri = `staged://${'f'.repeat(32)}`;
     const legacySourcePath = `${dataDir}/legacy-source.mp4`;
     legacy
@@ -464,7 +465,7 @@ test('processing contributions cannot be deleted while a worker owns the job', a
 test('idempotent retries consume one allowance and persisted state survives reopen', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-retry-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  let database = openDatabase(config);
+  let database = openFixtureDatabase(config);
   try {
     database.exec(
       "DELETE FROM contribution_quota_windows; DELETE FROM contributions WHERE id = 'demo-contribution';",
@@ -489,7 +490,7 @@ test('idempotent retries consume one allowance and persisted state survives reop
     if (!retry.ok) return;
     assert.equal(retry.upload.existing, true);
     database.close();
-    database = openDatabase(config);
+    database = openFixtureDatabase(config);
     const ledger = database
       .prepare(
         'SELECT count_used AS countUsed, seconds_used AS secondsUsed FROM contribution_quota_windows',
@@ -642,41 +643,6 @@ test('trim bounds use verified FFprobe duration rather than a client source-dura
   });
 });
 
-test('demo reset clears quota and verified metadata so stale sources cannot be reused', async () => {
-  await withDatabase(async ({ database }) => {
-    registerMetadata(database);
-    const result = createClipUpload(
-      database,
-      'demo-group',
-      'demo-1',
-      { ...validInput, idempotencyKey: 'quota-reset-stale' },
-      new Date('2026-09-09T00:00:00.000Z'),
-    );
-    assert.equal(result.ok, true);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM media_metadata').get().count, 1);
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM contribution_quota_windows').get().count,
-      1,
-    );
-    restoreFixture(database);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM media_metadata').get().count, 0);
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM contribution_quota_windows').get().count,
-      1,
-    );
-    assert.deepEqual(
-      {
-        ...database
-          .prepare(
-            'SELECT count_used AS countUsed, seconds_used AS secondsUsed FROM contribution_quota_windows',
-          )
-          .get(),
-      },
-      { countUsed: 1, secondsUsed: 3 },
-    );
-  });
-});
-
 test('staged source capabilities are owner-bound and cannot be replaced', async () => {
   await withDatabase(async ({ database }) => {
     const first = claimStagedSource(database, 'demo-group', 'demo-1', 'source-owner-key');
@@ -721,7 +687,7 @@ test('staged source capabilities are owner-bound and cannot be replaced', async 
 test('a transient SQLite writer lock retries and same-key submissions remain idempotent', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-busy-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   const input = { ...validInput, idempotencyKey: 'quota-busy-retry' };
   registerMetadata(database);
   const worker = new Worker(

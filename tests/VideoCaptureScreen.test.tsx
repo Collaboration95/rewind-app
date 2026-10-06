@@ -7,11 +7,8 @@ import { ToastProvider } from '../src/ui/primitives';
 import { ClipUploadSession } from '../src/capture/clip-uploader';
 import { ContributionStatusProvider } from '../src/capture/contribution-status';
 
-import { DemoSessionProvider, useOptionalDemoSession } from '../src/session/DemoSessionProvider';
 import { VideoCaptureScreen } from '../src/capture/VideoCaptureScreen';
-import { DemoCameraPlatform } from '../src/capture/platform';
 import * as capturePlatform from '../src/capture/platform';
-import type { DemoSession, DemoSessionStore } from '../src/domain/session';
 import type { PendingClipUpload, RecordedClip } from '../src/domain/video';
 import type { CameraPlatform, PermissionSnapshot } from '../src/capture/contracts';
 import type { VideoRecordingPlatform } from '../src/capture/video-recording';
@@ -85,43 +82,29 @@ function fileFallbackPlatform(
   };
 }
 
-const demoSession: DemoSession = {
-  accessKind: 'demo',
-  actor: { displayName: 'Amber', isSynthetic: true, memberId: 'demo-1' },
-  expiresAt: '2026-09-12T00:00:00.000Z',
-  groupId: 'demo-group',
-  id: 'demo-session-ui',
-  invalidatedAt: null,
-  startedAt: '2026-09-11T00:00:00.000Z',
-};
+/** Real-account upload scope; the runtimeClient prop overrides its transport. */
+const REAL_ACCOUNT = { groupId: 'group-1', authenticatedRequest: jest.fn() };
+const UPLOAD_SESSION_ID = 'real-account-session';
 
 const upload = {
   contribution: {
     createdAt: '2026-09-11T00:00:00.000Z',
     cycleId: 'cycle-ui',
     durationSeconds: 8,
-    groupId: 'demo-group',
+    groupId: 'group-1',
     id: 'contribution-ui',
-    memberId: 'demo-1',
+    memberId: 'member-1',
   },
   existing: false,
   job: {
     contributionId: 'contribution-ui',
     createdAt: '2026-09-11T00:00:00.000Z',
-    groupId: 'demo-group',
+    groupId: 'group-1',
     id: 'job-ui',
     kind: 'clip' as const,
     status: 'pending' as const,
   },
 } satisfies PendingClipUpload;
-
-function demoSessionStore(): DemoSessionStore {
-  return {
-    clear: jest.fn().mockResolvedValue(undefined),
-    load: jest.fn().mockResolvedValue(demoSession),
-    save: jest.fn().mockResolvedValue(undefined),
-  };
-}
 
 function runtimeClient(overrides: Partial<RuntimeClient> = {}): RuntimeClient {
   return {
@@ -130,11 +113,6 @@ function runtimeClient(overrides: Partial<RuntimeClient> = {}): RuntimeClient {
     uploadClip: jest.fn().mockResolvedValue(upload),
     ...overrides,
   } as unknown as RuntimeClient;
-}
-
-function SessionReadyMarker() {
-  const session = useOptionalDemoSession()?.session;
-  return session ? <View testID="demo-session-ready" /> : null;
 }
 
 /**
@@ -208,17 +186,15 @@ async function renderReviewWithRuntime(
 ) {
   const result = await render(
     <ToastProvider>
-      <DemoSessionProvider
-        clock={() => new Date('2026-09-11T12:00:00.000Z')}
-        runtimeClient={client}
-        store={demoSessionStore()}
-      >
-        <SessionReadyMarker />
-        <VideoCaptureScreen platform={videoPlatform} runtimeClient={client} />
-      </DemoSessionProvider>
+      <>
+        <VideoCaptureScreen
+          platform={videoPlatform}
+          realAccount={REAL_ACCOUNT}
+          runtimeClient={client}
+        />
+      </>
     </ToastProvider>,
   );
-  await result.findByTestId('demo-session-ready');
   if (startCapture) await result.findByTestId('video-live-preview');
   else await result.findByTestId('video-record');
   if (startCapture) {
@@ -478,16 +454,14 @@ describe('VideoCaptureScreen', () => {
 
     try {
       const result = await render(
-        <DemoSessionProvider
-          clock={() => new Date('2026-09-11T12:00:00.000Z')}
-          runtimeClient={client}
-          store={demoSessionStore()}
-        >
-          <SessionReadyMarker />
-          <VideoCaptureScreen platform={platform} runtimeClient={client} />
-        </DemoSessionProvider>,
+        <>
+          <VideoCaptureScreen
+            platform={platform}
+            realAccount={REAL_ACCOUNT}
+            runtimeClient={client}
+          />
+        </>,
       );
-      await result.findByTestId('demo-session-ready');
       await result.findByTestId('video-unsupported');
       await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
       await result.findByTestId('video-review');
@@ -603,31 +577,6 @@ describe('VideoCaptureScreen', () => {
     }
   });
 
-  it('offers an authenticated fresh synthetic clip only in the local Demo fixture', async () => {
-    const createSyntheticDemoClip = jest.fn().mockResolvedValue(upload);
-    const processClipJob = jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' as const });
-    const client = runtimeClient({ createSyntheticDemoClip, processClipJob });
-    const result = await render(
-      <DemoSessionProvider
-        clock={() => new Date('2026-09-11T12:00:00.000Z')}
-        runtimeClient={client}
-        store={demoSessionStore()}
-      >
-        <SessionReadyMarker />
-        <VideoCaptureScreen platform={new DemoCameraPlatform()} runtimeClient={client} />
-      </DemoSessionProvider>,
-    );
-
-    await result.findByTestId('demo-session-ready');
-    await result.findByTestId('video-unsupported');
-    expect(result.getByText(/fresh, non-sensitive synthetic clip/)).toBeTruthy();
-    await fireEvent.press(result.getByRole('button', { name: 'Create synthetic Demo clip' }));
-
-    await result.findByTestId('camera-contribution-status-sealed');
-    expect(createSyntheticDemoClip).toHaveBeenCalledWith('demo-session-ui', 'demo-group');
-    expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
-  });
-
   it('shows recording progress and transitions to clip review after stopping', async () => {
     const platform = videoPlatformForReview();
     let resolveRecording!: (value: RecordedClip) => void;
@@ -712,7 +661,7 @@ describe('VideoCaptureScreen', () => {
     const processClipJob = jest.fn().mockResolvedValue({
       contributionId: 'contribution-ui',
       createdAt: '2026-09-11T00:00:00.000Z',
-      groupId: 'demo-group',
+      groupId: 'group-1',
       id: 'job-ui',
       kind: 'clip',
       status: 'ready',
@@ -742,8 +691,8 @@ describe('VideoCaptureScreen', () => {
       expect(player?.released).toBe(true);
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:submitted-capture');
       expect(uploadClip).toHaveBeenCalledWith(
-        'demo-session-ui',
-        'demo-group',
+        UPLOAD_SESSION_ID,
+        'group-1',
         expect.objectContaining({
           durationSeconds: 4,
           hasAudio: true,
@@ -757,7 +706,7 @@ describe('VideoCaptureScreen', () => {
         }),
         expect.any(AbortSignal),
       );
-      expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
+      expect(processClipJob).toHaveBeenCalledWith(UPLOAD_SESSION_ID, 'group-1', 'job-ui');
     } finally {
       Object.defineProperty(URL, 'revokeObjectURL', {
         configurable: true,
@@ -804,8 +753,8 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByRole('button', { name: 'Delete and replace' }));
 
     expect(deleteContribution).toHaveBeenCalledWith(
-      'demo-session-ui',
-      'demo-group',
+      UPLOAD_SESSION_ID,
+      'group-1',
       'contribution-ui',
     );
     await result.findByTestId('video-live-preview');
@@ -822,8 +771,8 @@ describe('VideoCaptureScreen', () => {
     await result.findByTestId('camera-contribution-status-sealed');
     expect(uploadClip).toHaveBeenNthCalledWith(
       2,
-      'demo-session-ui',
-      'demo-group',
+      UPLOAD_SESSION_ID,
+      'group-1',
       expect.objectContaining({ replacesContributionId: 'contribution-ui' }),
       expect.any(AbortSignal),
     );
@@ -1023,7 +972,7 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByRole('button', { name: 'Retake' }));
 
     await result.findByTestId('video-live-preview');
-    expect(cancelClipUpload).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
+    expect(cancelClipUpload).toHaveBeenCalledWith(UPLOAD_SESSION_ID, 'group-1', 'job-ui');
   });
 
   it('cancels an active recording on Close and ignores a late recorder completion', async () => {
@@ -1259,9 +1208,9 @@ describe('VideoCaptureScreen', () => {
 
   it('clears a retry affordance after route exit removes its resumable clip', async () => {
     const scope = {
-      groupId: demoSession.groupId,
-      memberId: demoSession.actor.memberId,
-      sessionId: demoSession.id,
+      groupId: REAL_ACCOUNT.groupId,
+      memberId: 'member-1',
+      sessionId: UPLOAD_SESSION_ID,
     };
     const client = runtimeClient({
       uploadClip: jest.fn().mockRejectedValue(new Error('runtime temporarily unavailable')),
@@ -1279,6 +1228,7 @@ describe('VideoCaptureScreen', () => {
               <VideoCaptureScreen
                 onBack={() => setVisible(false)}
                 platform={videoPlatformForReview()}
+                realAccount={REAL_ACCOUNT}
                 runtimeClient={client}
               />
             </>
@@ -1292,18 +1242,12 @@ describe('VideoCaptureScreen', () => {
     }
 
     const result = await render(
-      <DemoSessionProvider
-        clock={() => new Date('2026-09-11T12:00:00.000Z')}
-        runtimeClient={client}
-        store={demoSessionStore()}
-      >
+      <>
         <ContributionStatusProvider scope={scope}>
-          <SessionReadyMarker />
           <CaptureRouteHarness />
         </ContributionStatusProvider>
-      </DemoSessionProvider>,
+      </>,
     );
-    await result.findByTestId('demo-session-ready');
     await result.findByTestId('video-live-preview');
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-review');
@@ -1327,9 +1271,9 @@ describe('VideoCaptureScreen', () => {
 
   it('reconciles a restored processing status into an honest bounded retry', async () => {
     const scope = {
-      groupId: demoSession.groupId,
-      memberId: demoSession.actor.memberId,
-      sessionId: demoSession.id,
+      groupId: REAL_ACCOUNT.groupId,
+      memberId: 'member-1',
+      sessionId: UPLOAD_SESSION_ID,
     };
     await AsyncStorage.setItem(
       '@rewind/contribution-status-v1',
@@ -1347,18 +1291,16 @@ describe('VideoCaptureScreen', () => {
 
     const client = runtimeClient();
     const result = await render(
-      <DemoSessionProvider
-        clock={() => new Date('2026-09-11T12:00:00.000Z')}
-        runtimeClient={client}
-        store={demoSessionStore()}
-      >
+      <>
         <ContributionStatusProvider scope={scope}>
-          <SessionReadyMarker />
-          <VideoCaptureScreen platform={videoPlatformForReview()} runtimeClient={client} />
+          <VideoCaptureScreen
+            platform={videoPlatformForReview()}
+            realAccount={REAL_ACCOUNT}
+            runtimeClient={client}
+          />
         </ContributionStatusProvider>
-      </DemoSessionProvider>,
+      </>,
     );
-    await result.findByTestId('demo-session-ready');
     await result.findByTestId('video-live-preview');
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-review');
@@ -1410,23 +1352,21 @@ describe('VideoCaptureScreen', () => {
     try {
       const client = runtimeClient({ cancelClipUpload, uploadClip });
       const result = await render(
-        <DemoSessionProvider
-          clock={() => new Date('2026-09-11T12:00:00.000Z')}
-          runtimeClient={client}
-          store={demoSessionStore()}
-        >
-          <SessionReadyMarker />
-          <VideoCaptureScreen platform={platform} runtimeClient={client} />
-        </DemoSessionProvider>,
+        <>
+          <VideoCaptureScreen
+            platform={platform}
+            realAccount={REAL_ACCOUNT}
+            runtimeClient={client}
+          />
+        </>,
       );
-      await result.findByTestId('demo-session-ready');
       await result.findByTestId('video-unsupported');
       await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
       await result.findByTestId('video-review');
       await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
       await result.findByRole('button', { name: 'Cancel upload' });
 
-      // Ending Demo access unmounts the capture route.
+      // Signing out unmounts the capture route.
       await result.unmount();
 
       await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:sign-out-video'));
@@ -1447,21 +1387,16 @@ describe('VideoCaptureScreen', () => {
     const processClipJob = jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' as const });
     const client = runtimeClient({ processClipJob });
     const result = await render(
-      <DemoSessionProvider
-        clock={() => new Date('2026-09-11T12:00:00.000Z')}
-        runtimeClient={client}
-        store={demoSessionStore()}
-      >
-        <SessionReadyMarker />
+      <>
         <VideoCaptureScreen
           onBack={onBack}
           onClose={onClose}
           platform={videoPlatformForReview()}
+          realAccount={REAL_ACCOUNT}
           runtimeClient={client}
         />
-      </DemoSessionProvider>,
+      </>,
     );
-    await result.findByTestId('demo-session-ready');
     await fireEvent.press(await result.findByTestId('video-record'));
     await result.findByTestId('video-review');
     await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
