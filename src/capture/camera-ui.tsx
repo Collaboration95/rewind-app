@@ -3,6 +3,8 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  ScrollView,
+  useWindowDimensions,
   StyleSheet,
   Text,
   View,
@@ -167,6 +169,8 @@ export function CamBottom({
   onLayout?: (event: LayoutChangeEvent) => void;
 }) {
   const insets = useScreenInsets();
+  const { width, height } = useWindowDimensions();
+  const compact = width > height && height < 500;
   return (
     <View
       {...rw('capture-bottom')}
@@ -175,14 +179,21 @@ export function CamBottom({
       style={[
         styles.bottom,
         {
-          paddingBottom: insets.bottom + 24,
+          paddingBottom: insets.bottom + (compact ? 8 : 24),
           paddingLeft: insets.left + 22,
           paddingRight: insets.right + 22,
         },
+        compact && { paddingTop: 8, maxHeight: height - insets.top - 105 },
         style,
       ]}
     >
-      {children}
+      <ScrollView
+        scrollEnabled={compact}
+        style={{ width: '100%', flexShrink: 1 }}
+        contentContainerStyle={compact ? styles.compactControls : styles.portraitControls}
+      >
+        {children}
+      </ScrollView>
     </View>
   );
 }
@@ -379,19 +390,40 @@ export function CamCard({
   children?: ReactNode;
   testID?: string;
 }) {
+  const insets = useScreenInsets();
+  const { width, height } = useWindowDimensions();
+  const compact = width > height && height < 500;
+  const content = (
+    <>
+      <Text accessibilityRole="header" style={styles.cardTitle}>
+        {title}
+      </Text>
+      {body ? <Text style={styles.cardBody}>{body}</Text> : null}
+      <View style={styles.cardActions}>{children}</View>
+    </>
+  );
   return (
-    <View pointerEvents="box-none" style={styles.cardLayer}>
+    <View
+      pointerEvents="box-none"
+      style={[styles.cardLayer, compact && { top: insets.top + 64, bottom: insets.bottom + 76 }]}
+    >
       <View
         accessibilityLiveRegion="polite"
-        style={[styles.card, !isWeb && styles.cardNative]}
+        style={[
+          styles.card,
+          !isWeb && styles.cardNative,
+          compact && {
+            maxHeight: height - insets.top - insets.bottom - 140,
+            maxWidth: 680,
+            paddingVertical: 12,
+          },
+        ]}
         testID={testID}
         {...rw('dark-glass fade-in')}
       >
-        <Text accessibilityRole="header" style={styles.cardTitle}>
-          {title}
-        </Text>
-        {body ? <Text style={styles.cardBody}>{body}</Text> : null}
-        <View style={styles.cardActions}>{children}</View>
+        <ScrollView scrollEnabled={compact} style={{ flexShrink: 1 }}>
+          {content}
+        </ScrollView>
       </View>
     </View>
   );
@@ -855,6 +887,14 @@ const styles = StyleSheet.create({
     paddingTop: 24,
     backgroundColor: isWeb ? undefined : 'rgba(8,5,4,.8)',
   },
+  compactControls: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  portraitControls: { alignItems: 'center', gap: 16 },
   modes: {
     backgroundColor: isWeb ? undefined : 'rgba(0, 0, 0, 0.4)',
     borderRadius: 999,
