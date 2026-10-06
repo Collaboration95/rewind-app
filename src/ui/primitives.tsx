@@ -927,7 +927,8 @@ export const styles = StyleSheet.create({
   },
   fieldRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
   fieldGrow: { flex: 1 },
-  fieldMasked: { fontSize: 13, letterSpacing: 2.4 },
+  // 16 px is the floor: iOS Safari zooms the page when a smaller input is focused.
+  fieldMasked: { fontSize: 16, letterSpacing: 2 },
   fieldEye: {
     alignItems: 'center',
     height: 44,
