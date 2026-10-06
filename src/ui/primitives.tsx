@@ -502,6 +502,7 @@ export function Switch({
       accessibilityLabel={label}
       accessibilityRole="switch"
       accessibilityState={{ checked: value, disabled: Boolean(disabled) }}
+      aria-checked={value}
       disabled={disabled}
       hitSlop={8}
       onPress={() => onValueChange(!value)}
@@ -713,6 +714,7 @@ export function Dialog({
     >
       <Pressable
         accessibilityLabel={onDismiss ? 'Dismiss' : undefined}
+        accessibilityRole={onDismiss ? 'button' : undefined}
         accessible={Boolean(onDismiss)}
         disabled={!onDismiss}
         onPress={onDismiss}

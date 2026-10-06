@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,15 +9,14 @@ import { createProductionWebServer, assertStaticArtifact } from './production-we
 
 const projectRoot = process.cwd();
 const expoCli = join(projectRoot, 'node_modules/expo/bin/cli');
-const seedNow = new Date('2026-09-01T00:00:00.000Z');
-const smokeNow = new Date('2026-09-11T12:00:01.000Z');
+const httpsPort = Number(process.env.REWIND_WEB_SMOKE_HTTPS_PORT || 8443);
 
-function run(command, args, env = process.env) {
+function run(command, args, env = process.env, stdio = 'inherit') {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: projectRoot,
       env,
-      stdio: 'inherit',
+      stdio,
     });
     child.once('error', reject);
     child.once('exit', (code, signal) => {
@@ -45,6 +45,7 @@ async function main() {
   const dataDir = await mkdtemp(join(tmpdir(), 'rewind-web-runtime-'));
   let runtimeServer;
   let webServer;
+  let secureWebServer;
   let database;
   let closing = false;
 
@@ -52,6 +53,7 @@ async function main() {
     if (closing) return;
     closing = true;
     await closeServer(webServer);
+    await closeServer(secureWebServer);
     await closeServer(runtimeServer);
     database?.close();
     await rm(artifactDir, { recursive: true, force: true });
@@ -66,12 +68,10 @@ async function main() {
     await run(process.env.npm_execpath || 'npm', ['run', 'server:build']);
     const webExportEnv = {
       ...process.env,
-      EXPO_PUBLIC_DEMO_ACCESS: 'entry',
       EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
     };
-    // Responsive/browser smoke coverage must exercise the real web adapter.
-    // A caller's simulator fixture setting must not leak into this production
-    // web artifact; production E2E has its own explicitly demo-mode server.
+    // Responsive/browser smoke coverage must exercise the real web adapter, so a
+    // caller's simulator fixture setting must not leak into this artifact.
     delete webExportEnv.EXPO_PUBLIC_CAMERA_MODE;
     await run(
       process.execPath,
@@ -83,22 +83,59 @@ async function main() {
     const { parseConfig } = await import('../server/dist/config.js');
     const { openDatabase } = await import('../server/dist/db.js');
     const { createRuntimeServer } = await import('../server/dist/http.js');
+    // Production builds send real credentials only over HTTPS. The plain
+    // listener proves that refusal; the HTTPS one (throwaway self-signed
+    // certificate, origin-authenticated proxy) carries signed-in specs.
+    const originAuthSecret = randomBytes(32).toString('base64url');
     const config = parseConfig({
       REWIND_DATA_DIR: dataDir,
       REWIND_HOST: '127.0.0.1',
       REWIND_PORT: '0',
       REWIND_FFMPEG_BIN: 'ffmpeg',
+      REWIND_ALLOW_ORIGIN: `https://localhost:${httpsPort}`,
+      REWIND_ORIGIN_AUTH_SECRET: originAuthSecret,
     });
-    database = openDatabase(config, { seedNow });
-    runtimeServer = createRuntimeServer(config, database, { now: () => smokeNow });
-    const runtimePort = await listen(runtimeServer);
-    webServer = createProductionWebServer({
-      staticDir: artifactDir,
-      runtimeOrigin: `http://127.0.0.1:${runtimePort}`,
-    });
+    database = openDatabase(config);
+    runtimeServer = createRuntimeServer(config, database);
+    const runtimeOrigin = `http://127.0.0.1:${await listen(runtimeServer)}`;
+    webServer = createProductionWebServer({ staticDir: artifactDir, runtimeOrigin });
     const webPort = Number(process.env.REWIND_WEB_SMOKE_PORT || 8082);
     await listen(webServer, '127.0.0.1', webPort);
-    console.log(`Rewind production web smoke server listening on http://127.0.0.1:${webPort}`);
+
+    const key = join(dataDir, 'tls.key');
+    const cert = join(dataDir, 'tls.crt');
+    await run(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-nodes',
+        '-keyout',
+        key,
+        '-out',
+        cert,
+        '-days',
+        '2',
+        '-subj',
+        '/CN=localhost',
+        '-addext',
+        'subjectAltName=DNS:localhost,IP:127.0.0.1',
+      ],
+      process.env,
+      'ignore',
+    );
+    secureWebServer = createProductionWebServer({
+      staticDir: artifactDir,
+      runtimeOrigin,
+      tls: { key: await readFile(key), cert: await readFile(cert) },
+      originAuthSecret,
+    });
+    await listen(secureWebServer, '127.0.0.1', httpsPort);
+    console.log(
+      `Rewind production web smoke server listening on http://127.0.0.1:${webPort} and https://localhost:${httpsPort}`,
+    );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     await shutdown(1);
