@@ -196,7 +196,7 @@ function workerFixture(source = serviceWorker, stores = new Map(), windows = [])
   };
 }
 
-test('push revalidates the cookie session/current group and displays only generic content', async () => {
+test('push revalidates the cookie session/current group, displays only generic content and routes only when verified', async () => {
   const worker = workerFixture();
   const data = {
     kind: 'weekly-reminder',
@@ -214,6 +214,10 @@ test('push revalidates the cookie session/current group and displays only generi
   assert.equal(worker.notifications.length, 1);
   assert.equal(worker.notifications[0].title, 'Rewind');
   assert.equal(worker.notifications[0].options.tag, 'rewind:reminder-one');
+  assert.equal(
+    JSON.stringify(worker.notifications[0].options.data),
+    JSON.stringify({ kind: data.kind, groupId: data.groupId, reminderId: data.reminderId }),
+  );
   assert.doesNotMatch(
     JSON.stringify(worker.notifications),
     /Private prompt|Member secret|evil|media/,
@@ -244,7 +248,18 @@ test('push revalidates the cookie session/current group and displays only generi
   await worker.event('push', {
     data: { json: () => ({ data: { ...data, groupId: '../foreign' } }) },
   });
-  assert.equal(worker.notifications.length, 1);
+  // Other group, signed out and offline still show (Safari revokes silent pushes)
+  // the same generic text, but carry no routing intent. Malformed payloads show nothing.
+  assert.equal(worker.notifications.length, 4);
+  for (const shown of worker.notifications.slice(1)) {
+    assert.equal(shown.title, 'Rewind');
+    assert.equal(shown.options.body, worker.notifications[0].options.body);
+    assert.equal(shown.options.data, null);
+  }
+  assert.doesNotMatch(
+    JSON.stringify(worker.notifications),
+    /Private prompt|Member secret|evil|media|another-group/,
+  );
 });
 
 test('notification taps use opaque IDs and focus an existing app without arbitrary navigation', async () => {
@@ -289,6 +304,12 @@ test('notification taps use opaque IDs and focus an existing app without arbitra
     notification: { ...notification, data: { ...data, reminderId: 'https://evil.invalid' } },
   });
   assert.equal(cold.opened.length, 1);
+  await cold.event('notificationclick', { notification: { ...notification, data: null } });
+  assert.equal(cold.opened[1], 'https://rewind.invalid/');
+  const warm = workerFixture(serviceWorker, new Map(), [window]);
+  await warm.event('notificationclick', { notification: { ...notification, data: null } });
+  assert.equal(focused, 2);
+  assert.equal(received.length, 1);
 });
 
 test('private API/media, invite query navigations and writes never enter the shell cache', async () => {

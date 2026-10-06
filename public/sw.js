@@ -171,22 +171,25 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     (async () => {
       // Verify the cookie session and selected group without persisting a private
-      // response. Offline or logged-out delivery is intentionally unconfirmed.
+      // response. Safari revokes subscriptions whose pushes show nothing, so an
+      // unverified push (offline, signed out, other group) still shows the same
+      // generic text, without the routing intent.
+      let verified = false;
       try {
         const response = await fetch('/api/real/groups/current', {
           credentials: 'include',
           cache: 'no-store',
           signal: AbortSignal.timeout(8000),
         });
-        if (!response.ok || (await response.json()).group?.group?.id !== intent.groupId) return;
-        await self.registration.showNotification('Rewind', {
-          body: 'Your weekly reminder is ready. Open Rewind to check your group.',
-          tag: `rewind:${intent.reminderId}`,
-          data: intent,
-        });
+        verified = response.ok && (await response.json()).group?.group?.id === intent.groupId;
       } catch {
-        /* Revalidate online rather than display stale private context. */
+        /* Revalidate online rather than route into stale private context. */
       }
+      await self.registration.showNotification('Rewind', {
+        body: 'Your weekly reminder is ready. Open Rewind to check your group.',
+        tag: `rewind:${intent.reminderId}`,
+        data: verified ? intent : null,
+      });
     })(),
   );
 });
@@ -194,19 +197,22 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const intent = reminderIntent(event.notification.data);
-  if (!intent) return;
+  // Unverified reminders carry no data and just open the app; reject malformed data.
+  if (!intent && event.notification.data != null) return;
   event.waitUntil(
     (async () => {
       const windows = await clients.matchAll({ type: 'window' });
       const current = windows.find((client) => new URL(client.url).origin === self.location.origin);
       if (current) {
-        current.postMessage(intent);
+        if (intent) current.postMessage(intent);
         await current.focus();
         return;
       }
       const url = new URL('/', self.location.origin);
-      url.searchParams.set('rewindReminder', intent.reminderId);
-      url.searchParams.set('rewindGroup', intent.groupId);
+      if (intent) {
+        url.searchParams.set('rewindReminder', intent.reminderId);
+        url.searchParams.set('rewindGroup', intent.groupId);
+      }
       await clients.openWindow(url.href);
     })(),
   );
