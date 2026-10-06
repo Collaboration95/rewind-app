@@ -49,6 +49,8 @@ function noticeFor(error: unknown): AuthNotice {
     if (error.reason === 'expired') return 'expired';
     if (error.reason === 'insecure-transport') return 'offline';
     if (error.status === 401) return 'sign-in-failed';
+    if (error.status === 429) return 'sign-in-throttled';
+    if (error.status >= 500) return 'unavailable';
   }
   return 'offline';
 }
@@ -147,7 +149,9 @@ export function RealAccountProvider({
         // Keep the native token in SecureStore so Retry can validate the session.
         setSession(null);
         setState('error');
-        setNotice('offline');
+        setNotice(
+          error instanceof AuthRequestError && error.status >= 500 ? 'unavailable' : 'offline',
+        );
       }
     }
   }, [client]);

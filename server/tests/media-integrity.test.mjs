@@ -174,7 +174,7 @@ test('finalization persists a matching SHA-256 and byte length for a real clip',
   });
 });
 
-test('a tampered finalized clip is unavailable, audited, and still not served', async () => {
+test('a tampered finalized clip is refused and audited when served', async () => {
   await withDatabase(async (context) => {
     const { database, config } = context;
     const jobId = await finalizeOneClip(context, 'integrity-tamper-1');
@@ -210,9 +210,9 @@ test('a tampered finalized clip is unavailable, audited, and still not served', 
       assert.equal(archive.status, 200);
       const archiveBody = await archive.json();
       assert.deepEqual(
-        archiveBody.archive.clips.map((clip) => clip.id),
-        ['demo-clip'],
-        'the healthy sample remains available while the tampered clip is excluded',
+        archiveBody.archive.clips.map((clip) => clip.id).sort(),
+        [jobId, 'demo-clip'].sort(),
+        'same-size tampering is caught when the bytes are served, not by the listing (#475)',
       );
 
       const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
@@ -1234,7 +1234,7 @@ test('media streaming rejects a mixed snapshot after an in-place source mutation
   });
 });
 
-test('a published film whose bytes changed is reported delayed and never streamed', async () => {
+test('a published film whose bytes changed is never streamed', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     const processedDir = resolve(dataDir, 'media', 'processed');
     const filmPath = resolve(processedDir, 'demo-film.mp4');
@@ -1278,16 +1278,15 @@ test('a published film whose bytes changed is reported delayed and never streame
       const playback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
       assert.equal(playback.status, 200);
 
-      // Tampered bytes: the same request must stop advertising playback.
+      // Same-size tampering still reads as ready (status checks size only, #475);
+      // playback hashes the bytes, refuses them and audits once.
       const tampered = Buffer.from(bytes);
       tampered[tampered.length - 1] ^= 0xff;
       await writeFile(filmPath, tampered);
       const broken = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`, {
         headers: session.headers,
       });
-      assert.deepEqual(await broken.json(), {
-        premiere: { state: 'delayed', cycleId: 'demo-cycle' },
-      });
+      assert.equal((await broken.json()).premiere.state, 'ready');
       const brokenPlayback = await fetch(`${baseUrl}/films/demo-film/play?${query}`, {
         headers: session.headers,
       });

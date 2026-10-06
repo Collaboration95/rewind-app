@@ -34,6 +34,7 @@ import { plural } from './home-model';
 import { ReportSheet } from './ReportSheet';
 import { blockMember, openLegalPage, reportContent, unblockMember } from './safety';
 import type { MenuGroup } from './Shell';
+import { userMessage } from '../domain/user-message';
 
 export type SettingsStep = 'main' | 'members' | 'groups' | 'invite' | 'prompt' | 'tz' | 'delete';
 
@@ -476,8 +477,7 @@ function ReminderBlock({
         toast(done);
         return true;
       } catch (error) {
-        if (active.current)
-          setMessage(error instanceof Error ? error.message : 'Your reminder could not be saved.');
+        if (active.current) setMessage(userMessage(error, 'Your reminder could not be saved.'));
         return false;
       } finally {
         if (active.current) setPending(false);
@@ -709,11 +709,7 @@ function PromptScreen<T extends SettingsGroup>({
       toast('Saved.');
       onBack();
     } catch (failure) {
-      setError(
-        failure instanceof Error
-          ? failure.message
-          : 'Settings could not be saved. Retry when connected.',
-      );
+      setError(userMessage(failure, 'Settings could not be saved. Retry when connected.'));
       setPending(false);
     }
   };
@@ -790,11 +786,7 @@ function TimeZoneScreen<T extends SettingsGroup>({
       onGroupUpdated(updated);
       toast('Saved.');
     } catch (failure) {
-      setError(
-        failure instanceof Error
-          ? failure.message
-          : 'Settings could not be saved. Retry when connected.',
-      );
+      setError(userMessage(failure, 'Settings could not be saved. Retry when connected.'));
     } finally {
       setPending(null);
     }
@@ -995,7 +987,7 @@ function Members<T extends SettingsGroup>({
           : `${member.displayName} is blocked. You won’t see their messages or moments.`,
       );
     } catch (error) {
-      toast(error instanceof Error ? error.message : 'Try again.');
+      toast(userMessage(error, 'Try again.'));
     } finally {
       setPending(false);
     }
@@ -1098,9 +1090,7 @@ function Members<T extends SettingsGroup>({
               );
               return null;
             } catch (error) {
-              return error instanceof Error
-                ? error.message
-                : 'The report could not be sent. Try again.';
+              return userMessage(error, 'The report could not be sent. Try again.');
             }
           }}
           what="person"

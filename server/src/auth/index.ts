@@ -58,7 +58,8 @@ export type ResetAccountResult =
   { ok: true; account: RealAccount } | { ok: false; reason: 'missing' };
 export type LoginResult =
   | { status: 'authenticated'; account: RealAccount; token: string; expiresAt: string }
-  | { status: 'invalid' | 'throttled' };
+  | { status: 'invalid' }
+  | { status: 'throttled'; retryAfterSeconds: number };
 export type RealSessionResult =
   | { status: 'valid'; account: RealAccount; idleExpiresAt: string; absoluteExpiresAt: string }
   | { status: 'invalid' };
@@ -254,17 +255,29 @@ function throttleRow(
   return row ?? null;
 }
 
+/** When the longest active cooldown for this username or source ends, or null. */
+function loginCooldownEnd(
+  database: RewindDatabase,
+  username: string,
+  source: string,
+  now: Date,
+): number | null {
+  const end = Math.max(
+    ...(['account', 'source'] as const).map((scope) => {
+      const row = throttleRow(database, scope, scope === 'account' ? username : source);
+      return row?.cooldownUntil ? Date.parse(row.cooldownUntil) : 0;
+    }),
+  );
+  return end > now.getTime() ? end : null;
+}
+
 export function isLoginThrottled(
   database: RewindDatabase,
   username: string,
   source: string,
   now = new Date(),
 ): boolean {
-  const nowMs = now.getTime();
-  return (['account', 'source'] as const).some((scope) => {
-    const row = throttleRow(database, scope, scope === 'account' ? username : source);
-    return Boolean(row?.cooldownUntil && Date.parse(row.cooldownUntil) > nowMs);
-  });
+  return loginCooldownEnd(database, username, source, now) !== null;
 }
 
 function recordFailure(
@@ -327,7 +340,12 @@ async function authenticateRealAccountUnlocked(
 ): Promise<LoginResult> {
   const username = normalizeUsername(usernameInput);
   const normalized = username?.normalized ?? usernameInput.trim().toLowerCase().slice(0, 128);
-  if (isLoginThrottled(database, normalized, source, now)) return { status: 'throttled' };
+  const cooldownEnd = loginCooldownEnd(database, normalized, source, now);
+  if (cooldownEnd !== null)
+    return {
+      status: 'throttled',
+      retryAfterSeconds: Math.ceil((cooldownEnd - now.getTime()) / 1000),
+    };
   const row = database
     .prepare(
       `SELECT id, username, display_name AS displayName,

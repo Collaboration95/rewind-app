@@ -51,6 +51,7 @@ import {
   UploadPanel,
   allowanceLeft,
 } from './camera-ui';
+import { userMessage } from '../domain/user-message';
 
 /** How the chosen retro look reaches the server for one photo. */
 export interface PhotoRetroLook {
@@ -280,9 +281,7 @@ export function CameraCaptureScreen({
     } catch (error) {
       // Browser permission controls live in the address bar; keep guidance in
       // the route instead of failing silently or opening an arbitrary URL.
-      setSettingsError(
-        error instanceof Error ? error.message : 'Open this app settings to allow camera access.',
-      );
+      setSettingsError(userMessage(error, 'Open this app settings to allow camera access.'));
     }
   }, [platform, refreshAccess]);
 
@@ -318,10 +317,7 @@ export function CameraCaptureScreen({
         setState((current) => ({
           ...current,
           status: error instanceof CaptureFileLifecycleError ? 'write-failed' : 'capture-failed',
-          errorMessage:
-            error instanceof Error
-              ? error.message
-              : 'The still image could not be captured. Try again.',
+          errorMessage: userMessage(error, 'The still image could not be captured. Try again.'),
         }));
       }
     },
@@ -396,10 +392,7 @@ export function CameraCaptureScreen({
         ...current,
         status: 'write-failed',
         activePreview: null,
-        errorMessage:
-          error instanceof Error
-            ? error.message
-            : 'The image could not be saved locally. Try again.',
+        errorMessage: userMessage(error, 'The image could not be saved locally. Try again.'),
       }));
     }
   }, [onAccepted, session]);
@@ -446,9 +439,10 @@ export function CameraCaptureScreen({
             });
           } catch (error) {
             throw new Error(
-              `${
-                error instanceof Error ? error.message : 'The retro look could not be applied.'
-              } Your original photo is kept; try again.`,
+              `${userMessage(
+                error,
+                'The retro look could not be applied.',
+              )} Your original photo is kept; try again.`,
             );
           }
           retroPhotoRef.current = { key, result: graded };
@@ -491,13 +485,10 @@ export function CameraCaptureScreen({
         ...latestStatus,
         state: 'failed',
         createdAt: latestStatus.createdAt || new Date().toISOString(),
-        message:
-          error instanceof Error ? error.message : 'The photo upload failed. Retry this photo.',
+        message: userMessage(error, 'The photo upload failed. Retry this photo.'),
         retryable: true,
       });
-      setPhotoSubmitError(
-        error instanceof Error ? error.message : 'The photo upload failed. Retry this photo.',
-      );
+      setPhotoSubmitError(userMessage(error, 'The photo upload failed. Retry this photo.'));
     } finally {
       setPhotoSubmitPending(false);
     }
@@ -520,9 +511,7 @@ export function CameraCaptureScreen({
       setPhotoSubmitError(null);
       setMomentsOpen(false);
     } catch (error) {
-      setPhotoSubmitError(
-        error instanceof Error ? error.message : 'The contribution could not be deleted.',
-      );
+      setPhotoSubmitError(userMessage(error, 'The contribution could not be deleted.'));
     }
   }, [contributionStatus, contributionStatusContext, onDeletePhotoContribution]);
 
@@ -586,7 +575,7 @@ export function CameraCaptureScreen({
               <Text style={styles.fixtureSub}>No physical image was captured</Text>
             </View>
           ) : (
-            <LookPreview mode={photoMode} testID="photo-review-look">
+            <LookPreview fit="contain" mode={photoMode} testID="photo-review-look">
               <Image
                 accessibilityLabel="Captured still preview"
                 resizeMode="contain"
