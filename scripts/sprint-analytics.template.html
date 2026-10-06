@@ -1008,5 +1008,5 @@
   refresh();
   renderIssues();
   $('#foot').innerHTML =
-    `Generated ${DATA.generatedAt.replace('T', ' ').slice(0, 16)} UTC by <span class="mono">node scripts/sprint-analytics.mjs</span>. Archived or not-planned closures are kept apart from done work. Issue counts per PR come from #references in the PR body.`;
+    `Generated ${DATA.generatedAt.replace('T', ' ').slice(0, 16)} UTC by <span class="mono">node scripts/sprint-analytics.mjs</span>. Archived or not-planned closures are kept apart from done work. Issue counts per PR come from #references in the PR body. Open-issue history uses each issue’s latest close date, so a reopened issue counts as open since creation.`;
 </script>

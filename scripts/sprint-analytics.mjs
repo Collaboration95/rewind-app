@@ -68,6 +68,16 @@ const firstDay = [...issues, ...prs]
   .sort()[0]
   .slice(0, 10);
 sprints[0].start = firstDay;
+// Keep adding two-week Sprints so later activity never lands in a finished one.
+const iso = (t) => new Date(t).toISOString().slice(0, 10);
+while (sprints.at(-1).end < iso(Date.now())) {
+  const last = Date.parse(sprints.at(-1).end);
+  sprints.push({
+    name: `Sprint ${sprints.length}`,
+    start: iso(last + 864e5),
+    end: iso(last + 14 * 864e5),
+  });
+}
 
 const data = { generatedAt: new Date().toISOString(), sprints, issues, prs };
 const template = readFileSync(new URL('./sprint-analytics.template.html', import.meta.url), 'utf8');
