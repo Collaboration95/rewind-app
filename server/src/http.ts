@@ -69,9 +69,8 @@ import {
   integrityBlocksServing,
   openMediaWithIntegrity,
   recordIntegrityFailure,
-  verifyMediaIntegrity,
 } from './media/integrity';
-import { processClipJob, verifyReadyJobOutput, type StoredJobOptions } from './jobs';
+import { processClipJob, servableJobOutput, type StoredJobOptions } from './jobs';
 import {
   requestUploadIntent,
   getUploadIntentStatus,
@@ -83,12 +82,11 @@ import {
 } from './media/upload-intents';
 import { MediaCapabilities } from './archive/capabilities';
 import { openStoredServingFile } from './archive/store-serving';
-import { isMediaRef, decodeMediaRef } from './media/store';
+import { isMediaRef } from './media/store';
 import { maybeCleanupOrphanedStagedSources } from './jobs/staged-cleanup-scheduler';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { probeClipWithFfmpeg, probePhotoWithFfmpeg } from './ffmpeg';
 import { decodePageCursor, encodePageCursor } from './archive/cursor';
-import { verifyArchiveListingIntegrity } from './archive/integrity-cache';
 import { mediaServingBudget, releaseBudgetWhenSnapshotCloses } from './media/serving-budget';
 import {
   authenticateRealAccount,
@@ -553,9 +551,10 @@ async function openVerifiedServingFile(
   };
 }
 
-/** Archive/premiere checks need only a momentary verified read. Actual media
- * routes retain the handle and stream from it. */
-async function verifiedServingPath(
+/** Archive listing, premiere status and download grants advertise media from
+ * its finalized row; /media/access hashes the bytes when it streams them. A
+ * missing or resized object is audited here because it can no longer be played. */
+async function servableOutput(
   database: RewindDatabase,
   jobId: string,
   kind: 'clip' | 'film' | 'download',
@@ -563,78 +562,24 @@ async function verifiedServingPath(
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
-  storage: StoredJobOptions = {},
-): Promise<{ path: string; size: number } | null> {
-  if (isMediaRef(outputPath)) {
-    if (
-      !(await verifyReadyJobOutput(database, jobId, {
-        ...storage,
-        outputDir: resolve(dataDir, 'media/processed'),
-      }))
-    )
-      return null;
-    return { path: outputPath, size: decodeMediaRef(outputPath).byteLength };
-  }
-  const path = await resolveOwnedProcessedPath(outputPath, dataDir);
-  const result = await verifyMediaIntegrity(database, jobId, path);
-  if (integrityBlocksServing(result)) {
+  storage: StoredJobOptions,
+): Promise<boolean> {
+  const state = await servableJobOutput(database, jobId, outputPath, {
+    ...storage,
+    outputDir: resolve(dataDir, 'media/processed'),
+  });
+  if (state === 'missing')
     recordIntegrityFailure(database, {
       jobId,
       kind,
-      result,
       actorMemberId,
       timestamp: now.toISOString(),
     });
-    return null;
-  }
-  if (!path) return null;
-  const details = await stat(path).catch(() => null);
-  if (!details || !details.isFile() || details.size <= 0) return null;
-  return { path, size: details.size };
+  return state === 'servable';
 }
 
-async function verifiedArchiveListingPath(
-  database: RewindDatabase,
-  jobId: string,
-  kind: 'clip' | 'film',
-  outputPath: string,
-  dataDir: string,
-  actorMemberId: string | null,
-  now: Date,
-  storage: StoredJobOptions = {},
-): Promise<{ path: string; size: number } | null> {
-  if (isMediaRef(outputPath)) {
-    if (
-      !(await verifyReadyJobOutput(database, jobId, {
-        ...storage,
-        outputDir: resolve(dataDir, 'media/processed'),
-      }))
-    )
-      return null;
-    return { path: outputPath, size: decodeMediaRef(outputPath).byteLength };
-  }
-  const path = await resolveOwnedProcessedPath(outputPath, dataDir);
-  const result = await verifyArchiveListingIntegrity(database, jobId, path);
-  if (integrityBlocksServing(result)) {
-    recordIntegrityFailure(database, {
-      jobId,
-      kind,
-      result,
-      actorMemberId,
-      timestamp: now.toISOString(),
-    });
-    return null;
-  }
-  if (!path) return null;
-  const details = await stat(path).catch(() => null);
-  if (!details || !details.isFile() || details.size <= 0) return null;
-  return { path, size: details.size };
-}
-
-/**
- * Keep only released archive entries whose retained bytes still match their
- * finalized digest. The returned objects never include the server-side path.
- */
+/** Keep only released archive entries that are still servable. The returned
+ * objects never include the server-side path. */
 async function filterServableArchive<T extends { id: string; outputPath: string }>(
   database: RewindDatabase,
   kind: 'clip' | 'film',
@@ -644,32 +589,21 @@ async function filterServableArchive<T extends { id: string; outputPath: string 
   now: Date,
   storage: StoredJobOptions = {},
 ): Promise<Omit<T, 'outputPath'>[]> {
-  const safeEntries: Omit<T, 'outputPath'>[] = [];
-  // Process at most three hashes at once. Archive calls await the film batch
-  // before the clip batch, so the whole request stays within this bound.
-  for (let index = 0; index < entries.length; index += 3) {
-    const batch = await Promise.all(
-      entries.slice(index, index + 3).map(async (entry) => {
-        const served = await verifiedArchiveListingPath(
-          database,
-          entry.id,
-          kind,
-          entry.outputPath,
-          dataDir,
-          actorMemberId,
-          now,
-          storage,
-        );
-        if (!served) return null;
-        const { outputPath, ...safe } = entry;
-        return safe;
-      }),
-    );
-    for (const entry of batch) {
-      if (entry !== null) safeEntries.push(entry as Omit<T, 'outputPath'>);
-    }
-  }
-  return safeEntries;
+  const servable = await Promise.all(
+    entries.map((entry) =>
+      servableOutput(
+        database,
+        entry.id,
+        kind,
+        entry.outputPath,
+        dataDir,
+        actorMemberId,
+        now,
+        storage,
+      ),
+    ),
+  );
+  return entries.filter((_, index) => servable[index]).map(({ outputPath, ...safe }) => safe);
 }
 
 function streamMp4(
@@ -2319,17 +2253,19 @@ export async function handleRequest(
     // not be advertised as playable. It is reported as delayed and audited,
     // the same safe state used for an exhausted compile.
     if (state === 'ready' && film.filmId && film.outputPath) {
-      const served = await verifiedServingPath(
-        database,
-        film.filmId,
-        'film',
-        film.outputPath,
-        config.dataDir,
-        identity.memberId,
-        now(),
-        options,
-      );
-      if (!served) state = 'delayed';
+      if (
+        !(await servableOutput(
+          database,
+          film.filmId,
+          'film',
+          film.outputPath,
+          config.dataDir,
+          identity.memberId,
+          now(),
+          options,
+        ))
+      )
+        state = 'delayed';
     }
     if (!mediaIdentityIsCurrent(request, database, identity, now()))
       return sendDenied(response, config);
@@ -2486,9 +2422,8 @@ export async function handleRequest(
         filmCursor: filmCursor as [string, string, string] | null,
         clipCursor: clipCursor as [string, string] | null,
       });
-      // Advertise only entries whose retained bytes still match the digest
-      // recorded at finalization. A tampered or truncated output disappears
-      // from the archive and is audited instead of being offered for playback.
+      // Advertise finalized entries whose object still exists at its recorded
+      // size. Tampered bytes are caught and audited when playback hashes them.
       const films = await filterServableArchive(
         database,
         'film',
@@ -2662,7 +2597,7 @@ export async function handleRequest(
             : null;
       if (
         !released ||
-        !(await verifiedServingPath(
+        !(await servableOutput(
           database,
           resourceId,
           resource,
