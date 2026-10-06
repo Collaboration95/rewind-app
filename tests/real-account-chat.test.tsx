@@ -246,6 +246,63 @@ describe('real-account chat', () => {
     );
   });
 
+  it('does not send while Enter is confirming an IME candidate', async () => {
+    const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
+      if (path.startsWith('/realtime/groups/real-group-a/messages?limit=100'))
+        return response({ events: [], nextCursor: null, watermarkEventId: 0, hasMore: false });
+      if (path === '/realtime/groups/real-group-a/messages') {
+        const body = JSON.parse(String(init?.body)) as { body: string };
+        return response(
+          {
+            event: {
+              eventId: 1,
+              type: 'message',
+              message: { ...savedMessage, id: 'ime-message', body: body.body },
+            },
+          },
+          201,
+        );
+      }
+      throw new Error(`Unexpected authenticated request: ${path}`);
+    });
+    (useRealAccount as jest.Mock).mockReturnValue({
+      baseUrl: 'https://runtime.example',
+      session: { account: { id: 'account-id', displayName: 'Member' } },
+      authenticatedRequest,
+      realtimeAuthorizationHeader: () => 'Bearer private-token-value',
+    });
+    const result = await render(
+      <RealAccountChatScreen
+        groupId="real-group-a"
+        groupName="Saturday table"
+        currentMemberId="real-profile-member"
+        members={[{ memberId: 'real-profile-member', displayName: 'Member' }]}
+        onBack={jest.fn()}
+      />,
+    );
+    const composer = await result.findByTestId('real-chat-composer');
+    await fireEvent.changeText(composer, '你好');
+    const sends = () =>
+      authenticatedRequest.mock.calls.filter(
+        ([path, init]) =>
+          path === '/realtime/groups/real-group-a/messages' && init?.method === 'POST',
+      ).length;
+    await fireEvent(composer, 'keyPress', {
+      nativeEvent: { key: 'Enter', isComposing: true },
+      preventDefault: jest.fn(),
+    });
+    await fireEvent(composer, 'keyPress', {
+      nativeEvent: { key: 'Enter', keyCode: 229 },
+      preventDefault: jest.fn(),
+    });
+    expect(sends()).toBe(0);
+    await fireEvent(composer, 'keyPress', {
+      nativeEvent: { key: 'Enter' },
+      preventDefault: jest.fn(),
+    });
+    await waitFor(() => expect(sends()).toBe(1));
+  });
+
   it('asks once for fresh member names when a message comes from someone new', async () => {
     const event = (id: number) => ({
       eventId: id,

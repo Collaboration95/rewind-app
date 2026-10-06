@@ -19,6 +19,7 @@ import { FONT, serif } from '../ui/tokens';
 import { ReportSheet } from './ReportSheet';
 import { createFilmPlayback } from './film-playback';
 import { reportContent } from './safety';
+import { userMessage } from '../domain/user-message';
 
 type Request = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -427,9 +428,7 @@ export function FilmScreen({
               toast('Thanks. The Rewind team reviews reports within 24 hours.');
               return null;
             } catch (failure) {
-              return failure instanceof Error
-                ? failure.message
-                : 'The report could not be sent. Try again.';
+              return userMessage(failure, 'The report could not be sent. Try again.');
             }
           }}
           what="moment"

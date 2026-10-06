@@ -1,4 +1,5 @@
 import { MAX_CLIP_DURATION_SECONDS, type RecordedClip } from '../domain/video';
+import { userMessage } from '../domain/user-message';
 
 export interface VideoRecordingPlatform {
   recordClip(maxDurationSeconds: number): Promise<RecordedClip>;
@@ -79,7 +80,7 @@ export class BoundedVideoRecordingSession {
           ? error
           : new VideoRecordingError('The recording was cancelled.');
       }
-      const message = error instanceof Error ? error.message : 'The clip could not be recorded.';
+      const message = userMessage(error, 'The clip could not be recorded.');
       this.state = { status: 'failed', message };
       throw error instanceof VideoRecordingError ? error : new VideoRecordingError(message);
     }

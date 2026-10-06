@@ -271,30 +271,30 @@ const lifecycleCopy: Record<
   { body: string; title: string }
 > = {
   queued: {
-    title: 'Contribution queued',
-    body: 'Your contribution is safely queued. It stays sealed while processing begins.',
+    title: 'Moment saved',
+    body: 'Your moment is saved and stays sealed until the reveal.',
   },
   processing: {
-    title: 'Processing contribution',
-    body: 'The local runtime is preparing your contribution. Media remains sealed.',
+    title: 'Sealing your moment…',
+    body: 'This takes a few seconds. It stays sealed until the reveal.',
   },
   sealed: {
-    title: 'Contribution sealed',
-    body: 'The contribution is ready for the group reveal. Its media stays unavailable until then.',
+    title: 'Moment sealed',
+    body: 'It will appear in the group film when the cycle ends.',
   },
 };
 
 const failureCopy = (status: ContributionStatus): { body: string; title: string } =>
   status.reason === 'quota_exceeded'
-    ? { title: 'Contribution limit reached', body: 'No allowance remains.' }
+    ? { title: 'No moments left', body: 'You’ve used all your moments this cycle.' }
     : status.retryable
       ? {
-          title: 'Contribution needs a retry',
-          body: 'The contribution could not be prepared. Retry is available without exposing its file.',
+          title: 'Couldn’t seal this moment',
+          body: 'Something went wrong while sealing it. Try again.',
         }
       : {
-          title: 'Contribution could not be prepared',
-          body: 'This contribution cannot be retried. Retake it to submit a new contribution.',
+          title: 'Couldn’t seal this moment',
+          body: 'This one can’t be retried. Take it again to add a new moment.',
         };
 
 export function ContributionStatusPanel({
