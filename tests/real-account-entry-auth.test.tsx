@@ -390,6 +390,28 @@ describe('real account entry flow', () => {
     },
   );
 
+  it('shows and hides each password with its eye button', async () => {
+    globalThis.fetch = jest.fn() as typeof fetch;
+    const result = await render(
+      <App runtimeClient={{ baseUrl: 'http://rewind.example' } as never} />,
+    );
+
+    await fireEvent.press(await result.findByRole('button', { name: 'Sign in' }));
+    await fireEvent.press(result.getByTestId('sign-in-create-account'));
+    const password = result.getByTestId('registration-password');
+    expect(password).toHaveProp('secureTextEntry', true);
+
+    await fireEvent.press(result.getByRole('button', { name: 'Show password' }));
+    expect(password).toHaveProp('secureTextEntry', false);
+    expect(result.getByTestId('registration-password-confirmation')).toHaveProp(
+      'secureTextEntry',
+      true,
+    );
+
+    await fireEvent.press(result.getByRole('button', { name: 'Hide password' }));
+    expect(password).toHaveProp('secureTextEntry', true);
+  });
+
   it('does not let the native keyboard Go action bypass registration guards', async () => {
     Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios', writable: true });
     globalThis.fetch = jest.fn() as typeof fetch;
