@@ -575,7 +575,7 @@ export function CameraCaptureScreen({
               <Text style={styles.fixtureSub}>No physical image was captured</Text>
             </View>
           ) : (
-            <LookPreview mode={photoMode} testID="photo-review-look">
+            <LookPreview fit="contain" mode={photoMode} testID="photo-review-look">
               <Image
                 accessibilityLabel="Captured still preview"
                 resizeMode="contain"

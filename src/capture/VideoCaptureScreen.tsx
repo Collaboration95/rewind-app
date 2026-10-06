@@ -1399,7 +1399,7 @@ export function VideoCaptureScreen({
     <CameraFrame bokeh={!viewfinder && !inReview} testID="video-capture-screen">
       {viewfinder ? (
         Platform.OS === 'web' ? (
-          <LookPreview mode={mode} testID="video-live-look">
+          <LookPreview fit={previewFit} mode={mode} testID="video-live-look">
             <BrowserVideoPreview
               fit={previewFit}
               onAspect={setPreviewAspect}
@@ -1814,7 +1814,7 @@ function CapturedVideoReview({
             : styles.portraitMedia
         }
       >
-        <LookPreview mode={mode} testID="video-review-look">
+        <LookPreview fit="contain" mode={mode} testID="video-review-look">
           <VideoView
             accessible
             accessibilityLabel="Captured video preview with audio"
