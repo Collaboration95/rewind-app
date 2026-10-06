@@ -493,7 +493,7 @@ describe('real account entry flow', () => {
     {
       status: 429,
       body: { error: 'sign_in_throttled' },
-      text: 'Too many sign-in attempts. Wait at least 15 minutes, then try again.',
+      text: 'Too many sign-in attempts, so sign-in is paused for a while. Try again later.',
     },
     {
       status: 503,

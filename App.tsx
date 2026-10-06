@@ -279,7 +279,7 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
           : auth.notice === 'sign-in-failed'
             ? 'Wrong username or password.'
             : auth.notice === 'sign-in-throttled'
-              ? 'Too many sign-in attempts. Wait at least 15 minutes, then try again.'
+              ? 'Too many sign-in attempts, so sign-in is paused for a while. Try again later.'
               : auth.notice === 'unavailable'
                 ? 'Rewind is having trouble right now. Try again in a minute.'
                 : auth.notice === 'offline'
