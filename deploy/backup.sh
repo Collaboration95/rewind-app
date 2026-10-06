@@ -47,6 +47,11 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+# Hosts carry the runtime's access keys (delivered by Terraform); the template's
+# AWS_PROFILE names a profile that is never provisioned there.
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+  unset AWS_PROFILE
+fi
 
 : "${REWIND_BACKUP_BUCKET:?REWIND_BACKUP_BUCKET must be set in $ENV_FILE}"
 : "${REWIND_BACKUP_PREFIX:=rewind-demo}"

@@ -104,7 +104,7 @@ if [ "$SKIP_APT" != 1 ]; then
   fi
 fi
 
-for command_name in curl docker jq rsync sqlite3 usermod systemctl; do
+for command_name in aws curl docker jq rsync sqlite3 usermod systemctl; do
   require_command "$command_name"
 done
 if ! docker compose version >/dev/null 2>&1; then
