@@ -264,14 +264,17 @@ export async function readVideoMetadata(
       }
       const metadata = {
         durationSeconds: video.duration,
-        hasAudio: video.audioTracks
-          ? video.audioTracks.length > 0
-          : typeof video.mozHasAudio === 'boolean'
-            ? video.mozHasAudio
-            : typeof video.webkitAudioDecodedByteCount === 'number' &&
-                video.webkitAudioDecodedByteCount > 0
-              ? true
-              : null,
+        // WebKit exposes audioTracks but may leave it empty at loadedmetadata
+        // and fill it later, so an empty list is unknown, not proof of silence.
+        hasAudio:
+          video.audioTracks && video.audioTracks.length > 0
+            ? true
+            : typeof video.mozHasAudio === 'boolean'
+              ? video.mozHasAudio
+              : typeof video.webkitAudioDecodedByteCount === 'number' &&
+                  video.webkitAudioDecodedByteCount > 0
+                ? true
+                : null,
         height: video.videoHeight,
         width: video.videoWidth,
       };
