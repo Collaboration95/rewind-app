@@ -20,7 +20,7 @@ RUN EXPO_PUBLIC_BUILD_SHA="$REWIND_BUILD_SHA" \
     EXPO_PUBLIC_BUILD_BRANCH="$REWIND_BUILD_BRANCH" \
     EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
 
-FROM nginx:1.31.5-alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3 AS runtime
+FROM nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2 AS runtime
 
 RUN apk upgrade --no-cache
 RUN sed -i -E 's#^pid[[:space:]]+[^;]+;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \
