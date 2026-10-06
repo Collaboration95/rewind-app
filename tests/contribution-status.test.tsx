@@ -162,9 +162,7 @@ describe('ContributionStatusPanel', () => {
 
     await result.findByTestId('status-failed');
     expect(
-      result.getByText(
-        'This contribution cannot be retried. Retake it to submit a new contribution.',
-      ),
+      result.getByText('This one can’t be retried. Take it again to add a new moment.'),
     ).toBeTruthy();
     expect(result.queryByRole('button', { name: /retry/i })).toBeNull();
   });

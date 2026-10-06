@@ -3,6 +3,7 @@ import {
   type ClipUploadInput,
   type PendingClipUpload,
 } from '../domain/video';
+import { userMessage } from '../domain/user-message';
 
 export const MAX_CLIP_BYTES = 50 * 1024 * 1024;
 
@@ -202,7 +203,7 @@ export class ClipUploadSession {
               retryable: false,
             });
       }
-      const message = error instanceof Error ? error.message : 'The clip could not be uploaded.';
+      const message = userMessage(error, 'The clip could not be uploaded.');
       this.progress = { status: 'failed', percent: 10, message };
       onProgress?.(this.getProgress());
       // Preserve typed runtime failure metadata (HTTP status/code) on the

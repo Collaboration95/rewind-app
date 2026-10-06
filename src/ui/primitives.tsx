@@ -333,14 +333,31 @@ export const Field = forwardRef<
     containerTestID?: string;
   }
 >(function Field({ label, mono, style, containerStyle, containerTestID, ...props }, ref) {
+  // Password fields get a Show/Hide toggle so long passwords can be checked.
+  const [revealed, setRevealed] = useState(false);
   return (
     <Glass style={[styles.field, containerStyle]} testID={containerTestID}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={styles.fieldHeader}>
+        <Text style={styles.fieldLabel}>{label}</Text>
+        {props.secureTextEntry ? (
+          <Pressable
+            accessibilityLabel={
+              revealed ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`
+            }
+            accessibilityRole="button"
+            hitSlop={12}
+            onPress={() => setRevealed((value) => !value)}
+          >
+            <Text style={styles.fieldToggle}>{revealed ? 'Hide' : 'Show'}</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <TextInput
         accessibilityLabel={props.accessibilityLabel ?? label}
         placeholderTextColor="rgba(51, 35, 26, 0.5)"
         ref={ref}
         {...props}
+        secureTextEntry={props.secureTextEntry && !revealed}
         style={[styles.fieldInput, mono && styles.fieldMono, style]}
         {...rw('bare')}
       />
@@ -886,7 +903,9 @@ export const styles = StyleSheet.create({
   },
   errorSpace: { height: 36 },
   field: { borderRadius: 18, gap: 6, marginBottom: 10, paddingHorizontal: 16, paddingVertical: 12 },
+  fieldHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   fieldLabel: { color: WARM.muted, fontFamily: FONT.body, fontSize: 12 },
+  fieldToggle: { color: WARM.ink, fontFamily: FONT.body, fontSize: 12, fontWeight: '600' },
   fieldInput: {
     color: WARM.ink,
     fontFamily: FONT.body,

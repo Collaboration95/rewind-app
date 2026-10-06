@@ -20,6 +20,7 @@ import {
 } from '../ui/primitives';
 import { FONT, WARM, serif } from '../ui/tokens';
 import { momentDay, plural } from './home-model';
+import { userMessage } from '../domain/user-message';
 
 /** Moments that count this week: sealed, or still on their way, or failed.
  * The ledger spans the whole cycle; only the current seven-day window counts. */
@@ -81,7 +82,7 @@ export function MomentsScreen({
       }
     } catch (problem) {
       setPick(null);
-      setFailure(problem instanceof Error ? problem.message : 'That didn’t work. Try again.');
+      setFailure(userMessage(problem, 'That didn’t work. Try again.'));
     } finally {
       setBusy(null);
     }

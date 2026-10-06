@@ -11,7 +11,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 
 import { useRealAccount } from '../auth/RealAccountProvider';
-import type { InviteLinkPayload } from '../invites/deep-links';
+import { createInviteLink, type InviteLinkPayload } from '../invites/deep-links';
 import { VideoCaptureScreen } from '../capture/VideoCaptureScreen';
 import { CameraCaptureScreen } from '../capture/CameraCaptureScreen';
 import { RealAccountChatScreen } from '../chat/RealAccountChatScreen';
@@ -37,7 +37,6 @@ import { CreateGroupScreen, JoinScreen, type NewGroupInput } from '../real/Group
 import { HomeBody, HomeState, LoadingState } from '../real/Home';
 import {
   cycleWeek,
-  daysUntil,
   filmCountdown,
   homeCards,
   momentDay,
@@ -59,6 +58,7 @@ import {
 } from '../real/Shell';
 import { Button, Glass, Glow, rw, useNow, useScreenInsets, useToast } from '../ui/primitives';
 import { FONT, LAYOUT, WARM } from '../ui/tokens';
+import { userMessage } from '../domain/user-message';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -432,11 +432,7 @@ export function RealAccountGroupExperience({
         request === captureRequest.current &&
         context === groupContextVersion.current
       )
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : 'Capture settings are unavailable. Retry when connected.',
-        );
+        setMessage(userMessage(error, 'Capture settings are unavailable. Retry when connected.'));
     } finally {
       if (captureMounted.current && request === captureRequest.current) setCapturePending(false);
     }
@@ -472,9 +468,7 @@ export function RealAccountGroupExperience({
           selectedGroupId.current === groupId &&
           requestId === groupMembersRequest.current
         )
-          setGroupMembersError(
-            error instanceof Error ? error.message : 'Group members could not be loaded.',
-          );
+          setGroupMembersError(userMessage(error, 'Group members could not be loaded.'));
       }
     },
     [auth],
@@ -507,7 +501,7 @@ export function RealAccountGroupExperience({
       }
     } catch (error) {
       if (contextVersion !== groupContextVersion.current) return;
-      setMessage(error instanceof Error ? error.message : 'Your group could not be loaded.');
+      setMessage(userMessage(error, 'Your group could not be loaded.'));
       setScreen('error');
     }
   }, [auth, loadGroupMembers]);
@@ -596,7 +590,7 @@ export function RealAccountGroupExperience({
       await loadGroupMembers(created.group.id, contextVersion);
     } catch (error) {
       if (currentMutationAccount())
-        setCreateError(error instanceof Error ? error.message : 'The group could not be created.');
+        setCreateError(userMessage(error, 'The group could not be created.'));
     } finally {
       groupMutationPending.current = false;
       if (currentMutationAccount()) {
@@ -623,9 +617,7 @@ export function RealAccountGroupExperience({
       }
       setInvite(body.invite);
     } catch (error) {
-      setInviteFeedback(
-        error instanceof Error ? error.message : 'The invitation could not be created.',
-      );
+      setInviteFeedback(userMessage(error, 'The invitation could not be created.'));
     } finally {
       setInvitePending(false);
     }
@@ -645,9 +637,7 @@ export function RealAccountGroupExperience({
       toast('Code revoked. Make a new one when you need it.');
       await loadGroupMembers(group.group.id, groupContextVersion.current);
     } catch (error) {
-      setInviteFeedback(
-        error instanceof Error ? error.message : 'The invitation could not be revoked.',
-      );
+      setInviteFeedback(userMessage(error, 'The invitation could not be revoked.'));
     } finally {
       setInvitePending(false);
     }
@@ -667,8 +657,19 @@ export function RealAccountGroupExperience({
   const shareInvitation = async () => {
     if (!invite) return;
     try {
+      // On the web the link opens Rewind with the invitation filled in.
+      const link =
+        Platform.OS === 'web' && typeof window !== 'undefined'
+          ? createInviteLink(invite, {
+              platform: 'web',
+              webOrigin: window.location.origin,
+              groupId: invite.groupId,
+            })
+          : null;
       await Share.share({
-        message: `Join my Rewind group with code ${displayInviteCode(invite.code)}. Open Rewind and choose Have an invite?`,
+        message: `Join my Rewind group with code ${displayInviteCode(invite.code)}. ${
+          link ?? 'Open Rewind and choose Have an invite?'
+        }`,
       });
       setInviteFeedback(null);
     } catch {
@@ -717,9 +718,7 @@ export function RealAccountGroupExperience({
       else setJoinedName(body.group.group.name);
     } catch (error) {
       if (currentMutationAccount())
-        setJoinFeedback(
-          error instanceof Error ? error.message : 'The invitation could not be accepted.',
-        );
+        setJoinFeedback(userMessage(error, 'The invitation could not be accepted.'));
     } finally {
       groupMutationPending.current = false;
       if (currentMutationAccount()) {
@@ -755,7 +754,7 @@ export function RealAccountGroupExperience({
       return true;
     } catch (error) {
       if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return false;
-      setMessage(error instanceof Error ? error.message : 'The group could not be selected.');
+      setMessage(userMessage(error, 'The group could not be selected.'));
       if (previousGroupId) await loadGroupMembers(previousGroupId, contextVersion);
       return false;
     } finally {
@@ -1026,7 +1025,7 @@ export function RealAccountGroupExperience({
         bottomInset={LAYOUT.dockHeight + insets.bottom + 40}
         client={archiveClient}
         currentCycleId={group.cycle.id}
-        daysLeft={daysUntil(group.cycle.endsAt, now)}
+        countdown={filmCountdown(group.cycle.endsAt, now)}
         groupId={group.group.id}
         header={header}
         onOpenFilm={(cycleId, label) => pushScreen({ kind: 'film', cycleId, label })}
