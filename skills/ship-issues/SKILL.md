@@ -47,9 +47,9 @@ For a list or `next`, write a queue file before starting, for example
 7. **PR** to `dev` with `Refs #<n>` (no closing keyword). The body has two
    short parts: what changed, and which checks actually ran.
 8. **Review agent.** Run one review pass and fix the blocking findings:
-   - Codex: `codex exec review --base dev -m gpt-6-luna`.
-   - For auth, private media, migrations, deploy or infra, use
-     `-m gpt-6.1-sol`.
+   - `make review` from the PR head's worktree.
+   - For auth, private media, migrations, deploy or infra:
+     `make review MODEL=gpt-6.1-sol`.
 9. **Merge.** When Quality is green:
    - Routine PR: `gh pr merge <pr> --merge --delete-branch`.
    - Auth, private media, migrations, deploy or infra: leave the merge to the
