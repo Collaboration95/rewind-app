@@ -10,6 +10,7 @@ import {
   type MessagePort,
 } from 'node:worker_threads';
 
+import { recordDatabaseCall } from '../observability/database-timing';
 import type { BridgeError, BridgeRequest, BridgeResponse } from './protocol';
 import { splitStatements, translate } from './translate';
 
@@ -74,6 +75,26 @@ export class PostgresDatabaseError extends Error {
     this.sqlState = error.code;
     this.constraint = error.constraint;
   }
+}
+
+/**
+ * A value as a PostgreSQL literal. Strings use standard quoting ('' for '),
+ * which the connection enforces with standard_conforming_strings = on.
+ */
+export function sqlLiteral(value: unknown, nullCheck = false): string {
+  if (value === null) return nullCheck ? 'NULL::text' : 'NULL';
+  if (typeof value === 'string') {
+    if (value.includes('\u0000')) throw new TypeError('Text values cannot contain NUL characters.');
+    return `'${value.replaceAll("'", "''")}'${nullCheck ? '::text' : ''}`;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return `'${String(value)}'::double precision`;
+    const type = Number.isInteger(value) ? 'bigint' : 'double precision';
+    return value < 0 || Object.is(value, -0) ? `(${value})::${type}` : `${value}::${type}`;
+  }
+  if (typeof value === 'bigint') return `(${value.toString()})::bigint`;
+  if (value instanceof Uint8Array) return `'\\x${Buffer.from(value).toString('hex')}'::bytea`;
+  throw new TypeError(`Provided value cannot be bound to SQLite parameter: ${String(value)}`);
 }
 
 function nullPrototypeRow(row: Row, names: Map<string, string>): Row {
@@ -156,6 +177,7 @@ export class PostgresDatabase {
 
   private call_(request: BridgeRequest): { rows: Row[]; rowCount: number } {
     if (!this.worker_) throw new Error('database is not open');
+    const started = performance.now();
     Atomics.store(this.flag_, 0, 0);
     this.port_.postMessage(request);
     const waited = Atomics.wait(this.flag_, 0, 0, this.timeoutMs_);
@@ -173,6 +195,7 @@ export class PostgresDatabase {
       message = receiveMessageOnPort(this.port_);
     }
     const response = message.message as BridgeResponse;
+    recordDatabaseCall(response.roundTrips ?? 0, performance.now() - started);
     if (!response.ok) throw new PostgresDatabaseError(response.error);
     return response;
   }
@@ -189,25 +212,20 @@ export class PostgresDatabase {
         `Expected ${translated.parameterCount} parameters but received ${params.length}`,
       );
     }
-    // SQLite values carry their own type; give PostgreSQL the same by
-    // binding numbers as typed parameters instead of untyped text.
+    // Values travel as typed literals so the lock, savepoint and statement
+    // share one round trip (see sync-worker.ts). SQLite values carry their
+    // own type, so numbers get an explicit type rather than text inference.
     let sql = translated.parts[0];
     params.forEach((value, index) => {
-      let cast = '';
-      if (typeof value === 'number') {
-        cast = Number.isInteger(value) ? '::bigint' : '::double precision';
-      } else if (typeof value === 'bigint') {
-        cast = '::bigint';
-      } else if (value instanceof Uint8Array) {
-        cast = '::bytea';
-      } else if (value === null || typeof value === 'string') {
-        if (translated.nullChecks[index]) cast = '::text';
-      } else {
-        throw new TypeError(`Provided value cannot be bound to SQLite parameter: ${String(value)}`);
-      }
-      sql += `$${index + 1}${cast}${translated.parts[index + 1]}`;
+      sql += sqlLiteral(value, translated.nullChecks[index]) + translated.parts[index + 1];
     });
-    const result = this.call_({ type: 'query', kind: translated.kind, sql, params });
+    const result = this.call_({
+      type: 'query',
+      kind: translated.kind,
+      sql,
+      params: [],
+      inline: true,
+    });
     return {
       rows: result.rows.map((row) => nullPrototypeRow(row, translated.columnNames)),
       rowCount: result.rowCount,

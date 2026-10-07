@@ -13,7 +13,14 @@ export type StatementKind =
   | 'noop';
 
 export type BridgeRequest =
-  | { type: 'query'; kind: StatementKind; sql: string; params: unknown[] }
+  | {
+      type: 'query';
+      kind: StatementKind;
+      sql: string;
+      params: unknown[];
+      /** sql holds its values as literals: send it in one batched round trip. */
+      inline?: boolean;
+    }
   | { type: 'busy-timeout'; milliseconds: number }
   | { type: 'close' };
 
@@ -27,5 +34,5 @@ export interface BridgeError {
 }
 
 export type BridgeResponse =
-  | { ok: true; rows: Record<string, unknown>[]; rowCount: number }
-  | { ok: false; error: BridgeError };
+  | { ok: true; rows: Record<string, unknown>[]; rowCount: number; roundTrips?: number }
+  | { ok: false; error: BridgeError; roundTrips?: number };

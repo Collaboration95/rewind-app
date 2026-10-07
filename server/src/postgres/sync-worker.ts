@@ -35,7 +35,11 @@ const port = data.port;
 // advisory lock key does the same here. Like SQLite's busy_timeout = 5000, a
 // writer waits up to five seconds and then fails with "database is locked",
 // which the server's existing busy-retry loops already handle.
-const WRITE_LOCK_KEY = 5006261;
+// A schema (test runs give each database file its own) gets its own lock, so
+// unrelated test databases sharing one server never block each other.
+const WRITE_LOCK_KEY = data.schema
+  ? [...data.schema].reduce((hash, character) => (hash * 31 + character.charCodeAt(0)) | 0, 7)
+  : 5006261;
 // PRAGMA busy_timeout sets this per connection, as on SQLite.
 let busyTimeoutMs = 5000;
 
@@ -49,27 +53,27 @@ class BusyError extends BridgeUsageError {
   }
 }
 
-async function acquireWriteLock(connection: PgClient): Promise<void> {
-  const deadline = Date.now() + busyTimeoutMs;
-  let delay = 1;
-  for (;;) {
-    const result = await connection.query('SELECT pg_try_advisory_xact_lock($1) AS locked', [
-      WRITE_LOCK_KEY,
-    ]);
-    if ((result.rows[0] as { locked: number }).locked === 1) return;
-    if (Date.now() >= deadline) throw new BusyError();
-    await new Promise((done) => setTimeout(done, delay));
-    delay = Math.min(delay * 2, 50);
-  }
+function lockTimeout(): string {
+  // lock_timeout 0 would mean "wait forever"; SQLite's 0 means "fail now".
+  return `SET LOCAL lock_timeout = '${Math.max(1, Math.floor(busyTimeoutMs))}ms'`;
+}
+
+/** Opens a write transaction: BEGIN, the busy timeout and the writer lock. */
+function beginSql(): string {
+  return `BEGIN; ${lockTimeout()}; SELECT pg_advisory_xact_lock(${WRITE_LOCK_KEY})`;
+}
+
+/** 55P03: a lock (the writer lock, or a row lock) was not granted in time. */
+function busyOr(error: unknown): unknown {
+  return (error as { code?: unknown }).code === '55P03' ? new BusyError() : error;
 }
 
 async function beginWrite(connection: PgClient): Promise<void> {
-  await connection.query('BEGIN');
   try {
-    await acquireWriteLock(connection);
+    await connection.query(beginSql());
   } catch (error) {
     await connection.query('ROLLBACK').catch(() => undefined);
-    throw error;
+    throw busyOr(error);
   }
 }
 
@@ -79,6 +83,8 @@ let inTransaction = false;
 // savepoint then commits it.
 let implicitSavepoints = 0;
 let poisoned: Error | null = null;
+// Server round trips for the request being handled (reported to the caller).
+let roundTrips = 0;
 
 function quoteIdentifier(name: string): string {
   return `"${name.replaceAll('"', '""')}"`;
@@ -105,7 +111,14 @@ async function connect(): Promise<PgClient> {
     }
     await next.query(`SET search_path TO ${quoteIdentifier(data.schema)}`);
   }
+  // Inline literals rely on standard string quoting ('' escapes, no \\).
+  await next.query('SET standard_conforming_strings = on');
   if (data.readOnly) await next.query('SET default_transaction_read_only = on');
+  const query = next.query.bind(next) as PgClient['query'];
+  next.query = ((...args: Parameters<PgClient['query']>) => {
+    roundTrips += 1;
+    return (query as (...a: unknown[]) => unknown)(...args);
+  }) as PgClient['query'];
   client = next;
   poisoned = null;
   return next;
@@ -146,6 +159,59 @@ async function runStatement(
     return out;
   });
   return { rows, rowCount: result?.rowCount ?? 0 };
+}
+
+/** Run a batch of statements in one round trip and keep result `index`. */
+async function runBatch(
+  connection: PgClient,
+  statements: string[],
+  index: number,
+): Promise<{ rows: Record<string, unknown>[]; rowCount: number }> {
+  const results = await connection.query(statements.join(';\n'));
+  const list = Array.isArray(results) ? results : [results];
+  const result = list[index];
+  const rows = ((result?.rows ?? []) as Record<string, unknown>[]).map((row) => {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) out[key] = normaliseValue(value);
+    return out;
+  });
+  return { rows, rowCount: result?.rowCount ?? 0 };
+}
+
+/**
+ * One round trip per statement: values arrive as literals, so the writer
+ * lock and the savepoint travel with the statement.
+ */
+async function runInline(
+  connection: PgClient,
+  kind: string,
+  sql: string,
+): Promise<{ rows: Record<string, unknown>[]; rowCount: number }> {
+  if (inTransaction) {
+    try {
+      return await runBatch(
+        connection,
+        ['SAVEPOINT rewind_statement', sql, 'RELEASE SAVEPOINT rewind_statement'],
+        1,
+      );
+    } catch (error) {
+      // As on SQLite, the failed statement leaves the transaction usable.
+      await connection.query(
+        'ROLLBACK TO SAVEPOINT rewind_statement; RELEASE SAVEPOINT rewind_statement',
+      );
+      throw busyOr(error);
+    }
+  }
+  if (kind === 'write') {
+    // Autocommit writes queue behind open write transactions, as on SQLite.
+    try {
+      return await runBatch(connection, [beginSql(), sql, 'COMMIT'], 3);
+    } catch (error) {
+      await connection.query('ROLLBACK').catch(() => undefined);
+      throw busyOr(error);
+    }
+  }
+  return runBatch(connection, [sql], 0);
 }
 
 function describeError(error: unknown): BridgeError {
@@ -250,6 +316,8 @@ async function handle(request: BridgeRequest): Promise<BridgeResponse> {
         return { ok: true, ...result };
       }
       default: {
+        if (request.inline)
+          return { ok: true, ...(await runInline(connection, kind, request.sql)) };
         if (inTransaction) {
           return {
             ok: true,
@@ -285,13 +353,14 @@ async function handle(request: BridgeRequest): Promise<BridgeResponse> {
 }
 
 port.on('message', (request: BridgeRequest) => {
+  roundTrips = 0;
   void handle(request)
     .then(
       (response) => response,
       (error: unknown): BridgeResponse => ({ ok: false, error: describeError(error) }),
     )
     .then((response) => {
-      port.postMessage(response);
+      port.postMessage({ ...response, roundTrips });
       Atomics.store(flag, 0, 1);
       Atomics.notify(flag, 0);
     });

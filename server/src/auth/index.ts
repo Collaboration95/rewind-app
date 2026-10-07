@@ -6,6 +6,7 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import type { RewindDatabase } from '../db';
+import { cachedSession, forgetAccount, forgetSession, rememberSession } from './identity-cache';
 
 interface ScryptParameters {
   N: number;
@@ -27,6 +28,8 @@ export const LOGIN_FAILURE_LIMIT = 5;
 export const BASE_COOLDOWN_MS = 15 * 60 * 1000;
 export const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
 export const SESSION_ABSOLUTE_MS = 30 * 24 * 60 * 60 * 1000;
+/** How stale the stored idle expiry may get (it is extended in memory). */
+export const SESSION_TOUCH_MS = 10 * 60 * 1000;
 export const REAL_SESSION_COOKIE = '__Host-rewind_session';
 const DUMMY_SALT = Buffer.from('2ccf2ee9fc7ee2a87d5a74044cafc5a3', 'hex');
 const DUMMY_HASH = Buffer.alloc(PASSWORD_SCRYPT.keyLength);
@@ -226,6 +229,7 @@ async function resetRealAccountPasswordUnlocked(
     database.exec('ROLLBACK');
     throw error;
   }
+  forgetAccount(database, account.id);
   return { ok: true, account: readAccount(database, username.normalized)! };
 }
 
@@ -455,6 +459,34 @@ export function validateRealSession(
 ): RealSessionResult {
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return { status: 'invalid' };
   const tokenHash = digest(token);
+  const nowMs = now.getTime();
+  // A recently validated session needs no database work: it slides its idle
+  // expiry in memory and writes it back at most every SESSION_TOUCH_MS.
+  const cached = cachedSession(database, tokenHash, nowMs);
+  if (cached && Date.parse(cached.absoluteExpiresAt) > nowMs) {
+    const idleExpiresAt = new Date(
+      Math.min(nowMs + SESSION_IDLE_MS, Date.parse(cached.absoluteExpiresAt)),
+    ).toISOString();
+    if (Date.parse(idleExpiresAt) - Date.parse(cached.persistedIdleExpiresAt) >= SESSION_TOUCH_MS) {
+      database
+        .prepare(
+          'UPDATE real_account_sessions SET last_seen_at = ?, idle_expires_at = ? WHERE token_hash = ?',
+        )
+        .run(now.toISOString(), idleExpiresAt, tokenHash);
+      rememberSession(
+        database,
+        tokenHash,
+        { ...cached, persistedIdleExpiresAt: idleExpiresAt },
+        nowMs,
+      );
+    }
+    return {
+      status: 'valid',
+      account: mapAccount(cached.account),
+      idleExpiresAt,
+      absoluteExpiresAt: cached.absoluteExpiresAt,
+    };
+  }
   const row = database
     .prepare(
       `SELECT s.account_id AS id, s.account_id AS accountId, s.last_seen_at AS lastSeenAt,
@@ -492,6 +524,17 @@ export function validateRealSession(
       'UPDATE real_account_sessions SET last_seen_at = ?, idle_expires_at = ? WHERE token_hash = ?',
     )
     .run(now.toISOString(), nextIdle, tokenHash);
+  rememberSession(
+    database,
+    tokenHash,
+    {
+      accountId: String(row.accountId),
+      account: row,
+      absoluteExpiresAt: String(row.absoluteExpiresAt),
+      persistedIdleExpiresAt: nextIdle,
+    },
+    nowMs,
+  );
   return {
     status: 'valid',
     account: mapAccount(row),
@@ -502,6 +545,7 @@ export function validateRealSession(
 
 export function revokeRealSession(database: RewindDatabase, token: string, now = new Date()): void {
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return;
+  forgetSession(database, digest(token));
   database
     .prepare(
       'UPDATE real_account_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL',

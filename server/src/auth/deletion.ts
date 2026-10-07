@@ -1,5 +1,6 @@
 import { safeRemoveOwnedPath } from '../contributions';
 import type { RewindDatabase } from '../db';
+import { forgetAllIdentities } from './identity-cache';
 import { freezeFilmSegments } from '../groups/safety';
 import type { MediaStore } from '../media/store';
 import { decodeMediaRef, isMediaRef } from '../media/store';
@@ -130,6 +131,8 @@ export function purgeRealAccount(
       .run(accountId);
     database.prepare('DELETE FROM real_accounts WHERE id = ?').run(accountId);
     database.exec('COMMIT');
+    // Groups may have been deleted or handed on: forget every cached identity.
+    forgetAllIdentities(database);
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;

@@ -293,24 +293,20 @@ export function createChatMessage(
     return { ok: false, reason: 'invalid_timestamp' };
   }
   const messageId = input.messageId ?? `message-${randomUUID()}`;
+  let occurredAt = '';
+  let eventId: number;
 
   database.exec('BEGIN IMMEDIATE');
   try {
-    // Re-check the complete authorization context immediately before either
-    // insert. Reading the body happens before this function is called, so a
-    // session can have been invalidated while a client was still uploading it.
-    // BEGIN IMMEDIATE makes this check and the inserts one serialized write.
+    // Membership was checked above; members stay members (#261 trimmed the
+    // second check here, which cost a database round trip per message).
     const transactionNow =
       typeof input.now === 'function' ? input.now() : (input.now ?? new Date());
     if (!Number.isFinite(transactionNow.getTime())) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'invalid_timestamp' };
     }
-    const occurredAt = transactionNow.toISOString();
-    if (!isMember(database, input.groupId, input.memberId)) {
-      database.exec('ROLLBACK');
-      return { ok: false, reason: 'membership_denied' };
-    }
+    occurredAt = transactionNow.toISOString();
     if (input.replyToMessageId) {
       const parent = database
         .prepare(
@@ -374,18 +370,41 @@ export function createChatMessage(
         occurredAt,
         input.replyToMessageId ?? null,
       );
-    database
-      .prepare(
-        `INSERT INTO realtime_events (group_id, message_id, event_type, occurred_at)
-         VALUES (?, ?, 'message', ?)`,
-      )
-      .run(input.groupId, messageId, occurredAt);
+    eventId = Number(
+      (
+        database
+          .prepare(
+            `INSERT INTO realtime_events (group_id, message_id, event_type, occurred_at)
+             VALUES (?, ?, 'message', ?) RETURNING id AS eventId`,
+          )
+          .get(input.groupId, messageId, occurredAt) as { eventId: number }
+      ).eventId,
+    );
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
   }
 
+  // A new message has no reactions; a plain message needs no read-back.
+  if (!input.replyToMessageId) {
+    return {
+      ok: true,
+      event: mapEvent({
+        eventId,
+        occurredAt,
+        id: messageId,
+        groupId: input.groupId,
+        memberId: input.memberId,
+        body,
+        createdAt: occurredAt,
+        replyToId: null,
+        replyToMemberId: null,
+        replyToBody: null,
+        replyToCreatedAt: null,
+      }),
+    };
+  }
   const row = database
     .prepare(
       `SELECT e.id AS eventId, e.occurred_at AS occurredAt,
@@ -400,7 +419,7 @@ export function createChatMessage(
     )
     .get(messageId) as Record<string, unknown> | undefined;
   if (!row) throw new Error('Persisted chat message event could not be loaded.');
-  return { ok: true, event: mapEvent(row, reactionCounts(database, String(row.id))) };
+  return { ok: true, event: mapEvent(row) };
 }
 
 function validReaction(emoji: string): emoji is ChatReactionEmoji {

@@ -9,6 +9,9 @@ import { openFixtureDatabase, SAMPLE_CLIP_PATH } from './helpers/fixture-group.m
 
 const { parseConfig } = await import('../dist/config.js');
 const { createRuntimeServer } = await import('../dist/http.js');
+// Identity is cached; an out-of-band SQL change is applied by clearing it,
+// as the server's own selection and membership changes do.
+const { forgetAllIdentities } = await import('../dist/auth/identity-cache.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
 
@@ -237,6 +240,7 @@ test('real account can upload and process a clip only in its selected group', as
     database
       .prepare('DELETE FROM real_account_group_selections WHERE account_id = ?')
       .run(owner.account.id);
+    forgetAllIdentities(database);
     delayed.request.end(delayed.remaining);
     const delayedResult = await delayed.responsePromise;
     assert.equal(delayedResult.status, 401);

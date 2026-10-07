@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
+import { forgetAccount } from '../auth/identity-cache';
 import type { RewindDatabase } from '../db';
 import { getRealGroup } from './real';
 
@@ -323,6 +324,7 @@ export function acceptRealGroupInvite(
     const joinedGroup = getRealGroup(database, account.id, invite.groupId);
     if (!joinedGroup) throw new Error('Accepted real-group membership could not be loaded.');
     database.exec('COMMIT');
+    forgetAccount(database, account.id);
     return { ok: true, status: 'accepted', group: joinedGroup };
   } catch (error) {
     database.exec('ROLLBACK');
