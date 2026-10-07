@@ -20,7 +20,7 @@ precedence over `AGENTS.md` where they differ.
   credentials by hand (for example, Terraform writes them where the deploy
   reads them).
 - **One PR per batch.** Bundle all the issues and fixes worked on together into
-  a single PR (one branch, one review pass, one merge). Split only when part
+  a single PR (one branch, one merge). Split only when part
   of the batch is blocked or unrelated enough to need a separate rollback.
 - **Parallel sessions.** Several agents work in this repo at once. For a large
   or multi-file task, create a worktree from `origin/dev` (with its own
@@ -29,13 +29,13 @@ precedence over `AGENTS.md` where they differ.
   changes the owner explicitly asked for in this checkout, may be made in
   place. Never switch the main checkout's branch or kill processes you did
   not start.
-- **Review agent.** Every PR gets one Codex review pass before merge, run from
-  a worktree of the PR head: `make review` (GPT-6 Luna, high effort, fast
-  tier). For large or sensitive work, or when the owner names a model:
-  `make review MODEL=gpt-6.1-sol` (optional `EFFORT=`, default medium).
-  Review only once per PR, and only via this target.
-
-  Fix blocking findings, then merge once Quality is green. Record a
-  non-blocking or false-positive finding in one PR comment.
+- **Review agent.** Only for overnight or batched runs (a queue of several
+  issues), or when the owner types `/codex-review`. Never on an ordinary PR,
+  and never report it as a missing step. When it runs: once per PR, from a
+  worktree of the PR head, via `make review` (GPT-6 Luna, high effort, fast
+  tier), or `make review MODEL=gpt-6.1-sol` (optional `EFFORT=`, default
+  medium) for sensitive work or when the owner names a model. Fix blocking
+  findings; record a non-blocking or false-positive finding in one PR comment.
+  Merge once Quality is green.
 
 @AGENTS.md

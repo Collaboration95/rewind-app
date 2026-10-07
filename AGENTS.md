@@ -22,8 +22,10 @@ An issue is Done when all four conditions hold:
 1. Its core outcome works, checked in the cheapest real environment that
    exercises it (see Verification tiers).
 2. `npm run test:fast` passes and the PR's aggregate Quality check is green.
-3. One review-agent pass on the PR is complete and blocking findings are fixed.
-   No human approval is needed for routine `dev` PRs.
+3. Only for an overnight or batched run (a queue of several issues), or when
+   the owner asks: one review-agent pass is complete and blocking findings are
+   fixed. Other PRs need no review pass, and none is reported as missing. No
+   human approval is needed for routine `dev` PRs.
 4. The PR is merged to `dev`. Then close the issue with a one-line comment
    linking the PR.
 
@@ -76,8 +78,8 @@ of issues end to end; `verify-issue` drafts and files a new issue.
   protected branch requires a PR, green up-to-date aggregate Quality, and
   resolved conversations; routine PRs need no human approval.
 - For authentication, private media access, database migrations, deployment,
-  or infrastructure, use higher-tier GPT-6.1 Sol or Claude review and leave
-  merging to the owner.
+  or infrastructure, leave merging to the owner; when a review runs, use
+  higher-tier GPT-6.1 Sol or Claude.
 - Keep `main` as the reviewed release branch. Promote a small, green `dev` diff
   with a PR when wanted; no daily promotion or reviewer schedule is required.
   Existing `main` approval and Quality rules remain.
