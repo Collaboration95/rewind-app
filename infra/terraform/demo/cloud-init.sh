@@ -97,9 +97,14 @@ if [ "$SKIP_APT" != 1 ]; then
     ca-certificates curl docker.io docker-compose-v2 jq rsync sqlite3; then
     fail 'installing ca-certificates, curl, docker.io, docker-compose-v2, jq, rsync, and sqlite3 failed; fix apt sources or network access and retry'
   fi
+  # The daily backup (deploy/backup.sh) uploads with the aws CLI, which
+  # Ubuntu 24.04 ships as a snap rather than an apt package.
+  if ! command -v aws >/dev/null 2>&1 && ! snap install aws-cli --classic; then
+    fail 'installing the aws CLI snap failed; run snap install aws-cli --classic and retry'
+  fi
 fi
 
-for command_name in curl docker jq rsync sqlite3 usermod systemctl; do
+for command_name in aws curl docker jq rsync sqlite3 usermod systemctl; do
   require_command "$command_name"
 done
 if ! docker compose version >/dev/null 2>&1; then
@@ -123,6 +128,11 @@ if ! id "$HOST_USER" >/dev/null 2>&1; then
 fi
 if ! usermod -aG docker "$HOST_USER"; then
   fail "could not add '$HOST_USER' to the docker group; verify the docker group and retry"
+fi
+# The operator writes backups into the group-writable backups directory and
+# the backup script checks the private data tree, so it joins the runtime group.
+if ! usermod -aG "$RUNTIME_GROUP" "$HOST_USER"; then
+  fail "could not add '$HOST_USER' to the runtime group; verify the runtime group and retry"
 fi
 if ! systemctl enable --now docker; then
   fail 'Docker could not be enabled and started; inspect systemctl status docker and retry'

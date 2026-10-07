@@ -229,6 +229,8 @@ module "media" {
   web_origins      = [local.web_origin]
   web_push_subject = local.web_origin
   deploy_role_name = aws_iam_role.deploy.name
+  # Release has no host backup bucket yet.
+  backup_prefix_arn = null
   extra_hosted_settings = [
     "REWIND_WEB_BIND_ADDRESS=0.0.0.0",
     "REWIND_WEB_PORT=80",

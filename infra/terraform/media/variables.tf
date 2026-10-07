@@ -36,3 +36,9 @@ variable "extra_hosted_settings" {
   default     = []
   sensitive   = true
 }
+
+variable "backup_prefix_arn" {
+  description = "S3 object ARN pattern the host's daily backup may add to (deploy/backup.sh), or null for none."
+  type        = string
+  default     = "arn:aws:s3:::rewind-demo-backups-330599756236/rewind-demo/*"
+}

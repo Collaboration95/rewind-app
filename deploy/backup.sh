@@ -41,12 +41,20 @@ ensure_distinct_paths DATA_DIR "$DATA_DIR" MEDIA_DIR "$MEDIA_DIR"
 ensure_backup_directory "$BACKUP_DIR"
 BACKUP_DIR="$(canonical_directory BACKUP_DIR "$BACKUP_DIR")"
 require_regular_file "COMPOSE_FILE" "$COMPOSE_FILE"
+# Export the settings so the aws CLI sees the host's AWS_* credentials whether
+# this runs from the systemd timer or an operator shell.
+set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+set +a
+# Hosts carry the runtime's access keys (delivered by Terraform); the template's
+# AWS_PROFILE names a profile that is never provisioned there.
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+  unset AWS_PROFILE
+fi
 
 : "${REWIND_BACKUP_BUCKET:?REWIND_BACKUP_BUCKET must be set in $ENV_FILE}"
 : "${REWIND_BACKUP_PREFIX:=rewind-demo}"
-: "${AWS_PROFILE:=default}"
 validate_backup_prefix "$REWIND_BACKUP_PREFIX" || exit 1
 
 require_compose_prerequisites
@@ -106,13 +114,13 @@ validate_backup_manifest "$manifest_path" "$REWIND_BACKUP_PREFIX" || exit 1
 verify_backup_manifest_archives "$BACKUP_DIR" || exit 1
 
 if [[ "$LOCAL_ONLY" == 0 ]]; then
-  AWS_PROFILE="$AWS_PROFILE" aws s3 cp "$archive_path" \
+  aws s3 cp "$archive_path" \
     "s3://${REWIND_BACKUP_BUCKET}/${REWIND_BACKUP_PREFIX}/${archive_name}" \
     --sse AES256 --only-show-errors
-  AWS_PROFILE="$AWS_PROFILE" aws s3 cp "$media_archive_path" \
+  aws s3 cp "$media_archive_path" \
     "s3://${REWIND_BACKUP_BUCKET}/${REWIND_BACKUP_PREFIX}/${media_archive_name}" \
     --sse AES256 --only-show-errors
-  AWS_PROFILE="$AWS_PROFILE" aws s3 cp "$manifest_path" \
+  aws s3 cp "$manifest_path" \
     "s3://${REWIND_BACKUP_BUCKET}/${REWIND_BACKUP_PREFIX}/${manifest_name}" \
     --sse AES256 --only-show-errors
 fi
