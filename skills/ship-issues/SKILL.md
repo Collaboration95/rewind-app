@@ -1,6 +1,6 @@
 ---
 name: ship-issues
-description: Implement one Rewind GitHub issue, a list of issue numbers, or a Markdown issue queue end to end, from branch through verification, PR, review agent, merge and closing the issue. Use when asked to fix, ship, solve or work through issues.
+description: Implement one Rewind GitHub issue, a list of issue numbers, or a Markdown issue queue end to end, from branch through verification, PR, review agent (queues only), merge and closing the issue. Use when asked to fix, ship, solve or work through issues.
 metadata:
   short-description: Ship one issue or a queue of issues to dev
   compatibility: 'Codex, Claude Code, and OpenCode'
@@ -46,10 +46,12 @@ For a list or `next`, write a queue file before starting, for example
    and move to the next issue. Never delete or weaken assertions.
 7. **PR** to `dev` with `Refs #<n>` (no closing keyword). The body has two
    short parts: what changed, and which checks actually ran.
-8. **Review agent.** Run one review pass and fix the blocking findings:
-   - Codex: `codex exec review --base dev -m gpt-6-luna`.
-   - For auth, private media, migrations, deploy or infra, use
-     `-m gpt-6.1-sol`.
+8. **Review agent.** Only when working through a queue of several issues, in
+   an overnight run, or when the owner asked; otherwise skip this step. Run
+   one pass and fix the blocking findings:
+   - `make review` from the PR head's worktree.
+   - For auth, private media, migrations, deploy or infra:
+     `make review MODEL=gpt-6.1-sol`.
 9. **Merge.** When Quality is green:
    - Routine PR: `gh pr merge <pr> --merge --delete-branch`.
    - Auth, private media, migrations, deploy or infra: leave the merge to the
