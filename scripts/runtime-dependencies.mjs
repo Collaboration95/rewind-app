@@ -4,7 +4,12 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // The only external imports in server/src are these optional provider SDKs.
-export const runtimeRoots = ['@aws-sdk/client-s3', '@aws-sdk/s3-request-presigner', 'web-push'];
+export const runtimeRoots = [
+  '@aws-sdk/client-s3',
+  '@aws-sdk/s3-request-presigner',
+  'pg',
+  'web-push',
+];
 const packageName = /^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/i;
 const readJson = async (path) => JSON.parse(await readFile(path, 'utf8'));
 

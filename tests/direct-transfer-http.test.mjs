@@ -18,6 +18,9 @@ const { createRuntimeServer } = await import(new URL('../server/dist/http.js', i
 const { reconcileUploadIntent } = await import(
   new URL('../server/dist/media/upload-intents.js', import.meta.url)
 );
+const { forgetAllIdentities } = await import(
+  new URL('../server/dist/auth/identity-cache.js', import.meta.url)
+);
 
 // Execute the actual client, protocol and adapter in Chromium without mounting
 // another worker's capture UI. Only unused native platform services are facades;
@@ -485,6 +488,8 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
       c.database
         .prepare('DELETE FROM real_account_sessions WHERE account_id=?')
         .run('intent-owner');
+      // Identity is cached; clear it as the server's own revocation does.
+      forgetAllIdentities(c.database);
       assert.equal((await transfer('browser-http-key-1', true)).error, 'authorization');
       assert.equal(storageRequests.length, 5);
 

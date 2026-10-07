@@ -114,10 +114,6 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
-  // The admin page signs in with the browser's Basic auth prompt, which a
-  // worker-initiated fetch cannot show. Leave it entirely to the browser.
-  if (url.origin === self.location.origin && /^\/(?:api\/)?admin(?:\/|$)/.test(url.pathname))
-    return;
   if (isApiRequest(url) || isPrivateMediaRequest(url) || event.request.method !== 'GET') {
     // Never cache server-backed responses or queue writes for later sync.
     event.respondWith(fetch(event.request).catch(() => apiUnavailableResponse()));

@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { onPostgres } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
+const { openDatabaseAt } = await import('../dist/db.js');
 const { createRuntimeServer, authClientSource, authTransportIsSecure } =
   await import('../dist/http.js');
 const { createRealAccount, resetRealAccountPassword, revokeRealSession, validateRealSession } =
@@ -67,9 +68,9 @@ async function raceLoginWithReset(databasePath, account, ordering, reset) {
   const worker = new Worker(
     `(async () => {
        const { parentPort, workerData } = require('node:worker_threads');
-       const { DatabaseSync } = require('node:sqlite');
+       const { openDatabaseAt } = require(require('node:path').resolve('server/dist/db.js'));
        const gate = new Int32Array(workerData.gateBuffer);
-       const database = new DatabaseSync(workerData.databasePath);
+       const database = openDatabaseAt(workerData.databasePath);
        database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
        const wrapped = {
          prepare(sql) {
@@ -188,6 +189,8 @@ test('additive auth migration and account reset preserve synthetic fixture-group
 
     // Reopening the persisted database applies no destructive rebuild and
     // keeps the real-auth tables separate from the synthetic fixture records.
+    // (SQLite migration repair; PostgreSQL starts from its baseline.)
+    if (onPostgres) return;
     const { DatabaseSync } = await import('node:sqlite');
     const { migrateDatabase } = await import('../dist/db.js');
     const reopened = new DatabaseSync(`${dataDir}/rewind.sqlite`);
@@ -561,7 +564,7 @@ test('session idle and absolute expiry are enforced, and reset revokes tokens', 
     assert.equal(newPassword.status, 200);
     const finalSession = await newPassword.json();
     const finalHash = database
-      .prepare('SELECT token_hash FROM real_account_sessions ORDER BY rowid DESC LIMIT 1')
+      .prepare('SELECT token_hash FROM real_account_sessions WHERE revoked_at IS NULL')
       .get().token_hash;
     database
       .prepare('UPDATE real_account_sessions SET absolute_expires_at = ? WHERE token_hash = ?')
@@ -605,7 +608,7 @@ test('a reset committed after password verification blocks session insertion on 
       'old correct password',
     );
     assert.equal(account.ok, true);
-    const separateConnection = new DatabaseSync(`${dataDir}/rewind.sqlite`);
+    const separateConnection = openDatabaseAt(`${dataDir}/rewind.sqlite`);
     separateConnection.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     try {
       const result = await raceLoginWithReset(
@@ -634,7 +637,7 @@ test('a reset committed after guarded session insertion revokes that session', a
       'old correct password',
     );
     assert.equal(account.ok, true);
-    const separateConnection = new DatabaseSync(`${dataDir}/rewind.sqlite`);
+    const separateConnection = openDatabaseAt(`${dataDir}/rewind.sqlite`);
     separateConnection.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     try {
       const result = await raceLoginWithReset(

@@ -14,6 +14,10 @@ import {
 import { decodeMediaRef } from '../dist/media/store.js';
 import { runWorkerTick } from '../dist/jobs/worker.js';
 import { withIntentFixture } from './helpers/upload-intents.mjs';
+// Identity is cached; out-of-band SQL changes below clear it, as the server's
+// own revocation, selection and membership changes do.
+import { forgetAllIdentities } from '../dist/auth/identity-cache.js';
+import { createTestTrigger, dropTestTrigger } from './helpers/dialect.mjs';
 
 function reconciled(c, intent) {
   return reconcileUploadIntent(c.database, c.actor, { intentId: intent.id }, c.deps);
@@ -210,16 +214,19 @@ for (const kind of [
             c.database
               .prepare('DELETE FROM real_account_sessions WHERE account_id=?')
               .run('intent-owner');
+            forgetAllIdentities(c.database);
             break;
           case 'selection':
             c.database
               .prepare('DELETE FROM real_account_group_selections WHERE account_id=?')
               .run('intent-owner');
+            forgetAllIdentities(c.database);
             break;
           case 'membership':
             c.database
               .prepare('DELETE FROM real_group_memberships WHERE account_id=?')
               .run('intent-owner');
+            forgetAllIdentities(c.database);
             break;
           case 'expiry':
           case 'cleanup':
@@ -551,10 +558,12 @@ for (const kind of [
         c.deps.probe = async (path, mediaType) => {
           const { probeClipWithFfmpeg } = await import('../dist/ffmpeg.js');
           const result = await probeClipWithFfmpeg('ffmpeg', path);
-          if (kind === 'revocation')
+          if (kind === 'revocation') {
             c.database
               .prepare('UPDATE real_account_sessions SET revoked_at = ?')
               .run(c.now.toISOString());
+            forgetAllIdentities(c.database);
+          }
           if (kind === 'rollover')
             c.database
               .prepare('UPDATE groups SET current_cycle_id = NULL WHERE id = ?')
@@ -751,9 +760,13 @@ test('registration failure rolls back quota, staged metadata and jobs; retry reg
   withIntentFixture(async (c) => {
     const request = await requested(c);
     const version = await c.put(request.upload);
-    c.database.exec(
-      "CREATE TRIGGER fail_intent_job BEFORE INSERT ON media_jobs BEGIN SELECT RAISE(ABORT, 'private internal diagnostic'); END;",
-    );
+    createTestTrigger(c.database, {
+      name: 'fail_intent_job',
+      timing: 'BEFORE',
+      event: 'INSERT',
+      table: 'media_jobs',
+      action: { abort: 'private internal diagnostic' },
+    });
     const stagedBefore = scalar(c.database, 'SELECT COUNT(*) FROM staged_sources');
     assert.deepEqual(await completed(c, request.intent, version), {
       ok: false,
@@ -770,7 +783,7 @@ test('registration failure rolls back quota, staged metadata and jobs; retry reg
       getUploadIntentStatus(c.database, c.actor, request.intent.id, c.deps).value.state,
       'pinned',
     );
-    c.database.exec('DROP TRIGGER fail_intent_job');
+    dropTestTrigger(c.database, 'fail_intent_job', 'media_jobs');
     assert.equal((await completed(c, request.intent, version)).ok, true);
   }));
 

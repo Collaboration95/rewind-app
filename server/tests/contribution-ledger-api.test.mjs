@@ -5,6 +5,7 @@ import { once } from 'node:events';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
+import { sqliteOnly } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, schemaReadiness } = await import('../dist/db.js');
@@ -119,45 +120,49 @@ function insertFixtures(database) {
   `);
 }
 
-test('migration 016 records readiness and repairs a malformed index after receipt', async () => {
-  await withRuntime(async ({ database }) => {
-    assert.equal(schemaReadiness(database).ready, true);
-    assert.equal(schemaReadiness(database).expectedMigrationVersion, 30);
-    assert.equal(
-      database.prepare('SELECT version FROM schema_migrations WHERE version = 17').get()?.version,
-      17,
-    );
-    database.exec(`
+test(
+  'migration 016 records readiness and repairs a malformed index after receipt',
+  { skip: sqliteOnly },
+  async () => {
+    await withRuntime(async ({ database }) => {
+      assert.equal(schemaReadiness(database).ready, true);
+      assert.equal(schemaReadiness(database).expectedMigrationVersion, 30);
+      assert.equal(
+        database.prepare('SELECT version FROM schema_migrations WHERE version = 17').get()?.version,
+        17,
+      );
+      database.exec(`
       DROP INDEX contributions_ledger_member_idx;
       CREATE INDEX contributions_ledger_member_idx ON contributions (member_id);
     `);
-    assert.deepEqual(schemaReadiness(database).missingMigrationKeys, ['contribution-ledger-v1']);
-    migrateDatabase(database);
-    assert.equal(schemaReadiness(database).ready, true);
-    assert.deepEqual(
-      database
-        .prepare('PRAGMA index_info(contributions_ledger_member_idx)')
-        .all()
-        .map((row) => row.name),
-      ['cycle_id', 'member_id', 'created_at', 'id'],
-    );
+      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, ['contribution-ledger-v1']);
+      migrateDatabase(database);
+      assert.equal(schemaReadiness(database).ready, true);
+      assert.deepEqual(
+        database
+          .prepare('PRAGMA index_info(contributions_ledger_member_idx)')
+          .all()
+          .map((row) => row.name),
+        ['cycle_id', 'member_id', 'created_at', 'id'],
+      );
 
-    database.exec(`
+      database.exec(`
       DROP INDEX contributions_ledger_member_idx;
       ALTER TABLE contributions DROP COLUMN replaced_by_contribution_id;
     `);
-    assert.deepEqual(schemaReadiness(database).missingMigrationKeys, ['contribution-ledger-v1']);
-    migrateDatabase(database);
-    assert.equal(schemaReadiness(database).ready, true);
-    assert.equal(
-      database
-        .prepare('PRAGMA table_info(contributions)')
-        .all()
-        .some((row) => row.name === 'replaced_by_contribution_id'),
-      true,
-    );
-  });
-});
+      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, ['contribution-ledger-v1']);
+      migrateDatabase(database);
+      assert.equal(schemaReadiness(database).ready, true);
+      assert.equal(
+        database
+          .prepare('PRAGMA table_info(contributions)')
+          .all()
+          .some((row) => row.name === 'replaced_by_contribution_id'),
+        true,
+      );
+    });
+  },
+);
 
 test('GET /contributions is self-only, current-cycle, paginated, filterable and redacted', async () => {
   await withRuntime(async ({ baseUrl, database }) => {

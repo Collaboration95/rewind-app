@@ -2,12 +2,17 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createWriteStream, existsSync } from 'node:fs';
 import { mkdir, realpath, rename, rm, stat, type FileHandle } from 'node:fs/promises';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { membershipProfileId, selectedGroupId } from './auth/identity-cache';
+import {
+  newDatabaseTiming,
+  serverTimingHeader,
+  withDatabaseTiming,
+} from './observability/database-timing';
 import { networkInterfaces } from 'node:os';
 import { isIP } from 'node:net';
 import { URL } from 'node:url';
 
 import { requestObservation } from './observability';
-import { handleAdminRequest } from './admin';
 
 import { SERVICE_VERSION, type RuntimeConfig } from './config';
 import {
@@ -25,8 +30,8 @@ import {
   getReleasedFilmDownload,
   getReleasedOwnClipDownload,
   getMessage,
-  isMember,
   listReleasedArchive,
+  isPostgres,
   schemaReadiness,
   type RewindDatabase,
 } from './db';
@@ -132,7 +137,7 @@ export interface HealthPayload {
   version: string;
   ready: boolean;
   checks: {
-    sqlite: true;
+    database: 'sqlite' | 'postgresql';
     ffmpegConfigured: boolean;
     schema: ReturnType<typeof schemaReadiness>;
   };
@@ -296,27 +301,44 @@ function requireAuthorisedMediaGroup(
     });
     return null;
   }
-  const selected = getCurrentRealGroup(database, session.account.id);
-  const membership = groupId
-    ? (database
-        .prepare(
-          `SELECT profile_id AS profileId FROM real_group_memberships
-           WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
-        )
-        .get(session.account.id, groupId) as { profileId?: string } | undefined)
-    : undefined;
-  if (
-    !groupId ||
-    selected?.group.id !== groupId ||
-    !membership?.profileId ||
-    !isMember(database, groupId, membership.profileId)
-  ) {
+  const profileId = groupId ? signedInProfileId(database, session.account.id, groupId, now) : null;
+  if (!groupId || !profileId) {
     sendDenied(response, config);
     return null;
   }
   for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
     response.setHeader(name, value);
-  return { accountId: session.account.id, groupId, memberId: membership.profileId };
+  return { accountId: session.account.id, groupId, memberId: profileId };
+}
+
+/**
+ * The signed-in account's profile in `groupId` when that group is the
+ * account's selected group, else null. Uses the identity cache: a member
+ * stays a member for this process until the server itself changes it.
+ */
+function signedInProfileId(
+  database: RewindDatabase,
+  accountId: string,
+  groupId: string,
+  now: Date,
+): string | null {
+  const at = now.getTime();
+  const selected = selectedGroupId(database, accountId, at, () => {
+    const row = database
+      .prepare('SELECT group_id AS groupId FROM real_account_group_selections WHERE account_id = ?')
+      .get(accountId) as { groupId?: string } | undefined;
+    return row?.groupId ?? null;
+  });
+  if (selected !== groupId) return null;
+  return membershipProfileId(database, accountId, groupId, at, () => {
+    const row = database
+      .prepare(
+        `SELECT profile_id AS profileId FROM real_group_memberships
+         WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
+      )
+      .get(accountId, groupId) as { profileId?: string } | undefined;
+    return row?.profileId ?? null;
+  });
 }
 
 function mediaIdentityIsCurrent(
@@ -332,8 +354,7 @@ function mediaIdentityIsCurrent(
   return Boolean(
     session.status === 'valid' &&
     session.account.id === identity.accountId &&
-    getCurrentRealGroup(database, identity.accountId)?.group.id === identity.groupId &&
-    isMember(database, identity.groupId, identity.memberId),
+    signedInProfileId(database, identity.accountId, identity.groupId, now) === identity.memberId,
   );
 }
 
@@ -362,23 +383,11 @@ function requireAuthorisedChatGroup(
   if (session.status !== 'valid') {
     return deny(401, 'Sign in again to join this group chat.');
   }
-  const selected = getCurrentRealGroup(database, session.account.id);
-  const membership = database
-    .prepare(
-      `SELECT profile_id AS profileId FROM real_group_memberships
-       WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
-    )
-    .get(session.account.id, groupId) as { profileId?: string } | undefined;
-  if (
-    selected?.group.id !== groupId ||
-    !membership?.profileId ||
-    !isMember(database, groupId, membership.profileId)
-  ) {
-    return deny();
-  }
+  const profileId = signedInProfileId(database, session.account.id, groupId, at);
+  if (!profileId) return deny();
   for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
     response.setHeader(name, value);
-  return { accountId: session.account.id, groupId, memberId: membership.profileId };
+  return { accountId: session.account.id, groupId, memberId: profileId };
 }
 
 function chatIdentityIsCurrent(
@@ -389,18 +398,10 @@ function chatIdentityIsCurrent(
 ): boolean {
   const token = authToken(request);
   const session = token ? validateRealSession(database, token, at) : { status: 'invalid' as const };
-  const membership = database
-    .prepare(
-      `SELECT profile_id AS profileId FROM real_group_memberships
-       WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
-    )
-    .get(identity.accountId, identity.groupId) as { profileId?: string } | undefined;
   return Boolean(
     session.status === 'valid' &&
     session.account.id === identity.accountId &&
-    getCurrentRealGroup(database, identity.accountId)?.group.id === identity.groupId &&
-    membership?.profileId === identity.memberId &&
-    isMember(database, identity.groupId, identity.memberId),
+    signedInProfileId(database, identity.accountId, identity.groupId, at) === identity.memberId,
   );
 }
 
@@ -1226,7 +1227,11 @@ function healthPayload(config: RuntimeConfig, database: RewindDatabase): HealthP
     service: 'rewind-local-runtime',
     version: SERVICE_VERSION,
     ready: schema.ready,
-    checks: { sqlite: true, ffmpegConfigured: Boolean(config.ffmpegBin), schema },
+    checks: {
+      database: isPostgres(database) ? 'postgresql' : 'sqlite',
+      ffmpegConfigured: Boolean(config.ffmpegBin),
+      schema,
+    },
     addresses: {
       local: `http://${localHost}:${config.port}`,
       lan: lan ? `http://${lan}:${config.port}` : null,
@@ -1344,18 +1349,6 @@ export async function handleRequest(
           : 'rewind-my-clip.mp4'
         : undefined,
       served.releaseBudget,
-    );
-    return;
-  }
-
-  if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) {
-    handleAdminRequest(
-      request,
-      response,
-      config,
-      database,
-      url,
-      authTransportIsSecure(request, config),
     );
     return;
   }
@@ -2802,10 +2795,7 @@ async function handleRealGroupRequest(
       ? decodePathSegment(reminderDestinationMatch[3], response, config)
       : null;
     if (!groupId || (reminderDestinationMatch[3] && !id)) return;
-    if (
-      !getRealGroup(database, session.account.id, groupId) ||
-      getCurrentRealGroup(database, session.account.id)?.group.id !== groupId
-    )
+    if (!signedInProfileId(database, session.account.id, groupId, now))
       return sendDenied(response, config);
     const actor = { sessionToken: token!, groupId };
     if (request.method === 'GET' && !id) {
@@ -2896,10 +2886,7 @@ async function handleRealGroupRequest(
       : null;
     if (groupId === null || (uploadIntentMatch[2] && intentId === null)) return;
     const actor = { sessionToken: token!, groupId };
-    if (
-      !getRealGroup(database, session.account.id, groupId) ||
-      getCurrentRealGroup(database, session.account.id)?.group.id !== groupId
-    )
+    if (!signedInProfileId(database, session.account.id, groupId, now))
       return sendDenied(response, config);
     const deps = options.uploadIntents ? { ...options.uploadIntents, now: currentClock } : null;
     if (!deps) {
@@ -3739,17 +3726,30 @@ export function createRuntimeServer(
   return createServer((request, response) => {
     const observation = requestObservation();
     response.setHeader('X-Request-Id', observation.requestId);
+    // Database work for this request (PostgreSQL), as Server-Timing.
+    const timing = newDatabaseTiming();
+    const writeHead = response.writeHead.bind(response) as (...args: unknown[]) => ServerResponse;
+    (response as { writeHead: (...args: unknown[]) => ServerResponse }).writeHead = (
+      ...args: unknown[]
+    ) => {
+      if (timing.statements > 0 && !response.headersSent)
+        response.setHeader('Server-Timing', serverTimingHeader(timing));
+      return writeHead(...args);
+    };
     response.once('finish', () => {
       if (response.statusCode >= 500) observation.failure(response.statusCode);
       if (config.requestTiming)
-        observation.timing(request.method, request.url, response.statusCode);
+        observation.timing(request.method, request.url, response.statusCode, timing);
     });
-    void handleRequest(request, response, config, database, {
-      ...options,
-      realtimeHub,
-      mediaCapabilities,
-      requestLimiters,
-    }).catch((error: unknown) => {
+    const handled = withDatabaseTiming(timing, () =>
+      handleRequest(request, response, config, database, {
+        ...options,
+        realtimeHub,
+        mediaCapabilities,
+        requestLimiters,
+      }),
+    );
+    void handled.catch((error: unknown) => {
       const authRequest = (request.url ?? '').split('?', 1)[0].startsWith('/auth/');
       if (error instanceof RequestPolicyError) {
         if (authRequest) {

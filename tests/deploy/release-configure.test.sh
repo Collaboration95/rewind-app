@@ -57,3 +57,19 @@ grep -qx 'REWIND_MEDIA_BACKEND=s3' "$fresh/rewind.env" || { echo 'fresh host set
 fresh_mode="$(stat -c %a "$fresh/rewind.env" 2>/dev/null || stat -f %Lp "$fresh/rewind.env")"
 [[ "$fresh_mode" == 600 ]] || { echo "fresh rewind.env mode is $fresh_mode" >&2; exit 1; }
 echo 'fresh host configure fixture passed'
+
+# PostgreSQL settings (#261): delivered before the cutover with an empty
+# REWIND_DATABASE_URL, set at the cutover, and cleared again for rollback.
+pg="$root/pg"
+mkdir -p "$pg"
+app='postgres://rewind_app:Abc123@db.internal:5432/rewind'
+printf 'REWIND_DATABASE_ENVIRONMENT=dev\nREWIND_DATABASE_APP_URL=%s\nREWIND_DATABASE_READONLY_URL=postgres://rewind_readonly:Def456@db.internal:5432/rewind\nREWIND_DATABASE_URL=\n' "$app" |
+  REWIND_HOST_ROOT="$pg" bash "$script" configure >/dev/null
+grep -qx 'REWIND_DATABASE_URL=' "$pg/rewind.env" || { echo 'pre-cutover database URL was not empty' >&2; exit 1; }
+grep -qx "REWIND_DATABASE_APP_URL=$app" "$pg/rewind.env" || { echo 'database import login was not delivered' >&2; exit 1; }
+printf 'REWIND_DATABASE_URL=%s\n' "$app" | REWIND_HOST_ROOT="$pg" bash "$script" configure >/dev/null
+grep -qx "REWIND_DATABASE_URL=$app" "$pg/rewind.env" || { echo 'cutover did not set the database URL' >&2; exit 1; }
+printf 'REWIND_DATABASE_URL=\n' | REWIND_HOST_ROOT="$pg" bash "$script" configure >/dev/null
+grep -qx 'REWIND_DATABASE_URL=' "$pg/rewind.env" || { echo 'rollback did not clear the database URL' >&2; exit 1; }
+[[ "$(grep -c '^REWIND_DATABASE_URL=' "$pg/rewind.env")" == 1 ]] || { echo 'database URL was duplicated' >&2; exit 1; }
+echo 'database settings configure fixture passed'

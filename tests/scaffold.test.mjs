@@ -42,7 +42,13 @@ test('quality workflow validates main and dev pushes and PRs against any stacked
   assert.match(workflow, /npx jest --runInBand --coverage/);
   assert.match(workflow, /bash tests\/deploy\/recovery-smoke\.test\.sh/);
   assert.equal((workflow.match(/npm run build:web/g) ?? []).length, 1);
-  assert.match(workflow, /needs: \[changes, static, server, frontend, browser, fixtures\]/);
+  assert.match(
+    workflow,
+    /needs: \[changes, static, server, server-postgres, frontend, browser, fixtures\]/,
+  );
+  // The server suite also runs against PostgreSQL, the hosted engine (#261).
+  assert.match(workflow, /npm run server:test:postgres/);
+  assert.match(workflow, /test '\$\{\{ needs\.server-postgres\.result \}\}' = success/);
   assert.match(workflow, /if: \$\{\{ always\(\) \}\}/);
   assert.match(workflow, /push:\n    branches: \[main, dev\]/);
   const pullRequestBlock = workflow.match(/  pull_request:\n((?:    .*\n)*)/)?.[1] ?? '';

@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { createTestTrigger, sqliteOnly } from './helpers/dialect.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -446,16 +447,19 @@ test('compilation audit detects a film bound to a different cycle than its clip'
   });
 });
 
-test('migration 017 preserves audit history and permits consistency repair events', async () => {
-  await fixture(async ({ database }) => {
-    database
-      .prepare(
-        `INSERT INTO audit_events (id, event_type, actor_member_id, resource_id, occurred_at, result)
+test(
+  'migration 017 preserves audit history and permits consistency repair events',
+  { skip: sqliteOnly },
+  async () => {
+    await fixture(async ({ database }) => {
+      database
+        .prepare(
+          `INSERT INTO audit_events (id, event_type, actor_member_id, resource_id, occurred_at, result)
        VALUES ('audit-preserved-session', 'session.created', NULL, 'session:safe-id', '2026-09-25T00:00:00.000Z', 'success'),
               ('audit-preserved-integrity', 'media.integrity_failed', NULL, 'clip:safe-id', '2026-09-25T00:00:01.000Z', 'failure')`,
-      )
-      .run();
-    database.exec(`
+        )
+        .run();
+      database.exec(`
       DROP INDEX audit_events_occurred_at_idx;
       DROP INDEX audit_events_resource_id_idx;
       ALTER TABLE audit_events RENAME TO audit_events_old;
@@ -473,30 +477,31 @@ test('migration 017 preserves audit history and permits consistency repair event
       INSERT INTO audit_events SELECT * FROM audit_events_old;
       DROP TABLE audit_events_old;
     `);
-    database.prepare('DELETE FROM schema_migrations WHERE version = 17').run();
-    database
-      .prepare('DELETE FROM schema_migration_markers WHERE migration_key = ?')
-      .run('consistency-repair-audit-v1');
-    migrateDatabase(database);
-    assert.equal(schemaReadiness(database).ready, true);
-    const rows = database.prepare('SELECT id, event_type FROM audit_events ORDER BY id').all();
-    assert.deepEqual(
-      rows.map((row) => ({ id: row.id, event_type: row.event_type })),
-      [
-        { id: 'audit-preserved-integrity', event_type: 'media.integrity_failed' },
-        { id: 'audit-preserved-session', event_type: 'session.created' },
-      ],
-    );
-    database
-      .prepare(
-        `INSERT INTO audit_events (id, event_type, actor_member_id, resource_id, occurred_at, result)
+      database.prepare('DELETE FROM schema_migrations WHERE version = 17').run();
+      database
+        .prepare('DELETE FROM schema_migration_markers WHERE migration_key = ?')
+        .run('consistency-repair-audit-v1');
+      migrateDatabase(database);
+      assert.equal(schemaReadiness(database).ready, true);
+      const rows = database.prepare('SELECT id, event_type FROM audit_events ORDER BY id').all();
+      assert.deepEqual(
+        rows.map((row) => ({ id: row.id, event_type: row.event_type })),
+        [
+          { id: 'audit-preserved-integrity', event_type: 'media.integrity_failed' },
+          { id: 'audit-preserved-session', event_type: 'session.created' },
+        ],
+      );
+      database
+        .prepare(
+          `INSERT INTO audit_events (id, event_type, actor_member_id, resource_id, occurred_at, result)
        VALUES ('audit-new-consistency-quarantine', 'media.consistency_quarantined', NULL, NULL, '2026-09-25T00:00:02.000Z', 'success'),
               ('audit-new-consistency', 'media.consistency_repaired', NULL, NULL, '2026-09-25T00:00:03.000Z', 'success'),
               ('audit-new-consistency-failed', 'media.consistency_repair_failed', NULL, NULL, '2026-09-25T00:00:04.000Z', 'failure')`,
-      )
-      .run();
-  });
-});
+        )
+        .run();
+    });
+  },
+);
 
 test('consistency CLI defaults to read-only JSON report mode', async () => {
   await fixture(async ({ dataDir, database, processedDir }) => {
@@ -632,13 +637,18 @@ test('a failed database commit restores quarantined files and rolls back their a
         id TEXT PRIMARY KEY,
         member_id TEXT REFERENCES profiles(id) DEFERRABLE INITIALLY DEFERRED
       );
-      CREATE TRIGGER fail_consistency_commit AFTER INSERT ON audit_events
-      WHEN NEW.resource_id LIKE 'file:%:consistency'
-      BEGIN
-        INSERT INTO consistency_commit_failure (id, member_id)
-        VALUES ('deferred-invalid-owner', 'missing-member');
-      END;
     `);
+    createTestTrigger(database, {
+      name: 'fail_consistency_commit',
+      timing: 'AFTER',
+      event: 'INSERT',
+      table: 'audit_events',
+      when: "NEW.resource_id LIKE 'file:%:consistency'",
+      action: {
+        sql: `INSERT INTO consistency_commit_failure (id, member_id)
+              VALUES ('deferred-invalid-owner', 'missing-member')`,
+      },
+    });
 
     assert.throws(() => applyConsistencyRepair(database, processedDir, plan), /FOREIGN KEY/i);
     assert.equal(await readFile(orphan, 'utf8'), 'restore me');

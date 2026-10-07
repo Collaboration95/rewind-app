@@ -5,6 +5,7 @@ import { Worker } from 'node:worker_threads';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { seedLegacyFixture } from './helpers/legacy-fixture.mjs';
+import { sqliteOnly } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabaseAt } = await import('../dist/db.js');
@@ -76,120 +77,127 @@ test('weekly allowance is anchored to the cycle start and resets at seven days',
   });
 });
 
-test('upgrading a v005 database backfills the cycle-start quota ledger', async () => {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-upgrade-`);
-  const databasePath = `${dataDir}/rewind.sqlite`;
-  const { DatabaseSync } = await import('node:sqlite');
-  const legacy = new DatabaseSync(databasePath);
-  try {
-    legacy.exec('PRAGMA foreign_keys = ON;');
-    for (const [index, name] of [
-      '001-initial.sql',
-      '002-session-audit.sql',
-      '003-cycle-controls.sql',
-      '004-invites.sql',
-      '005-media-idempotency.sql',
-    ].entries()) {
-      legacy.exec(await readFile(`server/migrations/${name}`, 'utf8'));
+test(
+  'upgrading a v005 database backfills the cycle-start quota ledger',
+  { skip: sqliteOnly },
+  async () => {
+    const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-upgrade-`);
+    const databasePath = `${dataDir}/rewind.sqlite`;
+    const { DatabaseSync } = await import('node:sqlite');
+    const legacy = new DatabaseSync(databasePath);
+    try {
+      legacy.exec('PRAGMA foreign_keys = ON;');
+      for (const [index, name] of [
+        '001-initial.sql',
+        '002-session-audit.sql',
+        '003-cycle-controls.sql',
+        '004-invites.sql',
+        '005-media-idempotency.sql',
+      ].entries()) {
+        legacy.exec(await readFile(`server/migrations/${name}`, 'utf8'));
+        legacy
+          .prepare(
+            'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
+          )
+          .run();
+        legacy
+          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(index + 1, new Date().toISOString());
+      }
+      seedLegacyFixture(legacy);
       legacy
         .prepare(
-          'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
+          `INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
+         VALUES ('legacy-contribution', 'demo-cycle', 'demo-1', 7, '2026-09-02T00:00:00.000Z')`,
         )
         .run();
       legacy
-        .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-        .run(index + 1, new Date().toISOString());
-    }
-    seedLegacyFixture(legacy);
-    legacy
-      .prepare(
-        `INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
-         VALUES ('legacy-contribution', 'demo-cycle', 'demo-1', 7, '2026-09-02T00:00:00.000Z')`,
-      )
-      .run();
-    legacy
-      .prepare('UPDATE cycles SET count_used = 1, seconds_used = 7 WHERE id = ?')
-      .run('demo-cycle');
-    legacy.close();
+        .prepare('UPDATE cycles SET count_used = 1, seconds_used = 7 WHERE id = ?')
+        .run('demo-cycle');
+      legacy.close();
 
-    const upgraded = openDatabaseAt(databasePath);
-    try {
-      assert.deepEqual(
-        upgraded
-          .prepare('SELECT version FROM schema_migrations ORDER BY version')
-          .all()
-          .map((row) => row.version),
-        [
-          1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-          26, 27, 28, 29, 30,
-        ],
-      );
-      const rows = upgraded
-        .prepare(
-          `SELECT window_start_at AS startsAt, window_end_at AS endsAt,
+      const upgraded = openDatabaseAt(databasePath);
+      try {
+        assert.deepEqual(
+          upgraded
+            .prepare('SELECT version FROM schema_migrations ORDER BY version')
+            .all()
+            .map((row) => row.version),
+          [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28, 29, 30,
+          ],
+        );
+        const rows = upgraded
+          .prepare(
+            `SELECT window_start_at AS startsAt, window_end_at AS endsAt,
               count_used AS countUsed, seconds_used AS secondsUsed
            FROM contribution_quota_windows
            WHERE cycle_id = 'demo-cycle' AND member_id = 'demo-1'`,
-        )
-        .all();
-      assert.deepEqual(
-        rows.map((row) => ({ ...row })),
-        [
-          {
-            startsAt: '2026-09-01T00:00:00.000Z',
-            endsAt: '2026-09-08T00:00:00.000Z',
-            countUsed: 2,
-            secondsUsed: 10,
-          },
-        ],
-      );
-      assert.equal(
-        upgraded
-          .prepare('SELECT quota_window_start_at AS windowStart FROM contributions WHERE id = ?')
-          .get('legacy-contribution').windowStart,
-        '2026-09-01T00:00:00.000Z',
-      );
+          )
+          .all();
+        assert.deepEqual(
+          rows.map((row) => ({ ...row })),
+          [
+            {
+              startsAt: '2026-09-01T00:00:00.000Z',
+              endsAt: '2026-09-08T00:00:00.000Z',
+              countUsed: 2,
+              secondsUsed: 10,
+            },
+          ],
+        );
+        assert.equal(
+          upgraded
+            .prepare('SELECT quota_window_start_at AS windowStart FROM contributions WHERE id = ?')
+            .get('legacy-contribution').windowStart,
+          '2026-09-01T00:00:00.000Z',
+        );
+      } finally {
+        upgraded.close();
+      }
     } finally {
-      upgraded.close();
+      await rm(dataDir, { recursive: true, force: true });
     }
-  } finally {
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
+  },
+);
 
-test('a legacy media-only v6 is repaired without losing its media schema', async () => {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-media-v6-`);
-  const databasePath = `${dataDir}/rewind.sqlite`;
-  const { DatabaseSync } = await import('node:sqlite');
-  const legacy = new DatabaseSync(databasePath);
-  try {
-    legacy.exec('PRAGMA foreign_keys = ON;');
-    for (const [index, name] of [
-      '001-initial.sql',
-      '002-session-audit.sql',
-      '003-cycle-controls.sql',
-      '004-invites.sql',
-      '005-media-idempotency.sql',
-    ].entries()) {
-      legacy.exec(await readFile(`server/migrations/${name}`, 'utf8'));
-      legacy
-        .prepare(
-          'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
-        )
-        .run();
-      legacy
-        .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-        .run(index + 1, new Date().toISOString());
-    }
-    legacy.exec(
-      `ALTER TABLE media_jobs ADD COLUMN source_path TEXT;
+test(
+  'a legacy media-only v6 is repaired without losing its media schema',
+  { skip: sqliteOnly },
+  async () => {
+    const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-media-v6-`);
+    const databasePath = `${dataDir}/rewind.sqlite`;
+    const { DatabaseSync } = await import('node:sqlite');
+    const legacy = new DatabaseSync(databasePath);
+    try {
+      legacy.exec('PRAGMA foreign_keys = ON;');
+      for (const [index, name] of [
+        '001-initial.sql',
+        '002-session-audit.sql',
+        '003-cycle-controls.sql',
+        '004-invites.sql',
+        '005-media-idempotency.sql',
+      ].entries()) {
+        legacy.exec(await readFile(`server/migrations/${name}`, 'utf8'));
+        legacy
+          .prepare(
+            'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
+          )
+          .run();
+        legacy
+          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
+          .run(index + 1, new Date().toISOString());
+      }
+      legacy.exec(
+        `ALTER TABLE media_jobs ADD COLUMN source_path TEXT;
        ALTER TABLE media_jobs ADD COLUMN trim_start_seconds REAL;
        ALTER TABLE media_jobs ADD COLUMN trim_end_seconds REAL;
        ALTER TABLE media_jobs ADD COLUMN mode TEXT;
        ALTER TABLE media_jobs ADD COLUMN error_code TEXT;`,
-    );
-    legacy.exec(
-      `CREATE TABLE media_metadata (
+      );
+      legacy.exec(
+        `CREATE TABLE media_metadata (
          source_uri TEXT PRIMARY KEY, mime_type TEXT NOT NULL, byte_length INTEGER NOT NULL,
          duration_seconds REAL NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
          has_audio INTEGER NOT NULL, verified_at TEXT NOT NULL
@@ -198,69 +206,73 @@ test('a legacy media-only v6 is repaired without losing its media schema', async
          source_uri TEXT PRIMARY KEY, group_id TEXT NOT NULL, member_id TEXT NOT NULL,
          source_path TEXT NOT NULL, created_at TEXT NOT NULL
        );`,
-    );
-    legacy
-      .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)')
-      .run(new Date().toISOString());
-    seedLegacyFixture(legacy);
-    const legacySourceUri = `staged://${'f'.repeat(32)}`;
-    const legacySourcePath = `${dataDir}/legacy-source.mp4`;
-    legacy
-      .prepare(
-        `INSERT INTO media_metadata
+      );
+      legacy
+        .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)')
+        .run(new Date().toISOString());
+      seedLegacyFixture(legacy);
+      const legacySourceUri = `staged://${'f'.repeat(32)}`;
+      const legacySourcePath = `${dataDir}/legacy-source.mp4`;
+      legacy
+        .prepare(
+          `INSERT INTO media_metadata
           (source_uri, mime_type, byte_length, duration_seconds, width, height, has_audio, verified_at)
          VALUES (?, 'video/mp4', 1000, 1, 180, 320, 1, ?)`,
-      )
-      .run(legacySourceUri, new Date().toISOString());
-    legacy
-      .prepare(
-        `INSERT INTO staged_media_sources
+        )
+        .run(legacySourceUri, new Date().toISOString());
+      legacy
+        .prepare(
+          `INSERT INTO staged_media_sources
           (source_uri, group_id, member_id, source_path, created_at)
          VALUES (?, 'demo-group', 'demo-1', ?, ?)`,
-      )
-      .run(legacySourceUri, legacySourcePath, new Date().toISOString());
-    legacy.close();
+        )
+        .run(legacySourceUri, legacySourcePath, new Date().toISOString());
+      legacy.close();
 
-    const upgraded = openDatabaseAt(databasePath);
-    try {
-      assert.equal(
-        upgraded
-          .prepare(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'contribution_quota_windows'",
-          )
-          .get()?.['1'],
-        1,
-      );
-      assert.equal(
-        upgraded.prepare('SELECT source_path FROM media_jobs LIMIT 1').get().source_path,
-        null,
-      );
-      assert.equal(
-        upgraded
-          .prepare(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'staged_media_sources'",
-          )
-          .get(),
-        undefined,
-      );
-      assert.equal(upgraded.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count, 1);
-      assert.deepEqual(
-        upgraded
-          .prepare('SELECT version FROM schema_migrations ORDER BY version')
-          .all()
-          .map((row) => row.version),
-        [
-          1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-          26, 27, 28, 29, 30,
-        ],
-      );
+      const upgraded = openDatabaseAt(databasePath);
+      try {
+        assert.equal(
+          upgraded
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'contribution_quota_windows'",
+            )
+            .get()?.['1'],
+          1,
+        );
+        assert.equal(
+          upgraded.prepare('SELECT source_path FROM media_jobs LIMIT 1').get().source_path,
+          null,
+        );
+        assert.equal(
+          upgraded
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'staged_media_sources'",
+            )
+            .get(),
+          undefined,
+        );
+        assert.equal(
+          upgraded.prepare('SELECT COUNT(*) AS count FROM staged_sources').get().count,
+          1,
+        );
+        assert.deepEqual(
+          upgraded
+            .prepare('SELECT version FROM schema_migrations ORDER BY version')
+            .all()
+            .map((row) => row.version),
+          [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28, 29, 30,
+          ],
+        );
+      } finally {
+        upgraded.close();
+      }
     } finally {
-      upgraded.close();
+      await rm(dataDir, { recursive: true, force: true });
     }
-  } finally {
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
+  },
+);
 
 test('clip submissions enforce five clips and thirty seconds per member window', async () => {
   await withDatabase(async ({ database }) => {
@@ -692,8 +704,8 @@ test('a transient SQLite writer lock retries and same-key submissions remain ide
   registerMetadata(database);
   const worker = new Worker(
     `const { parentPort, workerData } = require('node:worker_threads');
-     const { DatabaseSync } = require('node:sqlite');
-     const db = new DatabaseSync(workerData.databasePath);
+     const { openDatabaseAt } = require(require('node:path').resolve('server/dist/db.js'));
+     const db = openDatabaseAt(workerData.databasePath);
      db.exec('BEGIN IMMEDIATE');
      parentPort.postMessage('locked');
      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30);
@@ -747,8 +759,8 @@ test('a transient SQLite writer lock retries and same-key submissions remain ide
       .get();
     const cancelLock = new Worker(
       `const { parentPort, workerData } = require('node:worker_threads');
-       const { DatabaseSync } = require('node:sqlite');
-       const db = new DatabaseSync(workerData.databasePath);
+       const { openDatabaseAt } = require(require('node:path').resolve('server/dist/db.js'));
+       const db = openDatabaseAt(workerData.databasePath);
        db.exec('BEGIN IMMEDIATE');
        parentPort.postMessage('locked');
        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);

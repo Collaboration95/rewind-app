@@ -181,10 +181,42 @@ jobs:
             if [ -f "$fixture" ]; then bash "$fixture"; fi
           done
 
+  server-postgres:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    name: Server tests on PostgreSQL
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        # postgres:17-alpine, the hosted Lightsail engine version (#261).
+        image: postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Install FFmpeg
+        run: command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - name: Run the server suite against PostgreSQL
+        env:
+          REWIND_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        run: npm run server:test:postgres
+
   gate:
     # Keep this name stable for the existing branch-protection requirement.
     name: Format, lint, typecheck, and test
-    needs: [changes, static, server, frontend, browser, fixtures]
+    needs: [changes, static, server, server-postgres, frontend, browser, fixtures]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     steps:
@@ -195,6 +227,7 @@ jobs:
         run: |
           test '${{ needs.static.result }}' = skipped
           test '${{ needs.server.result }}' = skipped
+          test '${{ needs.server-postgres.result }}' = skipped
           test '${{ needs.frontend.result }}' = skipped
           test '${{ needs.browser.result }}' = skipped
           test '${{ needs.fixtures.result }}' = skipped
@@ -204,6 +237,7 @@ jobs:
         run: |
           test '${{ needs.static.result }}' = success
           test '${{ needs.server.result }}' = success
+          test '${{ needs.server-postgres.result }}' = success
           test '${{ needs.frontend.result }}' = success
           test '${{ needs.fixtures.result }}' = success
       - name: Require browser checks on main

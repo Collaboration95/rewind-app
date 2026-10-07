@@ -32,7 +32,7 @@ export function listRealGroupMemberSummaries(
        JOIN real_profiles profile ON profile.id = membership.profile_id
        WHERE membership.group_id = ?
        ORDER BY CASE membership.role WHEN 'owner' THEN 0 ELSE 1 END,
-                membership.accepted_at, profile.display_name COLLATE NOCASE`,
+                membership.accepted_at, lower(profile.display_name)`,
     )
     .all(group.id) as unknown as RealGroupMemberSummary[];
   const pendingInviteCount = database

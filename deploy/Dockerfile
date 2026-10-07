@@ -34,6 +34,7 @@ WORKDIR /app
 COPY --from=build --chown=rewind:rewind /runtime-dependencies/node_modules ./node_modules
 COPY --from=build --chown=rewind:rewind /app/server/dist ./server/dist
 COPY --from=build --chown=rewind:rewind /app/server/migrations ./server/migrations
+COPY --from=build --chown=rewind:rewind /app/server/certs ./server/certs
 
 USER rewind
 EXPOSE 8787

@@ -6,6 +6,7 @@ import { createRealAccount } from '../dist/auth/index.js';
 import { createRealGroup } from '../dist/groups/real.js';
 import { migrateDatabase, schemaReadiness } from '../dist/db.js';
 import { withIntentFixture } from './helpers/upload-intents.mjs';
+import { onPostgres } from './helpers/dialect.mjs';
 
 async function apiFixture(run) {
   await withIntentFixture(async (c) => {
@@ -240,6 +241,8 @@ test('upload-intent HTTP rechecks closure/quota and uses actual canonical fresh/
     );
     assert.equal(schemaReadiness(c.database).expectedMigrationVersion, 30);
     assert.equal(schemaReadiness(c.database).ready, true);
+    // The rest replays SQLite's repair migration; PostgreSQL uses its baseline.
+    if (onPostgres) return;
     c.database.prepare('DELETE FROM upload_intents WHERE group_id=?').run(c.group.group.id);
     c.database.exec('DROP TABLE upload_intents');
     migrateDatabase(c.database);

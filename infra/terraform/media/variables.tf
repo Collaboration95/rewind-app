@@ -42,3 +42,9 @@ variable "backup_prefix_arn" {
   type        = string
   default     = "arn:aws:s3:::rewind-demo-backups-330599756236/rewind-demo/*"
 }
+
+variable "database_availability_zone" {
+  description = "Zone of the managed PostgreSQL primary; the same zone as the host avoids cross-zone latency."
+  type        = string
+  default     = "ap-southeast-1a"
+}

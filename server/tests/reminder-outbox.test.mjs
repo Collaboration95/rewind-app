@@ -24,6 +24,7 @@ import {
 } from '../dist/reminders/outbox.js';
 import { startReminderLoop } from '../dist/reminders/loop.js';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { sqliteOnly } from './helpers/dialect.mjs';
 
 const execFileAsync = promisify(execFile);
 const token = 'ExpoPushToken[synthetic_reminder_token]';
@@ -693,21 +694,25 @@ test('three crashed receipt leases finish inspectably without an extra provider 
   });
 });
 
-test('additive outbox migration repairs an interrupted empty schema without losing accounts', async () => {
-  await fixture(async (c) => {
-    const accounts = c.db.prepare('SELECT COUNT(*) AS n FROM real_accounts').get().n;
-    c.db.exec('DROP TABLE reminder_outbox');
-    c.db.close();
-    c.db = openFixtureDatabase(c.config);
-    assert.equal(c.db.prepare('SELECT COUNT(*) AS n FROM real_accounts').get().n, accounts);
-    assert.equal(c.db.prepare('SELECT COUNT(*) AS n FROM reminder_outbox').get().n, 0);
-    assert.equal(
-      c.db.prepare('SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 27').get().n,
-      1,
-    );
-    assert.equal(c.db.prepare('PRAGMA foreign_key_check').all().length, 0);
-  });
-});
+test(
+  'additive outbox migration repairs an interrupted empty schema without losing accounts',
+  { skip: sqliteOnly },
+  async () => {
+    await fixture(async (c) => {
+      const accounts = c.db.prepare('SELECT COUNT(*) AS n FROM real_accounts').get().n;
+      c.db.exec('DROP TABLE reminder_outbox');
+      c.db.close();
+      c.db = openFixtureDatabase(c.config);
+      assert.equal(c.db.prepare('SELECT COUNT(*) AS n FROM real_accounts').get().n, accounts);
+      assert.equal(c.db.prepare('SELECT COUNT(*) AS n FROM reminder_outbox').get().n, 0);
+      assert.equal(
+        c.db.prepare('SELECT COUNT(*) AS n FROM schema_migrations WHERE version = 27').get().n,
+        1,
+      );
+      assert.equal(c.db.prepare('PRAGMA foreign_key_check').all().length, 0);
+    });
+  },
+);
 
 test('the runtime reminder loop queues and sends a due reminder once (#347)', async () => {
   await fixture(async (c) => {

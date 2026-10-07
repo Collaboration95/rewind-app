@@ -52,6 +52,11 @@ set +a
 if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
   unset AWS_PROFILE
 fi
+# After the PostgreSQL cutover (#261) the SQLite file is no longer live.
+if [[ -n "${REWIND_DATABASE_URL:-}" ]]; then
+  BACKUP_DIR="$BACKUP_DIR" DATA_DIR="$DATA_DIR" MEDIA_DIR="$MEDIA_DIR" \
+    exec "$SCRIPT_DIR/backup-postgres.sh" "$@"
+fi
 
 : "${REWIND_BACKUP_BUCKET:?REWIND_BACKUP_BUCKET must be set in $ENV_FILE}"
 : "${REWIND_BACKUP_PREFIX:=rewind-demo}"

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { createTestTrigger } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { createRuntimeServer } = await import('../dist/http.js');
@@ -177,8 +178,13 @@ test('real group form and database constraints enforce 2–10 member capacity', 
 test('failed real-group creation rolls back profile, group, cycle, membership, and selection writes', async () => {
   await withRuntime(async ({ baseUrl, database }) => {
     const { authorization } = await provision(baseUrl, database);
-    database.exec(`CREATE TRIGGER reject_real_membership BEFORE INSERT ON real_group_memberships
-      BEGIN SELECT RAISE(ABORT, 'membership write rejected'); END`);
+    createTestTrigger(database, {
+      name: 'reject_real_membership',
+      timing: 'BEFORE',
+      event: 'INSERT',
+      table: 'real_group_memberships',
+      action: { abort: 'membership write rejected' },
+    });
     const response = await fetch(`${baseUrl}/real/groups`, {
       method: 'POST',
       headers: { Authorization: authorization, 'Content-Type': 'application/json' },

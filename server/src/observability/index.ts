@@ -78,7 +78,12 @@ export function requestObservation() {
   return {
     requestId,
     /** Opt-in (REWIND_REQUEST_TIMING) latency line for every finished request (#321). */
-    timing(method: string | undefined, url: string | undefined, status: number): void {
+    timing(
+      method: string | undefined,
+      url: string | undefined,
+      status: number,
+      database?: { statements: number; roundTrips: number; milliseconds: number },
+    ): void {
       console.log(
         JSON.stringify({
           event: 'api.request',
@@ -87,6 +92,13 @@ export function requestObservation() {
           route: requestRoute(url),
           statusCode: Number.isInteger(status) ? status : 0,
           durationMs: Math.min(86_400_000, Math.max(0, Math.round(performance.now() - started))),
+          ...(database
+            ? {
+                dbStatements: database.statements,
+                dbRoundTrips: database.roundTrips,
+                dbMs: Math.round(database.milliseconds * 10) / 10,
+              }
+            : {}),
         }),
       );
     },

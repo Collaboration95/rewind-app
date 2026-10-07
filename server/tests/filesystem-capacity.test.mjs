@@ -11,6 +11,7 @@ import {
   filesystemCapacity,
 } from '../dist/observability/filesystem-capacity.js';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { sqliteOnly } from './helpers/dialect.mjs';
 
 const execFileAsync = promisify(execFile);
 const unknown = { state: 'unavailable', totalBytes: null, availableBytes: null };
@@ -78,66 +79,70 @@ test('filesystem probe failures and invalid results omit paths, exceptions and r
   );
 });
 
-test('actual local statfs CLI preserves database-only output and read-only store bytes', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'rewind-capacity-'));
-  const config = parseConfig({ REWIND_DATA_DIR: root });
-  const database = openFixtureDatabase(config);
-  try {
-    database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    const before = await readFile(config.databasePath);
-    const runCli = (...args) =>
-      execFileAsync(
-        process.execPath,
-        ['scripts/server-operational-metrics.mjs', config.databasePath, ...args],
-        { env: { ...process.env, NODE_NO_WARNINGS: '1' } },
-      );
-    const legacy = JSON.parse((await runCli()).stdout);
-    assert.equal(legacy.schemaVersion, 1);
-    assert.equal(Object.hasOwn(legacy, 'filesystem'), false);
-    const stats = await statfs(root, { bigint: true });
-    const { stdout, stderr } = await runCli('--filesystem', root);
-    const snapshot = JSON.parse(stdout);
-    assert.equal(stderr, '');
-    assert.equal(snapshot.filesystem.state, 'available');
-    assert.equal(snapshot.filesystem.totalBytes, Number(stats.bsize * stats.blocks));
-    assert.ok(Number.isSafeInteger(snapshot.filesystem.availableBytes));
-    assert.ok(snapshot.filesystem.availableBytes >= 0);
-    assert.ok(snapshot.filesystem.availableBytes <= snapshot.filesystem.totalBytes);
-    assert.equal(snapshot.filesystem.availableBytes % Number(stats.bsize), 0);
-    assert.deepEqual(Object.keys(snapshot.filesystem).sort(), [
-      'availableBytes',
-      'state',
-      'totalBytes',
-    ]);
-    const { filesystem, observedAt, ...numericSnapshot } = snapshot;
-    const { observedAt: legacyTime, ...legacyNumeric } = legacy;
-    assert.deepEqual(numericSnapshot, legacyNumeric);
-    assert.doesNotMatch(stdout, /rewind-capacity|bavail|bfree|mount|stack|errno/);
-    assert.deepEqual(await readFile(config.databasePath), before);
+test(
+  'actual local statfs CLI preserves database-only output and read-only store bytes',
+  { skip: sqliteOnly },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rewind-capacity-'));
+    const config = parseConfig({ REWIND_DATA_DIR: root });
+    const database = openFixtureDatabase(config);
+    try {
+      database.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      const before = await readFile(config.databasePath);
+      const runCli = (...args) =>
+        execFileAsync(
+          process.execPath,
+          ['scripts/server-operational-metrics.mjs', config.databasePath, ...args],
+          { env: { ...process.env, NODE_NO_WARNINGS: '1' } },
+        );
+      const legacy = JSON.parse((await runCli()).stdout);
+      assert.equal(legacy.schemaVersion, 1);
+      assert.equal(Object.hasOwn(legacy, 'filesystem'), false);
+      const stats = await statfs(root, { bigint: true });
+      const { stdout, stderr } = await runCli('--filesystem', root);
+      const snapshot = JSON.parse(stdout);
+      assert.equal(stderr, '');
+      assert.equal(snapshot.filesystem.state, 'available');
+      assert.equal(snapshot.filesystem.totalBytes, Number(stats.bsize * stats.blocks));
+      assert.ok(Number.isSafeInteger(snapshot.filesystem.availableBytes));
+      assert.ok(snapshot.filesystem.availableBytes >= 0);
+      assert.ok(snapshot.filesystem.availableBytes <= snapshot.filesystem.totalBytes);
+      assert.equal(snapshot.filesystem.availableBytes % Number(stats.bsize), 0);
+      assert.deepEqual(Object.keys(snapshot.filesystem).sort(), [
+        'availableBytes',
+        'state',
+        'totalBytes',
+      ]);
+      const { filesystem, observedAt, ...numericSnapshot } = snapshot;
+      const { observedAt: legacyTime, ...legacyNumeric } = legacy;
+      assert.deepEqual(numericSnapshot, legacyNumeric);
+      assert.doesNotMatch(stdout, /rewind-capacity|bavail|bfree|mount|stack|errno/);
+      assert.deepEqual(await readFile(config.databasePath), before);
 
-    const missingPath = join(root, 'secret-media-path-that-does-not-exist');
-    await assert.rejects(runCli('--filesystem', missingPath), (error) => {
-      assert.equal(error.code, 1);
-      assert.equal(error.stderr, '');
-      assert.deepEqual(JSON.parse(error.stdout).filesystem, unknown);
-      assert.doesNotMatch(error.stdout, /secret-media|ENOENT|stack|path/);
-      return true;
-    });
-    for (const args of [
-      ['--filesystem'],
-      ['--unknown', missingPath],
-      ['--filesystem', root, missingPath],
-    ]) {
-      await assert.rejects(runCli(...args), (error) => {
+      const missingPath = join(root, 'secret-media-path-that-does-not-exist');
+      await assert.rejects(runCli('--filesystem', missingPath), (error) => {
         assert.equal(error.code, 1);
-        assert.equal(error.stdout, '');
-        assert.deepEqual(JSON.parse(error.stderr), { event: 'operational.snapshot_unavailable' });
+        assert.equal(error.stderr, '');
+        assert.deepEqual(JSON.parse(error.stdout).filesystem, unknown);
+        assert.doesNotMatch(error.stdout, /secret-media|ENOENT|stack|path/);
         return true;
       });
+      for (const args of [
+        ['--filesystem'],
+        ['--unknown', missingPath],
+        ['--filesystem', root, missingPath],
+      ]) {
+        await assert.rejects(runCli(...args), (error) => {
+          assert.equal(error.code, 1);
+          assert.equal(error.stdout, '');
+          assert.deepEqual(JSON.parse(error.stderr), { event: 'operational.snapshot_unavailable' });
+          return true;
+        });
+      }
+      assert.deepEqual(await readFile(config.databasePath), before);
+    } finally {
+      database.close();
+      await rm(root, { recursive: true, force: true });
     }
-    assert.deepEqual(await readFile(config.databasePath), before);
-  } finally {
-    database.close();
-    await rm(root, { recursive: true, force: true });
-  }
-});
+  },
+);
