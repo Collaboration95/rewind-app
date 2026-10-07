@@ -59,7 +59,7 @@ any of this.
   users.
 - **After step 4:** set `dev.cutover = false`, apply, and deploy. The runtime
   returns to the untouched SQLite file. Writes made on PostgreSQL since the
-  cutover are not copied back (#TBD tracks a reverse export). Decide fix
+  cutover are not copied back (#505 tracks a reverse export). Decide fix
   forward versus rollback within the first day.
 
 ## Backups
@@ -142,7 +142,7 @@ Targets, to be confirmed by the first rehearsal: RPO 5 minutes
 ## Environments and cost
 
 - `dev` (`rewind-dev-postgres`) is enabled. `release` stays on SQLite until
-  its own enablement (separate issue).
+  its own enablement (#504).
 - Each environment has its own database, logins and environment binding, and
   a runtime refuses a database bound to another environment.
 - Cost: `micro_2_0` is US$15/month (1 GB RAM, 40 GB SSD, backups included);

@@ -10,7 +10,7 @@ import {
   type MessagePort,
 } from 'node:worker_threads';
 
-import type { BridgeError, BridgeRequest, BridgeResponse, StatementKind } from './protocol';
+import type { BridgeError, BridgeRequest, BridgeResponse } from './protocol';
 import { splitStatements, translate } from './translate';
 
 export interface PostgresConnectionOptions {
@@ -123,7 +123,6 @@ export class PostgresDatabase {
   private port_: MessagePort;
   private flag_: Int32Array;
   private timeoutMs_: number;
-  private inTransaction_ = false;
 
   constructor(options: PostgresConnectionOptions) {
     const shared = new SharedArrayBuffer(4);
@@ -155,10 +154,6 @@ export class PostgresDatabase {
     return this.worker_ !== null;
   }
 
-  get isTransaction(): boolean {
-    return this.inTransaction_;
-  }
-
   private call_(request: BridgeRequest): { rows: Row[]; rowCount: number } {
     if (!this.worker_) throw new Error('database is not open');
     Atomics.store(this.flag_, 0, 0);
@@ -180,12 +175,6 @@ export class PostgresDatabase {
     const response = message.message as BridgeResponse;
     if (!response.ok) throw new PostgresDatabaseError(response.error);
     return response;
-  }
-
-  private track_(kind: StatementKind, succeeded: boolean): void {
-    if (kind === 'begin' && succeeded) this.inTransaction_ = true;
-    if (kind === 'commit' && succeeded) this.inTransaction_ = false;
-    if (kind === 'rollback') this.inTransaction_ = false;
   }
 
   query(source: string, params: Params): { rows: Row[]; rowCount: number } {
@@ -218,22 +207,11 @@ export class PostgresDatabase {
       }
       sql += `$${index + 1}${cast}${translated.parts[index + 1]}`;
     });
-    try {
-      const result = this.call_({
-        type: 'query',
-        kind: translated.kind,
-        sql,
-        params,
-      });
-      this.track_(translated.kind, true);
-      return {
-        rows: result.rows.map((row) => nullPrototypeRow(row, translated.columnNames)),
-        rowCount: result.rowCount,
-      };
-    } catch (error) {
-      this.track_(translated.kind, false);
-      throw error;
-    }
+    const result = this.call_({ type: 'query', kind: translated.kind, sql, params });
+    return {
+      rows: result.rows.map((row) => nullPrototypeRow(row, translated.columnNames)),
+      rowCount: result.rowCount,
+    };
   }
 
   prepare(sql: string): PostgresStatement {
