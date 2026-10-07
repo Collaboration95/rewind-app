@@ -11,13 +11,16 @@
 #   cutover  points the runtime at it (REWIND_DATABASE_URL); false keeps the
 #            SQLite file live and is also the rollback switch
 #   bundle   micro_2_0 (single AZ) or micro_ha_2_0 (standby + failover)
+#   public   reachable from the internet (TLS and generated logins still
+#            required) so the team can browse data with any PostgreSQL client;
+#            false keeps it private to Lightsail resources in the region
 locals {
   database_settings = {
-    dev     = { enabled = true, cutover = false, bundle = "micro_2_0" }
-    release = { enabled = false, cutover = false, bundle = "micro_2_0" }
+    dev     = { enabled = true, cutover = false, bundle = "micro_2_0", public = true }
+    release = { enabled = false, cutover = false, bundle = "micro_2_0", public = false }
   }
   database = merge(
-    { enabled = false, cutover = false, bundle = "micro_2_0" },
+    { enabled = false, cutover = false, bundle = "micro_2_0", public = false },
     lookup(local.database_settings, var.environment, {}),
   )
   database_count = local.database.enabled ? 1 : 0
@@ -53,7 +56,7 @@ resource "aws_lightsail_database" "main" {
   master_username          = "rewind_admin"
   master_password          = random_password.database_admin[0].result
 
-  publicly_accessible          = false
+  publicly_accessible          = local.database.public
   backup_retention_enabled     = true
   preferred_backup_window      = "18:00-18:30" # 02:00-02:30 Singapore
   preferred_maintenance_window = "sun:19:00-sun:19:30"

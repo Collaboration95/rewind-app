@@ -8,14 +8,14 @@ hand.
 
 ## Components
 
-| Piece                                                                           | Where                                                                                            |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Managed PostgreSQL 17 (`rewind-dev-postgres`, private, encrypted, TLS)          | `infra/terraform/media/database.tf`                                                              |
-| Per-environment switches: `enabled`, `cutover`, `bundle`                        | `local.database_settings` in the same file                                                       |
-| Generated logins: admin, `rewind_app` (owns schema `rewind`), `rewind_readonly` | `random_password.*`; delivered via the hosted settings object                                    |
-| Runtime selection                                                               | `REWIND_DATABASE_URL` (empty means the SQLite file stays live)                                   |
-| Host scripts                                                                    | `deploy/database-bootstrap.sh`, `database-import.sh`, `database-status.sh`, `backup-postgres.sh` |
-| Operator CLI                                                                    | `node server/dist/cli.js database-status / database-import / database-bootstrap`                 |
+| Piece                                                                                    | Where                                                                                            |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Managed PostgreSQL 17 (`rewind-dev-postgres`, private, encrypted, TLS)                   | `infra/terraform/media/database.tf`                                                              |
+| Per-environment switches: `enabled`, `cutover`, `bundle`                                 | `local.database_settings` in the same file                                                       |
+| Generated logins: `rewind_admin`, `rewind_app` (owns schema `rewind`), `rewind_readonly` | `random_password.*`; delivered via the hosted settings object                                    |
+| Runtime selection                                                                        | `REWIND_DATABASE_URL` (empty means the SQLite file stays live)                                   |
+| Host scripts                                                                             | `deploy/database-bootstrap.sh`, `database-import.sh`, `database-status.sh`, `backup-postgres.sh` |
+| Operator CLI                                                                             | `node server/dist/cli.js database-status / database-import / database-bootstrap`                 |
 
 Repository variable used by the workflow: `REWIND_DATABASE_BOOTSTRAP_URI`
 (`terraform output database_bootstrap_uri`).
@@ -105,12 +105,13 @@ Targets, to be confirmed by the first rehearsal: RPO 5 minutes
 
 ## Failover
 
-- **Infrastructure.** Set `bundle = "micro_ha_2_0"` for a standby in a second
-  availability zone with automatic failover behind the same endpoint
-  (US$30/month instead of US$15).
+- **Infrastructure.** The database runs as a single instance (`micro_2_0`).
+  The owner decided against a standby on 7 October 2026 (#503): recovery
+  from a lost instance is the point-in-time restore above. A standby is one
+  setting away (`bundle = "micro_ha_2_0"`, US$30/month) if that changes.
 - **Application.**
-  - A connection dropped by a failover, restart or network fault is replaced
-    on the next statement.
+  - A connection dropped by a restart, maintenance or network fault is
+    replaced on the next statement.
   - A transaction that loses its connection fails once and rolls back, and the
     request returns an error instead of partial data.
   - A writer that cannot get the lock within 5 s reports "database is locked"
@@ -123,21 +124,20 @@ Targets, to be confirmed by the first rehearsal: RPO 5 minutes
 
 ## Inspecting live data
 
-- **In the app:** `/api/admin/` (Basic auth, user `admin`,
-  `REWIND_ADMIN_PASSWORD`). It is a read-only, paginated table browser that
-  hides secrets, and it works on both engines.
-- **SQL client (psql, pgAdmin):** the database is private to Lightsail. Open
-  an SSH tunnel through the host, then connect to `127.0.0.1:5432`, database
-  `rewind`, as `rewind_readonly`:
+The dev database is publicly reachable (`public = true` in
+`local.database_settings`), so any PostgreSQL client can browse it: psql,
+pgAdmin, TablePlus or DBeaver. TLS is required. Use the read-only login, which
+cannot write (`default_transaction_read_only`, SELECT-only grants):
 
-  ```sh
-  ssh -L 5432:<endpoint>:5432 ubuntu@<host>
-  ```
+```sh
+terraform -chdir=infra/terraform/media output -raw database_readonly_url
+psql "$(terraform -chdir=infra/terraform/media output -raw database_readonly_url)?sslmode=require"
+```
 
-  The role cannot write (`default_transaction_read_only`, no write grants).
-
-- The Lightsail console shows metrics, logs, snapshots and connection
-  details. It has no row browser; use one of the two routes above.
+Tables are in schema `rewind`. The old `/admin` table browser was removed.
+The Lightsail console shows metrics, logs, snapshots and connection details,
+but has no row browser. Set `public = false` to make the database private to
+Lightsail resources again; then reach it through an SSH tunnel via the host.
 
 ## Environments and cost
 
@@ -145,5 +145,4 @@ Targets, to be confirmed by the first rehearsal: RPO 5 minutes
   its own enablement (#504).
 - Each environment has its own database, logins and environment binding, and
   a runtime refuses a database bound to another environment.
-- Cost: `micro_2_0` is US$15/month (1 GB RAM, 40 GB SSD, backups included);
-  `micro_ha_2_0` is US$30/month.
+- Cost: `micro_2_0` is US$15/month (1 GB RAM, 40 GB SSD, backups included).

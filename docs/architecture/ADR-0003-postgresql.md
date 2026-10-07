@@ -23,8 +23,10 @@ serialised-writer semantics (`BEGIN IMMEDIATE`, busy retries).
 ## Decision
 
 1. **Hosted runs use managed PostgreSQL 17 on Lightsail.** It is encrypted at
-   rest, takes automatic daily snapshots with 7-day point-in-time restore, is
-   private to the region and needs TLS. Terraform:
+   rest, takes automatic daily snapshots with 7-day point-in-time restore and
+   needs TLS. Dev is publicly reachable so the team can browse data with a
+   SQL client (owner decision, 7 Oct 2026: convenience over isolation); no
+   standby (#503). Terraform:
    `infra/terraform/media/database.tf`. Local runs and the default test suite
    keep SQLite; setting `REWIND_DATABASE_URL` selects PostgreSQL.
 2. **Keep the synchronous persistence code; add a PostgreSQL connection with
@@ -94,6 +96,20 @@ REPLACE`, named parameters) fail at `prepare`, not silently.
   write. Same-zone placement keeps hosted latency in the low milliseconds.
   Rewind's load (a handful of groups) is far below where this matters; if it
   ever does, hot paths can move to async `pg` one at a time.
+- **Round trips, not async, decide latency.** Measured with
+  `scripts/measure-database-calls.mjs` (Server-Timing per request). A chat
+  message first cost 23 statements and 38 server round trips. Two changes
+  cut that to 6:
+  - each statement now travels with its lock or savepoint in one round trip;
+  - signed-in identity (session, selected group, membership) is cached for
+    5 minutes and cleared by the server's own changes.
+
+  The other hot requests dropped too: archive 21 → 2, contributions 14 → 4,
+  chat history 15 → 5, session restore 5 → 0. With so few round trips per
+  request, an async rewrite of ~900 call sites would save little; it remains
+  the next step if hosted request timing shows the event loop is the
+  bottleneck.
+
 - Writers are serialised, exactly as before. PostgreSQL row-level
   concurrency is not exploited; that is a deliberate parity choice.
 - The server suite runs on both engines in CI (`Server tests on PostgreSQL`).

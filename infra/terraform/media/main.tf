@@ -191,11 +191,6 @@ resource "aws_iam_access_key" "runtime" {
   user = aws_iam_user.runtime.name
 }
 
-# Shared login for the read-only /admin table browser (user "admin").
-resource "random_password" "admin" {
-  length  = 32
-  special = false
-}
 
 # Hosted settings for the dev deploy. Terraform writes them here and the deploy
 # workflow streams them to the server (deploy/release-host.sh configure), so
@@ -217,7 +212,6 @@ resource "aws_s3_object" "hosted_env" {
     "AWS_SECRET_ACCESS_KEY=${aws_iam_access_key.runtime.secret}",
     "REWIND_REMINDER_VAPID_SUBJECT=${var.web_push_subject}",
     "REWIND_REQUEST_TIMING=true",
-    "REWIND_ADMIN_PASSWORD=${random_password.admin.result}",
   ], local.database_hosted_settings, var.extra_hosted_settings, [""])))
 }
 
