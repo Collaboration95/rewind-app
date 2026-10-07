@@ -20,6 +20,14 @@ hand.
 Repository variable used by the workflow: `REWIND_DATABASE_BOOTSTRAP_URI`
 (`terraform output database_bootstrap_uri`).
 
+GitHub only dispatches a workflow that also exists on the default branch
+(`main`). Until a `main` promotion includes it, run the same steps from an
+operator machine: open SSH for your address
+(`aws lightsail open-instance-public-ports`), get a certificate with
+`aws lightsail get-instance-access-details`, connect with
+`-o IdentitiesOnly=yes`, and run the `deploy/database-*.sh` scripts on the
+host. Close the port afterwards.
+
 ## First-time setup and cutover
 
 1. **Create.** Apply `infra/terraform/media` with `dev.enabled = true`.
@@ -100,8 +108,17 @@ restored row counts.
   the last SQLite snapshot. This is the emergency path only: data written
   since the cutover is not in that file.
 
-Targets, to be confirmed by the first rehearsal: RPO 5 minutes
-(point-in-time) or 24 hours (logical dump); RTO under 60 minutes.
+Measured on 7 October 2026 (cutover day), dev with 889 rows in 38 tables:
+
+| Rehearsal                                | Result                                                           |
+| ---------------------------------------- | ---------------------------------------------------------------- |
+| Recovery point age at restore time (RPO) | 334 s (5.6 min)                                                  |
+| Restore to a verified database (RTO)     | 1022 s (17 min); 1017 s of it is Lightsail creating the instance |
+| Restored versus live rows                | identical in all 38 tables                                       |
+| Nightly logical backup                   | `rewind-20261007T160237Z.pgdump`, restore-verified (38 tables)   |
+
+The logical dump bounds the RPO at 24 hours if the managed backups are lost
+as well.
 
 ## Failover
 
