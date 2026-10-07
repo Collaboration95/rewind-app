@@ -16,7 +16,7 @@
 #            false keeps it private to Lightsail resources in the region
 locals {
   database_settings = {
-    dev     = { enabled = true, cutover = false, bundle = "micro_2_0", public = true }
+    dev     = { enabled = true, cutover = true, bundle = "micro_2_0", public = true }
     release = { enabled = false, cutover = false, bundle = "micro_2_0", public = false }
   }
   database = merge(

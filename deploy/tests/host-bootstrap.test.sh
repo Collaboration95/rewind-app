@@ -114,7 +114,7 @@ assert_mode 600 "$fixture_root/rewind.env"
 for artifact in Dockerfile README.md compose.yaml operator-common.sh backup-manifest.sh backup.sh pause-host.sh preflight.sh migrate-with-backup.sh nginx.conf restore.sh rewind.env.example rewind-backup.service rewind-backup.timer web.Dockerfile; do
   assert_file "$fixture_root/deploy/$artifact"
 done
-for executable in operator-common.sh backup-manifest.sh backup.sh restore.sh pause-host.sh preflight.sh migrate-with-backup.sh; do
+for executable in operator-common.sh backup-manifest.sh backup.sh backup-postgres.sh database-bootstrap.sh database-import.sh database-status.sh restore.sh pause-host.sh preflight.sh migrate-with-backup.sh; do
   [[ -x "$fixture_root/deploy/$executable" ]]
 done
 assert_file "$SYSTEMD_DIR/rewind-backup.service"
