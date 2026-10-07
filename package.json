@@ -31,6 +31,7 @@
     "test:host-preflight": "bash tests/deploy/host-preflight.test.sh",
     "test:host-lifecycle": "node deploy/lifecycle-smoke.mjs",
     "server:test": "npm run server:build && node --test server/tests/*.test.mjs",
+    "server:test:postgres": "npm run server:build && node scripts/run-server-tests-postgres.mjs",
     "architecture:check": "node scripts/check-architecture.mjs",
     "lint": "eslint .",
     "format": "npm run format:write",

@@ -1,5 +1,11 @@
 # Hosted persistence contract
 
+> **PostgreSQL (#261).** Hosted relational data moves to managed PostgreSQL
+> when an environment's `cutover` switch is set; see
+> [ADR-0003](ADR-0003-postgresql.md) and the
+> [operations runbook](postgresql-operations.md). Until then, and for local
+> runs, the SQLite contract below applies unchanged.
+
 Hosted dev runs the real-account app as one disposable Node container on the
 Lightsail host `rewind-demo` (the name is historical), against persistent
 SQLite and server-owned media. It is not a production data platform: it does

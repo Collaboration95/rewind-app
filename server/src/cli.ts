@@ -4,6 +4,9 @@ import { listAuditEvents, type AuditEvent } from './audit';
 import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from './config';
 import {
   backfillMediaIntegrity,
+  bootstrapDatabase,
+  databaseStatus,
+  importSqliteSnapshot,
   openDatabase,
   openOperationalDatabase,
   resetDatabase,
@@ -678,7 +681,7 @@ async function start(config: RuntimeConfig): Promise<void> {
       `Rewind local runtime ${SERVICE_VERSION} listening on http://${host}:${actualPort}`,
     );
     if (lan) console.log(`LAN address: http://${lan}:${actualPort}`);
-    console.log(`SQLite data: ${config.databasePath}`);
+    console.log(`Database: ${describeDatabase(config)}`);
     console.log('Real-group automatic cycle/media loop started. Press Ctrl-C to stop.');
   });
 }
@@ -735,6 +738,12 @@ async function runReminderCommand(config: RuntimeConfig, argv: string[]): Promis
   }
 }
 
+function describeDatabase(config: RuntimeConfig): string {
+  return config.database
+    ? `PostgreSQL at ${config.database.host} (${config.database.environment})`
+    : `SQLite at ${config.databasePath}`;
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const command = argv[0] ?? 'start';
   const json = argv.includes('--json');
@@ -746,16 +755,53 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (!report.ok) process.exitCode = 1;
       return;
     }
+    if (command === 'database-import') {
+      const sqlitePath = readOption(argv, ['--sqlite']);
+      if (!sqlitePath) {
+        throw new ConfigError(
+          'database-import needs --sqlite PATH.',
+          'Point it at a SQLite snapshot, for example one restored from an S3 backup.',
+        );
+      }
+      const report = importSqliteSnapshot(config, resolve(sqlitePath), {
+        replace: argv.includes('--replace'),
+      });
+      if (json) console.log(JSON.stringify(report));
+      else {
+        for (const table of report.tables) console.log(`${table.table}: ${table.rows} rows`);
+        console.log(`Imported and reconciled ${report.totalRows} rows into PostgreSQL.`);
+      }
+      return;
+    }
+    if (command === 'database-bootstrap') {
+      const roles = bootstrapDatabase();
+      console.log(
+        `Roles ready: ${roles.appRole} owns schema ${roles.schema}; ${roles.readonlyRole} can read it.`,
+      );
+      return;
+    }
+    if (command === 'database-status') {
+      const status = databaseStatus(config);
+      if (json) console.log(JSON.stringify(status));
+      else {
+        console.log(`${status.engine} at ${status.location}`);
+        console.log(`Schema ready: ${status.ready} (migration ${status.migrationVersion})`);
+        if (status.environment) console.log(`Environment: ${status.environment}`);
+        for (const [table, count] of Object.entries(status.rows)) console.log(`${table}: ${count}`);
+      }
+      if (!status.ready) process.exitCode = 1;
+      return;
+    }
     if (command === 'migrate') {
       const database = await openRuntimeDatabase(config);
-      console.log(`SQLite migrated at ${config.databasePath}.`);
+      console.log(`Database migrated (${describeDatabase(config)}).`);
       database.close();
       return;
     }
     if (command === 'reset') {
       resetDatabase(config);
       const database = await openRuntimeDatabase(config);
-      console.log(`Local database reset at ${config.databasePath}.`);
+      console.log(`Local database reset (${describeDatabase(config)}).`);
       database.close();
       return;
     }

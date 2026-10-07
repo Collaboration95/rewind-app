@@ -198,3 +198,76 @@ export function postgresMissingMigrationKeys(
     .filter((migration) => !versions.has(migration.version) || !markers.has(migration.key))
     .map((migration) => migration.key);
 }
+
+export interface DatabaseRoles {
+  schema: string;
+  appRole: string;
+  appPassword: string;
+  readonlyRole: string;
+  readonlyPassword: string;
+}
+
+/**
+ * One-time setup run with the managed database's admin login: an application
+ * role that owns the Rewind schema (it runs migrations) and a read-only role
+ * for backups and operator inspection. Safe to rerun; it rotates passwords.
+ */
+export function bootstrapDatabaseRoles(admin: PostgresDatabase, roles: DatabaseRoles): void {
+  for (const name of [roles.schema, roles.appRole, roles.readonlyRole]) {
+    if (!/^[a-z_][a-z0-9_]{0,62}$/.test(name))
+      throw new Error(`Invalid role or schema name: ${name}`);
+  }
+  for (const password of [roles.appPassword, roles.readonlyPassword]) {
+    if (password.length < 24)
+      throw new Error('Database role passwords must be at least 24 characters.');
+  }
+  const run = (template: string, ...values: string[]) => {
+    const [{ sql }] = admin.queryNative(
+      `SELECT format($1::text, ${values.map((_, i) => `$${i + 2}::text`).join(', ')}) AS sql`,
+      [template, ...values],
+    );
+    admin.execNative(String(sql));
+  };
+  const roleExists = (name: string) =>
+    admin.queryNative('SELECT 1 FROM pg_roles WHERE rolname = $1', [name]).length > 0;
+  for (const [role, password] of [
+    [roles.appRole, roles.appPassword],
+    [roles.readonlyRole, roles.readonlyPassword],
+  ]) {
+    run(
+      roleExists(role) ? 'ALTER ROLE %I LOGIN PASSWORD %L' : 'CREATE ROLE %I LOGIN PASSWORD %L',
+      role,
+      password,
+    );
+  }
+  const [{ database }] = admin.queryNative('SELECT current_database() AS database');
+  // The admin must be able to hand the schema to the app role.
+  run('GRANT %I TO current_user', roles.appRole);
+  run(
+    'GRANT CONNECT ON DATABASE %I TO %I, %I',
+    String(database),
+    roles.appRole,
+    roles.readonlyRole,
+  );
+  run('CREATE SCHEMA IF NOT EXISTS %I AUTHORIZATION %I', roles.schema, roles.appRole);
+  run('ALTER SCHEMA %I OWNER TO %I', roles.schema, roles.appRole);
+  run('REVOKE ALL ON SCHEMA %I FROM PUBLIC', roles.schema);
+  run('ALTER ROLE %I SET search_path = %I', roles.appRole, roles.schema);
+  run('ALTER ROLE %I SET search_path = %I', roles.readonlyRole, roles.schema);
+  run('ALTER ROLE %I SET default_transaction_read_only = on', roles.readonlyRole);
+  run('GRANT USAGE ON SCHEMA %I TO %I', roles.schema, roles.readonlyRole);
+  run('GRANT SELECT ON ALL TABLES IN SCHEMA %I TO %I', roles.schema, roles.readonlyRole);
+  run('GRANT SELECT ON ALL SEQUENCES IN SCHEMA %I TO %I', roles.schema, roles.readonlyRole);
+  run(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT SELECT ON TABLES TO %I',
+    roles.appRole,
+    roles.schema,
+    roles.readonlyRole,
+  );
+  run(
+    'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT SELECT ON SEQUENCES TO %I',
+    roles.appRole,
+    roles.schema,
+    roles.readonlyRole,
+  );
+}

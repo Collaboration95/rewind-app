@@ -1,0 +1,219 @@
+name: Database operations
+
+# Manual, audited operations on the hosted dev PostgreSQL database (#261, #172).
+# Runs as the dev deploy role (GitHub OIDC, environment dev) and reaches the
+# host over a temporary SSH rule, like Deploy dev. Logins come from the
+# Terraform-written private settings; nothing is typed or copied by hand.
+#
+#   status            readiness and row counts of the live database
+#   bootstrap         create/rotate the app and read-only roles (idempotent)
+#   import            stop public traffic, take a fresh SQLite backup to S3,
+#                     and import it into PostgreSQL with reconciliation; the
+#                     web proxy stays stopped until the cutover deploy
+#   resume            restart the web proxy (abandon an import window)
+#   backup            run the nightly backup now
+#   rehearse-restore  restore the latest point-in-time recovery into a new
+#                     database, verify it, report RPO/RTO, delete it
+# See docs/architecture/postgresql-operations.md for the cutover and recovery runbook.
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation
+        required: true
+        type: choice
+        options: [status, bootstrap, import, resume, backup, rehearse-restore]
+      manifest:
+        description: 'import: backup manifest name (default: the backup this run takes)'
+        required: false
+        default: ''
+      replace:
+        description: 'import: overwrite a PostgreSQL database that already holds data'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-demo-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.REWIND_DEMO_AWS_REGION || 'ap-southeast-1' }}
+  REWIND_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEMO_DEPLOY_ROLE_ARN }}
+  REWIND_DEPLOY_INSTANCE: ${{ vars.REWIND_DEMO_INSTANCE || 'rewind-demo' }}
+  REWIND_DATABASE_NAME: rewind-dev-postgres
+  REWIND_DATABASE_ZONE: ap-southeast-1a
+  OPERATION: ${{ inputs.operation }}
+
+jobs:
+  operate:
+    name: ${{ inputs.operation }}
+    if: ${{ github.ref == 'refs/heads/dev' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: dev
+    steps:
+      - name: Assume the deploy role with GitHub OIDC
+        run: |
+          set -Eeuo pipefail
+          [ -n "$REWIND_DEPLOY_ROLE_ARN" ] || { echo 'AWS_DEMO_DEPLOY_ROLE_ARN is not set.' >&2; exit 1; }
+          id_token="$(curl -fsS \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r .value)"
+          credentials="$(aws sts assume-role-with-web-identity \
+            --role-arn "$REWIND_DEPLOY_ROLE_ARN" \
+            --role-session-name "rewind-database-${OPERATION}-${GITHUB_RUN_ID}" \
+            --web-identity-token "$id_token" \
+            --duration-seconds 3600 \
+            --output json --query Credentials)"
+          for name in AccessKeyId SecretAccessKey SessionToken; do
+            echo "::add-mask::$(jq -r ".${name}" <<<"$credentials")"
+          done
+          {
+            echo "AWS_ACCESS_KEY_ID=$(jq -r .AccessKeyId <<<"$credentials")"
+            echo "AWS_SECRET_ACCESS_KEY=$(jq -r .SecretAccessKey <<<"$credentials")"
+            echo "AWS_SESSION_TOKEN=$(jq -r .SessionToken <<<"$credentials")"
+            echo "AWS_DEFAULT_REGION=$AWS_REGION"
+          } >> "$GITHUB_ENV"
+
+      - name: Open temporary SSH for this runner
+        run: |
+          set -Eeuo pipefail
+          host_ip="$(aws lightsail get-instance --instance-name "$REWIND_DEPLOY_INSTANCE" \
+            --query 'instance.publicIpAddress' --output text)"
+          runner_ip="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
+          [[ "$runner_ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || { echo 'No runner address.' >&2; exit 1; }
+          {
+            echo "REWIND_HOST_IP=$host_ip"
+            echo "REWIND_RUNNER_CIDR=${runner_ip}/32"
+          } >> "$GITHUB_ENV"
+          aws lightsail open-instance-public-ports --instance-name "$REWIND_DEPLOY_INSTANCE" \
+            --port-info "fromPort=22,toPort=22,protocol=tcp,cidrs=${runner_ip}/32" >/dev/null
+          dir="$RUNNER_TEMP/rewind-ssh"
+          mkdir -p "$dir" && chmod 0700 "$dir"
+          aws lightsail get-instance-access-details --instance-name "$REWIND_DEPLOY_INSTANCE" \
+            --protocol ssh --output json > "$dir/access.json"
+          jq -r '.accessDetails.privateKey' "$dir/access.json" > "$dir/key"
+          jq -r '.accessDetails.certKey' "$dir/access.json" > "$dir/key-cert.pub"
+          chmod 0600 "$dir/key" "$dir/key-cert.pub"
+          jq -r --arg host "$host_ip" '.accessDetails.hostKeys[] | "\($host) \(.algorithm) \(.publicKey)"' \
+            "$dir/access.json" > "$dir/known_hosts"
+          rm -f "$dir/access.json"
+          echo "REWIND_SSH=ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$dir/known_hosts -i $dir/key ubuntu@$host_ip" >> "$GITHUB_ENV"
+
+      - name: Status
+        if: ${{ inputs.operation == 'status' }}
+        run: |
+          set -Eeuo pipefail
+          $REWIND_SSH 'bash /srv/rewind/deploy/database-status.sh' | tee status.json
+          jq -r '"Engine: \(.engine), ready: \(.ready), migration \(.appliedMigrationVersion)/\(.migrationVersion), environment: \(.environment)"' status.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Bootstrap roles
+        if: ${{ inputs.operation == 'bootstrap' }}
+        env:
+          REWIND_DATABASE_BOOTSTRAP_URI: ${{ vars.REWIND_DATABASE_BOOTSTRAP_URI }}
+        run: |
+          set -Eeuo pipefail
+          [ -n "$REWIND_DATABASE_BOOTSTRAP_URI" ] || {
+            echo 'Set the repository variable REWIND_DATABASE_BOOTSTRAP_URI from terraform output database_bootstrap_uri.' >&2
+            exit 1
+          }
+          settings="$(aws s3 cp "$REWIND_DATABASE_BOOTSTRAP_URI" -)"
+          printf '%s\n' "$settings" | $REWIND_SSH 'bash /srv/rewind/deploy/database-bootstrap.sh'
+
+      - name: Import the latest SQLite backup
+        if: ${{ inputs.operation == 'import' }}
+        env:
+          MANIFEST: ${{ inputs.manifest }}
+          REPLACE: ${{ inputs.replace }}
+        run: |
+          set -Eeuo pipefail
+          args='--confirm'
+          if [ -n "$MANIFEST" ]; then
+            [[ "$MANIFEST" =~ ^rewind-[0-9]{8}T[0-9]{6}Z\.manifest\.json$ ]] || { echo 'Bad manifest name.' >&2; exit 1; }
+            args="$args --manifest $MANIFEST"
+          fi
+          [ "$REPLACE" != true ] || args="$args --replace"
+          # Stop public traffic first so no write lands after the snapshot.
+          $REWIND_SSH "set -Eeuo pipefail
+            docker stop rewind-demo-web >/dev/null
+            if [ -z '$MANIFEST' ]; then bash /srv/rewind/deploy/backup.sh; fi
+            bash /srv/rewind/deploy/database-import.sh $args" | tee import.log
+          {
+            echo '### Import complete; the web proxy stays stopped.'
+            echo 'Set cutover = true for dev in infra/terraform/media/database.tf, apply, then run Deploy dev.'
+            echo '```'
+            tail -n 45 import.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resume public traffic
+        if: ${{ inputs.operation == 'resume' }}
+        run: $REWIND_SSH 'docker start rewind-demo-web >/dev/null && echo web proxy started'
+
+      - name: Back up now
+        if: ${{ inputs.operation == 'backup' }}
+        run: $REWIND_SSH 'bash /srv/rewind/deploy/backup.sh'
+
+      - name: Rehearse a point-in-time restore
+        if: ${{ inputs.operation == 'rehearse-restore' }}
+        run: |
+          set -Eeuo pipefail
+          source="$REWIND_DATABASE_NAME"
+          rehearsal="${source}-rehearsal-$(date -u +%Y%m%d%H%M%S)"
+          echo "REWIND_REHEARSAL=$rehearsal" >> "$GITHUB_ENV"
+          restorable="$(aws lightsail get-relational-database --relational-database-name "$source" \
+            --query 'relationalDatabase.latestRestorableTime' --output text)"
+          started="$(date -u +%s)"
+          aws lightsail create-relational-database-from-snapshot \
+            --relational-database-name "$rehearsal" \
+            --source-relational-database-name "$source" \
+            --use-latest-restorable-time \
+            --availability-zone "$REWIND_DATABASE_ZONE" \
+            --relational-database-bundle-id micro_2_0 \
+            --no-publicly-accessible \
+            --tags "key=rewind-purpose,value=restore-rehearsal-dev" >/dev/null
+          for _ in $(seq 1 120); do
+            state="$(aws lightsail get-relational-database --relational-database-name "$rehearsal" \
+              --query 'relationalDatabase.state' --output text)"
+            [ "$state" = available ] && break
+            sleep 30
+          done
+          [ "$state" = available ] || { echo "The rehearsal database is still $state." >&2; exit 1; }
+          endpoint="$(aws lightsail get-relational-database --relational-database-name "$rehearsal" \
+            --query 'relationalDatabase.[masterEndpoint.address,masterEndpoint.port]' --output text | tr '\t' ':')"
+          $REWIND_SSH "bash /srv/rewind/deploy/database-status.sh --endpoint $endpoint" > restored.json
+          recovered="$(date -u +%s)"
+          $REWIND_SSH 'bash /srv/rewind/deploy/database-status.sh' > live.json
+          jq -e '.ready == true and .engine == "postgresql"' restored.json >/dev/null
+          restorable_epoch="$(date -u -d "$restorable" +%s)"
+          rpo=$(( started - restorable_epoch ))
+          rto=$(( recovered - started ))
+          {
+            echo '### Point-in-time restore rehearsal'
+            echo "- Recovery point: $restorable (RPO at start: ${rpo}s)"
+            echo "- Restored and verified in ${rto}s (RTO)"
+            echo '- Rows (restored / live):'
+            jq -r --slurpfile live live.json \
+              '.rows | to_entries[] | "  - \(.key): \(.value) / \($live[0].rows[.key])"' restored.json
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the rehearsal database
+        if: ${{ always() && env.REWIND_REHEARSAL != '' }}
+        run: |
+          aws lightsail delete-relational-database --relational-database-name "$REWIND_REHEARSAL" \
+            --skip-final-snapshot >/dev/null && echo "Deleted $REWIND_REHEARSAL."
+
+      - name: Close temporary SSH and remove key material
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -n "${REWIND_RUNNER_CIDR:-}" ]; then
+            aws lightsail close-instance-public-ports --instance-name "$REWIND_DEPLOY_INSTANCE" \
+              --port-info "fromPort=22,toPort=22,protocol=tcp,cidrs=$REWIND_RUNNER_CIDR" >/dev/null
+          fi
+          rm -rf -- "$RUNNER_TEMP/rewind-ssh"

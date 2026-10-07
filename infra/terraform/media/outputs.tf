@@ -35,3 +35,18 @@ output "admin_password" {
   value       = random_password.admin.result
   sensitive   = true
 }
+
+output "database_endpoint" {
+  description = "Private managed PostgreSQL endpoint (host:port), or null when disabled."
+  value       = local.database_endpoint
+}
+
+output "database_name" {
+  description = "Lightsail name of the managed PostgreSQL database, or null when disabled."
+  value       = local.database.enabled ? local.database_name : null
+}
+
+output "database_bootstrap_uri" {
+  description = "Private settings object the Database operations workflow streams to the role bootstrap."
+  value       = local.database.enabled ? "s3://${aws_s3_bucket.media.id}/${aws_s3_object.database_bootstrap[0].key}" : null
+}

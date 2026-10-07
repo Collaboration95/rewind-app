@@ -22,11 +22,13 @@ declare module 'pg' {
     end(): Promise<void>;
     on(event: 'error', listener: (error: Error) => void): this;
   }
-  const types: {
-    builtins: { INT8: number; NUMERIC: number; BOOL: number };
-    setTypeParser(oid: number, parse: (value: string) => unknown): void;
+  const pg: {
+    Client: typeof Client;
+    types: {
+      builtins: { INT8: number; NUMERIC: number; BOOL: number };
+      setTypeParser(oid: number, parse: (value: string) => unknown): void;
+    };
   };
-  const pg: { Client: typeof Client; types: typeof types };
   export default pg;
   export type { Client };
 }

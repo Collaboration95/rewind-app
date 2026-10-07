@@ -154,14 +154,29 @@ data "aws_iam_policy_document" "runtime" {
     resources = [aws_s3_bucket.media.arn]
   }
 
-  # The daily host backup uploads with these keys. Add-only: the backup
+  # The daily host backup uploads with these keys, and the PostgreSQL import
+  # (deploy/database-import.sh) reads a backup back. No delete: the backup
   # bucket is versioned, so earlier backups cannot be overwritten or removed.
   dynamic "statement" {
     for_each = var.backup_prefix_arn == null ? [] : [var.backup_prefix_arn]
     content {
       sid       = "HostBackups"
-      actions   = ["s3:PutObject"]
+      actions   = ["s3:PutObject", "s3:GetObject"]
       resources = [statement.value]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.backup_prefix_arn == null ? [] : [var.backup_prefix_arn]
+    content {
+      sid       = "ListHostBackups"
+      actions   = ["s3:ListBucket"]
+      resources = [regex("^arn:aws:s3:::[^/]+", statement.value)]
+      condition {
+        test     = "StringLike"
+        variable = "s3:prefix"
+        values   = [replace(statement.value, "/^arn:aws:s3:::[^/]+\\//", "")]
+      }
     }
   }
 }
@@ -203,7 +218,7 @@ resource "aws_s3_object" "hosted_env" {
     "REWIND_REMINDER_VAPID_SUBJECT=${var.web_push_subject}",
     "REWIND_REQUEST_TIMING=true",
     "REWIND_ADMIN_PASSWORD=${random_password.admin.result}",
-  ], var.extra_hosted_settings, [""])))
+  ], local.database_hosted_settings, var.extra_hosted_settings, [""])))
 }
 
 data "aws_iam_policy_document" "deploy_reads_hosted_env" {

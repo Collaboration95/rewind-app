@@ -27,6 +27,7 @@ import {
   getMessage,
   isMember,
   listReleasedArchive,
+  isPostgres,
   schemaReadiness,
   type RewindDatabase,
 } from './db';
@@ -132,7 +133,7 @@ export interface HealthPayload {
   version: string;
   ready: boolean;
   checks: {
-    sqlite: true;
+    database: 'sqlite' | 'postgresql';
     ffmpegConfigured: boolean;
     schema: ReturnType<typeof schemaReadiness>;
   };
@@ -1226,7 +1227,11 @@ function healthPayload(config: RuntimeConfig, database: RewindDatabase): HealthP
     service: 'rewind-local-runtime',
     version: SERVICE_VERSION,
     ready: schema.ready,
-    checks: { sqlite: true, ffmpegConfigured: Boolean(config.ffmpegBin), schema },
+    checks: {
+      database: isPostgres(database) ? 'postgresql' : 'sqlite',
+      ffmpegConfigured: Boolean(config.ffmpegBin),
+      schema,
+    },
     addresses: {
       local: `http://${localHost}:${config.port}`,
       lan: lan ? `http://${lan}:${config.port}` : null,
