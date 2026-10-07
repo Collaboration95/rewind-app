@@ -10,6 +10,16 @@ import {
   type HashedFileIntegrity,
 } from './media/integrity';
 import {
+  dropTestSchema,
+  isPostgres,
+  migratePostgres,
+  openPostgres,
+  openTestPostgres,
+  postgresMissingMigrationKeys,
+  testDatabaseUrl,
+  verifyDatabaseEnvironment,
+} from './postgres/runtime';
+import {
   contributionLedgerSchemaReady,
   ensureContributionLedgerSchema,
 } from './contributions/ledger';
@@ -69,7 +79,18 @@ const MIGRATIONS = [
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
 }));
+/**
+ * Local runs use node:sqlite. Hosted runs set REWIND_DATABASE_URL and get a
+ * PostgresDatabase, which offers the same synchronous prepare/run/get/all/exec
+ * surface (server/src/postgres), so persistence code is shared by both.
+ */
 export type RewindDatabase = DatabaseSync;
+
+export { isPostgres };
+
+function asRewindDatabase(database: unknown): RewindDatabase {
+  return database as RewindDatabase;
+}
 
 export interface SchemaReadiness {
   ready: boolean;
@@ -84,6 +105,14 @@ export interface SchemaReadiness {
  * never reported as ready.
  */
 export function schemaReadiness(database: RewindDatabase): SchemaReadiness {
+  if (isPostgres(database)) {
+    const missingMigrationKeys = postgresMissingMigrationKeys(database, MIGRATIONS);
+    return {
+      ready: missingMigrationKeys.length === 0,
+      expectedMigrationVersion: Math.max(...MIGRATIONS.map((migration) => migration.version)),
+      missingMigrationKeys,
+    };
+  }
   const missingMigrationKeys = MIGRATIONS.filter((migration) => {
     const marked = database
       .prepare('SELECT 1 AS applied FROM schema_migration_markers WHERE migration_key = ?')
@@ -100,7 +129,27 @@ export function schemaReadiness(database: RewindDatabase): SchemaReadiness {
   };
 }
 
+function openMigratedPostgres(open: () => ReturnType<typeof openPostgres>, environment: string) {
+  const database = open();
+  try {
+    migratePostgres(database, MIGRATIONS);
+    verifyDatabaseEnvironment(database, environment);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+  return asRewindDatabase(database);
+}
+
 export function openDatabase(config: RuntimeConfig): RewindDatabase {
+  if (config.database) {
+    const settings = config.database;
+    return openMigratedPostgres(() => openPostgres(settings), settings.environment);
+  }
+  const testUrl = testDatabaseUrl();
+  if (testUrl) {
+    return openMigratedPostgres(() => openTestPostgres(testUrl, config.databasePath), 'test');
+  }
   mkdirSync(config.dataDir, { recursive: true });
   const database = new DatabaseSync(config.databasePath);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
@@ -108,7 +157,31 @@ export function openDatabase(config: RuntimeConfig): RewindDatabase {
   return database;
 }
 
+/**
+ * Operator commands (retention, consistency) open the existing database
+ * without migrating or seeding; reports open it read-only.
+ */
+export function openOperationalDatabase(
+  config: RuntimeConfig,
+  { readOnly }: { readOnly: boolean },
+): RewindDatabase {
+  if (config.database) {
+    return asRewindDatabase(
+      openPostgres(config.database, { applicationName: 'rewind-operator', readOnly }),
+    );
+  }
+  const testUrl = testDatabaseUrl();
+  if (testUrl) {
+    return asRewindDatabase(openTestPostgres(testUrl, config.databasePath, { readOnly }));
+  }
+  return new DatabaseSync(config.databasePath, readOnly ? { readOnly: true } : undefined);
+}
+
 export function openDatabaseAt(databasePath: string): RewindDatabase {
+  const testUrl = testDatabaseUrl();
+  if (testUrl) {
+    return openMigratedPostgres(() => openTestPostgres(testUrl, databasePath), 'test');
+  }
   const dataDir = resolve(databasePath, '..');
   mkdirSync(dataDir, { recursive: true });
   const database = new DatabaseSync(databasePath);
@@ -118,6 +191,10 @@ export function openDatabaseAt(databasePath: string): RewindDatabase {
 }
 
 export function migrateDatabase(database: RewindDatabase): void {
+  if (isPostgres(database)) {
+    migratePostgres(database, MIGRATIONS);
+    return;
+  }
   database.exec('PRAGMA busy_timeout = 5000;');
   database.exec(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);',
@@ -1465,8 +1542,14 @@ export function resetDatabase(config: RuntimeConfig): void {
   // The path is resolved from the validated data directory. Reset removes
   // database and media data only; source code and migrations are never in
   // this directory.
+  if (config.database) {
+    // Hosted PostgreSQL is recovered from backups, never reset by the app.
+    throw new Error('Reset only clears local SQLite data; REWIND_DATABASE_URL is set.');
+  }
   const mediaDir = resolve(config.dataDir, 'media');
   clearMediaDirectory(mediaDir);
+  const testUrl = testDatabaseUrl();
+  if (testUrl) dropTestSchema(testUrl, config.databasePath);
   for (const path of [
     config.databasePath,
     `${config.databasePath}-wal`,

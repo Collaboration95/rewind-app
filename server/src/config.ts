@@ -32,9 +32,70 @@ export interface RuntimeConfig {
   uploadTimeoutMs: number;
   maxConcurrentIntakes: number;
   maxConcurrentProcessing: number;
+  /** Unset keeps the local SQLite file at databasePath. */
+  database?: PostgresRuntimeConfig | null;
   /** Unset preserves legacy disk paths; opt-in stores use immutable references. */
   media?: MediaRuntimeConfig | null;
   reminders?: ReminderProviderConfig | null;
+}
+
+export interface PostgresRuntimeConfig {
+  url: string;
+  host: string;
+  /** verify: TLS with the bundled Amazon RDS CA. disable: loopback only. */
+  tls: 'verify' | 'disable';
+  /** Recorded in the database on first start; a mismatch refuses to start. */
+  environment: string;
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+function parseDatabaseConfig(env: NodeJS.ProcessEnv): PostgresRuntimeConfig | null {
+  const url = env.REWIND_DATABASE_URL?.trim();
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ConfigError(
+      'REWIND_DATABASE_URL is not a valid URL.',
+      'Use postgres://USER:PASSWORD@HOST:5432/DATABASE, or leave it unset for local SQLite.',
+    );
+  }
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol) || !parsed.hostname) {
+    throw new ConfigError(
+      'REWIND_DATABASE_URL must be a postgres:// URL with a host.',
+      'Use postgres://USER:PASSWORD@HOST:5432/DATABASE, or leave it unset for local SQLite.',
+    );
+  }
+  if (parsed.searchParams.has('sslmode')) {
+    throw new ConfigError(
+      'REWIND_DATABASE_URL must not carry sslmode.',
+      'Set REWIND_DATABASE_TLS=verify (default) or disable instead.',
+    );
+  }
+  const tls = env.REWIND_DATABASE_TLS?.trim() || 'verify';
+  if (tls !== 'verify' && tls !== 'disable') {
+    throw new ConfigError(
+      'REWIND_DATABASE_TLS must be verify or disable.',
+      'Leave it unset to verify TLS against the bundled Amazon RDS certificates.',
+    );
+  }
+  if (tls === 'disable' && !LOOPBACK_HOSTS.has(parsed.hostname)) {
+    throw new ConfigError(
+      'REWIND_DATABASE_TLS=disable is only allowed for a loopback database.',
+      'Remote databases must use TLS; leave REWIND_DATABASE_TLS unset.',
+    );
+  }
+  const environment =
+    env.REWIND_DATABASE_ENVIRONMENT?.trim() || env.REWIND_MEDIA_ENVIRONMENT?.trim() || 'local';
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(environment)) {
+    throw new ConfigError(
+      'REWIND_DATABASE_ENVIRONMENT must be a short lowercase name such as dev or release.',
+      'It defaults to REWIND_MEDIA_ENVIRONMENT, then local.',
+    );
+  }
+  return { url, host: parsed.hostname, tls, environment };
 }
 
 export class ConfigError extends Error {
@@ -166,6 +227,7 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
       DEFAULT_HTTP_MAX_CONCURRENT_PROCESSING,
       64,
     ),
+    database: parseDatabaseConfig(env),
     media: parseMediaConfig(env, dataDir),
     reminders: parseReminderConfig(env),
   };

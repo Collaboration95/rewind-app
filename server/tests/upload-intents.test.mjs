@@ -14,6 +14,7 @@ import {
 import { decodeMediaRef } from '../dist/media/store.js';
 import { runWorkerTick } from '../dist/jobs/worker.js';
 import { withIntentFixture } from './helpers/upload-intents.mjs';
+import { createTestTrigger, dropTestTrigger } from './helpers/dialect.mjs';
 
 function reconciled(c, intent) {
   return reconcileUploadIntent(c.database, c.actor, { intentId: intent.id }, c.deps);
@@ -751,9 +752,13 @@ test('registration failure rolls back quota, staged metadata and jobs; retry reg
   withIntentFixture(async (c) => {
     const request = await requested(c);
     const version = await c.put(request.upload);
-    c.database.exec(
-      "CREATE TRIGGER fail_intent_job BEFORE INSERT ON media_jobs BEGIN SELECT RAISE(ABORT, 'private internal diagnostic'); END;",
-    );
+    createTestTrigger(c.database, {
+      name: 'fail_intent_job',
+      timing: 'BEFORE',
+      event: 'INSERT',
+      table: 'media_jobs',
+      action: { abort: 'private internal diagnostic' },
+    });
     const stagedBefore = scalar(c.database, 'SELECT COUNT(*) FROM staged_sources');
     assert.deepEqual(await completed(c, request.intent, version), {
       ok: false,
@@ -770,7 +775,7 @@ test('registration failure rolls back quota, staged metadata and jobs; retry reg
       getUploadIntentStatus(c.database, c.actor, request.intent.id, c.deps).value.state,
       'pinned',
     );
-    c.database.exec('DROP TRIGGER fail_intent_job');
+    dropTestTrigger(c.database, 'fail_intent_job', 'media_jobs');
     assert.equal((await completed(c, request.intent, version)).ok, true);
   }));
 

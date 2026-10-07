@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { sqliteOnly } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, openDatabaseAt } = await import('../dist/db.js');
@@ -339,9 +340,12 @@ test('progress heartbeats renew only the current fenced claim lease', async () =
   });
 });
 
-test('recorded compilation migration repairs malformed input shape and keeps valid rows', async () => {
-  await withDatabase(async ({ database }) => {
-    database.exec(`
+test(
+  'recorded compilation migration repairs malformed input shape and keeps valid rows',
+  { skip: sqliteOnly },
+  async () => {
+    await withDatabase(async ({ database }) => {
+      database.exec(`
       DROP INDEX compilation_job_inputs_order_idx;
       DROP INDEX media_jobs_cycle_idx;
       DROP INDEX media_jobs_one_film_per_cycle_idx;
@@ -362,80 +366,85 @@ test('recorded compilation migration repairs malformed input shape and keeps val
       CREATE INDEX media_jobs_cycle_idx ON media_jobs (kind);
       CREATE INDEX media_jobs_one_film_per_cycle_idx ON media_jobs (cycle_id);
     `);
-    // The durable migration receipt remains present; migrateDatabase must use
-    // the shape validator and repair rather than trusting the receipt.
-    const { migrateDatabase } = await import('../dist/db.js');
-    migrateDatabase(database);
+      // The durable migration receipt remains present; migrateDatabase must use
+      // the shape validator and repair rather than trusting the receipt.
+      const { migrateDatabase } = await import('../dist/db.js');
+      migrateDatabase(database);
 
-    assert.equal(
-      database
-        .prepare(
-          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'compilation_job_inputs'",
-        )
-        .get()
-        .sql.includes('REFERENCES media_jobs'),
-      true,
-    );
-    assert.deepEqual(
-      database
-        .prepare(
-          'SELECT job_id AS jobId, clip_job_id AS clipJobId, contribution_id AS contributionId, position FROM compilation_job_inputs',
-        )
-        .all()
-        .map((row) => ({ ...row })),
-      [
-        {
-          jobId: 'demo-film',
-          clipJobId: 'demo-clip',
-          contributionId: 'demo-contribution',
-          position: 0,
-        },
-      ],
-    );
-    assert.deepEqual(
-      database
-        .prepare('PRAGMA foreign_key_list(compilation_job_inputs)')
-        .all()
-        .map((row) => ({ from: row.from, table: row.table, onDelete: row.on_delete }))
-        .sort((left, right) => left.from.localeCompare(right.from)),
-      [
-        { from: 'clip_job_id', table: 'media_jobs', onDelete: 'CASCADE' },
-        { from: 'contribution_id', table: 'contributions', onDelete: 'CASCADE' },
-        { from: 'job_id', table: 'media_jobs', onDelete: 'CASCADE' },
-      ],
-    );
-    assert.deepEqual(
-      database
-        .prepare('PRAGMA index_info(compilation_job_inputs_order_idx)')
-        .all()
-        .map((row) => row.name),
-      ['job_id', 'position'],
-    );
-    assert.deepEqual(
-      database
-        .prepare('PRAGMA index_info(media_jobs_cycle_idx)')
-        .all()
-        .map((row) => row.name),
-      ['cycle_id', 'kind', 'created_at'],
-    );
-  });
-});
+      assert.equal(
+        database
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'compilation_job_inputs'",
+          )
+          .get()
+          .sql.includes('REFERENCES media_jobs'),
+        true,
+      );
+      assert.deepEqual(
+        database
+          .prepare(
+            'SELECT job_id AS jobId, clip_job_id AS clipJobId, contribution_id AS contributionId, position FROM compilation_job_inputs',
+          )
+          .all()
+          .map((row) => ({ ...row })),
+        [
+          {
+            jobId: 'demo-film',
+            clipJobId: 'demo-clip',
+            contributionId: 'demo-contribution',
+            position: 0,
+          },
+        ],
+      );
+      assert.deepEqual(
+        database
+          .prepare('PRAGMA foreign_key_list(compilation_job_inputs)')
+          .all()
+          .map((row) => ({ from: row.from, table: row.table, onDelete: row.on_delete }))
+          .sort((left, right) => left.from.localeCompare(right.from)),
+        [
+          { from: 'clip_job_id', table: 'media_jobs', onDelete: 'CASCADE' },
+          { from: 'contribution_id', table: 'contributions', onDelete: 'CASCADE' },
+          { from: 'job_id', table: 'media_jobs', onDelete: 'CASCADE' },
+        ],
+      );
+      assert.deepEqual(
+        database
+          .prepare('PRAGMA index_info(compilation_job_inputs_order_idx)')
+          .all()
+          .map((row) => row.name),
+        ['job_id', 'position'],
+      );
+      assert.deepEqual(
+        database
+          .prepare('PRAGMA index_info(media_jobs_cycle_idx)')
+          .all()
+          .map((row) => row.name),
+        ['cycle_id', 'kind', 'created_at'],
+      );
+    });
+  },
+);
 
-test('recorded deletion migration repairs a malformed active-contribution index', async () => {
-  await withDatabase(async ({ database }) => {
-    database.exec(`
+test(
+  'recorded deletion migration repairs a malformed active-contribution index',
+  { skip: sqliteOnly },
+  async () => {
+    await withDatabase(async ({ database }) => {
+      database.exec(`
       DROP INDEX contributions_active_cycle_idx;
       CREATE INDEX contributions_active_cycle_idx ON contributions (member_id);
     `);
-    // Migration 010 is already recorded on a fresh install. Its durable
-    // marker must not suppress shape repair on the next process start.
-    migrateDatabase(database);
-    assert.deepEqual(
-      database
-        .prepare('PRAGMA index_info(contributions_active_cycle_idx)')
-        .all()
-        .map((row) => row.name),
-      ['cycle_id', 'member_id', 'deleted_at', 'created_at'],
-    );
-  });
-});
+      // Migration 010 is already recorded on a fresh install. Its durable
+      // marker must not suppress shape repair on the next process start.
+      migrateDatabase(database);
+      assert.deepEqual(
+        database
+          .prepare('PRAGMA index_info(contributions_active_cycle_idx)')
+          .all()
+          .map((row) => row.name),
+        ['cycle_id', 'member_id', 'deleted_at', 'created_at'],
+      );
+    });
+  },
+);

@@ -176,7 +176,7 @@ export function filmSegments(
   const rows = database
     .prepare(
       `SELECT s.position, c.id AS contributionId, s.start_seconds AS startSeconds,
-              s.duration_seconds AS durationSeconds, COALESCE(c.member_id = ?, 0) AS mine,
+              s.duration_seconds AS durationSeconds, CASE WHEN c.member_id = ? THEN 1 ELSE 0 END AS mine,
               (c.id IS NULL OR c.deleted_at IS NOT NULL OR c.removed_at IS NOT NULL
                OR EXISTS (SELECT 1 FROM account_blocks b
                           JOIN real_profiles viewer ON viewer.account_id = b.blocker_account_id

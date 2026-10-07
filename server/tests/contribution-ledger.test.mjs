@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { sqliteOnly } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { deleteContribution } = await import('../dist/contributions/index.js');
@@ -93,25 +94,29 @@ function insertContribution(database, options) {
   }
 }
 
-test('ledger schema is repaired idempotently and exposes its readiness probe', () => {
-  return withLedgerDatabase(async ({ database }) => {
-    assert.equal(contributionLedgerSchemaReady(database), true);
-    ensureContributionLedgerSchema(database);
-    ensureContributionLedgerSchema(database);
-    assert.equal(contributionLedgerSchemaReady(database), true);
+test(
+  'ledger schema is repaired idempotently and exposes its readiness probe',
+  { skip: sqliteOnly },
+  () => {
+    return withLedgerDatabase(async ({ database }) => {
+      assert.equal(contributionLedgerSchemaReady(database), true);
+      ensureContributionLedgerSchema(database);
+      ensureContributionLedgerSchema(database);
+      assert.equal(contributionLedgerSchemaReady(database), true);
 
-    const columns = database
-      .prepare('PRAGMA table_info(contributions)')
-      .all()
-      .map((row) => row.name);
-    assert.equal(columns.includes('replaced_by_contribution_id'), true);
-    const indexes = database.prepare('PRAGMA index_list(contributions)').all();
-    assert.equal(
-      indexes.some((row) => row.name === LEDGER_INDEX_NAME),
-      true,
-    );
-  });
-});
+      const columns = database
+        .prepare('PRAGMA table_info(contributions)')
+        .all()
+        .map((row) => row.name);
+      assert.equal(columns.includes('replaced_by_contribution_id'), true);
+      const indexes = database.prepare('PRAGMA index_list(contributions)').all();
+      assert.equal(
+        indexes.some((row) => row.name === LEDGER_INDEX_NAME),
+        true,
+      );
+    });
+  },
+);
 
 test('the ledger reports every lifecycle state with duration and redacted metadata', () => {
   return withLedgerDatabase(async ({ database }) => {

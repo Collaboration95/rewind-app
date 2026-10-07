@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { sqliteOnly } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, schemaReadiness } = await import('../dist/db.js');
@@ -198,31 +199,35 @@ test('self-only enabled/snooze/disable survives restart; forged identity and rev
   });
 });
 
-test('additive reminder migration upgrades legacy groups with UTC and repairs missing preference table', async () => {
-  await fixture(async ({ database, group }) => {
-    database.exec('DROP TABLE real_group_reminder_preferences');
-    database.exec('ALTER TABLE real_group_metadata DROP COLUMN time_zone');
-    database
-      .prepare(
-        "DELETE FROM schema_migration_markers WHERE migration_key = 'real-group-reminders-v1'",
-      )
-      .run();
-    database.prepare('DELETE FROM schema_migrations WHERE version = 25').run();
-    migrateDatabase(database);
-    assert.equal(schemaReadiness(database).ready, true);
-    assert.equal(
+test(
+  'additive reminder migration upgrades legacy groups with UTC and repairs missing preference table',
+  { skip: sqliteOnly },
+  async () => {
+    await fixture(async ({ database, group }) => {
+      database.exec('DROP TABLE real_group_reminder_preferences');
+      database.exec('ALTER TABLE real_group_metadata DROP COLUMN time_zone');
       database
-        .prepare('SELECT time_zone AS zone FROM real_group_metadata WHERE group_id = ?')
-        .get(group.group.id).zone,
-      'UTC',
-    );
-    database.exec('DROP TABLE real_group_reminder_preferences');
-    assert.equal(schemaReadiness(database).ready, false);
-    migrateDatabase(database);
-    assert.equal(schemaReadiness(database).ready, true);
-    assert.equal(
-      database.prepare('SELECT prompt FROM cycles WHERE id = ?').get(group.cycle.id).prompt,
-      'Original prompt',
-    );
-  });
-});
+        .prepare(
+          "DELETE FROM schema_migration_markers WHERE migration_key = 'real-group-reminders-v1'",
+        )
+        .run();
+      database.prepare('DELETE FROM schema_migrations WHERE version = 25').run();
+      migrateDatabase(database);
+      assert.equal(schemaReadiness(database).ready, true);
+      assert.equal(
+        database
+          .prepare('SELECT time_zone AS zone FROM real_group_metadata WHERE group_id = ?')
+          .get(group.group.id).zone,
+        'UTC',
+      );
+      database.exec('DROP TABLE real_group_reminder_preferences');
+      assert.equal(schemaReadiness(database).ready, false);
+      migrateDatabase(database);
+      assert.equal(schemaReadiness(database).ready, true);
+      assert.equal(
+        database.prepare('SELECT prompt FROM cycles WHERE id = ?').get(group.cycle.id).prompt,
+        'Original prompt',
+      );
+    });
+  },
+);

@@ -1,3 +1,4 @@
+import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 // Deliberately do not import openDatabase: it creates, migrates and seeds stores.
@@ -12,8 +13,19 @@ try {
   const { operationalSnapshot } = await import(
     new URL('../server/dist/observability/index.js', import.meta.url).href
   );
-  database = new DatabaseSync(databasePath, { readOnly: true });
-  database.exec('PRAGMA query_only = ON; PRAGMA busy_timeout = 1000; BEGIN');
+  if (process.env.REWIND_DATABASE_URL || process.env.REWIND_TEST_DATABASE_URL) {
+    // PostgreSQL: the same read-only, no-migration open the operator CLI uses.
+    const { parseConfig } = await import(new URL('../server/dist/config.js', import.meta.url).href);
+    const { openOperationalDatabase } = await import(
+      new URL('../server/dist/db.js', import.meta.url).href
+    );
+    const config = parseConfig({ ...process.env, REWIND_DATA_DIR: dirname(databasePath) });
+    database = openOperationalDatabase(config, { readOnly: true });
+    database.exec('BEGIN');
+  } else {
+    database = new DatabaseSync(databasePath, { readOnly: true });
+    database.exec('PRAGMA query_only = ON; PRAGMA busy_timeout = 1000; BEGIN');
+  }
   const snapshot = operationalSnapshot(database);
   database.exec('COMMIT');
   if (filesystemPath !== undefined) {

@@ -2,7 +2,13 @@ import { once } from 'node:events';
 import { startCycleSchedulerLoop } from './cycles/scheduler';
 import { listAuditEvents, type AuditEvent } from './audit';
 import { ConfigError, parseConfig, SERVICE_VERSION, type RuntimeConfig } from './config';
-import { backfillMediaIntegrity, openDatabase, resetDatabase, schemaReadiness } from './db';
+import {
+  backfillMediaIntegrity,
+  openDatabase,
+  openOperationalDatabase,
+  resetDatabase,
+  schemaReadiness,
+} from './db';
 import { runFfmpegProbe } from './ffmpeg';
 import { createRuntimeServer, getLanAddress } from './http';
 import { cleanupOrphanedStagedSources } from './jobs';
@@ -26,7 +32,6 @@ import {
   QueueQueryError,
 } from './jobs/queue';
 import { resolve } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { createRealAccount, resetRealAccountPassword } from './auth';
@@ -771,12 +776,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       const limit = parseRetentionLimit(argv);
       const apply = argv.includes('--apply');
       // Retention must not run migrations, seed fixtures, or the startup
-      // integrity backfill. The apply path needs only a direct SQLite handle
+      // integrity backfill. The apply path needs only a direct database handle
       // so reference revalidation and deletion share its writer transaction.
-      const database = new DatabaseSync(
-        config.databasePath,
-        apply ? undefined : { readOnly: true },
-      );
+      const database = openOperationalDatabase(config, { readOnly: !apply });
       try {
         const report = planProcessedMediaRetention(
           database,
@@ -802,10 +804,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (command === 'consistency') {
       const limit = parseConsistencyLimit(argv);
       const repair = argv.includes('--repair');
-      const database = new DatabaseSync(
-        config.databasePath,
-        repair ? undefined : { readOnly: true },
-      );
+      const database = openOperationalDatabase(config, { readOnly: !repair });
       try {
         const report = planConsistencyRepair(
           database,

@@ -22,6 +22,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Worker } from 'node:worker_threads';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { createTestTrigger, sqliteOnly } from './helpers/dialect.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
@@ -252,7 +253,7 @@ test('concurrent connections record one integrity audit event', async () => {
   await withDatabase(async ({ database, config }) => {
     const workerScript = `
       const { parentPort, workerData } = require('node:worker_threads');
-      const { DatabaseSync } = require('node:sqlite');
+      const { openDatabaseAt } = require(require('node:path').resolve('server/dist/db.js'));
       const { recordIntegrityFailure } = require(workerData.integrityModule);
 
       const startBarrier = new Int32Array(workerData.startBarrier);
@@ -266,7 +267,7 @@ test('concurrent connections record one integrity audit event', async () => {
       }
 
       const auditBarrier = new Int32Array(workerData.auditBarrier);
-      const database = new DatabaseSync(workerData.databasePath);
+      const database = openDatabaseAt(workerData.databasePath);
       database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
       let transactionActive = false;
       const connection = new Proxy(database, {
@@ -583,12 +584,14 @@ test('a zero-row ready update cannot complete clip finalization', async () => {
     );
     assert.equal(upload.ok, true);
     if (!upload.ok) return;
-    database.exec(
-      `CREATE TRIGGER ignore_clip_ready_157
-       BEFORE UPDATE OF status ON media_jobs
-       WHEN OLD.id = '${upload.upload.job.id}' AND NEW.status = 'ready'
-       BEGIN SELECT RAISE(IGNORE); END`,
-    );
+    createTestTrigger(database, {
+      name: 'ignore_clip_ready_157',
+      timing: 'BEFORE',
+      event: 'UPDATE OF status',
+      table: 'media_jobs',
+      when: `OLD.id = '${upload.upload.job.id}' AND NEW.status = 'ready'`,
+      action: 'ignore',
+    });
     const result = await processClipJob(database, {
       jobId: upload.upload.job.id,
       ffmpegBin: config.ffmpegBin,
@@ -734,171 +737,186 @@ exec ${shellQuote(realFfmpeg.trim())} "$@"
   });
 });
 
-test('a row finalized before #157 is unverifiable and the migration backfills it', async () => {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-integrity-backfill-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-  });
-  try {
-    let database = openFixtureDatabase(config);
-    const jobId = await finalizeOneClip({ database, config, dataDir }, 'integrity-backfill-1');
-    const row = storedIntegrity(database, jobId);
-    const bytes = await readFile(row.outputPath);
-
-    // Recreate the pre-#157 shape: no recorded digest and no receipt.
-    database
-      .prepare(
-        `UPDATE media_jobs SET output_sha256 = NULL, output_bytes = NULL,
-           output_verified_at = NULL WHERE id = ?`,
-      )
-      .run(jobId);
-    const result = await verifyMediaIntegrity(database, jobId, row.outputPath);
-    assert.equal(result.outcome, 'unverifiable');
-    database.close();
-
-    const raw = new DatabaseSync(config.databasePath);
-    raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
-    raw.exec('DELETE FROM schema_migrations WHERE version = 15');
-    raw.close();
-
-    database = openFixtureDatabase(config);
+test(
+  'a row finalized before #157 is unverifiable and the migration backfills it',
+  { skip: sqliteOnly },
+  async () => {
+    const dataDir = await mkdtemp(`${tmpdir()}/rewind-integrity-backfill-`);
+    const config = parseConfig({
+      REWIND_DATA_DIR: dataDir,
+      REWIND_HOST: '127.0.0.1',
+      REWIND_FFMPEG_BIN: 'ffmpeg',
+    });
     try {
-      await backfillMediaIntegrity(database, config.dataDir);
-      const backfilled = storedIntegrity(database, jobId);
-      assert.equal(backfilled.sha256, createHash('sha256').update(bytes).digest('hex'));
-      assert.equal(backfilled.byteLength, bytes.length);
-      assert.ok(backfilled.verifiedAt);
-      // Repairing twice is safe and leaves the same values.
-      migrateDatabase(database);
-      await backfillMediaIntegrity(database, config.dataDir);
-      assert.deepEqual({ ...storedIntegrity(database, jobId) }, { ...backfilled });
-    } finally {
-      database.close();
-    }
-  } finally {
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
+      let database = openFixtureDatabase(config);
+      const jobId = await finalizeOneClip({ database, config, dataDir }, 'integrity-backfill-1');
+      const row = storedIntegrity(database, jobId);
+      const bytes = await readFile(row.outputPath);
 
-test('legacy backfill releases writer locks while hashing and resumes after restart', async () => {
-  await withDatabase(async ({ database, config, dataDir }) => {
-    const jobIds = [
-      await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-a'),
-      await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-b'),
-    ].sort();
-    const expected = new Map(
-      await Promise.all(
-        jobIds.map(async (jobId) => {
-          const row = storedIntegrity(database, jobId);
-          const bytes = await readFile(row.outputPath);
-          return [jobId, createHash('sha256').update(bytes).digest('hex')];
-        }),
-      ),
-    );
-    database
-      .prepare(
-        `UPDATE media_jobs SET output_sha256 = NULL, output_bytes = NULL,
-           output_verified_at = NULL WHERE id IN (?, ?)`,
-      )
-      .run(...jobIds);
-    // Force the schema-only migration to replay, as after a crash between
-    // adding columns and finishing the separate backfill phase.
-    const raw = new DatabaseSync(config.databasePath);
-    raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
-    raw.exec('DELETE FROM schema_migrations WHERE version = 15');
-    raw.close();
-    migrateDatabase(database);
-
-    const competingWriter = new DatabaseSync(config.databasePath);
-    competingWriter.exec('PRAGMA busy_timeout = 100');
-    let hashCalls = 0;
-    await assert.rejects(
-      backfillMediaIntegrity(database, dataDir, {
-        hashOutput: async (path) => {
-          hashCalls += 1;
-          if (hashCalls === 1) {
-            // Hold a competing writer lock during the media read. This fails
-            // with SQLITE_BUSY if the migration already holds BEGIN IMMEDIATE.
-            competingWriter.exec('BEGIN IMMEDIATE');
-            try {
-              competingWriter
-                .prepare("UPDATE groups SET name = name WHERE id = 'demo-group'")
-                .run();
-              const integrity = await hashFileWithIdentity(path);
-              competingWriter.exec('COMMIT');
-              return integrity;
-            } catch (error) {
-              competingWriter.exec('ROLLBACK');
-              throw error;
-            }
-          }
-          throw new Error('simulated interruption after one committed receipt');
-        },
-      }),
-      /simulated interruption/,
-    );
-    competingWriter.close();
-    assert.equal(hashCalls, 2);
-    assert.equal(
+      // Recreate the pre-#157 shape: no recorded digest and no receipt.
       database
         .prepare(
-          `SELECT COUNT(*) AS count FROM media_jobs
-           WHERE id IN (?, ?) AND output_sha256 IS NOT NULL`,
+          `UPDATE media_jobs SET output_sha256 = NULL, output_bytes = NULL,
+           output_verified_at = NULL WHERE id = ?`,
         )
-        .get(...jobIds).count,
-      1,
-      'the first short receipt transaction should survive the simulated interruption',
-    );
+        .run(jobId);
+      const result = await verifyMediaIntegrity(database, jobId, row.outputPath);
+      assert.equal(result.outcome, 'unverifiable');
+      database.close();
 
-    // Reopening reapplies only the idempotent schema and resumes the missing
-    // row; the already-recorded receipt stays unchanged.
-    const resumed = openFixtureDatabase(config);
-    try {
-      await backfillMediaIntegrity(resumed, dataDir);
-      for (const jobId of jobIds) {
-        assert.equal(storedIntegrity(resumed, jobId).sha256, expected.get(jobId));
+      const raw = new DatabaseSync(config.databasePath);
+      raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
+      raw.exec('DELETE FROM schema_migrations WHERE version = 15');
+      raw.close();
+
+      database = openFixtureDatabase(config);
+      try {
+        await backfillMediaIntegrity(database, config.dataDir);
+        const backfilled = storedIntegrity(database, jobId);
+        assert.equal(backfilled.sha256, createHash('sha256').update(bytes).digest('hex'));
+        assert.equal(backfilled.byteLength, bytes.length);
+        assert.ok(backfilled.verifiedAt);
+        // Repairing twice is safe and leaves the same values.
+        migrateDatabase(database);
+        await backfillMediaIntegrity(database, config.dataDir);
+        assert.deepEqual({ ...storedIntegrity(database, jobId) }, { ...backfilled });
+      } finally {
+        database.close();
       }
     } finally {
-      resumed.close();
+      await rm(dataDir, { recursive: true, force: true });
     }
-  });
-});
+  },
+);
 
-test('the integrity migration is idempotent, preserves audit rows, and widens the event guard', async () => {
-  await withDatabase(async ({ config, database }) => {
-    database
-      .prepare(
-        `INSERT INTO audit_events (id, event_type, actor_member_id, resource_id, occurred_at, result)
-         VALUES ('legacy-audit', 'job.failed', 'demo-1', 'job:legacy-1', ?, 'failure')`,
-      )
-      .run(new Date().toISOString());
-    migrateDatabase(database);
-
-    assert.equal(
-      database.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id = 'legacy-audit'").get()
-        .count,
-      1,
-      'existing audit rows must survive the table rebuild',
-    );
-    assert.equal(
+test(
+  'legacy backfill releases writer locks while hashing and resumes after restart',
+  { skip: sqliteOnly },
+  async () => {
+    await withDatabase(async ({ database, config, dataDir }) => {
+      const jobIds = [
+        await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-a'),
+        await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-b'),
+      ].sort();
+      const expected = new Map(
+        await Promise.all(
+          jobIds.map(async (jobId) => {
+            const row = storedIntegrity(database, jobId);
+            const bytes = await readFile(row.outputPath);
+            return [jobId, createHash('sha256').update(bytes).digest('hex')];
+          }),
+        ),
+      );
       database
         .prepare(
-          "SELECT COUNT(*) AS count FROM audit_events WHERE event_type = 'media.integrity_failed'",
+          `UPDATE media_jobs SET output_sha256 = NULL, output_bytes = NULL,
+           output_verified_at = NULL WHERE id IN (?, ?)`,
         )
-        .get().count,
-      0,
-    );
-    // The rebuilt table still indexes chronological and resource lookups.
-    const indexes = database
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'audit_events'")
-      .all()
-      .map((row) => row.name);
-    assert.ok(indexes.includes('audit_events_occurred_at_idx'));
-    assert.ok(indexes.includes('audit_events_resource_id_idx'));
-  });
-});
+        .run(...jobIds);
+      // Force the schema-only migration to replay, as after a crash between
+      // adding columns and finishing the separate backfill phase.
+      const raw = new DatabaseSync(config.databasePath);
+      raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
+      raw.exec('DELETE FROM schema_migrations WHERE version = 15');
+      raw.close();
+      migrateDatabase(database);
+
+      const competingWriter = new DatabaseSync(config.databasePath);
+      competingWriter.exec('PRAGMA busy_timeout = 100');
+      let hashCalls = 0;
+      await assert.rejects(
+        backfillMediaIntegrity(database, dataDir, {
+          hashOutput: async (path) => {
+            hashCalls += 1;
+            if (hashCalls === 1) {
+              // Hold a competing writer lock during the media read. This fails
+              // with SQLITE_BUSY if the migration already holds BEGIN IMMEDIATE.
+              competingWriter.exec('BEGIN IMMEDIATE');
+              try {
+                competingWriter
+                  .prepare("UPDATE groups SET name = name WHERE id = 'demo-group'")
+                  .run();
+                const integrity = await hashFileWithIdentity(path);
+                competingWriter.exec('COMMIT');
+                return integrity;
+              } catch (error) {
+                competingWriter.exec('ROLLBACK');
+                throw error;
+              }
+            }
+            throw new Error('simulated interruption after one committed receipt');
+          },
+        }),
+        /simulated interruption/,
+      );
+      competingWriter.close();
+      assert.equal(hashCalls, 2);
+      assert.equal(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM media_jobs
+           WHERE id IN (?, ?) AND output_sha256 IS NOT NULL`,
+          )
+          .get(...jobIds).count,
+        1,
+        'the first short receipt transaction should survive the simulated interruption',
+      );
+
+      // Reopening reapplies only the idempotent schema and resumes the missing
+      // row; the already-recorded receipt stays unchanged.
+      const resumed = openFixtureDatabase(config);
+      try {
+        await backfillMediaIntegrity(resumed, dataDir);
+        for (const jobId of jobIds) {
+          assert.equal(storedIntegrity(resumed, jobId).sha256, expected.get(jobId));
+        }
+      } finally {
+        resumed.close();
+      }
+    });
+  },
+);
+
+test(
+  'the integrity migration is idempotent, preserves audit rows, and widens the event guard',
+  { skip: sqliteOnly },
+  async () => {
+    await withDatabase(async ({ config, database }) => {
+      database
+        .prepare(
+          `INSERT INTO audit_events (id, event_type, actor_member_id, resource_id, occurred_at, result)
+         VALUES ('legacy-audit', 'job.failed', 'demo-1', 'job:legacy-1', ?, 'failure')`,
+        )
+        .run(new Date().toISOString());
+      migrateDatabase(database);
+
+      assert.equal(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id = 'legacy-audit'")
+          .get().count,
+        1,
+        'existing audit rows must survive the table rebuild',
+      );
+      assert.equal(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM audit_events WHERE event_type = 'media.integrity_failed'",
+          )
+          .get().count,
+        0,
+      );
+      // The rebuilt table still indexes chronological and resource lookups.
+      const indexes = database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'audit_events'",
+        )
+        .all()
+        .map((row) => row.name);
+      assert.ok(indexes.includes('audit_events_occurred_at_idx'));
+      assert.ok(indexes.includes('audit_events_resource_id_idx'));
+    });
+  },
+);
 
 /** Insert one already-processed clip so a film can compile real retained
  * inputs. The recorded digest is computed from the bytes actually written. */

@@ -3,7 +3,7 @@ import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { onPostgres } from './helpers/dialect.mjs';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
@@ -895,8 +895,12 @@ test('worker CLI exits nonzero with a safe label after a persistent loop failure
         // Corrupt only this isolated test database after startup. The next
         // claim query must fail, and the CLI must expose a failing exit code.
         try {
-          const connection = new DatabaseSync(config.databasePath);
-          connection.exec('PRAGMA foreign_keys = OFF; DROP TABLE media_jobs;');
+          const connection = openDatabaseAt(config.databasePath);
+          connection.exec(
+            onPostgres
+              ? 'DROP TABLE media_jobs CASCADE'
+              : 'PRAGMA foreign_keys = OFF; DROP TABLE media_jobs;',
+          );
           connection.close();
         } catch {
           // A repeated stdout chunk may observe the table already removed.

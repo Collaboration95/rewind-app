@@ -72,6 +72,7 @@
     "expo-status-bar": "~57.0.1",
     "expo-video": "~57.0.5",
     "node-forge": "file:vendor/node-forge/rewind-node-forge-1.4.0-rewind.1.tgz",
+    "pg": "8.23.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",

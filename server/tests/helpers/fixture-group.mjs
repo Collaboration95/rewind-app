@@ -48,10 +48,13 @@ export function seedFixtureGroup(database, seedNow) {
   if (!Number.isFinite(nowDate.getTime())) throw new Error('The fixture seed time is invalid.');
   const now = nowDate.toISOString();
   const cycleEndsAt = new Date(nowDate.getTime() + FIXTURE.cycle.durationMs).toISOString();
-  const databaseFile = database
-    .prepare('PRAGMA database_list')
-    .all()
-    .find((entry) => entry.name === 'main')?.file;
+  // A PostgreSQL test schema remembers the SQLite path it stands in for.
+  const databaseFile =
+    database.testDatabasePath ??
+    database
+      .prepare('PRAGMA database_list')
+      .all()
+      .find((entry) => entry.name === 'main')?.file;
   if (!databaseFile) throw new Error('Fixture media seeding requires a file-backed database.');
   const processedDir = resolve(databaseFile, '..', 'media', 'processed');
   const sample = readFileSync(SAMPLE_CLIP_PATH);

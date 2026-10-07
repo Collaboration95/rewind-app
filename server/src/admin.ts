@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import type { RuntimeConfig } from './config';
-import type { RewindDatabase } from './db';
+import { isPostgres, type RewindDatabase } from './db';
 
 // Read-only table browser for the team (#261 follow-up). One shared login
 // (user "admin", password REWIND_ADMIN_PASSWORD) via the browser's Basic auth
@@ -35,7 +35,10 @@ export function handleAdminRequest(
   const tables = (
     database
       .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        isPostgres(database)
+          ? `SELECT table_name AS name FROM information_schema.tables
+             WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' ORDER BY name`
+          : "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
       )
       .all() as { name: string }[]
   ).map((row) => row.name);
@@ -73,11 +76,22 @@ function tablePage(database: RewindDatabase, table: string, page: number): strin
   const { count } = database.prepare(`SELECT COUNT(*) AS count FROM ${quote(table)}`).get() as {
     count: number;
   };
+  const postgres = isPostgres(database);
   const columns = (
-    database.prepare(`SELECT name FROM pragma_table_info(?)`).all(table) as { name: string }[]
+    database
+      .prepare(
+        postgres
+          ? `SELECT column_name AS name FROM information_schema.columns
+             WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position`
+          : `SELECT name FROM pragma_table_info(?)`,
+      )
+      .all(table) as { name: string }[]
   ).map((column) => column.name);
+  // Newest first: SQLite's rowid, or PostgreSQL's physical row order.
   const rows = database
-    .prepare(`SELECT * FROM ${quote(table)} ORDER BY rowid DESC LIMIT ? OFFSET ?`)
+    .prepare(
+      `SELECT * FROM ${quote(table)} ORDER BY ${postgres ? 'ctid' : 'rowid'} DESC LIMIT ? OFFSET ?`,
+    )
     .all(PAGE_SIZE, (page - 1) * PAGE_SIZE) as Record<string, unknown>[];
   const pages = Math.max(1, Math.ceil(count / PAGE_SIZE));
   const head = columns.map((column) => `<th>${escape(column)}</th>`).join('');
