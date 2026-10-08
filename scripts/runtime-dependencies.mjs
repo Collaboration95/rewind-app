@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 // The only external imports in server/src are these optional provider SDKs.
 export const runtimeRoots = [
+  '@aws-sdk/client-cognito-identity-provider',
   '@aws-sdk/client-s3',
   '@aws-sdk/s3-request-presigner',
+  'aws-jwt-verify',
   'pg',
   'web-push',
 ];
