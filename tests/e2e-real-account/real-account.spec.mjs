@@ -42,7 +42,7 @@ async function registerAndSignIn(page, username, { invitation = false } = {}) {
   } else {
     await page.goto('/');
     await expect(page.getByTestId('welcome-entry')).toBeVisible();
-    await page.getByRole('button', { name: 'Create account', exact: true }).click();
+    await page.getByRole('button', { name: 'Create an account', exact: true }).click();
   }
 
   await page.getByTestId('registration-username').fill(username);
