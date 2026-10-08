@@ -58,35 +58,6 @@ variable "budget_email_recipients" {
   default     = []
 }
 
-variable "cost_safety_audit_email_recipients" {
-  type        = set(string)
-  description = "Optional email recipients for cost-safety audit failure notifications."
-  default     = []
-}
-
-variable "cost_safety_audit_notification_mode" {
-  type        = string
-  description = "Cost-safety audit publisher mode. Disabled is the safe default; sns uses the managed topic ARN below."
-  default     = "disabled"
-
-  validation {
-    condition     = contains(["disabled", "sns"], var.cost_safety_audit_notification_mode)
-    error_message = "cost_safety_audit_notification_mode must be disabled or sns."
-  }
-}
-
-variable "cost_safety_audit_notification_topic_arn" {
-  type        = string
-  description = "Optional non-secret ARN of the managed SNS topic receiving redacted audit failure events."
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.cost_safety_audit_notification_topic_arn == null || can(regex("^arn:[^:]+:sns:[^:]+:[0-9]{12}:.+$", var.cost_safety_audit_notification_topic_arn))
-    error_message = "cost_safety_audit_notification_topic_arn must be a valid SNS topic ARN when set."
-  }
-}
-
 variable "ssh_cidr" {
   type        = string
   description = "The operator's public IPv4 CIDR permitted to use SSH."
@@ -130,31 +101,8 @@ variable "public_https_origin_auth_header" {
   }
 }
 
-variable "cost_safety_expected_instance_state" {
-  type        = string
-  description = "Expected Lightsail power state when the disposable Demo instance exists. Use stopped for the normal idle Demo or running only when an active Demo is explicitly approved."
-  default     = "stopped"
-
-  validation {
-    condition     = contains(["stopped", "running"], var.cost_safety_expected_instance_state)
-    error_message = "cost_safety_expected_instance_state must be stopped or running."
-  }
-}
-
 variable "retain_static_ip_when_instance_deleted" {
   type        = bool
   description = "Keep the Rewind static IPv4 address while the disposable instance is hibernated. Keeping it preserves the endpoint but has a small recurring charge."
   default     = false
-}
-
-variable "cost_safety_expected_snapshot_names" {
-  type        = set(string)
-  description = "Exact instance snapshot names allowed by the periodic cost-safety audit; an unlisted snapshot is an actionable finding."
-  default     = []
-}
-
-variable "cost_safety_expected_distributions" {
-  type        = map(string)
-  description = "Expected Lightsail distribution names mapped to their exact origin names; an empty map means no distribution is expected, but the inventory is still audited for unexpected resources."
-  default     = {}
 }

@@ -118,19 +118,6 @@ validate_hibernation_plan() {
             "aws_scheduler_schedule.automatic_start[0]"
           ] | index($address)
         ) != null and $actions == ["delete"]
-      ) or
-      (
-        .address as $address |
-        .change.actions as $actions |
-        (
-          [
-            "aws_iam_role.cost_safety_audit",
-            "aws_iam_role.cost_safety_audit_scheduler",
-            "aws_iam_role_policy.cost_safety_audit",
-            "aws_iam_role_policy.cost_safety_audit_scheduler",
-            "aws_lambda_function.cost_safety_audit"
-          ] | index($address)
-        ) != null and $actions == ["update"]
       )
     )
   ' "$json_path" >/dev/null; then
