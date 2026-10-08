@@ -263,6 +263,36 @@ test('a cancelled sign-in returns to the app with a message', async () => {
   });
 });
 
+test('a failed sign-in started from an invitation returns to the invitation', async () => {
+  await withRuntime(async (ctx) => {
+    const flow = await startFlow(ctx.baseUrl, '/?groupId=g1&code=ABCD');
+    ctx.exchange.idToken = signToken({ nonce: 'wrong' });
+    const response = await callback(ctx.baseUrl, flow);
+    assert.equal(response.headers.get('location'), '/?groupId=g1&code=ABCD&auth_error=cognito');
+    assert.equal(cookieOf(response, '__Host-rewind_session'), undefined);
+  });
+});
+
+test('an ID token without an email_verified claim is rejected', async () => {
+  await withRuntime(async (ctx) => {
+    const flow = await startFlow(ctx.baseUrl);
+    const now = Math.floor(Date.now() / 1000);
+    const claims = {
+      sub: 'sub-bob',
+      iss: ISSUER,
+      aud: COGNITO.clientId,
+      token_use: 'id',
+      iat: now,
+      exp: now + 3600,
+      nonce: flow.nonce,
+    };
+    const head = b64({ alg: 'RS256', kid: 'k1', typ: 'JWT' });
+    const input = `${head}.${b64(claims)}`;
+    ctx.exchange.idToken = `${input}.${createSign('RSA-SHA256').update(input).sign(privateKey).toString('base64url')}`;
+    assertRejected(await callback(ctx.baseUrl, flow));
+  });
+});
+
 test('used states expire and are bounded', () => {
   const states = new UsedStates();
   assert.equal(states.consume('a', 0), true);

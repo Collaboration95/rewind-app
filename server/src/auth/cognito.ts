@@ -97,7 +97,7 @@ export function createCognitoService(
       return {
         sub: claims.sub,
         nonce: typeof claims.nonce === 'string' ? claims.nonce : undefined,
-        emailVerified: claims.email_verified !== false && claims.email_verified !== 'false',
+        emailVerified: claims.email_verified === true || claims.email_verified === 'true',
       };
     },
     logoutUrl(origin) {

@@ -3566,8 +3566,13 @@ async function handleRealAuthRequest(
 
   if (url.pathname === '/auth/callback' && request.method === 'GET') {
     const clearTransaction = `${OIDC_TRANSACTION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
-    const fail = (code: string) =>
-      redirectWithCookies(response, `/?auth_error=${code}`, [clearTransaction]);
+    // A failure after the state matched returns to where sign-in started, so a
+    // pending invitation link survives a cancelled or failed attempt.
+    const fail = (code: string, returnPath = '/') => {
+      const target = new URL(returnPath, 'http://rewind.local');
+      target.searchParams.set('auth_error', code);
+      redirectWithCookies(response, `${target.pathname}${target.search}`, [clearTransaction]);
+    };
     const transaction = readLoginTransaction(request.headers.cookie, now);
     const state = url.searchParams.get('state') ?? '';
     // The state must match this browser's cookie and can finish only once.
@@ -3582,12 +3587,15 @@ async function handleRealAuthRequest(
     }
     const providerError = url.searchParams.get('error');
     if (providerError) {
-      fail(providerError === 'access_denied' ? 'cognito_denied' : 'cognito');
+      fail(
+        providerError === 'access_denied' ? 'cognito_denied' : 'cognito',
+        transaction.returnPath,
+      );
       return;
     }
     const code = url.searchParams.get('code') ?? '';
     if (!code || code.length > 2048) {
-      fail('cognito');
+      fail('cognito', transaction.returnPath);
       return;
     }
     let sessionCookie: string;
@@ -3598,11 +3606,11 @@ async function handleRealAuthRequest(
         redirectUri: `${publicOrigin(request, config)}/api/auth/callback`,
       });
       if (!identity.nonce || !sameSecret(identity.nonce, transaction.nonce)) {
-        fail('cognito');
+        fail('cognito', transaction.returnPath);
         return;
       }
       if (!identity.emailVerified) {
-        fail('cognito');
+        fail('cognito', transaction.returnPath);
         return;
       }
       const account = findOrCreateCognitoAccount(database, identity.sub, now);
@@ -3613,7 +3621,7 @@ async function handleRealAuthRequest(
       );
       sessionCookie = `${REAL_SESSION_COOKIE}=${created.token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
     } catch {
-      fail('cognito');
+      fail('cognito', transaction.returnPath);
       return;
     }
     redirectWithCookies(response, transaction.returnPath, [clearTransaction, sessionCookie]);
