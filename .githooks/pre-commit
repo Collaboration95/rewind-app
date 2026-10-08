@@ -2,6 +2,9 @@
 # Mirrors Quality's "Check source and production dependencies" step
 # (.github/workflows/quality.yml). Skip once with `git commit --no-verify`.
 set -euo pipefail
+# Git exports GIT_DIR, GIT_INDEX_FILE etc. to hooks; tests that build their own
+# temporary repositories must not inherit them.
+unset $(git rev-parse --local-env-vars)
 npm run --silent format:check
 npm run --silent lint
 npm run --silent architecture:check
