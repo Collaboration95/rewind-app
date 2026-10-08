@@ -69,15 +69,18 @@ function browserBundle(now) {
   })();`;
 }
 
-async function listen(server, port) {
-  server.listen(port, '127.0.0.1');
+// Fixture servers take ephemeral ports so concurrent test runs cannot collide.
+async function listen(server) {
+  server.listen(0, '127.0.0.1');
   await once(server, 'listening');
+  return `https://127.0.0.1:${server.address().port}`;
 }
 
 test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pinned completion and processing', async (t) => {
   await withIntentFixture(async (c) => {
-    const origin = 'https://127.0.0.1:5421';
-    const storageOrigin = 'https://127.0.0.1:5422';
+    // Assigned once the fixture servers listen; handlers read them per request.
+    let origin;
+    let storageOrigin;
     const secret = 'synthetic-direct-transfer-proxy';
     const key = c.root + '/fixture-key.pem';
     const cert = c.root + '/fixture-cert.pem';
@@ -114,20 +117,22 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
     let hideVersion = false;
     let rejectPut = false;
     let losePutResponse = false;
-    const runtime = createRuntimeServer(
-      {
-        ...c.config,
-        allowOrigin: origin,
-        originAuthSecret: secret,
-      },
-      c.database,
-      {
-        now: () => c.now,
-        mediaStore: c.deps.store,
-        mediaEnvironment: 'test',
-        uploadIntents: c.deps,
-      },
-    );
+    let runtime;
+    const createRuntime = () =>
+      createRuntimeServer(
+        {
+          ...c.config,
+          allowOrigin: origin,
+          originAuthSecret: secret,
+        },
+        c.database,
+        {
+          now: () => c.now,
+          mediaStore: c.deps.store,
+          mediaEnvironment: 'test',
+          uploadIntents: c.deps,
+        },
+      );
     const app = createServer(tls, async (request, response) => {
       if (request.url === '/') {
         response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
@@ -278,8 +283,9 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
       });
     let browser;
     try {
-      await listen(app, 5421);
-      await listen(storage, 5422);
+      origin = await listen(app);
+      storageOrigin = await listen(storage);
+      runtime = createRuntime();
       browser = await chromium.launch();
       const context = await browser.newContext({ ignoreHTTPSErrors: true });
       // A real, DB-backed HttpOnly secure session. Same-host storage on another
@@ -365,16 +371,18 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
           },
         );
       }
-      // Drop a response after the real handler has atomically registered it.
-      await page.route(
-        '**/upload-intents/*/complete',
-        async (route) => {
-          const result = await route.fetch();
-          assert.equal(result.status(), 200);
-          await route.abort('failed');
-        },
-        { times: 1 },
-      );
+      // Drop the first response after the real handler has atomically registered it.
+      // The handler stays installed and passes later requests through, rather than
+      // using { times: 1 }: removing the last route while the client's follow-up
+      // request is in flight could leave that request paused forever on a busy host.
+      let droppedCompletion = false;
+      await page.route('**/upload-intents/*/complete', async (route) => {
+        if (droppedCompletion) return route.continue();
+        droppedCompletion = true;
+        const result = await route.fetch();
+        assert.equal(result.status(), 200);
+        await route.abort('failed');
+      });
       const first = await transfer('browser-http-key-1');
       assert.equal(first.intent.state, 'completed', JSON.stringify(first));
       assert.equal(first.intent.cycleId, c.group.cycle.id);
@@ -513,7 +521,7 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
         server.closeAllConnections();
         await new Promise((done) => server.close(done));
       }
-      runtime.close();
+      runtime?.close();
     }
   });
 });
