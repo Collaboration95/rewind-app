@@ -48,3 +48,9 @@ variable "database_availability_zone" {
   type        = string
   default     = "ap-southeast-1a"
 }
+
+variable "auth_password" {
+  description = "Allow Rewind's own email/password sign-in next to Cognito (REWIND_AUTH_PASSWORD). True for dev only; release must set false because its server refuses to start otherwise."
+  type        = bool
+  default     = true
+}

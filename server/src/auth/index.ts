@@ -26,7 +26,7 @@ export const PASSWORD_SCRYPT: Readonly<ScryptParameters> = Object.freeze({
 export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 export const LOGIN_FAILURE_LIMIT = 5;
 export const BASE_COOLDOWN_MS = 15 * 60 * 1000;
-export const SESSION_IDLE_MS = 12 * 60 * 60 * 1000;
+export const SESSION_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
 export const SESSION_ABSOLUTE_MS = 30 * 24 * 60 * 60 * 1000;
 /** How stale the stored idle expiry may get (it is extended in memory). */
 export const SESSION_TOUCH_MS = 10 * 60 * 1000;
@@ -64,8 +64,15 @@ export type LoginResult =
   | { status: 'invalid' }
   | { status: 'throttled'; retryAfterSeconds: number };
 export type RealSessionResult =
-  | { status: 'valid'; account: RealAccount; idleExpiresAt: string; absoluteExpiresAt: string }
+  | {
+      status: 'valid';
+      account: RealAccount;
+      idleExpiresAt: string;
+      absoluteExpiresAt: string;
+      signInMethod: SignInMethod;
+    }
   | { status: 'invalid' };
+export type SignInMethod = 'cognito' | 'password';
 
 function scrypt(
   password: string,
@@ -485,6 +492,7 @@ export function validateRealSession(
       account: mapAccount(cached.account),
       idleExpiresAt,
       absoluteExpiresAt: cached.absoluteExpiresAt,
+      signInMethod: cached.account.cognitoSub ? 'cognito' : 'password',
     };
   }
   const row = database
@@ -492,7 +500,7 @@ export function validateRealSession(
       `SELECT s.account_id AS id, s.account_id AS accountId, s.last_seen_at AS lastSeenAt,
     s.idle_expires_at AS idleExpiresAt, s.absolute_expires_at AS absoluteExpiresAt,
     s.revoked_at AS revokedAt, a.username, a.display_name AS displayName,
-    a.created_at AS createdAt, a.updated_at AS updatedAt
+    a.created_at AS createdAt, a.updated_at AS updatedAt, a.cognito_sub AS cognitoSub
     FROM real_account_sessions s JOIN real_accounts a ON a.id = s.account_id
     WHERE s.token_hash = ?`,
     )
@@ -540,6 +548,7 @@ export function validateRealSession(
     account: mapAccount(row),
     idleExpiresAt: nextIdle,
     absoluteExpiresAt: String(row.absoluteExpiresAt),
+    signInMethod: row.cognitoSub ? 'cognito' : 'password',
   };
 }
 
@@ -593,4 +602,127 @@ export async function verifyRealAccountPassword(
     recordFailure(database, 'account', row.normalized, now);
     return 'invalid';
   });
+}
+
+/** Sign-in through Cognito: a new Rewind session for an account that already exists. */
+export function createRealSession(
+  database: RewindDatabase,
+  accountId: string,
+  now = new Date(),
+): { token: string; expiresAt: string } {
+  const token = randomBytes(32).toString('base64url');
+  const createdAt = now.toISOString();
+  const absoluteExpiresAt = new Date(now.getTime() + SESSION_ABSOLUTE_MS).toISOString();
+  const idleExpiresAt = new Date(
+    Math.min(now.getTime() + SESSION_IDLE_MS, Date.parse(absoluteExpiresAt)),
+  ).toISOString();
+  database
+    .prepare(
+      `INSERT INTO real_account_sessions
+    (token_hash, account_id, created_at, last_seen_at, idle_expires_at, absolute_expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(digest(token), accountId, createdAt, createdAt, idleExpiresAt, absoluteExpiresAt);
+  return { token, expiresAt: idleExpiresAt };
+}
+
+function accountByCognitoSub(database: RewindDatabase, sub: string): RealAccount | null {
+  const row = database
+    .prepare(
+      `SELECT id, username, display_name AS displayName,
+      created_at AS createdAt, updated_at AS updatedAt
+      FROM real_accounts WHERE cognito_sub = ?`,
+    )
+    .get(sub) as Record<string, unknown> | undefined;
+  return row ? mapAccount(row) : null;
+}
+
+/**
+ * The account for a Cognito identity, created on first sign-in. Cognito owns
+ * the credentials, so the password columns (still NOT NULL) hold random values
+ * nobody knows, and the display name starts empty: the app asks for it on the
+ * first sign-in. The email is not stored.
+ */
+export function findOrCreateCognitoAccount(
+  database: RewindDatabase,
+  sub: string,
+  now = new Date(),
+): RealAccount {
+  const existing = accountByCognitoSub(database, sub);
+  if (existing) return existing;
+  const timestamp = now.toISOString();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const username = `cognito-${randomBytes(6).toString('hex')}`;
+    try {
+      database
+        .prepare(
+          `INSERT INTO real_accounts
+        (id, username, normalized_username, display_name, password_salt, password_hash,
+         password_scrypt_n, password_scrypt_r, password_scrypt_p, created_at, updated_at, cognito_sub)
+        VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          randomUUID(),
+          username,
+          username,
+          randomBytes(16).toString('hex'),
+          randomBytes(PASSWORD_SCRYPT.keyLength).toString('hex'),
+          PASSWORD_SCRYPT.N,
+          PASSWORD_SCRYPT.r,
+          PASSWORD_SCRYPT.p,
+          timestamp,
+          timestamp,
+          sub,
+        );
+    } catch (error) {
+      // A parallel callback for the same sub won the race, or the generated
+      // username collided: look again, then retry with a fresh username.
+      const raced = accountByCognitoSub(database, sub);
+      if (raced) return raced;
+      if (attempt === 2) throw error;
+      continue;
+    }
+    return accountByCognitoSub(database, sub)!;
+  }
+  throw new Error('Could not create the Cognito account.');
+}
+
+export function cognitoSubForAccount(database: RewindDatabase, accountId: string): string | null {
+  const row = database
+    .prepare('SELECT cognito_sub AS sub FROM real_accounts WHERE id = ?')
+    .get(accountId) as { sub: string | null } | undefined;
+  return row?.sub ?? null;
+}
+
+/** Set the display name (the profile keeps it; Cognito never sees it). */
+export function updateAccountDisplayName(
+  database: RewindDatabase,
+  accountId: string,
+  displayNameInput: string,
+  now = new Date(),
+): RealAccount | null {
+  const displayName = displayNameInput.trim();
+  if (!displayName || displayName.length > 80) return null;
+  const timestamp = now.toISOString();
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    database
+      .prepare('UPDATE real_accounts SET display_name = ?, updated_at = ? WHERE id = ?')
+      .run(displayName, timestamp, accountId);
+    database
+      .prepare('UPDATE real_profiles SET display_name = ? WHERE account_id = ?')
+      .run(displayName, accountId);
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
+  forgetAccount(database, accountId);
+  const row = database
+    .prepare(
+      `SELECT id, username, display_name AS displayName,
+      created_at AS createdAt, updated_at AS updatedAt FROM real_accounts WHERE id = ?`,
+    )
+    .get(accountId) as Record<string, unknown> | undefined;
+  return row ? mapAccount(row) : null;
 }

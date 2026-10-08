@@ -130,7 +130,10 @@ export function SettingsScreen<T extends SettingsGroup>(props: {
   onCreate: () => void;
   signOut: { label: string; pending: boolean; onSignOut: () => void };
   notice?: string | null;
-  onDeleteAccount: (password: string) => Promise<AccountDeletionOutcome>;
+  /** Password for a password session; the typed word DELETE for a Cognito session. */
+  onDeleteAccount: (credential: string) => Promise<AccountDeletionOutcome>;
+  /** How this account signed in; absent means a password. */
+  signInMethod?: 'cognito' | 'password';
   blocked: Set<string>;
   onBlockedChange: (profileId: string, blocked: boolean) => void;
 }) {
@@ -1106,7 +1109,12 @@ function Members<T extends SettingsGroup>({
 
 /* ---------- S19–S20 Delete account ---------- */
 
-function DeleteAccount<T extends SettingsGroup>({ onBack, onDeleteAccount }: Props<T>) {
+function DeleteAccount<T extends SettingsGroup>({
+  onBack,
+  onDeleteAccount,
+  signInMethod,
+}: Props<T>) {
+  const typedConfirmation = signInMethod === 'cognito';
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState(false);
   const [pending, setPending] = useState(false);
@@ -1124,7 +1132,8 @@ function DeleteAccount<T extends SettingsGroup>({ onBack, onDeleteAccount }: Pro
     if (!mounted.current) return;
     setPending(false);
     setConfirm(false);
-    if (outcome === 'incorrect') setError('The password is incorrect.');
+    if (outcome === 'incorrect')
+      setError(typedConfirmation ? 'Type DELETE exactly as shown.' : 'The password is incorrect.');
     else if (outcome === 'throttled') setError('Too many attempts. Try again later.');
     else if (outcome === 'unavailable')
       setError('Your account could not be deleted. Retry when connected.');
@@ -1135,7 +1144,9 @@ function DeleteAccount<T extends SettingsGroup>({ onBack, onDeleteAccount }: Pro
         <SubHeader onBack={onBack} title="Delete account" />
         <Glass style={styles.deleteCard}>
           <Text style={styles.deleteLead}>This deletes your account for good:</Text>
-          <Text style={styles.bullet}>• your username and password</Text>
+          <Text style={styles.bullet}>
+            {typedConfirmation ? '• your profile and sign-in' : '• your username and password'}
+          </Text>
           <Text style={styles.bullet}>• your chat messages</Text>
           <Text style={styles.bullet}>
             • your photos and videos (films already made stay with the group)
@@ -1145,22 +1156,37 @@ function DeleteAccount<T extends SettingsGroup>({ onBack, onDeleteAccount }: Pro
           Groups you own pass to the member who joined next. Saved copies on people’s phones stay
           theirs.
         </Lead>
-        <Field
-          autoCapitalize="none"
-          autoComplete="current-password"
-          label="Password"
-          onChangeText={(value) => {
-            setPassword(value);
-            setError(null);
-          }}
-          secureTextEntry
-          testID="real-delete-password"
-          textContentType="password"
-          value={password}
-        />
+        {typedConfirmation ? (
+          <Field
+            autoCapitalize="characters"
+            autoCorrect={false}
+            label="Type DELETE to confirm"
+            onChangeText={(value) => {
+              setPassword(value);
+              setError(null);
+            }}
+            spellCheck={false}
+            testID="real-delete-confirmation"
+            value={password}
+          />
+        ) : (
+          <Field
+            autoCapitalize="none"
+            autoComplete="current-password"
+            label="Password"
+            onChangeText={(value) => {
+              setPassword(value);
+              setError(null);
+            }}
+            secureTextEntry
+            testID="real-delete-password"
+            textContentType="password"
+            value={password}
+          />
+        )}
         <ErrorText testID="real-delete-error">{error}</ErrorText>
         <Button
-          disabled={!password}
+          disabled={typedConfirmation ? password !== 'DELETE' : !password}
           label="Delete account"
           onPress={() => setConfirm(true)}
           testID="real-delete-account"

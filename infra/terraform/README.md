@@ -478,6 +478,22 @@ dev deploy role may read. Each dev deploy streams it to
 `deploy/release-host.sh configure`; the server generates its own web push keys
 once and keeps them. No one copies credentials by hand.
 
+### Cognito sign-in (`media/cognito.tf`)
+
+Each environment gets one Cognito user pool (`rewind-<environment>`), a public
+app client (authorization code + PKCE, no secret), a default prefix domain
+(`rewind-<environment>-<account>.auth.<region>.amazoncognito.com`) and Managed
+Login v2 branding in Warm Glass colours. Sign-in is by email and password;
+self sign-up is on; MFA, social login and custom domains are off. The client's
+callback URLs are derived from `web_origins` as `<origin>/api/auth/callback`,
+and its logout URLs as `<origin>/`, so adding an origin there registers it.
+Pool, client and domain reach the server through the settings object
+(`REWIND_COGNITO_*`), and the runtime IAM user may only call
+`cognito-idp:AdminDeleteUser` on that pool. `auth_password` (default true,
+dev) sets `REWIND_AUTH_PASSWORD`; the release module call sets it to false.
+Release gets its own pool when its root is applied with the next `main`
+promotion.
+
 ## Host alarms (`infra/scripts/lightsail-alarms.sh`)
 
 Terraform's AWS provider has no Lightsail contact-method or alarm resources, so

@@ -314,7 +314,8 @@ for (const change of [
           { name: 'New current group', prompt: 'New group', maxMembers: 5 },
           c.now,
         );
-      if (change === 'expired') c.now = new Date('2026-10-04T21:00:00Z');
+      // The session idles out after SESSION_IDLE_MS (7 days).
+      if (change === 'expired') c.now = new Date(Date.parse(c.due) + 8 * 24 * 60 * 60 * 1000);
       if (change === 'rotated')
         assert.equal(
           registerReminderDestination(

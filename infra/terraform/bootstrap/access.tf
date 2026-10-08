@@ -123,6 +123,7 @@ data "aws_iam_policy_document" "terraform_apply" {
     actions = [
       "budgets:*",
       "cloudtrail:*",
+      "cognito-idp:*",
       "cloudwatch:*",
       "cloudfront:CreateDistributionWithTags",
       "cloudfront:CreateDistribution",

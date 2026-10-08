@@ -133,6 +133,13 @@ resource "aws_iam_user" "runtime" {
 }
 
 data "aws_iam_policy_document" "runtime" {
+  # Account deletion removes the person's Cognito user (this pool only).
+  statement {
+    sid       = "DeleteCognitoUser"
+    actions   = ["cognito-idp:AdminDeleteUser"]
+    resources = [aws_cognito_user_pool.rewind.arn]
+  }
+
   statement {
     sid = "MediaObjects"
     actions = [
@@ -212,6 +219,11 @@ resource "aws_s3_object" "hosted_env" {
     "AWS_SECRET_ACCESS_KEY=${aws_iam_access_key.runtime.secret}",
     "REWIND_REMINDER_VAPID_SUBJECT=${var.web_push_subject}",
     "REWIND_REQUEST_TIMING=true",
+    "REWIND_AUTH_PASSWORD=${var.auth_password}",
+    "REWIND_COGNITO_REGION=${var.region}",
+    "REWIND_COGNITO_USER_POOL_ID=${aws_cognito_user_pool.rewind.id}",
+    "REWIND_COGNITO_CLIENT_ID=${aws_cognito_user_pool_client.rewind.id}",
+    "REWIND_COGNITO_DOMAIN=${local.cognito_domain}",
   ], local.database_hosted_settings, var.extra_hosted_settings, [""])))
 }
 

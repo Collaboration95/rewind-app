@@ -342,6 +342,77 @@ describe('real-account client transport and storage', () => {
   });
 });
 
+describe('Cognito support in the real-account client', () => {
+  const webLocation = {
+    configurable: true,
+    value: { location: { href: 'https://rewind.example/', origin: 'https://rewind.example' } },
+    writable: true,
+  };
+
+  it('reads the public sign-in options and rejects malformed answers', async () => {
+    setPlatform('web');
+    Object.defineProperty(globalThis, 'window', webLocation);
+    const fetcher = jest
+      .fn()
+      .mockResolvedValueOnce(response(200, { passwordSignIn: false, cognito: true }))
+      .mockResolvedValueOnce(response(200, { passwordSignIn: 'yes' }))
+      .mockResolvedValueOnce(response(503, {}));
+    const client = new RealAccountClient('https://rewind.example/api', tokenStore, fetcher);
+
+    await expect(client.fetchAuthConfig()).resolves.toEqual({
+      passwordSignIn: false,
+      cognito: true,
+    });
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://rewind.example/api/auth/config',
+      expect.objectContaining({ method: 'GET', credentials: 'include' }),
+    );
+    await expect(client.fetchAuthConfig()).rejects.toMatchObject({ status: 502 });
+    await expect(client.fetchAuthConfig()).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('builds the server-side Cognito start URL with an encoded return path', () => {
+    const client = new RealAccountClient('/api/', tokenStore, jest.fn());
+    expect(client.cognitoStartUrl('/invite?groupId=g&code=AB12')).toBe(
+      '/api/auth/cognito/start?return=%2Finvite%3FgroupId%3Dg%26code%3DAB12',
+    );
+  });
+
+  it('carries signInMethod from the session and login, and ignores unknown values', async () => {
+    setPlatform('web');
+    Object.defineProperty(globalThis, 'window', webLocation);
+    const session = { account, idleExpiresAt: expiresAt, absoluteExpiresAt: expiresAt };
+    const fetcher = jest
+      .fn()
+      .mockResolvedValueOnce(response(200, { ...session, signInMethod: 'cognito' }))
+      .mockResolvedValueOnce(response(200, session))
+      .mockResolvedValueOnce(response(200, { ...session, signInMethod: 'saml' }))
+      .mockResolvedValueOnce(response(200, { account, expiresAt, signInMethod: 'password' }));
+    const client = new RealAccountClient('https://rewind.example', tokenStore, fetcher);
+
+    await expect(client.restore()).resolves.toMatchObject({ signInMethod: 'cognito' });
+    await expect(client.restore()).resolves.not.toHaveProperty('signInMethod');
+    await expect(client.restore()).resolves.not.toHaveProperty('signInMethod');
+    await expect(client.login('pilot.user', 'pw')).resolves.toMatchObject({
+      signInMethod: 'password',
+    });
+  });
+
+  it('returns the provider sign-out URL from logout when the server sends one', async () => {
+    setPlatform('web');
+    Object.defineProperty(globalThis, 'window', webLocation);
+    const logoutUrl = 'https://auth.example.com/logout?client_id=abc';
+    const fetcher = jest
+      .fn()
+      .mockResolvedValueOnce(response(200, { signedOut: true, logoutUrl }))
+      .mockResolvedValueOnce(response(200, { signedOut: true }));
+    const client = new RealAccountClient('https://rewind.example', tokenStore, fetcher);
+
+    await expect(client.logout()).resolves.toBe(logoutUrl);
+    await expect(client.logout()).resolves.toBeUndefined();
+  });
+});
+
 test('account write limits return the unread response and keep the credential active', async () => {
   const token = 't'.repeat(43);
   storedToken = token;

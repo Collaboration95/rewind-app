@@ -119,7 +119,10 @@ function SessionGate({ inviteLink }: { inviteLink: InviteLinkIntent | null }) {
     const timeout = setTimeout(() => setLaunchFaded(true), MOTION_LAUNCH_FADE_MS);
     return () => clearTimeout(timeout);
   }, [launchReady]);
-  const realAccountActive = realAccount.state === 'active' && Boolean(realAccount.session);
+  const needsDisplayName =
+    realAccount.state === 'active' && realAccount.session?.account.displayName.trim() === '';
+  const realAccountActive =
+    realAccount.state === 'active' && Boolean(realAccount.session) && !needsDisplayName;
   useEffect(() => {
     // A signed-in member is ready once the group screen loads (see
     // RealAccountGroupExperience); other entry screens are ready here.
@@ -129,6 +132,12 @@ function SessionGate({ inviteLink }: { inviteLink: InviteLinkIntent | null }) {
     return <SessionLoadingScreen />;
   }
   const launchFade = launchFaded || Platform.OS !== 'web' ? null : <LaunchScreen leaving />;
+  if (needsDisplayName)
+    return (
+      <WarmFrame overlay={launchFade}>
+        <DisplayNameScreen />
+      </WarmFrame>
+    );
   if (realAccount.state === 'active' && realAccount.session)
     return (
       <WarmFrame overlay={launchFade}>
@@ -208,6 +217,83 @@ function SessionLoadingScreen() {
   );
 }
 
+/** First sign-in with Cognito: the display name lives in the Rewind profile. */
+function DisplayNameScreen() {
+  const auth = useRealAccount();
+  const entryInsets = useScreenInsets();
+  const [name, setName] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+  const trimmed = name.trim();
+  const blocked = pending || trimmed.length === 0 || trimmed.length > 80;
+  const submit = async () => {
+    if (blocked) return;
+    setError(null);
+    setPending(true);
+    const saved = await auth.updateDisplayName(trimmed);
+    if (!mounted.current) return;
+    setPending(false);
+    if (!saved) setError('We could not save your name. Check your connection and try again.');
+  };
+  return (
+    <>
+      <Glow />
+      <Animated.ScrollView
+        contentContainerStyle={[
+          styles.warmEntry,
+          styles.warmWelcome,
+          { paddingTop: entryInsets.top + 8, paddingBottom: entryInsets.bottom + 140 },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        testID="display-name-screen"
+      >
+        <View style={styles.warmForm}>
+          <Text accessibilityRole="header" style={styles.warmWord}>
+            What should we call you?
+          </Text>
+          <Text style={[styles.warmLead, styles.displayNameLead]}>
+            This is the name your group sees in Rewind.
+          </Text>
+          <Field
+            autoCapitalize="words"
+            autoComplete="name"
+            autoFocus={Platform.OS === 'web'}
+            editable={!pending}
+            label="Your name"
+            maxLength={80}
+            onChangeText={(value) => {
+              setName(value);
+              setError(null);
+            }}
+            onSubmitEditing={() => void submit()}
+            returnKeyType="go"
+            testID="display-name-input"
+            textContentType="name"
+            value={name}
+          />
+          <ErrorText testID="display-name-error">{error}</ErrorText>
+          <Button
+            busy={pending}
+            busyLabel="Saving…"
+            disabled={blocked}
+            label="Continue"
+            onPress={() => void submit()}
+            testID="display-name-submit"
+            variant="primary"
+          />
+        </View>
+      </Animated.ScrollView>
+    </>
+  );
+}
+
 function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const auth = useRealAccount();
   const [entryOffset] = useState(() => new Animated.Value(0));
@@ -216,6 +302,7 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
   const [mode, setMode] = useState<'welcome' | 'sign-in' | 'create-account'>(
     inviteGroupId ? 'sign-in' : 'welcome',
   );
+  const [developerOpen, setDeveloperOpen] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
@@ -301,7 +388,11 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
                               : 'This device could not verify sign-out recovery state, so the saved sign-in was not restored. Retry sign out to recover safely.'
                             : auth.notice === 'sign-out-marker-cleanup-failed'
                               ? 'The server confirmed sign-out and this device deleted its saved sign-in, but it could not clear the recovery marker. Account restore stays blocked on this device until cleanup is retried.'
-                              : null;
+                              : auth.notice === 'cognito-failed'
+                                ? "Cognito sign-in didn't complete. Try again."
+                                : auth.notice === 'cognito-denied'
+                                  ? 'Cognito sign-in was cancelled. Try again when you are ready.'
+                                  : null;
 
   const submitSignIn = async () => {
     // The "account is ready" banner has done its job once they try to sign in.
@@ -371,8 +462,34 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
     !password ||
     !passwordConfirmation ||
     !auth.secureTransportAvailable;
+  // Cognito sign-in is a web-only, server-side flow; native keeps passwords.
+  const cognitoOn = Platform.OS === 'web' && auth.authConfig.cognito;
+  const passwordUiOpen = !cognitoOn || (auth.authConfig.passwordSignIn && developerOpen);
+  const developerLinkShown = cognitoOn && auth.authConfig.passwordSignIn && !developerOpen;
+  const cognitoButton = cognitoOn ? (
+    <Button
+      label="Continue with Cognito"
+      onPress={auth.startCognitoSignIn}
+      testID="cognito-sign-in"
+      variant="primary"
+    />
+  ) : null;
+  const developerLink = developerLinkShown ? (
+    <Text
+      accessibilityRole="button"
+      onPress={() => setDeveloperOpen(true)}
+      style={styles.developerLink}
+      testID="developer-sign-in"
+    >
+      Developer sign-in
+    </Text>
+  ) : null;
   const welcomeBanner =
-    auth.notice === 'expired' || auth.notice === 'revoked' || auth.notice === 'deleted'
+    auth.notice === 'expired' ||
+    auth.notice === 'revoked' ||
+    auth.notice === 'deleted' ||
+    auth.notice === 'cognito-failed' ||
+    auth.notice === 'cognito-denied'
       ? authMessage
       : null;
   const recoveryNotice =
@@ -394,6 +511,24 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
       auth.notice === 'sign-out-marker-unavailable' ||
       auth.notice === 'local-credential-removal-failed') &&
     !(auth.notice === 'offline' && !auth.secureTransportAvailable);
+
+  const signInStatus =
+    authMessage &&
+    auth.notice !== 'sign-out-recovery-pending' &&
+    auth.notice !== 'sign-out-marker-unavailable' &&
+    auth.notice !== 'sign-out-marker-cleanup-failed' &&
+    auth.notice !== 'local-credential-removal-failed' &&
+    !(auth.notice === 'offline' && !auth.secureTransportAvailable) ? (
+      <ErrorText
+        testID={
+          auth.notice === 'offline' ? 'real-account-offline-status' : 'real-account-session-status'
+        }
+      >
+        {authMessage}
+      </ErrorText>
+    ) : (
+      <ErrorText />
+    );
 
   return (
     <WarmFrame>
@@ -435,14 +570,24 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
                 {welcomeBanner}
               </Text>
             ) : null}
-            <Button label="Sign in" onPress={() => setMode('sign-in')} variant="primary" />
-            <Button
-              label="Create an account"
-              onPress={() => {
-                setRegistrationError(null);
-                setMode('create-account');
-              }}
-            />
+            {cognitoButton}
+            {passwordUiOpen ? (
+              <>
+                <Button
+                  label="Sign in"
+                  onPress={() => setMode('sign-in')}
+                  variant={cognitoOn ? 'glass' : 'primary'}
+                />
+                <Button
+                  label="Create an account"
+                  onPress={() => {
+                    setRegistrationError(null);
+                    setMode('create-account');
+                  }}
+                />
+              </>
+            ) : null}
+            {developerLink}
           </View>
         ) : visibleMode === 'create-account' ? (
           <View style={styles.warmForm}>
@@ -567,84 +712,77 @@ function AccountEntry({ inviteGroupId }: { inviteGroupId?: string }) {
                 Your invitation is saved. Sign in to join the group.
               </Text>
             ) : null}
-            <Field
-              autoCapitalize="none"
-              autoComplete="username"
-              autoCorrect={false}
-              autoFocus={Platform.OS === 'web'}
-              blurOnSubmit={false}
-              editable={!authPending}
-              label="Username"
-              onChangeText={setUsername}
-              onSubmitEditing={() => signInPasswordRef.current?.focus()}
-              returnKeyType="next"
-              spellCheck={false}
-              testID="real-account-username"
-              textContentType="username"
-              value={username}
-            />
-            <Field
-              autoCapitalize="none"
-              autoComplete="current-password"
-              editable={!authPending}
-              label="Password"
-              onChangeText={setPassword}
-              onSubmitEditing={() => void submitSignIn()}
-              ref={signInPasswordRef}
-              returnKeyType="go"
-              secureTextEntry
-              testID="real-account-password"
-              textContentType="password"
-              value={password}
-            />
-            {!auth.secureTransportAvailable ? (
-              <ErrorText>
-                Sign-in is unavailable until this app is connected to its same-origin HTTPS service.
-                Your password will not be sent over an insecure connection.
-              </ErrorText>
-            ) : null}
-            {authMessage &&
-            auth.notice !== 'sign-out-recovery-pending' &&
-            auth.notice !== 'sign-out-marker-unavailable' &&
-            auth.notice !== 'sign-out-marker-cleanup-failed' &&
-            auth.notice !== 'local-credential-removal-failed' &&
-            !(auth.notice === 'offline' && !auth.secureTransportAvailable) ? (
-              <ErrorText
-                testID={
-                  auth.notice === 'offline'
-                    ? 'real-account-offline-status'
-                    : 'real-account-session-status'
-                }
-              >
-                {authMessage}
-              </ErrorText>
+            {cognitoButton}
+            {passwordUiOpen ? (
+              <>
+                <Field
+                  autoCapitalize="none"
+                  autoComplete="username"
+                  autoCorrect={false}
+                  autoFocus={Platform.OS === 'web'}
+                  blurOnSubmit={false}
+                  editable={!authPending}
+                  label="Username"
+                  onChangeText={setUsername}
+                  onSubmitEditing={() => signInPasswordRef.current?.focus()}
+                  returnKeyType="next"
+                  spellCheck={false}
+                  testID="real-account-username"
+                  textContentType="username"
+                  value={username}
+                />
+                <Field
+                  autoCapitalize="none"
+                  autoComplete="current-password"
+                  editable={!authPending}
+                  label="Password"
+                  onChangeText={setPassword}
+                  onSubmitEditing={() => void submitSignIn()}
+                  ref={signInPasswordRef}
+                  returnKeyType="go"
+                  secureTextEntry
+                  testID="real-account-password"
+                  textContentType="password"
+                  value={password}
+                />
+                {!auth.secureTransportAvailable ? (
+                  <ErrorText>
+                    Sign-in is unavailable until this app is connected to its same-origin HTTPS
+                    service. Your password will not be sent over an insecure connection.
+                  </ErrorText>
+                ) : null}
+                {signInStatus}
+                <Button
+                  busy={authPending}
+                  busyLabel="Signing in…"
+                  disabled={signInBlocked}
+                  label="Sign in"
+                  onPress={() => void submitSignIn()}
+                  testID="real-account-submit"
+                  variant="primary"
+                />
+                <Text style={styles.warmNote}>
+                  New here?{' '}
+                  <Text
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setRegistrationComplete(false);
+                      setRegistrationError(null);
+                      setMode('create-account');
+                    }}
+                    style={styles.warmLink}
+                    testID="sign-in-create-account"
+                  >
+                    Create an account
+                  </Text>
+                </Text>
+              </>
             ) : (
-              <ErrorText />
+              <>
+                {signInStatus}
+                {developerLink}
+              </>
             )}
-            <Button
-              busy={authPending}
-              busyLabel="Signing in…"
-              disabled={signInBlocked}
-              label="Sign in"
-              onPress={() => void submitSignIn()}
-              testID="real-account-submit"
-              variant="primary"
-            />
-            <Text style={styles.warmNote}>
-              New here?{' '}
-              <Text
-                accessibilityRole="button"
-                onPress={() => {
-                  setRegistrationComplete(false);
-                  setRegistrationError(null);
-                  setMode('create-account');
-                }}
-                style={styles.warmLink}
-                testID="sign-in-create-account"
-              >
-                Create an account
-              </Text>
-            </Text>
           </View>
         )}
         {recoveryNotice ? (
@@ -798,6 +936,16 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   warmLink: { color: WARM.ink, fontWeight: '600', textDecorationLine: 'underline' },
+  developerLink: {
+    alignSelf: 'center',
+    color: WARM.muted,
+    fontFamily: FONT.body,
+    fontSize: 13,
+    paddingHorizontal: 8,
+    paddingVertical: 14,
+    textDecorationLine: 'underline',
+  },
+  displayNameLead: { marginTop: 10 },
   warmRetry: { alignSelf: 'center', marginBottom: 8 },
   warmPanel: { gap: 8, marginTop: 18 },
   page: {

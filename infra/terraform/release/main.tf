@@ -229,6 +229,8 @@ module "media" {
   web_origins      = [local.web_origin]
   web_push_subject = local.web_origin
   deploy_role_name = aws_iam_role.deploy.name
+  # Release signs in through Cognito only; its server refuses password sign-in.
+  auth_password = false
   # Release has no host backup bucket yet.
   backup_prefix_arn = null
   extra_hosted_settings = [
