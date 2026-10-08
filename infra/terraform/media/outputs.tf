@@ -50,3 +50,23 @@ output "database_readonly_url" {
   value       = local.database_readonly_url
   sensitive   = true
 }
+
+output "cognito_user_pool_id" {
+  description = "REWIND_COGNITO_USER_POOL_ID"
+  value       = aws_cognito_user_pool.rewind.id
+}
+
+output "cognito_user_pool_arn" {
+  description = "Pool ARN the runtime may AdminDeleteUser on."
+  value       = aws_cognito_user_pool.rewind.arn
+}
+
+output "cognito_client_id" {
+  description = "REWIND_COGNITO_CLIENT_ID (public client, no secret)."
+  value       = aws_cognito_user_pool_client.rewind.id
+}
+
+output "cognito_domain" {
+  description = "REWIND_COGNITO_DOMAIN (Managed Login host)."
+  value       = local.cognito_domain
+}

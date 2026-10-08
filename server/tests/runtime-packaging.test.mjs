@@ -81,7 +81,7 @@ test('standalone runtime reproduces missing SDKs, then loads the locked minimal 
   const lock = JSON.parse(lockBytes);
   assert.equal(provenance.sourceLockSha256, createHash('sha256').update(lockBytes).digest('hex'));
   assert.deepEqual(provenance.roots, runtimeRoots);
-  assert.ok(selected.length < 60);
+  assert.ok(selected.length < 64);
   for (const key of selected) {
     assert.deepEqual(provenance.packages[key], lock.packages[key]);
     assert.doesNotMatch(key, /(?:expo|react|typescript|jest|eslint|playwright)/);

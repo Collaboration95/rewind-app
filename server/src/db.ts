@@ -79,6 +79,7 @@ const MIGRATIONS = [
   { version: 28, key: 'content-safety-v1', fileName: '028-content-safety.sql' },
   { version: 29, key: 'member-reports-v1', fileName: '029-member-reports.sql' },
   { version: 30, key: 'moderation-records-v1', fileName: '030-moderation-records.sql' },
+  { version: 31, key: 'cognito-accounts-v1', fileName: '031-cognito-accounts.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),

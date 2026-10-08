@@ -126,7 +126,7 @@ test(
   async () => {
     await withRuntime(async ({ database }) => {
       assert.equal(schemaReadiness(database).ready, true);
-      assert.equal(schemaReadiness(database).expectedMigrationVersion, 30);
+      assert.equal(schemaReadiness(database).expectedMigrationVersion, 31);
       assert.equal(
         database.prepare('SELECT version FROM schema_migrations WHERE version = 17').get()?.version,
         17,

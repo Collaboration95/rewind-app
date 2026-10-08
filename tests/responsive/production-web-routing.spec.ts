@@ -54,7 +54,7 @@ test('web entry opens account registration and blocks credentials without HTTPS 
   await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page.getByTestId('registration-password')).toBeVisible();
-  await expect(page.getByLabel('Confirm password')).toBeVisible();
+  await expect(page.getByLabel('Confirm password', { exact: true })).toBeVisible();
   await expect(
     page.getByText(/account creation requires the same-origin HTTPS service/i),
   ).toBeVisible();
@@ -63,7 +63,7 @@ test('web entry opens account registration and blocks credentials without HTTPS 
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByLabel('Username')).toBeVisible();
-  await expect(page.getByLabel('Password')).toBeVisible();
+  await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
   await expect(
     page.getByText(/password will not be sent over an insecure connection/i),
   ).toBeVisible();

@@ -69,6 +69,11 @@ function jsonResponse(status: number, body: unknown): Response {
   });
 }
 
+/** The browser asks `/auth/config` once when it lands on the entry screen. */
+function authConfigResponse(config = { passwordSignIn: true, cognito: false }) {
+  return jsonResponse(200, config);
+}
+
 function activeSessionResponse() {
   return jsonResponse(200, {
     account: apiAccount,
@@ -177,6 +182,7 @@ describe('real account entry flow', () => {
     globalThis.fetch = jest
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(authConfigResponse())
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce(jsonResponse(200, { account: apiAccount, expiresAt }))
       .mockResolvedValueOnce(jsonResponse(200, { group: null }))
@@ -197,7 +203,7 @@ describe('real account entry flow', () => {
     await fireEvent.press(result.getByTestId('real-account-submit'));
     expect(await result.findByRole('header', { name: 'You’re not in a group yet' })).toBeTruthy();
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
-      3,
+      4,
       'https://rewind.example/auth/login',
       expect.objectContaining({
         method: 'POST',
@@ -216,6 +222,7 @@ describe('real account entry flow', () => {
     globalThis.fetch = jest
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(authConfigResponse())
       .mockResolvedValueOnce(jsonResponse(201, { account: newAccount }))
       .mockResolvedValueOnce(jsonResponse(200, { account: newAccount, expiresAt }))
       .mockResolvedValueOnce(jsonResponse(200, { group: null }))
@@ -237,7 +244,7 @@ describe('real account entry flow', () => {
 
     await waitFor(() => {
       expect(globalThis.fetch).toHaveBeenNthCalledWith(
-        3,
+        4,
         'https://rewind.example/auth/login',
         expect.objectContaining({
           method: 'POST',
@@ -250,7 +257,7 @@ describe('real account entry flow', () => {
       );
     });
     expect(globalThis.fetch).toHaveBeenNthCalledWith(
-      2,
+      3,
       'https://rewind.example/auth/register',
       expect.objectContaining({
         method: 'POST',
@@ -274,6 +281,7 @@ describe('real account entry flow', () => {
     globalThis.fetch = jest
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(authConfigResponse())
       .mockResolvedValueOnce(jsonResponse(201, { account: newAccount })) as typeof fetch;
 
     const result = await render(<App runtimeClient={runtimeClient} />);
@@ -302,6 +310,7 @@ describe('real account entry flow', () => {
     globalThis.fetch = jest
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(authConfigResponse())
       .mockResolvedValueOnce(jsonResponse(409, { error: 'username_unavailable' })) as typeof fetch;
     const result = await render(<App runtimeClient={runtimeClient} />);
 
@@ -311,7 +320,7 @@ describe('real account entry flow', () => {
     await fireEvent.changeText(result.getByLabelText('Confirm password'), 'different password');
     await fireEvent.press(result.getByTestId('registration-submit'));
     expect(result.getByTestId('registration-error')).toHaveTextContent('Passwords do not match.');
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
 
     await fireEvent.changeText(
       result.getByLabelText('Confirm password'),
@@ -319,7 +328,7 @@ describe('real account entry flow', () => {
     );
     await fireEvent.press(result.getByTestId('registration-submit'));
     expect(await result.findByTestId('registration-error')).toHaveTextContent(/username is taken/i);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
     expect(secureStoreMock.token).toBeNull();
   });
 
@@ -347,6 +356,7 @@ describe('real account entry flow', () => {
     globalThis.fetch = jest
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(authConfigResponse())
       .mockResolvedValueOnce(jsonResponse(status, { error })) as typeof fetch;
     const result = await render(<App runtimeClient={runtimeClient} />);
 
@@ -377,6 +387,7 @@ describe('real account entry flow', () => {
       globalThis.fetch = jest
         .fn()
         .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+        .mockResolvedValueOnce(authConfigResponse())
         .mockResolvedValueOnce(
           jsonResponse(400, { error: 'invalid_registration' }),
         ) as typeof fetch;
@@ -450,6 +461,7 @@ describe('real account entry flow', () => {
     globalThis.fetch = jest
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(authConfigResponse())
       .mockImplementationOnce(() => pendingRegistration)
       .mockResolvedValueOnce(jsonResponse(201, { account: newAccount })) as typeof fetch;
     const result = await render(<App runtimeClient={runtimeClient} />);
@@ -462,7 +474,7 @@ describe('real account entry flow', () => {
       'synthetic-test-password',
     );
     await fireEvent.press(result.getByTestId('registration-submit'));
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(3));
 
     await fireEvent(result.getByTestId('registration-password-confirmation'), 'submitEditing');
     expect(
@@ -560,6 +572,7 @@ describe('real account entry flow', () => {
     globalThis.fetch = jest
       .fn()
       .mockResolvedValueOnce(jsonResponse(401, { error: 'session_required' }))
+      .mockResolvedValueOnce(authConfigResponse())
       .mockResolvedValueOnce(jsonResponse(200, { account: apiAccount, expiresAt }))
       .mockResolvedValueOnce(jsonResponse(200, { group: null }))
       .mockResolvedValueOnce(jsonResponse(200, { groups: [] })) as typeof fetch;
@@ -579,7 +592,7 @@ describe('real account entry flow', () => {
     );
     expect(result.getByTestId('real-invite-intent')).not.toHaveTextContent(groupId);
     expect(result.getByTestId('real-invite-intent')).toHaveTextContent(/Accept it to join/);
-    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(5);
     result.unmount();
   });
 

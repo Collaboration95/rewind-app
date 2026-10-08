@@ -62,7 +62,7 @@ test(
 
       assertChainReceipts();
       assertInviteSchema();
-      assert.equal(schemaReadiness(database).expectedMigrationVersion, 30);
+      assert.equal(schemaReadiness(database).expectedMigrationVersion, 31);
       assert.deepEqual(schemaReadiness(database).missingMigrationKeys, []);
       assert.ok(
         database

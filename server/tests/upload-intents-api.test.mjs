@@ -239,7 +239,7 @@ test('upload-intent HTTP rechecks closure/quota and uses actual canonical fresh/
         .endsAt,
       originalEnds,
     );
-    assert.equal(schemaReadiness(c.database).expectedMigrationVersion, 30);
+    assert.equal(schemaReadiness(c.database).expectedMigrationVersion, 31);
     assert.equal(schemaReadiness(c.database).ready, true);
     // The rest replays SQLite's repair migration; PostgreSQL uses its baseline.
     if (onPostgres) return;

@@ -132,7 +132,12 @@ three things only:
 - Photo and video capture both stay.
 - Reminders use web push only (browser and installed iPhone Home Screen app).
   Expo/native push is paused; leave its code disabled, do not extend it.
-- Managed OIDC (Cognito) is deferred; the existing sign-in stays.
+- Sign-in is Amazon Cognito Managed Login (authorization code + PKCE, server-side
+  exchange) on web/PWA, one user pool per environment (decided 8 October 2026).
+  Release has no password sign-in. Local runs, tests and hosted dev keep the
+  password form ("Developer sign-in", `REWIND_AUTH_PASSWORD`) so agents and
+  scripts can test without Cognito; native Expo builds use it against local or
+  dev servers only. See `doc/planning/sprints/sprint-3-cognito/`.
 - Media storage: `disk` for local runs, `s3` for hosted. Do not extend the
   `local` object-store backend.
 - iOS is delivered as the PWA. Compiled native iOS is out of scope.
