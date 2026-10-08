@@ -35,6 +35,18 @@ export interface RuntimeConfig {
   /** Unset preserves legacy disk paths; opt-in stores use immutable references. */
   media?: MediaRuntimeConfig | null;
   reminders?: ReminderProviderConfig | null;
+  /** Password sign-in and registration. Always false on release. */
+  authPassword?: boolean;
+  /** Cognito Managed Login; unset keeps password sign-in as the only path. */
+  cognito?: CognitoRuntimeConfig | null;
+}
+
+export interface CognitoRuntimeConfig {
+  region: string;
+  userPoolId: string;
+  clientId: string;
+  /** Hosted UI host, e.g. rewind-dev-123.auth.ap-southeast-1.amazoncognito.com. */
+  domain: string;
 }
 
 export interface PostgresRuntimeConfig {
@@ -215,7 +227,58 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
     database: parseDatabaseConfig(env),
     media: parseMediaConfig(env, dataDir),
     reminders: parseReminderConfig(env),
+    ...parseAuthConfig(env),
   };
+}
+
+function parseBoolean(value: string | undefined, name: string, fallback: boolean): boolean {
+  const text = value?.trim().toLowerCase();
+  if (!text) return fallback;
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  throw new ConfigError(`${name} must be true or false.`, `Leave ${name} unset for the default.`);
+}
+
+function parseCognitoConfig(env: NodeJS.ProcessEnv): CognitoRuntimeConfig | null {
+  const region = env.REWIND_COGNITO_REGION?.trim() ?? '';
+  const userPoolId = env.REWIND_COGNITO_USER_POOL_ID?.trim() ?? '';
+  const clientId = env.REWIND_COGNITO_CLIENT_ID?.trim() ?? '';
+  const domain = env.REWIND_COGNITO_DOMAIN?.trim() ?? '';
+  if (!region && !userPoolId && !clientId && !domain) return null;
+  if (
+    !/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region) ||
+    !/^[a-z]{2}(?:-[a-z]+)+-\d+_[A-Za-z0-9]+$/.test(userPoolId) ||
+    !/^[A-Za-z0-9]{10,64}$/.test(clientId) ||
+    !/^[a-z0-9][a-z0-9.-]*\.amazoncognito\.com$/.test(domain)
+  ) {
+    throw new ConfigError(
+      'The Cognito settings are incomplete or invalid.',
+      'Set REWIND_COGNITO_REGION, _USER_POOL_ID, _CLIENT_ID and _DOMAIN (host only) together, or leave them all unset.',
+    );
+  }
+  return { region, userPoolId, clientId, domain };
+}
+
+/** Release must never verify passwords: refuse to start rather than allow it. */
+function parseAuthConfig(env: NodeJS.ProcessEnv): Pick<RuntimeConfig, 'authPassword' | 'cognito'> {
+  const authPassword = parseBoolean(env.REWIND_AUTH_PASSWORD, 'REWIND_AUTH_PASSWORD', true);
+  const cognito = parseCognitoConfig(env);
+  const release =
+    env.REWIND_MEDIA_ENVIRONMENT?.trim() === 'release' ||
+    env.REWIND_DATABASE_ENVIRONMENT?.trim() === 'release';
+  if (release && authPassword) {
+    throw new ConfigError(
+      'Password sign-in is not allowed on the release environment.',
+      'Set REWIND_AUTH_PASSWORD=false and the REWIND_COGNITO_* settings.',
+    );
+  }
+  if (!authPassword && !cognito) {
+    throw new ConfigError(
+      'REWIND_AUTH_PASSWORD=false needs the REWIND_COGNITO_* settings, or nobody could sign in.',
+      'Set REWIND_COGNITO_REGION, _USER_POOL_ID, _CLIENT_ID and _DOMAIN.',
+    );
+  }
+  return { authPassword, cognito };
 }
 
 function parseReminderConfig(env: NodeJS.ProcessEnv): ReminderProviderConfig | null {

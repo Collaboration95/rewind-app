@@ -73,3 +73,13 @@ printf 'REWIND_DATABASE_URL=\n' | REWIND_HOST_ROOT="$pg" bash "$script" configur
 grep -qx 'REWIND_DATABASE_URL=' "$pg/rewind.env" || { echo 'rollback did not clear the database URL' >&2; exit 1; }
 [[ "$(grep -c '^REWIND_DATABASE_URL=' "$pg/rewind.env")" == 1 ]] || { echo 'database URL was duplicated' >&2; exit 1; }
 echo 'database settings configure fixture passed'
+
+# Cognito sign-in settings (Terraform media root) are configurable.
+cg="$root/cognito"
+mkdir -p "$cg"
+printf 'REWIND_AUTH_PASSWORD=false\nREWIND_COGNITO_REGION=ap-southeast-1\nREWIND_COGNITO_USER_POOL_ID=ap-southeast-1_Abc123\nREWIND_COGNITO_CLIENT_ID=client123\nREWIND_COGNITO_DOMAIN=rewind-dev-1.auth.ap-southeast-1.amazoncognito.com\n' |
+  REWIND_HOST_ROOT="$cg" bash "$script" configure >/dev/null
+for key in REWIND_AUTH_PASSWORD REWIND_COGNITO_REGION REWIND_COGNITO_USER_POOL_ID REWIND_COGNITO_CLIENT_ID REWIND_COGNITO_DOMAIN; do
+  grep -q "^$key=." "$cg/rewind.env" || { echo "$key was refused" >&2; exit 1; }
+done
+echo 'cognito settings configure fixture passed'

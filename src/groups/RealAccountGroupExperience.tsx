@@ -1123,6 +1123,7 @@ export function RealAccountGroupExperience({
         }
         onCreate={() => pushScreen({ kind: 'create' })}
         onDeleteAccount={auth.deleteAccount}
+        signInMethod={auth.session?.signInMethod}
         onGroupUpdated={(updated) =>
           setGroup((current) =>
             current ? { ...updated, releases: updated.releases ?? current.releases } : updated,

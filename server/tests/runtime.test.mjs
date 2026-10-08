@@ -224,7 +224,7 @@ test('health reports schema readiness over the local service', async () => {
     assert.equal(health.service, 'rewind-local-runtime');
     assert.equal(health.ready, true);
     assert.equal(health.checks.schema.ready, true);
-    assert.equal(health.checks.schema.expectedMigrationVersion, 30);
+    assert.equal(health.checks.schema.expectedMigrationVersion, 31);
 
     database
       .prepare('DELETE FROM schema_migration_markers WHERE migration_key = ?')

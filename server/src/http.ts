@@ -95,12 +95,26 @@ import { decodePageCursor, encodePageCursor } from './archive/cursor';
 import { mediaServingBudget, releaseBudgetWhenSnapshotCloses } from './media/serving-budget';
 import {
   authenticateRealAccount,
+  cognitoSubForAccount,
   createRealAccount,
+  createRealSession,
+  findOrCreateCognitoAccount,
   REAL_SESSION_COOKIE,
   revokeRealSession,
+  updateAccountDisplayName,
   validateRealSession,
   verifyRealAccountPassword,
 } from './auth';
+import {
+  type CognitoService,
+  cognitoServiceFor,
+  newLoginTransaction,
+  OIDC_TRANSACTION_COOKIE,
+  readLoginTransaction,
+  sameSecret,
+  transactionCookieValue,
+  UsedStates,
+} from './auth/cognito';
 import { purgeRealAccount, removeStoredMedia } from './auth/deletion';
 import {
   blockMember,
@@ -700,9 +714,12 @@ export interface RuntimeServerOptions extends StoredJobOptions {
   realtimeHub?: RealtimeHub;
   realtimeHeartbeatIntervalMs?: number;
   requestLimiters?: RequestLimiters;
+  /** Tests inject a Cognito service; production builds one from config.cognito. */
+  cognito?: CognitoService;
 }
 
 interface RequestLimiters {
+  cognitoStates: UsedStates;
   intake: ConcurrencyLimiter;
   processing: ConcurrencyLimiter;
   archive: ConcurrencyLimiter;
@@ -732,6 +749,7 @@ class ConcurrencyLimiter {
 
 function createRequestLimiters(config: RuntimeConfig): RequestLimiters {
   return {
+    cognitoStates: new UsedStates(),
     intake: new ConcurrencyLimiter(config.maxConcurrentIntakes),
     processing: new ConcurrencyLimiter(config.maxConcurrentProcessing),
     archive: new ConcurrencyLimiter(2),
@@ -1360,6 +1378,7 @@ export async function handleRequest(
       config,
       database,
       requestLimiters.registration,
+      requestLimiters.cognitoStates,
       url,
       now(),
       options,
@@ -3477,12 +3496,31 @@ async function handleRealGroupRequest(
   });
 }
 
+/** The browser-visible origin; the transport check already vouched for it. */
+function publicOrigin(request: IncomingMessage, config: RuntimeConfig): string {
+  const host = request.headers.host ?? 'localhost';
+  const https =
+    (request.socket as typeof request.socket & { encrypted?: boolean }).encrypted ||
+    authenticatedProxyHttps(request, config);
+  return `${https ? 'https' : 'http'}://${host}`;
+}
+
+function redirectWithCookies(response: ServerResponse, location: string, cookies: string[]): void {
+  response.writeHead(302, {
+    'Cache-Control': 'no-store',
+    Location: location,
+    'Set-Cookie': cookies,
+  });
+  response.end();
+}
+
 async function handleRealAuthRequest(
   request: IncomingMessage,
   response: ServerResponse,
   config: RuntimeConfig,
   database: RewindDatabase,
   registrationRateLimiter: RegistrationRateLimiter,
+  cognitoStates: UsedStates,
   url: URL,
   now: Date,
   options: RuntimeServerOptions = {},
@@ -3491,6 +3529,141 @@ async function handleRealAuthRequest(
     authJson(request, response, config, 403, {
       error: 'auth_transport_unavailable',
       message: 'Sign-in is unavailable on this connection.',
+    });
+    return;
+  }
+  const cognito = cognitoServiceFor(config, options.cognito);
+  const passwordSignIn = config.authPassword !== false;
+
+  if (url.pathname === '/auth/config' && request.method === 'GET') {
+    authJson(request, response, config, 200, { passwordSignIn, cognito: Boolean(cognito) });
+    return;
+  }
+
+  if (url.pathname === '/auth/cognito/start' && request.method === 'GET') {
+    if (!cognito) {
+      authJson(request, response, config, 404, {
+        error: 'cognito_unavailable',
+        message: 'Cognito sign-in is not configured.',
+      });
+      return;
+    }
+    const transaction = newLoginTransaction(url.searchParams.get('return') ?? '/', now);
+    redirectWithCookies(
+      response,
+      cognito.authorizeUrl({
+        redirectUri: `${publicOrigin(request, config)}/api/auth/callback`,
+        state: transaction.state,
+        nonce: transaction.nonce,
+        codeChallenge: transaction.codeChallenge,
+      }),
+      [
+        `${OIDC_TRANSACTION_COOKIE}=${transactionCookieValue(transaction)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
+      ],
+    );
+    return;
+  }
+
+  if (url.pathname === '/auth/callback' && request.method === 'GET') {
+    const clearTransaction = `${OIDC_TRANSACTION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+    // A failure after the state matched returns to where sign-in started, so a
+    // pending invitation link survives a cancelled or failed attempt.
+    const fail = (code: string, returnPath = '/') => {
+      const target = new URL(returnPath, 'http://rewind.local');
+      target.searchParams.set('auth_error', code);
+      redirectWithCookies(response, `${target.pathname}${target.search}`, [clearTransaction]);
+    };
+    const transaction = readLoginTransaction(request.headers.cookie, now);
+    const state = url.searchParams.get('state') ?? '';
+    // The state must match this browser's cookie and can finish only once.
+    if (
+      !cognito ||
+      !transaction ||
+      !sameSecret(state, transaction.state) ||
+      !cognitoStates.consume(transaction.state, now.getTime())
+    ) {
+      fail('cognito');
+      return;
+    }
+    const providerError = url.searchParams.get('error');
+    if (providerError) {
+      fail(
+        providerError === 'access_denied' ? 'cognito_denied' : 'cognito',
+        transaction.returnPath,
+      );
+      return;
+    }
+    const code = url.searchParams.get('code') ?? '';
+    if (!code || code.length > 2048) {
+      fail('cognito', transaction.returnPath);
+      return;
+    }
+    let sessionCookie: string;
+    try {
+      const identity = await cognito.exchange({
+        code,
+        codeVerifier: transaction.codeVerifier,
+        redirectUri: `${publicOrigin(request, config)}/api/auth/callback`,
+      });
+      if (!identity.nonce || !sameSecret(identity.nonce, transaction.nonce)) {
+        fail('cognito', transaction.returnPath);
+        return;
+      }
+      if (!identity.emailVerified) {
+        fail('cognito', transaction.returnPath);
+        return;
+      }
+      const account = findOrCreateCognitoAccount(database, identity.sub, now);
+      const created = createRealSession(database, account.id, now);
+      const maxAge = Math.max(
+        0,
+        Math.floor((Date.parse(created.expiresAt) - now.getTime()) / 1000),
+      );
+      sessionCookie = `${REAL_SESSION_COOKIE}=${created.token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+    } catch {
+      fail('cognito', transaction.returnPath);
+      return;
+    }
+    redirectWithCookies(response, transaction.returnPath, [clearTransaction, sessionCookie]);
+    return;
+  }
+
+  if (url.pathname === '/auth/profile' && request.method === 'POST') {
+    const token = authToken(request);
+    const session = token ? validateRealSession(database, token, now) : null;
+    if (session?.status !== 'valid') {
+      authJson(request, response, config, 401, {
+        error: 'session_required',
+        message: 'A valid sign-in is required.',
+      });
+      return;
+    }
+    const body = await requestBody(request, config, 8 * 1024);
+    const account = updateAccountDisplayName(
+      database,
+      session.account.id,
+      typeof body?.displayName === 'string' ? body.displayName : '',
+      now,
+    );
+    if (!account) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_display_name',
+        message: 'Enter a name of 1 to 80 characters.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, { account });
+    return;
+  }
+
+  if (
+    !passwordSignIn &&
+    (url.pathname === '/auth/register' || url.pathname === '/auth/login') &&
+    request.method === 'POST'
+  ) {
+    authJson(request, response, config, 403, {
+      error: 'password_sign_in_disabled',
+      message: 'Sign in with Cognito on this environment.',
     });
     return;
   }
@@ -3601,7 +3774,7 @@ async function handleRealAuthRequest(
         response,
         config,
         200,
-        { account: result.account, expiresAt: result.expiresAt },
+        { account: result.account, expiresAt: result.expiresAt, signInMethod: 'password' },
         {
           'Set-Cookie': `${REAL_SESSION_COOKIE}=${result.token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`,
         },
@@ -3611,6 +3784,7 @@ async function handleRealAuthRequest(
         account: result.account,
         token: result.token,
         expiresAt: result.expiresAt,
+        signInMethod: 'password',
       });
     }
     return;
@@ -3638,6 +3812,7 @@ async function handleRealAuthRequest(
         account: session.account,
         idleExpiresAt: session.idleExpiresAt,
         absoluteExpiresAt: session.absoluteExpiresAt,
+        signInMethod: session.signInMethod,
       },
       request.headers.cookie && !request.headers.authorization
         ? {
@@ -3659,19 +3834,42 @@ async function handleRealAuthRequest(
       return;
     }
     const body = await requestBody(request, config, 8 * 1024);
-    const password = typeof body?.password === 'string' ? body.password : '';
-    const check = password
-      ? await verifyRealAccountPassword(database, session.account.id, password, now)
-      : 'invalid';
-    if (check !== 'ok') {
-      authJson(request, response, config, check === 'throttled' ? 429 : 403, {
-        error: check === 'throttled' ? 'password_check_throttled' : 'password_incorrect',
-        message:
-          check === 'throttled'
-            ? 'Too many attempts. Try again later.'
-            : 'The password is incorrect.',
-      });
-      return;
+    const cognitoSub = cognitoSubForAccount(database, session.account.id);
+    if (cognitoSub) {
+      // Cognito owns the credentials, so the check is a typed confirmation and
+      // the Cognito user goes first: a failure here leaves the account intact.
+      if (body?.confirmation !== 'DELETE') {
+        authJson(request, response, config, 403, {
+          error: 'confirmation_incorrect',
+          message: 'Type DELETE to confirm.',
+        });
+        return;
+      }
+      try {
+        if (!cognito) throw new Error('Cognito is not configured.');
+        await cognito.deleteUser(cognitoSub);
+      } catch {
+        authJson(request, response, config, 502, {
+          error: 'cognito_unavailable',
+          message: 'The account could not be deleted right now. Try again shortly.',
+        });
+        return;
+      }
+    } else {
+      const password = typeof body?.password === 'string' ? body.password : '';
+      const check = password
+        ? await verifyRealAccountPassword(database, session.account.id, password, now)
+        : 'invalid';
+      if (check !== 'ok') {
+        authJson(request, response, config, check === 'throttled' ? 429 : 403, {
+          error: check === 'throttled' ? 'password_check_throttled' : 'password_incorrect',
+          message:
+            check === 'throttled'
+              ? 'Too many attempts. Try again later.'
+              : 'The password is incorrect.',
+        });
+        return;
+      }
     }
     const media = purgeRealAccount(database, session.account.id, now);
     await removeStoredMedia(media, {
@@ -3685,7 +3883,12 @@ async function handleRealAuthRequest(
       response,
       config,
       200,
-      { deleted: true },
+      {
+        deleted: true,
+        ...(cognitoSub && cognito
+          ? { logoutUrl: cognito.logoutUrl(publicOrigin(request, config)) }
+          : {}),
+      },
       {
         'Set-Cookie': `${REAL_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
       },
@@ -3695,13 +3898,19 @@ async function handleRealAuthRequest(
 
   if (url.pathname === '/auth/logout' && request.method === 'POST') {
     const token = authToken(request);
+    // A Cognito session also ends Cognito's own, so the next sign-in asks again.
+    const ended = token ? validateRealSession(database, token, now) : null;
+    const logoutUrl =
+      cognito && ended?.status === 'valid' && ended.signInMethod === 'cognito'
+        ? cognito.logoutUrl(publicOrigin(request, config))
+        : undefined;
     if (token) revokeRealSession(database, token, now);
     authJson(
       request,
       response,
       config,
       200,
-      { signedOut: true },
+      { signedOut: true, ...(logoutUrl ? { logoutUrl } : {}) },
       {
         'Set-Cookie': `${REAL_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
       },

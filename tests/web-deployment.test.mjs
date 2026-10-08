@@ -64,6 +64,15 @@ test('Compose starts the web proxy only after the healthy runtime', () => {
   assert.match(compose, /REWIND_ALLOW_ORIGIN:/);
   assert.match(compose, /REWIND_ORIGIN_AUTH_SECRET: '\$\{REWIND_ORIGIN_AUTH_SECRET:-\}'/);
   assert.doesNotMatch(compose, /web:[\s\S]*?REWIND_ORIGIN_AUTH_SECRET/);
+  for (const key of [
+    'REWIND_AUTH_PASSWORD',
+    'REWIND_COGNITO_REGION',
+    'REWIND_COGNITO_USER_POOL_ID',
+    'REWIND_COGNITO_CLIENT_ID',
+    'REWIND_COGNITO_DOMAIN',
+  ]) {
+    assert.match(compose, new RegExp(`${key}: '\\$\\{${key}:-\\}'`));
+  }
   assert.doesNotMatch(compose, /REWIND_ALLOW_INSECURE_LOCAL_AUTH/);
   assert.match(compose, /rewind-demo-web/);
   assert.match(compose, /http:\/\/127\.0\.0\.1:8080\//);
