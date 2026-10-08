@@ -13,6 +13,12 @@ const files = globSync([
   .filter((file) => file !== 'tests/native-build.test.mjs')
   .sort();
 if (files.length === 0) throw new Error('No root tests discovered.');
-const result = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });
+// scripts/run-fast-tests.mjs caps this while other suites share the CPUs; by default
+// node --test uses all of them.
+const cap = process.env.REWIND_TEST_CONCURRENCY;
+const concurrency = /^[1-9]\d*$/.test(cap ?? '') ? [`--test-concurrency=${cap}`] : [];
+const result = spawnSync(process.execPath, ['--test', ...concurrency, ...files], {
+  stdio: 'inherit',
+});
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;

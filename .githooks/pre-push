@@ -17,7 +17,7 @@ fi
 npm run test:root
 python3 -m unittest discover -s tests/security -p 'test_*.py'
 npm run server:test
-npx jest --runInBand --coverage
+npx jest --coverage
 for fixture in tests/deploy/backup-manifest.test.sh tests/deploy/wake-recovery-selection.test.sh \
   tests/deploy/lifecycle-guards.test.sh tests/deploy/recovery-smoke.test.sh \
   tests/deploy/restore-atomic.test.sh tests/deploy/ownership-contract.test.sh \

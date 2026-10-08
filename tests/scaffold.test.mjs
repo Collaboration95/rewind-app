@@ -25,7 +25,12 @@ test('scaffold identifies the Rewind app and exposes baseline quality commands',
   assert.match(packageJson.scripts['build:web'], /expo export --(?:clear )?--platform web/);
   assert.match(packageJson.scripts['web:smoke-server'], /scripts\/web-smoke-server\.mjs/);
   assert.match(packageJson.scripts['test:web-smoke'], /playwright test/);
-  assert.match(packageJson.scripts.test, /jest --runInBand/);
+  // `test` builds the server once and runs root, server and Jest concurrently; its
+  // Jest invocation is covered by scripts/run-fast-tests.test.mjs.
+  assert.equal(packageJson.scripts.test, 'node scripts/run-fast-tests.mjs');
+  assert.equal(packageJson.scripts['test:fast'], 'npm test');
+  assert.equal(packageJson.scripts['test:coverage:frontend'], 'jest --coverage');
+  assert.doesNotMatch(JSON.stringify(packageJson.scripts), /--runInBand/);
   assert.match(packageJson.scripts.check, /format:check/);
   assert.match(packageJson.scripts.check, /lint/);
   assert.match(packageJson.scripts.check, /architecture:check/);
@@ -36,16 +41,28 @@ test('scaffold identifies the Rewind app and exposes baseline quality commands',
 test('quality workflow validates main and dev pushes and PRs against any stacked base', () => {
   assert.match(workflow, /npm ci/);
   assert.match(workflow, /name: Format, lint, typecheck, and test/);
-  assert.match(workflow, /npm run format:check/);
-  assert.match(workflow, /npm run lint/);
-  assert.match(workflow, /npm run typecheck/);
-  assert.match(workflow, /npx jest --runInBand --coverage/);
+  // The cheap checks run as one parallel matrix; each leg runs `npm run "$CHECK"`.
+  assert.match(workflow, /check: \[format:check, lint, architecture:check, typecheck\]/);
+  assert.match(workflow, /run: npm run "\$CHECK"/);
+  assert.match(workflow, /npm audit --omit=dev --audit-level=high/);
+  assert.match(workflow, /npx jest --coverage/);
+  assert.doesNotMatch(workflow, /--runInBand/);
   assert.match(workflow, /bash tests\/deploy\/recovery-smoke\.test\.sh/);
   assert.equal((workflow.match(/npm run build:web/g) ?? []).length, 1);
   assert.match(
     workflow,
-    /needs: \[changes, static, server, server-postgres, frontend, browser, fixtures\]/,
+    /needs: \[changes, checks, audit, static, server, server-postgres, frontend, browser, fixtures\]/,
   );
+  // The gate requires every job, and lets each one skip on documentation-only changes.
+  const gateJobs = ['checks', 'audit', 'static', 'server', 'server-postgres', 'frontend'];
+  for (const job of [...gateJobs, 'fixtures'])
+    assert.match(workflow, new RegExp(`test '\\$\\{\\{ needs\\.${job}\\.result \\}\\}' = success`));
+  for (const job of [...gateJobs, 'browser', 'fixtures'])
+    assert.match(workflow, new RegExp(`test '\\$\\{\\{ needs\\.${job}\\.result \\}\\}' = skipped`));
+  // Classifying compares two trees, so a shallow checkout plus the base commit is enough.
+  const classifierJob = workflow.split('\n  checks:')[0];
+  assert.doesNotMatch(classifierJob, /fetch-depth/);
+  assert.match(classifierJob, /git fetch --no-tags --depth=1 .*"\$REWIND_CHANGE_BASE"/);
   // The server suite also runs against PostgreSQL, the hosted engine (#261).
   assert.match(workflow, /npm run server:test:postgres/);
   assert.match(workflow, /test '\$\{\{ needs\.server-postgres\.result \}\}' = success/);
@@ -73,6 +90,8 @@ test('documentation classification gates deployment before AWS and preserves sch
   );
   const classifier = deploy.split('  deploy:')[0];
   assert.doesNotMatch(classifier, /aws sts|AWS_ACCESS_KEY_ID|assume-role/);
+  assert.doesNotMatch(classifier, /fetch-depth/);
+  assert.match(classifier, /git fetch --no-tags --depth=1 .*"\$REWIND_CHANGE_BASE"/);
   assert.match(classifier, /REWIND_CHANGE_HEAD: \$\{\{ github\.sha \}\}/);
   assert.match(codeql, /schedule:\n    - cron: '23 3 \* \* 1'/);
   assert.doesNotMatch(codeql, /paths-ignore:/);
