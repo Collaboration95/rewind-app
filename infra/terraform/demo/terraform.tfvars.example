@@ -7,13 +7,13 @@ budget_email_recipients = []
 ssh_cidr                = "YOUR.PUBLIC.IP.ADDRESS/32"
 # Leave null for manual starts. Example: "cron(0 9 ? * MON-FRI *)"
 automatic_start_schedule_expression = null
-# The lifecycle scripts override this for reviewed hibernation/recovery plans.
+# wake-demo.sh overrides this for reviewed host rebuild plans.
 demo_instance_enabled = true
 # Set only when enabling real-auth CloudFront. Generate a random value of at
 # least 32 characters; configure the same value at the origin and inject this
 # via a protected tfvars/secret workflow. Do not commit the real value.
 public_https_origin_auth_header = ""
 real_auth_https_distribution_enabled = false
-# Delete the static IP too while hibernated to remove its residual charge.
+# Delete the static IP too when the instance is removed.
 # Set true only if preserving the endpoint is more important than cost.
 retain_static_ip_when_instance_deleted = false

@@ -18,14 +18,14 @@ resources or the state key: that would replace the live host.
   credentials.
 - Start with `plan`; only a named human Terraform-apply owner runs `apply`.
 - The disposable compute lifecycle is explicit: `demo_instance_enabled=true`
-  creates the host and `false` hibernates it after a verified backup. The
-  reviewed `infra/scripts/destroy-demo.sh` workflow is the only documented
-  teardown path; the backup bucket and recovery IAM remain managed.
+  creates the host and `false` removes it. Backup-gated hibernation
+  (`destroy-demo.sh`) was retired in #512; the host runs continuously and its
+  data lives in managed PostgreSQL and S3.
 - Instance `user_data` is creation-time bootstrap: its drift alone is ignored
   so edits to `cloud-init.sh` do not replace a running host. Newly created or
   intentionally recreated hosts still receive the current script. Updating
   the script does not update an existing host; use application deployment or
-  the backup-gated hibernation/wake workflow as appropriate. No other instance
+  rebuild the host with `wake-demo.sh` as appropriate. No other instance
   fields are ignored, and this rule does not prevent intentional teardown.
 - The S3 backend's contents are state, not source code. State is private,
   encrypted, versioned, and ignored by Git; the `.tf` files and provider lock
@@ -99,7 +99,7 @@ make that possible, and neither creates compute:
   with no wildcard. It is declared next to the instance so its policy
   always carries the current `aws_lightsail_instance.rewind[0].arn`; a
   hard-coded ARN would silently stop matching after the documented
-  hibernation/wake cycle replaces the host. It may read the instance address
+  host rebuild replaces it. It may read the instance address
   and open or close ports on that one host, and nothing else: no start, stop,
   delete, resize, or media/bucket access.
 
@@ -138,16 +138,12 @@ The live-Demo owners accepted the following operating model on 23 September
 - The approved location is `ap-southeast-1`, availability zone
   `ap-southeast-1a`.
 - Recovery uses CIDR-restricted SSH from the trusted operator machine.
-- Pausing is manual backup-gated hibernation through
-  `infra/scripts/destroy-demo.sh`; scheduled starts and direct stop/delete
-  operations remain disabled.
-- A failed backup or manifest verification leaves the instance running. No
-  disposable compute is deleted without a fresh verified recovery point. A
-  failed restore preserves every recovery artifact and does not replace
+- The host runs continuously; hibernation was retired in #512. Scheduled
+  starts and direct stop/delete operations remain disabled.
+- A failed restore preserves every recovery artifact and does not replace
   known-good data.
 - Public acceptance uses the single HTTPS entry point documented below. The
-  retired optional Lightsail distribution is not part of current deployment or
-  hibernation guidance.
+  retired optional Lightsail distribution is not part of current deployment.
 - Andrew owns the non-author acceptance run for the hosted journey.
 
 An apply still requires Andrew to review the exact Terraform plan. These
@@ -190,9 +186,8 @@ records those objects in Terraform state; it does **not** recreate them.
 
 ## Intentional cost safeguards
 
-- The active Demo uses one `micro_3_0` Lightsail instance. Hibernated state has
-  no instance or static IP; static-IP retention is intentionally out of scope
-  for the current sprint and may be revisited later.
+- The active Demo uses one `micro_3_0` Lightsail instance, running
+  continuously.
 - No RDS, NAT gateway, load balancer, ECR, or extra compute is declared here.
 - The hosted Demo is accessed at
   `https://d2m6kz76y4kuvm.cloudfront.net`; local Terraform defaults do not
@@ -236,7 +231,7 @@ apply is human-owned through the `rewind-terraform-apply` profile. Its service
 allowlist excludes EC2, RDS, VPC/NAT, ECR, ECS, and Organizations; extending it
 requires a reviewed Terraform change.
 
-## Cloud power controller and hibernation
+## Cloud power controller and host rebuild
 
 The demo root defines a small Lambda control plane, not a public endpoint. An
 operator role can invoke only `rewind-demo-power-controller` with either:
@@ -258,17 +253,15 @@ automatic start schedule is opt-in through
 because cloud automation must not bypass the host's backup-and-verify step.
 
 The legacy `rewind-demo-operator` Lambda remains only for an already-existing
-instance and is disabled while `demo_instance_enabled=false`. The normal
-operator flow uses the human-reviewed Terraform profile:
+instance and is disabled while `demo_instance_enabled=false`. Rebuilding the
+host uses the human-reviewed Terraform profile:
 
 ```sh
-./infra/scripts/destroy-demo.sh --dry-run
-./infra/scripts/destroy-demo.sh --apply --confirm
 ./infra/scripts/wake-demo.sh --latest
 ./infra/scripts/wake-demo.sh --latest --apply --confirm
 ```
 
-The scripts default to read-only guard and plan mode. They verify the caller
+The script defaults to read-only guard and plan mode. It verifies the caller
 account, Terraform identity tags, expected/absent Lightsail resources, and the
 absence of unexpected Rewind resources before a plan is eligible. `--apply`
 requires the separate `--confirm` flag. `wake-demo.sh` downloads and verifies
@@ -277,9 +270,8 @@ restores the files on the new host before starting the runtime. It never treats
 a newly-created empty database as a successful recovery. The explicit
 `wake-demo.sh --seed` mode is only the first-install exception when no
 historical recovery point exists; it must be run with `--apply --confirm` to
-execute and must be followed by a complete backup before hibernation.
-Hibernation uploads the host-created snapshot from the trusted operator
-machine, so recreated hosts do not need to inherit AWS CLI credentials.
+execute. The `--latest` and `--manifest` modes restore SQLite-era recovery
+points and apply only to a host that keeps its database on disk.
 
 ## Recovery model
 
