@@ -32,12 +32,7 @@ cat > "$PLAN_JSON" <<'JSON'
   {"address":"aws_iam_role_policy.power_controller[0]","change":{"actions":["delete"]}},
   {"address":"aws_iam_role_policy.operator[0]","change":{"actions":["delete"]}},
   {"address":"aws_iam_role_policy.scheduler[0]","change":{"actions":["delete"]}},
-  {"address":"aws_lambda_function.power_controller[0]","change":{"actions":["delete"]}},
-  {"address":"aws_iam_role.cost_safety_audit","change":{"actions":["update"]}},
-  {"address":"aws_iam_role.cost_safety_audit_scheduler","change":{"actions":["update"]}},
-  {"address":"aws_iam_role_policy.cost_safety_audit","change":{"actions":["update"]}},
-  {"address":"aws_iam_role_policy.cost_safety_audit_scheduler","change":{"actions":["update"]}},
-  {"address":"aws_lambda_function.cost_safety_audit","change":{"actions":["update"]}}
+  {"address":"aws_lambda_function.power_controller[0]","change":{"actions":["delete"]}}
 ]}
 JSON
 

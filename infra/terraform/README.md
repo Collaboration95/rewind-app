@@ -203,56 +203,6 @@ records those objects in Terraform state; it does **not** recreate them.
   30-day/7-day retention. Superseded Terraform state versions expire after
   90 days; the current state is retained.
 
-The read-only cost-safety audit evaluates one of three explicit expected states:
-
-- `demo_off`: no disposable instance and no static IP unless retention was
-  explicitly enabled; configured snapshots and distributions are still the
-  complete allowlist.
-- `expected_stopped`: one stopped, `Environment=demo` instance with its static
-  IP attached; this is the default idle state.
-- `approved_active_demo`: one running, `Environment=demo` instance with its
-  static IP attached; this is allowed only when
-  `cost_safety_expected_instance_state = "running"` is explicitly configured.
-
-`demo_instance_enabled` controls whether Terraform creates the instance; it
-does not describe its power state. When the instance exists, the audit's
-expected power state is configured independently with
-`cost_safety_expected_instance_state`.
-
-Unexpected compute, orphaned or unattached networking, unapproved snapshots or
-distributions, and missing backup retention produce redacted findings with a
-severity, resource identifier class, expected state, and safe remediation
-reference. The audit only observes and reports; it never stops, deletes, or
-reconfigures resources. Inventory read errors fail closed without logging AWS
-names, object keys, credentials, or exception text.
-
-Audit failure delivery is disabled by default. To use the managed publisher,
-set `cost_safety_audit_notification_mode = "sns"` and provide the ARN of a
-separately managed SNS topic in
-`cost_safety_audit_notification_topic_arn`. The publisher sends one stable,
-redacted failure event and records delivery failures without replacing the
-audit result. It does not choose recipients or store an email address,
-webhook, or credential in this repository.
-
-The audit IAM contract is deliberately narrower than the deployment roles:
-
-- The Lambda role can read the required Lightsail inventory, read backup-bucket
-  lifecycle configuration, write only to its own CloudWatch log streams, and
-  optionally publish to the configured SNS topic ARN. Lightsail inventory APIs
-  require `Resource = "*"`; the bucket, log group, and notification resources
-  remain explicit Terraform references.
-- The Scheduler role can invoke only the cost-safety Lambda. Its trust policy
-  requires both `var.account_id` and the exact `rewind-demo-cost-safety-audit`
-  schedule ARN in the managed `rewind-demo` schedule group.
-- Neither audit role has permission to stop, start, delete, terminate, or
-  otherwise mutate Lightsail/compute resources, bucket objects, IAM, or account
-  state. The audit observes and alerts; it never remediates findings.
-
-The policy contract is covered by static assertions in
-`tests/terraform/cost-safety-policy.test.mjs`. Run it together with
-`terraform fmt -check` and `terraform validate`; no AWS apply or credentials
-are required.
-
 Budgets notify after AWS has observed cost; they cannot impose a guaranteed
 hard spending ceiling. The practical cap is the small resource allowlist and
 manual apply review.

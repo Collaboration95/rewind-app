@@ -4,19 +4,9 @@ backup_bucket_name      = "rewind-demo-backups-330599756236"
 audit_bucket_name       = "rewind-audit-logs-330599756236"
 # Optional. Leave empty when email notifications are not configured.
 budget_email_recipients = []
-# Optional. Leave empty when audit failure emails are not configured.
-cost_safety_audit_email_recipients = []
-# Optional managed publisher. Keep disabled unless a separately managed SNS
-# topic ARN is intentionally configured; no recipient or credential is stored here.
-cost_safety_audit_notification_mode     = "disabled"
-cost_safety_audit_notification_topic_arn = null
 ssh_cidr                = "YOUR.PUBLIC.IP.ADDRESS/32"
 # Leave null for manual starts. Example: "cron(0 9 ? * MON-FRI *)"
 automatic_start_schedule_expression = null
-# Keep this empty unless an explicitly approved distribution is provisioned.
-# The audit still checks inventory for unexpected resources.
-cost_safety_expected_snapshot_names = []
-cost_safety_expected_distributions  = {}
 # The lifecycle scripts override this for reviewed hibernation/recovery plans.
 demo_instance_enabled = true
 # Set only when enabling real-auth CloudFront. Generate a random value of at
@@ -24,11 +14,6 @@ demo_instance_enabled = true
 # via a protected tfvars/secret workflow. Do not commit the real value.
 public_https_origin_auth_header = ""
 real_auth_https_distribution_enabled = false
-# The separate real-auth CloudFront endpoint needs its own audit entry when
-# enabled: { "rewind-demo-cloudfront" = "rewind-demo" }
-# The audit expects a stopped instance by default. Set this to "running" only
-# when an active Demo is explicitly approved for the current Terraform state.
-cost_safety_expected_instance_state = "stopped"
 # Delete the static IP too while hibernated to remove its residual charge.
 # Set true only if preserving the endpoint is more important than cost.
 retain_static_ip_when_instance_deleted = false
