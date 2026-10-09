@@ -1,7 +1,26 @@
-# Local operational signals — #166
+# Operational signals — #166, #514
 
-Operator: **not configured; named operator and approved alarm recipients remain an acceptance gate**.
-Issue: [#166](https://github.com/Collaboration95/rewind-app/issues/166).
+## Proposal §5.5 on hosted dev
+
+Proposal §5.5 asks the deployed system to "record structured logs and
+operational metrics" for five signals. Decision (#514, 9 Oct 2026): these are
+recorded by the deployed system itself, not published to CloudWatch. No
+CloudWatch metrics, dashboards or alarms are in scope; budget alerts stay the
+only AWS notification.
+
+| §5.5 signal                   | Where hosted dev records it                                                               | How to read it                                |
+| ----------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------- |
+| API errors                    | `api.failure` JSON lines (request ID, status, duration) on the runtime container's stderr | `docker compose ... logs runtime` on the host |
+| Job failures                  | `job.failed` audit events and failed/exhausted job rows in PostgreSQL                     | snapshot `jobs.failed`, `jobs.exhaustedFilms` |
+| Compilation duration          | `job.started`/`job.completed` audit events in PostgreSQL                                  | snapshot `jobs.longestRecorded*AttemptMs`     |
+| Notification failures         | Reminder delivery rows (`failed`, `retry`, expired leases) in PostgreSQL                  | snapshot `reminders`                          |
+| Scheduled transition outcomes | `cycle_lifecycle_events` rows in PostgreSQL; scheduler errors on the runtime's stderr     | snapshot `scheduler`                          |
+
+The snapshot below runs against the hosted PostgreSQL database when
+`REWIND_DATABASE_URL` is set; the path argument is then only used for
+configuration. The sections below describe the snapshot and log fields.
+
+## Snapshot
 
 From the checkout root, build with `npm run server:build`, then run:
 
@@ -69,15 +88,8 @@ fixed numeric projections, with no identities or private row payloads. Query
 work scales with retained tables; busy locks wait at most one second, and no
 large-store latency acceptance has been performed.
 
-Remaining acceptance gates: human privacy/infra review and consolidated batch
-integration; a named operator; agreed thresholds and approved recipients/cost;
-reviewed non-production delivery for critical API/job/storage/deploy/runtime,
-queue/compile and budget alarms. No cloud alarms, deploy or budget sensors,
-provider delivery, scheduled sender, or hosted failure injection are configured
-or exercised by this slice. The optional filesystem observation prepares a local
-capacity signal following the recorded staging `ENOSPC` failures; it does not
-recover the host, activate an alarm or establish live delivery. Local fixtures
-exercise an actual SQLite HTTP failure, invalid job metadata, and tampered owned
-bytes. Reminder/scheduler
-snapshot fixtures prove persisted-state visibility only. Keep #166 open until
-applicable live alarm delivery is accepted.
+Out of scope (#514): CloudWatch metrics, dashboards and alarms, paging
+thresholds, alarm recipients and hosted failure injection. #166 is closed on
+that basis; nothing here waits on live alarm delivery. Local fixtures exercise
+an actual HTTP failure, invalid job metadata and tampered owned bytes;
+reminder and scheduler fixtures prove persisted-state visibility only.

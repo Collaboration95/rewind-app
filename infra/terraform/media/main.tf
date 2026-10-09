@@ -86,6 +86,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
     }
   }
 
+  # Safe for the permanent archive (#513): every stored object gets a fresh
+  # random key and the app deletes by exact version ID, so a version the
+  # database references never becomes noncurrent. Only manual overwrites and
+  # the incoming expiry above leave noncurrent versions for this rule.
   rule {
     id     = "expire-old-versions"
     status = "Enabled"

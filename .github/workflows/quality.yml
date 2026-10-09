@@ -23,11 +23,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
+      - name: Fetch the comparison base commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REWIND_CHANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        # The classifier compares two trees, so it needs the base commit but no history.
+        # A base that is gone (new branch, force-push) makes it fail safe: every check runs.
+        run: |
+          if [ -n "$REWIND_CHANGE_BASE" ]; then
+            git fetch --no-tags --depth=1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$REWIND_CHANGE_BASE" ||
+              echo 'Base commit unavailable; every check will run.'
+          fi
       - name: Classify the exact checked change
         id: scope
         env:
@@ -35,10 +45,52 @@ jobs:
           REWIND_CHANGE_HEAD: ${{ github.sha }}
         run: node scripts/classify-quality-changes.mjs
 
+  # One matrix job: each cheap check runs in parallel and reports on its own, and the gate
+  # reads the single aggregated result (success only when every leg passes).
+  checks:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    name: Static check (${{ matrix.check }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [format:check, lint, architecture:check, typecheck]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Run the check
+        env:
+          CHECK: ${{ matrix.check }}
+        run: npm run "$CHECK"
+
+  audit:
+    needs: changes
+    if: ${{ needs.changes.outputs.docs_only != 'true' }}
+    name: Production dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      # The audit reads package-lock.json and the registry, so it needs no install.
+      - run: npm audit --omit=dev --audit-level=high
+
   static:
     needs: changes
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
-    name: Static and root tests
+    name: Root and IaC tests
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -50,14 +102,18 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - name: Check source and production dependencies
-        run: |
-          npm run format:check
-          npm run lint
-          npm run architecture:check
-          npm run typecheck
-          npm audit --omit=dev --audit-level=high
+      # Only the root HTTP integration test (tests/direct-transfer-http.test.mjs) drives Chromium.
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('./package-lock.json').packages['node_modules/playwright-core'].version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-ubuntu-24.04-${{ steps.playwright.outputs.version }}
       - name: Install browser and media runtime for root HTTP integration
+        # A cache hit makes the install skip the browser download; the system
+        # libraries are installed either way.
         run: |
           command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
           npx playwright install --with-deps chromium
@@ -116,7 +172,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run Jest with measured statement gate
-        run: npx jest --runInBand --coverage
+        run: npx jest --coverage
       - name: Retain frontend coverage
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -142,7 +198,17 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('./package-lock.json').packages['node_modules/playwright-core'].version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-ubuntu-24.04-${{ steps.playwright.outputs.version }}
       - name: Install browser and media runtime
+        # A cache hit makes the install skip the browser download; the system
+        # libraries are installed either way.
         run: |
           command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
           npx playwright install --with-deps chromium
@@ -162,11 +228,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The bash and Python fixtures use nothing from node_modules, so no install.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
-          cache: npm
-      - run: npm ci
       - name: Run backup, lifecycle, restore, and host fixtures
         run: |
           bash tests/deploy/backup-manifest.test.sh
@@ -216,7 +281,7 @@ jobs:
   gate:
     # Keep this name stable for the existing branch-protection requirement.
     name: Format, lint, typecheck, and test
-    needs: [changes, static, server, server-postgres, frontend, browser, fixtures]
+    needs: [changes, checks, audit, static, server, server-postgres, frontend, browser, fixtures]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     steps:
@@ -225,6 +290,8 @@ jobs:
       - name: Complete documentation-only Quality
         if: ${{ needs.changes.outputs.docs_only == 'true' }}
         run: |
+          test '${{ needs.checks.result }}' = skipped
+          test '${{ needs.audit.result }}' = skipped
           test '${{ needs.static.result }}' = skipped
           test '${{ needs.server.result }}' = skipped
           test '${{ needs.server-postgres.result }}' = skipped
@@ -235,6 +302,8 @@ jobs:
       - name: Require every quality job to succeed
         if: ${{ needs.changes.outputs.docs_only != 'true' }}
         run: |
+          test '${{ needs.checks.result }}' = success
+          test '${{ needs.audit.result }}' = success
           test '${{ needs.static.result }}' = success
           test '${{ needs.server.result }}' = success
           test '${{ needs.server-postgres.result }}' = success
