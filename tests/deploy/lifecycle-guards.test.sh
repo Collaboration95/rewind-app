@@ -21,20 +21,7 @@ mkdir -p -- "$FAKE_BIN" "$TF_DIR"
 printf 'account_id = "330599756236"\n' > "$TFVARS_FILE"
 printf 'fixture-only environment\n' > "$REWIND_ENV_FILE"
 
-cat > "$PLAN_JSON" <<'JSON'
-{"resource_changes":[
-  {"address":"data.aws_iam_policy_document.operator","mode":"data","change":{"actions":["read"]}},
-  {"address":"aws_lightsail_instance.rewind[0]","change":{"actions":["delete"]}},
-  {"address":"aws_lightsail_static_ip.rewind[0]","change":{"actions":["delete"]}},
-  {"address":"aws_lightsail_static_ip_attachment.rewind[0]","change":{"actions":["delete"]}},
-  {"address":"aws_lightsail_instance_public_ports.rewind[0]","change":{"actions":["delete"]}},
-  {"address":"aws_iam_role.power_controller[0]","change":{"actions":["delete"]}},
-  {"address":"aws_iam_role_policy.power_controller[0]","change":{"actions":["delete"]}},
-  {"address":"aws_iam_role_policy.operator[0]","change":{"actions":["delete"]}},
-  {"address":"aws_iam_role_policy.scheduler[0]","change":{"actions":["delete"]}},
-  {"address":"aws_lambda_function.power_controller[0]","change":{"actions":["delete"]}}
-]}
-JSON
+printf '%s\n' '{"resource_changes":[]}' > "$PLAN_JSON"
 
 cat > "$FAKE_BIN/aws" <<'FAKE_AWS'
 #!/usr/bin/env bash
@@ -91,9 +78,6 @@ cat > "$FAKE_BIN/ssh" <<'FAKE_SSH'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 printf 'ssh %s\n' "$*" >> "$COMMAND_LOG"
-if [[ "${SSH_MODE:-}" == backup ]]; then
-  printf 'Local backup ready /srv/rewind/backups/rewind-20260919T120000Z.manifest.json /srv/rewind/backups/rewind-20260919T120000Z.sqlite.gz /srv/rewind/backups/rewind-20260919T120000Z.media.tar.gz\n'
-fi
 FAKE_SSH
 
 for command_name in scp rsync; do
@@ -114,7 +98,6 @@ export BACKUP_AWS_PROFILE='test-backup-profile'
 export TF_AWS_PROFILE='test-terraform-profile'
 export AWS_REGION='ap-southeast-1'
 
-EXPECTED_INSTANCE='{"instances":[{"name":"rewind-demo","state":{"name":"running"},"publicIpAddress":"198.51.100.20","tags":[{"key":"Project","value":"rewind"},{"key":"Environment","value":"demo"},{"key":"ManagedBy","value":"terraform"}]}]}'
 EXPECTED_STATIC_IP='{"staticIps":[{"name":"rewind-demo-ip","attachedTo":"rewind-demo"}]}'
 
 run_capture() {
@@ -128,7 +111,6 @@ run_capture() {
     AWS_REGION="$AWS_REGION" CALLER_ACCOUNT="${CALLER_ACCOUNT:-330599756236}" \
     INSTANCE_INVENTORY="${INSTANCE_INVENTORY:-}" \
     STATIC_IP_INVENTORY="${STATIC_IP_INVENTORY:-}" \
-    SSH_MODE="${SSH_MODE:-}" \
     "$@" 2>&1)"
   status=$?
   set -e
@@ -140,33 +122,12 @@ assert_no_host_or_apply_commands() {
   ! grep -Eq '^(terraform .* (apply|plan)|ssh |scp |rsync )' "$LOG_FILE"
 }
 
-unset CALLER_ACCOUNT INSTANCE_INVENTORY STATIC_IP_INVENTORY SSH_MODE
-if output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --apply 2>&1)"; then
-  printf 'destroy --apply without confirmation unexpectedly succeeded\n' >&2
-  exit 1
-fi
-[[ "$output" == *'--apply requires explicit --confirm'* ]]
-[[ ! -s "$LOG_FILE" ]]
-
-if output="$(run_capture "$REPO_ROOT/infra/scripts/stop-demo.sh" --apply 2>&1)"; then
-  printf 'stop --apply without confirmation unexpectedly succeeded\n' >&2
-  exit 1
-fi
-[[ "$output" == *'--apply requires explicit --confirm'* ]]
-[[ ! -s "$LOG_FILE" ]]
-
+unset CALLER_ACCOUNT INSTANCE_INVENTORY STATIC_IP_INVENTORY
 if output="$(run_capture "$REPO_ROOT/infra/scripts/wake-demo.sh" --latest --apply 2>&1)"; then
   printf 'wake --apply without confirmation unexpectedly succeeded\n' >&2
   exit 1
 fi
 [[ "$output" == *'--apply requires explicit --confirm'* ]]
-[[ ! -s "$LOG_FILE" ]]
-
-if output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --dry-run --apply --confirm 2>&1)"; then
-  printf 'destroy dry-run/apply combination unexpectedly succeeded\n' >&2
-  exit 1
-fi
-[[ "$output" == *'--dry-run cannot be combined with --apply'* ]]
 [[ ! -s "$LOG_FILE" ]]
 
 if output="$(run_capture "$REPO_ROOT/infra/scripts/wake-demo.sh" --latest --apply --dry-run --confirm 2>&1)"; then
@@ -176,47 +137,9 @@ fi
 [[ "$output" == *'--dry-run cannot be combined with --apply'* ]]
 [[ ! -s "$LOG_FILE" ]]
 
-INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" \
-  output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --dry-run 2>&1)"
-[[ "$output" == *'Dry-run passed'* ]]
-grep -Fq 'terraform' "$LOG_FILE"
-! grep -Eq '^(ssh|scp|rsync) ' "$LOG_FILE"
-! grep -Eq '^aws (s3|s3api)' "$LOG_FILE"
-! grep -Eq 'terraform .* apply' "$LOG_FILE"
-
-jq '(.resource_changes[] | select(.address == "aws_lightsail_static_ip_attachment.rewind[0]").change.actions) = ["update"]' "$PLAN_JSON" > "$TEST_ROOT/unsafe-plan.json"
-cp "$TEST_ROOT/unsafe-plan.json" "$PLAN_JSON"
-if INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" \
-  output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --dry-run 2>&1)"; then
-  printf 'static IP attachment update unexpectedly passed hibernation allowlist\n' >&2
-  exit 1
-fi
-[[ "$output" == *'unexpected resource change'* ]]
-jq '(.resource_changes[] | select(.address == "aws_lightsail_static_ip_attachment.rewind[0]").change.actions) = ["delete"]' "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
-cp "$TEST_ROOT/safe-plan.json" "$PLAN_JSON"
-
-jq '.resource_changes += [{"address":"aws_s3_bucket.unexpected[0]","change":{"actions":["delete"]}}]' \
-  "$PLAN_JSON" > "$TEST_ROOT/unexpected-resource-plan.json"
-cp "$TEST_ROOT/unexpected-resource-plan.json" "$PLAN_JSON"
-if INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" \
-  output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --dry-run 2>&1)"; then
-  printf 'unexpected resource deletion unexpectedly passed hibernation allowlist\n' >&2
-  exit 1
-fi
-[[ "$output" == *'unexpected resource change'* ]]
-jq 'del(.resource_changes[] | select(.address == "aws_s3_bucket.unexpected[0]"))' \
-  "$PLAN_JSON" > "$TEST_ROOT/safe-plan.json"
-cp "$TEST_ROOT/safe-plan.json" "$PLAN_JSON"
-
-INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" \
-  output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" 2>&1)"
-[[ "$output" == *'Dry-run passed'* ]]
-! grep -Eq '^(ssh|scp|rsync) ' "$LOG_FILE"
-! grep -Eq '^aws (s3|s3api)' "$LOG_FILE"
-
-CALLER_ACCOUNT='999999999999' INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP"
-if output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --apply --confirm 2>&1)"; then
-  printf 'destroy with the wrong AWS account unexpectedly succeeded\n' >&2
+CALLER_ACCOUNT='999999999999' INSTANCE_INVENTORY='{"instances":[]}' STATIC_IP_INVENTORY='{"staticIps":[]}'
+if output="$(run_capture "$REPO_ROOT/infra/scripts/wake-demo.sh" --latest --apply --confirm 2>&1)"; then
+  printf 'wake with the wrong AWS account unexpectedly succeeded\n' >&2
   exit 1
 fi
 [[ "$output" == *'not the configured Demo account'* ]]
@@ -224,27 +147,6 @@ grep -Fq 'aws sts get-caller-identity' "$LOG_FILE"
 assert_no_host_or_apply_commands
 
 CALLER_ACCOUNT='330599756236'
-INSTANCE_INVENTORY='{"instances":[{"name":"rewind-demo","state":{"name":"running"},"publicIpAddress":"198.51.100.20","tags":[{"key":"Project","value":"rewind"},{"key":"Environment","value":"demo"},{"key":"ManagedBy","value":"terraform"}]},{"name":"rewind-surprise","state":{"name":"running"},"publicIpAddress":"198.51.100.21","tags":[{"key":"Project","value":"rewind"}]}]}'
-STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP"
-if output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --apply --confirm 2>&1)"; then
-  printf 'destroy with an unexpected instance unexpectedly succeeded\n' >&2
-  exit 1
-fi
-[[ "$output" == *'unexpected Rewind Lightsail instance'* ]]
-assert_no_host_or_apply_commands
-
-INSTANCE_INVENTORY="$EXPECTED_INSTANCE" STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP" SSH_MODE=backup
-if output="$(run_capture "$REPO_ROOT/infra/scripts/destroy-demo.sh" --apply --confirm 2>&1)"; then
-  printf 'destroy with an invalid host backup unexpectedly succeeded\n' >&2
-  exit 1
-fi
-[[ "$output" == *'backup manifest rejected'* ]]
-grep -Eq '^ssh ' "$LOG_FILE"
-grep -Eq '^scp ' "$LOG_FILE"
-! grep -Eq '^aws s3 ' "$LOG_FILE"
-! grep -Eq 'terraform .* plan' "$LOG_FILE"
-! grep -Eq 'terraform .* apply' "$LOG_FILE"
-
 INSTANCE_INVENTORY='{"instances":[{"name":"rewind-unexpected","state":{"name":"running"},"publicIpAddress":"198.51.100.22","tags":[{"key":"Project","value":"rewind"}]}]}'
 STATIC_IP_INVENTORY="$EXPECTED_STATIC_IP"
 if output="$(run_capture "$REPO_ROOT/infra/scripts/wake-demo.sh" --latest --apply --confirm 2>&1)"; then

@@ -231,11 +231,6 @@ cross-prefix keys, filename mismatches, or remote byte metadata mismatches stop
 the workflow before archive download; downloaded files are then checked for
 the recorded bytes and checksums before restore.
 
-The hibernation workflow invokes `./deploy/backup.sh --local-only` on the host;
-that creates the same verified artifacts without requiring AWS credentials on
-the host. The trusted operator then uploads the artifacts to S3 and verifies
-their presence before Terraform deletes compute.
-
 The systemd unit files are templates. Install them on the host only after the
 restricted backup AWS identity has been configured:
 
@@ -289,51 +284,20 @@ successful replacement, and the absence of partial media output:
 npm run test:restore-atomic
 ```
 
-## Hibernation and recovery
+## Host rebuild and recovery
 
-The hosted Demo now uses delete-and-recreate hibernation. A stopped Lightsail
-instance still incurs its monthly bundle charge, so the normal lifecycle is:
+Backup-gated hibernation (`destroy-demo.sh`) was retired in #512: the hosted
+dev host now runs continuously, and its data lives in managed PostgreSQL and
+the S3 media bucket rather than on the host. `wake-demo.sh` remains the
+reviewed way to create or rebuild the host. Its `--latest` and `--manifest`
+modes restore SQLite-era recovery points, so they apply only to a host that
+still keeps its database on disk.
 
-1. Back up SQLite and media on the live host.
-2. Verify the uploaded S3 manifest.
-3. Apply Terraform with `demo_instance_enabled=false` to delete the
-   disposable compute/network resources and disable their legacy controller
-   bindings, while preserving the backup bucket, recovery roles, and audit
-   infrastructure.
-4. Recreate the instance with Terraform, rebuild the runtime, restore the
-   selected S3 recovery point, and start the service.
-
-The lifecycle scripts are read-only by default. Before either workflow reaches
-Terraform apply, they verify the configured AWS account identity, the exact
-Terraform-managed Demo tags and instance/static-IP inventory, and the absence
-of unexpected Rewind resources. Invalid flags, partial arguments, identity
-mismatches, and unsafe inventory states stop before SSH, SCP, rsync, S3 upload,
-or Terraform plan/apply construction.
-
-From the trusted operator machine, first run the read-only hibernation plan:
-
-```sh
-cd /path/to/rewind-app
-export TF_AWS_PROFILE=rewind-terraform-apply
-./infra/scripts/destroy-demo.sh --dry-run
-```
-
-The default invocation is equivalent to `--dry-run`; `--confirm` without
-`--apply` is also still read-only. Only after the identity, inventory, backup
-contract, and Terraform plan have passed may an operator request execution:
-
-```sh
-./infra/scripts/destroy-demo.sh --apply --confirm
-```
-
-The apply path then asks the host to create a consistent local snapshot, copies
-the manifest and matching archives to the trusted operator machine, validates
-the manifest and checksums, uploads them to S3, and verifies all three objects
-before Terraform is allowed to delete compute. This means a recreated host
-does not need the old host's AWS CLI credentials. The default hibernation
-deletes the static IP to remove its residual charge, so the next wake may
-receive a new IP. Static-IP retention is intentionally out of scope for this
-sprint and can be revisited later.
+Wake is read-only by default. Before it reaches Terraform apply, it verifies
+the configured AWS account identity, the exact Terraform-managed Demo tags and
+instance/static-IP inventory, and the absence of unexpected Rewind resources.
+Invalid flags, partial arguments, identity mismatches, and unsafe inventory
+states stop before SSH, SCP, rsync, or Terraform plan/apply construction.
 
 To recreate the host from the newest backup, keep a private local copy of
 `deploy/rewind.env` in `REWIND_ENV_FILE`, then review and apply:
@@ -446,19 +410,14 @@ point existed, first installation can use the explicit seed path:
 Seed mode starts from an empty database and runs migrations; it is not a
 historical restore or a substitute for a verified recovery point. It is the
 explicit first-install exception to the recovery-point guard and must never be
-used to replace an existing host. Run a full host backup afterward and verify
-that the S3 manifest, SQLite archive, and media archive all exist before using
-`destroy-demo.sh`.
+used to replace an existing host.
 
-`infra/scripts/stop-demo.sh` is retained only as a compatibility name and now
-delegates to the same guarded, backup-gated hibernation workflow. It inherits
-the read-only default and requires `--apply --confirm` for execution. The
-emergency stop script is not a recovery workflow: it remains an incident-only
-last resort when the host cannot be reached and cannot create a backup itself.
+The emergency stop script is not a recovery workflow: it remains an
+incident-only last resort when the host cannot be reached. A stopped Lightsail
+instance still incurs its monthly bundle charge.
 
-Run the mocked lifecycle guard suite to exercise confirmation ordering,
-identity mismatches, unexpected resources, dry-run behavior, and backup-gate
-failures without AWS credentials or a real host:
+Run the mocked lifecycle guard suite to exercise wake's confirmation ordering
+and dry-run behavior without AWS credentials or a real host:
 
 ```sh
 npm run test:lifecycle-guards
@@ -512,8 +471,9 @@ It reuses the same verified release path, so the guarantees are unchanged:
 Differences from the operator flow:
 
 - The workflow never powers the host on or off. It requires the instance to be
-  `running` and fails with an explicit message otherwise, so hibernation stays
-  a deliberate operator decision rather than a side effect of a merge.
+  `running` and fails with an explicit message otherwise, so powering the
+  host off stays a deliberate operator decision rather than a side effect of
+  a merge.
 - It never writes `/srv/rewind/rewind.env`. The host's private configuration is
   untouched, so the recorded `release-config-version` and
   `release-config-digest` must still match. Change the

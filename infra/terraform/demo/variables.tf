@@ -103,6 +103,6 @@ variable "public_https_origin_auth_header" {
 
 variable "retain_static_ip_when_instance_deleted" {
   type        = bool
-  description = "Keep the Rewind static IPv4 address while the disposable instance is hibernated. Keeping it preserves the endpoint but has a small recurring charge."
+  description = "Keep the Rewind static IPv4 address while the disposable instance is removed. Keeping it preserves the endpoint but has a small recurring charge."
   default     = false
 }
