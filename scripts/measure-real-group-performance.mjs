@@ -19,6 +19,15 @@ export const SOURCE_PROFILE = Object.freeze({
   frameRates: [24, 30],
   seconds: 6,
 });
+// The compiler's current group-film contract (server/src/ffmpeg.ts): 720x1280
+// at a constant 30 fps, landscape letterboxed. This is separate from the
+// synthetic input fixture above and from 1080p browser capture/individual clips.
+export const FILM_PROFILE = Object.freeze({ width: 720, height: 1280, frameRate: '30/1' });
+// Bounded generated orientation sources; not physical-camera evidence.
+export const ORIENTATION_SOURCES = Object.freeze([
+  Object.freeze({ name: 'portrait', width: 1080, height: 1920 }),
+  Object.freeze({ name: 'landscape', width: 1920, height: 1080 }),
+]);
 
 // Nearest-rank percentiles: retain every observation, including failures.
 export function summarize(samples) {
@@ -55,8 +64,10 @@ export function assertTargets(report) {
       assert.equal(input.height, SOURCE_PROFILE.height);
       assert.equal(input.frameRates.nominal, `${SOURCE_PROFILE.frameRates[input.index % 2]}/1`);
     }
-    assert.equal(film.metadata.width, 180);
-    assert.equal(film.metadata.height, 320);
+    assert.equal(film.metadata.width, FILM_PROFILE.width);
+    assert.equal(film.metadata.height, FILM_PROFILE.height);
+    assert.equal(film.metadata.hasAudio, true);
+    assert.equal(film.metadata.frameRates?.nominal, FILM_PROFILE.frameRate);
     assert.ok(film.queueMs >= 0 && film.workerMs > 0);
     assert.ok(film.endToEndMs >= film.workerMs);
     assert.ok(film.endToEndMs <= 600_000, 'Boundary-to-ready exceeds ten minutes');
@@ -65,6 +76,26 @@ export function assertTargets(report) {
     assert.equal(film.chronologicalFrames, 25);
     assert.ok(film.loudnessLufs >= -18 && film.loudnessLufs <= -14);
   }
+  assertOrientation(report.orientation);
+}
+
+// Individual processing keeps source size/audio; only the film is 720x1280.
+export function assertOrientation(results) {
+  assert.ok(Array.isArray(results), 'Orientation results missing');
+  assert.equal(results.length, ORIENTATION_SOURCES.length);
+  ORIENTATION_SOURCES.forEach((source, i) => {
+    const r = results[i];
+    assert.equal(r.name, source.name);
+    assert.equal(r.processed.width, source.width, `${source.name}: processed width changed`);
+    assert.equal(r.processed.height, source.height, `${source.name}: processed height changed`);
+    assert.equal(r.processed.hasAudio, true, `${source.name}: processed audio lost`);
+    assert.equal(r.film.width, FILM_PROFILE.width, `${source.name}: film width`);
+    assert.equal(r.film.height, FILM_PROFILE.height, `${source.name}: film height`);
+    assert.equal(r.film.hasAudio, true, `${source.name}: film audio lost`);
+    // Portrait fills the frame; landscape is letterboxed (black bars, not cropped).
+    assert.equal(r.film.topEdgeBlack, source.width < source.height ? false : true);
+    assert.equal(r.film.centerBlack, false);
+  });
 }
 
 async function ffmpeg(args, options = {}) {
@@ -429,6 +460,92 @@ async function measureFilm({ database, group }, { outputDir, hashes }) {
   };
 }
 
+async function luma(path, x, y) {
+  const { stdout } = await ffmpeg(
+    [
+      '-loglevel',
+      'error',
+      '-i',
+      path,
+      '-frames:v',
+      '1',
+      '-vf',
+      `format=gray,crop=1:1:${x}:${y}`,
+      '-f',
+      'rawvideo',
+      '-',
+    ],
+    { encoding: 'buffer' },
+  );
+  assert.equal(stdout.length, 1);
+  return stdout[0];
+}
+
+// Bounded real-FFmpeg check of the media stages: a generated 1080p source
+// keeps its dimensions/audio as an individual clip; the film is 720x1280.
+export async function measureOrientations(directory) {
+  const { processClipWithFfmpeg, compileFilmWithFfmpeg, probeClipWithFfmpeg } =
+    await build('ffmpeg');
+  await mkdir(directory, { recursive: true });
+  const results = [];
+  for (const source of ORIENTATION_SOURCES) {
+    const input = join(directory, `${source.name}-source.mp4`);
+    const processed = join(directory, `${source.name}-processed.mp4`);
+    const film = join(directory, `${source.name}-film.mp4`);
+    await ffmpeg([
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      `color=c=red:size=${source.width}x${source.height}:rate=30:duration=2`,
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=48000:duration=2',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-shortest',
+      input,
+    ]);
+    // client:* modes mean browser looks were already applied: no second look.
+    await processClipWithFfmpeg('ffmpeg', {
+      inputPath: input,
+      outputPath: processed,
+      trimStartSeconds: 0,
+      trimEndSeconds: 1.5,
+      mode: 'client:ccd',
+    });
+    await compileFilmWithFfmpeg('ffmpeg', { inputPaths: [processed], outputPath: film });
+    const p = await probeClipWithFfmpeg('ffmpeg', processed);
+    const f = await probeClipWithFfmpeg('ffmpeg', film);
+    results.push({
+      name: source.name,
+      source: { width: source.width, height: source.height },
+      processed: {
+        width: p.width,
+        height: p.height,
+        hasAudio: p.hasAudio,
+        durationSeconds: p.durationSeconds,
+      },
+      film: {
+        width: f.width,
+        height: f.height,
+        hasAudio: f.hasAudio,
+        durationSeconds: f.durationSeconds,
+        topEdgeBlack: (await luma(film, FILM_PROFILE.width / 2, 8)) < 40,
+        centerBlack: (await luma(film, FILM_PROFILE.width / 2, FILM_PROFILE.height / 2)) < 40,
+      },
+    });
+  }
+  return results;
+}
+
 async function privacy({ origin, actors, group, members }) {
   const id = group.group.id;
   await request(origin, actors[5], `/real/groups/${id}`, undefined, 404);
@@ -473,6 +590,7 @@ export async function main() {
     startedAt: new Date().toISOString(),
     protocol: PROTOCOL,
     sourceProfile: SOURCE_PROFILE,
+    filmProfile: FILM_PROFILE,
     host: {
       platform: platform(),
       release: release(),
@@ -516,6 +634,7 @@ export async function main() {
     api: [],
     films: [],
     privacy: [],
+    orientation: [],
     gates: [
       'Existing film failure/retry/filler and private-media regression suites must be reported separately',
       'Hosted/device/provider acceptance',
@@ -536,6 +655,7 @@ export async function main() {
         report.films.push(await measureFilm(context, prepared));
       });
     }
+    report.orientation = await measureOrientations(join(directory, 'orientation'));
     assertTargets(report);
     report.passed = true;
   } catch (error) {
