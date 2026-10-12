@@ -130,6 +130,51 @@ test('runtime-unavailable API responses stay JSON and never fall back to the she
   }
 });
 
+test('an idle event stream outlives the request timeout and closes upstream with the browser', async () => {
+  const staticDir = await mkdtemp(join(tmpdir(), 'rewind-web-stream-'));
+  let upstreamClosed;
+  const upstreamGone = new Promise((resolve) => {
+    upstreamClosed = resolve;
+  });
+  const upstream = createServer((request, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    response.write(': open\n\n');
+    response.once('close', upstreamClosed);
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  const web = createProductionWebServer({
+    staticDir,
+    runtimeOrigin: `http://127.0.0.1:${upstream.address().port}`,
+    runtimeTimeoutMs: 100,
+  });
+  web.listen(0, '127.0.0.1');
+  await once(web, 'listening');
+  const controller = new AbortController();
+  try {
+    const response = await fetch(`http://127.0.0.1:${web.address().port}/api/realtime/stream`, {
+      signal: controller.signal,
+    });
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    await reader.read();
+    // Idle for several request timeouts: the stream must stay open.
+    const next = reader.read();
+    const outcome = await Promise.race([
+      next.then(() => 'ended'),
+      new Promise((resolve) => setTimeout(() => resolve('open'), 400)),
+    ]);
+    assert.equal(outcome, 'open');
+    controller.abort();
+    await next.catch(() => {});
+    await upstreamGone;
+  } finally {
+    await new Promise((resolve) => web.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+    await rm(staticDir, { recursive: true, force: true });
+  }
+});
+
 test('public legal pages resolve at extensionless paths without the SPA shell', async () => {
   assert.match(
     nginx,
