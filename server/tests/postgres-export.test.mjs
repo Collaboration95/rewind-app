@@ -6,13 +6,18 @@ import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  closeSync,
   existsSync,
+  fstatSync,
+  ftruncateSync,
   linkSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   symlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -602,10 +607,16 @@ test(
         () => installExportedDatabase(staged, live, { checkReady, expectedEnvironment: 'release' }),
         /taken from the "test" environment, not "release"/,
       );
-      const original = readFileSync(staged);
-      writeFileSync(staged, Buffer.concat([original, Buffer.from('x')]));
-      assert.throws(() => installExportedDatabase(staged, live, { checkReady }), /changed after/);
-      writeFileSync(staged, original);
+      // Tamper and restore through one descriptor: append a byte, then truncate it away.
+      const stagedFd = openSync(staged, 'r+');
+      try {
+        const size = fstatSync(stagedFd).size;
+        writeSync(stagedFd, Buffer.from('x'), 0, 1, size);
+        assert.throws(() => installExportedDatabase(staged, live, { checkReady }), /changed after/);
+        ftruncateSync(stagedFd, size);
+      } finally {
+        closeSync(stagedFd);
+      }
       assert.equal(sha256(live), priorHash);
 
       const result = installExportedDatabase(staged, live, {
