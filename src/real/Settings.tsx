@@ -431,6 +431,8 @@ function ReminderBlock({
   const [message, setMessage] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'notify' | 'install' | null>(null);
   const active = useRef(true);
+  // Bumped when the group, session or device client changes; late results are dropped.
+  const epoch = useRef(0);
   const now = useNow();
   const path = `/real/groups/${encodeURIComponent(group.group.id)}/reminders`;
 
@@ -452,6 +454,15 @@ function ReminderBlock({
   }, [path, request]);
 
   useEffect(() => {
+    const mine = epoch.current;
+    return () => {
+      if (epoch.current === mine) epoch.current += 1;
+      // A dropped in-flight action must not leave the controls locked.
+      setPending(false);
+    };
+  }, [path, request, reminderClient]);
+
+  useEffect(() => {
     if (!reminderClient) return;
     let current = true;
     void reminderClient.load().then((snapshot) => {
@@ -464,6 +475,7 @@ function ReminderBlock({
 
   const save = useCallback(
     async (enabled: boolean, snoozedUntil: string | null, done: string) => {
+      const mine = epoch.current;
       setPending(true);
       setMessage(null);
       try {
@@ -479,15 +491,16 @@ function ReminderBlock({
               : 'Your reminder could not be saved. Retry when connected.',
           );
         const body = (await response.json()) as { preference?: Preference };
-        if (!active.current) return false;
+        if (!active.current || epoch.current !== mine) return false;
         if (body.preference) setPreference(body.preference);
         toast(done);
         return true;
       } catch (error) {
-        if (active.current) setMessage(userMessage(error, 'Your reminder could not be saved.'));
+        if (active.current && epoch.current === mine)
+          setMessage(userMessage(error, 'Your reminder could not be saved.'));
         return false;
       } finally {
-        if (active.current) setPending(false);
+        if (active.current && epoch.current === mine) setPending(false);
       }
     },
     [path, request, toast],
@@ -499,24 +512,41 @@ function ReminderBlock({
       return;
     }
     // This device can't take push (no support or not installed); the row says why.
-    const saved = await save(true, null, 'Sunday 7 PM reminders are on.');
+    // Only the schedule is saved here, so the copy never claims the device is registered.
+    const saved = await save(true, null, 'Sunday 7 PM reminder saved.');
     // iPhone Safari only gets push from the Home Screen app: show how, now.
     if (saved && isIphoneSafari() && active.current) setDialog('install');
   };
   const allow = async () => {
     setDialog(null);
-    if (reminderClient) {
-      setPending(true);
-      const snapshot = await reminderClient.enable().catch(() => null);
-      if (!active.current) return;
-      setPending(false);
-      if (snapshot) setDevice(snapshot);
-      if (snapshot?.state === 'denied') {
-        toast('Notifications are off in your browser settings');
-        return;
-      }
+    if (!reminderClient) {
+      await save(true, null, 'Sunday 7 PM reminder saved.');
+      return;
     }
-    await save(true, null, 'Sunday 7 PM reminders are on for this device.');
+    const mine = epoch.current;
+    const current = () => active.current && epoch.current === mine;
+    setPending(true);
+    setMessage(null);
+    const snapshot = await reminderClient.enable().catch(() => null);
+    if (!current()) return;
+    setPending(false);
+    if (!snapshot) {
+      setMessage('This device could not be registered. Retry when connected.');
+      return;
+    }
+    setDevice(snapshot);
+    // Registration is confirmed only by an enabled snapshot; everything else is a failure.
+    if (snapshot.state !== 'enabled' || snapshot.enabled !== true) {
+      if (snapshot.state === 'denied') toast('Notifications are off in your browser settings');
+      else setMessage(snapshot.message);
+      return;
+    }
+    // The schedule is a separate preference: register first, then save it.
+    const saved = await save(true, null, 'Sunday 7 PM reminders are on for this device.');
+    if (!saved && current())
+      setMessage(
+        'This device is registered, but your reminder schedule could not be saved. Retry.',
+      );
   };
   const turnOff = async () => {
     const saved = await save(false, null, 'Sunday 7 PM reminders are off.');
