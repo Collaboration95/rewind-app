@@ -24,6 +24,14 @@ import {
 import type { PostgresDatabase } from './postgres/database';
 import { TransferError, transferSqliteToPostgres, type TransferReport } from './postgres/transfer';
 import {
+  assertSourceMatches,
+  exportPostgresToSqlite,
+  WRITER_APPLICATION_NAMES,
+  type ExportOptions,
+  type ExportReport,
+} from './postgres/export';
+import { installExportedDatabase, type InstallResult } from './postgres/install';
+import {
   contributionLedgerSchemaReady,
   ensureContributionLedgerSchema,
 } from './contributions/ledger';
@@ -1597,6 +1605,120 @@ export function importSqliteSnapshot(
   } finally {
     database.close();
   }
+}
+
+function exportSource(config: RuntimeConfig) {
+  if (config.database) {
+    const settings = config.database;
+    return {
+      open: () => openPostgres(settings, { applicationName: 'rewind-export', readOnly: true }),
+      environment: settings.environment,
+      testRun: false,
+    };
+  }
+  const testUrl = testDatabaseUrl();
+  if (!testUrl) return null;
+  return {
+    open: () => openTestPostgres(testUrl, config.databasePath, { readOnly: true }),
+    environment: 'test',
+    testRun: true,
+  };
+}
+
+/**
+ * Copy the configured PostgreSQL database into a new SQLite file at
+ * `sqlitePath` from one consistent snapshot, reconciled table by table.
+ * The runtime, scheduler, reminder loop and workers must be stopped first;
+ * the file is only exposed at `sqlitePath` once it is verified. Use
+ * installSqliteExport to put it in service.
+ */
+export function exportDatabaseToSqlite(
+  config: RuntimeConfig,
+  sqlitePath: string,
+  {
+    allowLiveWriters = false,
+    writerApplicationNames,
+    hooks,
+  }: {
+    allowLiveWriters?: boolean;
+    /** Tests: which session names count as writers. */
+    writerApplicationNames?: string[];
+    /** Tests: fault injection while the file is being built. */
+    hooks?: Pick<ExportOptions, 'afterLoad' | 'beforeExpose'>;
+  } = {},
+): ExportReport {
+  const destination = resolve(sqlitePath);
+  const target = exportSource(config);
+  if (!target) {
+    throw new TransferError('Set REWIND_DATABASE_URL to the PostgreSQL database to export.');
+  }
+  if (destination === resolve(config.databasePath)) {
+    throw new TransferError(
+      `${destination} is the live SQLite path. Export to a new file, then install it with database-install.`,
+    );
+  }
+  const source = target.open();
+  try {
+    return exportPostgresToSqlite(source, {
+      destination,
+      expectedEnvironment: target.environment,
+      migrations: MIGRATIONS,
+      createSchema: (path) => openSqliteDatabaseAt(path).close(),
+      checkReady: (database) => schemaReadiness(database),
+      // Test runs share one server, so their sessions cannot be attributed.
+      writerApplicationNames:
+        writerApplicationNames ?? (target.testRun ? [] : WRITER_APPLICATION_NAMES),
+      allowLiveWriters,
+      ...hooks,
+    });
+  } finally {
+    source.close();
+  }
+}
+
+/**
+ * Swap a validated export into the live SQLite path (config.databasePath),
+ * keeping the previous file beside it. Database only: media is not touched.
+ * While PostgreSQL is still configured, it is read once more first and the
+ * install is refused if anything changed (or a writer is connected) since the
+ * export. `skipSourceCheck` accepts that risk when PostgreSQL is unreadable.
+ */
+export function installSqliteExport(
+  config: RuntimeConfig,
+  stagedPath: string,
+  {
+    environment,
+    skipSourceCheck = false,
+    writerApplicationNames,
+  }: { environment?: string; skipSourceCheck?: boolean; writerApplicationNames?: string[] } = {},
+): InstallResult & { sourceVerified: boolean } {
+  const target = skipSourceCheck ? null : exportSource(config);
+  let sourceVerified = false;
+  const result = installExportedDatabase(stagedPath, config.databasePath, {
+    expectedEnvironment:
+      environment ??
+      (process.env.REWIND_DATABASE_ENVIRONMENT?.trim() ||
+        process.env.REWIND_MEDIA_ENVIRONMENT?.trim() ||
+        undefined),
+    checkReady: (database) => schemaReadiness(database),
+    checkSource: target
+      ? (report) => {
+          const source = target.open();
+          try {
+            assertSourceMatches(source, report.tables, {
+              expectedEnvironment: report.environment,
+              writerApplicationNames:
+                writerApplicationNames ?? (target.testRun ? [] : WRITER_APPLICATION_NAMES),
+              when: 'since it was exported',
+            });
+            sourceVerified = true;
+          } finally {
+            source.close();
+          }
+        }
+      : undefined,
+  });
+  return { ...result, sourceVerified };
 }
 
 /**

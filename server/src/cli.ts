@@ -6,7 +6,9 @@ import {
   backfillMediaIntegrity,
   bootstrapDatabase,
   databaseStatus,
+  exportDatabaseToSqlite,
   importSqliteSnapshot,
+  installSqliteExport,
   openDatabase,
   openOperationalDatabase,
   resetDatabase,
@@ -773,6 +775,57 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       }
       return;
     }
+    if (command === 'database-export') {
+      const sqlitePath = readOption(argv, ['--sqlite']);
+      if (!sqlitePath) {
+        throw new ConfigError(
+          'database-export needs --sqlite PATH.',
+          'Give a new file path; it must not exist. Stop the runtime and workers first.',
+        );
+      }
+      const report = exportDatabaseToSqlite(config, resolve(sqlitePath), {
+        allowLiveWriters: argv.includes('--allow-live-writers'),
+      });
+      if (json) console.log(JSON.stringify(report));
+      else {
+        for (const table of report.tables) console.log(`${table.table}: ${table.rows} rows`);
+        console.log(
+          `Exported and reconciled ${report.totalRows} rows from PostgreSQL (${report.environment}) to ${resolve(sqlitePath)}.`,
+        );
+        if (!report.writersQuiesced) {
+          console.log('Writers were not checked (--allow-live-writers): do not install this file.');
+        }
+      }
+      return;
+    }
+    if (command === 'database-install') {
+      const stagedPath = readOption(argv, ['--sqlite']);
+      if (!stagedPath) {
+        throw new ConfigError(
+          'database-install needs --sqlite PATH.',
+          'Point it at a file written by database-export.',
+        );
+      }
+      const result = installSqliteExport(config, resolve(stagedPath), {
+        environment: readOption(argv, ['--environment']),
+        skipSourceCheck: argv.includes('--skip-source-check'),
+      });
+      if (json) console.log(JSON.stringify(result));
+      else {
+        console.log(`Installed ${result.report.totalRows} rows at ${result.livePath}.`);
+        console.log(
+          result.sourceVerified
+            ? 'PostgreSQL was re-read and still matches the export.'
+            : 'PostgreSQL was not re-checked: make sure nothing wrote to it since the export.',
+        );
+        console.log(
+          result.previousPath
+            ? `The previous database is kept at ${result.previousPath}.`
+            : 'There was no previous database file.',
+        );
+      }
+      return;
+    }
     if (command === 'database-bootstrap') {
       const roles = bootstrapDatabase();
       console.log(
@@ -894,7 +947,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (command !== 'start') {
       throw new ConfigError(
         `Unknown local runtime command ${JSON.stringify(command)}.`,
-        'Use start, worker, reminders, preflight, migrate, reset, accounts, diagnostics, jobs, retention, or consistency.',
+        'Use start, worker, reminders, preflight, migrate, reset, accounts, diagnostics, jobs, retention, consistency, or database-status / -import / -export / -install / -bootstrap.',
       );
     }
     await start(config);
