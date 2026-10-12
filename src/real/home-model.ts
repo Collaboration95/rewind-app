@@ -59,8 +59,52 @@ export function cycleWeek(cycle: HomeCycle, now: number) {
   return {
     week,
     windowStart,
+    resetAt: reset,
     resetDays: Math.max(1, Math.ceil((reset - now) / DAY_MS)),
   };
+}
+
+const premiereEndsAt = (release: HomeRelease) =>
+  Date.parse(release.publishedAt ?? release.endsAt) + DAY_MS;
+
+/**
+ * The next instant the server may change what Home shows: the allowance
+ * reset, the cycle end or a premiere expiring. Null when none is ahead.
+ */
+export function nextBoundary(
+  cycle: HomeCycle,
+  releases: HomeRelease[] | undefined,
+  now: number,
+): number | null {
+  const times = [
+    cycleWeek(cycle, now).resetAt,
+    Date.parse(cycle.endsAt),
+    ...(releases ?? [])
+      .filter((release) => release.cycleId !== cycle.id && release.state === 'premiere')
+      .map(premiereEndsAt),
+  ].filter((time) => Number.isFinite(time) && time > now);
+  return times.length ? Math.min(...times) : null;
+}
+
+/**
+ * True while this client waits for the server to catch up: a film still
+ * developing, a cycle past its end or a premiere past its 24 hours.
+ */
+export function awaitingServer(
+  cycle: HomeCycle,
+  releases: HomeRelease[] | undefined,
+  now: number,
+): boolean {
+  const previous = (releases ?? []).filter((release) => release.cycleId !== cycle.id);
+  return (
+    now >= Date.parse(cycle.endsAt) ||
+    previous.some(
+      (release) =>
+        release.state === 'processing' ||
+        release.state === 'delayed' ||
+        (release.state === 'premiere' && now >= premiereEndsAt(release)),
+    )
+  );
 }
 
 /** The status card under the header, newest news first. */
