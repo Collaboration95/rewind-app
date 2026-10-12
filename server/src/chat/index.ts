@@ -39,6 +39,23 @@ export interface ChatEventMetadata {
   occurredAt: string;
 }
 
+/**
+ * A reaction change. It is deliberately not a `message` event: it has no event
+ * id, never enters the persisted event log, and never moves a reconnect cursor
+ * or unread count. `reactionCounts` is the absolute state after the change and
+ * `revision` orders it against other reaction state for the same message.
+ * `authorMemberId` is used for per-viewer filtering and is not sent on the wire.
+ */
+export interface ChatReactionEvent {
+  type: 'reaction';
+  groupId: string;
+  messageId: string;
+  authorMemberId: string;
+  reactionCounts: Partial<Record<ChatReactionEmoji, number>>;
+  revision: number;
+  occurredAt: string;
+}
+
 export interface ChatHistoryPage {
   events: ChatMessageEvent[];
   /** Event id to use as the exclusive upper bound for the next older page. */
@@ -98,6 +115,58 @@ export type ToggleChatReactionResult =
       reason:
         'membership_denied' | 'message_not_found' | 'unsupported_reaction' | 'invalid_timestamp';
     };
+
+// Monotonic across restarts (seeded from the clock). Reaction state is read and
+// published in one synchronous run, so a larger revision is always newer state.
+let reactionRevisionCursor = Date.now();
+
+/** The revision of the newest reaction state; read it before reading counts. */
+export function currentReactionRevision(): number {
+  return reactionRevisionCursor;
+}
+
+export function nextReactionRevision(): number {
+  reactionRevisionCursor = Math.max(reactionRevisionCursor + 1, Date.now());
+  return reactionRevisionCursor;
+}
+
+/** Aggregate reaction counts for messages of one group, with each author for viewer filtering. */
+export function listChatReactionSnapshot(
+  database: RewindDatabase,
+  groupId: string,
+  messageIds: string[],
+): { messageId: string; memberId: string; reactionCounts: ChatMessage['reactionCounts'] }[] {
+  if (messageIds.length === 0) return [];
+  const placeholders = messageIds.map(() => '?').join(', ');
+  const messages = database
+    .prepare(
+      `SELECT id, member_id AS memberId FROM messages
+       WHERE group_id = ? AND id IN (${placeholders})`,
+    )
+    .all(groupId, ...messageIds) as { id: string; memberId: string }[];
+  const counts = new Map<string, Partial<Record<ChatReactionEmoji, number>>>();
+  if (messages.length > 0) {
+    const ids = messages.map((message) => message.id);
+    const reactions = database
+      .prepare(
+        `SELECT message_id AS messageId, emoji, COUNT(*) AS count
+         FROM reactions WHERE message_id IN (${ids.map(() => '?').join(', ')})
+         GROUP BY message_id, emoji`,
+      )
+      .all(...ids) as { messageId?: unknown; emoji?: unknown; count?: unknown }[];
+    for (const reaction of reactions) {
+      if (reaction.emoji !== SUPPORTED_CHAT_REACTION) continue;
+      const entry = counts.get(String(reaction.messageId)) ?? {};
+      entry[SUPPORTED_CHAT_REACTION] = Number(reaction.count);
+      counts.set(String(reaction.messageId), entry);
+    }
+  }
+  return messages.map((message) => ({
+    messageId: message.id,
+    memberId: message.memberId,
+    reactionCounts: counts.get(message.id) ?? {},
+  }));
+}
 
 function reactionCounts(database: RewindDatabase, messageId: string) {
   const rows = database

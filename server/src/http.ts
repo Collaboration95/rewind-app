@@ -38,13 +38,17 @@ import {
 import {
   SUPPORTED_CHAT_REACTION,
   createChatMessage,
+  currentReactionRevision,
   latestChatEventId,
   listChatEvents,
   listChatEventMetadata,
   listChatHistoryPage,
+  listChatReactionSnapshot,
+  nextReactionRevision,
   toggleChatReaction,
+  type ChatReactionEvent,
 } from './chat';
-import { encodeSseCheckpoint, encodeSseEvent, RealtimeHub } from './realtime';
+import { encodeSseCheckpoint, encodeSseEvent, encodeSseReaction, RealtimeHub } from './realtime';
 import { SAFE_DENIAL } from './policy';
 import { deleteContribution } from './contributions';
 import {
@@ -120,6 +124,7 @@ import {
   blockMember,
   canInteractWithChatMessage,
   filmSegments,
+  isChatEventHidden,
   listBlockedMembers,
   removeContribution,
   reportContent,
@@ -1428,6 +1433,8 @@ export async function handleRequest(
       });
       return;
     }
+    // Read the revision first: the page then reflects at least that revision.
+    const reactionRevision = currentReactionRevision();
     const page = listChatHistoryPage(database, identity.groupId, {
       beforeEventId,
       limit: parsedLimit,
@@ -1436,7 +1443,7 @@ export async function handleRequest(
       const visible = visibleChatEvent(database, identity.accountId, event);
       return visible ? [visible] : [];
     });
-    sendJson(response, config, 200, page);
+    sendJson(response, config, 200, { ...page, reactionRevision });
     return;
   }
 
@@ -1503,6 +1510,27 @@ export async function handleRequest(
         response.write(encodeSseEvent(visible, { metadataOnly }));
       }
     };
+    const writeReaction = (event: ChatReactionEvent) => {
+      // Unread observers only count messages; a reaction never reaches them.
+      if (metadataOnly || endUnauthorisedStream()) return;
+      // Hidden or reported content for this viewer stays hidden, and the
+      // payload holds only the shared aggregate, never the actor's own state.
+      if (
+        isChatEventHidden(database, identity.accountId, {
+          id: event.messageId,
+          memberId: event.authorMemberId,
+        })
+      )
+        return;
+      if (!response.writableEnded && !response.destroyed) response.write(encodeSseReaction(event));
+    };
+    const subscribeToGroup = (
+      listener: (event: Parameters<typeof encodeSseEvent>[0]) => void,
+    ): (() => void) =>
+      hub.subscribe(groupId, (event) => {
+        if (event.type === 'reaction') writeReaction(event);
+        else listener(event);
+      });
     let unsubscribe = () => {};
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     const cleanup = () => {
@@ -1529,7 +1557,7 @@ export async function handleRequest(
       // either included in that watermark or delivered once from the buffer.
       const pending: Parameters<typeof encodeSseEvent>[0][] = [];
       let priming = true;
-      unsubscribe = hub.subscribe(groupId, (event) => {
+      unsubscribe = subscribeToGroup((event) => {
         if (priming) pending.push(event);
         else writeAuthorisedEvent(event);
       });
@@ -1555,7 +1583,7 @@ export async function handleRequest(
         writeAuthorisedEvent(event);
         lastDeliveredEventId = event.eventId;
       };
-      unsubscribe = hub.subscribe(groupId, (event) => {
+      unsubscribe = subscribeToGroup((event) => {
         if (priming) pending.push(event);
         else deliverOnce(event);
       });
@@ -1732,7 +1760,64 @@ export async function handleRequest(
     }
     const visible = visibleChatEvent(database, identity.accountId, { message: result.message });
     if (!visible) return sendNotFound(response, config);
-    sendJson(response, config, 200, { ...result, message: visible.message });
+    // Counts and revision are taken in this synchronous run, so they order
+    // against every other reaction change. Each stream filters per viewer.
+    const reactionRevision = nextReactionRevision();
+    options.realtimeHub?.publish({
+      type: 'reaction',
+      groupId,
+      messageId,
+      authorMemberId: result.message.memberId,
+      reactionCounts: result.message.reactionCounts ?? {},
+      revision: reactionRevision,
+      occurredAt: now().toISOString(),
+    });
+    sendJson(response, config, 200, { ...result, message: visible.message, reactionRevision });
+    return;
+  }
+
+  // Reconnect reconciliation: current counts for already-loaded messages,
+  // including ones older than the latest history page.
+  const realtimeReactionSnapshotMatch = url.pathname.match(
+    /^\/realtime\/groups\/([^/]+)\/reaction-counts$/,
+  );
+  if (realtimeReactionSnapshotMatch && request.method === 'POST') {
+    const groupId = decodePathSegment(realtimeReactionSnapshotMatch[1], response, config);
+    if (groupId === null) return;
+    const identity = requireAuthorisedChatGroup(
+      request,
+      database,
+      response,
+      config,
+      now(),
+      groupId,
+    );
+    if (!identity) return;
+    const body = await requestBody(request, config);
+    if (!chatIdentityIsCurrent(request, database, identity, now())) {
+      sendDenied(response, config);
+      return;
+    }
+    const messageIds = Array.isArray(body?.messageIds) ? body.messageIds : null;
+    if (
+      !messageIds ||
+      messageIds.length > 100 ||
+      messageIds.some((id: unknown) => typeof id !== 'string' || id.length === 0 || id.length > 200)
+    ) {
+      sendJson(response, config, 400, {
+        error: 'invalid_reaction_snapshot',
+        message: 'Send up to 100 message ids.',
+      });
+      return;
+    }
+    const revision = currentReactionRevision();
+    const messages = listChatReactionSnapshot(database, groupId, messageIds as string[]).flatMap(
+      ({ messageId, memberId, reactionCounts }) =>
+        isChatEventHidden(database, identity.accountId, { id: messageId, memberId })
+          ? []
+          : [{ messageId, reactionCounts }],
+    );
+    sendJson(response, config, 200, { revision, messages });
     return;
   }
 

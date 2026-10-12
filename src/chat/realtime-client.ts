@@ -35,6 +35,25 @@ export interface ChatMessageEvent {
   occurredAt: string;
 }
 
+/**
+ * Shared reaction state for one message. It is not a message: it has no event
+ * id, never moves the reconnect cursor and never counts as unread. `revision`
+ * orders it against other reaction state for the same message.
+ */
+export interface ChatReactionUpdate {
+  type: 'reaction';
+  groupId: string;
+  messageId: string;
+  reactionCounts: Partial<Record<ChatReactionEmoji, number>>;
+  revision: number;
+  occurredAt?: string;
+}
+
+export interface ChatReactionSnapshot {
+  revision: number;
+  messages: { messageId: string; reactionCounts: Partial<Record<ChatReactionEmoji, number>> }[];
+}
+
 export interface ChatHistoryPage {
   events: ChatMessageEvent[];
   nextCursor: number | null;
@@ -92,6 +111,10 @@ interface SubscribeOptionsBase {
   /** Persisted cursor delivered before live events on a startFromLatest stream. */
   onCheckpoint?(eventId: number): void;
   onError?(error: unknown): void;
+  /** Reaction changes from other members (and this session). Ignored by metadata-only streams. */
+  onReactionUpdate?(update: ChatReactionUpdate): void;
+  /** The stream opened. `reconnect` is true after a drop, when reactions may have been missed. */
+  onConnected?(info: { reconnect: boolean }): void;
   onConnectionStateChange?(state: RealtimeConnectionState): void;
   /** Alias useful to UI consumers that call the lifecycle a status. */
   onStatusChange?(state: RealtimeConnectionState): void;
@@ -291,7 +314,7 @@ export class RealtimeChatClient {
     messageId: string,
     emoji: ChatReactionEmoji = '✨',
     active?: boolean,
-  ): Promise<{ reaction: ChatReactionResult; message: ChatMessage }> {
+  ): Promise<{ reaction: ChatReactionResult; message: ChatMessage; reactionRevision?: number }> {
     const response = await this.fetchImpl(
       `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(messageId)}/reactions`,
       {
@@ -303,6 +326,7 @@ export class RealtimeChatClient {
     const payload = (await response.json().catch(() => ({}))) as {
       reaction?: ChatReactionResult;
       message?: ChatMessage | string;
+      reactionRevision?: number;
       error?: string;
     };
     if (
@@ -319,7 +343,45 @@ export class RealtimeChatClient {
         payload.error,
       );
     }
-    return { reaction: payload.reaction, message: payload.message as ChatMessage };
+    return {
+      reaction: payload.reaction,
+      message: payload.message as ChatMessage,
+      ...(Number.isSafeInteger(payload.reactionRevision)
+        ? { reactionRevision: payload.reactionRevision }
+        : {}),
+    };
+  }
+
+  /** Current counts for already-loaded messages; hidden or foreign ids are omitted by the server. */
+  async getReactionSnapshot(
+    sessionId: string,
+    groupId: string,
+    messageIds: string[],
+  ): Promise<ChatReactionSnapshot> {
+    const response = await this.fetchImpl(
+      `${this.baseUrl}/realtime/groups/${encodeURIComponent(groupId)}/reaction-counts`,
+      {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIds }),
+      },
+    );
+    const payload = (await response.json().catch(() => ({}))) as Partial<ChatReactionSnapshot> & {
+      message?: string;
+      error?: string;
+    };
+    if (
+      !response.ok ||
+      !Number.isSafeInteger(payload.revision) ||
+      !Array.isArray(payload.messages)
+    ) {
+      throw new RealtimeChatError(
+        payload.message ?? `Local realtime runtime returned HTTP ${response.status}.`,
+        response.status,
+        payload.error,
+      );
+    }
+    return { revision: payload.revision as number, messages: payload.messages };
   }
 
   subscribe(sessionId: string, groupId: string, options: SubscribeOptions): RealtimeSubscription {
@@ -351,12 +413,14 @@ export class RealtimeChatClient {
     let sourceListener: ((event: unknown) => void) | null = null;
     let sourceDeniedListener: ((event: unknown) => void) | null = null;
     let sourceCheckpointListener: ((event: unknown) => void) | null = null;
+    let sourceReactionListener: ((event: unknown) => void) | null = null;
     const closeSource = () => {
       if (!source) return;
       if (sourceListener) source.removeEventListener?.('message', sourceListener);
       if (sourceDeniedListener) source.removeEventListener?.('access-denied', sourceDeniedListener);
       if (sourceCheckpointListener)
         source.removeEventListener?.('checkpoint', sourceCheckpointListener);
+      if (sourceReactionListener) source.removeEventListener?.('reaction', sourceReactionListener);
       source.onerror = null;
       source.onopen = null;
       source.close();
@@ -364,6 +428,7 @@ export class RealtimeChatClient {
       sourceListener = null;
       sourceDeniedListener = null;
       sourceCheckpointListener = null;
+      sourceReactionListener = null;
     };
 
     let open: (isReconnect?: boolean) => void;
@@ -499,14 +564,56 @@ export class RealtimeChatClient {
           options.onError?.(new RealtimeChatError('The realtime event checkpoint was invalid.'));
         }
       };
+      const onReaction = (event: unknown) => {
+        if (source !== nextSource || closed) return;
+        const data =
+          event && typeof event === 'object' && 'data' in event
+            ? (event as { data: unknown }).data
+            : event;
+        try {
+          const parsed = (
+            typeof data === 'string' ? JSON.parse(data) : data
+          ) as Partial<ChatReactionUpdate>;
+          const sparks = parsed?.reactionCounts?.['✨'];
+          if (
+            !parsed ||
+            parsed.type !== 'reaction' ||
+            parsed.groupId !== groupId ||
+            typeof parsed.messageId !== 'string' ||
+            !Number.isSafeInteger(parsed.revision) ||
+            (sparks !== undefined && (!Number.isSafeInteger(sparks) || sparks < 0))
+          ) {
+            return;
+          }
+          // Reaction updates never touch lastEventId: that cursor is message-only.
+          options.onReactionUpdate?.({
+            type: 'reaction',
+            groupId,
+            messageId: parsed.messageId,
+            reactionCounts: sparks === undefined ? {} : { '✨': sparks },
+            revision: parsed.revision as number,
+            ...(typeof parsed.occurredAt === 'string' ? { occurredAt: parsed.occurredAt } : {}),
+          });
+        } catch {
+          // A malformed reaction frame is dropped: it is advisory state and
+          // must not put the whole chat into an error state.
+        }
+      };
       sourceListener = onMessage;
       sourceDeniedListener = onAccessDenied;
       sourceCheckpointListener = onCheckpoint;
+      if (!options.metadataOnly) {
+        sourceReactionListener = onReaction;
+        nextSource.addEventListener('reaction', onReaction);
+      }
       nextSource.addEventListener('message', onMessage);
       nextSource.addEventListener('access-denied', onAccessDenied);
       nextSource.addEventListener('checkpoint', onCheckpoint);
       nextSource.onopen = () => {
-        if (source === nextSource && !closed) setState('connected');
+        if (source === nextSource && !closed) {
+          setState('connected');
+          options.onConnected?.({ reconnect: isReconnect });
+        }
       };
       nextSource.onerror = (error) => {
         if (source === nextSource) failWithError(error, nextSource);
