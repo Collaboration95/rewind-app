@@ -130,7 +130,7 @@ test('staging pins accepted base, source/config/origin and excludes ambient cred
 test('unmerged config overlays are labelled preview; unrelated dirty code/dependency changes are refused', async () =>
   fixture(async (c) => {
     const changed = structuredClone(app);
-    changed.expo.android.versionCode = 2;
+    changed.expo.android.versionCode = app.expo.android.versionCode + 1;
     await writeFile(join(c.root, 'app.json'), JSON.stringify(changed));
     await assert.rejects(prepareNativeBuild(c.options), /Unreviewed changes/);
     const result = await prepareNativeBuild({ ...c.options, overlays: ['app.json'] });
