@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 import { setTrim } from './helpers/injected-recording';
-import { openCapture, signedIn } from './helpers/real-account';
+import { openCapture, signedIn, test } from './helpers/real-account';
 
 test.use(signedIn);
 

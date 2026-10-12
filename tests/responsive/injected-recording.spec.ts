@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
 import {
   allowInjectedSource,
@@ -13,7 +13,7 @@ import {
   restoreInjectedPreview,
   setTrim,
 } from './helpers/injected-recording';
-import { signedIn } from './helpers/real-account';
+import { signedIn, test } from './helpers/real-account';
 
 test.use({ ...signedIn, viewport: { width: 390, height: 844 } });
 test.setTimeout(90_000);
