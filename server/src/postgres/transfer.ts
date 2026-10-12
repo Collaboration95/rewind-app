@@ -1,5 +1,6 @@
 // One-off copy of a SQLite snapshot (for example a restored S3 backup) into
-// the PostgreSQL database, with per-table reconciliation before commit.
+// the PostgreSQL database, with per-table reconciliation before commit. The
+// reconciliation helpers are shared with the reverse export (export.ts).
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,7 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { PostgresDatabase } from './database';
 
 /** Tables that describe the database itself rather than application data. */
-const META_TABLES = new Set([
+export const META_TABLES = new Set([
   'schema_migrations',
   'schema_migration_markers',
   'rewind_database_environment',
@@ -32,21 +33,21 @@ export interface TransferReport {
 
 export class TransferError extends Error {}
 
-type Row = Record<string, unknown>;
+export type Row = Record<string, unknown>;
 
-function quote(identifier: string): string {
+export function quote(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
 
 /** Stable text for one value, identical for SQLite and PostgreSQL reads. */
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
   if (value === null || value === undefined) return 'null';
   if (value instanceof Uint8Array) return `x${Buffer.from(value).toString('hex')}`;
   if (typeof value === 'number' || typeof value === 'bigint') return `n${Number(value)}`;
   return `s${JSON.stringify(String(value))}`;
 }
 
-function digestTable(rows: Row[], columns: string[], keyColumns: string[]): string {
+export function digestTable(rows: Row[], columns: string[], keyColumns: string[]): string {
   const keyOf = (row: Row) => keyColumns.map((column) => canonical(row[column])).join('\u0000');
   const sorted = rows
     .map((row) => ({ key: keyOf(row), row }))
@@ -59,7 +60,7 @@ function digestTable(rows: Row[], columns: string[], keyColumns: string[]): stri
   return hash.digest('hex');
 }
 
-interface TargetColumn {
+export interface TargetColumn {
   name: string;
   type: string;
 }
@@ -84,7 +85,7 @@ function targetTables(target: PostgresDatabase): Map<string, TargetColumn[]> {
   return tables;
 }
 
-function primaryKey(target: PostgresDatabase, table: string): string[] {
+export function primaryKey(target: PostgresDatabase, table: string): string[] {
   return target
     .queryNative(
       `SELECT a.attname AS name
@@ -97,7 +98,7 @@ function primaryKey(target: PostgresDatabase, table: string): string[] {
     .map((row) => String(row.name));
 }
 
-function checkValue(table: string, column: TargetColumn, value: unknown): void {
+export function checkValue(table: string, column: TargetColumn, value: unknown): void {
   if (value === null) return;
   const where = `${table}.${column.name}`;
   switch (column.type) {

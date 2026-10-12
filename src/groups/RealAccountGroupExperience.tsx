@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import * as Clipboard from 'expo-clipboard';
-import { Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { AppState, Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 
 import { useRealAccount } from '../auth/RealAccountProvider';
 import { createInviteLink, type InviteLinkPayload } from '../invites/deep-links';
@@ -36,10 +36,12 @@ import { markEnd, markLaunchReady, markStart } from '../runtime/timing';
 import { CreateGroupScreen, JoinScreen, type NewGroupInput } from '../real/GroupFlows';
 import { HomeBody, HomeState, LoadingState } from '../real/Home';
 import {
+  awaitingServer,
   cycleWeek,
   filmCountdown,
   homeCards,
   momentDay,
+  nextBoundary,
   premiereLeft,
   premiereRelease,
   shutterState,
@@ -145,6 +147,13 @@ async function readGroupMembers(response: Response): Promise<RealGroupMembers> {
   return (await response.json()) as RealGroupMembers;
 }
 
+// Reconcile just after a boundary so the server has crossed it too.
+const BOUNDARY_SLACK_MS = 1_000;
+const MAX_TIMER_MS = 2 ** 31 - 1;
+// While a film is developing or the server is behind, poll gently and give up.
+const CATCH_UP_POLL_MS = 30_000;
+const CATCH_UP_POLL_LIMIT = 20;
+
 type Push =
   | { kind: 'settings'; step: SettingsStep }
   | { kind: 'mine' }
@@ -172,12 +181,14 @@ export function RealAccountGroupExperience({
     [auth.authenticatedRequest, transferMode],
   );
   const [captureMode, setCaptureMode] = useState<'photo' | 'video'>('photo');
+  const ledgerGroupId = group?.group.id ?? null;
+  // Keyed by group id, not the snapshot, so a quiet refresh never re-hydrates the status provider.
   const loadContributionLedger = useCallback(
     () =>
-      group
-        ? mediaClient.getContributionLedger(group.group.id)
+      ledgerGroupId
+        ? mediaClient.getContributionLedger(ledgerGroupId)
         : Promise.reject(new Error('No active group.')),
-    [group, mediaClient],
+    [ledgerGroupId, mediaClient],
   );
   const [memberGroups, setMemberGroups] = useState<RealGroup[]>([]);
   const [groupMembers, setGroupMembers] = useState<RealGroupMembers | null>(null);
@@ -510,29 +521,161 @@ export function RealAccountGroupExperience({
     void Promise.resolve().then(load);
   }, [load]);
 
-  const ledgerGroupId = group?.group.id ?? null;
-  const refreshLedger = useCallback(async (): Promise<ContributionLedgerPage | null> => {
-    if (!ledgerGroupId) return null;
-    const requestId = ++ledgerRequest.current;
-    try {
-      const page = await mediaClient.getContributionLedger(ledgerGroupId);
-      if (requestId !== ledgerRequest.current || selectedGroupId.current !== ledgerGroupId)
-        return null;
-      setLedger(page);
-      setLedgerError(null);
-      return page;
-    } catch {
-      if (requestId === ledgerRequest.current)
-        setLedgerError('Your moments could not be loaded. Retry when connected.');
-      return null;
-    }
-  }, [ledgerGroupId, mediaClient]);
+  const accountId = auth.session?.account.id ?? null;
+  const ledgerOwner = ledgerGroupId ? `${accountId}:${ledgerGroupId}` : null;
+  const ledgerOwnerRef = useRef<string | null>(null);
+  const ledgerInflight = useRef<{
+    id: number;
+    promise: Promise<ContributionLedgerPage | null>;
+  } | null>(null);
+  // `join` shares a request already in flight; the default always asks again.
+  const refreshLedger = useCallback(
+    (join = false): Promise<ContributionLedgerPage | null> => {
+      if (!ledgerGroupId) return Promise.resolve(null);
+      if (join && ledgerInflight.current) return ledgerInflight.current.promise;
+      const requestId = ++ledgerRequest.current;
+      const current = () =>
+        requestId === ledgerRequest.current &&
+        selectedGroupId.current === ledgerGroupId &&
+        ledgerOwnerRef.current === ledgerOwner;
+      const promise = (async () => {
+        try {
+          const page = await mediaClient.getContributionLedger(ledgerGroupId);
+          if (!current()) return null;
+          setLedger(page);
+          setLedgerError(null);
+          return page;
+        } catch {
+          // The last confirmed allowance stays; clearing it would make the shutter look ready.
+          if (current()) setLedgerError('Your moments could not be loaded. Retry when connected.');
+          return null;
+        } finally {
+          if (ledgerInflight.current?.id === requestId) ledgerInflight.current = null;
+        }
+      })();
+      ledgerInflight.current = { id: requestId, promise };
+      return promise;
+    },
+    [ledgerGroupId, ledgerOwner, mediaClient],
+  );
   useEffect(() => {
     void Promise.resolve().then(() => {
-      setLedger(null);
+      if (ledgerOwnerRef.current !== ledgerOwner) {
+        ledgerOwnerRef.current = ledgerOwner;
+        setLedger(null);
+        setLedgerError(null);
+      }
       return refreshLedger();
     });
-  }, [refreshLedger]);
+  }, [ledgerOwner, refreshLedger]);
+
+  const latestGroup = useRef(group);
+  const groupRefresh = useRef<{ id: number; promise: Promise<void> } | null>(null);
+  const groupRefreshId = useRef(0);
+  const capturing = useRef(false);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  useLayoutEffect(() => {
+    latestGroup.current = group;
+    capturing.current = top?.kind === 'capture';
+  });
+  // Quietly re-read the current group (cycle, releases) without touching the screen.
+  // A newer request supersedes an older one, and `force` skips joining one in flight.
+  const refreshGroup = useCallback(
+    (force = false): Promise<void> => {
+      const groupId = selectedGroupId.current;
+      if (!groupId || groupMutationPending.current) return Promise.resolve();
+      if (!force && groupRefresh.current) return groupRefresh.current.promise;
+      const contextVersion = groupContextVersion.current;
+      const request = auth.authenticatedRequest;
+      const requestId = ++groupRefreshId.current;
+      const current = () =>
+        captureMounted.current &&
+        requestId === groupRefreshId.current &&
+        contextVersion === groupContextVersion.current &&
+        selectedGroupId.current === groupId &&
+        reminderContext.current.accountId === accountId &&
+        reminderContext.current.request === request;
+      const promise = (async () => {
+        try {
+          const refreshed = await readGroup(await request('/real/groups/current'));
+          if (!current()) return;
+          if (refreshed?.group.id !== groupId) {
+            // Removed from the group, or the server selects another: reload as a fresh start would.
+            groupContextVersion.current += 1;
+            goHome();
+            void load();
+            return;
+          }
+          if (latestGroup.current?.cycle.id !== refreshed.cycle.id) void refreshLedger();
+          setGroup((previous) =>
+            previous && JSON.stringify(previous) === JSON.stringify(refreshed)
+              ? previous
+              : refreshed,
+          );
+          setRefreshFailed(false);
+        } catch {
+          if (current()) setRefreshFailed(true);
+        } finally {
+          if (groupRefresh.current?.id === requestId) groupRefresh.current = null;
+        }
+      })();
+      groupRefresh.current = { id: requestId, promise };
+      return promise;
+    },
+    [accountId, auth.authenticatedRequest, goHome, load, refreshLedger],
+  );
+  // Group and allowance together. An open capture keeps its screen and state; closing it reconciles.
+  const reconcile = (force = false): Promise<unknown> =>
+    screen !== 'ready' || capturing.current
+      ? Promise.resolve()
+      : Promise.all([refreshGroup(force), refreshLedger(!force)]);
+  const reconcileRef = useRef(reconcile);
+  const refreshGroupRef = useRef(refreshGroup);
+  useLayoutEffect(() => {
+    reconcileRef.current = reconcile;
+    refreshGroupRef.current = refreshGroup;
+  });
+
+  const [foregroundCount, setForegroundCount] = useState(0);
+  useEffect(() => {
+    let previous = AppState.currentState;
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active' && (previous === 'background' || previous === 'inactive')) {
+        setForegroundCount((count) => count + 1);
+        void reconcileRef.current();
+      }
+      previous = next;
+    });
+    return () => subscription.remove();
+  }, []);
+
+  const boundary = group ? nextBoundary(group.cycle, group.releases, now) : null;
+  useEffect(() => {
+    if (boundary === null) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const arm = () => {
+      const wait = boundary + BOUNDARY_SLACK_MS - Date.now();
+      timer =
+        wait > MAX_TIMER_MS
+          ? setTimeout(arm, MAX_TIMER_MS)
+          : setTimeout(() => void reconcileRef.current(true), Math.max(0, wait));
+    };
+    arm();
+    return () => clearTimeout(timer);
+  }, [boundary, ledgerOwner]);
+
+  const catchingUp = group ? awaitingServer(group.cycle, group.releases, now) : false;
+  useEffect(() => {
+    if (!catchingUp || !ledgerOwner) return;
+    let attempts = 0;
+    const timer = setInterval(() => {
+      if (attempts >= CATCH_UP_POLL_LIMIT) return clearInterval(timer);
+      if (AppState.currentState === 'background' || capturing.current) return;
+      attempts += 1;
+      void refreshGroupRef.current();
+    }, CATCH_UP_POLL_MS);
+    return () => clearInterval(timer);
+  }, [catchingUp, ledgerOwner, foregroundCount]);
 
   // Blocked people are fetched when Members opens; the server already hides
   // their messages and moments everywhere else.
@@ -553,6 +696,7 @@ export function RealAccountGroupExperience({
   const closeCapture = () => {
     const before = ledger?.allowance.countUsed ?? 0;
     popScreen();
+    void refreshGroup();
     void refreshLedger().then((page) => {
       // A moment was sealed: the allowance row rolls and the shutter says "Sealed".
       if (page && page.allowance.countUsed > before) setRollKey((key) => key + 1);
@@ -952,6 +1096,18 @@ export function RealAccountGroupExperience({
         <Text accessibilityRole="alert" style={styles.alert} testID="real-group-switch-error">
           {message}
         </Text>
+      ) : null}
+      {group && (refreshFailed || ledgerError) ? (
+        <Glass style={styles.notice} testID="real-group-refresh-error">
+          <Text accessibilityRole="alert" style={styles.noticeBody}>
+            Couldn’t refresh your group. Showing your last update.
+          </Text>
+          <Button
+            label="Try again"
+            onPress={() => void reconcile(true)}
+            testID="real-group-refresh-retry"
+          />
+        </Glass>
       ) : null}
     </>
   );

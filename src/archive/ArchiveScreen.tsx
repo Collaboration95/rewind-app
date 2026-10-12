@@ -309,7 +309,11 @@ export function RealAccountArchiveScreen({
       const result = await downloadQueue(fresh);
       if (version === requestVersion.current) {
         setNotice(
-          result.method === 'browser' ? 'Opened the authorized media.' : 'Saved to this device.',
+          result.method === 'browser'
+            ? 'Opened the authorized media.'
+            : result.method === 'cancelled'
+              ? 'Save cancelled. Nothing was saved.'
+              : 'Saved to this device.',
         );
       }
     } catch (error) {

@@ -14,15 +14,17 @@ import {
   type ChatMessageEvent,
   type RealtimeConnectionState,
 } from './realtime-client';
+import {
+  appendMessage,
+  applyReactionPatches,
+  historyRows,
+  mergeRows,
+  type ChatRow,
+} from './reaction-sync';
 import { useNetworkOnline } from './use-network-online';
 import { userMessage } from '../domain/user-message';
 
 const CHAT_MAX = 2_000;
-
-interface ChatRow {
-  eventId: number;
-  message: ChatMessage;
-}
 
 interface RealChatMember {
   memberId: string;
@@ -32,18 +34,6 @@ interface RealChatMember {
 interface FailedMessage {
   draft: ChatMessageDraft;
   replyTo: ChatMessage | null;
-}
-
-function appendMessage(rows: ChatRow[], event: ChatMessageEvent): ChatRow[] {
-  return mergeRows(rows, [{ eventId: event.eventId, message: event.message }]);
-}
-
-function mergeRows(current: ChatRow[], incoming: ChatRow[]): ChatRow[] {
-  const merged = new Map(current.map((row) => [row.message.id, row]));
-  for (const row of incoming) {
-    if (!merged.has(row.message.id)) merged.set(row.message.id, row);
-  }
-  return [...merged.values()].sort((left, right) => left.eventId - right.eventId);
 }
 
 function statusForError(error: unknown): number | undefined {
@@ -119,6 +109,12 @@ export function RealAccountChatScreen({
     [members],
   );
   const [rows, setRows] = useState<ChatRow[]>([]);
+  const rowsRef = useRef<ChatRow[]>([]);
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+  // Reported messages stay out even if a delayed history page still lists them.
+  const reportedIds = useRef(new Set<string>());
   const askedFor = useRef(new Set<string>());
   useEffect(() => {
     // Ask once per unknown author, so a deleted account cannot cause a loop.
@@ -152,6 +148,30 @@ export function RealAccountChatScreen({
     let active = true;
     let subscription: { close(): void } | null = null;
     olderCursor.current = null;
+    reportedIds.current = new Set();
+    const reconcileReactions = async () => {
+      // Reaction changes are not in the replayable message log, so after the
+      // stream opens, re-read counts for every loaded message (any page).
+      const ids = rowsRef.current.map((row) => row.message.id);
+      for (let start = 0; start < ids.length; start += 100) {
+        const snapshot = await client.getReactionSnapshot(
+          '',
+          groupId,
+          ids.slice(start, start + 100),
+        );
+        if (!active) return;
+        setRows((current) =>
+          applyReactionPatches(
+            current,
+            snapshot.messages.map(({ messageId, reactionCounts }) => ({
+              messageId,
+              reactionCounts,
+              revision: snapshot.revision,
+            })),
+          ),
+        );
+      }
+    };
     void (async () => {
       const query = new URLSearchParams({ limit: '100' });
       const pageResponse = await authenticatedRequest(
@@ -170,9 +190,10 @@ export function RealAccountChatScreen({
         nextCursor: number | null;
         hasMore: boolean;
         watermarkEventId: number;
+        reactionRevision?: number;
       };
       if (!active) return;
-      setRows(page.events.map(({ eventId, message }) => ({ eventId, message })));
+      setRows(historyRows(page.events, page.reactionRevision));
       olderCursor.current = page.nextCursor;
       setHasOlderMessages(page.hasMore);
       setState('ready');
@@ -182,6 +203,14 @@ export function RealAccountChatScreen({
           if (!active) return;
           setRows((current) => appendMessage(current, event));
           setState('ready');
+        },
+        onReactionUpdate: (update) => {
+          if (!active) return;
+          setRows((current) => applyReactionPatches(current, [update]));
+        },
+        onConnected: () => {
+          // Best effort: the next open or reaction retries a failed read.
+          void reconcileReactions().catch(() => {});
         },
         onError: (streamError) => {
           if (!active) return;
@@ -246,9 +275,12 @@ export function RealAccountChatScreen({
         events: ChatMessageEvent[];
         nextCursor: number | null;
         hasMore: boolean;
+        reactionRevision?: number;
       };
       if (activeScopeRef.current !== scope) return;
-      const older = page.events.map(({ eventId, message }) => ({ eventId, message }));
+      const older = historyRows(page.events, page.reactionRevision).filter(
+        (row) => !reportedIds.current.has(row.message.id),
+      );
       setRows((current) => mergeRows(current, older));
       olderCursor.current = page.nextCursor;
       setHasOlderMessages(page.hasMore);
@@ -305,9 +337,21 @@ export function RealAccountChatScreen({
     if (!client || reactionBusy || effectiveState === 'denied') return;
     setReactionBusy(message.id);
     try {
-      const { message: updated } = await client.toggleReaction('', groupId, message.id);
+      const scope = activeScope;
+      const { message: updated, reactionRevision } = await client.toggleReaction(
+        '',
+        groupId,
+        message.id,
+      );
+      if (activeScopeRef.current !== scope) return;
       setRows((current) =>
-        current.map((row) => (row.message.id === updated.id ? { ...row, message: updated } : row)),
+        applyReactionPatches(current, [
+          {
+            messageId: updated.id,
+            reactionCounts: updated.reactionCounts,
+            revision: reactionRevision,
+          },
+        ]),
       );
     } catch (reactionError) {
       setError(friendlyError(reactionError));
@@ -376,6 +420,7 @@ export function RealAccountChatScreen({
       await reportContent(authenticatedRequest, groupId, { messageId: reporting.id }, reason);
       // The server hides a reported message and its quotes from now on; match it here.
       const reportedId = reporting.id;
+      reportedIds.current.add(reportedId);
       setRows((current) =>
         current
           .filter(({ message }) => message.id !== reportedId)

@@ -397,6 +397,223 @@ describe('real-account chat', () => {
     await result.unmount();
   });
 
+  describe('reaction synchronisation', () => {
+    const messageEvent = (eventId: number, id: string, sparks = 0) => ({
+      eventId,
+      type: 'message' as const,
+      occurredAt: savedMessage.createdAt,
+      message: {
+        ...savedMessage,
+        id,
+        body: `Body of ${id}`,
+        reactionCounts: sparks ? { '✨': sparks } : {},
+      },
+    });
+    const reactionUpdate = (
+      messageId: string,
+      sparks: number,
+      revision: number,
+      groupId = 'real-group-a',
+    ) => ({
+      type: 'reaction',
+      groupId,
+      messageId,
+      reactionCounts: sparks ? { '✨': sparks } : {},
+      revision,
+    });
+    const fireReaction = async (update: unknown) =>
+      act(async () => {
+        mockEventSources[0].listeners.get('reaction')?.({ data: JSON.stringify(update) });
+      });
+    const openStream = async () =>
+      act(async () => {
+        mockEventSources[0].onopen?.();
+      });
+    const mountChat = async (authenticatedRequest: jest.Mock) => {
+      (useRealAccount as jest.Mock).mockReturnValue({
+        baseUrl: 'https://runtime.example',
+        session: { account: { id: 'account-id', displayName: 'Member' } },
+        authenticatedRequest,
+        realtimeAuthorizationHeader: () => undefined,
+      });
+      return render(
+        <RealAccountChatScreen
+          groupId="real-group-a"
+          groupName="Saturday table"
+          currentMemberId="real-profile-member"
+          members={[]}
+        />,
+      );
+    };
+
+    it('patches counts from live updates without touching order, composer or reply state', async () => {
+      const authenticatedRequest = jest.fn(async (path: string) =>
+        path.endsWith('/reaction-counts')
+          ? response({ revision: 5, messages: [] })
+          : response({
+              events: [messageEvent(1, 'first'), messageEvent(2, 'second')],
+              nextCursor: null,
+              watermarkEventId: 2,
+              hasMore: false,
+              reactionRevision: 5,
+            }),
+      );
+      const result = await mountChat(authenticatedRequest);
+      await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(2));
+      await fireEvent.press(result.getByTestId('real-chat-message-first'));
+      await fireEvent.press(result.getByTestId('real-chat-reply-first'));
+      await fireEvent.changeText(result.getByTestId('real-chat-composer'), 'half typed reply');
+      const order = () => result.getAllByText(/^Body of/).map((node) => node.props.children);
+      const before = order();
+
+      await fireReaction(reactionUpdate('second', 2, 6));
+      expect(await result.findByText('✨ 2')).toBeTruthy();
+      // A repeated delivery changes nothing; a stale, older one cannot undo it.
+      await fireReaction(reactionUpdate('second', 2, 6));
+      await fireReaction(reactionUpdate('second', 0, 4));
+      expect(result.getAllByText('✨ 2')).toHaveLength(1);
+      // Another group's update and an unknown message are ignored.
+      await fireReaction(reactionUpdate('first', 9, 20, 'other-group'));
+      await fireReaction(reactionUpdate('never-loaded', 9, 20));
+      expect(result.queryByText('✨ 9')).toBeNull();
+      expect(result.getAllByTestId('real-chat-message')).toHaveLength(2);
+      expect(order()).toEqual(before);
+      expect(result.getByTestId('real-chat-composer').props.value).toBe('half typed reply');
+      expect(result.getByTestId('real-chat-reply-target')).toBeTruthy();
+
+      await fireReaction(reactionUpdate('second', 0, 7));
+      await waitFor(() => expect(result.queryByText('✨ 2')).toBeNull());
+      await result.unmount();
+    });
+
+    it('reconciles reactions missed during a disconnect, including on older loaded pages', async () => {
+      const older = messageEvent(1, 'older');
+      const newest = messageEvent(2, 'newest');
+      const snapshots: string[][] = [];
+      let snapshot = { revision: 5, messages: [] as unknown[] };
+      const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
+        if (path.endsWith('/reaction-counts')) {
+          snapshots.push((JSON.parse(String(init?.body)) as { messageIds: string[] }).messageIds);
+          return response(snapshot);
+        }
+        if (path.includes('beforeEventId=2')) {
+          return response({
+            events: [older],
+            nextCursor: null,
+            watermarkEventId: 2,
+            hasMore: false,
+            reactionRevision: 5,
+          });
+        }
+        return response({
+          events: [newest],
+          nextCursor: 2,
+          watermarkEventId: 2,
+          hasMore: true,
+          reactionRevision: 5,
+        });
+      });
+      const result = await mountChat(authenticatedRequest);
+      await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(1));
+      await fireEvent.press(result.getByTestId('real-chat-load-older'));
+      await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(2));
+
+      // The stream drops and returns; both loaded messages changed meanwhile.
+      snapshot = {
+        revision: 9,
+        messages: [
+          { messageId: 'older', reactionCounts: { '✨': 3 } },
+          { messageId: 'newest', reactionCounts: { '✨': 1 } },
+        ],
+      };
+      await openStream();
+      expect(await result.findByText('✨ 3')).toBeTruthy();
+      expect(result.getByText('✨ 1')).toBeTruthy();
+      expect(snapshots.at(-1)).toEqual(['older', 'newest']);
+      expect(result.getAllByTestId('real-chat-message')).toHaveLength(2);
+
+      // A later reconcile that was read earlier cannot undo a newer live update.
+      await fireReaction(reactionUpdate('older', 4, 12));
+      expect(await result.findByText('✨ 4')).toBeTruthy();
+      snapshot = {
+        revision: 10,
+        messages: [{ messageId: 'older', reactionCounts: { '✨': 0 } }],
+      };
+      await openStream();
+      await waitFor(() => expect(snapshots).toHaveLength(2));
+      expect(result.getByText('✨ 4')).toBeTruthy();
+      await result.unmount();
+    });
+
+    it('does not bring a reported message back through a reaction update or snapshot', async () => {
+      let snapshotIds: string[] = [];
+      const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
+        if (path.endsWith('/reports')) return response({ reported: true }, 201);
+        if (path.endsWith('/reaction-counts')) {
+          snapshotIds = (JSON.parse(String(init?.body)) as { messageIds: string[] }).messageIds;
+          return response({
+            revision: 9,
+            messages: snapshotIds.map((messageId) => ({
+              messageId,
+              reactionCounts: { '✨': 1 },
+            })),
+          });
+        }
+        return response({
+          events: [messageEvent(1, 'reported'), messageEvent(2, 'kept')],
+          nextCursor: null,
+          watermarkEventId: 2,
+          hasMore: false,
+          reactionRevision: 5,
+        });
+      });
+      const result = await mountChat(authenticatedRequest);
+      await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(2));
+      await fireEvent.press(result.getByTestId('real-chat-message-reported'));
+      await fireEvent.press(result.getByTestId('real-chat-report-reported'));
+      await fireEvent.press(result.getByTestId('report-send'));
+      await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(1));
+
+      await fireReaction(reactionUpdate('reported', 5, 20));
+      await openStream();
+      expect(await result.findByText('✨ 1')).toBeTruthy();
+      expect(snapshotIds).toEqual(['kept']);
+      expect(result.queryByText('Body of reported')).toBeNull();
+      expect(result.getAllByTestId('real-chat-message')).toHaveLength(1);
+      await result.unmount();
+    });
+
+    it('fences a snapshot that returns after the group changed', async () => {
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const authenticatedRequest = jest.fn(async (path: string) => {
+        if (path.endsWith('/reaction-counts')) {
+          await gate;
+          return response({
+            revision: 9,
+            messages: [{ messageId: 'first', reactionCounts: { '✨': 7 } }],
+          });
+        }
+        return response({
+          events: [messageEvent(1, 'first')],
+          nextCursor: null,
+          watermarkEventId: 1,
+          hasMore: false,
+          reactionRevision: 5,
+        });
+      });
+      const result = await mountChat(authenticatedRequest);
+      await waitFor(() => expect(result.getAllByTestId('real-chat-message')).toHaveLength(1));
+      await openStream();
+      await result.unmount();
+      release?.();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(result.queryByText('✨ 7')).toBeNull();
+    });
+  });
+
   it('shows an explicit denied state when group history is forbidden', async () => {
     const authenticatedRequest = jest.fn(async () => response({ message: 'forbidden' }, 403));
     (useRealAccount as jest.Mock).mockReturnValue({

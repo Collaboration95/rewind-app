@@ -8,14 +8,14 @@ hand.
 
 ## Components
 
-| Piece                                                                                    | Where                                                                                            |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Managed PostgreSQL 17 (`rewind-dev-postgres`, private, encrypted, TLS)                   | `infra/terraform/media/database.tf`                                                              |
-| Per-environment switches: `enabled`, `cutover`, `bundle`                                 | `local.database_settings` in the same file                                                       |
-| Generated logins: `rewind_admin`, `rewind_app` (owns schema `rewind`), `rewind_readonly` | `random_password.*`; delivered via the hosted settings object                                    |
-| Runtime selection                                                                        | `REWIND_DATABASE_URL` (empty means the SQLite file stays live)                                   |
-| Host scripts                                                                             | `deploy/database-bootstrap.sh`, `database-import.sh`, `database-status.sh`, `backup-postgres.sh` |
-| Operator CLI                                                                             | `node server/dist/cli.js database-status / database-import / database-bootstrap`                 |
+| Piece                                                                                    | Where                                                                                                                 |
+| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Managed PostgreSQL 17 (`rewind-dev-postgres`, private, encrypted, TLS)                   | `infra/terraform/media/database.tf`                                                                                   |
+| Per-environment switches: `enabled`, `cutover`, `bundle`                                 | `local.database_settings` in the same file                                                                            |
+| Generated logins: `rewind_admin`, `rewind_app` (owns schema `rewind`), `rewind_readonly` | `random_password.*`; delivered via the hosted settings object                                                         |
+| Runtime selection                                                                        | `REWIND_DATABASE_URL` (empty means the SQLite file stays live)                                                        |
+| Host scripts                                                                             | `deploy/database-bootstrap.sh`, `database-import.sh`, `database-status.sh`, `backup-postgres.sh`                      |
+| Operator CLI                                                                             | `node server/dist/cli.js database-status / database-import / database-export / database-install / database-bootstrap` |
 
 Repository variable used by the workflow: `REWIND_DATABASE_BOOTSTRAP_URI`
 (`terraform output database_bootstrap_uri`).
@@ -63,12 +63,142 @@ any of this.
 
 ### Rollback
 
+There are two different rollbacks. Pick one on purpose.
+
+| Goal                                                        | Use                                                                   | Writes made on PostgreSQL since the cutover                                   |
+| ----------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Return to SQLite and keep everything users did              | [Reverse export and switch](#reverse-export-and-database-only-switch) | Kept: proven by row counts and content hashes                                 |
+| Return to the old pre-cutover snapshot (accepting the loss) | `cutover = false` with the untouched `/srv/rewind/data/rewind.sqlite` | Lost: accounts, chat and contributions since the cutover are not in that file |
+
 - **Before step 4:** run the workflow with `resume`. Nothing changed for
   users.
-- **After step 4:** set `dev.cutover = false`, apply, and deploy. The runtime
-  returns to the untouched SQLite file. Writes made on PostgreSQL since the
-  cutover are not copied back (#505 tracks a reverse export). Decide fix
-  forward versus rollback within the first day.
+- **After step 4, lossless:** run the reverse export and switch below. It
+  refuses to continue unless every table matches, and it leaves PostgreSQL and
+  the previous SQLite file in place.
+- **After step 4, deliberately old:** set `dev.cutover = false`, apply, and
+  deploy. This is only a rollback to the pre-cutover snapshot, not a recovery
+  of current data. Say so in the incident notes, and decide it within the
+  first day.
+- A lossless rollback needs readable PostgreSQL. If PostgreSQL cannot be
+  read, the export cannot run: use [Recovery](#recovery) and report the
+  recovery point it gives (never "zero loss").
+
+## Reverse export and database-only switch
+
+`database-export` copies the current PostgreSQL database into a new SQLite
+file from one repeatable-read, read-only snapshot. `database-install` swaps
+that file in for the live SQLite path. Neither touches media: disk media and
+the exact S3 object and version references stored in the rows stay as they
+are, and `deploy/restore.sh` (which also swaps the media tree and could bring
+back older media) is not used.
+
+What the export guarantees:
+
+- The file is built at the current SQLite schema under a staging name in the
+  destination directory, then verified: integrity check, foreign-key check,
+  schema readiness, and for every table the row count and canonical content
+  hash against the PostgreSQL snapshot (the same hashing as `database-import`).
+  Migration versions and markers must be exactly this release's; the
+  PostgreSQL environment binding must equal `REWIND_DATABASE_ENVIRONMENT`;
+  and `AUTOINCREMENT` counters continue after PostgreSQL's.
+- PostgreSQL is then read a second time. If any table differs from the
+  snapshot, a write landed during the export and the command fails.
+- The destination must be a new file in an existing directory. A leftover
+  file, `-wal`/`-shm`, symlink, directory or report with that name is refused.
+  The file is linked into place without overwriting, and only after every
+  check passed. A failure or `kill -9` at any point leaves no destination
+  file, only a hidden `.<name>.exporting-*` file that is safe to delete.
+- `<destination>.export.json` records the environment, per-table hashes and
+  the file's SHA-256. `database-install` accepts nothing without it.
+
+What the install guarantees:
+
+- It re-verifies the file against the report, and re-reads PostgreSQL: it
+  refuses if anything changed, or a runtime is connected, since the export.
+  (`--skip-source-check` is for unreadable PostgreSQL only; it accepts that
+  nothing was checked.)
+- It keeps the previous file as `rewind.sqlite.pre-export-<stamp>` (a hard
+  link, so `rewind.sqlite` is never missing), moves a stale `-wal`/`-shm` with
+  it, and replaces `rewind.sqlite` with one rename on the same filesystem.
+- It verifies the installed file again. On any failure it puts the previous
+  file (and its WAL) back and returns the export to its staged name, so the
+  same export can be installed after the cause is fixed.
+- The environment of the export must match `REWIND_DATABASE_ENVIRONMENT` (or
+  `REWIND_MEDIA_ENVIRONMENT`) of the install, or `--environment NAME`.
+
+### Writers to stop first
+
+Everything that writes to PostgreSQL runs inside the `runtime` container:
+the HTTP server, the cycle scheduler (which drives media processing and film
+compilation), the reminder loop and the staged-source cleanup. There is no
+separate worker container. The export refuses to run while a session named
+`rewind-runtime` is connected to the database, so a forgotten writer fails
+the command instead of losing data.
+
+1. Hold merges to `dev` and do not start **Deploy dev**: a deploy restarts the
+   runtime on PostgreSQL while `cutover = true`.
+2. Pause the nightly backup if it is due in the window:
+   `sudo systemctl stop rewind-backup.timer` (start it again at the end).
+3. Stop public traffic and the runtime, which stops the scheduler, reminder
+   loop and media workers with it:
+   `docker stop rewind-demo-web` then
+   `docker compose --env-file /srv/rewind/rewind.env -f /srv/rewind/deploy/compose.yaml stop runtime`.
+   Also stop any `worker` command started by hand.
+4. Confirm `docker ps` shows neither container.
+
+### Procedure
+
+Run on the host (same SSH access as the other database operations), as the
+user that owns `/srv/rewind`. `compose` stands for
+`REWIND_DATA_HOST_DIR=/srv/rewind/data REWIND_MEDIA_HOST_DIR=/srv/rewind/media docker compose --env-file /srv/rewind/rewind.env -f /srv/rewind/deploy/compose.yaml`.
+
+```sh
+# 1. Stop the writers (above). Then export; this reads PostgreSQL only.
+compose run --rm --no-deps -T runtime database-export \
+  --sqlite /var/lib/rewind/rewind.sqlite.next --json | tee /srv/rewind/backups/export.json
+
+# 2. Switch the database file only. Re-checks PostgreSQL, keeps the old file.
+compose run --rm --no-deps -T runtime database-install \
+  --sqlite /var/lib/rewind/rewind.sqlite.next --json | tee /srv/rewind/backups/install.json
+
+# 3. Point the runtime at SQLite: dev.cutover = false in
+#    infra/terraform/media/database.tf, apply, then run Deploy dev. The
+#    deploy clears REWIND_DATABASE_URL, starts the runtime on the installed
+#    file, and its health checks gate the web proxy.
+# 4. Check: sign in, open the group and chat, and look for the writes made
+#    since the cutover.
+```
+
+The install output names the previous file
+(`/srv/rewind/data/rewind.sqlite.pre-export-<stamp>`). PostgreSQL is not
+modified or deleted, and neither are the media directories or S3 objects.
+
+If anything after step 2 goes wrong, before users write to SQLite:
+
+- **The switch itself failed.** Nothing changed: the live file is the old one.
+  Fix the cause and rerun step 2 (or step 1 if PostgreSQL changed).
+- **The deploy or its health check failed.** Set `cutover = true` again and
+  deploy; PostgreSQL still holds everything. Or put the file back:
+  `mv rewind.sqlite.pre-export-<stamp> rewind.sqlite` (with its `-wal`/`-shm`
+  if present) while the runtime is stopped.
+- **After users have written to SQLite**, do not flip `cutover = true`: that
+  would lose those writes. Stop the writers and copy the live SQLite file
+  back with `database-import --replace` first.
+
+Rehearse locally with disposable databases: start PostgreSQL, run the runtime
+with `REWIND_DATABASE_URL` and a scratch `REWIND_DATA_DIR`, make writes, stop
+the runtime, then run `database-export` and `database-install` as above and
+start the runtime without `REWIND_DATABASE_URL`. `server/tests/postgres-export.test.mjs`
+automates the export and install, including the failure cases (run it with
+`npm run server:test:postgres`, see the next section).
+
+### Tests
+
+`server/tests/postgres-export.test.mjs` needs PostgreSQL
+(`REWIND_TEST_DATABASE_URL`; `npm run server:test:postgres` creates a
+throwaway database on `REWIND_TEST_POSTGRES_URL` or `make postgres-test-db`).
+Without it the tests skip, as the other PostgreSQL tests do. CI runs them in
+the `server-postgres` job.
 
 ## Backups
 
@@ -104,9 +234,18 @@ restored row counts.
   `rewind-<stamp>.pgdump` with
   `pg_restore --no-owner --role=rewind_app -d rewind`, run `bootstrap`, and
   deploy.
-- **PostgreSQL unavailable for a long time.** Set `cutover = false` to run on
-  the last SQLite snapshot. This is the emergency path only: data written
-  since the cutover is not in that file.
+- **PostgreSQL unavailable for a long time.** The reverse export needs
+  readable PostgreSQL, so it cannot help here. Use the managed point-in-time
+  restore or the latest logical dump above, and state the recovery point you
+  actually got: the latest restorable time of the point-in-time restore
+  (5.6 minutes behind in the 7 October rehearsal), or the last nightly
+  logical dump (up to 24 hours behind). Data written after that point is lost
+  and must be reported as lost, not as a zero-loss rollback. Once the
+  restored database is readable, you can still run the reverse export
+  against it.
+- **Emergency fallback to the old snapshot.** Setting `cutover = false` runs
+  the untouched pre-cutover SQLite file. That is a return to an old snapshot,
+  not a recovery: everything written since the cutover is missing.
 
 Measured on 7 October 2026 (cutover day), dev with 889 rows in 38 tables:
 
