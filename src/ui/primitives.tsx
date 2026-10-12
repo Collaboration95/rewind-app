@@ -9,7 +9,6 @@ import {
   type ReactNode,
 } from 'react';
 import {
-  AppState,
   Platform,
   Pressable,
   ScrollView,
@@ -835,19 +834,12 @@ export function useEffectKey() {
   return [key, fire] as const;
 }
 
-/** The current time, refreshed every minute and on foreground return, for countdowns drawn during render. */
+/** The current time, refreshed every minute, for countdowns drawn during render. */
 export function useNow(intervalMs = 60_000) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), intervalMs);
-    // Background tabs throttle the interval, so catch up as soon as the app is visible.
-    const foreground = AppState.addEventListener('change', (state) => {
-      if (state === 'active') setNow(Date.now());
-    });
-    return () => {
-      clearInterval(timer);
-      foreground.remove();
-    };
+    return () => clearInterval(timer);
   }, [intervalMs]);
   return now;
 }

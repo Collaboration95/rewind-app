@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import type {
@@ -59,52 +59,9 @@ export function ArchiveScreen({
     void Promise.resolve().then(load);
   }, [load]);
 
-  // A release changing state (developing, premiere, expired) means the film list may have changed.
-  // Re-read the first page quietly and keep any older pages already loaded.
-  const mounted = useRef(true);
-  const refreshId = useRef(0);
-  const olderLoaded = useRef(false);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  const releaseKey = releases
-    .map((release) => `${release.cycleId}:${release.state}:${release.publishedAt ?? ''}`)
-    .join('|');
-  const shownKey = useRef(releaseKey);
-  useEffect(() => {
-    if (shownKey.current === releaseKey || !client) return;
-    shownKey.current = releaseKey;
-    const id = ++refreshId.current;
-    void client.getArchivePage(groupId, { limit: 20 }).then(
-      (fresh) => {
-        if (!mounted.current || id !== refreshId.current) return;
-        setFailed(false);
-        setPage((current) => {
-          if (!current || !olderLoaded.current) return fresh;
-          const known = new Set(fresh.archive.films.map((film) => film.id));
-          return {
-            archive: {
-              films: [
-                ...fresh.archive.films,
-                ...current.archive.films.filter((film) => !known.has(film.id)),
-              ],
-              clips: fresh.archive.clips,
-            },
-            pagination: current.pagination,
-          };
-        });
-      },
-      () => undefined,
-    );
-  }, [client, groupId, releaseKey]);
-
   const loadMore = async () => {
     if (!client || !page?.pagination.hasMoreFilms || loadingMore) return;
     setLoadingMore(true);
-    olderLoaded.current = true;
     try {
       const next = await client.getArchivePage(groupId, {
         filmCursor: page.pagination.filmCursor,
