@@ -602,3 +602,120 @@ test('bounds a direct chat send, aborts fetch, and preserves its retry identity'
     jest.useRealTimers();
   }
 });
+
+describe('reaction updates', () => {
+  const update = (overrides: Record<string, unknown> = {}) => ({
+    type: 'reaction',
+    groupId: 'demo-group',
+    messageId: 'm1',
+    reactionCounts: { '✨': 2 },
+    revision: 10,
+    occurredAt: '2026-09-13T00:00:00.000Z',
+    ...overrides,
+  });
+
+  test('delivers reaction events without moving the message cursor and quietly drops malformed or foreign ones', async () => {
+    const first = new FakeEventSource();
+    const second = new FakeEventSource();
+    const sources = [first, second];
+    const factory = jest.fn<RealtimeEventSource, [string]>(() => sources.shift()!);
+    const updates: unknown[] = [];
+    const errors: unknown[] = [];
+    const messages: number[] = [];
+    const connected: boolean[] = [];
+    const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+      eventSourceFactory: factory,
+      reconnectDelayMs: 0,
+    });
+    const subscription = client.subscribe('session-1', 'demo-group', {
+      sinceEventId: 4,
+      onEvent: (event) => messages.push(event.eventId),
+      onReactionUpdate: (next) => updates.push(next),
+      onConnected: ({ reconnect }) => connected.push(reconnect),
+      onError: (error) => errors.push(error),
+    });
+    first.onopen?.();
+    first.emit('reaction', { data: JSON.stringify(update()) });
+    first.emit('reaction', { data: JSON.stringify(update({ groupId: 'other-group' })) });
+    first.emit('reaction', { data: JSON.stringify(update({ revision: 'x' })) });
+    first.emit('reaction', { data: JSON.stringify(update({ reactionCounts: { '✨': -1 } })) });
+    expect(updates).toEqual([
+      {
+        type: 'reaction',
+        groupId: 'demo-group',
+        messageId: 'm1',
+        reactionCounts: { '✨': 2 },
+        revision: 10,
+        occurredAt: '2026-09-13T00:00:00.000Z',
+      },
+    ]);
+    // Advisory frames are dropped quietly rather than failing the chat.
+    expect(errors).toHaveLength(0);
+    expect(messages).toEqual([]);
+
+    // A reconnect resumes from the unchanged message cursor and says it is a reconnect.
+    first.onerror?.({});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(factory.mock.calls[1][0]).toMatch(/[?&]sinceEventId=4$/);
+    second.onopen?.();
+    expect(connected).toEqual([false, true]);
+    subscription.close();
+  });
+
+  test('metadata-only unread streams never listen for reactions', () => {
+    const source = new FakeEventSource();
+    const add = jest.spyOn(source, 'addEventListener');
+    const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+      eventSourceFactory: () => source,
+    });
+    const onReactionUpdate = jest.fn();
+    const subscription = client.subscribe('session-1', 'demo-group', {
+      metadataOnly: true,
+      startFromLatest: true,
+      onEvent: jest.fn(),
+      onReactionUpdate,
+    });
+    expect(add.mock.calls.map(([type]) => type)).not.toContain('reaction');
+    source.emit('reaction', { data: JSON.stringify(update()) });
+    expect(onReactionUpdate).not.toHaveBeenCalled();
+    subscription.close();
+  });
+
+  test('reads a reaction snapshot and the toggle revision', async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/reaction-counts')
+        ? new Response(
+            JSON.stringify({
+              revision: 12,
+              messages: [{ messageId: 'm1', reactionCounts: { '✨': 1 } }],
+            }),
+          )
+        : new Response(
+            JSON.stringify({
+              reaction: { messageId: 'm1', groupId: 'demo-group', active: true, count: 1 },
+              message: { id: 'm1', reactionCounts: { '✨': 1 } },
+              reactionRevision: 11,
+            }),
+          ),
+    );
+    const client = new RealtimeChatClient('http://127.0.0.1:8787', fetchImpl);
+    await expect(client.getReactionSnapshot('s', 'demo-group', ['m1'])).resolves.toEqual({
+      revision: 12,
+      messages: [{ messageId: 'm1', reactionCounts: { '✨': 1 } }],
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:8787/realtime/groups/demo-group/reaction-counts',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ messageIds: ['m1'] }) }),
+    );
+    await expect(client.toggleReaction('s', 'demo-group', 'm1')).resolves.toMatchObject({
+      reactionRevision: 11,
+    });
+    const denied = new RealtimeChatClient(
+      'http://127.0.0.1:8787',
+      jest.fn(async () => new Response('{}', { status: 403 })),
+    );
+    await expect(denied.getReactionSnapshot('s', 'demo-group', ['m1'])).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+});

@@ -1,6 +1,6 @@
-import type { ChatEventMetadata, ChatMessageEvent } from '../chat';
+import type { ChatEventMetadata, ChatMessageEvent, ChatReactionEvent } from '../chat';
 
-export type RealtimeEventWriter = (event: ChatMessageEvent) => void;
+export type RealtimeEventWriter = (event: ChatMessageEvent | ChatReactionEvent) => void;
 
 /**
  * Process-local fan-out for the local runtime. SQLite remains the source of
@@ -19,8 +19,10 @@ export class RealtimeHub {
     };
   }
 
-  publish(event: ChatMessageEvent): void {
-    const writers = this.subscribers.get(event.message.groupId);
+  publish(event: ChatMessageEvent | ChatReactionEvent): void {
+    const writers = this.subscribers.get(
+      event.type === 'reaction' ? event.groupId : event.message.groupId,
+    );
     if (!writers) return;
     for (const writer of [...writers]) {
       try {
@@ -60,6 +62,12 @@ export function encodeSseEvent(
     '',
     '',
   ].join('\n');
+}
+
+/** A reaction update carries no `id:` line, so it never moves a client's reconnect cursor. */
+export function encodeSseReaction(event: ChatReactionEvent): string {
+  const { authorMemberId: _author, ...payload } = event;
+  return ['event: reaction', `data: ${JSON.stringify(payload)}`, '', ''].join('\n');
 }
 
 export function encodeSseCheckpoint(eventId: number): string {
