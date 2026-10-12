@@ -3,10 +3,36 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 import {
   ArchiveDownloadError,
+  archiveAssetKey,
   createArchiveDownloadQueue,
   downloadReleasedArchiveMedia,
+  pickArchiveExportDestination,
 } from '../src/archive/archive-download';
 import { getReleasedArchiveFilename, type ReleasedArchiveMedia } from '../src/domain/archive';
+
+const mockNative = {
+  pickDirectoryAsync: jest.fn(),
+  copy: jest.fn(),
+  rename: jest.fn(),
+};
+
+jest.mock('expo-file-system', () => ({
+  Directory: {
+    pickDirectoryAsync: (...args: unknown[]) => mockNative.pickDirectoryAsync(...args),
+  },
+  File: class {
+    uri: string;
+    constructor(uri: string) {
+      this.uri = uri;
+    }
+    copy(destination: unknown) {
+      return mockNative.copy(this.uri, destination);
+    }
+    rename(name: string) {
+      mockNative.rename(this.uri, name);
+    }
+  },
+}));
 
 const films: ReleasedArchiveMedia[] = [
   {
@@ -134,7 +160,7 @@ describe('archive download naming and delivery', () => {
   });
 
   it('preserves the native HTTP failure when error-body cleanup also fails', async () => {
-    jest.replaceProperty(Platform, 'OS', 'android');
+    jest.replaceProperty(Platform, 'OS', 'ios');
     Object.defineProperty(FileSystem, 'cacheDirectory', {
       configurable: true,
       value: 'file:///cache/',
@@ -350,6 +376,192 @@ describe('archive download naming and delivery', () => {
 
     await expect(downloadReleasedArchiveMedia(films[0])).rejects.toThrow(
       'The browser could not open this authorized media.',
+    );
+  });
+});
+
+describe('Android export to a user-chosen folder', () => {
+  const folder = { uri: 'content://tree/Movies' };
+  const mockCache = () => {
+    jest.replaceProperty(Platform, 'OS', 'android');
+    Object.defineProperty(FileSystem, 'cacheDirectory', {
+      configurable: true,
+      value: 'file:///cache/',
+    });
+    jest.spyOn(FileSystem, 'makeDirectoryAsync').mockResolvedValue(undefined);
+    return {
+      downloadAsync: jest
+        .spyOn(FileSystem, 'downloadAsync')
+        .mockImplementation(async (url, fileUri) => ({
+          headers: {},
+          mimeType: 'video/mp4',
+          status: 200,
+          uri: fileUri,
+          md5: undefined,
+        })),
+      deleteAsync: jest.spyOn(FileSystem, 'deleteAsync').mockResolvedValue(undefined),
+    };
+  };
+
+  beforeEach(() => {
+    mockNative.pickDirectoryAsync.mockReset().mockResolvedValue(folder);
+    mockNative.copy.mockReset().mockResolvedValue(undefined);
+    mockNative.rename.mockReset();
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('copies the disk-backed download into the picked folder and removes only its temp folder', async () => {
+    const { downloadAsync, deleteAsync } = mockCache();
+
+    const result = await downloadReleasedArchiveMedia(films[0]);
+
+    expect(result).toEqual({
+      filename: getReleasedArchiveFilename(films[0]),
+      method: 'native',
+      uri: folder.uri,
+    });
+    const [, tempUri] = downloadAsync.mock.calls[0];
+    expect(tempUri).toMatch(
+      new RegExp(
+        `^file:///cache/rewind-archive/export-[^/]+/${getReleasedArchiveFilename(films[0])}$`,
+      ),
+    );
+    expect(mockNative.copy).toHaveBeenCalledWith(tempUri, folder);
+    const operationDirectory = tempUri.slice(0, tempUri.lastIndexOf('/'));
+    expect(deleteAsync).toHaveBeenCalledTimes(1);
+    expect(deleteAsync).toHaveBeenCalledWith(operationDirectory, { idempotent: true });
+  });
+
+  it('treats a dismissed picker as cancellation: nothing downloaded or claimed saved', async () => {
+    const { downloadAsync } = mockCache();
+    mockNative.pickDirectoryAsync.mockRejectedValue(
+      Object.assign(new Error('The file picker was cancelled by the user'), {
+        code: 'ERR_PICKER_CANCELLED',
+      }),
+    );
+
+    await expect(pickArchiveExportDestination()).resolves.toBeNull();
+    await expect(downloadReleasedArchiveMedia(films[0])).resolves.toMatchObject({
+      method: 'cancelled',
+    });
+    expect(downloadAsync).not.toHaveBeenCalled();
+    expect(mockNative.copy).not.toHaveBeenCalled();
+  });
+
+  it('reports an unavailable folder picker as a distinct, non-cancel failure', async () => {
+    mockCache();
+    mockNative.pickDirectoryAsync.mockRejectedValue(new Error('no activity'));
+
+    await expect(downloadReleasedArchiveMedia(films[0])).rejects.toEqual(
+      expect.objectContaining({ name: 'ArchiveDownloadError', code: 'unavailable' }),
+    );
+  });
+
+  it('cleans its temp folder and never copies when the transfer fails', async () => {
+    const { downloadAsync, deleteAsync } = mockCache();
+    downloadAsync.mockResolvedValue({
+      headers: {},
+      mimeType: 'text/plain',
+      status: 503,
+      uri: 'file:///cache/ignored',
+      md5: undefined,
+    });
+
+    await expect(downloadReleasedArchiveMedia(clips[0])).rejects.toThrow(
+      'The authorized media download failed with HTTP 503.',
+    );
+    expect(mockNative.copy).not.toHaveBeenCalled();
+    expect(deleteAsync).toHaveBeenCalledWith(
+      expect.stringMatching(/^file:\/\/\/cache\/rewind-archive\/export-[^/]+$/),
+      { idempotent: true },
+    );
+  });
+
+  it('fails retryably, and cleans up, when the copy to the folder fails', async () => {
+    const { deleteAsync } = mockCache();
+    mockNative.copy.mockRejectedValue(new Error('SAF write failed'));
+
+    await expect(downloadReleasedArchiveMedia(films[0])).rejects.toBeInstanceOf(
+      ArchiveDownloadError,
+    );
+    expect(deleteAsync).toHaveBeenCalled();
+  });
+
+  it('saves beside an existing file of the same name instead of overwriting it', async () => {
+    mockCache();
+    mockNative.copy
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Destination already exists'), {
+          code: 'ERR_DESTINATION_ALREADY_EXISTS',
+        }),
+      )
+      .mockResolvedValueOnce(undefined);
+
+    const result = await downloadReleasedArchiveMedia(films[0]);
+
+    const base = getReleasedArchiveFilename(films[0]);
+    expect(mockNative.rename).toHaveBeenCalledWith(
+      expect.stringContaining(base),
+      base.replace('.mp4', '-1.mp4'),
+    );
+    expect(result.filename).toBe(base.replace('.mp4', '-1.mp4'));
+    expect(mockNative.copy).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves iOS and other native platforms on the existing app-cache path', async () => {
+    jest.replaceProperty(Platform, 'OS', 'ios');
+    await expect(pickArchiveExportDestination()).resolves.toEqual({ kind: 'default' });
+    expect(mockNative.pickDirectoryAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('archive operation queue', () => {
+  it('joins repeated taps on one asset even when each would use a different signed URL', async () => {
+    const queue = createArchiveDownloadQueue();
+    let release!: () => void;
+    const operation = jest.fn(
+      () => new Promise<string>((resolve) => (release = () => resolve('done'))),
+    );
+    const first = queue.run(archiveAssetKey(films[0]), operation);
+    const repeat = queue.run(archiveAssetKey({ ...films[0] }), async () => 'second url');
+
+    expect(repeat).toBe(first);
+    await Promise.resolve();
+    release();
+    await expect(first).resolves.toBe('done');
+    expect(operation).toHaveBeenCalledTimes(1);
+
+    // Once finished, the asset can be saved again.
+    await expect(queue.run(archiveAssetKey(films[0]), async () => 'again')).resolves.toBe('again');
+  });
+
+  it('runs whole operations for different assets one at a time, even after a failure', async () => {
+    const queue = createArchiveDownloadQueue();
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const first = queue.run('film:a', async () => {
+      events.push('a:start');
+      await new Promise<void>((resolve) => (releaseFirst = resolve));
+      events.push('a:end');
+      throw new Error('a failed');
+    });
+    const second = queue.run('film:b', async () => {
+      events.push('b:start');
+      return 'b';
+    });
+    first.catch(() => undefined);
+
+    await Promise.resolve();
+    expect(events).toEqual(['a:start']);
+    releaseFirst();
+    await expect(second).resolves.toBe('b');
+    expect(events).toEqual(['a:start', 'a:end', 'b:start']);
+  });
+
+  it('keys films and clips by identity, never by URL', () => {
+    expect(archiveAssetKey(films[0])).not.toBe(archiveAssetKey(clips[0]));
+    expect(archiveAssetKey(clips[0])).toBe(
+      archiveAssetKey({ id: clips[0].id, contributionId: 'contribution-1' }),
     );
   });
 });

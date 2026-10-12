@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 
-import { createArchiveDownloadQueue } from '../archive/archive-download';
+import {
+  ArchiveDownloadError,
+  archiveAssetKey,
+  createArchiveDownloadQueue,
+  downloadReleasedArchiveMediaTo,
+  pickArchiveExportDestination,
+} from '../archive/archive-download';
 import type { RealAccountArchiveClient, RealArchiveClip } from '../auth/real-account-client';
 import type { FilmSegment } from '../domain/premiere';
 import { Icon } from '../ui/Icon';
@@ -18,6 +24,7 @@ import {
 import { FONT, serif } from '../ui/tokens';
 import { ReportSheet } from './ReportSheet';
 import { createFilmPlayback } from './film-playback';
+import { discoverOwnClips } from './film-own-clips';
 import { reportContent } from './safety';
 import { userMessage } from '../domain/user-message';
 
@@ -29,6 +36,17 @@ export function segmentAt(segments: FilmSegment[], time: number): number {
     if (time >= segments[index].startSeconds - 0.05) return index;
   return 0;
 }
+
+type OwnClips =
+  { status: 'loading' } | { status: 'failed' } | { status: 'ready'; clips: RealArchiveClip[] };
+
+const CANCELLED = 'Save cancelled. Nothing was saved.';
+// Only Android copies into a folder the user picked; web hands over to the browser.
+const savedTo = () => (Platform.OS === 'android' ? ' to the folder you chose' : '');
+const unavailableOrRetry = (error: unknown, retry: string) =>
+  error instanceof ArchiveDownloadError && error.code === 'unavailable'
+    ? 'Saving is not available on this device.'
+    : retry;
 
 /** F1, F3, F4: the film full screen, its end card and reporting a moment. */
 export function FilmScreen({
@@ -67,7 +85,15 @@ export function FilmScreen({
   const [reporting, setReporting] = useState<FilmSegment | null>(null);
   const [removing, setRemoving] = useState<FilmSegment | null>(null);
   const [removePending, setRemovePending] = useState(false);
-  const [ownClips, setOwnClips] = useState<RealArchiveClip[]>([]);
+  const [ownClips, setOwnClips] = useState<OwnClips>({ status: 'loading' });
+  const [saving, setSaving] = useState<'film' | 'mine' | null>(null);
+  const savingRef = useRef(false);
+  // Bumped on every own-clip load and on unmount or context change, so a slow
+  // earlier response can never replace the current one.
+  const ownClipsGeneration = useRef(0);
+  // Bumped when the account, group or cycle changes or the screen unmounts.
+  const contextEpoch = useRef(0);
+  const savedClips = useRef(new Set<string>());
   const downloads = useRef(createArchiveDownloadQueue()).current;
   const alive = useRef(true);
   const videoView = useRef<VideoView>(null);
@@ -108,14 +134,6 @@ export function FilmScreen({
         return;
       }
       setFilmId(premiere.filmId);
-      // Your own released moments from this cycle, for "Save your own moments".
-      void client
-        .getArchivePage(groupId, { limit: 50 })
-        .then((page) => {
-          if (alive.current)
-            setOwnClips(page.archive.clips.filter((clip) => clip.cycleId === cycleId));
-        })
-        .catch(() => undefined);
       setSegments(premiere.segments ?? null);
       await playback.replaceAsync(premiere.playbackUrl);
       if (!alive.current) return;
@@ -129,6 +147,27 @@ export function FilmScreen({
   useEffect(() => {
     void Promise.resolve().then(open);
   }, [open]);
+
+  // Your own released moments from this cycle, for "Save your own moments".
+  const loadOwnClips = useCallback(async () => {
+    const generation = ++ownClipsGeneration.current;
+    const isCurrent = () => generation === ownClipsGeneration.current;
+    setOwnClips({ status: 'loading' });
+    try {
+      const clips = await discoverOwnClips(client, groupId, cycleId, isCurrent);
+      if (isCurrent()) setOwnClips({ status: 'ready', clips });
+    } catch {
+      if (isCurrent()) setOwnClips({ status: 'failed' });
+    }
+  }, [client, cycleId, groupId]);
+  useEffect(() => {
+    savedClips.current = new Set();
+    void Promise.resolve().then(loadOwnClips);
+    return () => {
+      ownClipsGeneration.current += 1;
+      contextEpoch.current += 1;
+    };
+  }, [loadOwnClips]);
 
   const visible = useMemo(() => (segments ?? []).filter((segment) => !segment.hidden), [segments]);
   const end = useCallback(() => {
@@ -193,28 +232,86 @@ export function FilmScreen({
       : others.at(-1)) ?? null;
 
   const saveFilm = async () => {
-    if (!filmId) return;
+    if (!filmId || savingRef.current) return;
+    savingRef.current = true;
+    setSaving('film');
+    const epoch = contextEpoch.current;
     try {
-      const fresh = await client.getFreshArchiveMedia(groupId, { id: filmId });
-      await downloads(fresh);
-      toast('Saved.');
-    } catch {
-      toast('The film could not be saved. Try again when connected.');
+      // Authorize, download and export as one operation: a repeat tap joins it.
+      const result = await downloads.run(archiveAssetKey({ id: filmId }), async () => {
+        const destination = await pickArchiveExportDestination();
+        if (!destination) return null;
+        const fresh = await client.getFreshArchiveMedia(groupId, { id: filmId });
+        return downloadReleasedArchiveMediaTo(fresh, destination);
+      });
+      if (epoch !== contextEpoch.current) return;
+      toast(!result || result.method === 'cancelled' ? CANCELLED : `Saved${savedTo()}.`);
+    } catch (error) {
+      toast(unavailableOrRetry(error, 'The film could not be saved. Try again when connected.'));
+    } finally {
+      savingRef.current = false;
+      setSaving(null);
     }
   };
   const saveMine = async () => {
+    if (ownClips.status !== 'ready' || savingRef.current) return;
+    const clips = ownClips.clips.filter((clip) => !savedClips.current.has(clip.id));
+    if (!clips.length) {
+      toast('Your moments are already saved.');
+      return;
+    }
+    savingRef.current = true;
+    setSaving('mine');
+    const epoch = contextEpoch.current;
+    const progress = {
+      saved: 0,
+      outcome: 'done' as 'done' | 'cancelled' | 'failed' | 'unavailable',
+    };
     try {
-      for (const clip of ownClips)
-        await downloads(
-          await client.getFreshArchiveMedia(groupId, {
+      await downloads.run(`own-clips:${groupId}:${cycleId}`, async () => {
+        const destination = await pickArchiveExportDestination();
+        if (!destination) {
+          progress.outcome = 'cancelled';
+          return;
+        }
+        for (const clip of clips) {
+          if (epoch !== contextEpoch.current) return;
+          const fresh = await client.getFreshArchiveMedia(groupId, {
             id: clip.id,
             contributionId: clip.contributionId,
-          }),
-        );
-      toast('Saved.');
-    } catch {
-      toast('Your moments could not be saved. Try again when connected.');
+          });
+          const result = await downloadReleasedArchiveMediaTo(fresh, destination);
+          // Cancelling stops the moments that are left.
+          if (result.method === 'cancelled') {
+            progress.outcome = 'cancelled';
+            return;
+          }
+          savedClips.current.add(clip.id);
+          progress.saved += 1;
+        }
+      });
+    } catch (error) {
+      progress.outcome =
+        error instanceof ArchiveDownloadError && error.code === 'unavailable'
+          ? 'unavailable'
+          : 'failed';
+    } finally {
+      savingRef.current = false;
+      setSaving(null);
     }
+    if (epoch !== contextEpoch.current) return;
+    const { saved, outcome } = progress;
+    const moments = (count: number) => `${count} ${count === 1 ? 'moment' : 'moments'}`;
+    if (outcome === 'done') toast(`Saved ${moments(saved)}${savedTo()}.`);
+    else if (outcome === 'unavailable') toast('Saving is not available on this device.');
+    else if (outcome === 'cancelled')
+      toast(saved ? `Saved ${saved} of ${clips.length} before you cancelled.` : CANCELLED);
+    else
+      toast(
+        saved
+          ? `Saved ${saved} of ${clips.length} moments. The rest could not be saved. Try again.`
+          : 'Your moments could not be saved. Try again when connected.',
+      );
   };
   const remove = async () => {
     if (!removing) return;
@@ -381,19 +478,40 @@ export function FilmScreen({
             <Button
               icon="save"
               label="Save film"
+              busy={saving === 'film'}
+              busyLabel="Saving…"
+              disabled={saving !== null}
               onPress={() => void saveFilm()}
               style={styles.half}
               testID="real-film-save"
               variant="glass"
             />
           </View>
-          {ownClips.length ? (
+          {ownClips.status === 'loading' ? (
+            <Text style={styles.endNote} testID="real-film-mine-loading">
+              Finding your moments…
+            </Text>
+          ) : null}
+          {ownClips.status === 'failed' ? (
             <TextLink
               color="#fff"
-              label="Save your own moments"
+              label="Your moments couldn’t be loaded. Try again"
+              onPress={() => void loadOwnClips()}
+              testID="real-film-mine-retry"
+            />
+          ) : null}
+          {ownClips.status === 'ready' && ownClips.clips.length ? (
+            <TextLink
+              color="#fff"
+              label={saving === 'mine' ? 'Saving your moments…' : 'Save your own moments'}
               onPress={() => void saveMine()}
               testID="real-film-save-mine"
             />
+          ) : null}
+          {ownClips.status === 'ready' && !ownClips.clips.length ? (
+            <Text style={styles.endNote} testID="real-film-mine-none">
+              You didn’t add any moments to this film.
+            </Text>
           ) : null}
           {lastVisible ? (
             <TextLink
