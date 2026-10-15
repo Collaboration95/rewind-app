@@ -88,7 +88,12 @@ It cannot run from `main` until the workflow itself has been promoted there.
    persistence, and run `backup`. Logical dumps must restore successfully into
    the local verifier before upload. Rehearse managed restore with the explicit
    release target and record measured recovery-point age and usable-restore
-   time; no dev measurement establishes release recovery.
+   time; no dev measurement establishes release recovery. Restore creation is
+   restricted to source snapshots tagged with the selected environment; tagging
+   and deletion require an already-labelled rehearsal. If Lightsail's create-time
+   tag authorization has no existing resource tags, this deliberately fails closed.
+   Record that limitation and obtain a separately reviewed provisioning plan;
+   never widen tagging to all resources to make a rehearsal pass.
 
 If import fails, preserve source SQLite, backups and the stopped state. Retry
 only after resolving the cause; `resume` abandons the window and starts the

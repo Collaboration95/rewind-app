@@ -135,25 +135,72 @@ data "aws_iam_policy_document" "deploy_database_operations" {
     resources = ["*"]
   }
 
+  # Creation may read only snapshots belonging to this environment. Neither
+  # runtime nor deploy identities may tag source snapshots into that scope.
   statement {
     sid       = "CreateRestoreRehearsal"
-    actions   = ["lightsail:CreateRelationalDatabaseFromSnapshot", "lightsail:TagResource"]
-    resources = ["*"]
+    actions   = ["lightsail:CreateRelationalDatabaseFromSnapshot"]
+    resources = ["arn:aws:lightsail:${var.region}:${data.aws_caller_identity.current.account_id}:RelationalDatabaseSnapshot/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = [var.environment]
+    }
     condition {
       test     = "StringEquals"
       variable = "aws:RequestTag/rewind-purpose"
       values   = ["restore-rehearsal-${var.environment}"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = [var.environment]
+    }
+  }
+
+  # Never grant tag-on-arbitrary-resource: it would let the deploy role turn a
+  # live database into a deletable rehearsal. Only already-labelled rehearsals
+  # may retain those same labels. If create-time authorization has no existing
+  # tags, restore fails closed and needs a separately reviewed provisioning path.
+  statement {
+    sid       = "TagExistingRestoreRehearsal"
+    actions   = ["lightsail:TagResource"]
+    resources = ["arn:aws:lightsail:${var.region}:${data.aws_caller_identity.current.account_id}:RelationalDatabase/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/rewind-purpose"
+      values   = ["restore-rehearsal-${var.environment}"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = [var.environment]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/rewind-purpose"
+      values   = ["restore-rehearsal-${var.environment}"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Environment"
+      values   = [var.environment]
     }
   }
 
   statement {
     sid       = "DeleteRestoreRehearsal"
     actions   = ["lightsail:DeleteRelationalDatabase"]
-    resources = ["*"]
+    resources = ["arn:aws:lightsail:${var.region}:${data.aws_caller_identity.current.account_id}:RelationalDatabase/*"]
     condition {
       test     = "StringEquals"
       variable = "aws:ResourceTag/rewind-purpose"
       values   = ["restore-rehearsal-${var.environment}"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Environment"
+      values   = [var.environment]
     }
   }
 }

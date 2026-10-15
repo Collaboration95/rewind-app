@@ -399,3 +399,14 @@ require_runtime_stopped() {
   running="$(compose ps --status running --services)" || die 'cannot inspect running services'
   ! grep -Fxq runtime <<<"$running" || die 'stop the runtime and all writers before the final snapshot/import'
 }
+
+resolve_installed_release() {
+  local installed
+  installed="$(cat "${HOST_ROOT:-/srv/rewind}/current-release")" || die 'installed release SHA is missing'
+  [[ "$installed" =~ ^[0-9a-f]{40}$ ]] || die 'installed release SHA is invalid'
+  [[ -z "${REWIND_RELEASE_SHA:-}" || "$REWIND_RELEASE_SHA" == "$installed" ]] || die 'selected image is not the installed release'
+  export REWIND_RELEASE_SHA="$installed"
+  local revision
+  revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "rewind-demo:$installed")" || die 'qualified runtime image is unavailable'
+  [[ "$revision" == "$installed" ]] || die 'runtime image revision does not match installed release'
+}

@@ -17,6 +17,7 @@ if [[ "${1:-}" == "--local-only" ]]; then
   LOCAL_ONLY=1
 fi
 
+HOST_ROOT="${HOST_ROOT:-/srv/rewind}"
 COMPOSE_FILE="${COMPOSE_FILE:-/srv/rewind/deploy/compose.yaml}"
 ENV_FILE="${ENV_FILE:-/srv/rewind/rewind.env}"
 DATA_DIR="${DATA_DIR:-/srv/rewind/data}"
@@ -70,6 +71,7 @@ if [[ "$LOCAL_ONLY" == 0 ]]; then
   require_command aws
 fi
 if [[ "${REWIND_BACKUP_QUIESCED:-0}" == 1 ]]; then
+  resolve_installed_release
   require_runtime_stopped
 else
   require_runtime_running
@@ -102,7 +104,7 @@ trap cleanup EXIT
 # persistent tree's private mode contract just to read an archive.
 snapshot_command=(exec -T -e "REWIND_SNAPSHOT_PATH=/tmp/$snapshot_name" runtime node)
 if [[ "${REWIND_BACKUP_QUIESCED:-0}" == 1 ]]; then
-  snapshot_command=(run --rm --no-deps -T -e "REWIND_SNAPSHOT_PATH=/tmp/$snapshot_name" --entrypoint node runtime)
+  snapshot_command=(run --rm --no-deps --no-build --pull never -T -e "REWIND_SNAPSHOT_PATH=/tmp/$snapshot_name" --entrypoint node runtime)
 fi
 compose "${snapshot_command[@]}" --input-type=module -e "import { DatabaseSync } from 'node:sqlite'; import { readFileSync, rmSync } from 'node:fs'; const target = process.env.REWIND_SNAPSHOT_PATH; const escaped = target.replaceAll(String.fromCharCode(39), String.fromCharCode(39, 39)); const db = new DatabaseSync('/var/lib/rewind/rewind.sqlite', { readOnly: true }); db.exec('VACUUM INTO ' + String.fromCharCode(39) + escaped + String.fromCharCode(39)); db.close(); process.stdout.write(readFileSync(target)); rmSync(target);" \
   > "$snapshot_path"
@@ -110,7 +112,7 @@ compose "${snapshot_command[@]}" --input-type=module -e "import { DatabaseSync }
 gzip -9 -c "$snapshot_path" > "$archive_path"
 if [[ "${REWIND_BACKUP_QUIESCED:-0}" == 1 ]]; then
   # One-shot tar has no server, scheduler, reminder or media worker.
-  compose run --rm --no-deps -T --entrypoint tar runtime -C /var/lib/rewind/media -cf - . | gzip -9 > "$media_archive_path"
+  compose run --rm --no-deps --no-build --pull never -T --entrypoint tar runtime -C /var/lib/rewind/media -cf - . | gzip -9 > "$media_archive_path"
   chmod 0600 "$media_archive_path"
   assert_private_backup_file "$media_archive_path" 'media backup archive'
 else

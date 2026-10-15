@@ -114,3 +114,46 @@ case "$*" in *'ps --status running --services'*) [ "$STILL_RUNNING" != 1 ] || ec
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('stopped-runtime tools require the installed qualified image and export its SHA', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'rewind-installed-image-'));
+  try {
+    const bin = path.join(dir, 'bin');
+    mkdirSync(bin);
+    const sha = '1'.repeat(40);
+    writeFileSync(path.join(dir, 'current-release'), sha);
+    writeFileSync(
+      path.join(bin, 'docker'),
+      '#!/bin/sh\n[ "$1 $2 $3" = "image inspect --format" ] || exit 2\n[ "$5" = "rewind-demo:$EXPECTED_SHA" ] || exit 3\n[ "$MISSING_IMAGE" != 1 ] || exit 4\nprintf "%s\\n" "$EXPECTED_SHA"\n',
+      { mode: 0o755 },
+    );
+    const invoke = (overrides = {}) =>
+      spawnSync(
+        'bash',
+        [
+          '-c',
+          'source deploy/operator-common.sh; resolve_installed_release; bash -c \'printf "%s" "$REWIND_RELEASE_SHA"\'',
+        ],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            PATH: `${bin}:${process.env.PATH}`,
+            HOST_ROOT: dir,
+            EXPECTED_SHA: sha,
+            REWIND_RELEASE_SHA: '',
+            ...overrides,
+          },
+        },
+      );
+    assert.equal(invoke().status, 0);
+    assert.equal(invoke().stdout, sha);
+    assert.notEqual(invoke({ REWIND_RELEASE_SHA: 'local' }).status, 0);
+    assert.notEqual(invoke({ MISSING_IMAGE: '1' }).status, 0);
+    writeFileSync(path.join(dir, 'current-release'), 'local');
+    assert.notEqual(invoke().status, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

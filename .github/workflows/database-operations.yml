@@ -176,7 +176,7 @@ jobs:
             --availability-zone "$REWIND_DATABASE_ZONE" \
             --relational-database-bundle-id micro_2_0 \
             --no-publicly-accessible \
-            --tags "key=rewind-purpose,value=restore-rehearsal-${TARGET_ENVIRONMENT}" >/dev/null
+            --tags "key=rewind-purpose,value=restore-rehearsal-${TARGET_ENVIRONMENT}" "key=Environment,value=${TARGET_ENVIRONMENT}" >/dev/null
           for _ in $(seq 1 120); do
             state="$(aws lightsail get-relational-database --relational-database-name "$rehearsal" \
               --query 'relationalDatabase.state' --output text)"
