@@ -1,23 +1,28 @@
 # PostgreSQL operations runbook
 
-How the hosted dev database is created, filled, switched to, backed up,
+How the hosted database is created, filled, switched to, backed up,
 recovered and inspected. The design is in [ADR-0003](ADR-0003-postgresql.md).
 Every step runs from Terraform or the **Database operations** workflow
 (`.github/workflows/database-operations.yml`). No credential is copied by
 hand.
 
+Release uses its own root, storage, identities and protected branch/environment.
+Follow [Release cutover and deployment](release-cutover.md) for release setup,
+protection gates, explicit workflow targets and the final-snapshot procedure.
+The historical recovery measurements below are dev measurements only.
+
 ## Components
 
-| Piece                                                                                    | Where                                                                                                                 |
-| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Managed PostgreSQL 17 (`rewind-dev-postgres`, private, encrypted, TLS)                   | `infra/terraform/media/database.tf`                                                                                   |
-| Per-environment switches: `enabled`, `cutover`, `bundle`                                 | `local.database_settings` in the same file                                                                            |
-| Generated logins: `rewind_admin`, `rewind_app` (owns schema `rewind`), `rewind_readonly` | `random_password.*`; delivered via the hosted settings object                                                         |
-| Runtime selection                                                                        | `REWIND_DATABASE_URL` (empty means the SQLite file stays live)                                                        |
-| Host scripts                                                                             | `deploy/database-bootstrap.sh`, `database-import.sh`, `database-status.sh`, `backup-postgres.sh`                      |
-| Operator CLI                                                                             | `node server/dist/cli.js database-status / database-import / database-export / database-install / database-bootstrap` |
+| Piece                                                                                                | Where                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Managed PostgreSQL 17 (`rewind-dev-postgres` (dev public), release private; encrypted, verified TLS) | `infra/terraform/media/database.tf`                                                                                   |
+| Per-environment switches: `enabled`, `cutover`, `bundle`                                             | `local.database_settings` in the same file                                                                            |
+| Generated logins: `rewind_admin`, `rewind_app` (owns schema `rewind`), `rewind_readonly`             | `random_password.*`; delivered via the hosted settings object                                                         |
+| Runtime selection                                                                                    | `REWIND_DATABASE_URL` (empty means the SQLite file stays live)                                                        |
+| Host scripts                                                                                         | `deploy/database-bootstrap.sh`, `database-import.sh`, `database-status.sh`, `backup-postgres.sh`                      |
+| Operator CLI                                                                                         | `node server/dist/cli.js database-status / database-import / database-export / database-install / database-bootstrap` |
 
-Repository variable used by the workflow: `REWIND_DATABASE_BOOTSTRAP_URI`
+Environment variable used by the workflow: `REWIND_DATABASE_BOOTSTRAP_URI`
 (`terraform output database_bootstrap_uri`).
 
 GitHub only dispatches a workflow that also exists on the default branch
@@ -39,15 +44,15 @@ host. Close the port afterwards.
    of schema `rewind`, used by the runtime) and `rewind_readonly` (backups,
    inspection). It is safe to rerun.
 3. **Import.** Run the workflow with `import`. It:
-   - stops the public web proxy;
-   - takes a fresh SQLite and media backup to S3 (`backup.sh`);
+   - stops the backup timer/service, public web proxy and runtime (all writers);
+   - takes a quiesced SQLite and media backup to S3 (`backup.sh`);
    - downloads that backup, checks it against its manifest, and runs
      `database-import`.
 
    The import loads every table in one transaction and commits only if each
    table's row count and content hash match the snapshot. The job summary
    lists the rows per table, and the JSON report stays next to the backup on
-   the host. The web proxy stays stopped.
+   the host. The web proxy and runtime writers stay stopped.
 
 4. **Cut over.** Set `dev.cutover = true`, apply, and run **Deploy dev**.
    - The runtime starts on PostgreSQL, applies any newer migration, and binds
@@ -297,8 +302,9 @@ Lightsail resources again; then reach it through an SSH tunnel via the host.
 
 ## Environments and cost
 
-- `dev` (`rewind-dev-postgres`) is enabled. `release` stays on SQLite until
-  its own enablement (#504).
+- `dev` (`rewind-dev-postgres`) is enabled and cut over. Release provisioning
+  is enabled in configuration (#504), with cutover explicitly false until the
+  release import is reconciled. Configuration is not proof of a live apply.
 - Each environment has its own database, logins and environment binding, and
   a runtime refuses a database bound to another environment.
 - Cost: `micro_2_0` is US$15/month (1 GB RAM, 40 GB SSD, backups included).

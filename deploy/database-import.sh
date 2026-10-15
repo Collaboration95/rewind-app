@@ -55,16 +55,19 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+require_database_target
 if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
   unset AWS_PROFILE
 fi
 export REWIND_RELEASE_SHA="${selected_release_sha:-$(cat "$HOST_ROOT/current-release")}"
 : "${REWIND_BACKUP_BUCKET:?REWIND_BACKUP_BUCKET must be set in $ENV_FILE}"
-: "${REWIND_BACKUP_PREFIX:=rewind-demo}"
+: "${REWIND_BACKUP_PREFIX:?REWIND_BACKUP_PREFIX must be explicit for database import}"
 : "${REWIND_DATABASE_APP_URL:?REWIND_DATABASE_APP_URL must be set (Terraform hosted settings)}"
 validate_backup_prefix "$REWIND_BACKUP_PREFIX" || exit 1
 ensure_backup_directory "$BACKUP_DIR"
 BACKUP_DIR="$(canonical_directory BACKUP_DIR "$BACKUP_DIR")"
+
+require_runtime_stopped
 
 remote="s3://${REWIND_BACKUP_BUCKET}/${REWIND_BACKUP_PREFIX}"
 if [[ -z "$manifest_name" ]]; then

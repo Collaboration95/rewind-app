@@ -17,3 +17,18 @@ output "hosted_env_uri" {
   description = "REWIND_RELEASE_HOSTED_ENV_URI repository variable."
   value       = module.media.hosted_env_uri
 }
+
+output "database_bootstrap_uri" {
+  description = "Release environment REWIND_DATABASE_BOOTSTRAP_URI variable."
+  value       = module.media.database_bootstrap_uri
+}
+
+output "database_name" {
+  description = "Isolated release managed PostgreSQL database."
+  value       = module.media.database_name
+}
+
+output "backup_bucket" {
+  description = "Release-only logical backup bucket."
+  value       = aws_s3_bucket.backups.id
+}

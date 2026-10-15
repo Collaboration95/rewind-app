@@ -43,7 +43,7 @@ require_disk_for() {
 # rewind.env stays as the operator wrote it.
 # REWIND_ADMIN_PASSWORD is retired (the admin page was removed); it stays
 # accepted so a settings object written before that change still applies.
-CONFIGURABLE_KEYS='REWIND_DATABASE_URL REWIND_DATABASE_APP_URL REWIND_DATABASE_READONLY_URL REWIND_DATABASE_ENVIRONMENT REWIND_MEDIA_BACKEND REWIND_MEDIA_ENVIRONMENT REWIND_MEDIA_S3_BUCKET REWIND_MEDIA_S3_OWNER REWIND_MEDIA_S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION REWIND_REMINDER_VAPID_SUBJECT REWIND_REMINDER_VAPID_PUBLIC_KEY REWIND_REMINDER_VAPID_PRIVATE_KEY REWIND_REAL_CYCLE_MINUTES REWIND_REQUEST_TIMING REWIND_WEB_BIND_ADDRESS REWIND_WEB_PORT REWIND_ALLOW_ORIGIN REWIND_ORIGIN_AUTH_SECRET REWIND_ADMIN_PASSWORD REWIND_AUTH_PASSWORD REWIND_COGNITO_REGION REWIND_COGNITO_USER_POOL_ID REWIND_COGNITO_CLIENT_ID REWIND_COGNITO_DOMAIN'
+CONFIGURABLE_KEYS='REWIND_BACKUP_BUCKET REWIND_BACKUP_PREFIX REWIND_DATABASE_URL REWIND_DATABASE_APP_URL REWIND_DATABASE_READONLY_URL REWIND_DATABASE_ENVIRONMENT REWIND_MEDIA_BACKEND REWIND_MEDIA_ENVIRONMENT REWIND_MEDIA_S3_BUCKET REWIND_MEDIA_S3_OWNER REWIND_MEDIA_S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION REWIND_REMINDER_VAPID_SUBJECT REWIND_REMINDER_VAPID_PUBLIC_KEY REWIND_REMINDER_VAPID_PRIVATE_KEY REWIND_REAL_CYCLE_MINUTES REWIND_REQUEST_TIMING REWIND_WEB_BIND_ADDRESS REWIND_WEB_PORT REWIND_ALLOW_ORIGIN REWIND_ORIGIN_AUTH_SECRET REWIND_ADMIN_PASSWORD REWIND_AUTH_PASSWORD REWIND_COGNITO_REGION REWIND_COGNITO_USER_POOL_ID REWIND_COGNITO_CLIENT_ID REWIND_COGNITO_DOMAIN'
 
 # Web push (VAPID) keys are generated here, once, and never leave the host.
 # SEC1 DER for a P-256 key is 121 bytes: private scalar at 7..39, public point last 65.
@@ -159,6 +159,13 @@ load_candidate() {
 
 start_candidate() {
   local sha="$1"
+  if [[ -f "$HOST_ROOT/database-maintenance" ]]; then
+    # A normal deploy must not resume old SQLite writers during an import.
+    grep -Eq '^REWIND_DATABASE_URL=postgres(ql)?://' "$HOST_ROOT/rewind.env" || {
+      printf 'ERROR: database maintenance requires PostgreSQL cutover or explicit resume.\n' >&2
+      return 1
+    }
+  fi
   REWIND_RELEASE_SHA="$sha" docker compose --env-file "$HOST_ROOT/rewind.env" -f "$HOST_ROOT/deploy/compose.yaml" up -d --no-build
 }
 
@@ -218,6 +225,10 @@ promote() {
   printf '%s\n' "$version" > "$HOST_ROOT/release-config-version"
   sha256sum "$HOST_ROOT/rewind.env" | cut -d ' ' -f 1 > "$HOST_ROOT/release-config-digest"
   rm -f -- "$HOST_ROOT/pending-release"
+  if [[ -f "$HOST_ROOT/database-maintenance" ]]; then
+    sudo -n systemctl enable --now rewind-backup.timer
+    rm "$HOST_ROOT/database-maintenance"
+  fi
   printf 'Activated release %s after runtime and web health checks.\n' "$sha"
   prune_releases
 }

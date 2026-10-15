@@ -32,6 +32,9 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+if [[ "${REWIND_MEDIA_ENVIRONMENT:-}" == release || -n "${REWIND_OPERATION_ENVIRONMENT:-}" ]]; then
+  require_database_target
+fi
 if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
   unset AWS_PROFILE
 fi
