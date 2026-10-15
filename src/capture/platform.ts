@@ -204,7 +204,12 @@ async function readImageDimensions(uri: string): Promise<{ height: number; width
   });
 }
 
-export async function readVideoMetadata(uri: string): Promise<BrowserVideoMetadata> {
+export const VIDEO_METADATA_TIMEOUT_MS = 10_000;
+
+export async function readVideoMetadata(
+  uri: string,
+  signal?: AbortSignal,
+): Promise<BrowserVideoMetadata> {
   let protocol: string;
   try {
     protocol = new URL(uri).protocol;
@@ -219,30 +224,77 @@ export async function readVideoMetadata(uri: string): Promise<BrowserVideoMetada
   }
   return new Promise((resolve, reject) => {
     const video = document.createElement('video') as BrowserVideoElement;
-    video.preload = 'metadata';
-    video.onloadedmetadata = () => {
-      const durationSeconds = Number.isFinite(video.duration) ? video.duration : 0;
-      const hasAudio = video.audioTracks
-        ? video.audioTracks.length > 0
-        : typeof video.mozHasAudio === 'boolean'
-          ? video.mozHasAudio
-          : typeof video.webkitAudioDecodedByteCount === 'number' &&
-              video.webkitAudioDecodedByteCount > 0
-            ? true
-            : null;
-      if (durationSeconds <= 0) {
-        reject(new Error('The selected video has no usable duration.'));
+    let settled = false;
+    let recoveringDuration = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', fail);
+      video.onloadedmetadata = null;
+      video.ondurationchange = null;
+      video.ontimeupdate = null;
+      video.onerror = null;
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    };
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("This video couldn't be read. Try recording again."));
+    };
+    const read = () => {
+      if (settled) return;
+      if (video.duration === Infinity) {
+        // Streaming MediaRecorder files may only reveal their duration after
+        // seeking past the final frame. Keep this recovery under the same deadline.
+        if (!recoveringDuration) {
+          recoveringDuration = true;
+          try {
+            video.currentTime = 1e101;
+          } catch {
+            fail();
+          }
+        }
         return;
       }
-      resolve({
-        durationSeconds,
-        hasAudio,
+      if (!Number.isFinite(video.duration) || video.duration <= 0) {
+        fail();
+        return;
+      }
+      const metadata = {
+        durationSeconds: video.duration,
+        // WebKit exposes audioTracks but may leave it empty at loadedmetadata
+        // and fill it later, so an empty list is unknown, not proof of silence.
+        hasAudio:
+          video.audioTracks && video.audioTracks.length > 0
+            ? true
+            : typeof video.mozHasAudio === 'boolean'
+              ? video.mozHasAudio
+              : typeof video.webkitAudioDecodedByteCount === 'number' &&
+                  video.webkitAudioDecodedByteCount > 0
+                ? true
+                : null,
         height: video.videoHeight,
         width: video.videoWidth,
-      });
+      };
+      settled = true;
+      cleanup();
+      resolve(metadata);
     };
-    video.onerror = () => reject(new Error('The selected video could not be opened.'));
-    video.src = uri;
+    const timer = setTimeout(fail, VIDEO_METADATA_TIMEOUT_MS);
+    video.preload = 'metadata';
+    video.onloadedmetadata = read;
+    video.ondurationchange = () => {
+      if (recoveringDuration) read();
+    };
+    video.ontimeupdate = () => {
+      if (recoveringDuration) read();
+    };
+    video.onerror = fail;
+    signal?.addEventListener('abort', fail, { once: true });
+    if (signal?.aborted) fail();
+    else video.src = uri;
   });
 }
 
@@ -309,10 +361,13 @@ export async function removeManagedRecordedClip(uri: string): Promise<void> {
 }
 
 /** Read a managed capture only for the server-owned binary upload boundary. */
-export async function readManagedRecordedClipBase64(uri: string): Promise<string> {
+export async function readManagedRecordedClipBase64(
+  uri: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const cacheDirectory = FileSystem.cacheDirectory;
   if (uri.startsWith('blob:')) {
-    const response = await fetch(uri);
+    const response = await fetch(uri, { signal });
     if (!response.ok) throw new Error('The selected clip is no longer available.');
     return bytesToBase64(new Uint8Array(await response.arrayBuffer()));
   }
@@ -366,6 +421,8 @@ export interface ExpoCameraPlatformOptions {
   browserPermissionReader?: () => Promise<PermissionSnapshot>;
   /** Waits between still-capture attempts while a browser camera warms up. */
   wait?: (milliseconds: number) => Promise<void>;
+  /** Web only: the live preview <video> expo-camera renders inside CameraView. */
+  browserPreviewVideo?: () => HTMLVideoElement | null;
 }
 
 // iPhone Safari can report the camera ready before its video element holds a
@@ -375,6 +432,38 @@ const CAMERA_WARMUP_DELAY_MS = 200;
 
 function isCameraWarmingUp(error: unknown): boolean {
   return error instanceof Error && /enough camera data/i.test(error.message);
+}
+
+const HAVE_ENOUGH_DATA = 4;
+const CAMERA_FRAME_TIMEOUT_MS = 3000;
+
+function findBrowserPreviewVideo(): HTMLVideoElement | null {
+  // expo-camera renders its preview as <video autoplay playsinline muted>.
+  return globalThis.document?.querySelector?.<HTMLVideoElement>('video[playsinline]') ?? null;
+}
+
+/**
+ * expo-camera's web takePicture demands readyState === HAVE_ENOUGH_DATA.
+ * iPhone Safari can fire onCameraReady (and pause the preview after a
+ * background/foreground) before that, so wait for a frame, nudging a paused
+ * preview to play. Resolves after a bounded timeout; the retry loop remains.
+ */
+function waitForVideoFrame(video: HTMLVideoElement, timeoutMs: number): Promise<void> {
+  if (video.readyState >= HAVE_ENOUGH_DATA) return Promise.resolve();
+  if (video.paused) void video.play?.()?.catch?.(() => undefined);
+  return new Promise((resolve) => {
+    const events = ['loadeddata', 'canplay', 'canplaythrough', 'playing'] as const;
+    const done = () => {
+      clearTimeout(timer);
+      for (const name of events) video.removeEventListener(name, check);
+      resolve();
+    };
+    const check = () => {
+      if (video.readyState >= HAVE_ENOUGH_DATA) done();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    for (const name of events) video.addEventListener(name, check);
+  });
 }
 
 /** Expo SDK 57 adapter. No Expo or React Native types cross the capture port. */
@@ -716,6 +805,8 @@ export class ExpoCameraPlatform implements CameraPlatform {
   async captureStill(): Promise<PlatformStillImage> {
     const camera = this.options.getCameraRef();
     if (!camera) throw new Error('The camera preview is not ready. Try again.');
+    const video = (this.options.browserPreviewVideo ?? findBrowserPreviewVideo)();
+    if (video) await waitForVideoFrame(video, CAMERA_FRAME_TIMEOUT_MS);
 
     const wait =
       this.options.wait ??

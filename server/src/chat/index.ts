@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { isMember, type RewindDatabase } from '../db';
-import { getDemoSession } from '../session';
-import { classifyDemoSession } from '../session/contract';
+import { canInteractWithChatMessage } from '../groups/safety';
 
 export const CHAT_MESSAGE_MAX_LENGTH = 2_000;
 export const SUPPORTED_CHAT_REACTION = '✨' as const;
@@ -40,6 +39,23 @@ export interface ChatEventMetadata {
   occurredAt: string;
 }
 
+/**
+ * A reaction change. It is deliberately not a `message` event: it has no event
+ * id, never enters the persisted event log, and never moves a reconnect cursor
+ * or unread count. `reactionCounts` is the absolute state after the change and
+ * `revision` orders it against other reaction state for the same message.
+ * `authorMemberId` is used for per-viewer filtering and is not sent on the wire.
+ */
+export interface ChatReactionEvent {
+  type: 'reaction';
+  groupId: string;
+  messageId: string;
+  authorMemberId: string;
+  reactionCounts: Partial<Record<ChatReactionEmoji, number>>;
+  revision: number;
+  occurredAt: string;
+}
+
 export interface ChatHistoryPage {
   events: ChatMessageEvent[];
   /** Event id to use as the exclusive upper bound for the next older page. */
@@ -51,8 +67,6 @@ export interface ChatHistoryPage {
 export interface CreateChatMessageInput {
   groupId: string;
   memberId: string;
-  /** The session that established the HTTP authorization context. */
-  sessionId?: string;
   body: string;
   /** A fixed timestamp for tests, or a clock evaluated inside the transaction. */
   now?: Date | (() => Date);
@@ -77,7 +91,6 @@ export type CreateChatMessageResult =
 export interface ToggleChatReactionInput {
   groupId: string;
   memberId: string;
-  sessionId?: string;
   messageId: string;
   emoji: string;
   active?: boolean;
@@ -102,6 +115,58 @@ export type ToggleChatReactionResult =
       reason:
         'membership_denied' | 'message_not_found' | 'unsupported_reaction' | 'invalid_timestamp';
     };
+
+// Monotonic across restarts (seeded from the clock). Reaction state is read and
+// published in one synchronous run, so a larger revision is always newer state.
+let reactionRevisionCursor = Date.now();
+
+/** The revision of the newest reaction state; read it before reading counts. */
+export function currentReactionRevision(): number {
+  return reactionRevisionCursor;
+}
+
+export function nextReactionRevision(): number {
+  reactionRevisionCursor = Math.max(reactionRevisionCursor + 1, Date.now());
+  return reactionRevisionCursor;
+}
+
+/** Aggregate reaction counts for messages of one group, with each author for viewer filtering. */
+export function listChatReactionSnapshot(
+  database: RewindDatabase,
+  groupId: string,
+  messageIds: string[],
+): { messageId: string; memberId: string; reactionCounts: ChatMessage['reactionCounts'] }[] {
+  if (messageIds.length === 0) return [];
+  const placeholders = messageIds.map(() => '?').join(', ');
+  const messages = database
+    .prepare(
+      `SELECT id, member_id AS memberId FROM messages
+       WHERE group_id = ? AND id IN (${placeholders})`,
+    )
+    .all(groupId, ...messageIds) as { id: string; memberId: string }[];
+  const counts = new Map<string, Partial<Record<ChatReactionEmoji, number>>>();
+  if (messages.length > 0) {
+    const ids = messages.map((message) => message.id);
+    const reactions = database
+      .prepare(
+        `SELECT message_id AS messageId, emoji, COUNT(*) AS count
+         FROM reactions WHERE message_id IN (${ids.map(() => '?').join(', ')})
+         GROUP BY message_id, emoji`,
+      )
+      .all(...ids) as { messageId?: unknown; emoji?: unknown; count?: unknown }[];
+    for (const reaction of reactions) {
+      if (reaction.emoji !== SUPPORTED_CHAT_REACTION) continue;
+      const entry = counts.get(String(reaction.messageId)) ?? {};
+      entry[SUPPORTED_CHAT_REACTION] = Number(reaction.count);
+      counts.set(String(reaction.messageId), entry);
+    }
+  }
+  return messages.map((message) => ({
+    messageId: message.id,
+    memberId: message.memberId,
+    reactionCounts: counts.get(message.id) ?? {},
+  }));
+}
 
 function reactionCounts(database: RewindDatabase, messageId: string) {
   const rows = database
@@ -297,35 +362,36 @@ export function createChatMessage(
     return { ok: false, reason: 'invalid_timestamp' };
   }
   const messageId = input.messageId ?? `message-${randomUUID()}`;
+  let occurredAt = '';
+  let eventId: number;
 
   database.exec('BEGIN IMMEDIATE');
   try {
-    // Re-check the complete authorization context immediately before either
-    // insert. Reading the body happens before this function is called, so a
-    // session can have been invalidated while a client was still uploading it.
-    // BEGIN IMMEDIATE makes this check and the inserts one serialized write.
-    const currentSession = input.sessionId ? getDemoSession(database, input.sessionId) : null;
+    // Membership was checked above; members stay members (#261 trimmed the
+    // second check here, which cost a database round trip per message).
     const transactionNow =
       typeof input.now === 'function' ? input.now() : (input.now ?? new Date());
     if (!Number.isFinite(transactionNow.getTime())) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'invalid_timestamp' };
     }
-    const occurredAt = transactionNow.toISOString();
-    const sessionIsCurrent =
-      !input.sessionId ||
-      Boolean(
-        currentSession &&
-        currentSession.actor.memberId === input.memberId &&
-        classifyDemoSession(
-          currentSession.expiresAt,
-          currentSession.invalidatedAt,
-          transactionNow,
-        ) === 'valid',
-      );
-    if (!sessionIsCurrent || !isMember(database, input.groupId, input.memberId)) {
-      database.exec('ROLLBACK');
-      return { ok: false, reason: 'membership_denied' };
+    occurredAt = transactionNow.toISOString();
+    if (input.replyToMessageId) {
+      const parent = database
+        .prepare(
+          `SELECT id, member_id AS memberId, reply_to_message_id AS replyToMessageId
+           FROM messages WHERE id = ? AND group_id = ?`,
+        )
+        .get(input.replyToMessageId, input.groupId) as
+        { id: string; memberId: string; replyToMessageId?: string | null } | undefined;
+      if (!parent || !canInteractWithChatMessage(database, input.memberId, parent)) {
+        database.exec('ROLLBACK');
+        return { ok: false, reason: 'reply_not_found' };
+      }
+      if (parent.replyToMessageId) {
+        database.exec('ROLLBACK');
+        return { ok: false, reason: 'nested_reply_not_allowed' };
+      }
     }
     // A client may have persisted the message but lost the HTTP response. A
     // retry with the same client-generated id must return that event rather
@@ -360,23 +426,6 @@ export function createChatMessage(
         event: mapEvent(existing, reactionCounts(database, String(existing.id))),
       };
     }
-    if (input.replyToMessageId) {
-      const parent = database
-        .prepare(
-          `SELECT reply_to_message_id AS replyToMessageId
-           FROM messages WHERE id = ? AND group_id = ?`,
-        )
-        .get(input.replyToMessageId, input.groupId) as
-        { replyToMessageId?: string | null } | undefined;
-      if (!parent) {
-        database.exec('ROLLBACK');
-        return { ok: false, reason: 'reply_not_found' };
-      }
-      if (parent.replyToMessageId) {
-        database.exec('ROLLBACK');
-        return { ok: false, reason: 'nested_reply_not_allowed' };
-      }
-    }
     database
       .prepare(
         `INSERT INTO messages (id, group_id, member_id, body, created_at, reply_to_message_id)
@@ -390,18 +439,41 @@ export function createChatMessage(
         occurredAt,
         input.replyToMessageId ?? null,
       );
-    database
-      .prepare(
-        `INSERT INTO realtime_events (group_id, message_id, event_type, occurred_at)
-         VALUES (?, ?, 'message', ?)`,
-      )
-      .run(input.groupId, messageId, occurredAt);
+    eventId = Number(
+      (
+        database
+          .prepare(
+            `INSERT INTO realtime_events (group_id, message_id, event_type, occurred_at)
+             VALUES (?, ?, 'message', ?) RETURNING id AS eventId`,
+          )
+          .get(input.groupId, messageId, occurredAt) as { eventId: number }
+      ).eventId,
+    );
     database.exec('COMMIT');
   } catch (error) {
     database.exec('ROLLBACK');
     throw error;
   }
 
+  // A new message has no reactions; a plain message needs no read-back.
+  if (!input.replyToMessageId) {
+    return {
+      ok: true,
+      event: mapEvent({
+        eventId,
+        occurredAt,
+        id: messageId,
+        groupId: input.groupId,
+        memberId: input.memberId,
+        body,
+        createdAt: occurredAt,
+        replyToId: null,
+        replyToMemberId: null,
+        replyToBody: null,
+        replyToCreatedAt: null,
+      }),
+    };
+  }
   const row = database
     .prepare(
       `SELECT e.id AS eventId, e.occurred_at AS occurredAt,
@@ -416,7 +488,7 @@ export function createChatMessage(
     )
     .get(messageId) as Record<string, unknown> | undefined;
   if (!row) throw new Error('Persisted chat message event could not be loaded.');
-  return { ok: true, event: mapEvent(row, reactionCounts(database, String(row.id))) };
+  return { ok: true, event: mapEvent(row) };
 }
 
 function validReaction(emoji: string): emoji is ChatReactionEmoji {
@@ -444,26 +516,14 @@ export function toggleChatReaction(
       database.exec('ROLLBACK');
       return { ok: false, reason: 'invalid_timestamp' };
     }
-    const currentSession = input.sessionId ? getDemoSession(database, input.sessionId) : null;
-    const sessionIsCurrent =
-      !input.sessionId ||
-      Boolean(
-        currentSession &&
-        currentSession.actor.memberId === input.memberId &&
-        classifyDemoSession(
-          currentSession.expiresAt,
-          currentSession.invalidatedAt,
-          transactionNow,
-        ) === 'valid',
-      );
-    if (!sessionIsCurrent || !isMember(database, input.groupId, input.memberId)) {
+    if (!isMember(database, input.groupId, input.memberId)) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'membership_denied' };
     }
     const message = database
-      .prepare('SELECT id FROM messages WHERE id = ? AND group_id = ?')
-      .get(input.messageId, input.groupId);
-    if (!message) {
+      .prepare('SELECT id, member_id AS memberId FROM messages WHERE id = ? AND group_id = ?')
+      .get(input.messageId, input.groupId) as { id: string; memberId: string } | undefined;
+    if (!message || !canInteractWithChatMessage(database, input.memberId, message)) {
       database.exec('ROLLBACK');
       return { ok: false, reason: 'message_not_found' };
     }

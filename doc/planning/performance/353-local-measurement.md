@@ -91,6 +91,82 @@ lead-owned gates. Repeat against the final PostgreSQL/identity/storage setup
 when that reserved work lands. No optimization or instrumentation change is
 justified unless a measured target miss identifies a concrete bottleneck.
 
+## Current-code measurement — 12 October 2026 (#526), local SQLite, not hosted
+
+**Scope.** Local SQLite, local disk storage and loopback HTTP on one developer
+Mac, run on the built server of dev `a1dc77e940a824b0d4e9ffaabf1e4ac517e38816`
+plus the uncommitted #526 runner/test patch (runner SHA-256
+`ea1c32b4024d3a528f380cef491f111b56d4c0a87c95668de04b8751f67923ac`). It is
+neither PostgreSQL nor hosted: it does not establish hosted dev, isolated
+PostgreSQL, S3, IdP or device performance. No PostgreSQL or hosted target is
+supported by this runner, which still refuses any argument/URL. Production
+capture, retro and encoding code was not changed; only the measurement contract
+was repaired (#353's `180x320` expectation was obsolete).
+
+**Media stages (unchanged production behavior).** Browser capture requests
+1920x1080 at 30 fps and the browser retro path keeps up to 1920/1080; the server
+keeps an individual processed clip at its source size and rate (client looks are
+not applied twice); photo-derived film segments are 720x1280; the compiled group
+film is 720x1280 at constant 30 fps with landscape letterboxed. The benchmark's
+synthetic 720x1280 inputs are a fixture, not a capture ceiling.
+
+**Contract asserted now.** Film output must be 720x1280, 30/1 fps, with audio
+(180x320, landscape 1280x720 or any other size fails). The runner also generates
+bounded 2-second 1080x1920 and 1920x1080 sources with audio and checks that
+individual processing (`client:ccd`, no second look) keeps 1080x1920 /
+1920x1080 and audio, while film compilation yields 720x1280 with audio (portrait
+fills the frame; landscape has black bars at the top and content at centre).
+These are generated solid-colour sources, not physical-camera evidence.
+
+**Workload (unchanged).** 3 fresh repetitions; 5 members + 1 outsider; 100 seeded
+chat messages; 5 concurrent clients; 30 s paced warm-up; 100 measured samples
+per operation per repetition (group, owner prompt, budget, chat; 1,200
+requests); 25 new six-second H.264/AAC 720x1280 clips (24/30 fps alternating,
+44.1/48 kHz, 150 s total), compiled by one in-process worker with no scheduler
+delay. Exit 0; 11:55:18-11:57:34 SGT (08:55-08:57 UTC).
+
+| Run | Operation | Samples | Errors | p50 ms | p95 ms | Max ms |
+| --- | --------- | ------: | -----: | -----: | -----: | -----: |
+| 1   | group     |     100 |      0 |  3.164 |  5.378 |  9.280 |
+| 1   | prompt    |     100 |      0 |  3.358 |  6.045 |  9.483 |
+| 1   | budget    |     100 |      0 |  3.098 |  5.101 |  7.934 |
+| 1   | chat      |     100 |      0 |  3.296 |  5.176 |  9.102 |
+| 2   | group     |     100 |      0 |  3.174 |  4.307 |  5.653 |
+| 2   | prompt    |     100 |      0 |  3.311 |  4.671 |  8.225 |
+| 2   | budget    |     100 |      0 |  3.093 |  4.316 |  5.651 |
+| 2   | chat      |     100 |      0 |  3.326 |  4.590 |  8.096 |
+| 3   | group     |     100 |      0 |  5.547 |  9.100 | 17.196 |
+| 3   | prompt    |     100 |      0 |  6.212 |  9.282 | 17.530 |
+| 3   | budget    |     100 |      0 |  5.569 |  9.266 |  9.775 |
+| 3   | chat      |     100 |      0 |  5.812 |  9.668 | 17.051 |
+
+| Run | Warm-up s | Warm-up requests | Queue ms | Worker s | End-to-end s | Input / clip | Film (dims, fps) | Output s |  LUFS |
+| --- | --------: | ---------------: | -------: | -------: | -----------: | ------------ | ---------------- | -------: | ----: |
+| 1   |    30.085 |             1375 |    2.020 |    4.962 |        4.964 | 720x1280 x25 | 720x1280, 30/1   |    150.4 | -17.4 |
+| 2   |    30.007 |             1405 |    2.050 |    5.698 |        5.700 | 720x1280 x25 | 720x1280, 30/1   |    150.4 | -17.4 |
+| 3   |    30.034 |             1400 |    2.060 |    9.029 |        9.031 | 720x1280 x25 | 720x1280, 30/1   |    150.4 | -17.4 |
+
+Results: **no target misses.** Every operation's p95 was at most 9.7 ms
+(target <=2,000 ms, excluding IdP latency); the worst film took 9.0 s
+transition-to-ready (target <=600 s). There were 0 request errors; all films
+completed 25/25 inputs in one attempt, decoded fully, passed the 25 chronology
+checks, and measured -17.4 LUFS. Outsider group (404), budget (403), chat (403),
+prompt (403), non-owner prompt (403) and sealed own-clip download (404) were
+denied. Orientation check: 1080x1920 and 1920x1080 individual clips kept their
+size and audio and both compiled to 720x1280.
+
+**Caveat on resources.** The host was not idle: other agents ran builds and
+tests concurrently (load average 15.9/8.7/4.8 at start, 25.1 at the end), so
+run 3's slower numbers (about 2x API, 1.8x film) show contention, not a change
+in the code. Host: Apple M5, 10 logical CPUs, arm64, Darwin 25.6.0, 32 GiB RAM,
+free memory at start 3,543,826,432 bytes; Node v26.3.1; ffmpeg 8.1.2; API and
+load generator share one Node process; no profiler. Raw samples, probes and
+checksums remain in the runner's temporary mode-0600 `report.json`.
+
+Everything below this section is the historical 3 October record. Its
+"180x320 output" limitation and the old film assertion are superseded by the
+720x1280 film contract above.
+
 ## Observed result — 3 October 2026, 720p inputs
 
 Runner measurement: **exit 0**, 16:09:22–16:11:24 SGT. Three independent
@@ -101,7 +177,7 @@ API protocol remains unchanged: five concurrent clients, 30-second warm-up,
 Audio still varies frequency, volume and 44.1/48kHz sampling. All inputs are
 synthetic solid-color/audio-tone fixtures, not captured camera footage.
 
-**Output limitation:** the unchanged production film compiler scales/pads to
+**Output limitation (superseded, see the 12 October section):** at that time the unchanged production film compiler scales/pads to
 **180x320**, then encodes H.264/AAC. FFprobe measured nominal **24/1 fps** and
 average **168000000/6264977 fps (26.816)** for this mixed-rate fixture. The
 photo-to-clip path explicitly uses 12fps; the film compiler does not set a

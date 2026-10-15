@@ -343,7 +343,7 @@ async function createContext(timeoutMs, baseEnv = process.env) {
         envFile,
         ...Object.values(envValues),
         'disposable-media-sentinel',
-        'non-demo-sentinel',
+        'data-sentinel',
       ],
     };
 
@@ -369,7 +369,7 @@ async function writeLifecycleFixtures(context) {
     'runtime',
     'sh',
     '-c',
-    "printf '%s' 'disposable-media-sentinel' > /var/lib/rewind/media/lifecycle-media.bin && printf '%s' 'non-demo-sentinel' > /var/lib/rewind/non-demo-sentinel.txt",
+    "printf '%s' 'disposable-media-sentinel' > /var/lib/rewind/media/lifecycle-media.bin && printf '%s' 'data-sentinel' > /var/lib/rewind/data-sentinel.txt",
   ]);
 }
 
@@ -380,72 +380,22 @@ async function assertPersistenceFixtures(context, stage) {
     'runtime',
     'sh',
     '-c',
-    'test -f /var/lib/rewind/media/lifecycle-media.bin && test -f /var/lib/rewind/non-demo-sentinel.txt',
-  ]);
-}
-
-async function assertResetFixtures(context) {
-  await compose(context, 'assert reset cleanup', [
-    'exec',
-    '--no-TTY',
-    'runtime',
-    'sh',
-    '-c',
-    '! test -e /var/lib/rewind/media/lifecycle-media.bin && test -f /var/lib/rewind/non-demo-sentinel.txt && test -d /var/lib/rewind/media/staging',
+    'test -f /var/lib/rewind/media/lifecycle-media.bin && test -f /var/lib/rewind/data-sentinel.txt',
   ]);
 }
 
 async function runLifecycle(context) {
   await compose(context, 'compose configuration', ['config', '--quiet']);
   await compose(context, 'build runtime image', ['build', 'runtime']);
-  await compose(context, 'migrate and seed', ['run', '--rm', '--no-deps', 'runtime', 'migrate']);
+  await compose(context, 'migrate', ['run', '--rm', '--no-deps', 'runtime', 'migrate']);
   await compose(context, 'start runtime', ['up', '--detach', 'runtime']);
   await waitForHealth(context, 'initial health');
-
-  const profiles = await requestJson(context, 'seed verification', '/profiles');
-  if (!Array.isArray(profiles.profiles) || profiles.profiles.length !== 5) {
-    throw new LifecycleSmokeError('seed verification', 'deterministic Demo fixture was not seeded');
-  }
-  const session = await requestJson(
-    context,
-    'owner session creation',
-    '/sessions/demo',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memberId: 'demo-1' }),
-    },
-    201,
-  );
-  const sessionId = typeof session.session?.id === 'string' ? session.session.id : '';
-  if (!sessionId)
-    throw new LifecycleSmokeError('owner session creation', 'owner session was not created');
-  context.secrets.push(sessionId);
   await writeLifecycleFixtures(context);
 
   await compose(context, 'stop runtime for restart', ['stop', 'runtime']);
   await compose(context, 'restart runtime', ['up', '--detach', 'runtime']);
   await waitForHealth(context, 'post-restart health');
-  await requestJson(context, 'session persistence', `/sessions/${encodeURIComponent(sessionId)}`);
   await assertPersistenceFixtures(context, 'restart persistence');
-
-  const reset = await requestJson(
-    context,
-    'owner reset',
-    `/demo/reset?sessionId=${encodeURIComponent(sessionId)}`,
-    { method: 'POST' },
-  );
-  if (reset.reset !== true)
-    throw new LifecycleSmokeError('owner reset', 'owner reset was not acknowledged');
-  await assertResetFixtures(context);
-  await waitForHealth(context, 'post-reset health');
-  const postResetProfiles = await requestJson(context, 'post-reset fixture', '/profiles');
-  if (!Array.isArray(postResetProfiles.profiles) || postResetProfiles.profiles.length !== 5) {
-    throw new LifecycleSmokeError(
-      'post-reset fixture',
-      'Demo fixture was not restored after owner reset',
-    );
-  }
 }
 
 async function collectDiagnostics(context) {
@@ -512,13 +462,11 @@ async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes('--help')) {
     console.log('Usage: deploy/lifecycle-smoke.mjs [--timeout-seconds N]');
-    console.log('Runs a disposable local Compose migrate/seed/restart/reset lifecycle.');
+    console.log('Runs a disposable local Compose migrate/restart lifecycle.');
     return;
   }
   await runLifecycleSmoke(argv);
-  console.log(
-    'Lifecycle smoke passed: migrate, seed, health, restart persistence, owner reset, post-reset health.',
-  );
+  console.log('Lifecycle smoke passed: migrate, health, restart persistence.');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {

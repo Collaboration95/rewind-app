@@ -7,9 +7,9 @@ import { once } from 'node:events';
 import { Readable } from 'node:stream';
 import test from 'node:test';
 import { parseConfig } from '../dist/config.js';
-import { openDatabase } from '../dist/db.js';
 import { createRuntimeServer } from '../dist/http.js';
 import { createRealAccount, revokeRealSession } from '../dist/auth/index.js';
+import { purgeRealAccount } from '../dist/auth/deletion.js';
 import { createRealGroup } from '../dist/groups/real.js';
 import { createRealGroupInvite, acceptRealGroupInvite } from '../dist/groups/invites.js';
 import { encodeMediaRef } from '../dist/media/store.js';
@@ -20,6 +20,7 @@ import {
   PREMIERE_DURATION_MS,
 } from '../dist/cycles/index.js';
 import { s3Double, s3Store } from './helpers/private-media-store.mjs';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 const NOW = new Date('2026-10-02T12:00:00Z');
 const ORIGIN = 'https://archive-fixture.example';
 const proxy = {
@@ -37,7 +38,7 @@ async function fixture(run, remote = false) {
     REWIND_ORIGIN_AUTH_SECRET: proxy['x-rewind-origin-auth'],
     REWIND_ALLOW_ORIGIN: ORIGIN,
   });
-  const database = openDatabase(config),
+  const database = openFixtureDatabase(config),
     double = s3Double(),
     store = s3Store(double);
   let clock = NOW;
@@ -107,7 +108,7 @@ async function fixture(run, remote = false) {
         'SELECT profile_id AS id FROM real_group_memberships WHERE account_id=? AND group_id=?',
       )
       .get(member.account.id, group.group.id).id;
-    const bytes = await readFile(new URL('../fixtures/demo-media.mp4', import.meta.url));
+    const bytes = await readFile(new URL('../fixtures/sample-clip.mp4', import.meta.url));
     const sha = createHash('sha256').update(bytes).digest('hex');
     await mkdir(root + '/media/processed', { recursive: true });
     async function output(name, prefix) {
@@ -256,7 +257,6 @@ test('real Archive seals media until release and scopes films/own clips to live 
     );
     assert.equal((await request(outsider, scoped('/archive'))).status, 403);
     assert.equal((await request(outsider, scoped('/films/archive-film'))).status, 403);
-    assert.equal((await request(owner, scoped('/archive') + '&sessionId=forged')).status, 403);
     assert.equal((await request(owner, scoped('/archive') + '&filmCursor=malformed')).status, 400);
     const preflight = await request(null, scoped('/archive'), { method: 'OPTIONS' });
     assert.match(preflight.headers.get('access-control-allow-headers'), /Authorization/);
@@ -366,6 +366,32 @@ test('private stored film publication and full-day Archive require verified pinn
     assert.equal((await publishCycleReleaseWithStore(c.database, input, options)).ok, false);
   }, true));
 
+test('playback alone refuses changed bytes on disk and in S3, and audits them (#475)', async () => {
+  for (const remote of [false, true])
+    await fixture(async (c) => {
+      c.publish();
+      if (remote) {
+        const ref = JSON.parse(Buffer.from(c.filmPath.slice('media-object:'.length), 'base64url'));
+        const stored = c.double.versions.get(`${ref.key}:${ref.versionId}`);
+        stored.bytes = Buffer.from(stored.bytes);
+        stored.bytes[stored.bytes.length - 1] ^= 0xff;
+      } else {
+        const bytes = Buffer.from(c.bytes);
+        bytes[bytes.length - 1] ^= 0xff;
+        await writeFile(c.filmPath, bytes);
+      }
+      const archive = await (await c.request(c.owner, c.scoped('/archive'))).json();
+      assert.equal(archive.archive.films.length, 1, 'same-size changes stay listed');
+      assert.equal((await c.request(null, archive.archive.films[0].playbackPath)).status, 404);
+      const audited = c.database
+        .prepare(
+          "SELECT count(*) AS n FROM audit_events WHERE event_type = 'media.integrity_failed'",
+        )
+        .get().n;
+      assert.equal(audited, 1);
+    }, remote);
+});
+
 test('stored publication refuses an asset changed during its verified read', async () =>
   fixture(async (c) => {
     const input = { groupId: c.group.group.id, cycleId: c.group.cycle.id, clock: () => NOW };
@@ -394,3 +420,122 @@ test('stored publication refuses an asset changed during its verified read', asy
       'unpublished',
     );
   }, true));
+
+test('film segments hide blocked, reported and owner-removed moments per viewer', async () =>
+  fixture(async (c) => {
+    const { request, scoped, publish, group, owner, member, outsider, database } = c;
+    database
+      .prepare(
+        "UPDATE media_jobs SET trim_start_seconds=1, trim_end_seconds=3.5 WHERE id='owner-clip'",
+      )
+      .run();
+    database.prepare("UPDATE media_jobs SET media_type='photo' WHERE id='member-clip'").run();
+    for (const [position, id] of ['owner-clip', 'member-clip'].entries())
+      database
+        .prepare(
+          "INSERT INTO compilation_job_inputs(job_id,clip_job_id,contribution_id,position) VALUES('archive-film',?,?,?)",
+        )
+        .run(id, id, position);
+    publish();
+    const post = (person, path, body) =>
+      request(person, path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const segments = async (person) => {
+      const premiere = (
+        await (await request(person, scoped(`/cycles/${group.cycle.id}/premiere`))).json()
+      ).premiere;
+      assert.equal(premiere.state, 'ready');
+      const archive = (await (await request(person, scoped('/archive'))).json()).archive;
+      assert.deepEqual(archive.films[0].segments, premiere.segments);
+      return premiere.segments;
+    };
+    const segment = (contributionId, startSeconds, durationSeconds, hidden, mine) => ({
+      contributionId,
+      startSeconds,
+      durationSeconds,
+      hidden,
+      mine,
+    });
+    assert.deepEqual(await segments(member), [
+      segment('owner-clip', 0, 2.5, false, false),
+      segment('member-clip', 2.5, 3, false, true),
+    ]);
+    const ownerProfile = group.memberId;
+    assert.equal((await post(member, '/real/blocks', { profileId: ownerProfile })).status, 201);
+    assert.equal((await segments(member))[0].hidden, true);
+    assert.equal((await segments(owner))[0].hidden, false);
+    assert.equal(
+      (await request(member, `/real/blocks/${ownerProfile}`, { method: 'DELETE' })).status,
+      200,
+    );
+    assert.equal(
+      (
+        await post(owner, `/real/groups/${group.group.id}/reports`, {
+          contributionId: 'member-clip',
+        })
+      ).status,
+      201,
+    );
+    assert.deepEqual(
+      (await segments(owner)).map((entry) => entry.hidden),
+      [false, true],
+    );
+    assert.equal((await segments(member))[1].hidden, false);
+
+    const remove = (person, groupId, id) =>
+      post(person, `/real/groups/${groupId}/contributions/${id}/remove`, {});
+    const memberRemove = await remove(member, group.group.id, 'owner-clip');
+    assert.equal(memberRemove.status, 403);
+    assert.equal((await memberRemove.json()).error, 'forbidden');
+    assert.equal((await remove(outsider, group.group.id, 'owner-clip')).status, 404);
+    assert.equal((await remove(owner, group.group.id, 'missing')).status, 404);
+    const elsewhere = createRealGroup(
+      database,
+      outsider.account,
+      { name: 'Elsewhere', prompt: 'Other', maxMembers: 3 },
+      new Date('2026-10-02T12:00:00Z'),
+    );
+    database
+      .prepare(
+        "INSERT INTO contributions(id,cycle_id,member_id,duration_seconds,created_at) VALUES('foreign-clip',?,?,1,?)",
+      )
+      .run(elsewhere.cycle.id, elsewhere.memberId, '2026-10-02T12:00:00Z');
+    assert.equal((await remove(owner, group.group.id, 'foreign-clip')).status, 404);
+    const allowance = () =>
+      database
+        .prepare('SELECT count_used AS count, seconds_used AS seconds FROM cycles WHERE id=?')
+        .get(group.cycle.id);
+    const before = allowance();
+    const removed = await remove(owner, group.group.id, 'owner-clip');
+    assert.equal(removed.status, 200);
+    assert.deepEqual(await removed.json(), { removed: true });
+    assert.deepEqual(allowance(), before);
+    const row = database
+      .prepare(
+        "SELECT deleted_at AS deletedAt, removed_at AS removedAt, removed_by_account_id AS removedBy FROM contributions WHERE id='owner-clip'",
+      )
+      .get();
+    assert.equal(row.deletedAt, null);
+    assert.equal(row.removedBy, owner.account.id);
+    assert.ok(row.removedAt);
+    for (const person of [owner, member]) assert.equal((await segments(person))[0].hidden, true);
+    const encoded = JSON.stringify(await segments(member));
+    assert.equal(encoded.includes('/media/'), false);
+    assert.equal(encoded.includes(ownerProfile), false);
+
+    // Deleting an author's account keeps the film's offsets in place.
+    purgeRealAccount(database, member.account.id);
+    const afterDelete = (
+      await (await request(owner, scoped(`/cycles/${group.cycle.id}/premiere`))).json()
+    ).premiere.segments;
+    assert.deepEqual(
+      afterDelete.map((entry) => [entry.startSeconds, entry.durationSeconds, entry.hidden]),
+      [
+        [0, 2.5, true],
+        [2.5, 3, true],
+      ],
+    );
+  }));

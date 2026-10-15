@@ -18,6 +18,9 @@ const { createRuntimeServer } = await import(new URL('../server/dist/http.js', i
 const { reconcileUploadIntent } = await import(
   new URL('../server/dist/media/upload-intents.js', import.meta.url)
 );
+const { forgetAllIdentities } = await import(
+  new URL('../server/dist/auth/identity-cache.js', import.meta.url)
+);
 
 // Execute the actual client, protocol and adapter in Chromium without mounting
 // another worker's capture UI. Only unused native platform services are facades;
@@ -38,6 +41,7 @@ function browserBundle(now) {
   compile(auth);
   compile(adapter);
   return `(() => {
+    globalThis.__DEV__ = false;
     const sources = ${JSON.stringify(modules)}, cache = {};
     function load(path) {
       if (cache[path]) return cache[path].exports;
@@ -65,15 +69,18 @@ function browserBundle(now) {
   })();`;
 }
 
-async function listen(server, port) {
-  server.listen(port, '127.0.0.1');
+// Fixture servers take ephemeral ports so concurrent test runs cannot collide.
+async function listen(server) {
+  server.listen(0, '127.0.0.1');
   await once(server, 'listening');
+  return `https://127.0.0.1:${server.address().port}`;
 }
 
 test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pinned completion and processing', async (t) => {
   await withIntentFixture(async (c) => {
-    const origin = 'https://127.0.0.1:5421';
-    const storageOrigin = 'https://127.0.0.1:5422';
+    // Assigned once the fixture servers listen; handlers read them per request.
+    let origin;
+    let storageOrigin;
     const secret = 'synthetic-direct-transfer-proxy';
     const key = c.root + '/fixture-key.pem';
     const cert = c.root + '/fixture-cert.pem';
@@ -104,25 +111,28 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
     const storageRequests = [];
     // Preserve assertion details in the test runner, never in HTTP responses.
     const fixtureErrors = [];
+    const fixtureSockets = new Set();
     t.after(() => assert.deepEqual(fixtureErrors, [], 'fixture handlers must not fail'));
     const photoBytes = readFileSync('public/icons/rewind-icon-192.png');
     let hideVersion = false;
     let rejectPut = false;
     let losePutResponse = false;
-    const runtime = createRuntimeServer(
-      {
-        ...c.config,
-        allowOrigin: origin,
-        originAuthSecret: secret,
-      },
-      c.database,
-      {
-        now: () => c.now,
-        mediaStore: c.deps.store,
-        mediaEnvironment: 'test',
-        uploadIntents: c.deps,
-      },
-    );
+    let runtime;
+    const createRuntime = () =>
+      createRuntimeServer(
+        {
+          ...c.config,
+          allowOrigin: origin,
+          originAuthSecret: secret,
+        },
+        c.database,
+        {
+          now: () => c.now,
+          mediaStore: c.deps.store,
+          mediaEnvironment: 'test',
+          uploadIntents: c.deps,
+        },
+      );
     const app = createServer(tls, async (request, response) => {
       if (request.url === '/') {
         response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
@@ -266,10 +276,16 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
         response.end('Fixture request failed');
       }
     });
+    for (const server of [app, storage])
+      server.on('connection', (socket) => {
+        fixtureSockets.add(socket);
+        socket.once('close', () => fixtureSockets.delete(socket));
+      });
     let browser;
     try {
-      await listen(app, 5421);
-      await listen(storage, 5422);
+      origin = await listen(app);
+      storageOrigin = await listen(storage);
+      runtime = createRuntime();
       browser = await chromium.launch();
       const context = await browser.newContext({ ignoreHTTPSErrors: true });
       // A real, DB-backed HttpOnly secure session. Same-host storage on another
@@ -355,16 +371,18 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
           },
         );
       }
-      // Drop a response after the real handler has atomically registered it.
-      await page.route(
-        '**/upload-intents/*/complete',
-        async (route) => {
-          const result = await route.fetch();
-          assert.equal(result.status(), 200);
-          await route.abort('failed');
-        },
-        { times: 1 },
-      );
+      // Drop the first response after the real handler has atomically registered it.
+      // The handler stays installed and passes later requests through, rather than
+      // using { times: 1 }: removing the last route while the client's follow-up
+      // request is in flight could leave that request paused forever on a busy host.
+      let droppedCompletion = false;
+      await page.route('**/upload-intents/*/complete', async (route) => {
+        if (droppedCompletion) return route.continue();
+        droppedCompletion = true;
+        const result = await route.fetch();
+        assert.equal(result.status(), 200);
+        await route.abort('failed');
+      });
       const first = await transfer('browser-http-key-1');
       assert.equal(first.intent.state, 'completed', JSON.stringify(first));
       assert.equal(first.intent.cycleId, c.group.cycle.id);
@@ -478,6 +496,8 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
       c.database
         .prepare('DELETE FROM real_account_sessions WHERE account_id=?')
         .run('intent-owner');
+      // Identity is cached; clear it as the server's own revocation does.
+      forgetAllIdentities(c.database);
       assert.equal((await transfer('browser-http-key-1', true)).error, 'authorization');
       assert.equal(storageRequests.length, 5);
 
@@ -495,11 +515,13 @@ test('Chromium cookie client → intent HTTP → cross-origin binary PUT → pin
       assert.deepEqual(scriptErrors, []);
     } finally {
       await browser?.close();
+      // Also close idle TLS handshakes, which closeAllConnections does not own.
+      for (const socket of fixtureSockets) socket.destroy();
       for (const server of [app, storage]) {
         server.closeAllConnections();
         await new Promise((done) => server.close(done));
       }
-      runtime.close();
+      runtime?.close();
     }
   });
 });

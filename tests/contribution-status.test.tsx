@@ -43,6 +43,7 @@ describe('ContributionStatusPanel', () => {
             jobId: 'job-1',
             state: 'sealed',
             durationSeconds: 3,
+            mediaType: 'video',
             createdAt: '2026-09-14T00:00:00.000Z',
             updatedAt: '2026-09-14T00:00:01.000Z',
             attempts: 1,
@@ -68,6 +69,7 @@ describe('ContributionStatusPanel', () => {
       jobId: `job-older-${index}`,
       state: 'sealed' as const,
       durationSeconds: 3,
+      mediaType: 'video' as const,
       createdAt: new Date(Date.UTC(2026, 0, index + 1)).toISOString(),
       updatedAt: '2026-09-30T00:00:00.000Z',
       attempts: 1,
@@ -160,9 +162,7 @@ describe('ContributionStatusPanel', () => {
 
     await result.findByTestId('status-failed');
     expect(
-      result.getByText(
-        'This contribution cannot be retried. Retake it to submit a new contribution.',
-      ),
+      result.getByText('This one can’t be retried. Take it again to add a new moment.'),
     ).toBeTruthy();
     expect(result.queryByRole('button', { name: /retry/i })).toBeNull();
   });

@@ -13,11 +13,15 @@ import { Platform } from 'react-native';
 import {
   AuthRequestError,
   RealAccountClient,
+  type AuthConfig,
   type AuthNotice,
   type AuthState,
   type RealAccount,
   type RealAccountSession,
   type RegistrationOutcome,
+  DEFAULT_AUTH_CONFIG,
+  invalidRegistrationOutcome,
+  isRealAccount,
 } from './real-account-client';
 import { signOutMarkerStore, type SignOutMarker } from './sign-out-marker';
 
@@ -28,14 +32,27 @@ interface RealAccountContextValue {
   notice: AuthNotice;
   pending: boolean;
   secureTransportAvailable: boolean;
+  /** Sign-in options the server offers; password-only until the config is known. */
+  authConfig: AuthConfig;
+  /** Web only: leave for the server's Cognito sign-in and come back signed in. */
+  startCognitoSignIn: () => void;
+  /** Save the Rewind display name (asked once after the first Cognito sign-in). */
+  updateDisplayName: (displayName: string) => Promise<boolean>;
   signIn: (username: string, password: string) => Promise<boolean>;
   registerAccount: (username: string, password: string) => Promise<RegistrationOutcome>;
   signOut: () => Promise<void>;
+  /**
+   * Delete the signed-in account after re-checking it (#428): the password for
+   * a password session, the typed word DELETE for a Cognito session.
+   */
+  deleteAccount: (password: string) => Promise<AccountDeletionOutcome>;
   retryLocalCredentialRemoval: () => Promise<void>;
   retryRestore: () => void;
   authenticatedRequest: (path: string, init?: RequestInit) => Promise<Response>;
   realtimeAuthorizationHeader: () => string | undefined;
 }
+
+export type AccountDeletionOutcome = 'deleted' | 'incorrect' | 'throttled' | 'unavailable';
 
 const RealAccountContext = createContext<RealAccountContextValue | null>(null);
 
@@ -44,13 +61,64 @@ function noticeFor(error: unknown): AuthNotice {
     if (error.reason === 'expired') return 'expired';
     if (error.reason === 'insecure-transport') return 'offline';
     if (error.status === 401) return 'sign-in-failed';
+    if (error.status === 429) return 'sign-in-throttled';
+    if (error.status >= 500) return 'unavailable';
   }
   return 'offline';
 }
 
-function accountSession(account: RealAccount, idleExpiresAt: string): RealAccountSession {
-  return { account, idleExpiresAt, absoluteExpiresAt: idleExpiresAt };
+function accountSession(
+  account: RealAccount,
+  idleExpiresAt: string,
+  absoluteExpiresAt?: string,
+  signInMethod?: RealAccountSession['signInMethod'],
+): RealAccountSession {
+  return {
+    account,
+    idleExpiresAt,
+    ...(absoluteExpiresAt ? { absoluteExpiresAt } : {}),
+    ...(signInMethod ? { signInMethod } : {}),
+  };
 }
+
+/** The server redirects a failed Cognito sign-in to `/?auth_error=...`. */
+function consumeAuthErrorParam(): AuthNotice {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return null;
+  try {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get('auth_error');
+    if (code === null) return null;
+    url.searchParams.delete('auth_error');
+    if (typeof window.history?.replaceState === 'function') {
+      window.history.replaceState(
+        window.history.state,
+        '',
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+    }
+    if (code === 'cognito_denied') return 'cognito-denied';
+    return code === 'cognito' ? 'cognito-failed' : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Follow the identity provider's sign-out URL so its own session ends too. */
+function followLogoutUrl(logoutUrl: string | undefined) {
+  if (!logoutUrl || Platform.OS !== 'web' || typeof window === 'undefined') return;
+  try {
+    const url = new URL(logoutUrl, window.location.href);
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if (url.protocol === 'https:' || (url.protocol === 'http:' && loopback)) {
+      window.location.assign(url.href);
+    }
+  } catch {
+    // A malformed sign-out URL leaves the local sign-out as it was.
+  }
+}
+
+/** Longest the launch screen waits for the sign-in options before showing the entry screen. */
+const AUTH_CONFIG_WAIT_MS = 2500;
 
 export function RealAccountProvider({
   baseUrl,
@@ -64,9 +132,47 @@ export function RealAccountProvider({
   const [session, setSession] = useState<RealAccountSession | null>(null);
   const [notice, setNotice] = useState<AuthNotice>(null);
   const [pending, setPending] = useState(false);
+  const [authConfig, setAuthConfig] = useState<AuthConfig>(DEFAULT_AUTH_CONFIG);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const mounted = useRef(true);
   const tokenRef = useRef<string | undefined>(undefined);
+  // Requests still in flight when sign-out lands get a 401; that is the
+  // sign-out itself, not a revoked session.
+  const signingOut = useRef(false);
+  const authConfigRequest = useRef<Promise<void> | null>(null);
+  const urlNotice = useRef<{ read: boolean; notice: AuthNotice }>({ read: false, notice: null });
+
+  // One fetch of the sign-in options per page load (web only). Any failure
+  // keeps the password-only default so the entry screen never depends on it.
+  const loadAuthConfig = useCallback((): Promise<void> => {
+    if (!client || Platform.OS !== 'web') return Promise.resolve();
+    if (!authConfigRequest.current) {
+      authConfigRequest.current = client
+        .fetchAuthConfig()
+        .then((config) => {
+          if (mounted.current) setAuthConfig(config);
+        })
+        .catch(() => {
+          authConfigRequest.current = null;
+        });
+    }
+    return authConfigRequest.current;
+  }, [client]);
+
+  // Wait for the options only while the launch screen is still up, so the
+  // entry screen does not flash password buttons and then swap them.
+  const loadAuthConfigBriefly = useCallback(async (): Promise<void> => {
+    if (!client || Platform.OS !== 'web') return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const limit = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, AUTH_CONFIG_WAIT_MS);
+    });
+    try {
+      await Promise.race([loadAuthConfig(), limit]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }, [client, loadAuthConfig]);
 
   const restore = useCallback(async () => {
     if (!client) {
@@ -103,9 +209,16 @@ export function RealAccountProvider({
       const restored = await client.restore();
       if (!mounted.current) return;
       if (!restored) {
+        if (!urlNotice.current.read) {
+          urlNotice.current = { read: true, notice: consumeAuthErrorParam() };
+        }
+        const returnedNotice = urlNotice.current.notice;
+        urlNotice.current.notice = null;
+        await loadAuthConfigBriefly();
+        if (!mounted.current) return;
         setSession(null);
         setState('entry');
-        setNotice(null);
+        setNotice(returnedNotice);
         return;
       }
       setSession(restored);
@@ -123,6 +236,8 @@ export function RealAccountProvider({
             localCredentialRemovalFailed = true;
           }
         }
+        await loadAuthConfigBriefly();
+        if (!mounted.current) return;
         setSession(null);
         tokenRef.current = undefined;
         setNotice(localCredentialRemovalFailed ? 'local-credential-removal-failed' : 'expired');
@@ -135,10 +250,12 @@ export function RealAccountProvider({
         // Keep the native token in SecureStore so Retry can validate the session.
         setSession(null);
         setState('error');
-        setNotice('offline');
+        setNotice(
+          error instanceof AuthRequestError && error.status >= 500 ? 'unavailable' : 'offline',
+        );
       }
     }
-  }, [client]);
+  }, [client, loadAuthConfigBriefly]);
 
   useEffect(() => {
     mounted.current = true;
@@ -149,8 +266,14 @@ export function RealAccountProvider({
     };
   }, [restore, restoreAttempt]);
 
+  // Covers entry reached without a restore (sign-out, no stored token).
+  useEffect(() => {
+    if (state === 'entry') void loadAuthConfig();
+  }, [loadAuthConfig, state]);
+
   const signIn = useCallback(
     async (username: string, password: string): Promise<boolean> => {
+      signingOut.current = false;
       if (!client) {
         setNotice('offline');
         return false;
@@ -183,7 +306,14 @@ export function RealAccountProvider({
         const result = await client.login(username, password);
         if (!mounted.current) return false;
         tokenRef.current = result.token;
-        setSession(accountSession(result.account, result.expiresAt));
+        setSession(
+          accountSession(
+            result.account,
+            result.expiresAt,
+            result.absoluteExpiresAt,
+            result.signInMethod,
+          ),
+        );
         setState('active');
         return true;
       } catch (error) {
@@ -210,7 +340,9 @@ export function RealAccountProvider({
         if (error instanceof AuthRequestError) {
           if (error.status === 409) return 'duplicate';
           if (error.status === 429) return 'rate-limited';
-          if (error.status === 400 || error.status === 422) return 'invalid';
+          if (error.status === 400 || error.status === 422) {
+            return invalidRegistrationOutcome(username, password);
+          }
         }
         return 'unavailable';
       } finally {
@@ -257,6 +389,7 @@ export function RealAccountProvider({
   }, [client]);
 
   const signOut = useCallback(async () => {
+    signingOut.current = true;
     setPending(true);
     if (!client) {
       await clearLocalSession();
@@ -270,6 +403,7 @@ export function RealAccountProvider({
       } catch {
         // Keep the active session visible and truthful if durable recovery
         // state cannot be written. No request or credential deletion starts.
+        signingOut.current = false;
         setPending(false);
         setNotice('sign-out-marker-unavailable');
         return;
@@ -281,8 +415,9 @@ export function RealAccountProvider({
     }
 
     let remoteRevoked = false;
+    let logoutUrl: string | undefined;
     try {
-      await client.logout(tokenRef.current);
+      logoutUrl = await client.logout(tokenRef.current);
       remoteRevoked = true;
     } catch {
       // Keep server revocation status separate from local credential deletion.
@@ -292,9 +427,11 @@ export function RealAccountProvider({
       if (remoteRevoked) {
         await clearLocalSession();
         setNotice(null);
+        followLogoutUrl(logoutUrl);
       } else {
         // HttpOnly cookies cannot be cleared in JavaScript. Keep this browser
         // session active until the server confirms revocation.
+        signingOut.current = false;
         setPending(false);
         setNotice('revocation-unconfirmed');
       }
@@ -354,6 +491,49 @@ export function RealAccountProvider({
     }
   }, [clearLocalSession, client]);
 
+  const deleteAccount = useCallback(
+    async (credential: string): Promise<AccountDeletionOutcome> => {
+      if (!client || state !== 'active') return 'unavailable';
+      const body =
+        session?.signInMethod === 'cognito'
+          ? { confirmation: credential }
+          : { password: credential };
+      setPending(true);
+      try {
+        const response = await client.request(
+          '/auth/account/delete',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+          tokenRef.current,
+        );
+        if (response.status === 403) return 'incorrect';
+        if (response.status === 429) return 'throttled';
+        if (!response.ok) return 'unavailable';
+        // The server revoked every session with the account, so only this
+        // device's copy of the credential is left to clear.
+        const result = (await response.json().catch(() => null)) as { logoutUrl?: unknown } | null;
+        await clearLocalSession();
+        if (mounted.current) setNotice('deleted');
+        if (session?.signInMethod === 'cognito' && typeof result?.logoutUrl === 'string') {
+          followLogoutUrl(result.logoutUrl);
+        }
+        return 'deleted';
+      } catch (error) {
+        if (error instanceof AuthRequestError && error.status === 401) {
+          await clearLocalSession();
+          if (mounted.current) setNotice('revoked');
+        }
+        return 'unavailable';
+      } finally {
+        if (mounted.current) setPending(false);
+      }
+    },
+    [clearLocalSession, client, session, state],
+  );
+
   const authenticatedRequest = useCallback(
     async (path: string, init: RequestInit = {}) => {
       if (!client || state !== 'active' || !session) throw new AuthRequestError(401, 'expired');
@@ -361,7 +541,7 @@ export function RealAccountProvider({
         return await client.request(path, init, tokenRef.current);
       } catch (error) {
         if (error instanceof AuthRequestError && error.status === 401) {
-          setNotice('revoked');
+          if (!signingOut.current) setNotice('revoked');
           await clearLocalSession();
         }
         throw error;
@@ -370,21 +550,59 @@ export function RealAccountProvider({
     [clearLocalSession, client, session, state],
   );
 
+  const startCognitoSignIn = useCallback(() => {
+    if (!client || Platform.OS !== 'web' || typeof window === 'undefined') return;
+    // Keep the path and query so a pending invitation link survives the round trip.
+    const { pathname, search } = window.location;
+    window.location.assign(client.cognitoStartUrl(`${pathname || '/'}${search || ''}`));
+  }, [client]);
+
+  const updateDisplayName = useCallback(
+    async (displayName: string): Promise<boolean> => {
+      try {
+        const response = await authenticatedRequest('/auth/profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ displayName }),
+        });
+        if (!response.ok) return false;
+        const body = (await response.json().catch(() => null)) as { account?: unknown } | null;
+        const account = body?.account;
+        if (!isRealAccount(account)) return false;
+        if (mounted.current) {
+          setSession((current) => (current ? { ...current, account } : current));
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [authenticatedRequest],
+  );
+
   const realtimeAuthorizationHeader = useCallback(
     () => client?.realtimeAuthorizationHeader(tokenRef.current),
     [client],
   );
 
   useEffect(() => {
-    if (state !== 'active' || !session) return;
-    const remaining = Date.parse(session.idleExpiresAt) - Date.now();
-    const timer = setTimeout(
-      () => {
+    if (state !== 'active' || !session?.absoluteExpiresAt) return;
+    // Idle expiry rolls forward on the server. Only a supplied absolute expiry
+    // is safe to schedule locally; every server 401 remains authoritative.
+    const remaining = Date.parse(session.absoluteExpiresAt) - Date.now();
+    if (!Number.isFinite(remaining)) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const checkAbsoluteExpiry = () => {
+      const delay = Date.parse(session.absoluteExpiresAt!) - Date.now();
+      if (delay <= 0) {
         setNotice('expired');
         void clearLocalSession();
-      },
-      Math.max(0, Number.isFinite(remaining) ? remaining : 0),
-    );
+        return;
+      }
+      // Longer delays overflow the signed 32-bit JS timer and fire immediately.
+      timer = setTimeout(checkAbsoluteExpiry, Math.min(delay, 2_147_483_647));
+    };
+    checkAbsoluteExpiry();
     return () => clearTimeout(timer);
   }, [clearLocalSession, session, state]);
 
@@ -396,9 +614,13 @@ export function RealAccountProvider({
       notice,
       pending,
       secureTransportAvailable: Boolean(client?.canConnectSecurely()),
+      authConfig,
+      startCognitoSignIn,
+      updateDisplayName,
       signIn,
       registerAccount,
       signOut,
+      deleteAccount,
       retryLocalCredentialRemoval,
       retryRestore: () => {
         setState('loading');
@@ -409,10 +631,12 @@ export function RealAccountProvider({
       realtimeAuthorizationHeader,
     }),
     [
+      authConfig,
       authenticatedRequest,
       realtimeAuthorizationHeader,
       baseUrl,
       client,
+      deleteAccount,
       notice,
       pending,
       retryLocalCredentialRemoval,
@@ -420,7 +644,9 @@ export function RealAccountProvider({
       session,
       signIn,
       signOut,
+      startCognitoSignIn,
       state,
+      updateDisplayName,
     ],
   );
 

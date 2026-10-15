@@ -1,6 +1,7 @@
 import { CAPTURE_MODES, type CaptureMode } from '../src/domain/video';
 import {
   RETRO_LOOKS,
+  lookPreviewStyle,
   createRandom,
   drawRetroFrame,
   fillNoise,
@@ -210,4 +211,8 @@ describe('retro looks', () => {
     );
     expect(draw?.args[2]).not.toBe(0);
   });
+});
+
+it.each(CAPTURE_MODES)('live %s grading uses the final-file spec', (mode) => {
+  expect(lookPreviewStyle(mode)).toEqual({ filter: RETRO_LOOKS[mode].filter });
 });

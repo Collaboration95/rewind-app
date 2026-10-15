@@ -6,22 +6,24 @@ import { once, EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { clearDemoMedia } from './helpers/demo-media.mjs';
+import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
-const { ArchiveIntegrityCache } = await import('../dist/archive/integrity-cache.js');
-const { hashFileWithIdentity } = await import('../dist/media/integrity.js');
 const { openMediaWithIntegrity } = await import('../dist/media/integrity.js');
 const { MediaServingBudget, releaseBudgetWhenSnapshotCloses } =
   await import('../dist/media/serving-budget.js');
 
-test('archive and cycle routes keyset-page independently and invalidate changed media identity', async () => {
+test('archive films and clips keyset-page independently and drop resized media', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-paging-performance-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
-  clearDemoMedia(database);
+  const config = parseConfig({
+    REWIND_DATA_DIR: dataDir,
+    REWIND_HOST: '127.0.0.1',
+    ...REAL_AUTH_ENV,
+  });
+  const database = openFixtureDatabase(config);
+  clearFixtureMedia(database);
   const processedDir = `${dataDir}/media/processed`;
   await mkdir(processedDir, { recursive: true });
   const mediaPath = `${processedDir}/archive-fixture.mp4`;
@@ -49,8 +51,9 @@ test('archive and cycle routes keyset-page independently and invalidate changed 
 
   const insertFilm = database.prepare(
     `INSERT INTO media_jobs
-       (id, group_id, cycle_id, kind, status, output_path, created_at, output_sha256, output_bytes)
-     VALUES (?, 'demo-group', ?, 'film', 'ready', ?, ?, ?, ?)`,
+       (id, group_id, cycle_id, kind, status, output_path, created_at, output_sha256, output_bytes,
+        output_verified_at)
+     VALUES (?, 'demo-group', ?, 'film', 'ready', ?, ?, ?, ?, ?)`,
   );
   for (let index = 0; index < 51; index += 1) {
     const createdAt = new Date(Date.parse(timestamp) - index * 1_000).toISOString();
@@ -61,6 +64,7 @@ test('archive and cycle routes keyset-page independently and invalidate changed 
       createdAt,
       digest,
       mediaBytes.length,
+      timestamp,
     );
   }
   database
@@ -73,26 +77,21 @@ test('archive and cycle routes keyset-page independently and invalidate changed 
     .prepare(
       `INSERT INTO media_jobs
          (id, group_id, cycle_id, contribution_id, kind, status, output_path, created_at,
-          output_sha256, output_bytes)
+          output_sha256, output_bytes, output_verified_at)
        VALUES ('page-clip', 'demo-group', 'demo-cycle', 'page-contribution', 'clip',
-         'ready', ?, ?, ?, ?)`,
+         'ready', ?, ?, ?, ?, ?)`,
     )
-    .run(mediaPath, timestamp, digest, mediaBytes.length);
+    .run(mediaPath, timestamp, digest, mediaBytes.length, timestamp);
 
   const server = createRuntimeServer(config, database);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   try {
-    const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ memberId: 'demo-1' }),
-    });
-    const session = (await sessionResponse.json()).session;
-    const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.id)}`;
+    const { headers } = await signInAs(database, 'demo-1');
+    const query = 'groupId=demo-group';
 
-    const firstArchiveResponse = await fetch(`${baseUrl}/archive?${query}&limit=50`);
+    const firstArchiveResponse = await fetch(`${baseUrl}/archive?${query}&limit=50`, { headers });
     assert.equal(firstArchiveResponse.status, 200);
     const firstArchive = await firstArchiveResponse.json();
     assert.equal(firstArchive.archive.films.length, 50);
@@ -105,6 +104,7 @@ test('archive and cycle routes keyset-page independently and invalidate changed 
 
     const finalFilmPageResponse = await fetch(
       `${baseUrl}/archive?${query}&limit=50&filmCursor=${encodeURIComponent(firstArchive.pagination.filmCursor)}&includeClips=false`,
+      { headers },
     );
     const finalFilmPage = await finalFilmPageResponse.json();
     assert.deepEqual(
@@ -115,67 +115,40 @@ test('archive and cycle routes keyset-page independently and invalidate changed 
     assert.equal(finalFilmPage.pagination.hasMoreFilms, false);
     assert.equal(finalFilmPage.pagination.hasMoreClips, false);
 
-    const firstCycleResponse = await fetch(`${baseUrl}/cycles/history?${query}&limit=50`);
-    assert.equal(firstCycleResponse.status, 200);
-    const firstCycles = await firstCycleResponse.json();
-    assert.equal(firstCycles.cycles.length, 50);
-    assert.equal(firstCycles.hasMore, true);
-    const olderCycleResponse = await fetch(
-      `${baseUrl}/cycles/history?${query}&limit=50&cursor=${encodeURIComponent(firstCycles.nextCursor)}`,
-    );
-    const olderCycles = await olderCycleResponse.json();
-    assert.equal(olderCycles.cycles.length, 6);
-    assert.equal(olderCycles.hasMore, false);
-    assert.equal(
-      new Set([...firstCycles.cycles, ...olderCycles.cycles].map(({ id }) => id)).size,
-      56,
-    );
-
-    const invalidArchiveCursor = await fetch(`${baseUrl}/archive?${query}&filmCursor=invalid`);
+    const invalidArchiveCursor = await fetch(`${baseUrl}/archive?${query}&filmCursor=invalid`, {
+      headers,
+    });
     assert.equal(invalidArchiveCursor.status, 400);
-    const invalidCycleCursor = await fetch(`${baseUrl}/cycles/history?${query}&cursor=invalid`);
-    assert.equal(invalidCycleCursor.status, 400);
 
-    // Listing cache hits are tied to strong filesystem identity; the next
-    // page sees changed bytes and omits the now-tampered file.
+    // Same-size tampering stays listed (listing checks size, not content)
+    // and is refused when playback hashes the bytes (#475).
     await writeFile(mediaPath, Buffer.from('tampered archive fixture'));
     const tamperedPageResponse = await fetch(
       `${baseUrl}/archive?${query}&filmCursor=${encodeURIComponent(firstArchive.pagination.filmCursor)}&includeClips=false`,
+      { headers },
     );
     const tamperedPage = await tamperedPageResponse.json();
-    assert.deepEqual(tamperedPage.archive.films, []);
-    const download = await fetch(`${baseUrl}/films/page-film-50/download?${query}`);
+    assert.deepEqual(
+      tamperedPage.archive.films.map((film) => film.id),
+      ['page-film-50'],
+    );
+    const playback = await fetch(`${baseUrl}/films/page-film-50/play?${query}`, { headers });
+    assert.equal(playback.status, 404);
+    // A resized object no longer matches its record and leaves the listing.
+    await writeFile(mediaPath, Buffer.from('truncated'));
+    const resizedPage = await (
+      await fetch(
+        `${baseUrl}/archive?${query}&filmCursor=${encodeURIComponent(firstArchive.pagination.filmCursor)}&includeClips=false`,
+        { headers },
+      )
+    ).json();
+    assert.deepEqual(resizedPage.archive.films, []);
+    const download = await fetch(`${baseUrl}/films/page-film-50/download?${query}`, { headers });
     assert.equal(download.status, 404);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     database.close();
     await rm(dataDir, { recursive: true, force: true });
-  }
-});
-
-test('archive integrity cache expires, bounds entries, and rejects replaced or changed files', async () => {
-  const directory = await mkdtemp(`${tmpdir()}/rewind-integrity-cache-test-`);
-  const path = `${directory}/media.bin`;
-  let clock = 1_000;
-  const cache = new ArchiveIntegrityCache(100, 1, () => clock);
-  try {
-    await writeFile(path, 'before');
-    const hashed = await hashFileWithIdentity(path);
-    assert.ok(hashed);
-    cache.rememberVerified(path, hashed.sha256, hashed.byteLength, hashed.identity);
-    assert.equal(cache.hasVerified(path, hashed.sha256, hashed.byteLength), true);
-    assert.equal(cache.hasVerified(path, 'different-digest', hashed.byteLength), false);
-    cache.rememberVerified(path, hashed.sha256, hashed.byteLength, hashed.identity);
-    clock += 101;
-    assert.equal(cache.hasVerified(path, hashed.sha256, hashed.byteLength), false);
-
-    const fresh = await hashFileWithIdentity(path);
-    assert.ok(fresh);
-    cache.rememberVerified(path, fresh.sha256, fresh.byteLength, fresh.identity);
-    await writeFile(path, 'changed-size-and-identity');
-    assert.equal(cache.hasVerified(path, fresh.sha256, fresh.byteLength), false);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -220,8 +193,8 @@ test('aborted media response retains its lease until the snapshot stream closes'
 test('integrity snapshot refuses a source larger than its reserved temporary-byte budget', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-snapshot-budget-test-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
-  clearDemoMedia(database);
+  const database = openFixtureDatabase(config);
+  clearFixtureMedia(database);
   const processedDir = `${dataDir}/media/processed`;
   await mkdir(processedDir, { recursive: true });
   const mediaPath = `${processedDir}/oversized.mp4`;

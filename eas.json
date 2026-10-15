@@ -9,9 +9,6 @@
       "environment": "preview",
       "autoIncrement": false,
       "node": "26.3.1",
-      "env": {
-        "EXPO_PUBLIC_DEMO_ACCESS": "disabled"
-      },
       "android": {
         "buildType": "apk",
         "credentialsSource": "local"
@@ -22,9 +19,6 @@
       "environment": "preview",
       "autoIncrement": false,
       "node": "26.3.1",
-      "env": {
-        "EXPO_PUBLIC_DEMO_ACCESS": "disabled"
-      },
       "ios": {
         "simulator": true,
         "buildConfiguration": "Release",
@@ -36,9 +30,6 @@
       "environment": "preview",
       "autoIncrement": false,
       "node": "26.3.1",
-      "env": {
-        "EXPO_PUBLIC_DEMO_ACCESS": "disabled"
-      },
       "ios": {
         "simulator": false,
         "buildConfiguration": "Release",

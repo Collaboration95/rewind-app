@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { forgetAccount } from '../auth/identity-cache';
 import type { RewindDatabase } from '../db';
 import { DEFAULT_GROUP_TIME_ZONE, validateTimeZone } from '../reminders/schedule';
 const GROUP_NAME_MAX_LENGTH = 80;
@@ -119,6 +120,7 @@ export function createRealGroup(
     database.exec('ROLLBACK');
     throw error;
   }
+  forgetAccount(database, account.id);
 
   return getCurrentRealGroup(database, account.id);
 }
@@ -233,5 +235,6 @@ export function selectRealGroup(database: RewindDatabase, accountId: string, gro
        ON CONFLICT(account_id) DO UPDATE SET group_id = excluded.group_id`,
     )
     .run(accountId, groupId);
+  forgetAccount(database, accountId);
   return true;
 }

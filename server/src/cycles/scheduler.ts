@@ -41,7 +41,7 @@ function scanLimit(limit: number | undefined): number {
   return limit;
 }
 
-/** One bounded pass. Real groups alone are eligible; Demo stays owner-driven. */
+/** One bounded pass over real groups. */
 export async function runCycleSchedulerTick(
   database: RewindDatabase,
   options: CycleSchedulerOptions,

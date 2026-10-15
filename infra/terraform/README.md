@@ -4,6 +4,11 @@ Terraform is the source of truth for AWS infrastructure. Application deployment,
 database migrations, and backup/restore scripts remain in `deploy/` because they
 operate inside the already-provisioned host rather than create cloud resources.
 
+The `demo` root and every `rewind-demo*` resource are the hosted dev host for
+the real-account app. "Demo" in their names and in this README is historical;
+the synthetic Demo product was removed on 6 October 2026. Do not rename these
+resources or the state key: that would replace the live host.
+
 ## Safety rules
 
 - This Mac stores the bootstrap credential as AWS's `default` profile;
@@ -13,14 +18,14 @@ operate inside the already-provisioned host rather than create cloud resources.
   credentials.
 - Start with `plan`; only a named human Terraform-apply owner runs `apply`.
 - The disposable compute lifecycle is explicit: `demo_instance_enabled=true`
-  creates the host and `false` hibernates it after a verified backup. The
-  reviewed `infra/scripts/destroy-demo.sh` workflow is the only documented
-  teardown path; the backup bucket and recovery IAM remain managed.
+  creates the host and `false` removes it. Backup-gated hibernation
+  (`destroy-demo.sh`) was retired in #512; the host runs continuously and its
+  data lives in managed PostgreSQL and S3.
 - Instance `user_data` is creation-time bootstrap: its drift alone is ignored
   so edits to `cloud-init.sh` do not replace a running host. Newly created or
   intentionally recreated hosts still receive the current script. Updating
   the script does not update an existing host; use application deployment or
-  the backup-gated hibernation/wake workflow as appropriate. No other instance
+  rebuild the host with `wake-demo.sh` as appropriate. No other instance
   fields are ignored, and this rule does not prevent intentional teardown.
 - The S3 backend's contents are state, not source code. State is private,
   encrypted, versioned, and ignored by Git; the `.tf` files and provider lock
@@ -94,7 +99,7 @@ make that possible, and neither creates compute:
   with no wildcard. It is declared next to the instance so its policy
   always carries the current `aws_lightsail_instance.rewind[0].arn`; a
   hard-coded ARN would silently stop matching after the documented
-  hibernation/wake cycle replaces the host. It may read the instance address
+  host rebuild replaces it. It may read the instance address
   and open or close ports on that one host, and nothing else: no start, stop,
   delete, resize, or media/bucket access.
 
@@ -133,16 +138,12 @@ The live-Demo owners accepted the following operating model on 23 September
 - The approved location is `ap-southeast-1`, availability zone
   `ap-southeast-1a`.
 - Recovery uses CIDR-restricted SSH from the trusted operator machine.
-- Pausing is manual backup-gated hibernation through
-  `infra/scripts/destroy-demo.sh`; scheduled starts and direct stop/delete
-  operations remain disabled.
-- A failed backup or manifest verification leaves the instance running. No
-  disposable compute is deleted without a fresh verified recovery point. A
-  failed restore preserves every recovery artifact and does not replace
+- The host runs continuously; hibernation was retired in #512. Scheduled
+  starts and direct stop/delete operations remain disabled.
+- A failed restore preserves every recovery artifact and does not replace
   known-good data.
 - Public acceptance uses the single HTTPS entry point documented below. The
-  retired optional Lightsail distribution is not part of current deployment or
-  hibernation guidance.
+  retired optional Lightsail distribution is not part of current deployment.
 - Andrew owns the non-author acceptance run for the hosted journey.
 
 An apply still requires Andrew to review the exact Terraform plan. These
@@ -185,9 +186,8 @@ records those objects in Terraform state; it does **not** recreate them.
 
 ## Intentional cost safeguards
 
-- The active Demo uses one `micro_3_0` Lightsail instance. Hibernated state has
-  no instance or static IP; static-IP retention is intentionally out of scope
-  for the current sprint and may be revisited later.
+- The active Demo uses one `micro_3_0` Lightsail instance, running
+  continuously.
 - No RDS, NAT gateway, load balancer, ECR, or extra compute is declared here.
 - The hosted Demo is accessed at
   `https://d2m6kz76y4kuvm.cloudfront.net`; local Terraform defaults do not
@@ -197,56 +197,6 @@ records those objects in Terraform state; it does **not** recreate them.
   temporary release archive prefix after 3 days. CloudTrail has matching
   30-day/7-day retention. Superseded Terraform state versions expire after
   90 days; the current state is retained.
-
-The read-only cost-safety audit evaluates one of three explicit expected states:
-
-- `demo_off`: no disposable instance and no static IP unless retention was
-  explicitly enabled; configured snapshots and distributions are still the
-  complete allowlist.
-- `expected_stopped`: one stopped, `Environment=demo` instance with its static
-  IP attached; this is the default idle state.
-- `approved_active_demo`: one running, `Environment=demo` instance with its
-  static IP attached; this is allowed only when
-  `cost_safety_expected_instance_state = "running"` is explicitly configured.
-
-`demo_instance_enabled` controls whether Terraform creates the instance; it
-does not describe its power state. When the instance exists, the audit's
-expected power state is configured independently with
-`cost_safety_expected_instance_state`.
-
-Unexpected compute, orphaned or unattached networking, unapproved snapshots or
-distributions, and missing backup retention produce redacted findings with a
-severity, resource identifier class, expected state, and safe remediation
-reference. The audit only observes and reports; it never stops, deletes, or
-reconfigures resources. Inventory read errors fail closed without logging AWS
-names, object keys, credentials, or exception text.
-
-Audit failure delivery is disabled by default. To use the managed publisher,
-set `cost_safety_audit_notification_mode = "sns"` and provide the ARN of a
-separately managed SNS topic in
-`cost_safety_audit_notification_topic_arn`. The publisher sends one stable,
-redacted failure event and records delivery failures without replacing the
-audit result. It does not choose recipients or store an email address,
-webhook, or credential in this repository.
-
-The audit IAM contract is deliberately narrower than the deployment roles:
-
-- The Lambda role can read the required Lightsail inventory, read backup-bucket
-  lifecycle configuration, write only to its own CloudWatch log streams, and
-  optionally publish to the configured SNS topic ARN. Lightsail inventory APIs
-  require `Resource = "*"`; the bucket, log group, and notification resources
-  remain explicit Terraform references.
-- The Scheduler role can invoke only the cost-safety Lambda. Its trust policy
-  requires both `var.account_id` and the exact `rewind-demo-cost-safety-audit`
-  schedule ARN in the managed `rewind-demo` schedule group.
-- Neither audit role has permission to stop, start, delete, terminate, or
-  otherwise mutate Lightsail/compute resources, bucket objects, IAM, or account
-  state. The audit observes and alerts; it never remediates findings.
-
-The policy contract is covered by static assertions in
-`tests/terraform/cost-safety-policy.test.mjs`. Run it together with
-`terraform fmt -check` and `terraform validate`; no AWS apply or credentials
-are required.
 
 Budgets notify after AWS has observed cost; they cannot impose a guaranteed
 hard spending ceiling. The practical cap is the small resource allowlist and
@@ -281,7 +231,7 @@ apply is human-owned through the `rewind-terraform-apply` profile. Its service
 allowlist excludes EC2, RDS, VPC/NAT, ECR, ECS, and Organizations; extending it
 requires a reviewed Terraform change.
 
-## Cloud power controller and hibernation
+## Cloud power controller and host rebuild
 
 The demo root defines a small Lambda control plane, not a public endpoint. An
 operator role can invoke only `rewind-demo-power-controller` with either:
@@ -303,17 +253,15 @@ automatic start schedule is opt-in through
 because cloud automation must not bypass the host's backup-and-verify step.
 
 The legacy `rewind-demo-operator` Lambda remains only for an already-existing
-instance and is disabled while `demo_instance_enabled=false`. The normal
-operator flow uses the human-reviewed Terraform profile:
+instance and is disabled while `demo_instance_enabled=false`. Rebuilding the
+host uses the human-reviewed Terraform profile:
 
 ```sh
-./infra/scripts/destroy-demo.sh --dry-run
-./infra/scripts/destroy-demo.sh --apply --confirm
 ./infra/scripts/wake-demo.sh --latest
 ./infra/scripts/wake-demo.sh --latest --apply --confirm
 ```
 
-The scripts default to read-only guard and plan mode. They verify the caller
+The script defaults to read-only guard and plan mode. It verifies the caller
 account, Terraform identity tags, expected/absent Lightsail resources, and the
 absence of unexpected Rewind resources before a plan is eligible. `--apply`
 requires the separate `--confirm` flag. `wake-demo.sh` downloads and verifies
@@ -322,9 +270,8 @@ restores the files on the new host before starting the runtime. It never treats
 a newly-created empty database as a successful recovery. The explicit
 `wake-demo.sh --seed` mode is only the first-install exception when no
 historical recovery point exists; it must be run with `--apply --confirm` to
-execute and must be followed by a complete backup before hibernation.
-Hibernation uploads the host-created snapshot from the trusted operator
-machine, so recreated hosts do not need to inherit AWS CLI credentials.
+execute. The `--latest` and `--manifest` modes restore SQLite-era recovery
+points and apply only to a host that keeps its database on disk.
 
 ## Recovery model
 
@@ -472,6 +419,22 @@ subject) to the private object `s3://<bucket>/_config/dev.env`, which only the
 dev deploy role may read. Each dev deploy streams it to
 `deploy/release-host.sh configure`; the server generates its own web push keys
 once and keeps them. No one copies credentials by hand.
+
+### Cognito sign-in (`media/cognito.tf`)
+
+Each environment gets one Cognito user pool (`rewind-<environment>`), a public
+app client (authorization code + PKCE, no secret), a default prefix domain
+(`rewind-<environment>-<account>.auth.<region>.amazoncognito.com`) and Managed
+Login v2 branding in Warm Glass colours. Sign-in is by email and password;
+self sign-up is on; MFA, social login and custom domains are off. The client's
+callback URLs are derived from `web_origins` as `<origin>/api/auth/callback`,
+and its logout URLs as `<origin>/`, so adding an origin there registers it.
+Pool, client and domain reach the server through the settings object
+(`REWIND_COGNITO_*`), and the runtime IAM user may only call
+`cognito-idp:AdminDeleteUser` on that pool. `auth_password` (default true,
+dev) sets `REWIND_AUTH_PASSWORD`; the release module call sets it to false.
+Release gets its own pool when its root is applied with the next `main`
+promotion.
 
 ## Host alarms (`infra/scripts/lightsail-alarms.sh`)
 

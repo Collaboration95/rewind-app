@@ -1,13 +1,7 @@
 export {
-  ChatUnreadProvider,
-  chatConnectionLabel,
-  useChatUnread,
-  useOptionalChatUnread,
-  type ChatConnectionState,
-  type ChatUnreadContextValue,
-} from './ChatUnreadProvider';
-export {
   ChatUnreadOwner,
+  chatConnectionLabel,
+  type ChatConnectionState,
   type ChatUnreadState,
   type ChatUnreadSubscribe,
   type ChatUnreadSubscription,

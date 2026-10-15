@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f6ede3" />
+    <title>Rewind privacy policy</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        background: #f6ede3;
+        color: #33231a;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 40rem;
+        padding: 40px 16px 56px;
+        line-height: 1.55;
+        background: #f6ede3;
+      }
+      h1,
+      h2 {
+        font-family: Fraunces, Georgia, serif;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      h1 {
+        font-size: 2rem;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin: 32px 0 8px;
+      }
+      p,
+      li {
+        color: rgba(51, 35, 26, 0.74);
+      }
+      strong {
+        color: #33231a;
+      }
+      a {
+        color: #e0703a;
+        text-underline-offset: 2px;
+      }
+      nav {
+        margin-top: 40px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(51, 35, 26, 0.16);
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Rewind privacy policy</h1>
+      <p>Effective 15 October 2026.</p>
+      <p>
+        Rewind is a private time capsule for small groups. This policy says what Rewind stores, why,
+        and how you delete it.
+      </p>
+      <h2>What we store</h2>
+      <ul>
+        <li>
+          Your username, display name and account identifier. For Cognito sign-in, Rewind stores the
+          provider's subject identifier to link your account. Amazon Cognito holds your sign-in
+          credentials and verified email; Rewind checks the verified-email claim during sign-in but
+          does not store the email in its account database or receive your Cognito password. Local
+          and hosted developer accounts instead use a username and a salted password hash stored by
+          Rewind; the password itself is not stored.
+        </li>
+        <li>The groups you create or join, and your role in each group.</li>
+        <li>The photos and videos you capture, including the sound in videos.</li>
+        <li>Your chat messages and reactions.</li>
+        <li>
+          Reminder settings, the group time zone and, if you turn on reminders, a push subscription
+          for your device.
+        </li>
+        <li>Reports you make, members you block and moments a group owner removes.</li>
+        <li>
+          Short-lived security records, such as hashed sign-in tokens and failed sign-in counts.
+        </li>
+      </ul>
+      <h2>Why we store it</h2>
+      <p>
+        We use this data only to run Rewind: to sign you in, to share moments with the members of
+        your groups, to make each group's film, to send the reminders you ask for, and to keep the
+        service safe. Rewind has no ads. We do not sell your data, share it with advertisers or
+        track you across other apps and websites.
+      </p>
+      <h2>Who can see it</h2>
+      <p>
+        Only the members of a group can see that group's moments, film and chat. The people who
+        operate Rewind can access stored data to keep the service running and to act on reports. We
+        review reports within 24 hours. When you block someone, their messages and moments are
+        hidden from you.
+      </p>
+      <h2>Where it is stored</h2>
+      <p>
+        Photos, videos and group films are stored in private Amazon Web Services (AWS) S3 storage.
+        Account details, group membership, chat and reminder settings are stored in the hosted
+        database on AWS. Data is sent over encrypted (HTTPS) connections. Web push reminders pass
+        through your browser or device maker's push service. Amazon Cognito handles hosted sign-in
+        and recovery separately from Rewind's application database. Local development uses local
+        database and disk storage rather than the hosted storage described above.
+      </p>
+      <h2>How long we keep it</h2>
+      <p>
+        We keep your account data while your account exists, unless you delete content sooner. Group
+        films that have already been made stay with the group after account deletion. Unfinished
+        uploads expire through scheduled cleanup and storage expiration rules; storage removal may
+        take additional time after an upload expires. Recovery backups may contain earlier copies
+        until they expire under the configured backup retention rules.
+      </p>
+      <h2>Deleting your account</h2>
+      <p>
+        You can delete your account in the app under <strong>Settings → Delete account</strong>.
+        Deletion is permanent. It removes your account, your sign-ins, your chat messages and
+        reactions, your photos and videos, your reports and your blocks. Access is revoked when
+        deletion completes; stored media is then removed through deletion and cleanup. A group you
+        own passes to its longest-standing other member. A group with no other members is deleted
+        with all its content. A group film that was already made with your moments stays with that
+        group. For a Cognito-linked account, deletion also requests removal of the linked Cognito
+        user before removing the Rewind account. If the provider request fails, Rewind reports an
+        error and leaves the application account intact so you can retry. Deleting Rewind does not
+        delete a separate upstream identity-provider account, if one is used. Copies already
+        downloaded by group members are outside Rewind's control.
+      </p>
+      <h2>Children</h2>
+      <p>Rewind is not for children under 13.</p>
+      <h2>Changes and contact</h2>
+      <p>
+        We will update this page when this policy changes. For questions or requests, use the
+        <a href="/support">support page</a>.
+      </p>
+      <nav aria-label="Rewind legal pages">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms of use</a>
+        <a href="/support">Support</a>
+      </nav>
+    </main>
+  </body>
+</html>

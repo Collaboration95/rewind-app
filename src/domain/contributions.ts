@@ -18,6 +18,7 @@ export interface ContributionLedgerEntry {
   jobId: string | null;
   state: ContributionLedgerState;
   durationSeconds: number;
+  mediaType: 'photo' | 'video';
   createdAt: string;
   updatedAt: string;
   attempts: number;
@@ -102,6 +103,8 @@ function parseEntry(value: unknown): ContributionLedgerEntry | null {
     jobId: entry.jobId,
     state: state as ContributionLedgerState,
     durationSeconds: entry.durationSeconds,
+    // Older servers omit the type; a video is the safe default label.
+    mediaType: entry.mediaType === 'photo' ? 'photo' : 'video',
     createdAt: entry.createdAt,
     updatedAt: entry.updatedAt,
     attempts: entry.attempts,

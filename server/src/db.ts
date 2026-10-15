@@ -1,15 +1,36 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 
-import type { RuntimeConfig } from './config';
-import { DEMO_SESSION_LIFETIME_MS } from './session/contract';
+import { parseConfig, type RuntimeConfig } from './config';
 import {
   filePathMatchesIdentity,
   hashFileWithIdentity,
   type HashedFileIntegrity,
 } from './media/integrity';
+import {
+  bootstrapDatabaseRoles,
+  type DatabaseRoles,
+  dropTestSchema,
+  isPostgres,
+  migratePostgres,
+  openPostgres,
+  openTestPostgres,
+  postgresMissingMigrationKeys,
+  testDatabaseUrl,
+  verifyDatabaseEnvironment,
+} from './postgres/runtime';
+import type { PostgresDatabase } from './postgres/database';
+import { TransferError, transferSqliteToPostgres, type TransferReport } from './postgres/transfer';
+import {
+  assertSourceMatches,
+  exportPostgresToSqlite,
+  WRITER_APPLICATION_NAMES,
+  type ExportOptions,
+  type ExportReport,
+} from './postgres/export';
+import { installExportedDatabase, type InstallResult } from './postgres/install';
 import {
   contributionLedgerSchemaReady,
   ensureContributionLedgerSchema,
@@ -63,37 +84,26 @@ const MIGRATIONS = [
   { version: 25, key: 'real-group-reminders-v1', fileName: '025-real-group-reminders.sql' },
   { version: 26, key: 'upload-intents-v1', fileName: '026-upload-intents.sql' },
   { version: 27, key: 'reminder-outbox-v1', fileName: '027-reminder-outbox.sql' },
+  { version: 28, key: 'content-safety-v1', fileName: '028-content-safety.sql' },
+  { version: 29, key: 'member-reports-v1', fileName: '029-member-reports.sql' },
+  { version: 30, key: 'moderation-records-v1', fileName: '030-moderation-records.sql' },
+  { version: 31, key: 'cognito-accounts-v1', fileName: '031-cognito-accounts.sql' },
 ].map((migration) => ({
   ...migration,
   sql: readFileSync(resolve(process.cwd(), 'server/migrations', migration.fileName), 'utf8'),
 }));
-const FIXTURE = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'server/fixtures/demo-fixture.json'), 'utf8'),
-) as DemoFixture;
-
-export interface DemoFixture {
-  seedVersion: number;
-  profiles: { id: string; displayName: string; avatarLabel: string }[];
-  group: { id: string; name: string; currentCycleId: string };
-  cycle: {
-    id: string;
-    prompt: string;
-    startsAt: string;
-    endsAt: string;
-    status: string;
-    lockState: string;
-    maxCount: number;
-    maxSeconds: number;
-    countUsed: number;
-    secondsUsed: number;
-  };
-  acceptedAt: string;
-  message: { id: string; body: string };
-  contribution: { id: string; durationSeconds: number };
-  mediaJobs: { id: string; kind: 'clip' | 'film' | 'download'; status: 'pending' | 'ready' }[];
-}
-
+/**
+ * Local runs use node:sqlite. Hosted runs set REWIND_DATABASE_URL and get a
+ * PostgresDatabase, which offers the same synchronous prepare/run/get/all/exec
+ * surface (server/src/postgres), so persistence code is shared by both.
+ */
 export type RewindDatabase = DatabaseSync;
+
+export { isPostgres };
+
+function asRewindDatabase(database: unknown): RewindDatabase {
+  return database as RewindDatabase;
+}
 
 export interface SchemaReadiness {
   ready: boolean;
@@ -102,12 +112,20 @@ export interface SchemaReadiness {
 }
 
 /**
- * The durable migration marker and version receipts are the hosted Demo's
+ * The durable migration marker and version receipts are the hosted runtime's
  * schema contract. Startup applies this contract before accepting traffic;
  * health checks repeat it so an interrupted or manually damaged migration is
  * never reported as ready.
  */
 export function schemaReadiness(database: RewindDatabase): SchemaReadiness {
+  if (isPostgres(database)) {
+    const missingMigrationKeys = postgresMissingMigrationKeys(database, MIGRATIONS);
+    return {
+      ready: missingMigrationKeys.length === 0,
+      expectedMigrationVersion: Math.max(...MIGRATIONS.map((migration) => migration.version)),
+      missingMigrationKeys,
+    };
+  }
   const missingMigrationKeys = MIGRATIONS.filter((migration) => {
     const marked = database
       .prepare('SELECT 1 AS applied FROM schema_migration_markers WHERE migration_key = ?')
@@ -124,34 +142,77 @@ export function schemaReadiness(database: RewindDatabase): SchemaReadiness {
   };
 }
 
-export interface SeedDatabaseOptions {
-  /** Optional clock for the seeded cycle and synthetic record timestamps. */
-  seedNow?: Date | string;
+function openMigratedPostgres(open: () => ReturnType<typeof openPostgres>, environment: string) {
+  const database = open();
+  try {
+    migratePostgres(database, MIGRATIONS);
+    verifyDatabaseEnvironment(database, environment);
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+  return asRewindDatabase(database);
 }
 
-export function openDatabase(
-  config: RuntimeConfig,
-  options: SeedDatabaseOptions = {},
-): RewindDatabase {
+export function openDatabase(config: RuntimeConfig): RewindDatabase {
+  if (config.database) {
+    const settings = config.database;
+    return openMigratedPostgres(() => openPostgres(settings), settings.environment);
+  }
+  const testUrl = testDatabaseUrl();
+  if (testUrl) {
+    return openMigratedPostgres(() => openTestPostgres(testUrl, config.databasePath), 'test');
+  }
   mkdirSync(config.dataDir, { recursive: true });
   const database = new DatabaseSync(config.databasePath);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   migrateDatabase(database);
-  seedDatabase(database, options.seedNow);
   return database;
 }
 
+/**
+ * Operator commands (retention, consistency) open the existing database
+ * without migrating or seeding; reports open it read-only.
+ */
+export function openOperationalDatabase(
+  config: RuntimeConfig,
+  { readOnly }: { readOnly: boolean },
+): RewindDatabase {
+  if (config.database) {
+    return asRewindDatabase(
+      openPostgres(config.database, { applicationName: 'rewind-operator', readOnly }),
+    );
+  }
+  const testUrl = testDatabaseUrl();
+  if (testUrl) {
+    return asRewindDatabase(openTestPostgres(testUrl, config.databasePath, { readOnly }));
+  }
+  return new DatabaseSync(config.databasePath, readOnly ? { readOnly: true } : undefined);
+}
+
 export function openDatabaseAt(databasePath: string): RewindDatabase {
+  const testUrl = testDatabaseUrl();
+  if (testUrl) {
+    return openMigratedPostgres(() => openTestPostgres(testUrl, databasePath), 'test');
+  }
+  return openSqliteDatabaseAt(databasePath);
+}
+
+/** Always SQLite, whatever the environment (snapshot import, local tools). */
+export function openSqliteDatabaseAt(databasePath: string): RewindDatabase {
   const dataDir = resolve(databasePath, '..');
   mkdirSync(dataDir, { recursive: true });
   const database = new DatabaseSync(databasePath);
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
   migrateDatabase(database);
-  seedDatabase(database);
   return database;
 }
 
 export function migrateDatabase(database: RewindDatabase): void {
+  if (isPostgres(database)) {
+    migratePostgres(database, MIGRATIONS);
+    return;
+  }
   database.exec('PRAGMA busy_timeout = 5000;');
   database.exec(
     'CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);',
@@ -169,7 +230,10 @@ export function migrateDatabase(database: RewindDatabase): void {
     const needsRepair = migrationNeedsRepair(database, migration.key);
     if (marked?.applied && applied?.applied && !needsRepair) continue;
 
-    const rebuildProfileReferences = migration.key === 'real-media-profile-bridge-v1';
+    const rebuildProfileReferences = [
+      'real-media-profile-bridge-v1',
+      'moderation-records-v1',
+    ].includes(migration.key);
     if (rebuildProfileReferences) database.exec('PRAGMA foreign_keys = OFF;');
     try {
       beginMigrationTransaction(database);
@@ -236,7 +300,7 @@ export function migrateDatabase(database: RewindDatabase): void {
       if (rebuildProfileReferences) {
         const violations = database.prepare('PRAGMA foreign_key_check').all();
         if (violations.length > 0) {
-          throw new Error('The real media profile migration would break existing references.');
+          throw new Error('The table rebuild migration would break existing references.');
         }
       }
       database.exec('COMMIT');
@@ -1492,205 +1556,280 @@ function migrateLegacyStagedSources(database: RewindDatabase): void {
   database.exec('DROP TABLE staged_media_sources');
 }
 
-/** Seed stable synthetic identities and a time-relative local Demo window. */
-export function seedDatabase(database: RewindDatabase, seedNow?: Date | string): void {
-  const existing = database.prepare('SELECT COUNT(*) AS count FROM profiles').get() as {
-    count: number;
-  };
-  if (Number(existing.count) > 0) return;
-
-  const nowDate = seedNow === undefined ? new Date(FIXTURE.acceptedAt) : new Date(seedNow);
-  if (!Number.isFinite(nowDate.getTime()))
-    throw new Error('The Demo fixture seed time is invalid.');
-  const now = nowDate.toISOString();
-  const fixtureDurationMs = Date.parse(FIXTURE.cycle.endsAt) - Date.parse(FIXTURE.cycle.startsAt);
-  if (!Number.isFinite(fixtureDurationMs) || fixtureDurationMs <= 0) {
-    throw new Error('The Demo fixture cycle window is invalid.');
+function postgresTarget(config: RuntimeConfig) {
+  if (config.database) {
+    const settings = config.database;
+    return { open: () => openPostgres(settings), environment: settings.environment };
   }
-  const cycleStartsAt = now;
-  const cycleEndsAt = new Date(nowDate.getTime() + fixtureDurationMs).toISOString();
-  // The sample is a bundled three-second synthetic portrait MP4 with audio.
-  // Copy actual bytes before publishing ready rows; seeding must not enqueue
-  // source-less work or require an FFmpeg process at startup/reset.
-  const databaseFile = (
-    database.prepare('PRAGMA database_list').all() as { name: string; file: string }[]
-  ).find((entry) => entry.name === 'main')?.file;
-  if (!databaseFile) throw new Error('Demo media seeding requires a file-backed database.');
-  const processedDir = resolve(databaseFile, '..', 'media', 'processed');
-  const sample = readFileSync(resolve(process.cwd(), 'server/fixtures/demo-media.mp4'));
-  const sampleSha256 = createHash('sha256').update(sample).digest('hex');
-  mkdirSync(processedDir, { recursive: true });
-  mkdirSync(resolve(databaseFile, '..', 'media', 'staging'), { recursive: true });
-  const clipPath = resolve(processedDir, 'fixture-demo-clip.mp4');
-  const filmPath = resolve(processedDir, 'fixture-demo-film.mp4');
-  writeFileSync(clipPath, sample);
-  writeFileSync(filmPath, sample);
-  database.exec('BEGIN');
+  const testUrl = testDatabaseUrl();
+  if (testUrl) {
+    return { open: () => openTestPostgres(testUrl, config.databasePath), environment: 'test' };
+  }
+  return null;
+}
+
+/**
+ * Copy a SQLite snapshot (for example a restored S3 backup) into the
+ * configured PostgreSQL database. A copy of the snapshot is migrated to the
+ * current SQLite schema first; the snapshot file itself is not changed.
+ */
+export function importSqliteSnapshot(
+  config: RuntimeConfig,
+  sqlitePath: string,
+  { replace = false }: { replace?: boolean } = {},
+): TransferReport {
+  const target = postgresTarget(config);
+  if (!target) {
+    throw new TransferError('Set REWIND_DATABASE_URL to the PostgreSQL database to import into.');
+  }
+  if (!existsSync(sqlitePath)) throw new TransferError(`No SQLite snapshot at ${sqlitePath}.`);
+  const database = openMigratedPostgres(target.open, target.environment);
   try {
-    const profileInsert = database.prepare(
-      'INSERT INTO profiles (id, display_name, avatar_label, is_synthetic) VALUES (?, ?, ?, 1)',
-    );
-    for (const profile of FIXTURE.profiles) {
-      profileInsert.run(profile.id, profile.displayName, profile.avatarLabel);
-    }
+    return transferSqliteToPostgres(sqlitePath, database as unknown as PostgresDatabase, {
+      replace,
+      migrateSnapshot: (copyPath) => {
+        const snapshot = openSqliteDatabaseAt(copyPath);
+        try {
+          const readiness = schemaReadiness(snapshot);
+          if (!readiness.ready) {
+            throw new TransferError(
+              `The snapshot could not be migrated: ${readiness.missingMigrationKeys.join(', ')}.`,
+            );
+          }
+          return readiness.expectedMigrationVersion;
+        } finally {
+          snapshot.close();
+        }
+      },
+    });
+  } finally {
+    database.close();
+  }
+}
 
-    database
-      .prepare('INSERT INTO groups (id, name, current_cycle_id) VALUES (?, ?, ?)')
-      .run(FIXTURE.group.id, FIXTURE.group.name, FIXTURE.group.currentCycleId);
-    database
-      .prepare(
-        `INSERT INTO cycles
-          (id, group_id, prompt, starts_at, ends_at, status, lock_state, max_count, max_seconds, count_used, seconds_used)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        FIXTURE.cycle.id,
-        FIXTURE.group.id,
-        FIXTURE.cycle.prompt,
-        cycleStartsAt,
-        cycleEndsAt,
-        FIXTURE.cycle.status,
-        FIXTURE.cycle.lockState,
-        FIXTURE.cycle.maxCount,
-        FIXTURE.cycle.maxSeconds,
-        FIXTURE.cycle.countUsed,
-        FIXTURE.cycle.secondsUsed,
-      );
+function exportSource(config: RuntimeConfig) {
+  if (config.database) {
+    const settings = config.database;
+    return {
+      open: () => openPostgres(settings, { applicationName: 'rewind-export', readOnly: true }),
+      environment: settings.environment,
+      testRun: false,
+    };
+  }
+  const testUrl = testDatabaseUrl();
+  if (!testUrl) return null;
+  return {
+    open: () => openTestPostgres(testUrl, config.databasePath, { readOnly: true }),
+    environment: 'test',
+    testRun: true,
+  };
+}
 
-    const membershipInsert = database.prepare(
-      'INSERT INTO memberships (group_id, member_id, role, accepted_at) VALUES (?, ?, ?, ?)',
+/**
+ * Copy the configured PostgreSQL database into a new SQLite file at
+ * `sqlitePath` from one consistent snapshot, reconciled table by table.
+ * The runtime, scheduler, reminder loop and workers must be stopped first;
+ * the file is only exposed at `sqlitePath` once it is verified. Use
+ * installSqliteExport to put it in service.
+ */
+export function exportDatabaseToSqlite(
+  config: RuntimeConfig,
+  sqlitePath: string,
+  {
+    allowLiveWriters = false,
+    writerApplicationNames,
+    hooks,
+  }: {
+    allowLiveWriters?: boolean;
+    /** Tests: which session names count as writers. */
+    writerApplicationNames?: string[];
+    /** Tests: fault injection while the file is being built. */
+    hooks?: Pick<ExportOptions, 'afterLoad' | 'beforeExpose'>;
+  } = {},
+): ExportReport {
+  const destination = resolve(sqlitePath);
+  const target = exportSource(config);
+  if (!target) {
+    throw new TransferError('Set REWIND_DATABASE_URL to the PostgreSQL database to export.');
+  }
+  if (destination === resolve(config.databasePath)) {
+    throw new TransferError(
+      `${destination} is the live SQLite path. Export to a new file, then install it with database-install.`,
     );
-    for (const [index, profile] of FIXTURE.profiles.entries()) {
-      membershipInsert.run(FIXTURE.group.id, profile.id, index === 0 ? 'owner' : 'member', now);
-    }
+  }
+  const source = target.open();
+  try {
+    return exportPostgresToSqlite(source, {
+      destination,
+      expectedEnvironment: target.environment,
+      migrations: MIGRATIONS,
+      createSchema: (path) => openSqliteDatabaseAt(path).close(),
+      checkReady: (database) => schemaReadiness(database),
+      // Test runs share one server, so their sessions cannot be attributed.
+      writerApplicationNames:
+        writerApplicationNames ?? (target.testRun ? [] : WRITER_APPLICATION_NAMES),
+      allowLiveWriters,
+      ...hooks,
+    });
+  } finally {
+    source.close();
+  }
+}
 
-    database
-      .prepare(
-        `INSERT INTO sessions
-          (id, member_id, group_id, started_at, last_seen_at, access_kind, expires_at)
-         VALUES (?, ?, ?, ?, ?, 'demo', ?)`,
-      )
-      .run(
-        'demo-session',
-        FIXTURE.profiles[0].id,
-        FIXTURE.group.id,
-        now,
-        now,
-        new Date(Date.parse(now) + DEMO_SESSION_LIFETIME_MS).toISOString(),
-      );
-    database
-      .prepare(
-        'INSERT INTO invites (id, group_id, invitee_member_id, status, created_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .run('demo-invite', FIXTURE.group.id, FIXTURE.profiles[0].id, 'accepted', now);
-    const hasQuotaWindowStart = tableColumns(database, 'contributions').has(
-      'quota_window_start_at',
-    );
-    database
-      .prepare(
-        hasQuotaWindowStart
-          ? `INSERT INTO contributions
-              (id, cycle_id, member_id, duration_seconds, created_at, quota_window_start_at)
-             VALUES (?, ?, ?, ?, ?, ?)`
-          : `INSERT INTO contributions (id, cycle_id, member_id, duration_seconds, created_at)
-             VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(
-        FIXTURE.contribution.id,
-        FIXTURE.cycle.id,
-        FIXTURE.profiles[0].id,
-        FIXTURE.contribution.durationSeconds,
-        now,
-        ...(hasQuotaWindowStart ? [cycleStartsAt] : []),
-      );
-    if (hasQuotaWindowStart && hasTable(database, 'contribution_quota_windows')) {
+/**
+ * Swap a validated export into the live SQLite path (config.databasePath),
+ * keeping the previous file beside it. Database only: media is not touched.
+ * While PostgreSQL is still configured, it is read once more first and the
+ * install is refused if anything changed (or a writer is connected) since the
+ * export. `skipSourceCheck` accepts that risk when PostgreSQL is unreadable.
+ */
+export function installSqliteExport(
+  config: RuntimeConfig,
+  stagedPath: string,
+  {
+    environment,
+    skipSourceCheck = false,
+    writerApplicationNames,
+  }: { environment?: string; skipSourceCheck?: boolean; writerApplicationNames?: string[] } = {},
+): InstallResult & { sourceVerified: boolean } {
+  const target = skipSourceCheck ? null : exportSource(config);
+  let sourceVerified = false;
+  const result = installExportedDatabase(stagedPath, config.databasePath, {
+    expectedEnvironment:
+      environment ??
+      (process.env.REWIND_DATABASE_ENVIRONMENT?.trim() ||
+        process.env.REWIND_MEDIA_ENVIRONMENT?.trim() ||
+        undefined),
+    checkReady: (database) => schemaReadiness(database),
+    checkSource: target
+      ? (report) => {
+          const source = target.open();
+          try {
+            assertSourceMatches(source, report.tables, {
+              expectedEnvironment: report.environment,
+              writerApplicationNames:
+                writerApplicationNames ?? (target.testRun ? [] : WRITER_APPLICATION_NAMES),
+              when: 'since it was exported',
+            });
+            sourceVerified = true;
+          } finally {
+            source.close();
+          }
+        }
+      : undefined,
+  });
+  return { ...result, sourceVerified };
+}
+
+/**
+ * Create the application and read-only roles with the managed database's
+ * admin login (REWIND_DATABASE_ADMIN_URL), streamed in for this one command.
+ */
+export function bootstrapDatabase(env: NodeJS.ProcessEnv = process.env): DatabaseRoles {
+  const admin = parseConfig({
+    ...env,
+    REWIND_DATABASE_URL: env.REWIND_DATABASE_ADMIN_URL,
+  }).database;
+  if (!admin) throw new TransferError('Set REWIND_DATABASE_ADMIN_URL for database-bootstrap.');
+  const roles: DatabaseRoles = {
+    schema: env.REWIND_DATABASE_SCHEMA?.trim() || 'rewind',
+    appRole: env.REWIND_DATABASE_APP_ROLE?.trim() || 'rewind_app',
+    appPassword: env.REWIND_DATABASE_APP_PASSWORD ?? '',
+    readonlyRole: env.REWIND_DATABASE_READONLY_ROLE?.trim() || 'rewind_readonly',
+    readonlyPassword: env.REWIND_DATABASE_READONLY_PASSWORD ?? '',
+  };
+  const database = openPostgres(admin, { applicationName: 'rewind-bootstrap' });
+  try {
+    bootstrapDatabaseRoles(database, roles);
+  } finally {
+    database.close();
+  }
+  return { ...roles, appPassword: '', readonlyPassword: '' };
+}
+
+export interface DatabaseStatus {
+  engine: 'sqlite' | 'postgresql';
+  location: string;
+  ready: boolean;
+  /** The schema version this release expects. */
+  migrationVersion: number;
+  /** The highest version recorded in the database (0 when empty). */
+  appliedMigrationVersion: number;
+  environment: string | null;
+  serverVersion: string | null;
+  rows: Record<string, number>;
+}
+
+/** Operator summary: engine, schema readiness and per-table row counts. */
+export function databaseStatus(config: RuntimeConfig): DatabaseStatus {
+  const database = openOperationalDatabase(config, { readOnly: true });
+  try {
+    const readiness = schemaReadiness(database);
+    const postgres = isPostgres(database);
+    const tables = (
       database
         .prepare(
-          `INSERT INTO contribution_quota_windows
-            (id, cycle_id, member_id, window_start_at, window_end_at,
-             max_count, max_seconds, count_used, seconds_used)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+          postgres
+            ? `SELECT table_name AS name FROM information_schema.tables
+               WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' ORDER BY name`
+            : "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
         )
-        .run(
-          `fixture-quota-${FIXTURE.cycle.id}-${FIXTURE.profiles[0].id}`,
-          FIXTURE.cycle.id,
-          FIXTURE.profiles[0].id,
-          cycleStartsAt,
-          new Date(Date.parse(cycleStartsAt) + 7 * 24 * 60 * 60 * 1000).toISOString(),
-          FIXTURE.cycle.maxCount,
-          FIXTURE.cycle.maxSeconds,
-          FIXTURE.contribution.durationSeconds,
-        );
+        .all() as { name: string }[]
+    ).map((row) => row.name);
+    const rows: Record<string, number> = {};
+    for (const table of tables) {
+      const { count } = database
+        .prepare(`SELECT COUNT(*) AS count FROM "${table.replaceAll('"', '""')}"`)
+        .get() as { count: number };
+      rows[table] = Number(count);
     }
-    const mediaInsert = tableColumns(database, 'media_jobs').has('updated_at')
-      ? database.prepare(
-          'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, output_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        )
-      : database.prepare(
-          'INSERT INTO media_jobs (id, group_id, contribution_id, kind, status, output_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        );
-    for (const job of FIXTURE.mediaJobs) {
-      if (tableColumns(database, 'media_jobs').has('updated_at')) {
-        mediaInsert.run(
-          job.id,
-          FIXTURE.group.id,
-          job.kind === 'clip' ? FIXTURE.contribution.id : null,
-          job.kind,
-          job.status,
-          job.kind === 'clip' ? clipPath : filmPath,
-          now,
-          now,
-        );
-      } else {
-        mediaInsert.run(
-          job.id,
-          FIXTURE.group.id,
-          job.kind === 'clip' ? FIXTURE.contribution.id : null,
-          job.kind,
-          job.status,
-          job.kind === 'clip' ? clipPath : filmPath,
-          now,
-        );
-      }
-      if (tableColumns(database, 'media_jobs').has('output_sha256')) {
-        database
-          .prepare(
-            `UPDATE media_jobs SET output_sha256 = ?, output_bytes = ?, output_verified_at = ?, progress = 100 WHERE id = ?`,
+    return {
+      engine: postgres ? 'postgresql' : 'sqlite',
+      location: postgres ? (config.database?.host ?? 'test') : config.databasePath,
+      ready: readiness.ready,
+      migrationVersion: readiness.expectedMigrationVersion,
+      appliedMigrationVersion: tables.includes('schema_migrations')
+        ? Number(
+            (
+              database
+                .prepare('SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations')
+                .get() as {
+                version: number;
+              }
+            ).version,
           )
-          .run(sampleSha256, sample.byteLength, now, job.id);
-      }
-    }
-    database
-      .prepare(
-        'INSERT INTO messages (id, group_id, member_id, body, created_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .run(FIXTURE.message.id, FIXTURE.group.id, FIXTURE.profiles[0].id, FIXTURE.message.body, now);
-    if (hasTable(database, 'realtime_events')) {
-      database
-        .prepare(
-          `INSERT INTO realtime_events (group_id, message_id, event_type, occurred_at)
-           VALUES (?, ?, 'message', ?)`,
-        )
-        .run(FIXTURE.group.id, FIXTURE.message.id, now);
-    }
-    database
-      .prepare(
-        'INSERT INTO reactions (id, message_id, member_id, emoji, created_at) VALUES (?, ?, ?, ?, ?)',
-      )
-      .run('demo-reaction', FIXTURE.message.id, FIXTURE.profiles[1].id, '✨', now);
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
+        : 0,
+      environment: postgres
+        ? String(
+            database.prepare('SELECT environment FROM rewind_database_environment').get()
+              ?.environment ?? '',
+          ) || null
+        : null,
+      serverVersion: postgres
+        ? String(
+            (database.prepare('SHOW server_version').get() as { server_version: string })
+              .server_version,
+          )
+        : null,
+      rows,
+    };
+  } finally {
+    database.close();
   }
 }
 
 export function resetDatabase(config: RuntimeConfig): void {
   // The path is resolved from the validated data directory. Reset removes
-  // Demo database and media data only; source code and migrations are never
-  // in this directory.
+  // database and media data only; source code and migrations are never in
+  // this directory.
+  if (config.database) {
+    // Hosted PostgreSQL is recovered from backups, never reset by the app.
+    throw new Error('Reset only clears local SQLite data; REWIND_DATABASE_URL is set.');
+  }
   const mediaDir = resolve(config.dataDir, 'media');
   clearMediaDirectory(mediaDir);
+  const testUrl = testDatabaseUrl();
+  if (testUrl) dropTestSchema(testUrl, config.databasePath);
   for (const path of [
     config.databasePath,
     `${config.databasePath}-wal`,
@@ -1700,132 +1839,13 @@ export function resetDatabase(config: RuntimeConfig): void {
   }
 }
 
-/** Clear Demo artifacts without removing the media directory itself, which is
- * a bind-mount target in the hosted container. */
+/** Clear media without removing the media directory itself, which is a
+ * bind-mount target in the hosted container. */
 export function clearMediaDirectory(mediaDir: string): void {
   if (!existsSync(mediaDir)) return;
   for (const entry of readdirSync(mediaDir)) {
     rmSync(resolve(mediaDir, entry), { recursive: true, force: true });
   }
-}
-
-/** Restore only a disposable Demo fixture. Return false without mutation if
- * real or non-synthetic data is present. The write lock and synchronous media
- * clearing prevent registration from committing between inspection and reset.
- * Source files and migrations are never touched. */
-export function restoreFixture(
-  database: RewindDatabase,
-  seedNow?: Date | string,
-  mediaDir?: string,
-): boolean {
-  database.exec('BEGIN IMMEDIATE');
-  try {
-    const foreignData = database
-      .prepare(
-        `SELECT
-      EXISTS (SELECT 1 FROM real_accounts)
-      OR EXISTS (SELECT 1 FROM real_profiles)
-      OR EXISTS (SELECT 1 FROM real_group_metadata)
-      OR EXISTS (SELECT 1 FROM profiles WHERE is_synthetic IS NOT 1)
-      AS present`,
-      )
-      .get() as { present: number };
-    if (foreignData.present) {
-      database.exec('ROLLBACK');
-      return false;
-    }
-    if (mediaDir !== undefined) clearMediaDirectory(mediaDir);
-    for (const table of [
-      'reactions',
-      'realtime_events',
-      'messages',
-      'media_metadata',
-      'staged_sources',
-      'contribution_quota_windows',
-      'media_jobs',
-      'contributions',
-      'sessions',
-      'audit_events',
-      'invites',
-      'cycles',
-      'memberships',
-      'groups',
-      'profiles',
-    ]) {
-      database.exec(`DELETE FROM ${table}`);
-    }
-    database.exec('COMMIT');
-  } catch (error) {
-    database.exec('ROLLBACK');
-    throw error;
-  }
-  seedDatabase(database, seedNow);
-  return true;
-}
-
-export function fixtureSummary(database: RewindDatabase): Record<string, number> {
-  const tables = [
-    'profiles',
-    'groups',
-    'memberships',
-    'invites',
-    'cycles',
-    'sessions',
-    'contributions',
-    'media_jobs',
-    'messages',
-    'reactions',
-  ];
-  return Object.fromEntries(
-    tables.map((table) => {
-      const row = database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as {
-        count: number;
-      };
-      return [table, Number(row.count)];
-    }),
-  );
-}
-
-export function listProfiles(database: RewindDatabase) {
-  return database
-    .prepare(
-      'SELECT id, display_name AS displayName, avatar_label AS avatarLabel, is_synthetic AS isSynthetic FROM profiles WHERE is_synthetic = 1 ORDER BY id',
-    )
-    .all()
-    .map((row) => {
-      const profile = row as Record<string, unknown>;
-      return {
-        id: String(profile.id),
-        displayName: String(profile.displayName),
-        avatarLabel: String(profile.avatarLabel),
-        isSynthetic: Number(profile.isSynthetic) === 1,
-      };
-    });
-}
-
-export function getGroup(database: RewindDatabase, groupId: string, actingMemberId?: string) {
-  const group = database
-    .prepare('SELECT id, name, current_cycle_id AS currentCycleId FROM groups WHERE id = ?')
-    .get(groupId) as Record<string, unknown> | undefined;
-  if (!group) return null;
-  const members = database
-    .prepare('SELECT member_id AS memberId FROM memberships WHERE group_id = ? ORDER BY member_id')
-    .all(groupId)
-    .map((row) => String((row as { memberId: string }).memberId));
-  const actingMemberRole = actingMemberId
-    ? (
-        database
-          .prepare('SELECT role FROM memberships WHERE group_id = ? AND member_id = ?')
-          .get(groupId, actingMemberId) as { role?: string } | undefined
-      )?.role
-    : undefined;
-  return {
-    id: String(group.id),
-    name: String(group.name),
-    currentCycleId: String(group.currentCycleId),
-    memberIds: members,
-    ...(actingMemberRole === 'owner' || actingMemberRole === 'member' ? { actingMemberRole } : {}),
-  };
 }
 
 export function getCurrentCycle(

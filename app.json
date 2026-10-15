@@ -5,22 +5,22 @@
     "version": "0.1.0",
     "scheme": "rewind",
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic",
+    "userInterfaceStyle": "light",
     "splash": {
-      "image": "./public/icons/rewind-icon-512.png",
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#252326"
+      "backgroundColor": "#f6ede3"
     },
     "web": {
       "output": "single",
-      "favicon": "./public/icons/rewind-icon-512.png",
+      "favicon": "./assets/favicon.png",
       "name": "Rewind",
       "shortName": "Rewind",
       "lang": "en",
       "scope": "/",
       "startUrl": "/",
-      "themeColor": "#252326",
-      "backgroundColor": "#252326",
+      "themeColor": "#f6ede3",
+      "backgroundColor": "#f6ede3",
       "display": "standalone",
       "orientation": "portrait-primary",
       "description": "A local-first time capsule for shared moments."
@@ -29,25 +29,39 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow Rewind to use your camera for a still moment.",
-          "microphonePermission": "Allow Rewind to use your microphone for capture readiness.",
+          "cameraPermission": "Rewind uses the camera to take the photos and videos you share with your group.",
+          "microphonePermission": "Rewind records sound with the videos you share with your group.",
           "recordAudioAndroid": true
         }
       ],
       "expo-video",
       "expo-notifications",
-      "expo-secure-store"
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": false
+        }
+      ],
+      "expo-font"
     ],
     "ios": {
       "bundleIdentifier": "com.anonymous.rewind-app",
-      "buildNumber": "1"
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.anonymous.rewindapp",
-      "versionCode": 1
+      "versionCode": 2,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#4a2c2a"
+      }
     },
     "updates": {
       "enabled": false
-    }
+    },
+    "icon": "./assets/icon.png"
   }
 }

@@ -11,9 +11,11 @@ import {
   recordFor,
   recordingSupport,
   restoreInjectedPreview,
+  setTrim,
 } from './helpers/injected-recording';
+import { signedIn } from './helpers/real-account';
 
-test.use({ viewport: { width: 390, height: 844 } });
+test.use({ ...signedIn, viewport: { width: 390, height: 844 } });
 test.setTimeout(90_000);
 
 test.afterEach(async ({ page }) => {
@@ -80,18 +82,19 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
   );
   await openInjectedCapture(page);
   await allowInjectedSource(page);
-  // The viewfinder takes the camera's shape (a 360×640 portrait stream here).
+  // The full-screen viewfinder shows the camera's own portrait stream (360×640 here).
   await expect
-    .poll(async () => {
-      const box = await page.getByTestId('video-live-preview').boundingBox();
-      return box ? Number((box.height / box.width).toFixed(2)) : 0;
-    })
+    .poll(() =>
+      page
+        .getByTestId('video-live-preview')
+        .evaluate((v: HTMLVideoElement) => Number((v.videoHeight / v.videoWidth).toFixed(2))),
+    )
     .toBeCloseTo(640 / 360, 1);
   await recordFor(page);
   const review = page.getByTestId('video-review');
   await expect(review).toBeVisible();
   await expect(review).toContainText(/Recorded .*360 × 640 · audio included/);
-  await expect(review).not.toContainText('FILE FALLBACK');
+  await expect(review).not.toContainText('Chosen from a file');
   await expectSourceStopped(page, 0);
   const encoded = await inspectRecording(page, info, 0);
   expect(encoded.streams.find((stream) => stream.codec_type === 'video')).toMatchObject({
@@ -105,9 +108,9 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
   await expect(video).toHaveJSProperty('playsInline', true);
   await expect(video).toHaveJSProperty('muted', false);
   await expect(video).toHaveJSProperty('volume', 1);
-  await review.locator('input').nth(0).fill('1');
-  await review.locator('input').nth(1).fill('4.5');
-  await page.getByRole('button', { name: 'Save trim and mode', exact: true }).click();
+  // Trim applies as the handles move; there is no separate save step.
+  await setTrim(page, 'start', 1);
+  await setTrim(page, 'end', 4.5);
   await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime)).toBeCloseTo(1, 2);
   // Attach the observer while paused. Inserting Web Audio during playback can
   // switch WebKit's media clock and disturb an otherwise valid pause assertion.
@@ -194,10 +197,9 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
   await expect(review).toBeVisible();
   await expectSourceStopped(page, 1);
   await inspectRecording(page, info, 1);
-  await review.locator('input').nth(0).fill('1');
-  await review.locator('input').nth(1).fill('4.5');
+  await setTrim(page, 'start', 1);
+  await setTrim(page, 'end', 4.5);
   await page.getByRole('radio', { name: 'VHS Camcorder', exact: true }).click();
-  await page.getByRole('button', { name: 'Save trim and mode', exact: true }).click();
   const requestPromise = page.waitForRequest(
     (request) =>
       request.method() === 'POST' &&
@@ -208,9 +210,9 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/contributions/upload',
   );
-  await page.getByRole('button', { name: 'Upload clip', exact: true }).click();
+  await page.getByRole('button', { name: 'Seal', exact: true }).click();
   // The retro look is applied in the browser, in real time, before any upload.
-  await expect(page.getByTestId('video-retro-processing')).toContainText('Applying retro look');
+  await expect(page.getByTestId('video-retro-processing')).toContainText('Applying look');
   const body = (await requestPromise).postDataJSON();
   // The uploaded bytes are the processed, already-trimmed 1–4.5 s segment.
   expect(body).toMatchObject({
@@ -300,6 +302,6 @@ test('real landscape recording reaches review, overlong recording rejects, and s
   await expectRevoked(page, 2);
   await restoreInjectedPreview(page);
   // Leave the recovered live source through normal navigation; assert it stops too.
-  await page.getByTestId('nav-home').click();
+  await page.getByTestId('video-close').click();
   await expectSourceStopped(page, 3);
 });

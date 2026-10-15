@@ -2,6 +2,7 @@ import { createPrivateReminderClient } from '../src/reminders/private-reminder-c
 import {
   createNativePushPlatform,
   createWebPushPlatform,
+  defaultPushPlatform,
   type NativeNotifications,
   type PreparedPushPlatform,
 } from '../src/reminders/push-platform';
@@ -393,6 +394,11 @@ it.each(['secure', 'installed', 'pushSupported'] as const)(
     expect(f.environment.registration).not.toHaveBeenCalled();
   },
 );
+it('keeps native (Expo) push paused: the default native platform is unsupported', async () => {
+  expect(await defaultPushPlatform().prepare()).toEqual({
+    unsupported: 'Reminders arrive through the Rewind web app.',
+  });
+});
 it('invokes installed-web subscribe synchronously from opt-in and reuses the subscription', async () => {
   const f = webFixture();
   const prepared = await createWebPushPlatform(f.environment).prepare();

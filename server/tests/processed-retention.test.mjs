@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const {
   applyProcessedMediaRetention,
   planProcessedMediaRetention,
@@ -22,7 +22,7 @@ async function fixture(run) {
   const config = parseConfig({ REWIND_DATA_DIR: dataDir });
   const processedDir = resolve(dataDir, 'media', 'processed');
   await mkdir(processedDir, { recursive: true });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     return await run({ dataDir, processedDir, database });
   } finally {

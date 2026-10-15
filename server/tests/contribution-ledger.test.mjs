@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { sqliteOnly } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { deleteContribution } = await import('../dist/contributions/index.js');
 const {
   ContributionLedgerQueryError,
@@ -31,7 +32,7 @@ const validInput = {
 async function withLedgerDatabase(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-ledger-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   ensureContributionLedgerSchema(database);
   try {
     return await run({ config, database, dataDir });
@@ -93,25 +94,29 @@ function insertContribution(database, options) {
   }
 }
 
-test('ledger schema is repaired idempotently and exposes its readiness probe', () => {
-  return withLedgerDatabase(async ({ database }) => {
-    assert.equal(contributionLedgerSchemaReady(database), true);
-    ensureContributionLedgerSchema(database);
-    ensureContributionLedgerSchema(database);
-    assert.equal(contributionLedgerSchemaReady(database), true);
+test(
+  'ledger schema is repaired idempotently and exposes its readiness probe',
+  { skip: sqliteOnly },
+  () => {
+    return withLedgerDatabase(async ({ database }) => {
+      assert.equal(contributionLedgerSchemaReady(database), true);
+      ensureContributionLedgerSchema(database);
+      ensureContributionLedgerSchema(database);
+      assert.equal(contributionLedgerSchemaReady(database), true);
 
-    const columns = database
-      .prepare('PRAGMA table_info(contributions)')
-      .all()
-      .map((row) => row.name);
-    assert.equal(columns.includes('replaced_by_contribution_id'), true);
-    const indexes = database.prepare('PRAGMA index_list(contributions)').all();
-    assert.equal(
-      indexes.some((row) => row.name === LEDGER_INDEX_NAME),
-      true,
-    );
-  });
-});
+      const columns = database
+        .prepare('PRAGMA table_info(contributions)')
+        .all()
+        .map((row) => row.name);
+      assert.equal(columns.includes('replaced_by_contribution_id'), true);
+      const indexes = database.prepare('PRAGMA index_list(contributions)').all();
+      assert.equal(
+        indexes.some((row) => row.name === LEDGER_INDEX_NAME),
+        true,
+      );
+    });
+  },
+);
 
 test('the ledger reports every lifecycle state with duration and redacted metadata', () => {
   return withLedgerDatabase(async ({ database }) => {
@@ -188,6 +193,17 @@ test('the ledger reports every lifecycle state with duration and redacted metada
     assert.equal(byId['c-deleted'].restored.seconds, 6);
     assert.equal(byId['c-deleted'].replaced, false);
     assert.equal(byId['c-queued'].restored, null);
+    assert.equal(byId['c-sealed'].mediaType, 'video');
+    database.prepare("UPDATE media_jobs SET media_type = 'photo' WHERE id = 'j-sealed'").run();
+    const photoPage = listContributionLedger(database, {
+      groupId: 'demo-group',
+      memberId: 'demo-1',
+      limit: 50,
+    });
+    assert.equal(
+      photoPage.entries.find((entry) => entry.contributionId === 'c-sealed').mediaType,
+      'photo',
+    );
 
     // Sealed is a metadata label only: no capability, path, or share leaks.
     const serialized = JSON.stringify(page);
@@ -202,6 +218,7 @@ test('the ledger reports every lifecycle state with duration and redacted metada
       'durationSeconds',
       'failureCategory',
       'jobId',
+      'mediaType',
       'progress',
       'replaced',
       'restored',
@@ -691,5 +708,21 @@ test('current-week allowance does not inherit usage or correction from the previ
       deletionsUsed: 0,
       deletionAvailability: 'available',
     });
+  });
+});
+
+test('ledger preserves the sealed fractional duration for nearest-second UI rounding', () => {
+  return withLedgerDatabase(async ({ database }) => {
+    insertContribution(database, {
+      id: 'rounded-sealed',
+      jobId: 'rounded-job',
+      jobStatus: 'ready',
+      durationSeconds: 3.96,
+    });
+    const page = listContributionLedger(database, { groupId: 'demo-group', memberId: 'demo-1' });
+    const entry = page.entries.find((entry) => entry.contributionId === 'rounded-sealed');
+    assert.equal(entry.state, 'sealed');
+    assert.equal(entry.durationSeconds, 3.96);
+    assert.equal(Math.round(entry.durationSeconds), 4);
   });
 });

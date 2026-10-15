@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import type { FileHandle } from 'node:fs/promises';
 import type { RewindDatabase } from '../db';
 import type { StoredJobOptions } from '../jobs';
-import { decodeMediaRef } from '../media/store';
+import { decodeMediaRef, MediaStoreError } from '../media/store';
 import { materializeStoredMedia } from '../media/store-files';
 import {
   integrityBlocksServing,
@@ -117,7 +117,15 @@ export async function openStoredServingFile(
       size: opened.byteLength,
       releaseBudget: () => ownedLease.release(),
     };
-  } catch {
+  } catch (error) {
+    // The verified S3 read refuses changed bytes before a local hash can run.
+    if (error instanceof MediaStoreError && error.code === 'integrity_mismatch')
+      recordIntegrityFailure(database, {
+        jobId,
+        kind,
+        actorMemberId,
+        timestamp: now.toISOString(),
+      });
     await ownedHandle?.close().catch(() => undefined);
     lease?.release();
     return null;

@@ -297,7 +297,7 @@ function reconcileCompilationJobInputsLocked(
       `SELECT i.clip_job_id AS clipJobId, i.contribution_id AS contributionId,
               i.position AS position,
               CASE WHEN c.id IS NOT NULL
-                    AND c.deleted_at IS NULL
+                    AND c.deleted_at IS NULL AND c.removed_at IS NULL
                     AND cy.group_id = film.group_id
                     AND (c.cycle_id = film.cycle_id
                       OR (c.cycle_id <> film.cycle_id
@@ -391,7 +391,7 @@ function eligibleCompilationInputs(
         AND clip.kind = 'clip' AND clip.status = 'ready'
         AND clip.deleted_at IS NULL
        WHERE c.cycle_id = ?
-         AND c.deleted_at IS NULL
+         AND c.deleted_at IS NULL AND c.removed_at IS NULL
          -- A ready clip has completed processing only when its raw staged
          -- path is no longer retained. No source path is copied to the film
          -- job or its input snapshot.
@@ -415,7 +415,7 @@ function eligibleCompilationInputs(
                AND cy.status = 'archived'
                AND cy.release_status = 'published'
                AND cy.release_published_at IS NOT NULL
-               AND c.deleted_at IS NULL
+               AND c.deleted_at IS NULL AND c.removed_at IS NULL
                AND clip.source_path IS NULL
                AND clip.output_path IS NOT NULL
              ORDER BY cy.release_published_at DESC, c.created_at DESC, c.id DESC, clip.id DESC
@@ -441,7 +441,7 @@ function acceptedCompilationInputs(
     FROM contributions c JOIN cycles cy ON cy.id = c.cycle_id AND cy.group_id = ?
     LEFT JOIN media_jobs clip ON clip.contribution_id = c.id AND clip.kind = 'clip'
       AND clip.group_id = cy.group_id AND clip.deleted_at IS NULL
-    WHERE c.cycle_id = ? AND c.deleted_at IS NULL
+    WHERE c.cycle_id = ? AND c.deleted_at IS NULL AND c.removed_at IS NULL
     ORDER BY c.created_at, c.id, clip.id`,
     )
     .all(job.groupId, job.cycleId) as {
@@ -1868,29 +1868,24 @@ function storedContext(
   return { store: options.mediaStore, scope: { environment: options.mediaEnvironment, groupId } };
 }
 
-/** Async publication guard for lifecycle and authorized retrieval. Always requires
- * the persisted output digest/size/verified timestamp, including legacy disk. */
-export async function verifyReadyJobOutput(
-  database: RewindDatabase,
-  jobId: string,
-  options: StoredJobOptions & { outputDir: string },
-): Promise<boolean> {
+interface ReadyOutputRow {
+  groupId: string;
+  status: string;
+  path: string;
+  sha256: string;
+  byteLength: number;
+  verifiedAt: string;
+}
+
+/** The persisted output digest/size/verified timestamp, or null when unfinished. */
+function readReadyOutput(database: RewindDatabase, jobId: string): ReadyOutputRow | null {
   const row = database
     .prepare(
       `SELECT group_id AS groupId, status, output_path AS path,
     output_sha256 AS sha256, output_bytes AS byteLength, output_verified_at AS verifiedAt
     FROM media_jobs WHERE id = ?`,
     )
-    .get(jobId) as
-    | {
-        groupId: string;
-        status: string;
-        path: string | null;
-        sha256: string | null;
-        byteLength: number | null;
-        verifiedAt: string | null;
-      }
-    | undefined;
+    .get(jobId) as Partial<ReadyOutputRow> | undefined;
   if (
     !row ||
     row.status !== 'ready' ||
@@ -1901,7 +1896,50 @@ export async function verifyReadyJobOutput(
     !row.verifiedAt ||
     !Number.isFinite(Date.parse(row.verifiedAt))
   )
-    return false;
+    return null;
+  return row as ReadyOutputRow;
+}
+
+/** Cheap per-request check for Archive listing, premiere status and download
+ * grants: the finalized row plus the object's existence and size. Bytes are
+ * hashed when /media/access streams them, and at release by verifyReadyJobOutput. */
+export async function servableJobOutput(
+  database: RewindDatabase,
+  jobId: string,
+  outputPath: string,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<'servable' | 'unfinished' | 'missing'> {
+  const row = readReadyOutput(database, jobId);
+  if (!row || row.path !== outputPath) return 'unfinished';
+  try {
+    if (isMediaRef(row.path)) {
+      const ref = decodeMediaRef(row.path);
+      if (
+        ref.prefix === 'incoming' ||
+        ref.sha256 !== row.sha256 ||
+        ref.byteLength !== row.byteLength
+      )
+        return 'unfinished';
+      const { store, scope } = storedContext(options, row.groupId);
+      await store.head(scope, ref);
+      return 'servable';
+    }
+    const details = await stat(await resolveProcessedMediaPath(row.path, options.outputDir));
+    return details.isFile() && details.size === row.byteLength ? 'servable' : 'missing';
+  } catch {
+    return 'missing';
+  }
+}
+
+/** Async publication guard for lifecycle release. Always requires the persisted
+ * output digest/size/verified timestamp, including legacy disk. */
+export async function verifyReadyJobOutput(
+  database: RewindDatabase,
+  jobId: string,
+  options: StoredJobOptions & { outputDir: string },
+): Promise<boolean> {
+  const row = readReadyOutput(database, jobId);
+  if (!row) return false;
   try {
     if (isMediaRef(row.path)) {
       const ref = decodeMediaRef(row.path);
@@ -1922,7 +1960,7 @@ export async function verifyReadyJobOutput(
       .prepare(
         'SELECT status, output_path AS path, output_sha256 AS sha256, output_bytes AS byteLength, output_verified_at AS verifiedAt FROM media_jobs WHERE id = ?',
       )
-      .get(jobId) as typeof row;
+      .get(jobId) as ReadyOutputRow | undefined;
     return Boolean(
       current &&
       current.status === 'ready' &&

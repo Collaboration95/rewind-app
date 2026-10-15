@@ -7,24 +7,38 @@ trap 'rm -rf -- "$root"' EXIT
 script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)/deploy/release-host.sh"
 host="$root/host"
 mkdir -p "$host"
-printf 'REWIND_ALLOW_ORIGIN=*\nREWIND_MEDIA_BACKEND=disk\n' > "$host/rewind.env"
+printf 'REWIND_ALLOW_ORIGIN=*\nREWIND_MEDIA_BACKEND=disk\nREWIND_BACKUP_BUCKET=old-backups\nREWIND_BACKUP_PREFIX=old-prefix\n' > "$host/rewind.env"
 sha256sum "$host/rewind.env" 2>/dev/null | cut -d ' ' -f 1 > "$host/release-config-digest" || shasum -a 256 "$host/rewind.env" | cut -d ' ' -f 1 > "$host/release-config-digest"
 
-printf 'REWIND_MEDIA_BACKEND=s3\nREWIND_MEDIA_S3_BUCKET=rewind-dev-media-1\n# comment\n\n' |
+# #504 delivers explicit release backup settings through configure.
+printf 'REWIND_MEDIA_BACKEND=s3\nREWIND_MEDIA_S3_BUCKET=rewind-dev-media-1\nREWIND_BACKUP_BUCKET=rewind-release-backups-330599756236\nREWIND_BACKUP_PREFIX=rewind-release\n# comment\n\n' |
   REWIND_HOST_ROOT="$host" bash "$script" configure >/dev/null
 
 grep -qx 'REWIND_ALLOW_ORIGIN=\*' "$host/rewind.env" || { echo 'operator setting was lost' >&2; exit 1; }
 grep -qx 'REWIND_MEDIA_BACKEND=s3' "$host/rewind.env" || { echo 'setting was not replaced' >&2; exit 1; }
 [[ "$(grep -c '^REWIND_MEDIA_BACKEND=' "$host/rewind.env")" == 1 ]] || { echo 'setting was duplicated' >&2; exit 1; }
 grep -qx 'REWIND_MEDIA_S3_BUCKET=rewind-dev-media-1' "$host/rewind.env" || { echo 'setting was not added' >&2; exit 1; }
+grep -qx 'REWIND_BACKUP_BUCKET=rewind-release-backups-330599756236' "$host/rewind.env" || { echo 'release backup bucket was not replaced' >&2; exit 1; }
+grep -qx 'REWIND_BACKUP_PREFIX=rewind-release' "$host/rewind.env" || { echo 'release backup prefix was not replaced' >&2; exit 1; }
+for key in REWIND_BACKUP_BUCKET REWIND_BACKUP_PREFIX; do
+  [[ "$(grep -c "^$key=" "$host/rewind.env")" == 1 ]] || { echo "$key was duplicated" >&2; exit 1; }
+done
 if command -v sha256sum >/dev/null; then digest="$(sha256sum "$host/rewind.env" | cut -d ' ' -f 1)"; else digest="$(shasum -a 256 "$host/rewind.env" | cut -d ' ' -f 1)"; fi
 [[ "$(cat "$host/release-config-digest")" == "$digest" ]] || { echo 'digest was not refreshed' >&2; exit 1; }
 
 before="$(cat "$host/rewind.env")"
-if printf 'REWIND_BACKUP_BUCKET=evil\n' | REWIND_HOST_ROOT="$host" bash "$script" configure >/dev/null 2>&1; then
-  echo 'a non-configurable key was accepted' >&2; exit 1
-fi
-[[ "$(cat "$host/rewind.env")" == "$before" ]] || { echo 'a refused change modified rewind.env' >&2; exit 1; }
+# Release selection remains protected; unknown keys and quoted backup values
+# are refused. A preceding allowlisted change must not be partially committed.
+for setting in REWIND_RELEASE_SHA=unreviewed REWIND_UNSUPPORTED_SETTING=value 'REWIND_BACKUP_BUCKET="quoted"' 'REWIND_BACKUP_PREFIX="quoted"'; do
+  key="${setting%%=*}"
+  if output="$(printf 'REWIND_BACKUP_PREFIX=must-not-be-written\n%s\n' "$setting" | REWIND_HOST_ROOT="$host" bash "$script" configure 2>&1)"; then
+    echo "a forbidden setting was accepted: $key" >&2; exit 1
+  fi
+  if [[ "$key" == REWIND_BACKUP_* ]]; then reason="setting $key has an unsupported value"; else reason="setting $key is not configurable"; fi
+  [[ "$output" == *"$reason"* ]] || { echo "unexpected refusal for $key: $output" >&2; exit 1; }
+  [[ "$(cat "$host/rewind.env")" == "$before" ]] || { echo 'a refused change modified rewind.env' >&2; exit 1; }
+  [[ "$(cat "$host/release-config-digest")" == "$digest" ]] || { echo 'a refused change modified the config digest' >&2; exit 1; }
+done
 # Web push keys are generated on the host once, then kept across deploys.
 printf 'REWIND_REMINDER_VAPID_SUBJECT=https://rewind.example\n' |
   REWIND_HOST_ROOT="$host" bash "$script" configure >/dev/null
@@ -57,3 +71,29 @@ grep -qx 'REWIND_MEDIA_BACKEND=s3' "$fresh/rewind.env" || { echo 'fresh host set
 fresh_mode="$(stat -c %a "$fresh/rewind.env" 2>/dev/null || stat -f %Lp "$fresh/rewind.env")"
 [[ "$fresh_mode" == 600 ]] || { echo "fresh rewind.env mode is $fresh_mode" >&2; exit 1; }
 echo 'fresh host configure fixture passed'
+
+# PostgreSQL settings (#261): delivered before the cutover with an empty
+# REWIND_DATABASE_URL, set at the cutover, and cleared again for rollback.
+pg="$root/pg"
+mkdir -p "$pg"
+app='postgres://rewind_app:Abc123@db.internal:5432/rewind'
+printf 'REWIND_DATABASE_ENVIRONMENT=dev\nREWIND_DATABASE_APP_URL=%s\nREWIND_DATABASE_READONLY_URL=postgres://rewind_readonly:Def456@db.internal:5432/rewind\nREWIND_DATABASE_URL=\n' "$app" |
+  REWIND_HOST_ROOT="$pg" bash "$script" configure >/dev/null
+grep -qx 'REWIND_DATABASE_URL=' "$pg/rewind.env" || { echo 'pre-cutover database URL was not empty' >&2; exit 1; }
+grep -qx "REWIND_DATABASE_APP_URL=$app" "$pg/rewind.env" || { echo 'database import login was not delivered' >&2; exit 1; }
+printf 'REWIND_DATABASE_URL=%s\n' "$app" | REWIND_HOST_ROOT="$pg" bash "$script" configure >/dev/null
+grep -qx "REWIND_DATABASE_URL=$app" "$pg/rewind.env" || { echo 'cutover did not set the database URL' >&2; exit 1; }
+printf 'REWIND_DATABASE_URL=\n' | REWIND_HOST_ROOT="$pg" bash "$script" configure >/dev/null
+grep -qx 'REWIND_DATABASE_URL=' "$pg/rewind.env" || { echo 'rollback did not clear the database URL' >&2; exit 1; }
+[[ "$(grep -c '^REWIND_DATABASE_URL=' "$pg/rewind.env")" == 1 ]] || { echo 'database URL was duplicated' >&2; exit 1; }
+echo 'database settings configure fixture passed'
+
+# Cognito sign-in settings (Terraform media root) are configurable.
+cg="$root/cognito"
+mkdir -p "$cg"
+printf 'REWIND_AUTH_PASSWORD=false\nREWIND_COGNITO_REGION=ap-southeast-1\nREWIND_COGNITO_USER_POOL_ID=ap-southeast-1_Abc123\nREWIND_COGNITO_CLIENT_ID=client123\nREWIND_COGNITO_DOMAIN=rewind-dev-1.auth.ap-southeast-1.amazoncognito.com\n' |
+  REWIND_HOST_ROOT="$cg" bash "$script" configure >/dev/null
+for key in REWIND_AUTH_PASSWORD REWIND_COGNITO_REGION REWIND_COGNITO_USER_POOL_ID REWIND_COGNITO_CLIENT_ID REWIND_COGNITO_DOMAIN; do
+  grep -q "^$key=." "$cg/rewind.env" || { echo "$key was refused" >&2; exit 1; }
+done
+echo 'cognito settings configure fixture passed'

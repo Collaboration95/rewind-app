@@ -229,7 +229,12 @@ module "media" {
   web_origins      = [local.web_origin]
   web_push_subject = local.web_origin
   deploy_role_name = aws_iam_role.deploy.name
+  # Release signs in through Cognito only; its server refuses password sign-in.
+  auth_password     = false
+  backup_prefix_arn = "${aws_s3_bucket.backups.arn}/rewind-release/*"
   extra_hosted_settings = [
+    "REWIND_BACKUP_BUCKET=${aws_s3_bucket.backups.id}",
+    "REWIND_BACKUP_PREFIX=rewind-release",
     "REWIND_WEB_BIND_ADDRESS=0.0.0.0",
     "REWIND_WEB_PORT=80",
     "REWIND_ALLOW_ORIGIN=${local.web_origin}",

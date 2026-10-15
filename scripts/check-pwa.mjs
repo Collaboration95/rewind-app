@@ -22,9 +22,9 @@ const offline = (await readArtifact('offline.html')).toString('utf8');
 assert.match(index, /<link rel="manifest" href="\/manifest\.json"/);
 assert.match(index, /navigator\.serviceWorker\.register\('\/sw\.js'/);
 assert.match(index, /viewport-fit=cover/);
-assert.match(index, /name="theme-color" content="#252326"/);
+assert.match(index, /name="theme-color" content="#f6ede3"/);
 assert.match(index, /apple-mobile-web-app-capable/);
-assert.match(index, /apple-mobile-web-app-status-bar-style" content="black-translucent"/);
+assert.match(index, /apple-mobile-web-app-status-bar-style" content="default"/);
 assert.match(index, /min-height: 100dvh/);
 assert.match(index, /margin: 0/);
 assert.equal(manifest.name, 'Rewind');
@@ -32,9 +32,9 @@ assert.equal(manifest.short_name, 'Rewind');
 assert.equal(manifest.start_url, '/');
 assert.equal(manifest.scope, '/');
 assert.equal(manifest.display, 'standalone');
-assert.equal(manifest.theme_color, '#252326');
+assert.equal(manifest.theme_color, '#f6ede3');
 assert.equal(manifest.background_color, manifest.theme_color);
-assert.equal(manifest.icons.length, 2);
+assert.equal(manifest.icons.length, 3);
 
 for (const icon of manifest.icons) {
   const dimensions = readPngDimensions(await readArtifact(icon.src.slice(1)), icon.src);
@@ -68,7 +68,7 @@ assert.ok(
 );
 assert.match(offline, /Captured media is not synchronized offline/);
 assert.match(offline, /viewport-fit=cover/);
-assert.match(offline, /theme-color" content="#252326"/);
+assert.match(offline, /theme-color" content="#f6ede3"/);
 assert.match(offline, /min-height: 100dvh/);
 assert.match(offline, /margin: 0/);
 

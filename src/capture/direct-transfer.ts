@@ -688,10 +688,7 @@ export function createDirectTransferClient(
               const response = await storageFetch(signed.url, {
                 method: 'PUT',
                 headers: signed.headers,
-                body:
-                  source.kind === 'blob'
-                    ? new Blob([prepared], { type: normalized.contentType })
-                    : prepared.buffer,
+                body: source.kind === 'blob' ? source.blob : prepared.buffer,
                 signal: controller.signal,
                 credentials: 'omit',
                 redirect: 'error',

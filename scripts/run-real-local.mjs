@@ -4,12 +4,12 @@
 // normally requires HTTPS; REWIND_ALLOW_INSECURE_LOCAL_AUTH and the client's
 // dev-build loopback exception permit plain HTTP only on localhost, so this is
 // for a browser on this Mac, not a phone.
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { apiTarget } from './production-web-proxy.mjs';
+import { apiTarget, legalPagePath } from './production-web-proxy.mjs';
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const apiPort = Number(process.env.REWIND_PORT || 8787);
@@ -28,11 +28,18 @@ const runtimeEnv = {
   // New local groups get a short cycle so reveal and Archive can be tested.
   REWIND_REAL_CYCLE_MINUTES: process.env.REWIND_REAL_CYCLE_MINUTES || '10',
 };
+const git = (...args) => {
+  try {
+    return execFileSync('git', args, { cwd: projectRoot, encoding: 'utf8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+};
 const expoEnv = {
   ...process.env,
   EXPO_PUBLIC_LOCAL_BASE_URL: '/api',
-  EXPO_PUBLIC_DEMO_ACCESS: 'disabled',
-  EXPO_PUBLIC_CAMERA_MODE: process.env.EXPO_PUBLIC_CAMERA_MODE || '',
+  EXPO_PUBLIC_DISPLAY_CURRENT_VERSION: 'true',
+  EXPO_PUBLIC_CURRENT_VERSION: `${git('rev-parse', '--abbrev-ref', 'HEAD')}-${git('rev-parse', '--short=7', 'HEAD')}`,
 };
 
 const children = new Set();
@@ -91,7 +98,7 @@ function startProxy() {
     // reference would let a request choose the upstream host.
     const target = isApi ? apiTarget(runtimeOrigin, url) : new URL(metroOrigin);
     if (!isApi) {
-      target.pathname = url.pathname;
+      target.pathname = legalPagePath(url.pathname) ?? url.pathname;
       target.search = url.search;
     }
     const upstream = httpRequest(

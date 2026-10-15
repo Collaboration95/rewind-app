@@ -1,18 +1,27 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { onPostgres } from './helpers/dialect.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase, fixtureSummary } = await import('../dist/db.js');
+const { openDatabaseAt } = await import('../dist/db.js');
 const { createRuntimeServer, authClientSource, authTransportIsSecure } =
   await import('../dist/http.js');
-const { createDemoSession } = await import('../dist/session/index.js');
 const { createRealAccount, resetRealAccountPassword, revokeRealSession, validateRealSession } =
   await import('../dist/auth/index.js');
+
+function syntheticSummary(database) {
+  return Object.fromEntries(
+    ['profiles', 'groups', 'memberships', 'cycles', 'contributions', 'messages'].map((table) => [
+      table,
+      database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count,
+    ]),
+  );
+}
 
 async function withRuntime(run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-real-auth-`);
@@ -22,7 +31,7 @@ async function withRuntime(run) {
     REWIND_PORT: '0',
     REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   const serverOptions = { now: () => new Date('2026-09-28T00:00:00.000Z') };
   const server = createRuntimeServer(config, database, serverOptions);
   server.listen(0, '127.0.0.1');
@@ -59,9 +68,9 @@ async function raceLoginWithReset(databasePath, account, ordering, reset) {
   const worker = new Worker(
     `(async () => {
        const { parentPort, workerData } = require('node:worker_threads');
-       const { DatabaseSync } = require('node:sqlite');
+       const { openDatabaseAt } = require(require('node:path').resolve('server/dist/db.js'));
        const gate = new Int32Array(workerData.gateBuffer);
-       const database = new DatabaseSync(workerData.databasePath);
+       const database = openDatabaseAt(workerData.databasePath);
        database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
        const wrapped = {
          prepare(sql) {
@@ -145,11 +154,9 @@ async function raceLoginWithReset(databasePath, account, ordering, reset) {
   }
 }
 
-test('additive auth migration and account reset preserve synthetic Demo data and sessions', async () => {
+test('additive auth migration and account reset preserve synthetic fixture-group data', async () => {
   await withRuntime(async ({ database, dataDir }) => {
-    const seededDemo = fixtureSummary(database);
-    const demoBefore = createDemoSession(database, { memberId: 'demo-1' });
-    assert.equal(demoBefore.ok, true);
+    const seeded = syntheticSummary(database);
     const first = await createRealAccount(
       database,
       'Alice_1',
@@ -167,7 +174,6 @@ test('additive auth migration and account reset preserve synthetic Demo data and
         .get(second.account.id).password_salt,
     );
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM profiles').get().count, 5);
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 2);
     assert.equal(database.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 2);
     assert.equal(
       JSON.stringify(
@@ -175,22 +181,16 @@ test('additive auth migration and account reset preserve synthetic Demo data and
       ).includes('correct horse'),
       false,
     );
-    assert.deepEqual(fixtureSummary(database), {
-      ...seededDemo,
-      sessions: seededDemo.sessions + 1,
-    });
+    assert.deepEqual(syntheticSummary(database), seeded);
 
     const result = await resetRealAccountPassword(database, 'alice_1', 'replacement password 123');
     assert.equal(result.ok, true);
-    assert.equal(
-      database
-        .prepare('SELECT COUNT(*) AS count FROM sessions WHERE id = ?')
-        .get(demoBefore.session.id).count,
-      1,
-    );
+    assert.deepEqual(syntheticSummary(database), seeded);
 
-    // Reopening the persisted Demo database applies no destructive rebuild and
-    // keeps the new real-auth tables separate from Demo records.
+    // Reopening the persisted database applies no destructive rebuild and
+    // keeps the real-auth tables separate from the synthetic fixture records.
+    // (SQLite migration repair; PostgreSQL starts from its baseline.)
+    if (onPostgres) return;
     const { DatabaseSync } = await import('node:sqlite');
     const { migrateDatabase } = await import('../dist/db.js');
     const reopened = new DatabaseSync(`${dataDir}/rewind.sqlite`);
@@ -204,12 +204,8 @@ test('additive auth migration and account reset preserve synthetic Demo data and
         DELETE FROM schema_migrations WHERE version = 18;`);
       migrateDatabase(reopened);
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM profiles').get().count, 5);
-      assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 2);
       assert.equal(reopened.prepare('SELECT COUNT(*) AS count FROM real_accounts').get().count, 0);
-      assert.deepEqual(fixtureSummary(reopened), {
-        ...seededDemo,
-        sessions: seededDemo.sessions + 1,
-      });
+      assert.deepEqual(syntheticSummary(reopened), seeded);
     } finally {
       reopened.close();
     }
@@ -376,7 +372,6 @@ test('real login returns an opaque native token, supports current/logout, and br
       database.prepare('SELECT token_hash FROM real_account_sessions').get().token_hash,
       token,
     );
-    assert.equal(database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 1);
 
     const current = await fetch(`${baseUrl}/auth/session`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -448,9 +443,12 @@ test('wrong credentials are generic, throttled by account and source, and reset 
       assert.equal(last.status, 401);
     }
     const badBody = await last.json();
+    assert.equal(badBody.error, 'sign_in_failed');
+    // A locked account says so (429 + Retry-After), even with the right password.
     const throttled = await postLogin(baseUrl, 'limit.user', 'long correct password');
-    assert.equal(throttled.status, 401);
-    assert.deepEqual(await throttled.json(), badBody);
+    assert.equal(throttled.status, 429);
+    assert.equal(throttled.headers.get('retry-after'), '900');
+    assert.equal((await throttled.json()).error, 'sign_in_throttled');
     assert.equal(
       database.prepare('SELECT MAX(cooldown_level) AS level FROM auth_login_throttles').get().level,
       1,
@@ -493,13 +491,34 @@ test('wrong credentials are generic, throttled by account and source, and reset 
   });
 });
 
+test('an unknown username locks exactly like a real one, so 429 reveals no account', async () => {
+  const lockout = async (username) =>
+    withRuntime(async ({ baseUrl, database }) => {
+      await createRealAccount(database, 'real.user', 'Real User', 'long correct password');
+      for (let attempt = 0; attempt < 5; attempt += 1)
+        assert.equal((await postLogin(baseUrl, username, 'wrong password value')).status, 401);
+      const locked = await postLogin(baseUrl, username, 'wrong password value');
+      return {
+        status: locked.status,
+        retryAfter: locked.headers.get('retry-after'),
+        body: await locked.json(),
+      };
+    });
+  const real = await lockout('real.user');
+  assert.equal(real.status, 429);
+  assert.deepEqual(await lockout('no.such.user'), real);
+});
+
 test('parallel guesses cannot race past the five-failure cooldown', async () => {
   await withRuntime(async ({ baseUrl, database }) => {
     await createRealAccount(database, 'parallel.user', 'Parallel User', 'long correct password');
     const responses = await Promise.all(
       Array.from({ length: 8 }, () => postLogin(baseUrl, 'parallel.user', 'wrong password value')),
     );
-    assert.ok(responses.every((response) => response.status === 401));
+    assert.deepEqual(
+      responses.map((response) => response.status).sort(),
+      [401, 401, 401, 401, 401, 429, 429, 429],
+    );
     assert.equal(
       database
         .prepare(`SELECT cooldown_level FROM auth_login_throttles WHERE scope = 'account'`)
@@ -507,7 +526,7 @@ test('parallel guesses cannot race past the five-failure cooldown', async () => 
       1,
     );
     const correct = await postLogin(baseUrl, 'parallel.user', 'long correct password');
-    assert.equal(correct.status, 401);
+    assert.equal(correct.status, 429);
   });
 });
 
@@ -545,7 +564,7 @@ test('session idle and absolute expiry are enforced, and reset revokes tokens', 
     assert.equal(newPassword.status, 200);
     const finalSession = await newPassword.json();
     const finalHash = database
-      .prepare('SELECT token_hash FROM real_account_sessions ORDER BY rowid DESC LIMIT 1')
+      .prepare('SELECT token_hash FROM real_account_sessions WHERE revoked_at IS NULL')
       .get().token_hash;
     database
       .prepare('UPDATE real_account_sessions SET absolute_expires_at = ? WHERE token_hash = ?')
@@ -589,7 +608,7 @@ test('a reset committed after password verification blocks session insertion on 
       'old correct password',
     );
     assert.equal(account.ok, true);
-    const separateConnection = new DatabaseSync(`${dataDir}/rewind.sqlite`);
+    const separateConnection = openDatabaseAt(`${dataDir}/rewind.sqlite`);
     separateConnection.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     try {
       const result = await raceLoginWithReset(
@@ -618,7 +637,7 @@ test('a reset committed after guarded session insertion revokes that session', a
       'old correct password',
     );
     assert.equal(account.ok, true);
-    const separateConnection = new DatabaseSync(`${dataDir}/rewind.sqlite`);
+    const separateConnection = openDatabaseAt(`${dataDir}/rewind.sqlite`);
     separateConnection.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
     try {
       const result = await raceLoginWithReset(
@@ -664,12 +683,9 @@ test('malformed and duplicate account input has no partial writes', async () => 
   });
 });
 
-test('public registration creates a sign-in-ready account without Demo or group membership', async () => {
+test('public registration creates a sign-in-ready account without group membership', async () => {
   await withRuntime(async ({ baseUrl, database }) => {
     const profilesBefore = database.prepare('SELECT COUNT(*) AS count FROM profiles').get().count;
-    const demoSessionsBefore = database
-      .prepare('SELECT COUNT(*) AS count FROM sessions')
-      .get().count;
     const registration = await postRegistration(
       baseUrl,
       '  new.member  ',
@@ -707,10 +723,6 @@ test('public registration creates a sign-in-ready account without Demo or group 
     assert.equal(
       database.prepare('SELECT COUNT(*) AS count FROM profiles').get().count,
       profilesBefore,
-    );
-    assert.equal(
-      database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count,
-      demoSessionsBefore,
     );
   });
 });

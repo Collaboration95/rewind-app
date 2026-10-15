@@ -3,14 +3,14 @@ import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { DatabaseSync } from 'node:sqlite';
+import { onPostgres } from './helpers/dialect.mjs';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { clearDemoMedia } from './helpers/demo-media.mjs';
+import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase, openDatabaseAt } = await import('../dist/db.js');
+const { openDatabaseAt } = await import('../dist/db.js');
 const { createClipUpload } = await import('../dist/media/index.js');
 const { createCompilationJob, PROCESSING_CLAIM_LEASE_MS, processClipJob, processCompilationJob } =
   await import('../dist/jobs/index.js');
@@ -33,7 +33,7 @@ async function withDatabase(run) {
     REWIND_HOST: '127.0.0.1',
     REWIND_FFMPEG_BIN: 'ffmpeg',
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     return await run({ config, database, dataDir });
   } finally {
@@ -401,7 +401,7 @@ test('worker claim enforces the automatic clip cap after candidate selection', a
 
 test('an exhausted film job is terminal and never claimed again', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
-    clearDemoMedia(database);
+    clearFixtureMedia(database);
     database.prepare("UPDATE cycles SET status = 'revealing' WHERE id = 'demo-cycle'").run();
     const created = createCompilationJob(database, {
       groupId: 'demo-group',
@@ -895,8 +895,12 @@ test('worker CLI exits nonzero with a safe label after a persistent loop failure
         // Corrupt only this isolated test database after startup. The next
         // claim query must fail, and the CLI must expose a failing exit code.
         try {
-          const connection = new DatabaseSync(config.databasePath);
-          connection.exec('PRAGMA foreign_keys = OFF; DROP TABLE media_jobs;');
+          const connection = openDatabaseAt(config.databasePath);
+          connection.exec(
+            onPostgres
+              ? 'DROP TABLE media_jobs CASCADE'
+              : 'PRAGMA foreign_keys = OFF; DROP TABLE media_jobs;',
+          );
           connection.close();
         } catch {
           // A repeated stdout chunk may observe the table already removed.

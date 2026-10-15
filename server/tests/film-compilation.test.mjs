@@ -5,15 +5,15 @@ import { access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { clearDemoMedia } from './helpers/demo-media.mjs';
+import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createCompilationJob, getCompilationJob, MAX_COMPILATION_ATTEMPTS, processCompilationJob } =
   await import('../dist/jobs/index.js');
-const { ARCHIVE_FILLER_LABEL, generateSyntheticDemoClip, probeClipWithFfmpeg } =
+const { ARCHIVE_FILLER_LABEL, compileFilmWithFfmpeg, probeClipWithFfmpeg, processPhotoWithFfmpeg } =
   await import('../dist/ffmpeg.js');
 
 async function withDatabase(run) {
@@ -22,9 +22,10 @@ async function withDatabase(run) {
     REWIND_DATA_DIR: dataDir,
     REWIND_HOST: '127.0.0.1',
     REWIND_FFMPEG_BIN: 'ffmpeg',
+    ...REAL_AUTH_ENV,
   });
-  const database = openDatabase(config);
-  clearDemoMedia(database);
+  const database = openFixtureDatabase(config);
+  clearFixtureMedia(database);
   try {
     return await run({ config, database, dataDir });
   } finally {
@@ -67,19 +68,6 @@ async function createProcessedClip(
   ];
   await execFileAsync('ffmpeg', args);
 }
-
-test('creates a deterministic portrait synthetic clip with audio for the local Demo', async () => {
-  await withDatabase(async ({ config, dataDir }) => {
-    const outputDir = `${dataDir}/media/staging`;
-    await mkdir(outputDir, { recursive: true });
-    const media = await generateSyntheticDemoClip(config.ffmpegBin, `${outputDir}/synthetic.mp4`);
-    assert.equal(media.mimeType, 'video/mp4');
-    assert.equal(media.width, 180);
-    assert.equal(media.height, 320);
-    assert.equal(media.hasAudio, true);
-    assert.ok(media.durationSeconds > 1.5 && media.durationSeconds < 2.5);
-  });
-});
 
 test('accepts a landscape clip at intake; the film letterboxes it into vertical 720p', async () => {
   await withDatabase(async ({ config, dataDir }) => {
@@ -327,6 +315,122 @@ test('compiles chronological retained clips into a playable normalized-audio fil
   });
 });
 
+test('a moment the owner removed before the film compiles stays out of it', async () => {
+  await withDatabase(async ({ config, database, dataDir }) => {
+    const outputDir = `${dataDir}/media/processed`;
+    await mkdir(outputDir, { recursive: true });
+    const keptClip = `${outputDir}/kept.mp4`;
+    const removedClip = `${outputDir}/removed.mp4`;
+    await createProcessedClip(keptClip, { color: 'red', frequency: 440 });
+    await createProcessedClip(removedClip, { color: 'blue', frequency: 880 });
+    insertReadyClip(database, {
+      id: 'kept',
+      contributionId: 'contribution-kept',
+      acceptedAt: '2026-09-10T01:00:00.000Z',
+      jobCreatedAt: '2026-09-10T01:00:00.000Z',
+      outputPath: keptClip,
+    });
+    insertReadyClip(database, {
+      id: 'removed',
+      contributionId: 'contribution-removed',
+      acceptedAt: '2026-09-10T02:00:00.000Z',
+      jobCreatedAt: '2026-09-10T02:00:00.000Z',
+      outputPath: removedClip,
+    });
+    database
+      .prepare("UPDATE contributions SET removed_at = ? WHERE id = 'contribution-removed'")
+      .run('2026-09-10T03:00:00.000Z');
+    const jobId = await createFilmJob(database);
+    const result = await processCompilationJob(database, {
+      jobId,
+      ffmpegBin: config.ffmpegBin,
+      outputDir,
+    });
+    assert.deepEqual(result, { ok: true, jobId, status: 'ready' });
+    const job = getCompilationJob(database, jobId);
+    assert.equal(job?.completedCount, 1);
+    const metadata = await probeClipWithFfmpeg(config.ffmpegBin, job.outputPath);
+    assert.ok(
+      metadata.durationSeconds < 1.5,
+      `film kept the removed moment: ${metadata.durationSeconds}s`,
+    );
+  });
+});
+
+test('a film from a photo and a variable-rate clip stays playable on iPhone', async () => {
+  await withDatabase(async ({ config, dataDir }) => {
+    // Photos are full range, and browser recordings carry an odd frame rate
+    // on a microsecond timescale; together they made a level 6.2 film that
+    // iOS Safari would not play.
+    const still = `${dataDir}/still.jpg`;
+    await execFileAsync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'color=c=orange:size=360x640',
+      '-frames:v',
+      '1',
+      still,
+    ]);
+    const photo = `${dataDir}/photo.mp4`;
+    await processPhotoWithFfmpeg(config.ffmpegBin, {
+      inputPath: still,
+      outputPath: photo,
+      mode: 'ccd',
+    });
+    const recorded = `${dataDir}/recorded.mp4`;
+    await execFileAsync('ffmpeg', [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-y',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=720x1280:rate=12.98:duration=2',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440:sample_rate=48000:duration=2',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuvj420p',
+      '-c:a',
+      'aac',
+      '-video_track_timescale',
+      '1000000',
+      '-shortest',
+      recorded,
+    ]);
+    const outputPath = `${dataDir}/film.mp4`;
+    await compileFilmWithFfmpeg(config.ffmpegBin, { inputPaths: [photo, recorded], outputPath });
+    const { stdout } = await execFileAsync('ffprobe', [
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=profile,level,pix_fmt,color_range,r_frame_rate',
+      '-of',
+      'json',
+      outputPath,
+    ]);
+    const [video] = JSON.parse(stdout).streams;
+    assert.equal(video.profile, 'High');
+    assert.ok(video.level <= 40, `level ${video.level}`);
+    assert.equal(video.pix_fmt, 'yuv420p');
+    // Older FFmpeg builds leave the range untagged, which decoders read as TV
+    // range; full range ('pc') is what iOS Safari rejected.
+    assert.notEqual(video.color_range, 'pc');
+    assert.equal(video.r_frame_rate, '30/1');
+  });
+});
+
 test('production selection appends and visibly labels same-group archive filler', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     const outputDir = `${dataDir}/media/processed`;
@@ -503,23 +607,20 @@ process.exit(91);
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
-      });
-      assert.equal(sessionResponse.status, 201);
-      const session = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+      const { headers } = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
       const expectedNotFound = {
         error: 'not_found',
         message: 'The requested resource was not found.',
       };
-      const playback = await fetch(`${baseUrl}/films/${encodeURIComponent(jobId)}/play?${query}`);
+      const playback = await fetch(`${baseUrl}/films/${encodeURIComponent(jobId)}/play?${query}`, {
+        headers,
+      });
       assert.equal(playback.status, 404);
       assert.deepEqual(await playback.json(), expectedNotFound);
       const download = await fetch(
         `${baseUrl}/films/${encodeURIComponent(jobId)}/download?${query}`,
+        { headers },
       );
       assert.equal(download.status, 404);
       assert.deepEqual(await download.json(), expectedNotFound);

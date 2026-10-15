@@ -7,6 +7,8 @@ export {
   type ChatMessageEvent,
   type ChatReactionEmoji,
   type ChatReactionResult,
+  type ChatReactionSnapshot,
+  type ChatReactionUpdate,
   type ChatReplyContext,
   type RealtimeConnectionState,
   type RealtimeChatClientOptions,

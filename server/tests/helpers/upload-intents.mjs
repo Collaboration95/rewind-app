@@ -5,10 +5,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { parseConfig } from '../../dist/config.js';
-import { openDatabase, openDatabaseAt } from '../../dist/db.js';
+import { openDatabaseAt } from '../../dist/db.js';
 import { createRealGroup } from '../../dist/groups/real.js';
 import { PrivateS3MediaStore } from '../../dist/media/s3-store.js';
 import { s3Double } from './private-media-store.mjs';
+import { openFixtureDatabase } from './fixture-group.mjs';
 
 /** Tests share the canonical migration; no duplicate schema contract. */
 export const INTENT_SCHEMA_SQL = readFileSync(
@@ -50,7 +51,7 @@ export async function withIntentFixture(run) {
   const root = await mkdtemp(`${tmpdir()}/rewind-upload-intents-`);
   const config = parseConfig({ REWIND_DATA_DIR: root });
   const now = new Date('2026-10-02T12:00:00Z');
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   database.exec(INTENT_SCHEMA_SQL);
   const token = accountFixture(database, 'intent-owner', now);
   const otherToken = accountFixture(database, 'intent-outsider', now);
@@ -104,7 +105,7 @@ export async function withIntentFixture(run) {
     ffmpegBin: 'ffmpeg',
     now: () => context.now,
   };
-  context.bytes = await readFile(new URL('../../fixtures/demo-media.mp4', import.meta.url));
+  context.bytes = await readFile(new URL('../../fixtures/sample-clip.mp4', import.meta.url));
   context.input = (key) => ({
     idempotencyKey: key,
     mediaType: 'video',

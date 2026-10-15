@@ -42,19 +42,15 @@ async function registerAndSignIn(page, username, { invitation = false } = {}) {
   } else {
     await page.goto('/');
     await expect(page.getByTestId('welcome-entry')).toBeVisible();
-    await page.getByRole('button', { name: 'Create account', exact: true }).click();
+    await page.getByRole('button', { name: 'Create an account', exact: true }).click();
   }
 
   await page.getByTestId('registration-username').fill(username);
   await page.getByTestId('registration-password').fill(password);
   await page.getByTestId('registration-password-confirmation').fill(password);
+  // Registration signs straight in; a saved invitation continues afterwards.
   await page.getByTestId('registration-submit').click();
-  await expect(page.getByTestId('registration-success')).toBeVisible();
-  await page.getByTestId('registration-continue-to-sign-in').click();
-  if (invitation) await expect(page.getByTestId('invite-sign-in-intent')).toBeVisible();
-  await page.getByTestId('real-account-username').fill(username);
-  await page.getByTestId('real-account-password').fill(password);
-  await page.getByTestId('real-account-submit').click();
+  await expect(page.getByTestId('welcome-entry')).toBeHidden();
 }
 
 async function readCurrentGroup(page) {

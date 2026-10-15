@@ -1,22 +1,18 @@
 import { expect, test, type APIRequestContext } from '@playwright/test';
 
-test('fresh web install keeps Demo behind Sign in before any member is active', async ({
-  page,
-}) => {
+test('fresh web install offers only real-account entry, with no Demo', async ({ page }) => {
   await page.goto('/');
 
   await expect(page.getByTestId('welcome-entry')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Try Demo' })).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'Weekend People' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Create an account' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Try Demo/i })).toHaveCount(0);
+  await expect(page.getByTestId('demo-entry-demo-1')).toHaveCount(0);
+  await expect(page.getByText(/Demo member/i)).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('button', { name: 'Try Demo' })).toBeVisible();
-  await page.getByRole('button', { name: 'Try Demo' }).click();
-  await expect(page.getByRole('heading', { name: 'Choose a Demo member' })).toBeVisible();
-  await page.getByRole('button', { name: 'Enter Demo as Amber, sample member' }).click();
-  await expect(page.getByRole('heading', { name: 'Weekend People' })).toBeVisible();
+  await expect(page.getByTestId('real-account-username')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Try Demo/i })).toHaveCount(0);
 });
 
 test('mobile welcome keeps the brand and entry actions together and vertically balanced', async ({
@@ -33,30 +29,32 @@ test('mobile welcome keeps the brand and entry actions together and vertically b
   const gap = actions!.y - (brand!.y + brand!.height);
   const contentCenter = (brand!.y + actions!.y + actions!.height) / 2;
   expect(gap).toBeLessThan(96);
-  expect(Math.abs(contentCenter - 844 / 2)).toBeLessThan(88);
+  expect(actions!.y + actions!.height).toBeLessThanOrEqual(844);
+  expect(Math.abs(contentCenter - 844 / 2)).toBeLessThan(120);
 });
 
 test('mobile signup starts close to the brand without a large empty band', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.getByRole('button', { name: 'Create an account' }).click();
 
-  const brand = await page.getByTestId('entry-brand').boundingBox();
-  const formIntro = await page.getByText('JOIN REWIND').boundingBox();
-  expect(brand).not.toBeNull();
-  expect(formIntro).not.toBeNull();
-  expect(formIntro!.y - (brand!.y + brand!.height)).toBeLessThan(64);
+  const heading = await page.getByRole('heading', { name: 'Create account' }).boundingBox();
+  const username = await page.getByText('Username', { exact: true }).boundingBox();
+  expect(heading).not.toBeNull();
+  expect(username).not.toBeNull();
+  expect(heading!.y).toBeLessThan(120);
+  expect(username!.y - (heading!.y + heading!.height)).toBeLessThan(64);
 });
 
 test('web entry opens account registration and blocks credentials without HTTPS configuration', async ({
   page,
 }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Create account' }).click();
+  await page.getByRole('button', { name: 'Create an account' }).click();
   await expect(page.getByRole('heading', { name: 'Create account' })).toBeVisible();
   await expect(page.getByLabel('Username')).toBeVisible();
   await expect(page.getByTestId('registration-password')).toBeVisible();
-  await expect(page.getByLabel('Confirm password')).toBeVisible();
+  await expect(page.getByLabel('Confirm password', { exact: true })).toBeVisible();
   await expect(
     page.getByText(/account creation requires the same-origin HTTPS service/i),
   ).toBeVisible();
@@ -65,7 +63,7 @@ test('web entry opens account registration and blocks credentials without HTTPS 
   await page.getByRole('button', { name: 'Back' }).click();
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page.getByLabel('Username')).toBeVisible();
-  await expect(page.getByLabel('Password')).toBeVisible();
+  await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
   await expect(
     page.getByText(/password will not be sent over an insecure connection/i),
   ).toBeVisible();
@@ -73,7 +71,7 @@ test('web entry opens account registration and blocks credentials without HTTPS 
 });
 
 test('deep application routes return the exported web shell', async ({ page }) => {
-  const response = await page.goto('/groups/demo-group/capsule');
+  const response = await page.goto('/groups/any-group/archive');
 
   expect(response?.status()).toBe(200);
   expect(response?.headers()['content-type']).toContain('text/html');
@@ -113,7 +111,7 @@ test('the exported shell exposes install metadata and an honest offline API fall
     display: 'standalone',
     name: 'Rewind',
     start_url: '/',
-    theme_color: '#252326',
+    theme_color: '#f6ede3',
   });
 
   const serviceWorkerResponse = await request.get('/sw.js');
@@ -144,18 +142,18 @@ test('the installed shell reloads root and starts a deep SPA route offline', asy
 }) => {
   await page.goto('/');
   await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
-  await expect(page.locator('#root')).toContainText('REWIND');
+  await expect(page.locator('#root')).toContainText('Rewind');
 
   let deepPage: Awaited<ReturnType<typeof context.newPage>> | undefined;
   await context.setOffline(true);
   try {
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.locator('#root')).toContainText('REWIND');
+    await expect(page.locator('#root')).toContainText('Rewind');
 
     deepPage = await context.newPage();
-    await deepPage.goto('/groups/demo-group/capsule', { waitUntil: 'domcontentloaded' });
-    expect(new URL(deepPage.url()).pathname).toBe('/groups/demo-group/capsule');
-    await expect(deepPage.locator('#root')).toContainText('REWIND');
+    await deepPage.goto('/groups/any-group/archive', { waitUntil: 'domcontentloaded' });
+    expect(new URL(deepPage.url()).pathname).toBe('/groups/any-group/archive');
+    await expect(deepPage.locator('#root')).toContainText('Rewind');
   } finally {
     await deepPage?.close();
     await context.setOffline(false);

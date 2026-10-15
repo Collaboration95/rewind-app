@@ -124,8 +124,11 @@ export function validReminderDestination(
       url.username ||
       url.password ||
       url.hash ||
-      !['web.push.apple.com', 'updates.push.services.mozilla.com', 'fcm.googleapis.com'].includes(
-        url.hostname,
+      !(
+        ['web.push.apple.com', 'updates.push.services.mozilla.com', 'fcm.googleapis.com'].includes(
+          url.hostname,
+        ) ||
+        url.hostname.endsWith('.notify.windows.com') // Microsoft Edge (WNS)
       )
     )
       return null;

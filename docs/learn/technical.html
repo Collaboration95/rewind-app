@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rewind: how it works</title>
+    <style>
+      :root {
+        --bg: #fafaf7;
+        --fg: #1d1d1b;
+        --mut: #6b6b66;
+        --line: #c9c9c0;
+        --card: #fff;
+        --y: #ffd84d;
+        --p: #b8b3ff;
+        --b: #8ec5ff;
+        --g: #a8e6b4;
+        --r: #ffb3b3;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16161a;
+          --fg: #ececea;
+          --mut: #9a9a94;
+          --line: #44444c;
+          --card: #1e1e24;
+          --y: #7a6a1a;
+          --p: #4a468f;
+          --b: #2d5a85;
+          --g: #2d6a3e;
+          --r: #8a3a3a;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          16px/1.55 system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 24px 16px 80px;
+      }
+      h1 {
+        margin: 0.2em 0;
+      }
+      h2 {
+        margin-top: 2.4em;
+        border-top: 1px solid var(--line);
+        padding-top: 0.8em;
+      }
+      .lvl {
+        display: inline-block;
+        background: var(--y);
+        color: var(--fg);
+        border-radius: 6px;
+        padding: 1px 8px;
+        font-size: 0.8em;
+        margin-right: 6px;
+      }
+      .mut {
+        color: var(--mut);
+      }
+      svg {
+        width: 100%;
+        height: auto;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+      }
+      svg text {
+        fill: var(--fg);
+        font:
+          13px system-ui,
+          sans-serif;
+        text-anchor: middle;
+      }
+      svg .s {
+        fill: var(--mut);
+        font-size: 11px;
+      }
+      svg .e {
+        stroke: var(--fg);
+        stroke-width: 1.5;
+        fill: none;
+        marker-end: url(#a);
+      }
+      svg .d {
+        stroke-dasharray: 5 4;
+      }
+      svg rect.n {
+        stroke: var(--fg);
+        stroke-width: 1.2;
+      }
+      .y {
+        fill: var(--y);
+      }
+      .p {
+        fill: var(--p);
+      }
+      .b {
+        fill: var(--b);
+      }
+      .g {
+        fill: var(--g);
+      }
+      .r {
+        fill: var(--r);
+      }
+      .w {
+        fill: var(--card);
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.93em;
+      }
+      td,
+      th {
+        border: 1px solid var(--line);
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: var(--card);
+      }
+      code {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0 4px;
+        font-size: 0.9em;
+      }
+      nav a {
+        margin-right: 12px;
+      }
+      .diagram,
+      .table-wrap {
+        overflow-x: auto;
+        margin: 16px 0;
+      }
+      .diagram svg {
+        display: block;
+        min-width: 700px;
+      }
+      .table-wrap table {
+        min-width: 640px;
+      }
+      code {
+        overflow-wrap: anywhere;
+      }
+      a {
+        color: inherit;
+        text-decoration-thickness: 1px;
+      }
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        line-height: 2;
+      }
+      nav a {
+        margin-right: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Rewind: how it technically works</h1>
+      <p class="mut">
+        Source: <code>dev</code> commit <code>40ebeb5673d103b4b6950d095192aae744980769</code>,
+        inspected 15 October 2026. These are code and configuration facts, not a live deployment or
+        device test. See the
+        <a href="../architecture/current-system.md">current system architecture</a> for the
+        configuration matrix and decision index.
+      </p>
+      <nav>
+        <a href="index.html">Layered guide</a><a href="#stack">Stack</a><a href="#http">HTTP</a
+        ><a href="#auth">Sessions</a><a href="#db">Database</a><a href="#jobs">Jobs</a
+        ><a href="#media">Media</a><a href="#rt">Realtime</a><a href="#client">Client</a
+        ><a href="#pwa">PWA/push</a><a href="#ship">Delivery</a><a href="#tests">Checks</a>
+      </nav>
+      <svg width="0" height="0" aria-hidden="true" style="position: absolute; border: 0">
+        <defs>
+          <marker
+            id="a"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+          >
+            <path d="M0 0L10 5L0 10z" style="fill: #888" />
+          </marker>
+        </defs>
+      </svg>
+      <h2 id="stack"><span class="lvl">0</span>Stack and deployment</h2>
+      <p>
+        The root <a href="../../package.json">package manifest</a> declares Expo 57, React Native
+        0.86, React 19 and TypeScript. The server compiles TypeScript and uses
+        <code>node:http</code>, SQLite or <code>pg</code>, AWS S3/Cognito integrations,
+        <code>aws-jwt-verify</code>, <code>web-push</code> and ffmpeg. Feature folders are internal
+        modules, not separate microservices.
+      </p>
+      <div
+        class="diagram"
+        tabindex="0"
+        aria-label="Deployment diagram; scroll horizontally on small screens"
+      >
+        <svg viewBox="0 0 880 360" role="img" aria-labelledby="deployment-title deployment-desc">
+          <title id="deployment-title">Hosted application and external services</title>
+          <desc id="deployment-desc">
+            Browser connects over HTTPS to CloudFront, which sends HTTP with origin proof to nginx
+            on Lightsail. nginx serves static files and proxies API requests to Node. Node connects
+            to external PostgreSQL, S3 and web push. Cognito redirects issue an opaque app session.
+            Direct incoming uploads go from the browser to S3.
+          </desc>
+          <rect class="n y" x="15" y="120" width="120" height="60" rx="8" />
+          <text x="75" y="146">Browser / PWA</text>
+          <text class="s" x="75" y="165">HTTPS + app cookie</text>
+          <rect class="n p" x="175" y="120" width="120" height="60" rx="8" />
+          <text x="235" y="146">CloudFront</text>
+          <text class="s" x="235" y="165">viewer HTTPS</text>
+          <rect
+            class="n b"
+            x="345"
+            y="40"
+            width="310"
+            height="260"
+            rx="12"
+            style="fill: none; stroke-dasharray: 6 4"
+          />
+          <text x="500" y="65">Lightsail / Docker Compose</text>
+          <rect class="n b" x="365" y="120" width="110" height="60" rx="8" />
+          <text x="420" y="146">nginx</text>
+          <text class="s" x="420" y="165">static + /api proxy</text>
+          <rect class="n g" x="505" y="95" width="130" height="130" rx="8" />
+          <text x="570" y="122">Node application</text>
+          <text class="s" x="570" y="143">HTTP + SSE hub</text>
+          <text class="s" x="570" y="162">cycle/media loop</text>
+          <text class="s" x="570" y="181">reminder loop</text>
+          <text class="s" x="570" y="202">ffmpeg child process</text>
+          <rect class="n w" x="705" y="40" width="140" height="55" rx="8" />
+          <text x="775" y="65">PostgreSQL</text>
+          <text class="s" x="775" y="82">external database</text>
+          <rect class="n w" x="705" y="120" width="140" height="55" rx="8" />
+          <text x="775" y="145">Private S3</text>
+          <text class="s" x="775" y="162">versioned media</text>
+          <rect class="n r" x="705" y="200" width="140" height="55" rx="8" />
+          <text x="775" y="225">Web push service</text>
+          <text class="s" x="775" y="242">browser notification</text>
+          <rect class="n p" x="15" y="20" width="120" height="55" rx="8" />
+          <text x="75" y="45">Cognito</text>
+          <text class="s" x="75" y="62">pool per environment</text>
+          <path class="e" d="M135 150H175" />
+          <path class="e" d="M295 150H365" />
+          <text class="s" x="330" y="110">HTTP + proof</text>
+          <path class="e" d="M475 150H505" />
+          <path class="e" d="M635 110L705 68" />
+          <path class="e" d="M635 150H705" />
+          <path class="e" d="M635 200L705 225" />
+          <path class="e d" d="M75 120V75" />
+          <path class="e d" d="M75 180V330H865V147H845" />
+          <text class="s" x="400" y="348">
+            Direct incoming PUT only; Node still reads, processes and serves media
+          </text>
+        </svg>
+      </div>
+      <p>
+        The diagram combines configured hosted boundaries, not verified release status. Default
+        Compose runs nginx plus one Node application container. PostgreSQL and S3 are external;
+        local runs use SQLite and disk. Hosted-dev names retain <code>demo</code> after the
+        synthetic Demo's removal.
+      </p>
+      <h2 id="http"><span class="lvl">1</span>HTTP and proxy trust</h2>
+      <p>
+        <a href="../../server/src/http.ts">http.ts</a> dispatches routes using paths and regular
+        expressions. nginx proxies <code>/api/*</code> to Node with that prefix removed, keeps API
+        responses out of caches, and disables proxy buffering for SSE. Auth transport and browser
+        origin validation precede session/resource checks.
+      </p>
+      <p>
+        <code>authTransportIsSecure</code> accepts socket TLS, an explicitly enabled loopback
+        exception, or matching <code>X-Rewind-Origin-Auth</code> and
+        <code>X-Forwarded-Proto: https</code>. CloudFront enforces viewer HTTPS and supplies the
+        origin proof; nginx forwards it and sets the protocol. A forwarded protocol header alone
+        does not authenticate the proxy. The origin hop is HTTP. The loopback exception requires a
+        loopback peer/host and no forwarded protocol header.
+      </p>
+      <p>
+        Intake defaults are 30 seconds idle, 120 seconds total upload, two concurrent intakes and
+        one processing request; selectors live in
+        <a href="../../server/src/config.ts">config.ts</a>. Process-local limits are not a
+        distributed rate limiter.
+      </p>
+      <h2 id="auth"><span class="lvl">2</span>Managed login and opaque sessions</h2>
+      <div
+        class="diagram"
+        tabindex="0"
+        aria-label="Login diagram; scroll horizontally on small screens"
+      >
+        <svg viewBox="0 0 860 150" role="img" aria-labelledby="auth-title auth-desc">
+          <title id="auth-title">Cognito login becomes a Rewind session</title>
+          <desc id="auth-desc">
+            Browser starts login, Cognito authorizes with PKCE, server exchanges and validates the
+            callback, then sets an opaque Rewind cookie used by API requests.
+          </desc>
+          <rect class="n y" x="15" y="40" width="130" height="60" rx="8" />
+          <text x="80" y="65">Browser starts</text>
+          <text class="s" x="80" y="84">/api/auth/cognito/start</text>
+          <rect class="n p" x="180" y="40" width="135" height="60" rx="8" />
+          <text x="247" y="65">Cognito login</text>
+          <text class="s" x="247" y="84">code + PKCE</text>
+          <rect class="n b" x="350" y="40" width="150" height="60" rx="8" />
+          <text x="425" y="65">Server callback</text>
+          <text class="s" x="425" y="84">exchange + verify</text>
+          <rect class="n g" x="535" y="40" width="145" height="60" rx="8" />
+          <text x="607" y="65">Opaque app cookie</text>
+          <text class="s" x="607" y="84">token hash in database</text>
+          <rect class="n w" x="715" y="40" width="130" height="60" rx="8" />
+          <text x="780" y="65">API policy</text>
+          <text class="s" x="780" y="84">session + membership</text>
+          <path class="e" d="M145 70H180" />
+          <path class="e" d="M315 70H350" />
+          <path class="e" d="M500 70H535" />
+          <path class="e" d="M680 70H715" />
+        </svg>
+      </div>
+      <p>
+        The callback checks state/replay, nonce, ID-token claims and verified email, then maps
+        <code>cognito_sub</code> to the account. The API accepts the Rewind session, not a Cognito
+        token. The cookie is <code>__Host-rewind_session</code>, Secure, HttpOnly, SameSite=Lax,
+        Path=/ and no Domain. Idle expiry slides for seven days, bounded by 30 days absolute. The
+        persisted credential is a SHA-256 token hash.
+      </p>
+      <p>
+        Developer password sign-in remains local/dev under <code>REWIND_AUTH_PASSWORD</code>;
+        browser responses keep the token in the cookie, while native responses return a bearer token
+        for SecureStore. Different simultaneous cookie/bearer credentials fail. Release refuses
+        password sign-in; native clients do not show managed login. See the
+        <a href="../domain/session-contract.md">session contract</a> and
+        <a href="../../doc/planning/sprints/sprint-3-cognito/design-decisions.md"
+          >existing Cognito decision note</a
+        >.
+      </p>
+      <h2 id="db"><span class="lvl">3</span>SQLite and hosted PostgreSQL</h2>
+      <p>
+        <code>REWIND_DATABASE_URL</code> selects PostgreSQL; otherwise
+        <a href="../../server/src/db.ts">db.ts</a> opens SQLite under <code>REWIND_DATA_DIR</code>.
+        SQLite uses WAL, foreign keys and a busy timeout. The PostgreSQL bridge presents the
+        synchronous <code>prepare/run/get/all/exec</code> surface through a <code>pg</code> worker
+        thread; calling SQL blocks the caller. This is not an asynchronous persistence rewrite.
+      </p>
+      <p>
+        PostgreSQL uses advisory locks for serialized writers, savepoints for compatible failure
+        behavior, translated SQL and matching migrations. Runtime verifies remote TLS with the
+        bundled RDS CA and binds the database to its environment. TLS disable is loopback-only. Read
+        <a href="../architecture/ADR-0003-postgresql.md">ADR-0003</a> for the decision and
+        historical measurements.
+      </p>
+      <p>
+        At the baseline, <a href="../../infra/terraform/media/database.tf">database.tf</a> enables
+        dev cutover but disables release provisioning/cutover. That declaration is not a current
+        health check. Release persistence/recovery remains #504; operations stay in the
+        <a href="../architecture/postgresql-operations.md">database runbook</a>.
+      </p>
+      <h2 id="jobs"><span class="lvl">4</span>Internal loops and durable work</h2>
+      <p>
+        <a href="../../server/src/cli.ts">cli.ts</a> <code>start</code> runs HTTP and the cycle
+        scheduler, plus the reminder loop when providers are configured. The scheduler calls
+        <code>runWorkerTick</code> for real groups. Optional <code>worker</code> CLI mode runs the
+        same job machinery separately; default Compose has no standalone worker service. The
+        PostgreSQL I/O thread is a different mechanism.
+      </p>
+      <p>
+        Clip and film jobs persist in SQL. Claims have leases and
+        <code>claim_generation</code> fences; progress/completion must match the claim, preventing
+        stale workers from overwriting newer work. ffmpeg runs as a child process with argument
+        arrays. Retry limits and typed failure categories live in
+        <a href="../../server/src/jobs/worker.ts">worker.ts</a> and the job processors. These are
+        durable database jobs, not an external message broker.
+      </p>
+      <h2 id="media"><span class="lvl">5</span>Storage and media capabilities</h2>
+      <div
+        class="diagram"
+        tabindex="0"
+        aria-label="Media lifecycle diagram; scroll horizontally on small screens"
+      >
+        <svg viewBox="0 0 860 180" role="img" aria-labelledby="life-title life-desc">
+          <title id="life-title">One contribution becomes a released film</title>
+          <desc id="life-desc">
+            Capture, authorized intake, durable clip job, ffmpeg and verified clip output. At cycle
+            end, a film job compiles clips, publication unlocks authorized playback and Archive.
+          </desc>
+          <rect class="n y" x="15" y="20" width="120" height="50" rx="8" />
+          <text x="75" y="49">Photo / video</text>
+          <rect class="n p" x="175" y="20" width="160" height="50" rx="8" />
+          <text x="255" y="42">Authorized intake</text>
+          <text class="s" x="255" y="59">S3 signed PUT / disk upload</text>
+          <rect class="n w" x="375" y="20" width="120" height="50" rx="8" />
+          <text x="435" y="49">Durable clip job</text>
+          <rect class="n g" x="535" y="20" width="120" height="50" rx="8" />
+          <text x="595" y="49">ffmpeg</text>
+          <rect class="n b" x="695" y="20" width="150" height="50" rx="8" />
+          <text x="770" y="49">Verified clip</text>
+          <path class="e" d="M135 45H175" />
+          <path class="e" d="M335 45H375" />
+          <path class="e" d="M495 45H535" />
+          <path class="e" d="M655 45H695" />
+          <rect class="n y" x="15" y="110" width="160" height="50" rx="8" />
+          <text x="95" y="139">Cycle ends</text>
+          <rect class="n w" x="215" y="110" width="160" height="50" rx="8" />
+          <text x="295" y="139">Film job + ffmpeg</text>
+          <rect class="n b" x="415" y="110" width="160" height="50" rx="8" />
+          <text x="495" y="139">Published release</text>
+          <rect class="n g" x="615" y="110" width="230" height="50" rx="8" />
+          <text x="730" y="132">Premiere / Archive</text>
+          <text class="s" x="730" y="149">authorized playback and download</text>
+          <path class="e" d="M175 135H215" />
+          <path class="e" d="M375 135H415" />
+          <path class="e" d="M575 135H615" />
+        </svg>
+      </div>
+      <div class="table-wrap" tabindex="0" aria-label="Media adapter table">
+        <table>
+          <tr>
+            <th>Configuration</th>
+            <th>Representation / intake</th>
+            <th>Boundary</th>
+          </tr>
+          <tr>
+            <td><code>disk</code></td>
+            <td>
+              No configured <code>MediaStore</code>; staged/processed filesystem paths;
+              authenticated byte intake through Node.
+            </td>
+            <td>Local product path.</td>
+          </tr>
+          <tr>
+            <td><code>local</code></td>
+            <td>Legacy immutable object-store adapter; not the disk intake path.</td>
+            <td>Retained; do not extend.</td>
+          </tr>
+          <tr>
+            <td><code>s3</code></td>
+            <td>Immutable object refs and a signed incoming PUT transport.</td>
+            <td>
+              Hosted path; scope binds environment/group, exact key/version, digest, length, type
+              and expiry.
+            </td>
+          </tr>
+        </table>
+      </div>
+      <p>
+        <a href="../../server/src/media/store.ts">MediaStore</a> defines
+        <code>put/head/read/delete</code> for the local/S3 object adapters.
+        <a href="../../server/src/media/configured-runtime.ts">Configured runtime wiring</a> shares
+        the selected store across HTTP, jobs and lifecycle. S3 finalization checks version,
+        checksum, size and encryption before trusting incoming media. A signed upload URL does not
+        grant playback or publish permission.
+      </p>
+      <p>
+        The active <a href="../../infra/terraform/media/main.tf">media root</a> uses SSE-S3
+        (<code>AES256</code>), versioning and public-access blocking. The adapter supports SSE-KMS
+        when configured with a canonical key ARN, and the separate
+        <a href="../../infra/terraform/modules/private-media/main.tf">private-media module</a>
+        requires it. Compose does not pass a KMS selector. Do not describe the current root as KMS.
+      </p>
+      <p>
+        Direct S3 PUT avoids Node's intake hop. Node still materializes/verifies S3 bytes for
+        processing and
+        <a href="../../server/src/archive/store-serving.ts">authorized playback/download</a>, then
+        writes outputs to S3. Media therefore still passes through Node.
+      </p>
+      <p>
+        <a href="../../server/src/archive/capabilities.ts">Read capabilities</a> are two-minute
+        opaque URLs backed by a process-local grant. They may work without a cookie, but resolution
+        rechecks the bound session, accepted/selected membership, published cycle and exact verified
+        output; a different presented session is rejected. They expose neither the application
+        session token nor a raw S3 URL.
+      </p>
+      <h2 id="rt"><span class="lvl">6</span>Realtime</h2>
+      <p>
+        Chat and cycle events use SSE. Persisted events support replay; the in-memory hub
+        distributes events after commit. The hub is process-local, so a second API replica would
+        require coordination for live delivery. nginx disables buffering; a database shared between
+        replicas does not by itself share the hub.
+      </p>
+      <h2 id="client"><span class="lvl">7</span>Client runtime</h2>
+      <p>
+        <code>App.tsx</code> supplies <code>RealAccountProvider</code>; real-account screens use
+        HTTP clients and domain contracts, with platform capture/file/token adapters.
+        <code>EXPO_PUBLIC_LOCAL_BASE_URL</code> is bundled at build time (hosted web uses
+        <code>/api</code>). A missing URL makes sign-in unavailable; it does not enable an offline
+        Demo. <code>EXPO_PUBLIC_*</code> settings are public, never a place for server secrets.
+      </p>
+      <h2 id="pwa"><span class="lvl">8</span>PWA and web-only reminders</h2>
+      <p>
+        <a href="../../public/sw.js">The service worker</a> keeps API/media/non-GET traffic
+        network-only, uses a network-first navigation shell and caches build assets. It does not
+        provide an offline private-media queue. A stamped build invalidates old shell caches.
+      </p>
+      <p>
+        The reminder outbox persists intended delivery and retry state; configured
+        <code>web-push</code> providers use VAPID. Provider acceptance does not establish visible
+        notification receipt, and no exactly-once device-delivery guarantee is claimed. iPhone
+        delivery uses an installed Home Screen PWA over HTTPS. Expo/native push remains disabled and
+        is outside this work.
+      </p>
+      <h2 id="ship"><span class="lvl">9</span>Build and delivery</h2>
+      <p>
+        Expo exports the web bundle; TypeScript builds the Node runtime. Compose runs read-only
+        containers with explicit data/media mounts. CloudFront/nginx expose the app and same-origin
+        API. The dev workflow requires Quality for its selected revision; a dev merge triggers
+        deployment. Release promotion follows protected <code>main</code> and release-environment
+        rules. Workflow configuration is distinct from deployed health and acceptance.
+      </p>
+      <p>
+        Procedures remain in <a href="../../deploy/README.md">deployment guidance</a>. This guide
+        performed no AWS action and establishes no new release result.
+      </p>
+      <h2 id="tests"><span class="lvl">10</span>Verification boundaries</h2>
+      <p>
+        <code>npm run test:fast</code> builds the server once, then runs root, server and frontend
+        suites concurrently. PostgreSQL has a separate server-suite path. Focused tests diagnose one
+        file. Slow, coverage and accessibility checks apply to web export, routing, PWA,
+        accessibility changes and release promotion under the working agreement.
+      </p>
+      <p>
+        For this documentation change, format/source/link checks and rendered learning-page
+        inspection validate the documentation. They do not replace application tests, real-provider
+        acceptance or iPhone notification receipt.
+      </p>
+      <h2 id="smells">Known architectural limits</h2>
+      <ul>
+        <li>
+          Process-local SSE, capabilities, caches and Cognito replay tracking prevent assuming
+          transparent multi-replica operation.
+        </li>
+        <li>
+          The synchronous PostgreSQL bridge blocks the calling thread; serialized writes preserve
+          parity rather than exploiting full PostgreSQL concurrency.
+        </li>
+        <li>
+          ffmpeg and API work share host resources. Concurrency limits bound work but do not prove
+          capacity under arbitrary load.
+        </li>
+        <li>
+          Release operational acceptance and current device integration results belong to their
+          tracking issues, not this source map.
+        </li>
+      </ul>
+    </main>
+  </body>
+</html>

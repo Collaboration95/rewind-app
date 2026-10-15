@@ -18,14 +18,6 @@ export interface ReleasedArchive {
   clips: ReleasedClip[];
 }
 
-export interface ReleasedArchivePage {
-  archive: ReleasedArchive;
-  filmCursor: string | null;
-  clipCursor: string | null;
-  hasMoreFilms: boolean;
-  hasMoreClips: boolean;
-}
-
 export type ReleasedArchiveMedia = ReleasedFilm | ReleasedClip;
 
 function filenamePart(value: string): string {

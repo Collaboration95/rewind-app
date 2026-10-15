@@ -5,6 +5,7 @@ import {
   createPrivateReminderClient,
   type PrivateReminderSnapshot,
 } from '../src/reminders/private-reminder-client';
+import { ToastProvider } from '../src/ui/primitives';
 import { subscribeToReminderIntents, type ReminderIntent } from '../src/reminders/reminder-intents';
 
 jest.mock('../src/auth/RealAccountProvider', () => ({ useRealAccount: jest.fn() }));
@@ -80,9 +81,11 @@ function fixture() {
         },
         pagination: { hasMore: false, nextCursor: null },
       });
+    if (path.endsWith('/reminders') && init?.method === 'POST')
+      return response({ preference: JSON.parse(String(init.body)) });
     if (path.endsWith('/reminders'))
       return response({
-        preference: { enabled: true, snoozedUntil: null },
+        preference: { enabled: false, snoozedUntil: null },
         nextReminderAt: null,
         delivery: { state: 'unconfigured', message: 'Unconfigured' },
       });
@@ -112,22 +115,48 @@ function fixture() {
 }
 beforeEach(() => jest.clearAllMocks());
 
+type Screen = Awaited<ReturnType<typeof render>>;
+/** Reminder controls live in Settings; the device state loads there without opting in. */
+async function openReminders(ui: Screen) {
+  await fireEvent.press(await ui.findByTestId('real-account-settings-button'));
+  const toggle = await ui.findByTestId('real-group-reminder-toggle');
+  await waitFor(() => expect(toggle.props.accessibilityState.disabled).toBe(false));
+  return toggle;
+}
+async function closeSettings(ui: Screen) {
+  await fireEvent.press(ui.getByTestId('real-settings-back'));
+}
+async function pickGroup(ui: Screen, id: string) {
+  await fireEvent.press(ui.getByTestId('real-group-menu-button'));
+  await fireEvent.press(ui.getByTestId(`switch-real-group-${id}`));
+}
+async function signOut(ui: Screen) {
+  await fireEvent.press(ui.getByTestId('real-group-sign-out'));
+  await fireEvent.press(ui.getByTestId('real-group-sign-out-confirm'));
+}
+
 it('loads scoped controls without opting in and awaits old-device removal before switching groups', async () => {
   const f = fixture();
   const removal = deferred<PrivateReminderSnapshot>();
   f.client.revoke.mockImplementationOnce(() => removal.promise);
   const ui = await render(<RealAccountGroupExperience displayName="Owner" />);
-  await ui.findByText(available.message);
+  await openReminders(ui);
+  expect(f.client.load).toHaveBeenCalled();
   expect(f.client.enable).not.toHaveBeenCalled();
   const oldContext = (createPrivateReminderClient as jest.Mock).mock.calls[0][0];
   expect(oldContext.isCurrentContext()).toBe(true);
-  await fireEvent.press(ui.getByTestId('switch-real-group-group-two'));
+  await closeSettings(ui);
+  await pickGroup(ui, 'group-two');
   expect(
     f.request.mock.calls.some(
       ([path, init]) => path === '/real/groups/current' && init?.method === 'POST',
     ),
   ).toBe(false);
-  expect(ui.getByTestId('private-reminder-enable').props.accessibilityState.disabled).toBe(true);
+  // Group controls stay locked while the old device is removed.
+  await fireEvent.press(ui.getByTestId('real-group-menu-button'));
+  expect(ui.getByTestId('switch-real-group-group-two').props.accessibilityState.disabled).toBe(
+    true,
+  );
   expect(oldContext.isCurrentContext()).toBe(true);
   await act(async () => {
     removal.resolve(revoked);
@@ -143,8 +172,9 @@ it('keeps a failed removal visible and never sends a group mutation', async () =
   const f = fixture();
   f.client.revoke.mockResolvedValueOnce({ ...revoked, state: 'cleanup-pending' });
   const ui = await render(<RealAccountGroupExperience displayName="Owner" />);
-  await ui.findByText(available.message);
-  await fireEvent.press(ui.getByTestId('switch-real-group-group-two'));
+  await openReminders(ui);
+  await closeSettings(ui);
+  await pickGroup(ui, 'group-two');
   await ui.findByText('Device reminder removal is unconfirmed. Check reminder support and retry.');
   expect(ui.getByTestId('real-group-name-heading').props.children).toBe('group-one');
   expect(f.request.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
@@ -160,7 +190,8 @@ it('awaits removal before accepting an invitation that selects another group', a
       inviteIntent={{ code: 'ABCDEF', groupId: 'group-two', expiresAt: '2026-10-25T00:00:00Z' }}
     />,
   );
-  await ui.findByText(available.message);
+  await openReminders(ui);
+  await closeSettings(ui);
   await fireEvent.press(ui.getByTestId('real-invite-accept'));
   expect(f.request).not.toHaveBeenCalledWith('/real/invites/accept', expect.anything());
   await act(async () => {
@@ -176,8 +207,8 @@ it('starts logout immediately while device cleanup is pending', async () => {
   const removal = deferred<PrivateReminderSnapshot>();
   f.client.revoke.mockImplementationOnce(() => removal.promise);
   const ui = await render(<RealAccountGroupExperience displayName="Owner" />);
-  await ui.findByText(available.message);
-  await fireEvent.press(ui.getByTestId('real-group-sign-out'));
+  await openReminders(ui);
+  await signOut(ui);
   expect(f.auth.signOut).toHaveBeenCalledTimes(1);
   const context = (createPrivateReminderClient as jest.Mock).mock.calls[0][0];
   await ui.unmount();
@@ -233,14 +264,15 @@ it.each([false, true])(
       }),
     );
     const ui = await render(<RealAccountGroupExperience displayName="Owner" />);
-    const enable = await ui.findByTestId('private-reminder-enable');
-    await waitFor(() => expect(enable.props.accessibilityState.disabled).toBe(false));
+    const enable = await openReminders(ui);
+    await waitFor(() => expect(ui.getByText('Off')).toBeTruthy());
     await fireEvent.press(enable);
+    await fireEvent.press(await ui.findByTestId('real-notify-continue'));
     await ui.findByText('This device is registered. Reminder delivery is not confirmed.');
-    await fireEvent.press(ui.getByTestId('real-group-sign-out'));
+    await signOut(ui);
     await waitFor(() => expect(createPrivateReminderClient).toHaveBeenCalledTimes(2));
     await waitFor(() =>
-      expect(ui.getByTestId('private-reminder-enable').props.accessibilityState.disabled).toBe(
+      expect(ui.getByTestId('real-group-reminder-toggle').props.accessibilityState.disabled).toBe(
         false,
       ),
     );
@@ -253,7 +285,8 @@ it.each([false, true])(
 it('revalidates a tap against the server-selected group without switching to payload context', async () => {
   const f = fixture();
   const ui = await render(<RealAccountGroupExperience displayName="Owner" />);
-  await ui.findByText(available.message);
+  await openReminders(ui);
+  await closeSettings(ui);
   await act(async () => {
     await f.callbacks[0]({ groupId: 'group-two', reminderId: 'one' });
   });
@@ -269,7 +302,8 @@ it('revalidates a tap against the server-selected group without switching to pay
 it('discards a delayed reminder response after the authenticated context changes', async () => {
   const f = fixture();
   const ui = await render(<RealAccountGroupExperience displayName="Owner" />);
-  await ui.findByText(available.message);
+  await openReminders(ui);
+  await closeSettings(ui);
   const pending = deferred<Response>();
   f.request.mockImplementationOnce(() => pending.promise);
   let tap!: Promise<void> | void;
@@ -290,4 +324,160 @@ it('discards a delayed reminder response after the authenticated context changes
     ui.queryByText('This reminder is for another group. Choose a group you belong to.'),
   ).toBeNull();
   expect(ui.queryByText('group-two')).toBeNull();
+});
+
+describe('turning the reminder on for this device', () => {
+  const enabled: PrivateReminderSnapshot = {
+    state: 'enabled',
+    enabled: true,
+    canEnable: false,
+    canDisable: true,
+    message: 'This device is registered. Reminder delivery is not confirmed.',
+  };
+  // Toasts need their provider to render.
+  const screen = () => (
+    <ToastProvider>
+      <RealAccountGroupExperience displayName="Owner" />
+    </ToastProvider>
+  );
+  const deviceOn = 'Sunday 7 PM reminders are on for this device.';
+  const saves = (f: ReturnType<typeof fixture>) =>
+    f.request.mock.calls.filter(
+      ([path, init]) => String(path).endsWith('/reminders') && init?.method === 'POST',
+    );
+  async function allow(ui: Screen) {
+    await fireEvent.press(await openReminders(ui));
+    await fireEvent.press(await ui.findByTestId('real-notify-continue'));
+  }
+
+  it('claims the device only after a confirmed registration and saves the schedule', async () => {
+    const f = fixture();
+    f.client.enable.mockResolvedValueOnce(enabled);
+    const ui = await render(screen());
+    await allow(ui);
+    await ui.findByText(deviceOn);
+    expect(f.client.enable).toHaveBeenCalledTimes(1);
+    expect(saves(f)).toHaveLength(1);
+  });
+
+  it.each([
+    ['denied', { ...available, state: 'denied', canEnable: false, message: 'Denied.' }],
+    ['error', { ...available, state: 'error', message: 'This device could not be registered.' }],
+    [
+      'cleanup-pending',
+      { ...available, state: 'cleanup-pending', canEnable: false, message: 'Removal unconfirmed.' },
+    ],
+    ['revoked', { ...revoked, message: 'Association removed.' }],
+    [
+      'unenabled success-looking state',
+      { ...available, state: 'enabled', enabled: false, message: 'Not really registered.' },
+    ],
+  ] as const)('reports a %s result without a device-enabled message', async (_name, snapshot) => {
+    const f = fixture();
+    f.client.enable.mockResolvedValueOnce(snapshot as PrivateReminderSnapshot);
+    const ui = await render(screen());
+    await allow(ui);
+    await waitFor(() => expect(f.client.enable).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        ui.queryByText(snapshot.message) ??
+          ui.queryByText('Notifications are off in your browser settings'),
+      ).toBeTruthy(),
+    );
+    expect(ui.queryByText(deviceOn)).toBeNull();
+    expect(saves(f)).toHaveLength(0);
+    expect(ui.getByTestId('real-group-reminder-toggle').props.accessibilityState.checked).toBe(
+      false,
+    );
+  });
+
+  it('shows a retry message for a rejected enable call, then reaches success on retry', async () => {
+    const f = fixture();
+    f.client.enable.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce(enabled);
+    const ui = await render(screen());
+    await allow(ui);
+    await ui.findByText('This device could not be registered. Retry when connected.');
+    expect(ui.queryByText(deviceOn)).toBeNull();
+    expect(saves(f)).toHaveLength(0);
+    await waitFor(() =>
+      expect(ui.getByTestId('real-group-reminder-toggle').props.accessibilityState.disabled).toBe(
+        false,
+      ),
+    );
+    await fireEvent.press(ui.getByTestId('real-group-reminder-toggle'));
+    await fireEvent.press(await ui.findByTestId('real-notify-continue'));
+    await ui.findByText(deviceOn);
+    expect(f.client.enable).toHaveBeenCalledTimes(2);
+    expect(ui.queryByText('This device could not be registered. Retry when connected.')).toBeNull();
+    expect(saves(f)).toHaveLength(1);
+  });
+
+  it('keeps registration success separate from a failed schedule save', async () => {
+    const f = fixture();
+    f.client.enable.mockResolvedValueOnce(enabled);
+    const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (path, init) =>
+      String(path).endsWith('/reminders') && init?.method === 'POST'
+        ? response({}, 503)
+        : original(path, init),
+    );
+    const ui = await render(screen());
+    await allow(ui);
+    await ui.findByText(
+      'This device is registered, but your reminder schedule could not be saved. Retry.',
+    );
+    expect(ui.queryByText(deviceOn)).toBeNull();
+    expect(ui.getByTestId('real-group-reminder-toggle').props.accessibilityState.checked).toBe(
+      false,
+    );
+  });
+
+  it('saves only the schedule, with truthful copy, when the device cannot register', async () => {
+    const f = fixture();
+    f.client.load.mockResolvedValue({
+      ...available,
+      state: 'unconfigured',
+      canEnable: false,
+      message: 'Remote reminder delivery is not configured. Group preferences remain usable.',
+    });
+    const ui = await render(screen());
+    await fireEvent.press(await openReminders(ui));
+    await ui.findByText('Sunday 7 PM reminder saved.');
+    expect(f.client.enable).not.toHaveBeenCalled();
+    expect(ui.queryByText(deviceOn)).toBeNull();
+    await ui.findByText(
+      'Remote reminder delivery is not configured. Group preferences remain usable.',
+    );
+  });
+
+  it('drops a late enable result after unmount', async () => {
+    const f = fixture();
+    const pending = deferred<PrivateReminderSnapshot>();
+    f.client.enable.mockImplementationOnce(() => pending.promise);
+    const ui = await render(screen());
+    await allow(ui);
+    await ui.unmount();
+    await act(async () => {
+      pending.resolve(enabled);
+    });
+    expect(saves(f)).toHaveLength(0);
+  });
+
+  it('drops a late enable result after the authenticated context changes', async () => {
+    const f = fixture();
+    const pending = deferred<PrivateReminderSnapshot>();
+    f.client.enable.mockImplementationOnce(() => pending.promise);
+    const ui = await render(screen());
+    await allow(ui);
+    (useRealAccount as jest.Mock).mockReturnValue({
+      ...f.auth,
+      authenticatedRequest: f.request.getMockImplementation(),
+    });
+    await ui.rerender(screen());
+    await act(async () => {
+      pending.resolve(enabled);
+    });
+    expect(ui.queryByText(deviceOn)).toBeNull();
+    expect(saves(f)).toHaveLength(0);
+  });
 });

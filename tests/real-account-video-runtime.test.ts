@@ -1,4 +1,5 @@
 import { createRealAccountVideoRuntimeClient } from '../src/capture/real-account-video-runtime';
+import { ClipUploadSession } from '../src/capture/clip-uploader';
 import type { ClipUploadInput, PendingClipUpload } from '../src/domain/video';
 
 function response(body: unknown, status = 200): Response {
@@ -41,6 +42,105 @@ const input: ClipUploadInput = {
 };
 
 describe('real account video runtime', () => {
+  it('deletes a committed server job when Cancel precedes its registration response', async () => {
+    let sendReceipt!: () => void;
+    const registeredJobs = new Set<string>();
+    let quotaSeconds = 0;
+    const authenticatedRequest = jest.fn((path: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') {
+        expect(path).toBe('/contributions/upload/clip-job-1?groupId=real%2Fgroup-1');
+        registeredJobs.delete(pending.job.id);
+        quotaSeconds -= input.durationSeconds;
+        return Promise.resolve(response({ cancelled: true }));
+      }
+      expect(path).toBe('/contributions/upload?groupId=real%2Fgroup-1');
+      registeredJobs.add(pending.job.id);
+      quotaSeconds += input.durationSeconds;
+      return new Promise<Response>((resolve, reject) => {
+        sendReceipt = () => resolve(response({ upload: pending }, 201));
+        init?.signal?.addEventListener('abort', () =>
+          reject(new DOMException('Aborted after commit', 'AbortError')),
+        );
+      });
+    });
+    const client = createRealAccountVideoRuntimeClient(authenticatedRequest, {
+      transferMode: 'server',
+    });
+    const session = new ClipUploadSession({
+      uploadClip: (clip, signal) =>
+        client.uploadClip!('ignored-session', 'real/group-1', clip, signal),
+      cancelClipUpload: (jobId) =>
+        client.cancelClipUpload!('ignored-session', 'real/group-1', jobId),
+    });
+
+    const uploading = session.upload(input);
+    const cancelled = expect(uploading).rejects.toMatchObject({ code: 'cancelled' });
+    expect(registeredJobs.size).toBe(1);
+    expect(quotaSeconds).toBe(8);
+    await session.cancel();
+    expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
+    expect(authenticatedRequest).toHaveBeenCalledTimes(1);
+    expect(authenticatedRequest.mock.calls[0][1]?.signal).toBeUndefined();
+
+    sendReceipt();
+    await cancelled;
+    expect(authenticatedRequest).toHaveBeenCalledTimes(2);
+    expect(registeredJobs.size).toBe(0);
+    expect(quotaSeconds).toBe(0);
+    expect(session.getProgress()).toEqual({ status: 'cancelled', percent: 0 });
+  });
+
+  it('refuses server registration when cancellation already happened', async () => {
+    const authenticatedRequest = jest.fn();
+    const client = createRealAccountVideoRuntimeClient(authenticatedRequest);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      client.uploadClip!('ignored-session', 'real/group-1', input, controller.signal),
+    ).rejects.toMatchObject({ code: 'cancelled' });
+    expect(authenticatedRequest).not.toHaveBeenCalled();
+  });
+
+  it('aborts byte staging and does not register after a late staging response', async () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'video/mp4' });
+    const fetchSource = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      blob: async () => blob,
+    } as Response);
+    let finishStaging!: () => void;
+    let reachedStaging!: () => void;
+    const stagingStarted = new Promise<void>((resolve) => (reachedStaging = resolve));
+    const authenticatedRequest = jest.fn((_path: string, init?: RequestInit) => {
+      expect(init?.method).toBe('POST');
+      reachedStaging();
+      return new Promise<Response>((resolve) => {
+        finishStaging = () =>
+          resolve(response({ source: { uri: input.sourceUri, byteLength: 3 } }));
+      });
+    });
+    try {
+      const client = createRealAccountVideoRuntimeClient(authenticatedRequest);
+      const controller = new AbortController();
+      const uploading = client.uploadClip!(
+        'ignored-session',
+        'real/group-1',
+        { ...input, sourceUri: 'blob:owned-capture' },
+        controller.signal,
+      );
+      const cancelled = expect(uploading).rejects.toMatchObject({ code: 'cancelled' });
+      await stagingStarted;
+      expect(authenticatedRequest.mock.calls[0][1]?.signal).toBe(controller.signal);
+      controller.abort();
+      finishStaging();
+      await cancelled;
+      expect(authenticatedRequest).toHaveBeenCalledTimes(1);
+      expect(authenticatedRequest.mock.calls[0][0]).toContain('/contributions/upload/source?');
+      expect(controller.signal.aborted).toBe(true);
+    } finally {
+      fetchSource.mockRestore();
+    }
+  });
+
   it('loads the authenticated ledger and deletes a contribution in the selected group', async () => {
     const ledger = {
       cycleId: 'real-cycle-1',

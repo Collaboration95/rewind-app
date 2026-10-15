@@ -131,7 +131,7 @@ export function createRealAccountVideoRuntimeClient(
         ),
       );
     },
-    async stageClipSource(_sessionId, groupId, idempotencyKey, base64) {
+    async stageClipSource(_sessionId, groupId, idempotencyKey, base64, signal?: AbortSignal) {
       if (transferMode === 'direct')
         return stageLocal(groupId, idempotencyKey, base64, 'video/mp4');
       const bytes = decodeBase64(base64);
@@ -142,6 +142,7 @@ export function createRealAccountVideoRuntimeClient(
             method: 'POST',
             headers: { 'Content-Type': 'video/mp4' },
             body: bytes as unknown as BodyInit,
+            ...(signal ? { signal } : {}),
           },
         ),
       );
@@ -162,7 +163,14 @@ export function createRealAccountVideoRuntimeClient(
       );
       return body.source;
     },
-    async uploadClip(_sessionId, groupId, input: ClipUploadInput): Promise<PendingClipUpload> {
+    async uploadClip(
+      _sessionId,
+      groupId,
+      input: ClipUploadInput,
+      signal?: AbortSignal,
+    ): Promise<PendingClipUpload> {
+      if (signal?.aborted)
+        throw new LocalRuntimeError('The upload was cancelled.', undefined, 'cancelled');
       if (transferMode === 'direct') {
         const held = staged.get(input.sourceUri);
         let source: DirectTransferSource;
@@ -181,7 +189,7 @@ export function createRealAccountVideoRuntimeClient(
         } else if (input.sourceUri.startsWith('file://'))
           source = { kind: 'file', uri: input.sourceUri };
         else if (input.sourceUri.startsWith('blob:')) {
-          const response = await fetch(input.sourceUri, { credentials: 'omit' });
+          const response = await fetch(input.sourceUri, { credentials: 'omit', signal });
           if (!response.ok)
             throw new LocalRuntimeError(
               'The browser capture could not be read.',
@@ -199,7 +207,7 @@ export function createRealAccountVideoRuntimeClient(
             400,
             'missing_source',
           );
-        const completed = await direct.transferContribution(groupId, input, source);
+        const completed = await direct.transferContribution(groupId, input, source, { signal });
         staged.delete(input.sourceUri);
         // The intent receipt intentionally contains no invented timestamps.
         // Preserve RuntimeClient's legacy receipt using authoritative ledger metadata.
@@ -251,6 +259,31 @@ export function createRealAccountVideoRuntimeClient(
           existing: true,
         };
       }
+      if (input.sourceUri.startsWith('blob:')) {
+        const response = await fetch(input.sourceUri, { credentials: 'omit', signal });
+        if (!response.ok)
+          throw new LocalRuntimeError(
+            'The browser capture could not be read.',
+            400,
+            'missing_source',
+          );
+        const blob = await response.blob();
+        const stagedBody = await readResponse<{ source: { uri: string; byteLength: number } }>(
+          await authenticatedRequest(
+            `/contributions/upload/source?${groupQuery(groupId)}&idempotencyKey=${encodeURIComponent(input.idempotencyKey)}`,
+            { method: 'POST', headers: { 'Content-Type': 'video/mp4' }, body: blob, signal },
+          ),
+        );
+        input = {
+          ...input,
+          sourceUri: stagedBody.source.uri,
+          byteLength: stagedBody.source.byteLength,
+        };
+      }
+      if (signal?.aborted)
+        throw new LocalRuntimeError('The upload was cancelled.', undefined, 'cancelled');
+      // A committed registration must return its job ID even after Cancel.
+      // The upload session deletes that receipt when its generation is stale.
       const body = await readResponse<{ upload: PendingClipUpload }>(
         await authenticatedRequest(`/contributions/upload?${groupQuery(groupId)}`, {
           method: 'POST',
