@@ -61,7 +61,7 @@
   <body>
     <main>
       <h1>Rewind privacy policy</h1>
-      <p>Effective 6 October 2026.</p>
+      <p>Effective 15 October 2026.</p>
       <p>
         Rewind is a private time capsule for small groups. This policy says what Rewind stores, why,
         and how you delete it.
@@ -69,9 +69,12 @@
       <h2>What we store</h2>
       <ul>
         <li>
-          Your username, display name and a salted hash of your password. We never store the
-          password itself. You sign up with a username and password only; Rewind does not ask for
-          your email address or phone number.
+          Your username, display name and account identifier. For Cognito sign-in, Rewind stores the
+          provider's subject identifier to link your account. Amazon Cognito holds your sign-in
+          credentials and verified email; Rewind checks the verified-email claim during sign-in but
+          does not store the email in its account database or receive your Cognito password. Local
+          and hosted developer accounts instead use a username and a salted password hash stored by
+          Rewind; the password itself is not stored.
         </li>
         <li>The groups you create or join, and your role in each group.</li>
         <li>The photos and videos you capture, including the sound in videos.</li>
@@ -104,7 +107,9 @@
         Photos, videos and group films are stored in private Amazon Web Services (AWS) S3 storage.
         Account details, group membership, chat and reminder settings are stored in the hosted
         database on AWS. Data is sent over encrypted (HTTPS) connections. Web push reminders pass
-        through your browser or device maker's push service.
+        through your browser or device maker's push service. Amazon Cognito handles hosted sign-in
+        and recovery separately from Rewind's application database. Local development uses local
+        database and disk storage rather than the hosted storage described above.
       </p>
       <h2>How long we keep it</h2>
       <p>
@@ -122,7 +127,11 @@
         deletion completes; stored media is then removed through deletion and cleanup. A group you
         own passes to its longest-standing other member. A group with no other members is deleted
         with all its content. A group film that was already made with your moments stays with that
-        group.
+        group. For a Cognito-linked account, deletion also requests removal of the linked Cognito
+        user before removing the Rewind account. If the provider request fails, Rewind reports an
+        error and leaves the application account intact so you can retry. Deleting Rewind does not
+        delete a separate upstream identity-provider account, if one is used. Copies already
+        downloaded by group members are outside Rewind's control.
       </p>
       <h2>Children</h2>
       <p>Rewind is not for children under 13.</p>

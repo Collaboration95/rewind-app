@@ -83,9 +83,26 @@
           <a href="/privacy">privacy policy</a> for what is deleted.
         </li>
         <li>
-          <strong>Forgot your password:</strong> open an issue with your username and we will help
-          you get back in. Rewind accounts use a username and password only, with no email address
-          or phone number.
+          <strong>Sign-in and recovery:</strong> web and Home Screen app sign-in uses Amazon Cognito
+          Managed Login when configured. Use the recovery option on that sign-in page; recovery
+          depends on the verified contact methods configured for your account. Rewind support cannot
+          recover an account from a public username. Never post recovery codes.
+        </li>
+        <li>
+          <strong>Developer sign-in:</strong> the username/password form is for local and hosted
+          development only, including the Android test app. These accounts are separate from Cognito
+          accounts and have no self-service password recovery. It is not release sign-in.
+        </li>
+        <li>
+          <strong>Install on iPhone:</strong> open the HTTPS website in Safari, use Share → Add to
+          Home Screen, then open Rewind from its icon. Allow camera access for photos and camera and
+          microphone access for videos. Enable reminders in Settings only if you want them; iPhone
+          web push requires the installed Home Screen app on iOS 16.4 or later.
+        </li>
+        <li>
+          <strong>Camera or reminders blocked:</strong> check the browser and device permissions,
+          then reopen Rewind. Capture needs a supported camera and a secure connection. Reminders
+          depend on browser support, permission and connectivity; native test-app push is disabled.
         </li>
       </ul>
       <nav aria-label="Rewind legal pages">
