@@ -37,9 +37,17 @@ revokes account sessions. A revoked or expired session requires sign-in again.
 
 ## Request boundary
 
-Protected application routes resolve the actor from the cookie or bearer
-credential. If both are presented and differ, authentication fails. Missing,
-unknown, expired and revoked credentials share the session-required response.
+Protected resource routes resolve the actor from the cookie or bearer
+credential. If both are presented and differ, authentication fails. On these
+routes, missing, unknown, expired and revoked credentials share the
+`session_required` response.
+
+Session restore (`GET /auth/session`, exposed as `/api/auth/session` through
+the web proxy) deliberately distinguishes the cases: a missing or unusable
+transport credential returns `session_required`; a presented token that is
+unknown, expired or revoked returns `session_expired`. Both responses use HTTP 401. The browser client uses this distinction to separate signed-out state
+from an expired-session notice.
+
 Client-supplied member IDs cannot establish identity. A group ID is only a
 resource selector; persisted membership/selection and owner/resource policy
 decide access. A valid account does not grant access to another group's data.
