@@ -17,7 +17,7 @@
 locals {
   database_settings = {
     dev     = { enabled = true, cutover = true, bundle = "micro_2_0", public = true }
-    release = { enabled = false, cutover = false, bundle = "micro_2_0", public = false }
+    release = { enabled = true, cutover = false, bundle = "micro_2_0", public = false }
   }
   database = merge(
     { enabled = false, cutover = false, bundle = "micro_2_0", public = false },

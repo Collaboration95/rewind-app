@@ -164,7 +164,7 @@ if [ "$COMPLETE" -ne 1 ]; then
   exit 0
 fi
 
-required_bundle_files='Dockerfile README.md compose.yaml operator-common.sh backup-manifest.sh backup.sh backup-postgres.sh database-bootstrap.sh database-import.sh database-status.sh restore.sh pause-host.sh preflight.sh migrate-with-backup.sh nginx.conf rewind.env.example rewind-backup.service rewind-backup.timer web.Dockerfile release.py release-host.sh'
+required_bundle_files='Dockerfile README.md compose.yaml operator-common.sh backup-manifest.sh backup.sh backup-postgres.sh database-bootstrap.sh database-maintenance.sh database-import.sh database-status.sh restore.sh pause-host.sh preflight.sh migrate-with-backup.sh nginx.conf rewind.env.example rewind-backup.service rewind-backup.timer web.Dockerfile release.py release-host.sh'
 for file_name in $required_bundle_files; do
   [ -f "$BUNDLE_SOURCE/deploy/$file_name" ] ||
     fail "required deployment artifact is missing: $BUNDLE_SOURCE/deploy/$file_name; restore the complete checked-in deploy/ bundle and retry"
@@ -211,7 +211,9 @@ for unit_name in rewind-backup.service rewind-backup.timer; do
       "$BUNDLE_SOURCE/deploy/$unit_name" "$SYSTEMD_DIR/$unit_name"
 done
 run_step 'reload systemd after installing Rewind units' systemctl daemon-reload
-run_step 'enable the Rewind backup timer' systemctl enable --now rewind-backup.timer
+if [ ! -f "$HOST_ROOT/database-maintenance" ]; then
+  run_step 'enable the Rewind backup timer' systemctl enable --now rewind-backup.timer
+fi
 
 [ -x "$HOST_ROOT/deploy/pause-host.sh" ] || fail 'pause-host.sh is not executable after installation'
 [ -x "$HOST_ROOT/deploy/preflight.sh" ] || fail 'preflight.sh is not executable after installation'

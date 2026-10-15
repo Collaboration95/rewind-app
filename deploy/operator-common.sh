@@ -381,3 +381,21 @@ sha256_file() {
 file_bytes() {
   wc -c < "$1" | tr -d '[:space:]'
 }
+
+# An operation selected in CI must match the host settings before any action.
+require_database_target() {
+  local actual="${REWIND_MEDIA_ENVIRONMENT:-}" expected="${REWIND_OPERATION_ENVIRONMENT:-}"
+  case "$actual" in dev|release) ;; *) die 'host environment must be dev or release' ;; esac
+  [[ -z "$expected" || "$expected" == "$actual" ]] || die 'database operation targets another environment'
+  [[ "${REWIND_DATABASE_ENVIRONMENT:-}" == "$actual" ]] || die 'database environment does not match host'
+  if [[ "$actual" == release ]]; then
+    [[ "${REWIND_BACKUP_BUCKET:-}" == rewind-release-backups-330599756236 &&
+       "${REWIND_BACKUP_PREFIX:-}" == rewind-release ]] || die 'release requires its explicit isolated backup bucket and prefix'
+  fi
+}
+
+require_runtime_stopped() {
+  local running
+  running="$(compose ps --status running --services)" || die 'cannot inspect running services'
+  ! grep -Fxq runtime <<<"$running" || die 'stop the runtime and all writers before the final snapshot/import'
+}

@@ -30,6 +30,7 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+require_database_target
 : "${REWIND_DATABASE_READONLY_URL:?REWIND_DATABASE_READONLY_URL must be set (Terraform hosted settings)}"
 url="$REWIND_DATABASE_READONLY_URL"
 if [[ -n "$endpoint" ]]; then
