@@ -79,7 +79,8 @@ so other model packages can link to precise behavior.
 | Previously excluded account/safety controls | Added in source: account deletion, reporting/blocking and owner contribution removal; do not describe all original membership exclusions as still true. No commercial moderation/compliance assurance follows.                                                                                                                               | UC-MANAGE-SAFETY, UC-DELETE-ACCOUNT              |
 
 Current exclusions: public discovery/profiles/feed, follower graphs, advertising,
-normal gallery import (fixtures are not a user import feature), long-form video,
+general gallery import beyond the bounded browser video fallback described in
+UC-CONTRIBUTE (fixtures are separate test support), long-form video,
 live streaming, licensed music, complex editing/AI edits, full messaging features
 such as attachments and read receipts, and commercial moderation. Independent
 image-only social posts remain excluded; photo **time-capsule contributions** are
@@ -251,12 +252,18 @@ temporary source. Accepted contribution status is visible as metadata; submissio
 does not grant pre-release playback/thumbnail access. This sealing boundary does
 not prohibit the member's local review **before** submission.
 
-Permission denial, unavailable recorder, interruption, unsupported/oversize media,
-expired upload intent, transfer failure, quota exhaustion and processing failure
-produce bounded failure/pending states, not a playable partial release. Do not
-assume durable background upload after the app closes. Sources:
+If browser recording is unsupported or temporarily unavailable, supported web
+paths offer a bounded fallback: open the device camera sheet or “Choose a video
+file.” File selection accepts an MP4 up to 15 seconds with an audio track, keeps
+file contributions labelled, and still requires server verification and quota
+checks. This is production capability, distinct from fixture injection and a
+general gallery-import product. Permission denial, interruption, invalid/oversize
+media, expired upload intent, transfer failure, quota exhaustion and processing
+failure produce bounded failure/pending states, not a playable partial release.
+Do not assume durable background upload after the app closes. Sources:
 [photo capture](../../src/capture/CameraCaptureScreen.tsx),
 [video capture](../../src/capture/VideoCaptureScreen.tsx),
+[browser capture/fallback](../../src/capture/platform.ts),
 [quota policy](../../server/src/contributions/index.ts),
 [ledger](../../server/src/contributions/ledger.ts),
 [upload intents](../../server/src/media/upload-intents.ts),
@@ -280,11 +287,12 @@ not unlimited editing or early replay. Source: [deletion policy](../../server/sr
 At the cycle boundary, internal scheduling closes collection and ensures a
 successor cycle from the boundary. Durable jobs use eligible processed inputs in
 contribution-time order, normalize audio and compile the film. A one-clip cycle
-can append one eligible same-group archived clip with an explicit label. Verified
+can append one eligible same-group archived clip with an explicit label; if none
+qualifies, the valid single current clip still compiles on its own. Verified
 output is published; the 24-hour premiere begins at publication, even if compilation
 was delayed. Later lifecycle advancement archives the release. Retries and
 idempotent transitions avoid treating partial work as publication. Missing ready
-inputs, no eligible filler, empty cycles, processing errors or exhausted retries
+inputs, empty cycles, processing errors or exhausted retries
 must be represented by the appropriate empty/waiting/delayed state rather than a
 fabricated film. The next collection does not wait for a delayed premiere.
 Sources: [lifecycle](../../server/src/cycles/lifecycle.ts),
