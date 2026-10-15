@@ -1,32 +1,32 @@
-# SWE5006 Project Planning Workspace
+# SWE5006 Project Documentation
 
-This repository contains the active planning documents for the SWE5006 Practice
-Module project.
+Start here for Rewind product, design, delivery and project-process references.
+Current scope is the real-account app: photo and video capture, web push
+reminders, and iOS delivery through the PWA. The synthetic Demo and compiled
+native iOS release are outside current scope.
 
-## Start here
+## Product
 
-- [Project context and constraints](planning/context/project-brief.md) — the working interpretation of the module brief and report expectations.
-- [Rewind discovery handoff](planning/ideation/rewind-product-discovery-handoff.md) — product context, decisions, research, and open questions.
-- [Selected Rewind proposal](planning/proposals/proposal-rewind.md) — the original product baseline; the Sprint 2 plan records the later pilot login and photo decisions.
-- [Sprint 0 plan](planning/sprints/sprint-0-plan.md) — the first capacity-aware implementation slice.
-- [Sprint 0 extension](planning/sprints/sprint-0-plan-extension.md) — the runtime-foundation move and Sprint 1 handoff.
+- [Current product baseline](planning/current-product-baseline.md) — requirements, use cases, implemented behavior and verification limits at its stated source revision.
+- [Project context and constraints](planning/context/project-brief.md) — the working interpretation of the official module brief.
+- Product walkthrough (`doc/planning/product-walkthrough.md`) is proposed in [PR #547](https://github.com/Collaboration95/rewind-app/pull/547); use the PR until it is merged.
 
-Sprint names follow the GitHub milestones: Sprint 0 ends 12 September, Sprint 1
-runs 13–26 September, Sprint 2 runs 27 September–10 October, and Sprint 3 runs
-11–24 October 2026. Current work is the open `mvp` issues in the active
-Sprint milestone; run `make issues` to list them. Delivery rules live in
-[`AGENTS.md`](../AGENTS.md).
+## Design
 
-- [Sprint 2 user journey and issue map](planning/sprints/sprint-2-user-journey-plan.md) — the draft path from app launch through private group, capture, release, and installable clients.
-- [Earlier hosted Demo proposal](planning/sprints/sprint-1-plan.md) — uses superseded Sprint naming and a narrower synthetic Demo scope.
+- [Database design](../docs/domain/database-design.md) — relational structure, constraints and persistence boundaries.
+- Current system architecture (`docs/architecture/current-system.md`) is proposed in [PR #548](https://github.com/Collaboration95/rewind-app/pull/548).
+- Analysis and design models (`docs/design/README.md`) are proposed in [PR #552](https://github.com/Collaboration95/rewind-app/pull/552), addressing [issue #538](https://github.com/Collaboration95/rewind-app/issues/538).
 
-Superseded plans, the Sprint 2 execution plan, planning handoffs and long agent
-prompts are in the [planning archive](planning/archive/README.md). Agents do not
-read them unless asked by name.
+## Delivery
 
-## Delivery guides
+- Delivery and verification guide (`docs/architecture/delivery-and-verification.md`) is proposed in [PR #544](https://github.com/Collaboration95/rewind-app/pull/544).
+- Client artifacts guide (`doc/planning/client-artifacts.md`) is proposed in [PR #547](https://github.com/Collaboration95/rewind-app/pull/547); it distinguishes build configuration, available artifacts and device verification.
+- Release cutover guide (`docs/architecture/release-cutover.md`) is proposed in [PR #549](https://github.com/Collaboration95/rewind-app/pull/549), pending deployment/security review. A proposed runbook does not establish deployment or acceptance.
 
-- [Native client builds](planning/native-client-builds.md) — prepare a pinned Android APK or iOS preview, record its source and public origins, and distinguish compilation from installed-client acceptance.
+PR links above identify references still under review when this index was written;
+consult their merge state before relying on the proposed files. Documentation
+records its source revision and verification limits; implementation presence and
+historical evidence do not establish current runtime or device results.
 
 Documentation-only changes receive a cheap required Quality result without
 running application tests. Code, workflow, executable documentation, mixed
@@ -36,3 +36,26 @@ or waiting for a deployment Quality result. See the current
 [Quality workflow](../.github/workflows/quality.yml) and
 [dev deployment workflow](../.github/workflows/deploy-dev.yml) for the executable
 rules.
+
+## Process
+
+- [Working agreement](../AGENTS.md) — delivery rules and verification tiers.
+- [Project-conduct evidence](planning/project-conduct-evidence.md) — factual Sprint 0–3 records, source references and gaps; no inferred attendance, hours or ceremonies.
+
+Sprint 0 ends 12 September; Sprint 1 runs 13–26 September; Sprint 2 runs
+27 September–10 October; Sprint 3 runs 11–24 October 2026. Current work is the
+open `mvp` issues in the active Sprint milestone; run `make issues` to list them.
+Track work through milestones and `mvp`/`doing` labels; Project boards are not
+maintained.
+
+## Historical planning
+
+These documents explain earlier proposals and decisions. Use the current product
+baseline and working agreement for present scope.
+
+- [Discovery handoff](planning/ideation/rewind-product-discovery-handoff.md) — early research, product decisions and open questions.
+- [Selected proposal](planning/proposals/proposal-rewind.md) — original requirements and product proposal.
+- [Sprint 0 plan](planning/sprints/sprint-0-plan.md) and [extension](planning/sprints/sprint-0-plan-extension.md) — foundation work and the Sprint 1 handoff.
+- [Sprint 2 user journey and issue map](planning/sprints/sprint-2-user-journey-plan.md) — an earlier journey and delivery plan.
+- [Earlier hosted Demo proposal](planning/sprints/sprint-1-plan.md) — superseded Sprint naming and synthetic Demo scope.
+- [Native client build reference](planning/native-client-builds.md) — earlier build guidance; its iOS preview instructions do not define the current iOS PWA delivery scope.

@@ -365,21 +365,23 @@ export function CameraCaptureScreen({
     await session.retake();
     setState((current) => ({
       ...current,
-      status: 'ready',
+      status: 'checking',
       activePreview: null,
       errorMessage: null,
     }));
-  }, [session]);
+    await refreshAccess();
+  }, [refreshAccess, session]);
 
   const discard = useCallback(async () => {
     await session.discard();
     setState((current) => ({
       ...current,
-      status: 'ready',
+      status: 'checking',
       activePreview: null,
       errorMessage: null,
     }));
-  }, [session]);
+    await refreshAccess();
+  }, [refreshAccess, session]);
 
   const accept = useCallback(async () => {
     setState((current) => ({ ...current, status: 'saving', errorMessage: null }));
