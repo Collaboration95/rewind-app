@@ -146,23 +146,52 @@
       nav a {
         margin-right: 12px;
       }
+      .diagram,
+      .table-wrap {
+        overflow-x: auto;
+        margin: 16px 0;
+      }
+      .diagram svg {
+        display: block;
+        min-width: 700px;
+      }
+      .table-wrap table {
+        min-width: 640px;
+      }
+      code {
+        overflow-wrap: anywhere;
+      }
+      a {
+        color: inherit;
+        text-decoration-thickness: 1px;
+      }
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        line-height: 2;
+      }
+      nav a {
+        margin-right: 0;
+      }
     </style>
   </head>
   <body>
     <main>
       <h1>Rewind, layer by layer</h1>
       <p class="mut">
-        Start at L1. Go deeper only when a doubt pulls you. Facts below come from reading the code
-        and docs on <code>dev</code> (6 Oct 2026). Things marked <b>(inferred)</b> are my reading,
-        not stated in a doc.
+        Source: <code>dev</code> commit <code>40ebeb5673d103b4b6950d095192aae744980769</code>,
+        inspected 15 October 2026. These are code and configuration facts, not a live deployment or
+        device test. See the
+        <a href="../architecture/current-system.md">current system architecture</a> for the
+        configuration matrix and decision index.
       </p>
       <nav>
-        <a href="#l1">L1 What</a><a href="#l2">L2 Boxes</a><a href="#l3">L3 Clip's life</a
-        ><a href="#l4">L4 Code map</a><a href="#l5">L5 Ship path</a
-        ><a href="#tradeoffs">Tradeoffs</a><a href="#doubts">Doubts</a>
+        <a href="#l1">Product</a><a href="#l2">Deployment</a><a href="#l3">Clip lifecycle</a
+        ><a href="#l4">Code map</a><a href="#l5">Delivery</a><a href="#tradeoffs">Decisions</a
+        ><a href="technical.html">Technical guide</a>
       </nav>
-
-      <svg width="0" height="0" style="position: absolute; border: 0">
+      <svg width="0" height="0" aria-hidden="true" style="position: absolute; border: 0">
         <defs>
           <marker
             id="a"
@@ -173,394 +202,251 @@
             markerHeight="7"
             orient="auto-start-reverse"
           >
-            <path d="M0 0L10 5L0 10z" fill="currentColor" style="fill: #888" />
+            <path d="M0 0L10 5L0 10z" style="fill: #888" />
           </marker>
         </defs>
       </svg>
-
-      <!-- ============ L1 ============ -->
-      <h2 id="l1"><span class="lvl">L1</span>What the app does</h2>
-      <ul>
-        <li>
-          A friend <b>group</b> runs <b>cycles</b>. Everyone drops short clips/photos during the
-          cycle.
-        </li>
-        <li>
-          Nobody sees anything until the cycle ends. Then the clips are stitched into one
-          <b>film</b> and revealed together (the "premiere").
-        </li>
-        <li>
-          Films pile up in the <b>Archive</b>. There's group <b>chat</b> on the side, plus web-push
-          <b>reminders</b>.
-        </li>
-        <li>Quota (glossary): 5 contributions / 30 seconds per member per cycle.</li>
-      </ul>
-      <svg viewBox="0 0 860 190">
-        <rect class="n y" x="20" y="60" width="110" height="56" rx="8" />
-        <text x="75" y="93">Create group</text>
-        <rect class="n p" x="170" y="60" width="110" height="56" rx="8" />
-        <text x="225" y="93">Invite friends</text>
-        <rect class="n b" x="320" y="60" width="130" height="56" rx="8" />
-        <text x="385" y="86">Cycle: collecting</text>
-        <text class="s" x="385" y="104">clips locked, unseen</text>
-        <rect class="n p" x="490" y="60" width="110" height="56" rx="8" />
-        <text x="545" y="86">Cycle ends</text>
-        <text class="s" x="545" y="104">film is built</text>
-        <rect class="n g" x="640" y="60" width="100" height="56" rx="8" />
-        <text x="690" y="86">Reveal</text>
-        <text class="s" x="690" y="104">premiere</text>
-        <rect class="n y" x="770" y="60" width="70" height="56" rx="8" />
-        <text x="805" y="93">Archive</text>
-        <path class="e" d="M130 88H170" />
-        <path class="e" d="M280 88H320" />
-        <path class="e" d="M450 88H490" />
-        <path class="e" d="M600 88H640" />
-        <path class="e" d="M740 88H770" />
-        <path class="e d" d="M385 60V30H385" />
-        <rect class="n w" x="300" y="140" width="170" height="34" rx="8" />
-        <text x="385" y="162">Chat + reminders (any time)</text>
-        <path class="e d" d="M385 140V116" />
-      </svg>
-      <p class="mut">
-        Two modes exist: the <b>real-account app</b> (the product) and a synthetic
-        <b>Demo</b> (frozen: kept only for tests/local runs, git tag
-        <code>demo-frozen-20261004</code>). Many routes/files come in "demo" and "real" pairs, which
-        is why the code looks doubled.
+      <h2 id="l1"><span class="lvl">L1</span>The product</h2>
+      <p>
+        A real-account group collects photos and short videos during a cycle. Contributions stay
+        sealed until release. The server builds a film for the premiere, retains published films in
+        Archive, and supports group chat and web-push reminders. Members can save released films and
+        their own released clips.
       </p>
-
-      <!-- ============ L2 ============ -->
-      <h2 id="l2"><span class="lvl">L2</span>The boxes (hosted dev)</h2>
-      <svg viewBox="0 0 860 330">
-        <rect class="n y" x="20" y="120" width="130" height="70" rx="8" />
-        <text x="85" y="150">Phone / browser</text>
-        <text class="s" x="85" y="170">PWA (Expo web)</text>
-        <rect class="n p" x="200" y="120" width="120" height="70" rx="8" />
-        <text x="260" y="150">CloudFront</text>
-        <text class="s" x="260" y="170">HTTPS front door</text>
-        <rect
-          class="n b"
-          x="370"
-          y="30"
-          width="470"
-          height="270"
-          rx="12"
-          style="fill: none; stroke-dasharray: 6 4"
-        />
-        <text class="s" x="605" y="50">One Lightsail VM (Docker Compose)</text>
-        <rect class="n b" x="395" y="120" width="110" height="70" rx="8" />
-        <text x="450" y="150">nginx</text>
-        <text class="s" x="450" y="170">static + /api proxy</text>
-        <rect class="n g" x="560" y="90" width="130" height="130" rx="8" />
-        <text x="625" y="120">Node runtime</text>
-        <text class="s" x="625" y="140">HTTP API · SSE chat</text>
-        <text class="s" x="625" y="156">job worker · schedulers</text>
-        <text class="s" x="625" y="172">ffmpeg</text>
-        <rect class="n w" x="725" y="70" width="95" height="56" rx="8" />
-        <text x="772" y="96">SQLite</text>
-        <text class="s" x="772" y="112">on VM disk</text>
-        <rect class="n w" x="725" y="150" width="95" height="56" rx="8" />
-        <text x="772" y="176">Media</text>
-        <text class="s" x="772" y="192">disk or S3</text>
-        <rect class="n r" x="560" y="250" width="130" height="36" rx="8" />
-        <text x="625" y="273">Web push services</text>
-        <rect class="n r" x="725" y="250" width="95" height="36" rx="8" />
-        <text x="772" y="273">S3 bucket</text>
-        <path class="e" d="M150 155H200" />
-        <path class="e" d="M320 155H395" />
-        <path class="e" d="M505 155H560" />
-        <path class="e" d="M690 110H725" />
-        <path class="e" d="M690 178H725" />
-        <path class="e" d="M625 220V250" />
-        <path class="e d" d="M772 206V250" />
-      </svg>
-      <ul>
-        <li>
-          <b>One server process</b> does everything: API, chat stream, video jobs, schedulers.
-          Monolith by design (the course brief recommends it).
-        </li>
-        <li>
-          nginx serves the built web app and forwards <code>/api/*</code> to the Node runtime.
-          CloudFront's secret header proves requests came via HTTPS.
-        </li>
-        <li>
-          DB = <code>node:sqlite</code> (built into Node 22), a single file. 28+ numbered SQL
-          migrations in <code>server/migrations</code>.
-        </li>
-        <li>
-          Media: <code>disk</code> locally, <code>s3</code> hosted (private bucket, KMS,
-          Terraform-managed).
-        </li>
-        <li>Container is hardened: read-only FS, all capabilities dropped, 768 MB cap.</li>
-      </ul>
-
-      <!-- ============ L3 ============ -->
-      <h2 id="l3"><span class="lvl">L3</span>Life of one clip</h2>
-      <svg viewBox="0 0 860 250">
-        <rect class="n y" x="15" y="30" width="110" height="52" rx="8" />
-        <text x="70" y="52">Capture</text>
-        <text class="s" x="70" y="70">camera, ≤ quota</text>
-        <rect class="n p" x="155" y="30" width="120" height="52" rx="8" />
-        <text x="215" y="52">Upload intent</text>
-        <text class="s" x="215" y="70">server issues signed PUT</text>
-        <rect class="n r" x="305" y="30" width="100" height="52" rx="8" />
-        <text x="355" y="52">Store bytes</text>
-        <text class="s" x="355" y="70">S3 / disk</text>
-        <rect class="n w" x="435" y="30" width="110" height="52" rx="8" />
-        <text x="490" y="52">Job: clip</text>
-        <text class="s" x="490" y="70">row in SQLite queue</text>
-        <rect class="n g" x="575" y="30" width="120" height="52" rx="8" />
-        <text x="635" y="52">ffmpeg</text>
-        <text class="s" x="635" y="70">normalise to libx264</text>
-        <rect class="n b" x="725" y="30" width="120" height="52" rx="8" />
-        <text x="785" y="52">Clip ready</text>
-        <text class="s" x="785" y="70">status + ledger</text>
-        <path class="e" d="M125 56H155" />
-        <path class="e" d="M275 56H305" />
-        <path class="e" d="M405 56H435" />
-        <path class="e" d="M545 56H575" />
-        <path class="e" d="M695 56H725" />
-        <text class="s" x="430" y="125" style="text-anchor: start">Then, when the cycle ends:</text>
-        <rect class="n w" x="15" y="150" width="150" height="52" rx="8" />
-        <text x="90" y="172">Scheduler sees end</text>
-        <text class="s" x="90" y="190">cycles/scheduler.ts</text>
-        <rect class="n w" x="205" y="150" width="110" height="52" rx="8" />
-        <text x="260" y="172">Job: film</text>
-        <text class="s" x="260" y="190">retries up to 3</text>
-        <rect class="n g" x="355" y="150" width="140" height="52" rx="8" />
-        <text x="425" y="172">ffmpeg concat</text>
-        <text class="s" x="425" y="190">clips → one film</text>
-        <rect class="n b" x="535" y="150" width="130" height="52" rx="8" />
-        <text x="600" y="172">Premiere</text>
-        <text class="s" x="600" y="190">reveal to group (SSE)</text>
-        <rect class="n y" x="705" y="150" width="140" height="52" rx="8" />
-        <text x="775" y="172">Archive + download</text>
-        <path class="e" d="M165 176H205" />
-        <path class="e" d="M315 176H355" />
-        <path class="e" d="M495 176H535" />
-        <path class="e" d="M665 176H705" />
-      </svg>
-      <ul>
-        <li>
-          <b>Intents</b> bind bytes + checksum + version, so the client can't upload something other
-          than what was approved.
-        </li>
-        <li>
-          Queue kinds are just <code>clip</code> and <code>film</code>; statuses
-          <code>pending / processing / failed</code>. It's a table, not Redis/SQS
-          <b>(inferred: no broker in deps)</b>.
-        </li>
-        <li>
-          Locked state: until reveal, the server returns metadata only; media access goes through an
-          authorised <code>/media/access/…</code> route.
-        </li>
-      </ul>
-
-      <!-- ============ L4 ============ -->
+      <p>
+        The synthetic Demo was removed on 6 October 2026. The tag
+        <code>demo-frozen-20261004</code> preserves history. Hosted-dev resource names still contain
+        <code>demo</code>; that name does not indicate a Demo product mode. iPhone delivery is the
+        installed PWA; compiled native iOS is out of scope.
+      </p>
+      <h2 id="l2"><span class="lvl">L2</span>The deployment boundaries</h2>
+      <div
+        class="diagram"
+        tabindex="0"
+        aria-label="Deployment diagram; scroll horizontally on small screens"
+      >
+        <svg viewBox="0 0 880 360" role="img" aria-labelledby="deployment-title deployment-desc">
+          <title id="deployment-title">Hosted application and external services</title>
+          <desc id="deployment-desc">
+            Browser connects over HTTPS to CloudFront, which sends HTTP with origin proof to nginx
+            on Lightsail. nginx serves static files and proxies API requests to Node. Node connects
+            to external PostgreSQL, S3 and web push. Cognito redirects issue an opaque app session.
+            Direct incoming uploads go from the browser to S3.
+          </desc>
+          <rect class="n y" x="15" y="120" width="120" height="60" rx="8" />
+          <text x="75" y="146">Browser / PWA</text>
+          <text class="s" x="75" y="165">HTTPS + app cookie</text>
+          <rect class="n p" x="175" y="120" width="120" height="60" rx="8" />
+          <text x="235" y="146">CloudFront</text>
+          <text class="s" x="235" y="165">viewer HTTPS</text>
+          <rect
+            class="n b"
+            x="345"
+            y="40"
+            width="310"
+            height="260"
+            rx="12"
+            style="fill: none; stroke-dasharray: 6 4"
+          />
+          <text x="500" y="65">Lightsail / Docker Compose</text>
+          <rect class="n b" x="365" y="120" width="110" height="60" rx="8" />
+          <text x="420" y="146">nginx</text>
+          <text class="s" x="420" y="165">static + /api proxy</text>
+          <rect class="n g" x="505" y="95" width="130" height="130" rx="8" />
+          <text x="570" y="122">Node application</text>
+          <text class="s" x="570" y="143">HTTP + SSE hub</text>
+          <text class="s" x="570" y="162">cycle/media loop</text>
+          <text class="s" x="570" y="181">reminder loop</text>
+          <text class="s" x="570" y="202">ffmpeg child process</text>
+          <rect class="n w" x="705" y="40" width="140" height="55" rx="8" />
+          <text x="775" y="65">PostgreSQL</text>
+          <text class="s" x="775" y="82">external database</text>
+          <rect class="n w" x="705" y="120" width="140" height="55" rx="8" />
+          <text x="775" y="145">Private S3</text>
+          <text class="s" x="775" y="162">versioned media</text>
+          <rect class="n r" x="705" y="200" width="140" height="55" rx="8" />
+          <text x="775" y="225">Web push service</text>
+          <text class="s" x="775" y="242">browser notification</text>
+          <rect class="n p" x="15" y="20" width="120" height="55" rx="8" />
+          <text x="75" y="45">Cognito</text>
+          <text class="s" x="75" y="62">pool per environment</text>
+          <path class="e" d="M135 150H175" />
+          <path class="e" d="M295 150H365" />
+          <text class="s" x="330" y="110">HTTP + proof</text>
+          <path class="e" d="M475 150H505" />
+          <path class="e" d="M635 110L705 68" />
+          <path class="e" d="M635 150H705" />
+          <path class="e" d="M635 200L705 225" />
+          <path class="e d" d="M75 120V75" />
+          <path class="e d" d="M75 180V330H865V147H845" />
+          <text class="s" x="400" y="348">
+            Direct incoming PUT only; Node still reads, processes and serves media
+          </text>
+        </svg>
+      </div>
+      <p>
+        The default deployment is one Node application process beside nginx. PostgreSQL and S3 are
+        external services. Locally, SQLite and disk media replace those stores. Cognito handles
+        web/PWA sign-in, then the server issues its own opaque cookie session. Developer password
+        sign-in remains on local/dev; release rejects it.
+      </p>
+      <p>
+        The diagram describes hosted architecture. At this source revision, dev PostgreSQL cutover
+        is enabled; release database cutover is disabled in Terraform. Release operational
+        completion remains in #230, #504 and #515. No cloud check was performed for this guide.
+      </p>
+      <h2 id="l3"><span class="lvl">L3</span>Life of one contribution</h2>
+      <div
+        class="diagram"
+        tabindex="0"
+        aria-label="Media lifecycle diagram; scroll horizontally on small screens"
+      >
+        <svg viewBox="0 0 860 180" role="img" aria-labelledby="life-title life-desc">
+          <title id="life-title">One contribution becomes a released film</title>
+          <desc id="life-desc">
+            Capture, authorized intake, durable clip job, ffmpeg and verified clip output. At cycle
+            end, a film job compiles clips, publication unlocks authorized playback and Archive.
+          </desc>
+          <rect class="n y" x="15" y="20" width="120" height="50" rx="8" />
+          <text x="75" y="49">Photo / video</text>
+          <rect class="n p" x="175" y="20" width="160" height="50" rx="8" />
+          <text x="255" y="42">Authorized intake</text>
+          <text class="s" x="255" y="59">S3 signed PUT / disk upload</text>
+          <rect class="n w" x="375" y="20" width="120" height="50" rx="8" />
+          <text x="435" y="49">Durable clip job</text>
+          <rect class="n g" x="535" y="20" width="120" height="50" rx="8" />
+          <text x="595" y="49">ffmpeg</text>
+          <rect class="n b" x="695" y="20" width="150" height="50" rx="8" />
+          <text x="770" y="49">Verified clip</text>
+          <path class="e" d="M135 45H175" />
+          <path class="e" d="M335 45H375" />
+          <path class="e" d="M495 45H535" />
+          <path class="e" d="M655 45H695" />
+          <rect class="n y" x="15" y="110" width="160" height="50" rx="8" />
+          <text x="95" y="139">Cycle ends</text>
+          <rect class="n w" x="215" y="110" width="160" height="50" rx="8" />
+          <text x="295" y="139">Film job + ffmpeg</text>
+          <rect class="n b" x="415" y="110" width="160" height="50" rx="8" />
+          <text x="495" y="139">Published release</text>
+          <rect class="n g" x="615" y="110" width="230" height="50" rx="8" />
+          <text x="730" y="132">Premiere / Archive</text>
+          <text class="s" x="730" y="149">authorized playback and download</text>
+          <path class="e" d="M175 135H215" />
+          <path class="e" d="M375 135H415" />
+          <path class="e" d="M575 135H615" />
+        </svg>
+      </div>
+      <p>
+        S3 upload intents bind incoming bytes, checksum, scope and expiry. Disk intake sends bytes
+        through Node. Direct S3 upload avoids that intake hop, but Node still verifies/materializes
+        objects for ffmpeg, stores processed outputs and serves authorized reads. Publication and
+        member policy control access; possessing a group ID or S3 object reference does not grant
+        it.
+      </p>
       <h2 id="l4"><span class="lvl">L4</span>Code map</h2>
-      <svg viewBox="0 0 860 300">
-        <rect class="n y" x="20" y="20" width="390" height="260" rx="12" style="fill: none" />
-        <text x="215" y="42">CLIENT (repo root: App.tsx + src/)</text>
-        <rect class="n p" x="40" y="60" width="170" height="44" rx="8" />
-        <text x="125" y="87">Screens / providers</text>
-        <rect class="n g" x="230" y="60" width="160" height="44" rx="8" />
-        <text x="310" y="87">src/domain (pure)</text>
-        <rect class="n b" x="40" y="130" width="170" height="44" rx="8" />
-        <text x="125" y="150">src/runtime</text>
-        <text class="s" x="125" y="166">HTTP client + repositories</text>
-        <rect class="n w" x="230" y="130" width="160" height="44" rx="8" />
-        <text x="310" y="150">src/data</text>
-        <text class="s" x="310" y="166">demo (offline) repos</text>
-        <rect class="n w" x="40" y="200" width="350" height="60" rx="8" />
-        <text x="215" y="222">Feature folders</text>
-        <text class="s" x="215" y="240">
-          capture · chat · auth · capsule · archive · reminders · invites
-        </text>
-        <path class="e" d="M210 82H230" />
-        <path class="e" d="M125 104V130" />
-        <rect class="n y" x="450" y="20" width="390" height="260" rx="12" style="fill: none" />
-        <text x="645" y="42">SERVER (server/src)</text>
-        <rect class="n p" x="470" y="60" width="170" height="44" rx="8" />
-        <text x="555" y="80">http.ts</text>
-        <text class="s" x="555" y="96">~4.5k lines, route table</text>
-        <rect class="n g" x="660" y="60" width="160" height="44" rx="8" />
-        <text x="740" y="80">db.ts + migrations</text>
-        <text class="s" x="740" y="96">SQLite</text>
-        <rect class="n b" x="470" y="130" width="170" height="44" rx="8" />
-        <text x="555" y="150">cycles/</text>
-        <text class="s" x="555" y="166">engine (pure) · lifecycle · scheduler</text>
-        <rect class="n b" x="660" y="130" width="160" height="44" rx="8" />
-        <text x="740" y="150">jobs/ + media/</text>
-        <text class="s" x="740" y="166">queue · worker · stores</text>
-        <rect class="n w" x="470" y="200" width="350" height="60" rx="8" />
-        <text x="645" y="222">auth · groups · chat · realtime · reminders</text>
-        <text class="s" x="645" y="240">contributions · archive · audit · policy</text>
-        <path class="e" d="M640 82H660" />
-        <path class="e" d="M555 104V130" />
-        <path class="e" d="M740 104V130" />
-        <path class="e d" d="M410 150H450" />
-        <text class="s" x="430" y="140">HTTP</text>
-      </svg>
+      <div class="table-wrap" tabindex="0" aria-label="Code map table">
+        <table>
+          <tr>
+            <th>Area</th>
+            <th>Open</th>
+            <th>Responsibility</th>
+          </tr>
+          <tr>
+            <td>Client</td>
+            <td>
+              <code>App.tsx</code>, <code>src/auth</code>, <code>src/real</code>,
+              <code>src/capture</code>
+            </td>
+            <td>Session/onboarding, group screens and platform capture adapters.</td>
+          </tr>
+          <tr>
+            <td>Contracts</td>
+            <td><code>src/domain</code>, <code>server/src/cycles/engine.ts</code></td>
+            <td>
+              Framework-free types and pure cycle rules; import guard in
+              <code>scripts/check-architecture.mjs</code>.
+            </td>
+          </tr>
+          <tr>
+            <td>HTTP / policy</td>
+            <td><code>server/src/http.ts</code>, <code>server/src/policy.ts</code></td>
+            <td>Transport, origin and session checks before resource authorization.</td>
+          </tr>
+          <tr>
+            <td>SQL</td>
+            <td>
+              <code>server/src/db.ts</code>, <code>server/src/postgres</code>,
+              <code>server/migrations</code>
+            </td>
+            <td>SQLite locally; synchronous PostgreSQL bridge and matching hosted migrations.</td>
+          </tr>
+          <tr>
+            <td>Work and storage</td>
+            <td>
+              <code>server/src/jobs</code>, <code>server/src/media</code>,
+              <code>server/src/cycles/scheduler.ts</code>, <code>server/src/reminders</code>
+            </td>
+            <td>Durable jobs, ffmpeg, integrity, lifecycle and notification outbox.</td>
+          </tr>
+          <tr>
+            <td>Delivery</td>
+            <td>
+              <code>deploy</code>, <code>infra/terraform</code>, <code>.github/workflows</code>
+            </td>
+            <td>Containers, environment declarations and reviewed delivery automation.</td>
+          </tr>
+        </table>
+      </div>
+      <h2 id="l5"><span class="lvl">L5</span>Delivery and verification</h2>
+      <p>
+        Focused branches target <code>dev</code>, with an up-to-date aggregate Quality check. Batch
+        work includes one review-agent pass. Sensitive changes leave merge to the owner. Merges to
+        <code>dev</code> deploy automatically through the configured workflow; release promotion to
+        <code>main</code> follows its protected PR path. A workflow declaration alone does not
+        establish a successful deployment.
+      </p>
+      <p>
+        Use the cheapest environment that exercises a change. Local account flows use
+        <code>make run-real</code> at <code>http://localhost:8090</code> with ten-minute cycles;
+        <code>make run</code> currently aliases it. Hosted HTTPS checks cover
+        provider/storage/platform integration. Browser notification acceptance is different from
+        visible receipt on an installed iPhone PWA.
+      </p>
+      <h2 id="tradeoffs">Decision index and limits</h2>
       <ul>
         <li>
-          <b>Ports &amp; adapters</b> on the client: UI talks to repository interfaces; Demo and
-          Runtime each implement them (ADR-0001).
+          <a href="../architecture/ADR-0001-local-first-sprint-0.md">ADR-0001</a> records the
+          historical local-first boundary. Its offline fixture fallback is superseded.
         </li>
         <li>
-          <code>npm run architecture:check</code> enforces it: <code>src/domain</code> and
-          <code>cycles/engine.ts</code> may only import relative files (no Expo, no SQLite).
+          <a href="../architecture/ADR-0003-postgresql.md">ADR-0003</a> explains PostgreSQL while
+          preserving synchronous persistence calls and serialized writers. Local SQLite stays.
         </li>
-        <li>Cycle engine takes an injected clock, so tests never wait on real time.</li>
         <li>
-          Big files to know: <code>server/src/http.ts</code> (4.5k), <code>db.ts</code> (2.2k),
-          <code>jobs/index.ts</code> (2.1k). Everything routes through these.
+          <a href="../../doc/planning/sprints/sprint-3-cognito/design-decisions.md"
+            >Cognito decisions</a
+          >
+          explain PKCE, opaque app sessions and environment isolation.
         </li>
+        <li>
+          The active media Terraform root uses SSE-S3 (<code>AES256</code>). KMS is supported by
+          another module/adapter configuration; it is not the current root's setting.
+        </li>
+        <li>
+          SSE delivery, capability grants and some caches are process-local. Durable jobs do not
+          make API replicas share those maps.
+        </li>
+        <li>Reminders use web push only. Expo/native push code remains disabled.</li>
       </ul>
-
-      <!-- ============ L5 ============ -->
-      <h2 id="l5"><span class="lvl">L5</span>From PR to running server</h2>
-      <svg viewBox="0 0 860 170">
-        <rect class="n y" x="15" y="50" width="100" height="52" rx="8" />
-        <text x="65" y="72">PR to dev</text>
-        <text class="s" x="65" y="90">branch per batch</text>
-        <rect class="n p" x="145" y="50" width="120" height="52" rx="8" />
-        <text x="205" y="72">Quality check</text>
-        <text class="s" x="205" y="90">lint·types·tests</text>
-        <rect class="n w" x="295" y="50" width="110" height="52" rx="8" />
-        <text x="350" y="72">Codex review</text>
-        <text class="s" x="350" y="90">one pass</text>
-        <rect class="n g" x="435" y="50" width="100" height="52" rx="8" />
-        <text x="485" y="72">Merge</text>
-        <text class="s" x="485" y="90">to dev</text>
-        <rect class="n b" x="565" y="50" width="130" height="52" rx="8" />
-        <text x="630" y="72">deploy-dev.yml</text>
-        <text class="s" x="630" y="90">AWS role via OIDC</text>
-        <rect class="n r" x="725" y="50" width="120" height="52" rx="8" />
-        <text x="785" y="72">release-host.sh</text>
-        <text class="s" x="785" y="90">health check or rollback</text>
-        <path class="e" d="M115 76H145" />
-        <path class="e" d="M265 76H295" />
-        <path class="e" d="M405 76H435" />
-        <path class="e" d="M535 76H565" />
-        <path class="e" d="M695 76H725" />
-        <text class="s" x="430" y="140">
-          Later: dev → main by PR for release. Terraform (infra/terraform) provisions the AWS pieces
-          separately.
-        </text>
-      </svg>
-      <ul>
-        <li>
-          Only a commit that passed Quality can deploy. The new release is activated only if runtime
-          + web health checks pass; otherwise the previous release is restored.
-        </li>
-        <li>
-          No static AWS keys in CI: GitHub's OIDC token is trusted by a deploy role scoped to the
-          <code>dev</code> environment.
-        </li>
-        <li>
-          Terraform modules: <code>private-media</code> (S3+KMS), <code>environment-identity</code>;
-          roots: <code>demo</code> (the live one), <code>dev</code>, <code>prod</code> (reserved,
-          not initialised yet).
-        </li>
-        <li>
-          Docs say there are no routine application DB backups in the dev/prod plan (accepted
-          lifecycle). Worth knowing for a SQLite-on-one-disk setup.
-        </li>
-      </ul>
-
-      <!-- ============ Tradeoffs ============ -->
-      <h2 id="tradeoffs">Tradeoffs made</h2>
-      <table>
-        <tr>
-          <th>Decision</th>
-          <th>Why (stated / inferred)</th>
-          <th>What it costs</th>
-        </tr>
-        <tr>
-          <td>Monolith, one Node process</td>
-          <td>Course brief recommends it; tiny ops surface.</td>
-          <td>
-            Big files (<code>http.ts</code> 4.5k lines); video work shares the box with the API
-            (limits: 1 concurrent processor).
-          </td>
-        </tr>
-        <tr>
-          <td>SQLite on one disk</td>
-          <td>Zero ops, built into Node, migrations as plain SQL.</td>
-          <td>
-            Single writer, single host, no horizontal scale. Auth code even serialises logins
-            in-process for this reason.
-          </td>
-        </tr>
-        <tr>
-          <td>Job queue = DB table + worker</td>
-          <td>No broker to run <b>(inferred)</b>.</td>
-          <td>
-            Only works while there's one server process. Retries are hand-built (film: 3 attempts).
-          </td>
-        </tr>
-        <tr>
-          <td>SSE for chat/realtime</td>
-          <td>One-way push over plain HTTP; works through nginx/CloudFront.</td>
-          <td>Server → client only; sends go via normal POST.</td>
-        </tr>
-        <tr>
-          <td>Expo (React Native) + web PWA</td>
-          <td>
-            One codebase, iPhone works via Home Screen PWA. Native iOS out of scope (4 Oct
-            decision).
-          </td>
-          <td>HTTPS-only features (camera, push, install) can't be fully tested locally.</td>
-        </tr>
-        <tr>
-          <td>Web push only for reminders</td>
-          <td>Native/Expo push paused; PWA covers iPhone.</td>
-          <td>Dead native push code left in the repo, disabled.</td>
-        </tr>
-        <tr>
-          <td>Own auth (scrypt, cookie sessions); Cognito deferred</td>
-          <td>Ship sooner; no external IdP.</td>
-          <td>
-            You own password security: rate limits, dummy-hash timing, session expiry. All
-            hand-written.
-          </td>
-        </tr>
-        <tr>
-          <td>Signed upload intents, S3 private + KMS</td>
-          <td>Bytes can't bypass app authorisation; reveal stays locked.</td>
-          <td>Needs CORS/versioning/lifecycle verified per environment.</td>
-        </tr>
-        <tr>
-          <td>Lightsail + Docker Compose, not ECS/Lambda</td>
-          <td>Cheap, simple, matches SQLite-on-disk <b>(inferred)</b>.</td>
-          <td>Single point of failure; deploy = scripted host release with rollback.</td>
-        </tr>
-        <tr>
-          <td>Freeze the Demo</td>
-          <td>Real app is the product; parity was costing time.</td>
-          <td>Demo/real code pairs remain until someone deletes one side.</td>
-        </tr>
-        <tr>
-          <td>Strict, heavy process (ADRs, contracts, architecture check)</td>
-          <td>Course assesses design + DevSecOps, so evidence matters.</td>
-          <td>Lots of docs; some now stale (README still frames Sprint 0).</td>
-        </tr>
-      </table>
-
-      <!-- ============ Doubts ============ -->
-      <h2 id="doubts">Good next questions</h2>
-      <p class="mut">Pick any; I'll write the next layer with a focused diagram.</p>
-      <ul>
-        <li>
-          <b>Cycle lifecycle:</b> exact state machine (collecting → revealing → archived), what
-          triggers each hop.
-        </li>
-        <li><b>Auth &amp; privacy:</b> real session flow, who can fetch which media, when.</li>
-        <li><b>Realtime:</b> how SSE chat + unread counters work.</li>
-        <li><b>Data model:</b> ER diagram from the 28 migrations.</li>
-        <li><b>Terraform &amp; AWS:</b> what each root/module owns, cost safety.</li>
-        <li><b>Tests:</b> what <code>test:fast</code> vs <code>test:slow</code> really cover.</li>
-        <li><b>What changed in the last 150 issues:</b> a timeline by theme.</li>
-      </ul>
+      <h2 id="doubts">Read next</h2>
+      <p>
+        Use the <a href="technical.html">technical guide</a> for request, session, worker and media
+        mechanics, or the
+        <a href="../architecture/current-system.md#environment-configuration-matrix"
+          >environment matrix</a
+        >
+        to distinguish local, dev and release configuration.
+      </p>
     </main>
   </body>
 </html>

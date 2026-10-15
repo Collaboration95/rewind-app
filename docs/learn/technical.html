@@ -141,24 +141,53 @@
       nav a {
         margin-right: 12px;
       }
+      .diagram,
+      .table-wrap {
+        overflow-x: auto;
+        margin: 16px 0;
+      }
+      .diagram svg {
+        display: block;
+        min-width: 700px;
+      }
+      .table-wrap table {
+        min-width: 640px;
+      }
+      code {
+        overflow-wrap: anywhere;
+      }
+      a {
+        color: inherit;
+        text-decoration-thickness: 1px;
+      }
+      nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        line-height: 2;
+      }
+      nav a {
+        margin-right: 0;
+      }
     </style>
   </head>
   <body>
     <main>
       <h1>Rewind: how it technically works</h1>
       <p class="mut">
-        Mechanics only. Each section: diagram, then the facts, with the file to open. Read from the
-        code on <code>dev</code>, 6 Oct 2026; nothing here was run. <b>(inferred)</b> = my reading,
-        not stated in a doc.
+        Source: <code>dev</code> commit <code>40ebeb5673d103b4b6950d095192aae744980769</code>,
+        inspected 15 October 2026. These are code and configuration facts, not a live deployment or
+        device test. See the
+        <a href="../architecture/current-system.md">current system architecture</a> for the
+        configuration matrix and decision index.
       </p>
       <nav>
-        <a href="#stack">Stack</a><a href="#http">HTTP</a><a href="#auth">Auth</a
-        ><a href="#db">SQLite</a><a href="#jobs">Job queue</a><a href="#media">Media</a
-        ><a href="#rt">Realtime</a><a href="#client">Client</a><a href="#pwa">PWA/push</a
-        ><a href="#ship">Build/CI</a><a href="#tests">Tests</a><a href="#smells">Smells</a>
+        <a href="index.html">Layered guide</a><a href="#stack">Stack</a><a href="#http">HTTP</a
+        ><a href="#auth">Sessions</a><a href="#db">Database</a><a href="#jobs">Jobs</a
+        ><a href="#media">Media</a><a href="#rt">Realtime</a><a href="#client">Client</a
+        ><a href="#pwa">PWA/push</a><a href="#ship">Delivery</a><a href="#tests">Checks</a>
       </nav>
-
-      <svg width="0" height="0" style="position: absolute; border: 0">
+      <svg width="0" height="0" aria-hidden="true" style="position: absolute; border: 0">
         <defs>
           <marker
             id="a"
@@ -173,670 +202,360 @@
           </marker>
         </defs>
       </svg>
-
-      <!-- STACK -->
-      <h2 id="stack"><span class="lvl">0</span>Tech stack at a glance</h2>
-      <table>
-        <tr>
-          <th>Layer</th>
-          <th>Tech</th>
-          <th>Notable</th>
-        </tr>
-        <tr>
-          <td>Client</td>
-          <td>Expo 57, React Native 0.86 + react-native-web, React 19, TypeScript</td>
-          <td>
-            One codebase: web (PWA) + native. Root <code>App.tsx</code> is the shell; no router lib
-            in deps.
-          </td>
-        </tr>
-        <tr>
-          <td>Server</td>
-          <td>
-            Node 22+ (Docker uses Node 26), TypeScript compiled by <code>tsc</code>, raw
-            <code>node:http</code>
-          </td>
-          <td>No Express/Fastify. Only 2 server deps: AWS S3 SDK, <code>web-push</code>.</td>
-        </tr>
-        <tr>
-          <td>DB</td>
-          <td><code>node:sqlite</code> (built in), WAL mode</td>
-          <td>No ORM, no query builder. Hand-written SQL.</td>
-        </tr>
-        <tr>
-          <td>Video</td>
-          <td>ffmpeg via <code>execFile</code> (alpine package, pinned)</td>
-          <td>libx264 re-encode; film = concat.</td>
-        </tr>
-        <tr>
-          <td>Storage</td>
-          <td>disk, or S3 (SSE-KMS, SHA-256 checksum)</td>
-          <td>Same <code>MediaStore</code> interface for both.</td>
-        </tr>
-        <tr>
-          <td>Edge</td>
-          <td>CloudFront → nginx → Node</td>
-          <td>nginx also serves the static web build.</td>
-        </tr>
-        <tr>
-          <td>Infra / CI</td>
-          <td>Terraform (AWS provider 6.50), Lightsail, Docker Compose, GitHub Actions (OIDC)</td>
-          <td>Actions pinned by commit SHA.</td>
-        </tr>
-        <tr>
-          <td>Tests</td>
-          <td>
-            <code>node --test</code> (server/root), Jest + jest-expo (client), Playwright (browser)
-          </td>
-          <td>~21k lines of server tests.</td>
-        </tr>
-      </table>
-      <p class="mut">
-        Takeaway: the server is deliberately "stdlib + 2 packages". Most of what a framework would
-        give you (routing, validation, auth, migrations, job queue, SSE hub) is hand-rolled.
+      <h2 id="stack"><span class="lvl">0</span>Stack and deployment</h2>
+      <p>
+        The root <a href="../../package.json">package manifest</a> declares Expo 57, React Native
+        0.86, React 19 and TypeScript. The server compiles TypeScript and uses
+        <code>node:http</code>, SQLite or <code>pg</code>, AWS S3/Cognito integrations,
+        <code>aws-jwt-verify</code>, <code>web-push</code> and ffmpeg. Feature folders are internal
+        modules, not separate microservices.
       </p>
-
-      <!-- HTTP -->
-      <h2 id="http"><span class="lvl">1</span>HTTP layer</h2>
-      <svg viewBox="0 0 860 150">
-        <rect class="n y" x="15" y="45" width="110" height="52" rx="8" />
-        <text x="70" y="68">Request</text>
-        <text class="s" x="70" y="85">node:http</text>
-        <rect class="n p" x="155" y="45" width="130" height="52" rx="8" />
-        <text x="220" y="68">CORS + origin</text>
-        <text class="s" x="220" y="85">secure transport check</text>
-        <rect class="n b" x="315" y="45" width="130" height="52" rx="8" />
-        <text x="380" y="68">Prefix dispatch</text>
-        <text class="s" x="380" y="85">/auth /real /realtime…</text>
-        <rect class="n g" x="475" y="45" width="150" height="52" rx="8" />
-        <text x="550" y="68">Regex route match</text>
-        <text class="s" x="550" y="85">url.pathname.match(…)</text>
-        <rect class="n w" x="655" y="45" width="90" height="52" rx="8" />
-        <text x="700" y="68">Session</text>
-        <text class="s" x="700" y="85">+ policy.ts</text>
-        <rect class="n w" x="770" y="45" width="75" height="52" rx="8" />
-        <text x="807" y="68">SQLite</text>
-        <text class="s" x="807" y="85">handler</text>
-        <path class="e" d="M125 71H155" />
-        <path class="e" d="M285 71H315" />
-        <path class="e" d="M445 71H475" />
-        <path class="e" d="M625 71H655" />
-        <path class="e" d="M745 71H770" />
-      </svg>
-      <ul>
-        <li>
-          <code>createServer(...)</code> at <code>server/src/http.ts:3789</code>. Routing is one
-          giant <code>if (pathname === … )</code> / <code>pathname.match(regex)</code> chain (~4.5k
-          lines). No router, no middleware stack.
-        </li>
-        <li>
-          Limits are code, not config-only: JSON ≤ 64 KiB, media ≤ 50 MiB, 30 s body idle, 120 s
-          upload, 2 concurrent intakes, 1 concurrent processor. Errors: 408 / 413 / 429.
-        </li>
-        <li>
-          Auth transport gate (<code>authTransportIsSecure</code>): allowed if real TLS,
-          <b>or</b> loopback + <code>localhost</code> host + no <code>X-Forwarded-Proto</code> (dev
-          only), <b>or</b> a trusted proxy proves HTTPS via the secret
-          <code>X-Rewind-Origin-Auth</code> header that CloudFront injects. nginx hard-sets
-          <code>X-Forwarded-Proto: https</code> only because CloudFront strips it.
-        </li>
-        <li>No distributed rate limiter. Login/invite-guess throttles live in SQLite.</li>
-      </ul>
-
-      <!-- AUTH -->
-      <h2 id="auth"><span class="lvl">2</span>Auth &amp; sessions</h2>
-      <svg viewBox="0 0 860 150">
-        <rect class="n y" x="15" y="45" width="120" height="52" rx="8" />
-        <text x="75" y="68">POST /auth/…</text>
-        <text class="s" x="75" y="85">email + password</text>
-        <rect class="n p" x="165" y="45" width="140" height="52" rx="8" />
-        <text x="235" y="68">scrypt verify</text>
-        <text class="s" x="235" y="85">N=32768 r=8 p=1, 64B</text>
-        <rect class="n g" x="335" y="45" width="140" height="52" rx="8" />
-        <text x="405" y="68">Random token</text>
-        <text class="s" x="405" y="85">stored as hash (inferred)</text>
-        <rect class="n b" x="505" y="45" width="160" height="52" rx="8" />
-        <text x="585" y="68">__Host-rewind_session</text>
-        <text class="s" x="585" y="85">cookie, or Bearer header</text>
-        <rect class="n w" x="695" y="45" width="150" height="52" rx="8" />
-        <text x="770" y="68">Every request</text>
-        <text class="s" x="770" y="85">cookie==bearer else reject</text>
-        <path class="e" d="M135 71H165" />
-        <path class="e" d="M305 71H335" />
-        <path class="e" d="M475 71H505" />
-        <path class="e" d="M665 71H695" />
-      </svg>
-      <ul>
-        <li>
-          Passwords: Node's built-in <code>scrypt</code>, params stored per row (so cost can be
-          raised later). Unknown user → verifies against a dummy hash, so timing doesn't reveal
-          accounts.
-        </li>
-        <li>
-          Throttle: 5 failures / 15 min window, then 15 min cooldown. Sessions: 12 h idle, 30 d
-          absolute.
-        </li>
-        <li>
-          <code>__Host-</code> cookie prefix forces Secure + Path=/ + no Domain. Native/Demo path
-          uses a bearer token; if both are sent and differ, the request is rejected
-          (<code>http.ts:2802</code>).
-        </li>
-        <li>
-          Login verification and password change are queued through one promise chain
-          (<code>serializeAuthOperation</code>). Works only because there is a single process.
-        </li>
-        <li>
-          <b>Authorisation</b> is separate: <code>policy.ts</code> + group-membership checks per
-          route (<code>cross-group-access.test.mjs</code> exists for this).
-        </li>
-      </ul>
-
-      <!-- DB -->
-      <h2 id="db"><span class="lvl">3</span>SQLite &amp; migrations</h2>
-      <svg viewBox="0 0 860 150">
-        <rect class="n y" x="15" y="45" width="130" height="52" rx="8" />
-        <text x="80" y="68">Process starts</text>
-        <text class="s" x="80" y="85">openDatabase()</text>
-        <rect class="n p" x="175" y="45" width="150" height="52" rx="8" />
-        <text x="250" y="68">PRAGMAs</text>
-        <text class="s" x="250" y="85">WAL · FK on · busy 5 s</text>
-        <rect class="n b" x="355" y="45" width="150" height="52" rx="8" />
-        <text x="430" y="68">For each migration</text>
-        <text class="s" x="430" y="85">skip if marker+version</text>
-        <rect class="n g" x="535" y="45" width="150" height="52" rx="8" />
-        <text x="610" y="68">BEGIN IMMEDIATE</text>
-        <text class="s" x="610" y="85">re-check, apply, commit</text>
-        <rect class="n w" x="715" y="45" width="130" height="52" rx="8" />
-        <text x="780" y="68">Receipts</text>
-        <text class="s" x="780" y="85">2 tables written</text>
-        <path class="e" d="M145 71H175" />
-        <path class="e" d="M325 71H355" />
-        <path class="e" d="M505 71H535" />
-        <path class="e" d="M685 71H715" />
-      </svg>
-      <ul>
-        <li>
-          Files: <code>server/migrations/001…028*.sql</code>, but <code>db.ts</code> (2.2k lines)
-          holds a JS list with a <b>key</b> per migration, and many keys run <b>custom JS</b> (<code
-            >applyMediaProcessingMigration</code
-          >
-          etc.) because SQLite can't <code>ALTER</code> constraints. Those rebuild tables with
-          <code>foreign_keys=OFF</code>, then <code>PRAGMA foreign_key_check</code>.
-        </li>
-        <li>
-          Two receipts: <code>schema_migrations(version)</code> and
-          <code>schema_migration_markers(key)</code>. Health checks re-verify both, plus
-          <code>migrationNeedsRepair</code>, so a half-applied migration is detected.
-        </li>
-        <li>
-          <code>BEGIN IMMEDIATE</code> takes the writer lock up front; the "already applied?" check
-          is repeated <i>inside</i> it for concurrent starters.
-        </li>
-        <li>
-          <b>WAL</b> = readers don't block the writer. Several connections coexist (server,
-          scheduler has its own <code>schedulerDatabase</code>, reminder loop opens its own). That's
-          why <code>busy_timeout</code> matters.
-        </li>
-        <li>
-          Numbering gaps/dupes (two <code>006-</code>, two <code>007-</code>, no 011/012) are
-          visible in the folder; the code comment at line 19 explains key-vs-version handling.
-        </li>
-      </ul>
-
-      <!-- JOBS -->
-      <h2 id="jobs"><span class="lvl">4</span>Job queue (clip + film)</h2>
-      <svg viewBox="0 0 860 220">
-        <rect class="n w" x="15" y="30" width="130" height="52" rx="8" />
-        <text x="80" y="52">Row in SQLite</text>
-        <text class="s" x="80" y="70">pending / failed</text>
-        <rect class="n p" x="180" y="30" width="150" height="52" rx="8" />
-        <text x="255" y="52">claim (tx)</text>
-        <text class="s" x="255" y="70">claim_generation + 1</text>
-        <rect class="n g" x="365" y="30" width="150" height="52" rx="8" />
-        <text x="440" y="52">ffmpeg child proc</text>
-        <text class="s" x="440" y="70">progress heartbeat</text>
-        <rect class="n b" x="550" y="30" width="130" height="52" rx="8" />
-        <text x="615" y="52">commit if gen matches</text>
-        <rect class="n y" x="715" y="30" width="130" height="52" rx="8" />
-        <text x="780" y="52">ready</text>
-        <path class="e" d="M145 56H180" />
-        <path class="e" d="M330 56H365" />
-        <path class="e" d="M515 56H550" />
-        <path class="e" d="M680 56H715" />
-        <rect class="n r" x="365" y="130" width="150" height="52" rx="8" />
-        <text x="440" y="152">worker dies</text>
-        <text class="s" x="440" y="170">lease 15 min expires</text>
-        <rect class="n p" x="550" y="130" width="200" height="52" rx="8" />
-        <text x="650" y="152">another claim → gen + 1</text>
-        <text class="s" x="650" y="170">old worker's writes now rejected</text>
-        <path class="e d" d="M440 82V130" />
-        <path class="e" d="M515 156H550" />
-      </svg>
-      <ul>
-        <li>
-          <b>Not a separate service.</b> <code>server start</code> runs the HTTP server
-          <i>and</i> the cycle scheduler loop <i>and</i> (if configured) the reminder loop in one
-          process (<code>cli.ts</code>). <code>server worker</code> is an optional standalone loop
-          for jobs. <b>(inferred)</b> the request path also processes jobs, since routes like
-          <code>/contributions/jobs/:id/process</code> exist.
-        </li>
-        <li>
-          Concurrency control is a <b>fencing token</b> (<code>claim_generation</code>): every
-          progress/complete write checks it, so a zombie worker can't overwrite a newer claim.
-          Classic lease + fencing pattern, in SQL.
-        </li>
-        <li>
-          Lease <code>PROCESSING_CLAIM_LEASE_MS</code> = 15 min. Stale reclaim "resumes the same
-          attempt"; only pending/failed bump the attempt count.
-        </li>
-        <li>
-          Retries: film capped at 3 (<code>QUEUE_MAX_FILM_ATTEMPTS</code>), clip automatic cap then
-          manual retry. Failures are bucketed:
-          <code>invalid_metadata / source_unavailable / processing_failed / unknown</code>.
-        </li>
-        <li>
-          Worker polls (idle 1 s, batch window 8). No push, no LISTEN/NOTIFY (SQLite has none).
-        </li>
-        <li>
-          Cleanup jobs: <code>retention.ts</code>, <code>consistency.ts</code> (plan → apply repair,
-          audited), staged-file cleanup.
-        </li>
-      </ul>
-
-      <!-- MEDIA -->
-      <h2 id="media"><span class="lvl">5</span>Media pipeline internals</h2>
-      <svg viewBox="0 0 860 210">
-        <rect class="n y" x="15" y="30" width="120" height="52" rx="8" />
-        <text x="75" y="52">Client</text>
-        <text class="s" x="75" y="70">sha256 of bytes</text>
-        <rect class="n p" x="165" y="30" width="150" height="52" rx="8" />
-        <text x="240" y="52">POST upload-intent</text>
-        <text class="s" x="240" y="70">server checks quota</text>
-        <rect class="n g" x="345" y="30" width="150" height="52" rx="8" />
-        <text x="420" y="52">Presigned PUT</text>
-        <text class="s" x="420" y="70">ChecksumSHA256 + KMS</text>
-        <rect class="n r" x="525" y="30" width="130" height="52" rx="8" />
-        <text x="590" y="52">S3 bucket</text>
-        <text class="s" x="590" y="70">rejects if hash differs</text>
-        <rect class="n b" x="685" y="30" width="160" height="52" rx="8" />
-        <text x="765" y="52">Server verifies</text>
-        <text class="s" x="765" y="70">HEAD: hash+SSE+version</text>
-        <path class="e" d="M135 56H165" />
-        <path class="e" d="M315 56H345" />
-        <path class="e" d="M495 56H525" />
-        <path class="e" d="M655 56H685" />
-        <rect class="n w" x="15" y="130" width="190" height="52" rx="8" />
-        <text x="110" y="152">Local/disk path</text>
-        <text class="s" x="110" y="170">POST bytes via Node → staging/</text>
-        <rect class="n g" x="245" y="130" width="170" height="52" rx="8" />
-        <text x="330" y="152">staging → processed</text>
-        <text class="s" x="330" y="170">ffmpeg out dir</text>
-        <rect class="n w" x="455" y="130" width="390" height="52" rx="8" />
-        <text x="650" y="152">Read: /media/access/&lt;43-char token&gt;</text>
-        <text class="s" x="650" y="170">
-          auth check, then stream; serving-budget.ts limits concurrency
-        </text>
-        <path class="e" d="M205 156H245" />
-        <path class="e" d="M415 156H455" />
-      </svg>
-      <ul>
-        <li>
-          One <code>MediaStore</code> interface (<code>media/store.ts</code>), three impls: disk,
-          <code>local</code> (immutable object refs, <b>don't extend</b>), <code>s3</code>. AWS SDK
-          is <b>dynamic-imported</b> at runtime (<code>runtime-store.ts:95</code>), so non-S3 setups
-          never load it.
-        </li>
-        <li>
-          S3 trust model: the bucket itself enforces the checksum on PUT; the server then re-checks
-          hash, encryption mode and version id before trusting the object. Browsers upload straight
-          to S3, so video bytes never pass through the Node box (only the 2-concurrent-intake path
-          for disk).
-        </li>
-        <li>
-          Reads never hand out raw S3 URLs: access token route authorises, then the server serves
-          (with a serving budget). <b>(inferred)</b> this is the "locked until reveal" enforcement
-          point.
-        </li>
-        <li>
-          ffmpeg: spawned with <code>execFile</code> (args array, no shell), video → libx264; photo
-          → looped still → standard 3 s portrait clip; film → concat of normalised clips (a comment
-          notes concat needs identical encodings, so every clip is re-encoded first).
-        </li>
-        <li>
-          Integrity layer: <code>integrity.ts</code>, <code>integrity-cache.ts</code>,
-          <code>backfill.ts</code> (adds hashes to older rows at startup via
-          <code>backfillMediaIntegrity</code>).
-        </li>
-      </ul>
-
-      <!-- REALTIME -->
-      <h2 id="rt"><span class="lvl">6</span>Realtime (SSE)</h2>
-      <svg viewBox="0 0 860 160">
-        <rect class="n y" x="15" y="50" width="140" height="52" rx="8" />
-        <text x="85" y="72">Client A sends</text>
-        <text class="s" x="85" y="90">POST …/messages</text>
-        <rect class="n g" x="190" y="50" width="150" height="52" rx="8" />
-        <text x="265" y="72">SQLite tx commit</text>
-        <text class="s" x="265" y="90">event gets eventId</text>
-        <rect class="n p" x="375" y="50" width="140" height="52" rx="8" />
-        <text x="445" y="72">RealtimeHub</text>
-        <text class="s" x="445" y="90">Map&lt;groupId, Set&lt;writer&gt;&gt;</text>
-        <rect class="n b" x="550" y="50" width="130" height="52" rx="8" />
-        <text x="615" y="72">SSE stream</text>
-        <text class="s" x="615" y="90">text/event-stream</text>
-        <rect class="n y" x="715" y="50" width="130" height="52" rx="8" />
-        <text x="780" y="72">Client B</text>
-        <text class="s" x="780" y="90">EventSource</text>
-        <path class="e" d="M155 76H190" />
-        <path class="e" d="M340 76H375" />
-        <path class="e" d="M515 76H550" />
-        <path class="e" d="M680 76H715" />
-        <text class="s" x="430" y="140">
-          On reconnect: client sends Last-Event-ID, server replays from SQLite. Heartbeat via
-          setInterval (unref'd).
-        </text>
-      </svg>
-      <ul>
-        <li>
-          Hub is an in-memory pub/sub, <b>process-local</b>. SQLite is the truth; the hub only
-          delivers <i>after commit</i>. A 2nd server instance would break live delivery (no shared
-          bus).
-        </li>
-        <li>
-          <code>encodeSseEvent</code> has a <code>metadataOnly</code> mode (ids only, no body): used
-          for hidden/blocked content so the stream doesn't leak it.
-        </li>
-        <li>
-          Browser <code>EventSource</code> can't read HTTP error bodies, so the server returns a
-          terminal SSE frame for those callers (<code>http.ts:253</code>). Native uses an adapter
-          (<code>native-event-source.ts</code>).
-        </li>
-        <li>
-          nginx has <code>proxy_buffering off</code> for <code>/api</code>, required or SSE would
-          stall.
-        </li>
-      </ul>
-
-      <!-- CLIENT -->
+      <div
+        class="diagram"
+        tabindex="0"
+        aria-label="Deployment diagram; scroll horizontally on small screens"
+      >
+        <svg viewBox="0 0 880 360" role="img" aria-labelledby="deployment-title deployment-desc">
+          <title id="deployment-title">Hosted application and external services</title>
+          <desc id="deployment-desc">
+            Browser connects over HTTPS to CloudFront, which sends HTTP with origin proof to nginx
+            on Lightsail. nginx serves static files and proxies API requests to Node. Node connects
+            to external PostgreSQL, S3 and web push. Cognito redirects issue an opaque app session.
+            Direct incoming uploads go from the browser to S3.
+          </desc>
+          <rect class="n y" x="15" y="120" width="120" height="60" rx="8" />
+          <text x="75" y="146">Browser / PWA</text>
+          <text class="s" x="75" y="165">HTTPS + app cookie</text>
+          <rect class="n p" x="175" y="120" width="120" height="60" rx="8" />
+          <text x="235" y="146">CloudFront</text>
+          <text class="s" x="235" y="165">viewer HTTPS</text>
+          <rect
+            class="n b"
+            x="345"
+            y="40"
+            width="310"
+            height="260"
+            rx="12"
+            style="fill: none; stroke-dasharray: 6 4"
+          />
+          <text x="500" y="65">Lightsail / Docker Compose</text>
+          <rect class="n b" x="365" y="120" width="110" height="60" rx="8" />
+          <text x="420" y="146">nginx</text>
+          <text class="s" x="420" y="165">static + /api proxy</text>
+          <rect class="n g" x="505" y="95" width="130" height="130" rx="8" />
+          <text x="570" y="122">Node application</text>
+          <text class="s" x="570" y="143">HTTP + SSE hub</text>
+          <text class="s" x="570" y="162">cycle/media loop</text>
+          <text class="s" x="570" y="181">reminder loop</text>
+          <text class="s" x="570" y="202">ffmpeg child process</text>
+          <rect class="n w" x="705" y="40" width="140" height="55" rx="8" />
+          <text x="775" y="65">PostgreSQL</text>
+          <text class="s" x="775" y="82">external database</text>
+          <rect class="n w" x="705" y="120" width="140" height="55" rx="8" />
+          <text x="775" y="145">Private S3</text>
+          <text class="s" x="775" y="162">versioned media</text>
+          <rect class="n r" x="705" y="200" width="140" height="55" rx="8" />
+          <text x="775" y="225">Web push service</text>
+          <text class="s" x="775" y="242">browser notification</text>
+          <rect class="n p" x="15" y="20" width="120" height="55" rx="8" />
+          <text x="75" y="45">Cognito</text>
+          <text class="s" x="75" y="62">pool per environment</text>
+          <path class="e" d="M135 150H175" />
+          <path class="e" d="M295 150H365" />
+          <text class="s" x="330" y="110">HTTP + proof</text>
+          <path class="e" d="M475 150H505" />
+          <path class="e" d="M635 110L705 68" />
+          <path class="e" d="M635 150H705" />
+          <path class="e" d="M635 200L705 225" />
+          <path class="e d" d="M75 120V75" />
+          <path class="e d" d="M75 180V330H865V147H845" />
+          <text class="s" x="400" y="348">
+            Direct incoming PUT only; Node still reads, processes and serves media
+          </text>
+        </svg>
+      </div>
+      <p>
+        The diagram combines configured hosted boundaries, not verified release status. Default
+        Compose runs nginx plus one Node application container. PostgreSQL and S3 are external;
+        local runs use SQLite and disk. Hosted-dev names retain <code>demo</code> after the
+        synthetic Demo's removal.
+      </p>
+      <h2 id="http"><span class="lvl">1</span>HTTP and proxy trust</h2>
+      <p>
+        <a href="../../server/src/http.ts">http.ts</a> dispatches routes using paths and regular
+        expressions. nginx proxies <code>/api/*</code> to Node with that prefix removed, keeps API
+        responses out of caches, and disables proxy buffering for SSE. Auth transport and browser
+        origin validation precede session/resource checks.
+      </p>
+      <p>
+        <code>authTransportIsSecure</code> accepts socket TLS, an explicitly enabled loopback
+        exception, or matching <code>X-Rewind-Origin-Auth</code> and
+        <code>X-Forwarded-Proto: https</code>. CloudFront enforces viewer HTTPS and supplies the
+        origin proof; nginx forwards it and sets the protocol. A forwarded protocol header alone
+        does not authenticate the proxy. The origin hop is HTTP. The loopback exception requires a
+        loopback peer/host and no forwarded protocol header.
+      </p>
+      <p>
+        Intake defaults are 30 seconds idle, 120 seconds total upload, two concurrent intakes and
+        one processing request; selectors live in
+        <a href="../../server/src/config.ts">config.ts</a>. Process-local limits are not a
+        distributed rate limiter.
+      </p>
+      <h2 id="auth"><span class="lvl">2</span>Managed login and opaque sessions</h2>
+      <div
+        class="diagram"
+        tabindex="0"
+        aria-label="Login diagram; scroll horizontally on small screens"
+      >
+        <svg viewBox="0 0 860 150" role="img" aria-labelledby="auth-title auth-desc">
+          <title id="auth-title">Cognito login becomes a Rewind session</title>
+          <desc id="auth-desc">
+            Browser starts login, Cognito authorizes with PKCE, server exchanges and validates the
+            callback, then sets an opaque Rewind cookie used by API requests.
+          </desc>
+          <rect class="n y" x="15" y="40" width="130" height="60" rx="8" />
+          <text x="80" y="65">Browser starts</text>
+          <text class="s" x="80" y="84">/api/auth/cognito/start</text>
+          <rect class="n p" x="180" y="40" width="135" height="60" rx="8" />
+          <text x="247" y="65">Cognito login</text>
+          <text class="s" x="247" y="84">code + PKCE</text>
+          <rect class="n b" x="350" y="40" width="150" height="60" rx="8" />
+          <text x="425" y="65">Server callback</text>
+          <text class="s" x="425" y="84">exchange + verify</text>
+          <rect class="n g" x="535" y="40" width="145" height="60" rx="8" />
+          <text x="607" y="65">Opaque app cookie</text>
+          <text class="s" x="607" y="84">token hash in database</text>
+          <rect class="n w" x="715" y="40" width="130" height="60" rx="8" />
+          <text x="780" y="65">API policy</text>
+          <text class="s" x="780" y="84">session + membership</text>
+          <path class="e" d="M145 70H180" />
+          <path class="e" d="M315 70H350" />
+          <path class="e" d="M500 70H535" />
+          <path class="e" d="M680 70H715" />
+        </svg>
+      </div>
+      <p>
+        The callback checks state/replay, nonce, ID-token claims and verified email, then maps
+        <code>cognito_sub</code> to the account. The API accepts the Rewind session, not a Cognito
+        token. The cookie is <code>__Host-rewind_session</code>, Secure, HttpOnly, SameSite=Lax,
+        Path=/ and no Domain. Idle expiry slides for seven days, bounded by 30 days absolute. The
+        persisted credential is a SHA-256 token hash.
+      </p>
+      <p>
+        Developer password sign-in remains local/dev under <code>REWIND_AUTH_PASSWORD</code>;
+        browser responses keep the token in the cookie, while native responses return a bearer token
+        for SecureStore. Different simultaneous cookie/bearer credentials fail. Release refuses
+        password sign-in; native clients do not show managed login. See the
+        <a href="../domain/session-contract.md">session contract</a> and
+        <a href="../../doc/planning/sprints/sprint-3-cognito/design-decisions.md"
+          >existing Cognito decision note</a
+        >.
+      </p>
+      <h2 id="db"><span class="lvl">3</span>SQLite and hosted PostgreSQL</h2>
+      <p>
+        <code>REWIND_DATABASE_URL</code> selects PostgreSQL; otherwise
+        <a href="../../server/src/db.ts">db.ts</a> opens SQLite under <code>REWIND_DATA_DIR</code>.
+        SQLite uses WAL, foreign keys and a busy timeout. The PostgreSQL bridge presents the
+        synchronous <code>prepare/run/get/all/exec</code> surface through a <code>pg</code> worker
+        thread; calling SQL blocks the caller. This is not an asynchronous persistence rewrite.
+      </p>
+      <p>
+        PostgreSQL uses advisory locks for serialized writers, savepoints for compatible failure
+        behavior, translated SQL and matching migrations. Runtime verifies remote TLS with the
+        bundled RDS CA and binds the database to its environment. TLS disable is loopback-only. Read
+        <a href="../architecture/ADR-0003-postgresql.md">ADR-0003</a> for the decision and
+        historical measurements.
+      </p>
+      <p>
+        At the baseline, <a href="../../infra/terraform/media/database.tf">database.tf</a> enables
+        dev cutover but disables release provisioning/cutover. That declaration is not a current
+        health check. Release persistence/recovery remains #504; operations stay in the
+        <a href="../architecture/postgresql-operations.md">database runbook</a>.
+      </p>
+      <h2 id="jobs"><span class="lvl">4</span>Internal loops and durable work</h2>
+      <p>
+        <a href="../../server/src/cli.ts">cli.ts</a> <code>start</code> runs HTTP and the cycle
+        scheduler, plus the reminder loop when providers are configured. The scheduler calls
+        <code>runWorkerTick</code> for real groups. Optional <code>worker</code> CLI mode runs the
+        same job machinery separately; default Compose has no standalone worker service. The
+        PostgreSQL I/O thread is a different mechanism.
+      </p>
+      <p>
+        Clip and film jobs persist in SQL. Claims have leases and
+        <code>claim_generation</code> fences; progress/completion must match the claim, preventing
+        stale workers from overwriting newer work. ffmpeg runs as a child process with argument
+        arrays. Retry limits and typed failure categories live in
+        <a href="../../server/src/jobs/worker.ts">worker.ts</a> and the job processors. These are
+        durable database jobs, not an external message broker.
+      </p>
+      <h2 id="media"><span class="lvl">5</span>Storage and media capabilities</h2>
+      <div
+        class="diagram"
+        tabindex="0"
+        aria-label="Media lifecycle diagram; scroll horizontally on small screens"
+      >
+        <svg viewBox="0 0 860 180" role="img" aria-labelledby="life-title life-desc">
+          <title id="life-title">One contribution becomes a released film</title>
+          <desc id="life-desc">
+            Capture, authorized intake, durable clip job, ffmpeg and verified clip output. At cycle
+            end, a film job compiles clips, publication unlocks authorized playback and Archive.
+          </desc>
+          <rect class="n y" x="15" y="20" width="120" height="50" rx="8" />
+          <text x="75" y="49">Photo / video</text>
+          <rect class="n p" x="175" y="20" width="160" height="50" rx="8" />
+          <text x="255" y="42">Authorized intake</text>
+          <text class="s" x="255" y="59">S3 signed PUT / disk upload</text>
+          <rect class="n w" x="375" y="20" width="120" height="50" rx="8" />
+          <text x="435" y="49">Durable clip job</text>
+          <rect class="n g" x="535" y="20" width="120" height="50" rx="8" />
+          <text x="595" y="49">ffmpeg</text>
+          <rect class="n b" x="695" y="20" width="150" height="50" rx="8" />
+          <text x="770" y="49">Verified clip</text>
+          <path class="e" d="M135 45H175" />
+          <path class="e" d="M335 45H375" />
+          <path class="e" d="M495 45H535" />
+          <path class="e" d="M655 45H695" />
+          <rect class="n y" x="15" y="110" width="160" height="50" rx="8" />
+          <text x="95" y="139">Cycle ends</text>
+          <rect class="n w" x="215" y="110" width="160" height="50" rx="8" />
+          <text x="295" y="139">Film job + ffmpeg</text>
+          <rect class="n b" x="415" y="110" width="160" height="50" rx="8" />
+          <text x="495" y="139">Published release</text>
+          <rect class="n g" x="615" y="110" width="230" height="50" rx="8" />
+          <text x="730" y="132">Premiere / Archive</text>
+          <text class="s" x="730" y="149">authorized playback and download</text>
+          <path class="e" d="M175 135H215" />
+          <path class="e" d="M375 135H415" />
+          <path class="e" d="M575 135H615" />
+        </svg>
+      </div>
+      <div class="table-wrap" tabindex="0" aria-label="Media adapter table">
+        <table>
+          <tr>
+            <th>Configuration</th>
+            <th>Representation / intake</th>
+            <th>Boundary</th>
+          </tr>
+          <tr>
+            <td><code>disk</code></td>
+            <td>
+              No configured <code>MediaStore</code>; staged/processed filesystem paths;
+              authenticated byte intake through Node.
+            </td>
+            <td>Local product path.</td>
+          </tr>
+          <tr>
+            <td><code>local</code></td>
+            <td>Legacy immutable object-store adapter; not the disk intake path.</td>
+            <td>Retained; do not extend.</td>
+          </tr>
+          <tr>
+            <td><code>s3</code></td>
+            <td>Immutable object refs and a signed incoming PUT transport.</td>
+            <td>
+              Hosted path; scope binds environment/group, exact key/version, digest, length, type
+              and expiry.
+            </td>
+          </tr>
+        </table>
+      </div>
+      <p>
+        <a href="../../server/src/media/store.ts">MediaStore</a> defines
+        <code>put/head/read/delete</code> for the local/S3 object adapters.
+        <a href="../../server/src/media/configured-runtime.ts">Configured runtime wiring</a> shares
+        the selected store across HTTP, jobs and lifecycle. S3 finalization checks version,
+        checksum, size and encryption before trusting incoming media. A signed upload URL does not
+        grant playback or publish permission.
+      </p>
+      <p>
+        The active <a href="../../infra/terraform/media/main.tf">media root</a> uses SSE-S3
+        (<code>AES256</code>), versioning and public-access blocking. The adapter supports SSE-KMS
+        when configured with a canonical key ARN, and the separate
+        <a href="../../infra/terraform/modules/private-media/main.tf">private-media module</a>
+        requires it. Compose does not pass a KMS selector. Do not describe the current root as KMS.
+      </p>
+      <p>
+        Direct S3 PUT avoids Node's intake hop. Node still materializes/verifies S3 bytes for
+        processing and
+        <a href="../../server/src/archive/store-serving.ts">authorized playback/download</a>, then
+        writes outputs to S3. Media therefore still passes through Node.
+      </p>
+      <p>
+        <a href="../../server/src/archive/capabilities.ts">Read capabilities</a> are two-minute
+        opaque URLs backed by a process-local grant. They may work without a cookie, but resolution
+        rechecks the bound session, accepted/selected membership, published cycle and exact verified
+        output; a different presented session is rejected. They expose neither the application
+        session token nor a raw S3 URL.
+      </p>
+      <h2 id="rt"><span class="lvl">6</span>Realtime</h2>
+      <p>
+        Chat and cycle events use SSE. Persisted events support replay; the in-memory hub
+        distributes events after commit. The hub is process-local, so a second API replica would
+        require coordination for live delivery. nginx disables buffering; a database shared between
+        replicas does not by itself share the hub.
+      </p>
       <h2 id="client"><span class="lvl">7</span>Client runtime</h2>
-      <svg viewBox="0 0 860 190">
-        <rect class="n y" x="15" y="20" width="130" height="52" rx="8" />
-        <text x="80" y="42">App.tsx</text>
-        <text class="s" x="80" y="60">shell, screen switch</text>
-        <rect class="n p" x="175" y="20" width="170" height="52" rx="8" />
-        <text x="260" y="42">Context providers</text>
-        <text class="s" x="260" y="60">Capsule · Session · Account</text>
-        <rect class="n g" x="375" y="20" width="150" height="52" rx="8" />
-        <text x="450" y="42">Repository ports</text>
-        <text class="s" x="450" y="60">src/domain interfaces</text>
-        <rect class="n b" x="555" y="20" width="140" height="52" rx="8" />
-        <text x="625" y="42">Runtime adapter</text>
-        <text class="s" x="625" y="60">fetch → server</text>
-        <rect class="n w" x="555" y="100" width="140" height="52" rx="8" />
-        <text x="625" y="122">Demo adapter</text>
-        <text class="s" x="625" y="140">in-memory fixtures</text>
-        <rect class="n r" x="725" y="20" width="120" height="52" rx="8" />
-        <text x="785" y="42">Server</text>
-        <path class="e" d="M145 46H175" />
-        <path class="e" d="M345 46H375" />
-        <path class="e" d="M525 46H555" />
-        <path class="e" d="M695 46H725" />
-        <path class="e d" d="M525 60L555 118" />
-        <rect class="n w" x="15" y="100" width="190" height="52" rx="8" />
-        <text x="110" y="122">Local persistence</text>
-        <text class="s" x="110" y="140">AsyncStorage / SecureStore</text>
-        <rect class="n w" x="235" y="100" width="290" height="52" rx="8" />
-        <text x="380" y="122">Platform adapters (capture/)</text>
-        <text class="s" x="380" y="140">camera, file-store, uploader, MediaRecorder</text>
-      </svg>
+      <p>
+        <code>App.tsx</code> supplies <code>RealAccountProvider</code>; real-account screens use
+        HTTP clients and domain contracts, with platform capture/file/token adapters.
+        <code>EXPO_PUBLIC_LOCAL_BASE_URL</code> is bundled at build time (hosted web uses
+        <code>/api</code>). A missing URL makes sign-in unavailable; it does not enable an offline
+        Demo. <code>EXPO_PUBLIC_*</code> settings are public, never a place for server secrets.
+      </p>
+      <h2 id="pwa"><span class="lvl">8</span>PWA and web-only reminders</h2>
+      <p>
+        <a href="../../public/sw.js">The service worker</a> keeps API/media/non-GET traffic
+        network-only, uses a network-first navigation shell and caches build assets. It does not
+        provide an offline private-media queue. A stamped build invalidates old shell caches.
+      </p>
+      <p>
+        The reminder outbox persists intended delivery and retry state; configured
+        <code>web-push</code> providers use VAPID. Provider acceptance does not establish visible
+        notification receipt, and no exactly-once device-delivery guarantee is claimed. iPhone
+        delivery uses an installed Home Screen PWA over HTTPS. Expo/native push remains disabled and
+        is outside this work.
+      </p>
+      <h2 id="ship"><span class="lvl">9</span>Build and delivery</h2>
+      <p>
+        Expo exports the web bundle; TypeScript builds the Node runtime. Compose runs read-only
+        containers with explicit data/media mounts. CloudFront/nginx expose the app and same-origin
+        API. The dev workflow requires Quality for its selected revision; a dev merge triggers
+        deployment. Release promotion follows protected <code>main</code> and release-environment
+        rules. Workflow configuration is distinct from deployed health and acceptance.
+      </p>
+      <p>
+        Procedures remain in <a href="../../deploy/README.md">deployment guidance</a>. This guide
+        performed no AWS action and establishes no new release result.
+      </p>
+      <h2 id="tests"><span class="lvl">10</span>Verification boundaries</h2>
+      <p>
+        <code>npm run test:fast</code> builds the server once, then runs root, server and frontend
+        suites concurrently. PostgreSQL has a separate server-suite path. Focused tests diagnose one
+        file. Slow, coverage and accessibility checks apply to web export, routing, PWA,
+        accessibility changes and release promotion under the working agreement.
+      </p>
+      <p>
+        For this documentation change, format/source/link checks and rendered learning-page
+        inspection validate the documentation. They do not replace application tests, real-provider
+        acceptance or iPhone notification receipt.
+      </p>
+      <h2 id="smells">Known architectural limits</h2>
       <ul>
         <li>
-          No Redux/React-Query/router in dependencies. State = React Context providers + hooks +
-          stores written to AsyncStorage/SecureStore <b>(inferred from deps and file names)</b>.
+          Process-local SSE, capabilities, caches and Cognito replay tracking prevent assuming
+          transparent multi-replica operation.
         </li>
         <li>
-          Which adapter is used is decided at startup by env:
-          <code>EXPO_PUBLIC_LOCAL_BASE_URL</code> present → Runtime adapter; absent → offline Demo.
-          Baked into the bundle at build time (<code>EXPO_PUBLIC_*</code> are inlined by Expo).
+          The synchronous PostgreSQL bridge blocks the calling thread; serialized writes preserve
+          parity rather than exploiting full PostgreSQL concurrency.
         </li>
         <li>
-          <code>src/capture/</code> is the biggest client folder (19 files): state machine,
-          interruption handling, uploader with retries, browser recorder
-          (<code>retro-browser.ts</code>), looks/filters. Platform split via
-          <code>platform.ts</code>.
+          ffmpeg and API work share host resources. Concurrency limits bound work but do not prove
+          capacity under arbitrary load.
         </li>
         <li>
-          Boundary rule enforced by <code>scripts/check-architecture.mjs</code>: regex over imports;
-          <code>src/domain</code> + <code>cycles/engine.ts</code> can't import Expo/RN/SQLite.
-        </li>
-      </ul>
-
-      <!-- PWA -->
-      <h2 id="pwa"><span class="lvl">8</span>PWA, service worker, web push</h2>
-      <svg viewBox="0 0 860 170">
-        <rect class="n y" x="15" y="30" width="130" height="52" rx="8" />
-        <text x="80" y="52">fetch event</text>
-        <text class="s" x="80" y="70">public/sw.js</text>
-        <rect class="n r" x="185" y="10" width="200" height="40" rx="8" />
-        <text x="285" y="35">API / media / non-GET → network only</text>
-        <rect class="n b" x="185" y="60" width="200" height="40" rx="8" />
-        <text x="285" y="85">Navigate → network, fallback shell</text>
-        <rect class="n g" x="185" y="110" width="200" height="40" rx="8" />
-        <text x="285" y="135">Hashed assets → cache-first</text>
-        <path class="e" d="M145 56L185 30" />
-        <path class="e" d="M145 56L185 80" />
-        <path class="e" d="M145 56L185 130" />
-        <rect class="n p" x="450" y="30" width="130" height="52" rx="8" />
-        <text x="515" y="52">Server tick</text>
-        <text class="s" x="515" y="70">reminder outbox</text>
-        <rect class="n w" x="610" y="30" width="110" height="52" rx="8" />
-        <text x="665" y="52">web-push lib</text>
-        <text class="s" x="665" y="70">VAPID signed</text>
-        <rect class="n g" x="750" y="30" width="95" height="52" rx="8" />
-        <text x="797" y="52">sw 'push'</text>
-        <text class="s" x="797" y="70">→ notification</text>
-        <path class="e" d="M580 56H610" />
-        <path class="e" d="M720 56H750" />
-        <text class="s" x="620" y="120">
-          Subscription = endpoint+keys from pushManager.subscribe, stored server-side
-        </text>
-      </svg>
-      <ul>
-        <li>
-          The SW never caches or queues anything private: API, media and non-GET always hit the
-          network (offline = a synthetic "unavailable" response). <code>/admin</code> is bypassed
-          entirely (Basic-auth prompt can't be shown from a worker).
-        </li>
-        <li>
-          <code>scripts/stamp-pwa-build.mjs</code> rewrites <code>sw.js</code> per build (cache name
-          / asset list) so a deploy invalidates the old shell; <code>check-pwa.mjs</code> verifies
-          it in CI.
-        </li>
-        <li>
-          Push is <b>outbox pattern</b>: <code>reminders/outbox.ts</code> persists the intended send
-          first, a loop delivers, so a crash doesn't lose or double-send
-          <b>(inferred from name and size)</b>. Notification click carries a validated
-          <code>{kind, groupId, reminderId}</code> intent (strict regex in <code>sw.js</code>).
-        </li>
-        <li>
-          iPhone web push only works from an installed Home Screen PWA over HTTPS: why that tier
-          needs the hosted dev URL.
-        </li>
-      </ul>
-
-      <!-- SHIP -->
-      <h2 id="ship"><span class="lvl">9</span>Build, container, CI, deploy</h2>
-      <svg viewBox="0 0 860 200">
-        <rect class="n y" x="15" y="20" width="130" height="52" rx="8" />
-        <text x="80" y="42">expo export</text>
-        <text class="s" x="80" y="60">web → dist/</text>
-        <rect class="n y" x="15" y="110" width="130" height="52" rx="8" />
-        <text x="80" y="132">tsc server</text>
-        <text class="s" x="80" y="150">→ server/dist</text>
-        <rect class="n p" x="185" y="20" width="150" height="52" rx="8" />
-        <text x="260" y="42">web.Dockerfile</text>
-        <text class="s" x="260" y="60">nginx + dist</text>
-        <rect class="n p" x="185" y="110" width="150" height="52" rx="8" />
-        <text x="260" y="132">Dockerfile</text>
-        <text class="s" x="260" y="150">2-stage, alpine, non-root</text>
-        <rect class="n g" x="375" y="65" width="150" height="52" rx="8" />
-        <text x="450" y="87">release.py</text>
-        <text class="s" x="450" y="105">build + verify bundle</text>
-        <rect class="n b" x="565" y="65" width="130" height="52" rx="8" />
-        <text x="630" y="87">SSM/SSH to host</text>
-        <text class="s" x="630" y="105">(inferred)</text>
-        <rect class="n r" x="725" y="65" width="120" height="52" rx="8" />
-        <text x="785" y="87">compose up</text>
-        <text class="s" x="785" y="105">health → keep/rollback</text>
-        <path class="e" d="M145 46H185" />
-        <path class="e" d="M145 136H185" />
-        <path class="e" d="M335 46L375 85" />
-        <path class="e" d="M335 136L375 100" />
-        <path class="e" d="M525 91H565" />
-        <path class="e" d="M695 91H725" />
-      </svg>
-      <ul>
-        <li>
-          <b>Container hardening</b>: digest-pinned base images,
-          <code>npm ci --ignore-scripts</code>, a script copies only production runtime deps into
-          stage 2, npm/npx/yarn removed from the final image, uid 10001, read-only root FS,
-          <code>cap_drop: ALL</code>, <code>no-new-privileges</code>, tmpfs <code>/tmp</code>,
-          127.0.0.1-only port binding (nginx is the only way in).
-        </li>
-        <li>
-          <b>Supply chain</b>: <code>vendor/node-forge</code> and <code>vendor/braces</code> are
-          patched tarballs installed via <code>file:</code> (security overrides for transitive deps;
-          tests <code>node-forge-security</code>, <code>braces-security</code> guard them).
-        </li>
-        <li>
-          <b>Quality workflow</b> jobs: classify change (docs-only skips) → static+root tests →
-          server tests+coverage (installs ffmpeg) → frontend Jest with a 70% statement gate →
-          browser (export once, PWA + a11y + responsive) → cloud-free deploy fixtures
-          (backup/restore/lifecycle shell tests) → aggregate <code>gate</code> job (the one branch
-          protection needs).
-        </li>
-        <li>
-          <b>Deploy</b>: <code>deploy-dev.yml</code> only deploys a commit that passed Quality;
-          concurrency group is serial (<code>cancel-in-progress: false</code>); AWS creds via OIDC
-          role trusting <code>repo:…:environment:dev</code> + <code>refs/heads/dev</code>.
-        </li>
-        <li>
-          <b>Host ops scripts</b> (<code>deploy/</code>): backup-manifest, restore-atomic,
-          pause/wake, migrate-with-backup, recovery-selection, each with a shell test in
-          <code>tests/deploy/</code>.
-        </li>
-      </ul>
-
-      <!-- TESTS -->
-      <h2 id="tests"><span class="lvl">10</span>Test architecture</h2>
-      <table>
-        <tr>
-          <th>Tier</th>
-          <th>Runner</th>
-          <th>Covers</th>
-        </tr>
-        <tr>
-          <td>root</td>
-          <td><code>node --test</code></td>
-          <td>scaffold, architecture rules, PWA, Terraform policy, scripts</td>
-        </tr>
-        <tr>
-          <td>server</td>
-          <td>
-            <code>node --test server/tests/*.mjs</code> against compiled <code>server/dist</code>
-          </td>
-          <td>
-            Real HTTP + real SQLite + real ffmpeg. Fakes only the clock and S3. (<code
-              >server:test</code
-            >
-            runs <code>tsc</code> first.)
-          </td>
-        </tr>
-        <tr>
-          <td>frontend</td>
-          <td>Jest + jest-expo</td>
-          <td>Components/stores; native modules mocked (<code>tests/mocks/</code>)</td>
-        </tr>
-        <tr>
-          <td>deploy fixtures</td>
-          <td>bash tests</td>
-          <td>Backup/restore/lifecycle scripts, no cloud</td>
-        </tr>
-        <tr>
-          <td>slow</td>
-          <td>Playwright (3 configs: responsive, e2e, real-account)</td>
-          <td>Built web bundle, a11y, routing, full real-account flow</td>
-        </tr>
-      </table>
-      <ul>
-        <li>
-          <code>test:fast</code> = the first four tiers chained; that's your Definition-of-Done
-          gate. <code>test:focused</code> runs one file through a wrapper
-          (<code>scripts/focused-test.mjs</code>).
-        </li>
-        <li>
-          Design choice worth noting: injected clock (<code>CycleClock</code>) makes time-based
-          flows deterministic, so no sleeps.
-        </li>
-      </ul>
-
-      <!-- SMELLS -->
-      <h2 id="smells"><span class="lvl">!</span>Technical risks / smells I noticed</h2>
-      <table>
-        <tr>
-          <th>What</th>
-          <th>Why it matters</th>
-        </tr>
-        <tr>
-          <td>
-            Everything assumes <b>one process, one host</b>: auth serialisation, RealtimeHub,
-            in-process loops, SQLite file.
-          </td>
-          <td>
-            Hard ceiling. Scaling out means a shared DB, a pub/sub bus and a real queue, i.e. most
-            of the server.
-          </td>
-        </tr>
-        <tr>
-          <td>
-            <code>http.ts</code> 4.5k, <code>db.ts</code> 2.2k, <code>jobs/index.ts</code> 2.1k
-            lines
-          </td>
-          <td>Giant if-chains are hard to review; easy to forget an auth check on a new route.</td>
-        </tr>
-        <tr>
-          <td>Migrations = SQL files <b>plus</b> JS special cases keyed by name</td>
-          <td>Order and idempotence live in two places; numbering has gaps/dupes.</td>
-        </tr>
-        <tr>
-          <td>ffmpeg + API share the VM (768 MB cap)</td>
-          <td>
-            A long film encode can starve requests; the "1 concurrent processor" cap is the only
-            guard.
-          </td>
-        </tr>
-        <tr>
-          <td>Demo/real code pairs and disabled native push still shipped</td>
-          <td>Dead weight and larger attack surface until removed.</td>
-        </tr>
-        <tr>
-          <td>Hand-rolled auth</td>
-          <td>
-            Well built (scrypt, dummy hash, throttles) but yours to maintain; no MFA/reset email
-            flow (inferred).
-          </td>
-        </tr>
-      </table>
-
-      <h2>Next deep dives</h2>
-      <ul>
-        <li>Trace one real request end to end with line numbers (e.g. posting a chat message).</li>
-        <li>ER diagram from the migrations.</li>
-        <li>The Terraform roots and IAM policies (what can the deploy role actually do?).</li>
-        <li>The fencing/lease logic line by line, with a failure walkthrough.</li>
-        <li>
-          What's in the hand-written <code>tests/</code> for security (cross-group access, account
-          safety).
+          Release operational acceptance and current device integration results belong to their
+          tracking issues, not this source map.
         </li>
       </ul>
     </main>
