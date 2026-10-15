@@ -7,14 +7,14 @@ and maintenance. They are independent of final-report assembly.
 
 ## Model catalogue
 
-| Area                                              | Use cases and design problems                                                     |
-| ------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [Identity](identity.md)                           | Managed Login, developer sign-in, groups, invitations and membership authority    |
-| [Capture](capture.md)                             | Photo/video contribution, local preview, sealed upload and storage integrity      |
-| [Lifecycle](lifecycle.md)                         | Cycle boundaries, compilation, verified publication and Archive                   |
-| [Interactions](interactions.md)                   | Chat, prompts, reminder preferences, web-push subscription and dispatch           |
-| [Playback](playback.md)                           | Authorized film viewing, Archive, own-clip downloads and expiring media access    |
-| [Transition strategies](transition-strategies.md) | Cross-domain analysis-to-design mapping and evidence-based pattern classification |
+| Area                                              | Use cases and design problems                                                                    |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| [Identity](identity.md)                           | Managed Login, developer sign-in, groups, invitations, account deletion and membership authority |
+| [Capture](capture.md)                             | Photo/video contribution, local preview, sealed upload and storage integrity                     |
+| [Lifecycle](lifecycle.md)                         | Cycle boundaries, compilation, verified publication and Archive                                  |
+| [Interactions](interactions.md)                   | Chat, prompts, reminder preferences, web-push subscription and dispatch                          |
+| [Playback](playback.md)                           | Authorized film viewing, Archive, own-clip downloads and expiring media access                   |
+| [Transition strategies](transition-strategies.md) | Cross-domain analysis-to-design mapping and evidence-based pattern classification                |
 
 Each domain document contains the following editable views:
 
