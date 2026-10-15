@@ -1,8 +1,9 @@
 import { expect } from '@playwright/test';
+import { openChat } from './navigation.mjs';
 
 function messageRow(page, body) {
   return page
-    .getByTestId('real-chat-message')
+    .getByTestId(/^real-chat-message-/)
     .filter({ has: page.getByText(body, { exact: true }) });
 }
 
@@ -24,37 +25,34 @@ async function sendText(page, groupId, body) {
 }
 
 export async function verifyOwnerChat(page, groupId, suffix) {
-  await page.getByTestId('real-group-chat-action').click();
+  await openChat(page, groupId);
   await expect(page.getByTestId('real-chat-empty')).toBeVisible();
-  await expect(page.getByText('Connected', { exact: true })).toBeVisible();
   const event = await sendText(page, groupId, `Fixture owner chat ${suffix}`);
-  await page.getByTestId('real-group-chat-back').click();
+  await page.getByTestId('real-group-nav-home').click();
   return event;
 }
 
 export async function verifyMemberChat(page, groupId, ownerEvent, suffix) {
-  await page.getByTestId('real-group-chat-action').click();
+  await openChat(page, groupId);
   await expect(messageRow(page, ownerEvent.message.body)).toHaveCount(1);
-  await expect(page.getByText('Connected', { exact: true })).toBeVisible();
   const memberEvent = await sendText(page, groupId, `Fixture member chat ${suffix}`);
   expect(memberEvent.message.memberId).not.toBe(ownerEvent.message.memberId);
 
+  await page.getByTestId(`real-chat-message-${ownerEvent.message.id}`).click();
   await page.getByTestId(`real-chat-reply-${ownerEvent.message.id}`).click();
   const replyBody = `Fixture member reply ${suffix}`;
   await page.getByTestId('real-chat-composer').fill(replyBody);
   const messagesPath = `/api/realtime/groups/${encodeURIComponent(groupId)}/messages`;
   // Let the real server persist the reply, then lose only its response. The UI
-  // must keep its draft/identity and safely replay the same write on retry.
+  // must keep the failed message/identity and safely replay the same write on retry.
   await page.evaluate((targetPath) => {
     window.__rewindChatResponseLoss.targetPath = targetPath;
   }, messagesPath);
   await page.getByTestId('real-chat-send').click();
-  await expect(
-    page.getByText('Fixture response lost after persistence', { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByTestId('real-chat-send')).toBeEnabled();
-  await expect(page.getByTestId('real-chat-composer')).toHaveValue(replyBody);
-  await expect(page.getByTestId('real-chat-reply-target')).toBeVisible();
+  await expect(page.getByTestId('real-chat-retry-send')).toBeVisible();
+  await expect(page.getByTestId('real-chat-retry-send')).toBeEnabled();
+  await expect(page.getByTestId('real-chat-retry-send').locator('..')).toContainText(replyBody);
+  await expect(page.getByTestId('real-chat-composer')).toHaveValue('');
   const { firstRequestBody, persistedReply, status } = await page.evaluate(
     () => window.__rewindChatResponseLoss,
   );
@@ -64,7 +62,7 @@ export async function verifyMemberChat(page, groupId, ownerEvent, suffix) {
     (response) =>
       response.request().method() === 'POST' && new URL(response.url()).pathname === messagesPath,
   );
-  await page.getByTestId('real-chat-send').click();
+  await page.getByTestId('real-chat-retry-send').click();
   const replay = await replayResponse;
   expect(replay.status()).toBe(200);
   expect(replay.request().postDataJSON()).toEqual(firstRequestBody);
@@ -76,20 +74,22 @@ export async function verifyMemberChat(page, groupId, ownerEvent, suffix) {
   await expect(page.getByTestId('real-chat-composer')).toHaveValue('');
   await expect(page.getByTestId('real-chat-reply-target')).toHaveCount(0);
 
-  const reaction = page.getByTestId(`real-chat-reaction-${ownerEvent.message.id}`);
-  await reaction.click();
+  await page.getByTestId(`real-chat-message-${ownerEvent.message.id}`).click();
+  await page.getByTestId(`real-chat-reaction-${ownerEvent.message.id}`).click();
+  const reaction = page.getByTestId(`real-chat-sparks-${ownerEvent.message.id}`);
   await expect(reaction).toHaveText('✨ 1');
   await reaction.click();
-  await expect(reaction).toHaveText('✨ 0');
-  await page.getByTestId('real-group-chat-back').click();
+  await expect(reaction).toHaveCount(0);
+  await page.getByTestId('real-group-nav-home').click();
   await page.reload();
   await expect(page.getByTestId('real-group-home')).toBeVisible();
-  await page.getByTestId('real-group-chat-action').click();
+  await openChat(page, groupId);
   for (const body of [ownerEvent.message.body, memberEvent.message.body, replyBody]) {
     await expect(messageRow(page, body)).toHaveCount(1);
   }
-  await expect(page.getByTestId(`real-chat-reaction-${ownerEvent.message.id}`)).toHaveText('✨ 0');
-  await page.getByTestId('real-group-chat-back').click();
+  await expect(page.getByTestId(`real-chat-sparks-${ownerEvent.message.id}`)).toHaveCount(0);
+  await expect(page.getByTestId('real-chat-retry-send')).toHaveCount(0);
+  await page.getByTestId('real-group-nav-home').click();
 }
 
 // Install before RealAccountClient captures fetch. Firefox service-worker API
