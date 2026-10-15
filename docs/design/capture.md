@@ -508,3 +508,183 @@ The architectural patterns are boundary/control/entity decomposition, ports/adap
 The source revision above was supplied by the coordinator as verified against `origin/dev`. This document's evidence is static inspection of the linked source, migration and test definitions at that worktree baseline. No app changes, GitHub operations, deployment, device checks, test suites or runtime media transfers were performed for this document. The test table identifies checks to consult/run; it is not a passing-results record.
 
 Diagrams omit HTTP helper calls, audit details, lock retry loops and lower-level error mapping while preserving the authorization, persistence and ownership boundaries. Photo probe validation is stricter than generic intent request validation; receipt completion and UI success must be read separately. In particular, the photo callback can return queued/processing status, while `CameraCaptureScreen.submitPhoto` proceeds to local success cleanup and sets its success panel flag for any non-throwing return; the authoritative status projection still maps only `ready` to sealed. This is an observed implementation limit, not evidence that every displayed success is sealed. Browser codec/crypto/CORS support, actual S3 configuration and crash timing remain runtime-dependent; source/test definitions alone do not establish operational behavior.
+
+<a id="correction-scope"></a>
+
+## UC-6 — Correct an own contribution
+
+Added for #558, canonical [UC-CORRECT-CONTRIBUTION](../../doc/planning/current-product-baseline.md#uc-correct-contribution), inspected at `39ba152af0da152ff8e0efe08be861270752129e` (15 October 2026). Earlier capture models above retain their stated revision.
+
+A member confirms deletion of an own contribution in its original, current seven-day allowance window while the cycle is collecting. One transaction consumes that window's single deletion permission, restores one count and the contribution's reserved seconds, tombstones the contribution and deletes its job logically. The member may then recapture through [UC-1–5](#scope-and-use-cases); deletion alone does not create a replacement or grant playback.
+
+The server accepts jobs in `pending`, `failed` or `ready`, rejects `processing`, and rejects missing/foreign/already-deleted contributions, missing jobs, previous-window contributions, closed cycles or exhausted deletion permission. The window is measured from cycle start, not the calendar week. A replacement, when explicitly supplied by the caller, is linked only within the same member/cycle/window; it is never inferred from the next upload.
+
+<a id="cap-a6"></a>
+
+**CAP-A6 — analysis class view.** This adds correction responsibilities to shared [CAP-A1](#cap-a1); capture/preview concepts are reused.
+
+```mermaid
+classDiagram
+  class Member
+  class CorrectionBoundary {
+    confirmDeletion()
+    showAllowance()
+  }
+  class CorrectionControl {
+    checkEligibility()
+    restoreReservedAllowance()
+  }
+  class Contribution {
+    owner
+    acceptedWindow
+    reservedSeconds
+    tombstone
+  }
+  class AllowanceWindow {
+    countUsed
+    secondsUsed
+    deletionsUsed
+  }
+  class ProcessingJob {
+    status
+  }
+  class Cycle {
+    collectionBoundary
+  }
+  Member --> CorrectionBoundary
+  CorrectionBoundary --> CorrectionControl
+  CorrectionControl --> Contribution
+  CorrectionControl --> AllowanceWindow
+  CorrectionControl --> ProcessingJob
+  CorrectionControl --> Cycle
+```
+
+<a id="cap-a7"></a>
+
+**CAP-A7 — analysis sequence, normal and major denial flows.**
+
+```mermaid
+sequenceDiagram
+  actor M as Member
+  participant B as Own-moments boundary
+  participant C as Correction control
+  participant E as Contribution, cycle and allowance
+  M->>B: Confirm delete own moment
+  B->>C: Request correction
+  C->>E: Check ownership, window, collection, job and permission
+  alt Wrong scope, closed/old window, processing or permission used
+    E-->>C: Ineligible
+    C-->>B: Safe denial, no allowance change
+  else Eligible
+    C->>E: Atomically tombstone, consume deletion and restore reservation
+    E-->>C: Committed
+    C-->>B: Deleted and restored count/seconds
+    B-->>M: Refresh metadata and allowance
+    opt Member chooses to recapture
+      M->>B: Start ordinary capture flow
+    end
+  end
+```
+
+<a id="cap-d8"></a>
+
+**CAP-D8 — design class view.** Boxes labelled `module` describe functional code, not new runtime classes. Actual upload/processing classes remain in [CAP-D1](#cap-d1) and [CAP-D7](#cap-d7).
+
+```mermaid
+classDiagram
+  class MomentsScreen {
+    <<component>>
+    onDelete(entry)
+    onRetake()
+  }
+  class RealAccountGroupExperience {
+    <<component>>
+    refreshLedger()
+  }
+  class Http {
+    <<module>>
+    requireAuthorisedMediaGroup()
+  }
+  class Contributions {
+    <<module>>
+    deleteContribution()
+    contributionQuotaWindow()
+    safeRemoveOwnedPath()
+  }
+  class Ledger {
+    <<module>>
+    listContributionLedger()
+    linkContributionReplacement()
+  }
+  class RewindDatabase {
+    contributions
+    contribution_quota_windows
+    media_jobs
+    cycles
+  }
+  MomentsScreen --> RealAccountGroupExperience : callbacks
+  RealAccountGroupExperience --> Http : media client DELETE and ledger GET
+  Http --> Contributions
+  Http --> Ledger
+  Contributions --> RewindDatabase : writer transaction
+  Ledger --> RewindDatabase : metadata and explicit replacement link
+```
+
+<a id="cap-d9"></a>
+
+**CAP-D9 — design sequence, transaction and relevant failure paths.**
+
+```mermaid
+sequenceDiagram
+  participant U as MomentsScreen / group experience
+  participant H as HTTP handler
+  participant C as contributions module
+  participant D as RewindDatabase
+  participant F as Configured owned file roots
+  U->>H: DELETE /contributions/id?groupId=selected
+  H->>H: requireAuthorisedMediaGroup
+  alt Session or selected membership denied
+    H-->>U: Authorization failure
+  else Authorized
+    H->>C: deleteContribution(groupId, memberId, id, now, roots)
+    C->>D: BEGIN IMMEDIATE, read own contribution, cycle and clip job
+    alt Missing/deleted, processing, wrong phase/window or invalid job
+      C->>D: ROLLBACK
+      C-->>H: Typed failure
+      H-->>U: 404 missing/deleted, 409 ineligible/processing
+    else Eligible
+      C->>D: UPDATE window WHERE deletions_used < 1
+      alt No updated row
+        C->>D: ROLLBACK
+        C-->>H: deletion_used
+        H-->>U: 409, no restored allowance
+      else Permission consumed
+        C->>D: Restore count/seconds, tombstone contribution, job deleted
+        C->>D: Clear job media references, reduce cycle usage, remove staged metadata
+        C->>D: COMMIT
+        C->>F: safeRemoveOwnedPath(output/source)
+        Note over C,F: Cleanup is after commit, failure cannot undo tombstone or quota
+        C-->>H: restored count 1 and reserved seconds
+        H-->>U: 200 deleted result
+        U->>H: Refresh self-only ledger
+      end
+    end
+  end
+```
+
+Unexpected database errors roll back and propagate; acquiring the writer transaction has bounded SQLite busy retries. Post-commit cleanup errors can propagate after logical success, so a failed response is not proof that deletion did not commit. Refresh authoritative ledger state before interpreting an ambiguous response. `safeRemoveOwnedPath` only removes descendants of configured server roots; this function is not evidence of deleting remote S3 versions.
+
+<a id="correction-transition"></a>
+
+### Correction transition and source mapping
+
+**Design choice:** client-only permission checks would race concurrent deletion, worker claims and cycle closure. Separate quota and tombstone commits could restore twice or leave a playable job after restoring quota. The implemented writer transaction refines analysis eligibility into one scoped SQL read, a guarded `deletions_used < 1` update and atomic row mutations. File removal follows the authoritative database commit; this is a transaction/tombstone strategy, not a GoF State implementation. UI metadata is advisory; HTTP and transaction checks remain authoritative.
+
+| Responsibility                                                                           | Source and existing check location                                                                                                                                                |
+| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Confirm/delete/refresh/retake                                                            | [MomentsScreen](../../src/real/Moments.tsx), [RealAccountGroupExperience](../../src/groups/RealAccountGroupExperience.tsx); no dedicated MomentsScreen test was found in `tests/` |
+| Session and selected membership, HTTP failures                                           | [HTTP contribution route](../../server/src/http.ts), `requireAuthorisedMediaGroup`; [real-account-video tests](../../server/tests/real-account-video.test.mjs)                    |
+| Original window, once-only permission, processing guard, tombstone and exact restoration | [deleteContribution / contributionQuotaWindow](../../server/src/contributions/index.ts); [contribution policy tests](../../server/tests/contribution-policy.test.mjs)             |
+| Self-only projection and optional explicit replacement identity                          | [listContributionLedger / linkContributionReplacement](../../server/src/contributions/ledger.ts); [ledger tests](../../server/tests/contribution-ledger.test.mjs)                 |
+
+**Observed limits:** `MomentsScreen` offers deletion for failed entries and says it does not use the weekly delete; `deleteContribution` applies the same single-deletion consumption to `failed`, `pending` and `ready`. Its main “Retake now” callback opens capture without an explicit deleted ID, so this route must not be claimed to mark the next upload as `replaced`; the ledger helper and upload paths support an explicitly supplied replacement ID. These are source/UI distinctions, not changes introduced by the models. Owner safety removal is a separate [UC-MANAGE-SAFETY](safety.md#safety-scope) with no quota restoration. This addition uses static source/test inspection only; no runtime, device or deployment result is asserted.
