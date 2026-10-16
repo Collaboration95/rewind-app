@@ -24,6 +24,8 @@ ios/
 playwright-report/
 test-results/
 .local-data/
+vigolium-result/
+vigolium-results/
 
 # Codex Excalidraw live-session state and validation previews.
 canvas/excalidraw/session.json
