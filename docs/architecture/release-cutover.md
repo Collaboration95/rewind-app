@@ -74,11 +74,15 @@ It cannot run from `main` until the workflow itself has been promoted there.
    symlinks, open writers, more than 100,000 files/10 GiB or insufficient disk.
    Verify the inventory, including an explicit empty result. Preparation installs
    verified tools without starting the application; operations use its pending SHA.
-   Keep SQLite authoritative. Keep merges/deployments for that environment on hold during
-   the cutover; the other environment may continue serving.
-2. Run `bootstrap` for the selected target. It creates/rotates only its generated
+   Preparation does not open an import maintenance window or require an import.
+2. With release `cutover = false`, run the normal qualified **Deploy release**
+   installation (`operation=install`). SQLite remains authoritative, and the
+   runtime brings it to the current schema before the final snapshot. Confirm
+   healthy SQLite operation. Then hold merges/deployments for that environment
+   through the cutover; the other environment may continue serving.
+3. Run `bootstrap` for the selected target. It creates/rotates only its generated
    app and read-only roles. Verify the selected database's environment binding.
-3. Run `import` without a manifest for the final snapshot. It stops the backup
+4. Run `import` without a manifest for the final snapshot. It stops the backup
    timer/service, web proxy and runtime. The runtime contains the HTTP server,
    scheduler, reminders and media workers. Also stop any manually launched
    worker before proceeding. One-shot Node/tar containers take the SQLite/media
@@ -88,13 +92,13 @@ It cannot run from `main` until the workflow itself has been promoted there.
    binds environment, manifest digest and table reconciliation. Writers remain stopped
    on failure.
    A selected older manifest is recovery to that point, not a lossless cutover.
-4. Inspect the reconciliation report. Set release `cutover = true`, review/apply
+5. Inspect the reconciliation report. Set release `cutover = true`, review/apply
    the release-only plan, then deploy the qualified main revision normally.
    A maintenance marker prevents restarting SQLite writers. PostgreSQL activation
    requires a final-snapshot receipt for the matching environment and a fresh hash
    comparison before any writer starts. Successful health validation restores the
    backup timer.
-5. Run `status`, verify PostgreSQL engine, current migration/environment, restart
+6. Run `status`, verify PostgreSQL engine, current migration/environment, restart
    persistence, and run `backup`. Logical dumps must restore successfully into
    the local verifier before upload. Rehearse managed restore with the explicit
    release target and record measured recovery-point age and usable-restore

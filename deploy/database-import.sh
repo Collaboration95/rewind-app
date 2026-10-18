@@ -106,7 +106,7 @@ export REWIND_DATABASE_URL="$REWIND_DATABASE_APP_URL"
 compose run --rm --no-deps -T \
   -e REWIND_DATABASE_URL -e REWIND_DATABASE_ENVIRONMENT \
   -v "$work/import:/import:ro" \
-  runtime database-import --sqlite /import/rewind.sqlite --json "${replace[@]}" > "$report.tmp"
+  runtime database-import --sqlite /import/rewind.sqlite --json ${replace[@]+"${replace[@]}"} > "$report.tmp"
 mv "$report.tmp" "$report"
 jq -n --arg environment "$REWIND_MEDIA_ENVIRONMENT" --arg manifest "$manifest_name" \
   --arg manifestSha256 "$(sha256_file "$work/$manifest_name")" \

@@ -62,11 +62,53 @@ with tempfile.TemporaryDirectory(prefix="rewind-release-extract-test-") as temp:
 
 print("release extraction safety tests passed")
 
+def preserve(host):
+    # Only the fixture supplies this seam; the live CLI always scans /proc
+    # under release-host.sh's sudo invocation and fails on inaccessible FDs.
+    proc = host / 'fixture-proc'
+    proc.mkdir(exist_ok=True)
+    release.preserve_retained(host, proc_root=proc)
+
+
 # First activation must preserve the WAL as well as the main file and disk media.
 import json
 import shutil
 import sqlite3
 import hashlib
+from unittest.mock import patch
+
+with tempfile.TemporaryDirectory(prefix="rewind-retained-writer-test-") as temp:
+    host = Path(temp)
+    (host / 'data').mkdir()
+    retained = host / 'data/live-file'
+    retained.write_bytes(b'retained')
+    proc = host / 'fixture-proc'
+    (proc / '123/fd').mkdir(parents=True)
+    (proc / '123/fdinfo').mkdir()
+    fd = proc / '123/fd/0'
+    fd.symlink_to(retained)
+    (proc / '123/fdinfo/0').write_text('flags:\t02\n')
+    try:
+        preserve(host)
+    except ValueError as error:
+        assert 'writer is still open' in str(error)
+    else:
+        raise AssertionError('open retained-data writer was accepted')
+    assert not (host / 'backups/first-start-retained.tar').exists()
+
+    original_stat = Path.stat
+    def inaccessible_fd(path, *args, **kwargs):
+        if path == fd:
+            raise PermissionError(13, 'fixture descriptor is inaccessible', str(fd))
+        return original_stat(path, *args, **kwargs)
+    with patch.object(Path, 'stat', inaccessible_fd):
+        try:
+            preserve(host)
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError('inaccessible potential writer was silently skipped')
+    assert not (host / 'backups/first-start-retained.tar').exists()
 
 with tempfile.TemporaryDirectory(prefix="rewind-retained-test-") as temp:
     root = Path(temp)
@@ -83,22 +125,26 @@ with tempfile.TemporaryDirectory(prefix="rewind-retained-test-") as temp:
     source.close()
     (host / 'media' / 'clip.bin').write_bytes(b'retained media')
     before = {str(p.relative_to(host)): p.read_bytes() for p in host.rglob('*') if p.is_file()}
-    release.preserve_retained(host)
+    preserve(host)
     report = json.loads((host / 'backups/first-start-inventory.json').read_text())
     assert report['sqlitePresent'] is True
     assert report['tables']['retained']['rows'] == 1
     assert 'data/rewind.sqlite-wal' in report['files']
-    assert (host / 'database-maintenance').read_text().strip() == 'release'
+    # Preservation must allow the qualified SQLite deployment to migrate this
+    # retained, pre-application-schema database before the final import window.
+    assert not (host / 'database-maintenance').exists()
+    assert not (host / 'database-maintenance-mode').exists()
     for name, contents in before.items():
         assert (host / name).read_bytes() == contents
     with tarfile.open(host / 'backups/first-start-retained.tar') as archive:
         for name, contents in before.items():
             assert archive.extractfile(name).read() == contents
-    release.preserve_retained(host)  # idempotent and verifies the preserved archive
+    preserve(host)  # idempotent and verifies the preserved archive
+    assert not (host / 'database-maintenance').exists()
     with open(host / 'backups/first-start-retained.tar', 'ab') as stream:
         stream.write(b'changed')
     try:
-        release.preserve_retained(host)
+        preserve(host)
     except ValueError:
         pass
     else:
@@ -106,7 +152,7 @@ with tempfile.TemporaryDirectory(prefix="rewind-retained-test-") as temp:
 
 with tempfile.TemporaryDirectory(prefix="rewind-empty-retained-test-") as temp:
     host = Path(temp)
-    release.preserve_retained(host)
+    preserve(host)
     assert json.loads((host / 'backups/first-start-inventory.json').read_text())['sqlitePresent'] is False
     assert not (host / 'database-maintenance').exists()
 
@@ -115,7 +161,7 @@ with tempfile.TemporaryDirectory(prefix="rewind-retained-symlink-test-") as temp
     (host / 'data').mkdir()
     (host / 'data/link').symlink_to('/etc/passwd')
     try:
-        release.preserve_retained(host)
+        preserve(host)
     except ValueError:
         pass
     else:

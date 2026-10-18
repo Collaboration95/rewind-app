@@ -46,7 +46,19 @@ def retained_summary(report):
                       'archiveSha256': report['archiveSha256']}, sort_keys=True))
 
 
-def preserve_retained(host):
+def process_descriptors(proc_root):
+    # Unlike glob, iterdir propagates permission failures. A disappearing
+    # process is safe to ignore; an inaccessible potential writer is not.
+    for process in proc_root.iterdir():
+        if not process.name.isdigit():
+            continue
+        try:
+            yield from (process / 'fd').iterdir()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+
+
+def preserve_retained(host, *, proc_root=Path('/proc')):
     """Preserve pre-start SQLite (including WAL) and disk media without booting."""
     host = Path(host)
     backups = host / 'backups'
@@ -59,8 +71,6 @@ def preserve_retained(host):
         saved = json.loads(inventory.read_text())
         if digest(archive) != saved['archiveSha256']:
             fail('retained rollback archive no longer matches its inventory')
-        if saved['sqlitePresent'] and not (host / 'database-maintenance').exists():
-            fail('retained SQLite requires an active final-import maintenance window')
         retained_summary(saved)
         return
     if archive.exists():
@@ -85,7 +95,7 @@ def preserve_retained(host):
     if shutil.disk_usage(backups).free < size * 2 + 64 * 1024**2:
         fail('retained preservation exceeds its file, size or free-space bound')
     identities = {(p.stat().st_dev, p.stat().st_ino) for p in (host / name for name in entries)}
-    for fd in Path('/proc').glob('[0-9]*/fd/*'):
+    for fd in process_descriptors(proc_root):
         try:
             info = fd.stat()
             if (info.st_dev, info.st_ino) not in identities:
@@ -127,10 +137,6 @@ def preserve_retained(host):
                         tables[name] = {'rows': database.execute('SELECT COUNT(*) FROM ' + quoted).fetchone()[0]}
                 finally:
                     database.close()
-            (host / 'database-maintenance').write_text('release\n')
-            (host / 'database-maintenance-mode').write_text('import\n')
-            for name in ('database-maintenance', 'database-maintenance-mode'):
-                os.chown(host / name, host.stat().st_uid, host.stat().st_gid)
         report = {'environment': 'release', 'sqlitePresent': 'data/rewind.sqlite' in entries,
                   'files': entries, 'tables': tables, 'schema': schema, 'archiveSha256': digest(archive)}
         temporary = inventory.with_suffix('.tmp')

@@ -34,6 +34,13 @@ case "${1:-}" in
   resume)
     [[ -f "$HOST_ROOT/database-maintenance" ]] || die 'no database maintenance window to resume'
     [[ "$(cat "$HOST_ROOT/database-maintenance")" == "$REWIND_MEDIA_ENVIRONMENT" ]] || die 'maintenance environment mismatch'
+    case "$(cat "$HOST_ROOT/database-maintenance-mode")" in
+      import)
+        [[ -z "${REWIND_DATABASE_URL:-}" ]] || die 'PostgreSQL import activation requires guarded install, not resume'
+        ;;
+      recovery) ;;
+      *) die 'unknown database maintenance mode' ;;
+    esac
     compose up -d runtime
     wait_for_runtime_readiness || die 'runtime is unhealthy; keep public traffic stopped'
     compose up -d web

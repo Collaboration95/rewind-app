@@ -84,12 +84,17 @@ test('quiesce stops timer and every runtime writer, and a failed drain stays rec
       path.join(bin, 'docker'),
       `#!/bin/sh
 printf '%s\\n' "$*" >> "$CALLS"
-case "$*" in 'image inspect --format'*) echo 1111111111111111111111111111111111111111 ;; *'ps --status running --services'*) [ "$STILL_RUNNING" != 1 ] || echo runtime ;; esac
+case "$*" in
+ 'image inspect --format'*) echo 1111111111111111111111111111111111111111 ;;
+ *'ps --status running --services'*) [ "$STILL_RUNNING" != 1 ] || echo runtime ;;
+ *'ps -q runtime'*) echo fixture-runtime ;;
+ 'inspect --format'*) echo healthy ;;
+esac
 `,
       { mode: 0o755 },
     );
-    const invoke = (extra = {}) =>
-      spawnSync('bash', ['deploy/database-maintenance.sh', 'quiesce'], {
+    const invoke = (extra = {}, operation = 'quiesce') =>
+      spawnSync('bash', ['deploy/database-maintenance.sh', operation], {
         cwd: root,
         encoding: 'utf8',
         env: {
@@ -110,6 +115,27 @@ case "$*" in 'image inspect --format'*) echo 11111111111111111111111111111111111
     assert.equal(readFileSync(path.join(dir, 'database-maintenance'), 'utf8').trim(), 'release');
     assert.notEqual(invoke({ STILL_RUNNING: '1' }).status, 0);
     assert.equal(readFileSync(path.join(dir, 'database-maintenance'), 'utf8').trim(), 'release');
+    // Import maintenance cannot be bypassed by switching the configured URL
+    // and invoking resume, even without any reconciliation receipt.
+    const envFile = path.join(dir, 'rewind.env');
+    const sqliteSettings = readFileSync(envFile, 'utf8');
+    writeFileSync(envFile, `${sqliteSettings}REWIND_DATABASE_URL=postgres://fixture@db/rewind\n`);
+    writeFileSync(log, '');
+    const refused = invoke({}, 'resume');
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /guarded install/);
+    assert.doesNotMatch(readFileSync(log, 'utf8'), /up -d|enable --now/);
+    assert.equal(readFileSync(path.join(dir, 'database-maintenance'), 'utf8').trim(), 'release');
+    // Abandoning the import while SQLite is still selected remains supported.
+    writeFileSync(envFile, sqliteSettings);
+    assert.equal(invoke({}, 'resume').status, 0);
+    assert.throws(() => readFileSync(path.join(dir, 'database-maintenance')));
+    // A completed recovery comparison resumes the selected PostgreSQL normally.
+    writeFileSync(envFile, `${sqliteSettings}REWIND_DATABASE_URL=postgres://fixture@db/rewind\n`);
+    writeFileSync(path.join(dir, 'database-maintenance'), 'release\n');
+    writeFileSync(path.join(dir, 'database-maintenance-mode'), 'recovery\n');
+    assert.equal(invoke({}, 'resume').status, 0);
+    assert.throws(() => readFileSync(path.join(dir, 'database-maintenance')));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -301,8 +327,10 @@ esac
       `#!/bin/bash
 printf '%s\\n' "$*" >> "$FIXTURE/calls"
 case "$*" in
- *latestRestorableTime*) echo 2026-10-18T00:00:01Z ;;
- *relationalDatabase.state*) echo available ;;
+ *latestRestorableTime*)
+   if [[ "$DEADLINE_CASE" == 1 && ! -f "$FIXTURE/polled" ]]; then touch "$FIXTURE/polled"; echo 2026-10-17T23:59:59Z
+   else echo 2026-10-18T00:00:01Z; fi ;;
+ *relationalDatabase.state*) if [[ "$DEADLINE_CASE" == 1 ]]; then echo creating; else echo available; fi ;;
  *masterEndpoint*) echo db.example:5432 ;;
  *create-relational-database-from-snapshot*) [[ "$*" == *'--restore-time 2026-10-18T00:00:00.000000Z'* && "$*" != *--use-latest-restorable-time* ]] || exit 22 ;;
  *) exit 23 ;;
@@ -313,8 +341,18 @@ esac
     writeFileSync(
       path.join(dir, 'date'),
       `#!/bin/bash
-case "$*" in *+%s%6N*) echo 1792281601000000 ;; *+%s*) echo 1792281601 ;; *) echo 20261018000000 ;; esac
+case "$*" in
+ *2026-10-17*+%s%6N*) echo 1792281599000000 ;;
+ *+%s%6N*) echo 1792281601000000 ;;
+ *+%s*) if [[ -f "$FIXTURE/clock" ]]; then cat "$FIXTURE/clock"; else echo 1792281601; fi ;;
+ *) echo 20261018000000 ;;
+esac
 `,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      path.join(dir, 'sleep'),
+      '#!/bin/bash\nnow=$(cat "$FIXTURE/clock" 2>/dev/null || echo 1792281601)\nprintf "%s\\n" "$(( now + $1 ))" > "$FIXTURE/clock"\n',
       { mode: 0o755 },
     );
     const workflow = readFileSync('.github/workflows/database-operations.yml', 'utf8');
@@ -329,14 +367,15 @@ case "$*" in *+%s%6N*) echo 1792281601000000 ;; *+%s*) echo 1792281601 ;; *) ech
     // Workflow scratch files are runner-local; keep this invocation inside its fixture.
     const run = script.replace(
       'source deploy/operator-common.sh',
-      `source '${root}/deploy/operator-common.sh'`,
+      'source "$REWIND_FIXTURE_ROOT/deploy/operator-common.sh"',
     );
-    const invoke = (corrupt) =>
+    const invoke = (corrupt, deadlineCase = '0') =>
       spawnSync('bash', ['-c', run], {
         cwd: dir,
         encoding: 'utf8',
         env: {
           ...process.env,
+          REWIND_FIXTURE_ROOT: root,
           PATH: `${dir}:${process.env.PATH}`,
           FIXTURE: dir,
           REWIND_SSH: path.join(dir, 'ssh'),
@@ -346,11 +385,18 @@ case "$*" in *+%s%6N*) echo 1792281601000000 ;; *+%s*) echo 1792281601 ;; *) ech
           GITHUB_ENV: path.join(dir, 'github-env'),
           GITHUB_STEP_SUMMARY: path.join(dir, 'summary'),
           CORRUPT: corrupt,
+          DEADLINE_CASE: deadlineCase,
+          REWIND_DATABASE_OPERATION_DEADLINE: '1792281661',
         },
       });
     const passed = invoke('0');
     assert.equal(passed.status, 0, passed.stderr);
     assert.notEqual(invoke('1').status, 0);
+    const expired = invoke('0', '1');
+    assert.notEqual(expired.status, 0);
+    assert.match(expired.stderr, /Operation deadline reached/);
+    assert.equal(readFileSync(path.join(dir, 'clock'), 'utf8').trim(), '1792281661');
+    assert.match(readFileSync(path.join(dir, 'github-env'), 'utf8'), /REWIND_REHEARSAL=/);
     assert.equal(readFileSync(path.join(dir, 'stopped'), 'utf8'), '');
     const calls = readFileSync(path.join(dir, 'calls'), 'utf8');
     assert.ok(calls.indexOf('quiesce-recovery') < calls.indexOf('database-status.sh'));
