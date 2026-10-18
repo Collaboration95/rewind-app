@@ -22,9 +22,21 @@ import {
   verifyDatabaseEnvironment,
 } from './postgres/runtime';
 import type { PostgresDatabase } from './postgres/database';
-import { TransferError, transferSqliteToPostgres, type TransferReport } from './postgres/transfer';
+import {
+  TransferError,
+  transferSqliteToPostgres,
+  digestTable,
+  primaryKey,
+  quote,
+  type Row,
+  type TableReconciliation,
+  type TransferReport,
+} from './postgres/transfer';
 import {
   assertSourceMatches,
+  assertNoLiveWriters,
+  readEnvironment,
+  anchor as databaseSnapshotAnchor,
   exportPostgresToSqlite,
   WRITER_APPLICATION_NAMES,
   type ExportOptions,
@@ -1758,14 +1770,47 @@ export interface DatabaseStatus {
   environment: string | null;
   serverVersion: string | null;
   rows: Record<string, number>;
+  tables: TableReconciliation[];
+  capturedAt: string;
+  snapshot?: string;
 }
 
 /** Operator summary: engine, schema readiness and per-table row counts. */
-export function databaseStatus(config: RuntimeConfig): DatabaseStatus {
-  const database = openOperationalDatabase(config, { readOnly: true });
+export function databaseStatus(
+  config: RuntimeConfig,
+  requireStoppedWriters = false,
+): DatabaseStatus {
+  const snapshot = openDatabaseStatusSnapshot(config, { requireStoppedWriters });
   try {
+    return snapshot.status;
+  } finally {
+    snapshot.close();
+  }
+}
+
+/** Hold a read-only snapshot until pg_dump has imported its exported ID. */
+export function openDatabaseStatusSnapshot(
+  config: RuntimeConfig,
+  {
+    exportSnapshot = false,
+    requireStoppedWriters = false,
+  }: { exportSnapshot?: boolean; requireStoppedWriters?: boolean } = {},
+) {
+  const database = openOperationalDatabase(config, { readOnly: true });
+  const postgres = isPostgres(database);
+  const close = () => {
+    try {
+      database.exec('ROLLBACK');
+    } finally {
+      database.close();
+    }
+  };
+  try {
+    if (postgres) database.execNative('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    else database.exec('BEGIN');
+    const anchor = postgres ? databaseSnapshotAnchor(database) : null;
+    if (postgres && requireStoppedWriters) assertNoLiveWriters(database, WRITER_APPLICATION_NAMES);
     const readiness = schemaReadiness(database);
-    const postgres = isPostgres(database);
     const tables = (
       database
         .prepare(
@@ -1777,13 +1822,36 @@ export function databaseStatus(config: RuntimeConfig): DatabaseStatus {
         .all() as { name: string }[]
     ).map((row) => row.name);
     const rows: Record<string, number> = {};
+    const fingerprints: TableReconciliation[] = [];
     for (const table of tables) {
-      const { count } = database
-        .prepare(`SELECT COUNT(*) AS count FROM "${table.replaceAll('"', '""')}"`)
-        .get() as { count: number };
-      rows[table] = Number(count);
+      const columns = postgres
+        ? database
+            .queryNative(
+              'SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 ORDER BY ordinal_position',
+              [table],
+            )
+            .map((row) => String(row.name))
+        : (
+            database.prepare('SELECT name FROM pragma_table_info(?) ORDER BY cid').all(table) as {
+              name: string;
+            }[]
+          ).map((row) => row.name);
+      const keys = postgres
+        ? primaryKey(database, table)
+        : (
+            database
+              .prepare('SELECT name FROM pragma_table_info(?) WHERE pk > 0 ORDER BY pk')
+              .all(table) as { name: string }[]
+          ).map((row) => row.name);
+      const values = database.prepare(`SELECT * FROM ${quote(table)}`).all() as Row[];
+      rows[table] = values.length;
+      fingerprints.push({
+        table,
+        rows: values.length,
+        sha256: digestTable(values, columns, keys.length ? keys : columns),
+      });
     }
-    return {
+    const status: DatabaseStatus = {
       engine: postgres ? 'postgresql' : 'sqlite',
       location: postgres ? (config.database?.host ?? 'test') : config.databasePath,
       ready: readiness.ready,
@@ -1800,10 +1868,7 @@ export function databaseStatus(config: RuntimeConfig): DatabaseStatus {
           )
         : 0,
       environment: postgres
-        ? String(
-            database.prepare('SELECT environment FROM rewind_database_environment').get()
-              ?.environment ?? '',
-          ) || null
+        ? readEnvironment(database, config.database?.environment ?? 'test').environment
         : null,
       serverVersion: postgres
         ? String(
@@ -1812,9 +1877,28 @@ export function databaseStatus(config: RuntimeConfig): DatabaseStatus {
           )
         : null,
       rows,
+      tables: fingerprints,
+      capturedAt: postgres
+        ? String(
+            database.queryNative(
+              'SELECT to_char(clock_timestamp() AT TIME ZONE \'UTC\', \'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\') AS stamp',
+            )[0].stamp,
+          )
+        : new Date().toISOString(),
     };
-  } finally {
-    database.close();
+    if (exportSnapshot) {
+      if (!postgres) throw new TransferError('Exported snapshots require PostgreSQL.');
+      status.snapshot = String(
+        database.queryNative('SELECT pg_export_snapshot() AS snapshot')[0].snapshot,
+      );
+    }
+    if (postgres && databaseSnapshotAnchor(database) !== anchor) {
+      throw new TransferError('The database snapshot connection changed during inspection.');
+    }
+    return { status, close };
+  } catch (error) {
+    close();
+    throw error;
   }
 }
 

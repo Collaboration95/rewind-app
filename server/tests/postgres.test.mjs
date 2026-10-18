@@ -18,8 +18,13 @@ const db = await import('../dist/db.js');
 const { createRealAccount, authenticateRealAccount } = await import('../dist/auth/index.js');
 const { createRealGroup } = await import('../dist/groups/real.js');
 const { createChatMessage, toggleChatReaction } = await import('../dist/chat/index.js');
-const { openPostgres, openTestPostgres, verifyDatabaseEnvironment, postgresMigrationFiles } =
-  await import('../dist/postgres/runtime.js');
+const {
+  openPostgres,
+  openTestPostgres,
+  verifyDatabaseEnvironment,
+  postgresMigrationFiles,
+  testSchemaForPath,
+} = await import('../dist/postgres/runtime.js');
 
 const needsPostgres = onPostgres ? false : 'needs REWIND_TEST_DATABASE_URL';
 const PASSWORD = 'a sufficiently long import password';
@@ -499,4 +504,71 @@ test('bootstrap creates an owning app role and a read-only role', { skip: needsP
       admin.close();
     }
   }),
+);
+
+test(
+  'backup fingerprint and exported snapshot retain old content during concurrent writes',
+  { skip: needsPostgres },
+  () =>
+    scratch(async (dir) => {
+      const config = parseConfig({ REWIND_DATA_DIR: dir });
+      const writer = db.openDatabase(config);
+      writer
+        .prepare("INSERT INTO groups (id, name) VALUES ('snapshot-group', 'before dump')")
+        .run();
+      const lease = db.openDatabaseStatusSnapshot(config, { exportSnapshot: true });
+      const reader = openTestPostgres(process.env.REWIND_TEST_DATABASE_URL, config.databasePath, {
+        readOnly: true,
+      });
+      try {
+        const baseline = lease.status.tables.find((t) => t.table === 'groups');
+        assert.equal(baseline.rows, 1);
+        assert.match(lease.status.snapshot, /^[0-9A-Fa-f-]+$/);
+        writer.prepare("UPDATE groups SET name = 'after dump' WHERE id = 'snapshot-group'").run();
+        const changed = db.databaseStatus(config).tables.find((t) => t.table === 'groups');
+        assert.equal(changed.rows, baseline.rows);
+        assert.notEqual(changed.sha256, baseline.sha256);
+        reader.execNative('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        reader.execNative(`SET TRANSACTION SNAPSHOT '${lease.status.snapshot}'`);
+        assert.equal(
+          reader.prepare("SELECT name FROM groups WHERE id = 'snapshot-group'").get().name,
+          'before dump',
+        );
+        const { digestTable, primaryKey } = await import('../dist/postgres/transfer.js');
+        const columns = reader
+          .queryNative(
+            "SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='groups' ORDER BY ordinal_position",
+          )
+          .map((r) => r.name);
+        assert.equal(
+          digestTable(
+            reader.queryNative('SELECT * FROM groups'),
+            columns,
+            primaryKey(reader, 'groups'),
+          ),
+          baseline.sha256,
+        );
+        const forgottenWorker = openPostgres(
+          {
+            url: process.env.REWIND_TEST_DATABASE_URL,
+            host: '127.0.0.1',
+            tls: 'disable',
+            environment: 'test',
+          },
+          { schema: testSchemaForPath(config.databasePath), applicationName: 'rewind-runtime' },
+        );
+        try {
+          forgottenWorker.prepare('SELECT 1').get();
+          assert.throws(() => db.databaseStatus(config, true), /Writers are still connected/);
+        } finally {
+          forgottenWorker.close();
+        }
+        assert.equal(db.databaseStatus(config, true).ready, true);
+        reader.execNative('ROLLBACK');
+      } finally {
+        reader.close();
+        lease.close();
+        writer.close();
+      }
+    }),
 );

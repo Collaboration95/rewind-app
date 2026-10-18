@@ -69,6 +69,9 @@ jobs:
             --web-identity-token "$id_token" \
             --duration-seconds 3600 \
             --output json --query Credentials)"
+          # One combined operation window, leaving 15 minutes of this session
+          # for failure handling and protected cleanup (including SSH closure).
+          echo "REWIND_DATABASE_OPERATION_DEADLINE=$(( $(date -u +%s) + 2700 ))" >> "$GITHUB_ENV"
           for name in AccessKeyId SecretAccessKey SessionToken; do
             echo "::add-mask::$(jq -r ".${name}" <<<"$credentials")"
           done
@@ -141,8 +144,17 @@ jobs:
           $REWIND_SSH "set -Eeuo pipefail
             export REWIND_OPERATION_ENVIRONMENT=$TARGET_ENVIRONMENT
             bash /srv/rewind/deploy/database-maintenance.sh quiesce
-            if [ -z '$MANIFEST' ]; then REWIND_BACKUP_QUIESCED=1 bash /srv/rewind/deploy/backup.sh; fi
-            bash /srv/rewind/deploy/database-import.sh $args" | tee import.log
+            if [ -z '$MANIFEST' ]; then
+              fresh=\$(mktemp /srv/rewind/backups/.final-manifest.XXXXXX)
+              trap 'rm -f -- \"\$fresh\"' EXIT
+              REWIND_BACKUP_QUIESCED=1 REWIND_BACKUP_MANIFEST_OUTPUT=\"\$fresh\" bash /srv/rewind/deploy/backup.sh
+              export REWIND_FINAL_IMPORT_MANIFEST=\$(cat \"\$fresh\")
+              [[ \"\$REWIND_FINAL_IMPORT_MANIFEST\" =~ ^rewind-[0-9]{8}T[0-9]{6}Z\\.manifest\\.json$ ]]
+              args=\"$args --manifest \$REWIND_FINAL_IMPORT_MANIFEST\"
+            else
+              args='$args'
+            fi
+            bash /srv/rewind/deploy/database-import.sh \$args" | tee import.log
           {
             echo '### Import complete; runtime writers and web proxy stay stopped.'
             echo "Set cutover = true for $TARGET_ENVIRONMENT in infra/terraform/media/database.tf, apply its root, then deploy that environment and resume the backup timer."
@@ -163,33 +175,64 @@ jobs:
         if: ${{ inputs.operation == 'rehearse-restore' }}
         run: |
           set -Eeuo pipefail
+          deadline="${REWIND_DATABASE_OPERATION_DEADLINE:?missing assumed-session operation deadline}"
+          check_deadline() {
+            [ "$(date -u +%s)" -lt "$deadline" ] || {
+              echo 'Operation deadline reached; writers remain stopped for explicit recovery.' >&2
+              exit 1
+            }
+          }
+          wait_for_poll() {
+            check_deadline
+            remaining=$(( deadline - $(date -u +%s) ))
+            sleep "$(( remaining < 30 ? remaining : 30 ))"
+          }
+          check_deadline
           source="$REWIND_DATABASE_NAME"
           rehearsal="${source}-rehearsal-$(date -u +%Y%m%d%H%M%S)"
-          echo "REWIND_REHEARSAL=$rehearsal" >> "$GITHUB_ENV"
-          restorable="$(aws lightsail get-relational-database --relational-database-name "$source" \
-            --query 'relationalDatabase.latestRestorableTime' --output text)"
+          # Remain in maintenance on success or failure until explicit resume.
+          # Also stop any manually launched worker before dispatching this job.
+          $REWIND_SSH "REWIND_OPERATION_ENVIRONMENT=$TARGET_ENVIRONMENT bash /srv/rewind/deploy/database-maintenance.sh quiesce-recovery"
+          $REWIND_SSH "REWIND_OPERATION_ENVIRONMENT=$TARGET_ENVIRONMENT bash /srv/rewind/deploy/database-status.sh --require-stopped-writers" > baseline.json
+          restorable="$(jq -er '.capturedAt' baseline.json)"
+          baseline_epoch="$(date -u -d "$restorable" +%s%6N)"
+          while :; do
+            check_deadline
+            latest="$(aws lightsail get-relational-database --relational-database-name "$source" \
+              --query 'relationalDatabase.latestRestorableTime' --output text)"
+            latest_epoch="$(date -u -d "$latest" +%s%6N)"
+            [ "$latest_epoch" -lt "$baseline_epoch" ] || break
+            wait_for_poll
+          done
+          [ "$latest_epoch" -ge "$baseline_epoch" ] || { echo 'Recovery has not reached the stopped baseline.' >&2; exit 1; }
           started="$(date -u +%s)"
+          check_deadline
           aws lightsail create-relational-database-from-snapshot \
             --relational-database-name "$rehearsal" \
             --source-relational-database-name "$source" \
-            --use-latest-restorable-time \
+            --restore-time "$restorable" \
             --availability-zone "$REWIND_DATABASE_ZONE" \
             --relational-database-bundle-id micro_2_0 \
             --no-publicly-accessible \
             --tags "key=rewind-purpose,value=restore-rehearsal-${TARGET_ENVIRONMENT}" "key=Environment,value=${TARGET_ENVIRONMENT}" >/dev/null
-          for _ in $(seq 1 120); do
+          echo "REWIND_REHEARSAL=$rehearsal" >> "$GITHUB_ENV"
+          while :; do
+            check_deadline
             state="$(aws lightsail get-relational-database --relational-database-name "$rehearsal" \
               --query 'relationalDatabase.state' --output text)"
             [ "$state" = available ] && break
-            sleep 30
+            wait_for_poll
           done
           [ "$state" = available ] || { echo "The rehearsal database is still $state." >&2; exit 1; }
+          check_deadline
           endpoint="$(aws lightsail get-relational-database --relational-database-name "$rehearsal" \
             --query 'relationalDatabase.[masterEndpoint.address,masterEndpoint.port]' --output text | tr '\t' ':')"
           $REWIND_SSH "REWIND_OPERATION_ENVIRONMENT=$TARGET_ENVIRONMENT bash /srv/rewind/deploy/database-status.sh --endpoint $endpoint" > restored.json
           recovered="$(date -u +%s)"
-          $REWIND_SSH "REWIND_OPERATION_ENVIRONMENT=$TARGET_ENVIRONMENT bash /srv/rewind/deploy/database-status.sh" > live.json
-          jq -e '.ready == true and .engine == "postgresql"' restored.json >/dev/null
+          source deploy/operator-common.sh
+          compare_database_reports baseline.json restored.json
+          $REWIND_SSH "REWIND_OPERATION_ENVIRONMENT=$TARGET_ENVIRONMENT bash /srv/rewind/deploy/database-status.sh --require-stopped-writers" > stopped.json
+          compare_database_reports baseline.json stopped.json
           restorable_epoch="$(date -u -d "$restorable" +%s)"
           rpo=$(( started - restorable_epoch ))
           rto=$(( recovered - started ))
@@ -197,9 +240,8 @@ jobs:
             echo '### Point-in-time restore rehearsal'
             echo "- Recovery point: $restorable (RPO at start: ${rpo}s)"
             echo "- Restored and verified in ${rto}s (RTO)"
-            echo '- Rows (restored / live):'
-            jq -r --slurpfile live live.json \
-              '.rows | to_entries[] | "  - \(.key): \(.value) / \($live[0].rows[.key])"' restored.json
+            echo '- All restored table sets, counts and content hashes equal the stopped baseline.'
+            echo '- Writers and backup timer remain stopped; run resume after inspection.'
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Delete the rehearsal database

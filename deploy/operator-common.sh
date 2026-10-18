@@ -400,9 +400,24 @@ require_runtime_stopped() {
   ! grep -Fxq runtime <<<"$running" || die 'stop the runtime and all writers before the final snapshot/import'
 }
 
+# Compare immutable database reports, never a moving live row-count summary.
+compare_database_reports() {
+  jq -e --slurpfile expected "$1" '
+    .ready == true and .engine == "postgresql" and
+    .environment == $expected[0].environment and
+    .migrationVersion == $expected[0].migrationVersion and
+    .appliedMigrationVersion == .migrationVersion and
+    (.tables | length) > 0 and
+    (.tables | sort_by(.table)) == ($expected[0].tables | sort_by(.table))
+  ' "$2" >/dev/null || die 'Restored database differs from its captured baseline.'
+}
+
 resolve_installed_release() {
-  local installed
-  installed="$(cat "${HOST_ROOT:-/srv/rewind}/current-release")" || die 'installed release SHA is missing'
+  local installed pointer="${HOST_ROOT:-/srv/rewind}/current-release"
+  # Protected first-start prepare has loaded/verified the tools, without ever
+  # publishing current-release or starting application writers.
+  [[ -f "$pointer" ]] || pointer="${HOST_ROOT:-/srv/rewind}/pending-release"
+  installed="$(cat "$pointer")" || die 'installed or prepared release SHA is missing'
   [[ "$installed" =~ ^[0-9a-f]{40}$ ]] || die 'installed release SHA is invalid'
   [[ -z "${REWIND_RELEASE_SHA:-}" || "$REWIND_RELEASE_SHA" == "$installed" ]] || die 'selected image is not the installed release'
   export REWIND_RELEASE_SHA="$installed"

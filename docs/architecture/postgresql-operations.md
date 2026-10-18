@@ -25,13 +25,10 @@ The historical recovery measurements below are dev measurements only.
 Environment variable used by the workflow: `REWIND_DATABASE_BOOTSTRAP_URI`
 (`terraform output database_bootstrap_uri`).
 
-GitHub only dispatches a workflow that also exists on the default branch
-(`main`). Until a `main` promotion includes it, run the same steps from an
-operator machine: open SSH for your address
-(`aws lightsail open-instance-public-ports`), get a certificate with
-`aws lightsail get-instance-access-details`, connect with
-`-o IdentitiesOnly=yes`, and run the `deploy/database-*.sh` scripts on the
-host. Close the port afterwards.
+GitHub dispatch requires the workflow on the default branch (`main`). Promote it
+through normal protection first. For a first release, dispatch **Deploy release**
+with `operation=prepare`; follow the release cutover procedure above. Do not open
+a direct SSH path to bypass branch or environment protection.
 
 ## First-time setup and cutover
 
@@ -215,19 +212,27 @@ the `server-postgres` job.
 
 The workflow's `backup` operation runs the nightly job on demand. Each
 logical backup writes `rewind-<stamp>.postgres.json` with checksums and the
-restored row counts.
+restored row counts and canonical table hashes. The fingerprint holder and
+`pg_dump --snapshot` share one exported read-only transaction, so concurrent app
+writes do not change the comparison baseline. Upload requires the restored table
+sets, counts, hashes, environment and schema to match.
 
 ## Recovery
 
 - **Rehearsal (do it after cutover, then monthly).** Run the workflow with
   `rehearse-restore`. It:
-  1. restores the latest point-in-time recovery into a new, tagged database;
-  2. checks it with `database-status` from the host;
+  1. stops runtime/web writers and the backup timer, captures a content-hash
+     baseline, and waits for managed recovery to reach its timestamp;
+  2. restores that exact timestamp into a tagged database and asserts matching
+     environment, schema, table sets, counts and hashes against the baseline;
   3. writes the RPO (recovery point age) and RTO (time to a verified
      database) to the job summary;
-  4. deletes the rehearsal database.
+  4. rechecks the still-stopped source against the baseline and deletes the
+     owned rehearsal database.
 
-  The live database is never touched.
+  Stop manually launched workers before dispatch. The source data is read only;
+  runtime writers and the timer remain stopped even on success. Inspect the result
+  and explicitly run `resume` to restore service.
 
 - **Bad data or operator error.** Restore point-in-time to just before the
   incident. Use the Lightsail console, or the rehearsal workflow's commands

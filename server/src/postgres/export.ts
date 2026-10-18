@@ -141,7 +141,7 @@ function validateDestination(destination: string): void {
 }
 
 /** Identifies the snapshot transaction; changes if the connection is replaced. */
-function anchor(source: PostgresDatabase): string {
+export function anchor(source: PostgresDatabase): string {
   const row = source.queryNative(
     `SELECT pg_backend_pid() AS pid, pg_current_snapshot()::text AS snapshot,
             current_setting('transaction_isolation') AS isolation,
@@ -153,7 +153,7 @@ function anchor(source: PostgresDatabase): string {
   return `${String(row.pid)}:${String(row.snapshot)}`;
 }
 
-function assertNoLiveWriters(source: PostgresDatabase, names: string[]): void {
+export function assertNoLiveWriters(source: PostgresDatabase, names: string[]): void {
   if (!names.length) return;
   const sessions = source.queryNative(
     `SELECT application_name AS name, count(*) AS sessions FROM pg_stat_activity
@@ -192,7 +192,7 @@ function postgresTables(source: PostgresDatabase): Map<string, TargetColumn[]> {
   return tables;
 }
 
-function readEnvironment(source: PostgresDatabase, expected: string) {
+export function readEnvironment(source: PostgresDatabase, expected: string) {
   const present = source.queryNative(`SELECT to_regclass('${ENVIRONMENT_TABLE}') AS name`)[0];
   if (present.name === null) {
     throw new ExportError('This PostgreSQL database has no Rewind environment binding.');

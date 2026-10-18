@@ -157,3 +157,6 @@ if [[ "$LOCAL_ONLY" == 1 ]]; then
 else
   echo "Uploaded manifest s3://${REWIND_BACKUP_BUCKET}/${REWIND_BACKUP_PREFIX}/${manifest_name}"
 fi
+if [[ -n "${REWIND_BACKUP_MANIFEST_OUTPUT:-}" ]]; then
+  printf '%s\n' "$manifest_name" > "$REWIND_BACKUP_MANIFEST_OUTPUT"
+fi

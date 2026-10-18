@@ -6,6 +6,7 @@ import {
   backfillMediaIntegrity,
   bootstrapDatabase,
   databaseStatus,
+  openDatabaseStatusSnapshot,
   exportDatabaseToSqlite,
   importSqliteSnapshot,
   installSqliteExport,
@@ -834,7 +835,29 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     if (command === 'database-status') {
-      const status = databaseStatus(config);
+      if (argv.includes('--hold-snapshot')) {
+        const snapshot = openDatabaseStatusSnapshot(config, { exportSnapshot: true });
+        const input = createInterface({ input: stdin });
+        try {
+          if (
+            !snapshot.status.ready ||
+            snapshot.status.environment !== config.database?.environment
+          ) {
+            throw new Error('The backup snapshot is not ready or belongs to another environment.');
+          }
+          console.log(JSON.stringify(snapshot.status));
+          // The host closes this lease only after pg_dump --snapshot finishes.
+          for await (const line of input) {
+            if (line !== 'release') throw new Error('Invalid snapshot release.');
+            break;
+          }
+        } finally {
+          input.close();
+          snapshot.close();
+        }
+        return;
+      }
+      const status = databaseStatus(config, argv.includes('--require-stopped-writers'));
       if (json) console.log(JSON.stringify(status));
       else {
         console.log(`${status.engine} at ${status.location}`);
