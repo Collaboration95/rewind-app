@@ -1,12 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 import { setTrim } from './helpers/injected-recording';
-import { openCapture, signedIn } from './helpers/real-account';
-
-test.use(signedIn);
+import { openCapture } from './helpers/real-account';
+import { recordingTest as test, waitForRecordingProcessed } from './helpers/recording-account';
 
 const portraitMp4 = readFileSync(join(process.cwd(), 'tests/fixtures/portrait-h264-aac.mp4'));
 const mislabeledWebm = readFileSync(join(process.cwd(), 'tests/fixtures/mislabeled-webm.mp4'));
@@ -76,6 +75,7 @@ test('accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadat
   // The real capture view is full screen; the dock is hidden while capturing.
   await uploadButton.scrollIntoViewIfNeeded();
   await expect(uploadButton).toBeInViewport({ ratio: 1 });
+  const processingPromise = waitForRecordingProcessed(page);
   await uploadButton.click();
   const uploadRequest = await uploadRequestPromise;
   const uploadBody = JSON.parse(uploadRequest.postData() ?? '{}') as Record<string, unknown>;
@@ -88,6 +88,11 @@ test('accepts a generated portrait H.264/AAC MP4 and keeps review/upload metadat
   const uploadResponse = await uploadResponsePromise;
   expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
   await expect(page.getByText('Upload queued as one pending contribution.')).toBeVisible();
+  const processing = await processingPromise;
+  expect(processing.status(), await processing.text()).toBe(200);
+  expect(await processing.json()).toMatchObject({ job: { status: 'ready' } });
+  await expect(review).toHaveCount(0);
+  await expect(page.getByTestId('video-review-player')).toHaveCount(0);
 });
 
 test('keeps captured review inline with working play, pause, bounded seek and retake', async ({
@@ -254,6 +259,7 @@ test('records from browser camera and microphone after the member action and upl
   // The real capture view is full screen; the dock is hidden while capturing.
   await uploadButton.scrollIntoViewIfNeeded();
   await expect(uploadButton).toBeInViewport({ ratio: 1 });
+  const processingPromise = waitForRecordingProcessed(page);
   await uploadButton.click();
   const uploadRequest = await uploadRequestPromise;
   const uploadBody = JSON.parse(uploadRequest.postData() ?? '{}') as Record<string, unknown>;
@@ -264,6 +270,11 @@ test('records from browser camera and microphone after the member action and upl
   const uploadResponse = await uploadResponsePromise;
   expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
   await expect(page.getByText('Upload queued as one pending contribution.')).toBeVisible();
+  const processing = await processingPromise;
+  expect(processing.status(), await processing.text()).toBe(200);
+  expect(await processing.json()).toMatchObject({ job: { status: 'ready' } });
+  await expect(review).toHaveCount(0);
+  await expect(page.getByTestId('video-review-player')).toHaveCount(0);
 });
 
 test('orientation guidance and video fallback controls stay reachable through short landscape rotation', async ({
