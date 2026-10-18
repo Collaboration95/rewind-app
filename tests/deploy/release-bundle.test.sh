@@ -260,4 +260,13 @@ fi
 grep -q 'schema is newer' "$root/error"
 FIXTURE_SCHEMA=17 bash "$repo/deploy/release-host.sh" rollback
 [[ "$(cat "$host/current-release")" == "$sha" ]]
+# A PostgreSQL URL cannot bypass an unresolved final import, including the
+# automatic prior-release recovery path. No writer may be started on failure.
+printf 'REWIND_MEDIA_ENVIRONMENT=release\nREWIND_DATABASE_ENVIRONMENT=release\nREWIND_DATABASE_URL=postgres://fixture@db/rewind\n' | bash "$repo/deploy/release-host.sh" configure
+printf 'release\n' > "$host/database-maintenance"
+printf 'import\n' > "$host/database-maintenance-mode"
+if bash "$repo/deploy/release-host.sh" install "$root/second.tar" >"$root/error" 2>&1; then
+  echo 'maintenance without reconciliation started PostgreSQL writers' >&2; exit 1
+fi
+[[ -f "$host/database-maintenance" && "$(cat "$host/.active-image")" == "$sha" ]]
 echo 'release bundle fixture passed'

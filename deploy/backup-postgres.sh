@@ -45,6 +45,7 @@ require_command docker
 require_command jq
 [[ "$LOCAL_ONLY" == 1 ]] || require_command aws
 require_runtime_running
+resolve_installed_release
 ensure_backup_directory "$BACKUP_DIR"
 BACKUP_DIR="$(canonical_directory BACKUP_DIR "$BACKUP_DIR")"
 
@@ -54,7 +55,11 @@ media_name="rewind-${stamp}.media.tar.gz"
 manifest_name="rewind-${stamp}.postgres.json"
 work="$(mktemp -d "$BACKUP_DIR/.postgres-backup.XXXXXX")"
 verifier="rewind-backup-verify-${stamp,,}"
+snapshotter="rewind-backup-snapshot-${stamp,,}"
+snapshot_pid=''
 cleanup() {
+  docker rm -f "$snapshotter" >/dev/null 2>&1 || true
+  [[ -z "$snapshot_pid" ]] || wait "$snapshot_pid" 2>/dev/null || true
   docker rm -f "$verifier" >/dev/null 2>&1 || true
   rm -rf -- "$work"
 }
@@ -66,11 +71,29 @@ chmod 0644 "$work/ca.pem"
 chmod 0755 "$work"
 
 export PGURI="$REWIND_DATABASE_READONLY_URL"
+export REWIND_DATABASE_URL="$PGURI"
+# Keep the fingerprint and pg_dump on the same immutable MVCC snapshot, even
+# while normal runtime writes continue. Only this owned container holds it.
+mkfifo "$work/release"
+exec 3<> "$work/release"
+compose run --rm --no-deps -T --name "$snapshotter" -e REWIND_DATABASE_URL \
+  runtime database-status --json --hold-snapshot < "$work/release" > "$work/source.json" &
+snapshot_pid=$!
+for _ in $(seq 1 60); do
+  jq -e '.ready == true and (.snapshot | type == "string")' "$work/source.json" >/dev/null 2>&1 && break
+  kill -0 "$snapshot_pid" 2>/dev/null || die 'The backup snapshot holder failed.'
+  sleep 1
+done
+snapshot="$(jq -er '.snapshot | select(test("^[0-9A-Fa-f-]+$"))' "$work/source.json")" || die 'No exported backup snapshot.'
 docker run --rm -e PGURI -e PGSSLMODE=verify-full -e PGSSLROOTCERT=/ca/ca.pem \
-  -v "$work/ca.pem:/ca/ca.pem:ro" "$POSTGRES_IMAGE" \
-  sh -c 'exec pg_dump --format=custom --no-owner --no-privileges --dbname="$PGURI"' \
+  -e SNAPSHOT="$snapshot" -v "$work/ca.pem:/ca/ca.pem:ro" "$POSTGRES_IMAGE" \
+  sh -c 'exec pg_dump --snapshot="$SNAPSHOT" --format=custom --no-owner --no-privileges --dbname="$PGURI"' \
   > "$BACKUP_DIR/$dump_name"
 [[ -s "$BACKUP_DIR/$dump_name" ]] || die 'pg_dump produced an empty file.'
+printf 'release\n' >&3
+wait "$snapshot_pid"
+snapshot_pid=''
+exec 3>&-
 
 # Restore into a throwaway server and count every table.
 docker run -d --name "$verifier" -e POSTGRES_PASSWORD=verify --tmpfs /var/lib/postgresql/data \
@@ -81,12 +104,15 @@ for _ in $(seq 1 60); do
 done
 docker exec -i "$verifier" pg_restore --no-owner --no-privileges --exit-on-error \
   -h 127.0.0.1 -U postgres -d postgres < "$BACKUP_DIR/$dump_name"
-counts="$(docker exec "$verifier" psql -h 127.0.0.1 -U postgres -d postgres -At -c "
-  SELECT COALESCE(json_object_agg(t.schemaname || '.' || t.relname, t.n_live_tup), '{}')
-  FROM (SELECT schemaname, relname,
-          (xpath('/row/n/text()', query_to_xml(format('SELECT COUNT(*) AS n FROM %I.%I', schemaname, relname), false, true, '')))[1]::text::bigint AS n_live_tup
-        FROM pg_stat_user_tables) t")"
-[[ "$(jq 'length' <<<"$counts")" -gt 0 ]] || die 'The restored dump has no tables.'
+docker exec "$verifier" psql -h 127.0.0.1 -U postgres -d postgres -c 'ALTER ROLE postgres SET search_path = rewind' >/dev/null
+docker run --rm --network "container:$verifier" \
+  -e REWIND_DATABASE_URL=postgres://postgres:verify@127.0.0.1/postgres \
+  -e REWIND_DATABASE_TLS=disable -e REWIND_DATABASE_ENVIRONMENT \
+  -e REWIND_AUTH_PASSWORD -e REWIND_COGNITO_REGION -e REWIND_COGNITO_USER_POOL_ID \
+  -e REWIND_COGNITO_CLIENT_ID -e REWIND_COGNITO_DOMAIN \
+  "rewind-demo:$REWIND_RELEASE_SHA" database-status --json > "$work/restored.json"
+compare_database_reports "$work/source.json" "$work/restored.json"
+counts="$(jq '.rows' "$work/restored.json")"
 
 archive_runtime_media "$BACKUP_DIR/$media_name"
 for file in "$BACKUP_DIR/$dump_name" "$BACKUP_DIR/$media_name"; do
@@ -97,9 +123,9 @@ jq -n --arg created_at "$stamp" --arg prefix "$REWIND_BACKUP_PREFIX" \
   --argjson dump_bytes "$(file_bytes "$BACKUP_DIR/$dump_name")" \
   --arg media "$media_name" --arg media_sha "$(sha256_file "$BACKUP_DIR/$media_name")" \
   --argjson media_bytes "$(file_bytes "$BACKUP_DIR/$media_name")" \
-  --argjson rows "$counts" \
+  --argjson rows "$counts" --argjson tables "$(jq '.tables' "$work/source.json")" \
   '{created_at: $created_at, engine: "postgresql", restore_verified: true,
-    database: {key: ($prefix + "/" + $dump), sha256: $dump_sha, bytes: $dump_bytes, rows: $rows},
+    database: {key: ($prefix + "/" + $dump), sha256: $dump_sha, bytes: $dump_bytes, rows: $rows, tables: $tables},
     media: {key: ($prefix + "/" + $media), sha256: $media_sha, bytes: $media_bytes}}' \
   > "$BACKUP_DIR/$manifest_name"
 
