@@ -241,7 +241,7 @@ test('final import workflow passes its freshly produced manifest and stops on fa
       .join('\n');
     const invoke = (fail = '0') =>
       spawnSync('bash', ['-c', script], {
-        cwd: root,
+        cwd: dir,
         encoding: 'utf8',
         env: {
           ...process.env,
