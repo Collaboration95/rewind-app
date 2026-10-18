@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
 import {
   allowInjectedSource,
@@ -13,9 +13,9 @@ import {
   restoreInjectedPreview,
   setTrim,
 } from './helpers/injected-recording';
-import { signedIn } from './helpers/real-account';
+import { recordingTest as test, waitForRecordingProcessed } from './helpers/recording-account';
 
-test.use({ ...signedIn, viewport: { width: 390, height: 844 } });
+test.use({ viewport: { width: 390, height: 844 } });
 test.setTimeout(90_000);
 
 test.afterEach(async ({ page }) => {
@@ -210,6 +210,7 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/contributions/upload',
   );
+  const processingPromise = waitForRecordingProcessed(page);
   await page.getByRole('button', { name: 'Seal', exact: true }).click();
   // The retro look is applied in the browser, in real time, before any upload.
   await expect(page.getByTestId('video-retro-processing')).toContainText('Applying look');
@@ -230,6 +231,9 @@ test('real injected recording preserves moving video, decoded tone, trim, retake
   expect(body.sourceDurationSeconds).toBeGreaterThanOrEqual(body.trimEndSeconds);
   const response = await responsePromise;
   expect(response.status(), await response.text()).toBe(201);
+  const processing = await processingPromise;
+  expect(processing.status(), await processing.text()).toBe(200);
+  expect(await processing.json()).toMatchObject({ job: { status: 'ready' } });
   await expect(review).toHaveCount(0);
   await expect(page.getByTestId('video-review-player')).toHaveCount(0);
   await expectRevoked(page, 1);
