@@ -68,27 +68,45 @@ release on `main`. Role, host, region, bootstrap object and host environment mus
 match. Its concurrency is shared with that environment's deployment workflow.
 It cannot run from `main` until the workflow itself has been promoted there.
 
-1. Deploy the reviewed operation scripts and hosted settings with SQLite still
-   authoritative. Keep merges/deployments for that environment on hold during
-   the cutover; the other environment may continue serving.
-2. Run `bootstrap` for the selected target. It creates/rotates only its generated
+1. After protected main promotion, dispatch **Deploy release** with `operation=prepare`
+   before the first application startup. It preserves retained SQLite/WAL and disk
+   media in `backups/first-start-retained.tar`, with a private inventory. It refuses
+   symlinks, open writers, more than 100,000 files/10 GiB or insufficient disk.
+   Verify the inventory, including an explicit empty result. Preparation installs
+   verified tools without starting the application; operations use its pending SHA.
+   Preparation does not open an import maintenance window or require an import.
+2. With release `cutover = false`, run the normal qualified **Deploy release**
+   installation (`operation=install`). SQLite remains authoritative, and the
+   runtime brings it to the current schema before the final snapshot. Confirm
+   healthy SQLite operation. Then hold merges/deployments for that environment
+   through the cutover; the other environment may continue serving.
+3. Run `bootstrap` for the selected target. It creates/rotates only its generated
    app and read-only roles. Verify the selected database's environment binding.
-3. Run `import` without a manifest for the final snapshot. It stops the backup
+4. Run `import` without a manifest for the final snapshot. It stops the backup
    timer/service, web proxy and runtime. The runtime contains the HTTP server,
    scheduler, reminders and media workers. Also stop any manually launched
    worker before proceeding. One-shot Node/tar containers take the SQLite/media
    backup without starting runtime writers; import reconciles every table's
-   count and content hash in one transaction. Writers remain stopped on failure.
+   count and content hash in one transaction. The workflow passes the exact manifest
+   returned by that snapshot; it never selects remote latest. A successful receipt
+   binds environment, manifest digest and table reconciliation. Writers remain stopped
+   on failure.
    A selected older manifest is recovery to that point, not a lossless cutover.
-4. Inspect the reconciliation report. Set release `cutover = true`, review/apply
+5. Inspect the reconciliation report. Set release `cutover = true`, review/apply
    the release-only plan, then deploy the qualified main revision normally.
-   A maintenance marker prevents a normal deployment from restarting SQLite
-   writers. Successful health validation restores the backup timer.
-5. Run `status`, verify PostgreSQL engine, current migration/environment, restart
+   A maintenance marker prevents restarting SQLite writers. PostgreSQL activation
+   requires a final-snapshot receipt for the matching environment and a fresh hash
+   comparison before any writer starts. Successful health validation restores the
+   backup timer.
+6. Run `status`, verify PostgreSQL engine, current migration/environment, restart
    persistence, and run `backup`. Logical dumps must restore successfully into
    the local verifier before upload. Rehearse managed restore with the explicit
    release target and record measured recovery-point age and usable-restore
-   time; no dev measurement establishes release recovery. Restore creation is
+   time; no dev measurement establishes release recovery. Managed rehearsal stops all
+   writers, captures a hash baseline, waits for the provider recovery window to reach
+   it and restores that exact timestamp. Both restored and still-stopped source must
+   match. It leaves maintenance active on success or failure: inspect, then explicitly
+   run `resume`. Stop manually launched workers before dispatch. Restore creation is
    restricted to source snapshots tagged with the selected environment; tagging
    and deletion require an already-labelled rehearsal. If Lightsail's create-time
    tag authorization has no existing resource tags, this deliberately fails closed.

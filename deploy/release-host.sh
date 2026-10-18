@@ -165,6 +165,16 @@ start_candidate() {
       printf 'ERROR: database maintenance requires PostgreSQL cutover or explicit resume.\n' >&2
       return 1
     }
+    python3 "$RELEASE_PY" check-maintenance "$HOST_ROOT" || return 1
+    local status
+    status="$(mktemp "$HOST_ROOT/.cutover-status.XXXXXX")" || return 1
+    if ! REWIND_RELEASE_SHA="$sha" docker compose --env-file "$HOST_ROOT/rewind.env" -f "$HOST_ROOT/deploy/compose.yaml" \
+      run --rm --no-deps --no-build --pull never -T runtime database-status --json --require-stopped-writers > "$status" ||
+       ! python3 "$RELEASE_PY" check-maintenance "$HOST_ROOT" --status "$status"; then
+      rm -f -- "$status"
+      return 1
+    fi
+    rm -f -- "$status"
   fi
   REWIND_RELEASE_SHA="$sha" docker compose --env-file "$HOST_ROOT/rewind.env" -f "$HOST_ROOT/deploy/compose.yaml" up -d --no-build
 }
@@ -228,6 +238,7 @@ promote() {
   if [[ -f "$HOST_ROOT/database-maintenance" ]]; then
     sudo -n systemctl enable --now rewind-backup.timer
     rm "$HOST_ROOT/database-maintenance"
+    rm -f -- "$HOST_ROOT/database-maintenance-mode" "$HOST_ROOT/database-reconciled.json"
   fi
   printf 'Activated release %s after runtime and web health checks.\n' "$sha"
   prune_releases
@@ -238,6 +249,10 @@ case "$1" in
     [[ $# == 2 ]] || die "$1 requires a bundle file"
     if [[ "$1" == prepare && -f "$HOST_ROOT/current-release" ]]; then
       die 'prepare is only for fresh wake; use install for an existing host'
+    fi
+    if [[ ! -f "$HOST_ROOT/current-release" ]] && grep -qx 'REWIND_MEDIA_ENVIRONMENT=release' "$HOST_ROOT/rewind.env"; then
+      # Before loading/bootstrap can touch ownership or start a service.
+      sudo -n python3 "$RELEASE_PY" preserve-retained "$HOST_ROOT"
     fi
     sha="$(stage_bundle "$2")"
     if [[ "$1" == install ]]; then
@@ -262,6 +277,7 @@ case "$1" in
   promote)
     [[ $# == 1 && -f "$HOST_ROOT/pending-release" ]] || die 'no pending release'
     sha="$(cat "$HOST_ROOT/pending-release")"
+    [[ ! -f "$HOST_ROOT/database-maintenance" ]] || die 'maintenance must pass the install activation guard'
     check_candidate "$sha"
     if ! candidate_ready "$sha"; then
       (restore_current) || die 'pending release failed and automatic prior-release recovery failed'
