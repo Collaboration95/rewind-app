@@ -21,6 +21,8 @@ import {
 
 import { redactRealAccountDiagnostic } from '../../scripts/real-account-e2e-utils.mjs';
 
+import { signOutThroughUi, verifyNoGroup } from './navigation.mjs';
+
 const password = 'Fixture-Only-Password-2026!';
 
 function fixtureValue(name, value) {
@@ -230,78 +232,113 @@ async function waitForPublication(databasePath, cycleId) {
   }
 }
 
-async function verifyReleasedDownloads(page, databasePath, groupId, suffix) {
+async function verifyReleasedDownloads(page, databasePath, groupId, suffix, filmCount, clipCount) {
   let audibleClip = false;
-  for (const label of ['Download released group film', 'Download your released clip']) {
-    const buttons = page.getByRole('button', { name: label, exact: true });
-    expect(await buttons.count()).toBeGreaterThan(0);
-    for (let index = 0; index < (await buttons.count()); index++) {
-      const responsePromise = page.waitForResponse(
-        (response) =>
-          response.status() === 200 && Boolean(response.headers()['content-disposition']),
-      );
-      const downloaded = page.waitForEvent('download');
-      await buttons.nth(index).click();
-      const download = await downloaded;
-      expect(await download.failure()).toBeNull();
-      const path = join(
-        dirname(databasePath),
-        `download-${suffix}-${label.includes('group') ? 'film' : 'clip'}-${index}.mp4`,
-      );
-      await download.saveAs(path);
-      const bytes = readFileSync(path);
-      const response = await responsePromise;
-      expect(response.headers()['content-type']).toMatch(/^video\/mp4/);
-      expect(Number(response.headers()['content-length'])).toBe(bytes.length);
-      expect(response.headers()['cache-control']).toBe('no-store');
-      const database = new DatabaseSync(databasePath);
+  let savedClips = 0;
+  const films = page.getByTestId(/^real-archive-(play$|watch-)/);
+  await expect(films).toHaveCount(filmCount);
+  for (let filmIndex = 0; filmIndex < filmCount; filmIndex++) {
+    await films.nth(filmIndex).click();
+    // Saving is offered on the real Film end card. Let playback finish naturally.
+    await expect
+      .poll(async () => {
+        if (await page.getByTestId('real-film-end').isVisible()) return true;
+        const playback = page.getByTestId('real-film-pause');
+        if ((await playback.isVisible()) && (await playback.getAttribute('aria-label')) === 'Play')
+          await playback.click();
+        return page.getByTestId('real-film-end').isVisible();
+      })
+      .toBe(true);
+    await expect(page.getByTestId('real-film-end')).toBeVisible();
+    for (const kind of ['film', 'clip']) {
+      const downloads = [];
+      const responses = [];
+      const onDownload = (download) => downloads.push(download);
+      const onResponse = (response) => {
+        if (response.status() === 200 && response.headers()['content-disposition'])
+          responses.push(response);
+      };
+      page.on('download', onDownload);
+      page.on('response', onResponse);
       try {
-        const output = database
-          .prepare(
-            "SELECT output_bytes AS bytes FROM media_jobs WHERE group_id = ? AND kind = ? AND status = 'ready' AND output_sha256 = ?",
-          )
-          .get(
-            groupId,
-            label.includes('group') ? 'film' : 'clip',
-            createHash('sha256').update(bytes).digest('hex'),
-          );
-        expect(output?.bytes).toBe(bytes.length);
+        await page.getByTestId(kind === 'film' ? 'real-film-save' : 'real-film-save-mine').click();
+        await expect(
+          page.getByText(kind === 'film' ? 'Saved.' : /^Saved \d+ moments?\.$/, {
+            exact: true,
+          }),
+        ).toBeVisible();
+        expect(responses.length).toBeGreaterThan(0);
+        if (kind === 'film') expect(responses).toHaveLength(1);
+        await expect.poll(() => downloads.length).toBe(responses.length);
       } finally {
-        database.close();
+        page.off('download', onDownload);
+        page.off('response', onResponse);
       }
-      expect(bytes.length).toBeGreaterThan(1000);
-      expect(bytes.subarray(4, 8).toString()).toBe('ftyp');
-      const probe = JSON.parse(
-        execFileSync(
-          'ffprobe',
-          ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', path],
-          { encoding: 'utf8' },
-        ),
-      );
-      expect(probe.streams.some((stream) => stream.codec_type === 'video')).toBe(true);
-      expect(probe.streams.some((stream) => stream.codec_type === 'audio')).toBe(true);
-      const pcm = execFileSync('ffmpeg', [
-        '-v',
-        'error',
-        '-i',
-        path,
-        '-vn',
-        '-ac',
-        '1',
-        '-ar',
-        '8000',
-        '-f',
-        's16le',
-        'pipe:1',
-      ]);
-      let energy = 0;
-      for (let sample = 0; sample + 1 < pcm.length; sample += 2)
-        energy += (pcm.readInt16LE(sample) / 32768) ** 2;
-      const rms = Math.sqrt(energy / (pcm.length / 2));
-      if (label.includes('group')) expect(rms).toBeGreaterThan(0.001);
-      else audibleClip ||= rms > 0.001;
+      if (kind === 'clip') savedClips += downloads.length;
+      for (let index = 0; index < downloads.length; index++) {
+        const download = downloads[index];
+        expect(await download.failure()).toBeNull();
+        const path = join(
+          dirname(databasePath),
+          `download-${suffix}-${kind}-${filmIndex}-${index}.mp4`,
+        );
+        await download.saveAs(path);
+        const bytes = readFileSync(path);
+        const response = responses[index];
+        expect(response.headers()['content-type']).toMatch(/^video\/mp4/);
+        expect(Number(response.headers()['content-length'])).toBe(bytes.length);
+        expect(response.headers()['cache-control']).toBe('no-store');
+        const database = new DatabaseSync(databasePath);
+        try {
+          const output = database
+            .prepare(
+              "SELECT output_bytes AS bytes FROM media_jobs WHERE group_id = ? AND kind = ? AND status = 'ready' AND output_sha256 = ?",
+            )
+            .get(
+              groupId,
+              kind === 'film' ? 'film' : 'clip',
+              createHash('sha256').update(bytes).digest('hex'),
+            );
+          expect(output?.bytes).toBe(bytes.length);
+        } finally {
+          database.close();
+        }
+        expect(bytes.length).toBeGreaterThan(1000);
+        expect(bytes.subarray(4, 8).toString()).toBe('ftyp');
+        const probe = JSON.parse(
+          execFileSync(
+            'ffprobe',
+            ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', path],
+            { encoding: 'utf8' },
+          ),
+        );
+        expect(probe.streams.some((stream) => stream.codec_type === 'video')).toBe(true);
+        expect(probe.streams.some((stream) => stream.codec_type === 'audio')).toBe(true);
+        const pcm = execFileSync('ffmpeg', [
+          '-v',
+          'error',
+          '-i',
+          path,
+          '-vn',
+          '-ac',
+          '1',
+          '-ar',
+          '8000',
+          '-f',
+          's16le',
+          'pipe:1',
+        ]);
+        let energy = 0;
+        for (let sample = 0; sample + 1 < pcm.length; sample += 2)
+          energy += (pcm.readInt16LE(sample) / 32768) ** 2;
+        const rms = Math.sqrt(energy / (pcm.length / 2));
+        if (kind === 'film') expect(rms).toBeGreaterThan(0.001);
+        else audibleClip ||= rms > 0.001;
+      }
     }
+    await page.getByTestId('real-film-close').click();
   }
+  expect(savedClips).toBe(clipCount);
   expect(audibleClip).toBe(true);
 }
 
@@ -354,37 +391,51 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     const outsiderUsername = `outsider${suffix}`;
 
     await registerAndSignIn(page, ownerUsername);
-    await expect(page.getByRole('heading', { name: 'Choose a group' })).toBeVisible();
+    await verifyNoGroup(page);
     await page.getByTestId('real-group-create-choice').click();
     await page.getByTestId('real-group-name').fill(`Fixture Group ${suffix}`);
     await page.getByTestId('real-group-create-submit').click();
-    await expect(page.getByTestId('real-group-empty-contributions')).toBeVisible();
+    await expect(page.getByTestId('real-group-home')).toBeVisible();
+    await expect(page.getByTestId('real-group-allowance')).toHaveAccessibleName(
+      'Your moments: 0 of 5, 0 of 30 seconds',
+    );
     const screenshotPath = process.env.REWIND_REAL_ACCOUNT_SCREENSHOT;
     if (screenshotPath) await page.screenshot({ path: screenshotPath, fullPage: true });
     const ownerGroup = await readCurrentGroup(page);
     const ownerGroupId = ownerGroup.group.id;
     const ownerChatEvent = await verifyOwnerChat(page, ownerGroupId, suffix);
 
-    await page.getByTestId('real-group-open-archive').click();
+    await page.getByTestId('real-group-nav-archive').click();
     await expect(page.getByTestId('route-heading-archive')).toBeVisible();
-    await expect(page.getByTestId('archive-empty-films')).toBeVisible();
-    await expect(page.getByTestId('archive-empty-clips')).toBeVisible();
-    await expect(page.getByTestId('archive-locked')).toBeVisible();
-    await page.getByRole('button', { name: 'Back to group', exact: true }).click();
-    await expect(page.getByTestId('real-group-empty-contributions')).toBeVisible();
+    await expect(page.getByTestId('real-archive-first')).toBeVisible();
+    await expect(page.getByTestId('real-archive-now')).toContainText('sealed until then');
+    const emptyArchive = await page.evaluate(async (groupId) => {
+      const response = await fetch(`/api/archive?groupId=${encodeURIComponent(groupId)}`);
+      return { status: response.status, ...(await response.json()) };
+    }, ownerGroupId);
+    expect(emptyArchive.status).toBe(200);
+    expect(emptyArchive.archive.films).toEqual([]);
+    expect(emptyArchive.archive.clips).toEqual([]);
+    await page.getByTestId('real-group-nav-home').click();
+    await expect(page.getByTestId('real-group-home')).toBeVisible();
+    await expect(page.getByTestId('real-group-allowance')).toHaveAccessibleName(
+      'Your moments: 0 of 5, 0 of 30 seconds',
+    );
 
     const invite = await createGroupInvitation(page, ownerGroupId);
 
-    await page.getByTestId('real-group-sign-out').click();
-    await expect(page.getByTestId('welcome-entry')).toBeVisible();
+    await signOutThroughUi(page);
 
     // A distinct real owner makes stale member/profile context observable.
     await registerAndSignIn(page, secondOwnerUsername);
-    await expect(page.getByRole('heading', { name: 'Choose a group' })).toBeVisible();
+    await verifyNoGroup(page);
     await page.getByTestId('real-group-create-choice').click();
     await page.getByTestId('real-group-name').fill(`Second Group ${suffix}`);
     await page.getByTestId('real-group-create-submit').click();
-    await expect(page.getByTestId('real-group-empty-contributions')).toBeVisible();
+    await expect(page.getByTestId('real-group-home')).toBeVisible();
+    await expect(page.getByTestId('real-group-allowance')).toHaveAccessibleName(
+      'Your moments: 0 of 5, 0 of 30 seconds',
+    );
     const secondGroup = await readCurrentGroup(page);
     expect(secondGroup.group.id).not.toBe(ownerGroupId);
     await verifyForeignGroupDenied(page, ownerGroupId);
@@ -395,8 +446,7 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
       `${suffix}-second`,
     );
     const secondInvite = await createGroupInvitation(page, secondGroup.group.id);
-    await page.getByTestId('real-group-sign-out').click();
-    await expect(page.getByTestId('welcome-entry')).toBeVisible();
+    await signOutThroughUi(page);
 
     const inviteUrl = new URL('/invite', webOrigin);
     inviteUrl.searchParams.set('groupId', ownerGroupId);
@@ -406,8 +456,13 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     await registerAndSignIn(page, memberUsername, { invitation: true });
     await expect(page.getByTestId('real-invite-intent')).toBeVisible();
     await page.getByTestId('real-invite-accept').click();
-    await expect(page.getByTestId('real-group-empty-contributions')).toBeVisible();
-    await expect(page.getByTestId('real-group-members')).toContainText('2/');
+    await expect(page.getByTestId('real-group-home')).toBeVisible();
+    await expect(page.getByTestId('real-group-allowance')).toHaveAccessibleName(
+      'Your moments: 0 of 5, 0 of 30 seconds',
+    );
+    await page.getByTestId('real-account-settings-button').click();
+    await expect(page.getByTestId('real-settings-group-summary')).toContainText('2 of');
+    await page.getByRole('button', { name: 'Back', exact: true }).click();
 
     const membershipDb = new DatabaseSync(databasePath);
     try {
@@ -440,17 +495,30 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
       otherMessage: ownerChatEvent.message.body,
     };
     await verifySelectedGroupContext(page, ownerGroup.group, firstContext);
-    await page.getByRole('button', { name: 'Join another group', exact: true }).click();
+    await page.getByTestId('real-group-menu-button').click();
+    await page.getByTestId('real-group-menu-join').click();
     await page.getByTestId('real-group-enter-code').fill(secondInvite.code);
     const joinResponse = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
         new URL(response.url()).pathname === '/api/real/invites/accept',
     );
+    const joinFeedback = page.getByTestId('real-group-join-feedback');
+    const joinRejected = joinFeedback.waitFor({ state: 'visible' }).then(async () => {
+      const feedback = (await joinFeedback.innerText()).toLowerCase();
+      const stage = feedback.includes('reminder')
+        ? 'reminder cleanup'
+        : feedback.includes('code')
+          ? 'invitation validation'
+          : 'group acceptance';
+      throw new Error(`Second-group invitation rejected during ${stage}.`);
+    });
     await page.getByTestId('real-group-join-choice').click();
-    const joined = await joinResponse;
+    const joined = await Promise.race([joinResponse, joinRejected]);
     expect(joined.status()).toBe(200);
     expect((await joined.json()).group.group.id).toBe(secondGroup.group.id);
+    await expect(page.getByTestId('real-join-done')).toContainText(secondGroup.group.name);
+    await page.getByTestId('real-join-go').click();
     await verifySelectedGroupContext(page, secondGroup.group, secondContext);
     await switchGroupThroughUi(page, ownerGroup.group);
     await verifySelectedGroupContext(page, ownerGroup.group, firstContext);
@@ -468,12 +536,8 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     await waitForPublication(databasePath, oldCycleId);
     await page.reload();
     await expect(page.getByTestId('real-group-home')).toBeVisible();
-    await page.getByTestId('real-group-open-archive').click();
-    await expect(page.getByTestId(/^archive-play-film-/).first()).toBeVisible();
-    await page
-      .getByTestId(/^archive-play-film-/)
-      .first()
-      .click();
+    await page.getByTestId('real-group-nav-archive').click();
+    await expect(page.getByTestId('real-archive-play')).toBeVisible();
     const playbackResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname.startsWith('/api/media/access/') &&
@@ -495,15 +559,14 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     await expect(video).toHaveJSProperty('muted', false);
     expect(await video.evaluate((element) => element.volume)).toBeGreaterThan(0);
     if (await video.evaluate((element) => element.paused)) {
-      const bounds = await video.boundingBox();
-      expect(bounds).not.toBeNull();
-      await video.click({ position: { x: bounds.width / 2, y: bounds.height / 2 } });
+      await page.getByTestId('real-film-pause').click();
     }
     await expect.poll(() => video.evaluate((element) => element.currentTime)).toBeGreaterThan(0.1);
     if (screenshotPath)
       await page.screenshot({ path: `${screenshotPath}.archive.png`, fullPage: true });
-    await verifyReleasedDownloads(page, databasePath, ownerGroupId, `first-${suffix}`);
-    await page.getByRole('button', { name: 'Back to group', exact: true }).click();
+    await page.getByTestId('real-film-close').click();
+    await verifyReleasedDownloads(page, databasePath, ownerGroupId, `first-${suffix}`, 1, 2);
+    await page.getByTestId('real-group-nav-home').click();
 
     await contributeFixtureMedia(page, databasePath, ownerGroupId, `${suffix}-second-video`, true);
     const secondCycleId = seedCurrentCycleDue(databasePath, ownerGroupId);
@@ -512,20 +575,20 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     await waitForPublication(databasePath, secondCycleId);
     await page.reload();
     expect((await readCurrentGroup(page)).group.id).toBe(ownerGroupId);
-    await page.getByTestId('real-group-open-archive').click();
-    await expect(page.getByTestId(/^archive-play-film-/)).toHaveCount(2);
-    await verifyReleasedDownloads(page, databasePath, ownerGroupId, `second-${suffix}`);
+    await page.getByTestId('real-group-nav-archive').click();
+    await expect(page.getByTestId(/^real-archive-(play$|watch-)/)).toHaveCount(2);
+    await verifyReleasedDownloads(page, databasePath, ownerGroupId, `second-${suffix}`, 2, 3);
     await page.reload();
-    await page.getByTestId('real-group-open-archive').click();
-    await expect(page.getByTestId(/^archive-play-film-/)).toHaveCount(2);
+    await page.getByTestId('real-group-nav-archive').click();
+    await expect(page.getByTestId(/^real-archive-(play$|watch-)/)).toHaveCount(2);
     expect((await readCurrentGroup(page)).group.id).toBe(ownerGroupId);
-    await page.getByRole('button', { name: 'Back to group', exact: true }).click();
+    await page.getByTestId('real-group-nav-home').click();
 
-    await page.getByTestId('real-group-sign-out').click();
+    await signOutThroughUi(page, { invitation: true });
     await page.goto('/');
     await expect(page.getByTestId('welcome-entry')).toBeVisible();
     await registerAndSignIn(page, outsiderUsername);
-    await expect(page.getByRole('heading', { name: 'Choose a group' })).toBeVisible();
+    await verifyNoGroup(page);
     await verifyForeignGroupDenied(page, ownerGroupId);
     await verifyForeignGroupDenied(page, secondGroup.group.id);
     const forbiddenGroup = await page.evaluate(async (groupId) => {
