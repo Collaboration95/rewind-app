@@ -114,6 +114,16 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+  // Keep long-lived SSE requests browser-owned: cancelling an intercepted
+  // response does not reliably abort the worker's separate fetch (Firefox
+  // bug 1394102). Direct network requests retain server auth and no-store.
+  if (
+    isApiRequest(url) &&
+    event.request.method === 'GET' &&
+    /^\/api\/realtime\/groups\/[^/]+\/events$/.test(url.pathname)
+  )
+    return;
+
   if (isApiRequest(url) || isPrivateMediaRequest(url) || event.request.method !== 'GET') {
     // Never cache server-backed responses or queue writes for later sync.
     event.respondWith(fetch(event.request).catch(() => apiUnavailableResponse()));
