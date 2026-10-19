@@ -22,8 +22,10 @@ An issue is Done when all four conditions hold:
 1. Its core outcome works, checked in the cheapest real environment that
    exercises it (see Verification tiers).
 2. `npm run test:fast` passes and the PR's aggregate Quality check is green.
-3. One review-agent pass on the PR is complete and blocking findings are fixed.
-   No human approval is needed for routine `dev` PRs.
+3. Only for an overnight or batched run (a queue of several issues), or when
+   the owner asks: one review-agent pass is complete and blocking findings are
+   fixed. Other PRs need no review pass, and none is reported as missing. No
+   human approval is needed for routine `dev` PRs.
 4. The PR is merged to `dev`. Then close the issue with a one-line comment
    linking the PR.
 
@@ -76,8 +78,8 @@ of issues end to end; `verify-issue` drafts and files a new issue.
   protected branch requires a PR, green up-to-date aggregate Quality, and
   resolved conversations; routine PRs need no human approval.
 - For authentication, private media access, database migrations, deployment,
-  or infrastructure, use higher-tier GPT-6.1 Sol or Claude review and leave
-  merging to the owner.
+  or infrastructure, leave merging to the owner; when a review runs, use
+  higher-tier GPT-6.1 Sol or Claude.
 - Keep `main` as the reviewed release branch. Promote a small, green `dev` diff
   with a PR when wanted; no daily promotion or reviewer schedule is required.
   Existing `main` approval and Quality rules remain.
@@ -122,14 +124,20 @@ three things only:
 
 ## Product decisions (4 October 2026)
 
-- The real-account app is the product. The synthetic Demo is frozen: keep it
-  working for tests and local runs, but add no features to it and do not keep
-  it in parity. Git tag `demo-frozen-20261004` marks the last state where both
-  were maintained, in case the Demo needs restoring or rebuilding.
+- The real-account app is the product. The synthetic Demo was removed on
+  6 October 2026. Git tag `demo-frozen-20261004` still marks the last state
+  where the Demo existed, in case it needs restoring. The hosted dev host and
+  its Terraform, scripts and variables keep the historical `demo` name; do not
+  rename them.
 - Photo and video capture both stay.
 - Reminders use web push only (browser and installed iPhone Home Screen app).
   Expo/native push is paused; leave its code disabled, do not extend it.
-- Managed OIDC (Cognito) is deferred; the existing sign-in stays.
+- Sign-in is Amazon Cognito Managed Login (authorization code + PKCE, server-side
+  exchange) on web/PWA, one user pool per environment (decided 8 October 2026).
+  Release has no password sign-in. Local runs, tests and hosted dev keep the
+  password form ("Developer sign-in", `REWIND_AUTH_PASSWORD`) so agents and
+  scripts can test without Cognito; native Expo builds use it against local or
+  dev servers only. See `doc/planning/sprints/sprint-3-cognito/`.
 - Media storage: `disk` for local runs, `s3` for hosted. Do not extend the
   `local` object-store backend.
 - iOS is delivered as the PWA. Compiled native iOS is out of scope.

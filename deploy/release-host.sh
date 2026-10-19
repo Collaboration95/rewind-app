@@ -41,7 +41,9 @@ require_disk_for() {
 # Hosted settings delivered by the deploy workflow (GitHub secret
 # REWIND_HOSTED_ENV). Only these keys may be set; everything else in
 # rewind.env stays as the operator wrote it.
-CONFIGURABLE_KEYS='REWIND_MEDIA_BACKEND REWIND_MEDIA_ENVIRONMENT REWIND_MEDIA_S3_BUCKET REWIND_MEDIA_S3_OWNER REWIND_MEDIA_S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION REWIND_REMINDER_VAPID_SUBJECT REWIND_REMINDER_VAPID_PUBLIC_KEY REWIND_REMINDER_VAPID_PRIVATE_KEY REWIND_REAL_CYCLE_MINUTES REWIND_REQUEST_TIMING REWIND_WEB_BIND_ADDRESS REWIND_WEB_PORT REWIND_ALLOW_ORIGIN REWIND_ORIGIN_AUTH_SECRET'
+# REWIND_ADMIN_PASSWORD is retired (the admin page was removed); it stays
+# accepted so a settings object written before that change still applies.
+CONFIGURABLE_KEYS='REWIND_BACKUP_BUCKET REWIND_BACKUP_PREFIX REWIND_DATABASE_URL REWIND_DATABASE_APP_URL REWIND_DATABASE_READONLY_URL REWIND_DATABASE_ENVIRONMENT REWIND_MEDIA_BACKEND REWIND_MEDIA_ENVIRONMENT REWIND_MEDIA_S3_BUCKET REWIND_MEDIA_S3_OWNER REWIND_MEDIA_S3_REGION AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION REWIND_REMINDER_VAPID_SUBJECT REWIND_REMINDER_VAPID_PUBLIC_KEY REWIND_REMINDER_VAPID_PRIVATE_KEY REWIND_REAL_CYCLE_MINUTES REWIND_REQUEST_TIMING REWIND_WEB_BIND_ADDRESS REWIND_WEB_PORT REWIND_ALLOW_ORIGIN REWIND_ORIGIN_AUTH_SECRET REWIND_ADMIN_PASSWORD REWIND_AUTH_PASSWORD REWIND_COGNITO_REGION REWIND_COGNITO_USER_POOL_ID REWIND_COGNITO_CLIENT_ID REWIND_COGNITO_DOMAIN'
 
 # Web push (VAPID) keys are generated here, once, and never leave the host.
 # SEC1 DER for a P-256 key is 121 bytes: private scalar at 7..39, public point last 65.
@@ -135,7 +137,12 @@ check_candidate() {
   if [[ -f "$HOST_ROOT/release-config-digest" ]]; then
     [[ "$(sha256sum "$HOST_ROOT/rewind.env" | cut -d ' ' -f 1)" == "$(cat "$HOST_ROOT/release-config-digest")" ]] || die 'private configuration revision changed; review before activating a release'
   fi
-  if [[ -f "$HOST_ROOT/data/rewind.sqlite" ]]; then
+  if grep -q '^REWIND_DATABASE_URL=.' "$HOST_ROOT/rewind.env" 2>/dev/null; then
+    # PostgreSQL: ask the running release; a first install has nothing to compare.
+    if current_schema="$(docker compose --env-file "$HOST_ROOT/rewind.env" -f "$HOST_ROOT/deploy/compose.yaml" exec -T runtime node server/dist/cli.js database-status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["appliedMigrationVersion"])')"; then
+      [[ "$current_schema" =~ ^[0-9]+$ && "$current_schema" -le "$schema" ]] || die 'database schema is newer than target release'
+    fi
+  elif [[ -f "$HOST_ROOT/data/rewind.sqlite" ]]; then
     current_schema="$(sudo sqlite3 -readonly "$HOST_ROOT/data/rewind.sqlite" 'SELECT COALESCE(MAX(version),0) FROM schema_migrations;' 2>/dev/null)" || die 'cannot inspect database schema'
     [[ "$current_schema" =~ ^[0-9]+$ && "$current_schema" -le "$schema" ]] || die 'database schema is newer than target release'
   fi
@@ -152,6 +159,23 @@ load_candidate() {
 
 start_candidate() {
   local sha="$1"
+  if [[ -f "$HOST_ROOT/database-maintenance" ]]; then
+    # A normal deploy must not resume old SQLite writers during an import.
+    grep -Eq '^REWIND_DATABASE_URL=postgres(ql)?://' "$HOST_ROOT/rewind.env" || {
+      printf 'ERROR: database maintenance requires PostgreSQL cutover or explicit resume.\n' >&2
+      return 1
+    }
+    python3 "$RELEASE_PY" check-maintenance "$HOST_ROOT" || return 1
+    local status
+    status="$(mktemp "$HOST_ROOT/.cutover-status.XXXXXX")" || return 1
+    if ! REWIND_RELEASE_SHA="$sha" docker compose --env-file "$HOST_ROOT/rewind.env" -f "$HOST_ROOT/deploy/compose.yaml" \
+      run --rm --no-deps --no-build --pull never -T runtime database-status --json --require-stopped-writers > "$status" ||
+       ! python3 "$RELEASE_PY" check-maintenance "$HOST_ROOT" --status "$status"; then
+      rm -f -- "$status"
+      return 1
+    fi
+    rm -f -- "$status"
+  fi
   REWIND_RELEASE_SHA="$sha" docker compose --env-file "$HOST_ROOT/rewind.env" -f "$HOST_ROOT/deploy/compose.yaml" up -d --no-build
 }
 
@@ -211,6 +235,11 @@ promote() {
   printf '%s\n' "$version" > "$HOST_ROOT/release-config-version"
   sha256sum "$HOST_ROOT/rewind.env" | cut -d ' ' -f 1 > "$HOST_ROOT/release-config-digest"
   rm -f -- "$HOST_ROOT/pending-release"
+  if [[ -f "$HOST_ROOT/database-maintenance" ]]; then
+    sudo -n systemctl enable --now rewind-backup.timer
+    rm "$HOST_ROOT/database-maintenance"
+    rm -f -- "$HOST_ROOT/database-maintenance-mode" "$HOST_ROOT/database-reconciled.json"
+  fi
   printf 'Activated release %s after runtime and web health checks.\n' "$sha"
   prune_releases
 }
@@ -220,6 +249,10 @@ case "$1" in
     [[ $# == 2 ]] || die "$1 requires a bundle file"
     if [[ "$1" == prepare && -f "$HOST_ROOT/current-release" ]]; then
       die 'prepare is only for fresh wake; use install for an existing host'
+    fi
+    if [[ ! -f "$HOST_ROOT/current-release" ]] && grep -qx 'REWIND_MEDIA_ENVIRONMENT=release' "$HOST_ROOT/rewind.env"; then
+      # Before loading/bootstrap can touch ownership or start a service.
+      sudo -n python3 "$RELEASE_PY" preserve-retained "$HOST_ROOT"
     fi
     sha="$(stage_bundle "$2")"
     if [[ "$1" == install ]]; then
@@ -244,6 +277,7 @@ case "$1" in
   promote)
     [[ $# == 1 && -f "$HOST_ROOT/pending-release" ]] || die 'no pending release'
     sha="$(cat "$HOST_ROOT/pending-release")"
+    [[ ! -f "$HOST_ROOT/database-maintenance" ]] || die 'maintenance must pass the install activation guard'
     check_candidate "$sha"
     if ! candidate_ready "$sha"; then
       (restore_current) || die 'pending release failed and automatic prior-release recovery failed'

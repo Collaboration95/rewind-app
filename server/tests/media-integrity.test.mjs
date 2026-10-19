@@ -20,10 +20,13 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { Worker } from 'node:worker_threads';
+import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { createTestTrigger, sqliteOnly } from './helpers/dialect.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { backfillMediaIntegrity, migrateDatabase, openDatabase } = await import('../dist/db.js');
+const { backfillMediaIntegrity, migrateDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createClipUpload, recordClipMediaMetadata } = await import('../dist/media/index.js');
 const {
@@ -49,8 +52,9 @@ async function withDatabase(run) {
     REWIND_DATA_DIR: dataDir,
     REWIND_HOST: '127.0.0.1',
     REWIND_FFMPEG_BIN: 'ffmpeg',
+    ...REAL_AUTH_ENV,
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   try {
     return await run({ config, database, dataDir });
   } finally {
@@ -171,7 +175,7 @@ test('finalization persists a matching SHA-256 and byte length for a real clip',
   });
 });
 
-test('a tampered finalized clip is unavailable, audited, and still not served', async () => {
+test('a tampered finalized clip is refused and audited when served', async () => {
   await withDatabase(async (context) => {
     const { database, config } = context;
     const jobId = await finalizeOneClip(context, 'integrity-tamper-1');
@@ -200,24 +204,21 @@ test('a tampered finalized clip is unavailable, audited, and still not served', 
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
-      });
-      const session = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+      const session = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
 
-      const archive = await fetch(`${baseUrl}/archive?${query}`);
+      const archive = await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers });
       assert.equal(archive.status, 200);
       const archiveBody = await archive.json();
       assert.deepEqual(
-        archiveBody.archive.clips.map((clip) => clip.id),
-        ['demo-clip'],
-        'the healthy sample remains available while the tampered clip is excluded',
+        archiveBody.archive.clips.map((clip) => clip.id).sort(),
+        [jobId, 'demo-clip'].sort(),
+        'same-size tampering is caught when the bytes are served, not by the listing (#475)',
       );
 
-      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
+      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
+        headers: session.headers,
+      });
       assert.equal(download.status, 404);
       assert.deepEqual(await download.json(), NOT_FOUND);
 
@@ -233,7 +234,7 @@ test('a tampered finalized clip is unavailable, audited, and still not served', 
       ]);
 
       // Repeated requests must not multiply the durable audit rows.
-      await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
+      await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, { headers: session.headers });
       assert.equal(
         database
           .prepare(
@@ -252,7 +253,7 @@ test('concurrent connections record one integrity audit event', async () => {
   await withDatabase(async ({ database, config }) => {
     const workerScript = `
       const { parentPort, workerData } = require('node:worker_threads');
-      const { DatabaseSync } = require('node:sqlite');
+      const { openDatabaseAt } = require(require('node:path').resolve('server/dist/db.js'));
       const { recordIntegrityFailure } = require(workerData.integrityModule);
 
       const startBarrier = new Int32Array(workerData.startBarrier);
@@ -266,7 +267,7 @@ test('concurrent connections record one integrity audit event', async () => {
       }
 
       const auditBarrier = new Int32Array(workerData.auditBarrier);
-      const database = new DatabaseSync(workerData.databasePath);
+      const database = openDatabaseAt(workerData.databasePath);
       database.exec('PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
       let transactionActive = false;
       const connection = new Proxy(database, {
@@ -401,14 +402,11 @@ test('a truncated finalized clip is unavailable and never streamed', async () =>
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
+      const session = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
+      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
+        headers: session.headers,
       });
-      const session = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
-      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
       assert.equal(download.status, 404);
       assert.deepEqual(await download.json(), NOT_FOUND);
     } finally {
@@ -450,19 +448,16 @@ for (const damage of ['deleted', 'zero-byte']) {
       const address = server.address();
       const baseUrl = `http://127.0.0.1:${address.port}`;
       try {
-        const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ memberId: 'demo-1' }),
-        });
-        const session = await sessionResponse.json();
-        const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+        const session = await signInAs(database, 'demo-1');
+        const query = 'groupId=demo-group';
         for (let attempt = 0; attempt < 2; attempt += 1) {
-          const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`);
+          const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
+            headers: session.headers,
+          });
           assert.equal(download.status, 404);
           assert.deepEqual(await download.json(), NOT_FOUND);
         }
-        const archive = await fetch(`${baseUrl}/archive?${query}`);
+        const archive = await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers });
         assert.equal(archive.status, 200);
         assert.equal(
           (await archive.json()).archive.clips.some((clip) => clip.id === jobId),
@@ -589,12 +584,14 @@ test('a zero-row ready update cannot complete clip finalization', async () => {
     );
     assert.equal(upload.ok, true);
     if (!upload.ok) return;
-    database.exec(
-      `CREATE TRIGGER ignore_clip_ready_157
-       BEFORE UPDATE OF status ON media_jobs
-       WHEN OLD.id = '${upload.upload.job.id}' AND NEW.status = 'ready'
-       BEGIN SELECT RAISE(IGNORE); END`,
-    );
+    createTestTrigger(database, {
+      name: 'ignore_clip_ready_157',
+      timing: 'BEFORE',
+      event: 'UPDATE OF status',
+      table: 'media_jobs',
+      when: `OLD.id = '${upload.upload.job.id}' AND NEW.status = 'ready'`,
+      action: 'ignore',
+    });
     const result = await processClipJob(database, {
       jobId: upload.upload.job.id,
       ffmpegBin: config.ffmpegBin,
@@ -740,171 +737,186 @@ exec ${shellQuote(realFfmpeg.trim())} "$@"
   });
 });
 
-test('a row finalized before #157 is unverifiable and the migration backfills it', async () => {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-integrity-backfill-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-  });
-  try {
-    let database = openDatabase(config);
-    const jobId = await finalizeOneClip({ database, config, dataDir }, 'integrity-backfill-1');
-    const row = storedIntegrity(database, jobId);
-    const bytes = await readFile(row.outputPath);
-
-    // Recreate the pre-#157 shape: no recorded digest and no receipt.
-    database
-      .prepare(
-        `UPDATE media_jobs SET output_sha256 = NULL, output_bytes = NULL,
-           output_verified_at = NULL WHERE id = ?`,
-      )
-      .run(jobId);
-    const result = await verifyMediaIntegrity(database, jobId, row.outputPath);
-    assert.equal(result.outcome, 'unverifiable');
-    database.close();
-
-    const raw = new DatabaseSync(config.databasePath);
-    raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
-    raw.exec('DELETE FROM schema_migrations WHERE version = 15');
-    raw.close();
-
-    database = openDatabase(config);
+test(
+  'a row finalized before #157 is unverifiable and the migration backfills it',
+  { skip: sqliteOnly },
+  async () => {
+    const dataDir = await mkdtemp(`${tmpdir()}/rewind-integrity-backfill-`);
+    const config = parseConfig({
+      REWIND_DATA_DIR: dataDir,
+      REWIND_HOST: '127.0.0.1',
+      REWIND_FFMPEG_BIN: 'ffmpeg',
+    });
     try {
-      await backfillMediaIntegrity(database, config.dataDir);
-      const backfilled = storedIntegrity(database, jobId);
-      assert.equal(backfilled.sha256, createHash('sha256').update(bytes).digest('hex'));
-      assert.equal(backfilled.byteLength, bytes.length);
-      assert.ok(backfilled.verifiedAt);
-      // Repairing twice is safe and leaves the same values.
-      migrateDatabase(database);
-      await backfillMediaIntegrity(database, config.dataDir);
-      assert.deepEqual({ ...storedIntegrity(database, jobId) }, { ...backfilled });
-    } finally {
-      database.close();
-    }
-  } finally {
-    await rm(dataDir, { recursive: true, force: true });
-  }
-});
+      let database = openFixtureDatabase(config);
+      const jobId = await finalizeOneClip({ database, config, dataDir }, 'integrity-backfill-1');
+      const row = storedIntegrity(database, jobId);
+      const bytes = await readFile(row.outputPath);
 
-test('legacy backfill releases writer locks while hashing and resumes after restart', async () => {
-  await withDatabase(async ({ database, config, dataDir }) => {
-    const jobIds = [
-      await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-a'),
-      await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-b'),
-    ].sort();
-    const expected = new Map(
-      await Promise.all(
-        jobIds.map(async (jobId) => {
-          const row = storedIntegrity(database, jobId);
-          const bytes = await readFile(row.outputPath);
-          return [jobId, createHash('sha256').update(bytes).digest('hex')];
-        }),
-      ),
-    );
-    database
-      .prepare(
-        `UPDATE media_jobs SET output_sha256 = NULL, output_bytes = NULL,
-           output_verified_at = NULL WHERE id IN (?, ?)`,
-      )
-      .run(...jobIds);
-    // Force the schema-only migration to replay, as after a crash between
-    // adding columns and finishing the separate backfill phase.
-    const raw = new DatabaseSync(config.databasePath);
-    raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
-    raw.exec('DELETE FROM schema_migrations WHERE version = 15');
-    raw.close();
-    migrateDatabase(database);
-
-    const competingWriter = new DatabaseSync(config.databasePath);
-    competingWriter.exec('PRAGMA busy_timeout = 100');
-    let hashCalls = 0;
-    await assert.rejects(
-      backfillMediaIntegrity(database, dataDir, {
-        hashOutput: async (path) => {
-          hashCalls += 1;
-          if (hashCalls === 1) {
-            // Hold a competing writer lock during the media read. This fails
-            // with SQLITE_BUSY if the migration already holds BEGIN IMMEDIATE.
-            competingWriter.exec('BEGIN IMMEDIATE');
-            try {
-              competingWriter
-                .prepare("UPDATE groups SET name = name WHERE id = 'demo-group'")
-                .run();
-              const integrity = await hashFileWithIdentity(path);
-              competingWriter.exec('COMMIT');
-              return integrity;
-            } catch (error) {
-              competingWriter.exec('ROLLBACK');
-              throw error;
-            }
-          }
-          throw new Error('simulated interruption after one committed receipt');
-        },
-      }),
-      /simulated interruption/,
-    );
-    competingWriter.close();
-    assert.equal(hashCalls, 2);
-    assert.equal(
+      // Recreate the pre-#157 shape: no recorded digest and no receipt.
       database
         .prepare(
-          `SELECT COUNT(*) AS count FROM media_jobs
-           WHERE id IN (?, ?) AND output_sha256 IS NOT NULL`,
+          `UPDATE media_jobs SET output_sha256 = NULL, output_bytes = NULL,
+           output_verified_at = NULL WHERE id = ?`,
         )
-        .get(...jobIds).count,
-      1,
-      'the first short receipt transaction should survive the simulated interruption',
-    );
+        .run(jobId);
+      const result = await verifyMediaIntegrity(database, jobId, row.outputPath);
+      assert.equal(result.outcome, 'unverifiable');
+      database.close();
 
-    // Reopening reapplies only the idempotent schema and resumes the missing
-    // row; the already-recorded receipt stays unchanged.
-    const resumed = openDatabase(config);
-    try {
-      await backfillMediaIntegrity(resumed, dataDir);
-      for (const jobId of jobIds) {
-        assert.equal(storedIntegrity(resumed, jobId).sha256, expected.get(jobId));
+      const raw = new DatabaseSync(config.databasePath);
+      raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
+      raw.exec('DELETE FROM schema_migrations WHERE version = 15');
+      raw.close();
+
+      database = openFixtureDatabase(config);
+      try {
+        await backfillMediaIntegrity(database, config.dataDir);
+        const backfilled = storedIntegrity(database, jobId);
+        assert.equal(backfilled.sha256, createHash('sha256').update(bytes).digest('hex'));
+        assert.equal(backfilled.byteLength, bytes.length);
+        assert.ok(backfilled.verifiedAt);
+        // Repairing twice is safe and leaves the same values.
+        migrateDatabase(database);
+        await backfillMediaIntegrity(database, config.dataDir);
+        assert.deepEqual({ ...storedIntegrity(database, jobId) }, { ...backfilled });
+      } finally {
+        database.close();
       }
     } finally {
-      resumed.close();
+      await rm(dataDir, { recursive: true, force: true });
     }
-  });
-});
+  },
+);
 
-test('the integrity migration is idempotent, preserves audit rows, and widens the event guard', async () => {
-  await withDatabase(async ({ config, database }) => {
-    database
-      .prepare(
-        `INSERT INTO audit_events (id, event_type, actor_member_id, resource_id, occurred_at, result)
-         VALUES ('legacy-audit', 'job.failed', 'demo-1', 'job:legacy-1', ?, 'failure')`,
-      )
-      .run(new Date().toISOString());
-    migrateDatabase(database);
-
-    assert.equal(
-      database.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id = 'legacy-audit'").get()
-        .count,
-      1,
-      'existing audit rows must survive the table rebuild',
-    );
-    assert.equal(
+test(
+  'legacy backfill releases writer locks while hashing and resumes after restart',
+  { skip: sqliteOnly },
+  async () => {
+    await withDatabase(async ({ database, config, dataDir }) => {
+      const jobIds = [
+        await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-a'),
+        await finalizeOneClip({ database, config, dataDir }, 'integrity-resume-b'),
+      ].sort();
+      const expected = new Map(
+        await Promise.all(
+          jobIds.map(async (jobId) => {
+            const row = storedIntegrity(database, jobId);
+            const bytes = await readFile(row.outputPath);
+            return [jobId, createHash('sha256').update(bytes).digest('hex')];
+          }),
+        ),
+      );
       database
         .prepare(
-          "SELECT COUNT(*) AS count FROM audit_events WHERE event_type = 'media.integrity_failed'",
+          `UPDATE media_jobs SET output_sha256 = NULL, output_bytes = NULL,
+           output_verified_at = NULL WHERE id IN (?, ?)`,
         )
-        .get().count,
-      0,
-    );
-    // The rebuilt table still indexes chronological and resource lookups.
-    const indexes = database
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'audit_events'")
-      .all()
-      .map((row) => row.name);
-    assert.ok(indexes.includes('audit_events_occurred_at_idx'));
-    assert.ok(indexes.includes('audit_events_resource_id_idx'));
-  });
-});
+        .run(...jobIds);
+      // Force the schema-only migration to replay, as after a crash between
+      // adding columns and finishing the separate backfill phase.
+      const raw = new DatabaseSync(config.databasePath);
+      raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
+      raw.exec('DELETE FROM schema_migrations WHERE version = 15');
+      raw.close();
+      migrateDatabase(database);
+
+      const competingWriter = new DatabaseSync(config.databasePath);
+      competingWriter.exec('PRAGMA busy_timeout = 100');
+      let hashCalls = 0;
+      await assert.rejects(
+        backfillMediaIntegrity(database, dataDir, {
+          hashOutput: async (path) => {
+            hashCalls += 1;
+            if (hashCalls === 1) {
+              // Hold a competing writer lock during the media read. This fails
+              // with SQLITE_BUSY if the migration already holds BEGIN IMMEDIATE.
+              competingWriter.exec('BEGIN IMMEDIATE');
+              try {
+                competingWriter
+                  .prepare("UPDATE groups SET name = name WHERE id = 'demo-group'")
+                  .run();
+                const integrity = await hashFileWithIdentity(path);
+                competingWriter.exec('COMMIT');
+                return integrity;
+              } catch (error) {
+                competingWriter.exec('ROLLBACK');
+                throw error;
+              }
+            }
+            throw new Error('simulated interruption after one committed receipt');
+          },
+        }),
+        /simulated interruption/,
+      );
+      competingWriter.close();
+      assert.equal(hashCalls, 2);
+      assert.equal(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM media_jobs
+           WHERE id IN (?, ?) AND output_sha256 IS NOT NULL`,
+          )
+          .get(...jobIds).count,
+        1,
+        'the first short receipt transaction should survive the simulated interruption',
+      );
+
+      // Reopening reapplies only the idempotent schema and resumes the missing
+      // row; the already-recorded receipt stays unchanged.
+      const resumed = openFixtureDatabase(config);
+      try {
+        await backfillMediaIntegrity(resumed, dataDir);
+        for (const jobId of jobIds) {
+          assert.equal(storedIntegrity(resumed, jobId).sha256, expected.get(jobId));
+        }
+      } finally {
+        resumed.close();
+      }
+    });
+  },
+);
+
+test(
+  'the integrity migration is idempotent, preserves audit rows, and widens the event guard',
+  { skip: sqliteOnly },
+  async () => {
+    await withDatabase(async ({ config, database }) => {
+      database
+        .prepare(
+          `INSERT INTO audit_events (id, event_type, actor_member_id, resource_id, occurred_at, result)
+         VALUES ('legacy-audit', 'job.failed', 'demo-1', 'job:legacy-1', ?, 'failure')`,
+        )
+        .run(new Date().toISOString());
+      migrateDatabase(database);
+
+      assert.equal(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM audit_events WHERE id = 'legacy-audit'")
+          .get().count,
+        1,
+        'existing audit rows must survive the table rebuild',
+      );
+      assert.equal(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM audit_events WHERE event_type = 'media.integrity_failed'",
+          )
+          .get().count,
+        0,
+      );
+      // The rebuilt table still indexes chronological and resource lookups.
+      const indexes = database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'audit_events'",
+        )
+        .all()
+        .map((row) => row.name);
+      assert.ok(indexes.includes('audit_events_occurred_at_idx'));
+      assert.ok(indexes.includes('audit_events_resource_id_idx'));
+    });
+  },
+);
 
 /** Insert one already-processed clip so a film can compile real retained
  * inputs. The recorded digest is computed from the bytes actually written. */
@@ -1240,7 +1252,7 @@ test('media streaming rejects a mixed snapshot after an in-place source mutation
   });
 });
 
-test('a published film whose bytes changed is reported delayed and never streamed', async () => {
+test('a published film whose bytes changed is never streamed', async () => {
   await withDatabase(async ({ config, database, dataDir }) => {
     const processedDir = resolve(dataDir, 'media', 'processed');
     const filmPath = resolve(processedDir, 'demo-film.mp4');
@@ -1272,30 +1284,30 @@ test('a published film whose bytes changed is reported delayed and never streame
     const address = server.address();
     const baseUrl = `http://127.0.0.1:${address.port}`;
     try {
-      const sessionResponse = await fetch(`${baseUrl}/sessions/demo`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ memberId: 'demo-1' }),
-      });
-      const session = await sessionResponse.json();
-      const query = `groupId=demo-group&sessionId=${encodeURIComponent(session.session.id)}`;
+      const session = await signInAs(database, 'demo-1');
+      const query = 'groupId=demo-group';
 
       // Healthy bytes: the premiere is ready and the film streams.
-      const ready = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
+      const ready = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`, {
+        headers: session.headers,
+      });
       const readyBody = await ready.json();
       assert.equal(readyBody.premiere.state, 'ready');
       const playback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
       assert.equal(playback.status, 200);
 
-      // Tampered bytes: the same request must stop advertising playback.
+      // Same-size tampering still reads as ready (status checks size only, #475);
+      // playback hashes the bytes, refuses them and audits once.
       const tampered = Buffer.from(bytes);
       tampered[tampered.length - 1] ^= 0xff;
       await writeFile(filmPath, tampered);
-      const broken = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`);
-      assert.deepEqual(await broken.json(), {
-        premiere: { state: 'delayed', cycleId: 'demo-cycle' },
+      const broken = await fetch(`${baseUrl}/cycles/demo-cycle/premiere?${query}`, {
+        headers: session.headers,
       });
-      const brokenPlayback = await fetch(`${baseUrl}/films/demo-film/play?${query}`);
+      assert.equal((await broken.json()).premiere.state, 'ready');
+      const brokenPlayback = await fetch(`${baseUrl}/films/demo-film/play?${query}`, {
+        headers: session.headers,
+      });
       assert.equal(brokenPlayback.status, 404);
       const audit = database
         .prepare(

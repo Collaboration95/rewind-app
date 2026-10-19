@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test';
+import { closeSettings, openChat } from './navigation.mjs';
 
 export async function createGroupInvitation(page, groupId) {
   const responsePromise = page.waitForResponse(
@@ -7,13 +8,16 @@ export async function createGroupInvitation(page, groupId) {
       new URL(response.url()).pathname ===
         `/api/real/groups/${encodeURIComponent(groupId)}/invites`,
   );
-  await page.getByTestId('real-group-create-invite').click();
+  await page.getByTestId('real-account-settings-button').click();
+  await page.getByTestId('real-settings-invite').click();
   const response = await responsePromise;
   expect(response.status()).toBe(201);
   const { invite } = await response.json();
   expect(invite.status).toBe('active');
   expect(invite.groupId).toBe(groupId);
   expect(Date.parse(invite.expiresAt)).toBeGreaterThan(Date.now());
+  await expect(page.getByTestId('real-group-invite-code')).toBeVisible();
+  await closeSettings(page);
   return invite;
 }
 
@@ -63,11 +67,18 @@ export async function verifySelectedGroupContext(
 ) {
   await expect(page.getByTestId('real-group-home')).toBeVisible();
   await expect(page.getByTestId('real-group-name-heading')).toHaveText(group.name);
+  await page.getByTestId('real-account-settings-button').click();
+  await page.getByTestId('real-settings-members').click();
   const profiles = page.getByTestId('real-group-members');
   await expect(profiles.getByTestId(/^real-group-member-/)).toHaveCount(2);
-  await expect(profiles.getByText(`${owner} · Owner`, { exact: true })).toBeVisible();
-  await expect(profiles.getByText(`${member} · Member`, { exact: true })).toBeVisible();
-  await expect(profiles.getByText(`${otherOwner} · Owner`, { exact: true })).toHaveCount(0);
+  await expect(
+    profiles.getByTestId(/^real-group-member-/).filter({ hasText: owner }),
+  ).toContainText('Owner');
+  await expect(
+    profiles.getByTestId(/^real-group-member-/).filter({ hasText: member }),
+  ).toContainText('Member');
+  await expect(profiles.getByText(otherOwner, { exact: true })).toHaveCount(0);
+  await closeSettings(page);
   const current = await page.evaluate(async () => {
     const response = await fetch('/api/real/groups/current', { credentials: 'same-origin' });
     return { status: response.status, body: await response.json() };
@@ -81,18 +92,21 @@ export async function verifySelectedGroupContext(
   await expect(page.getByTestId('camera-group-context')).toHaveText(`Group · ${group.name}`);
   // Inspect the real capability/permission state without requesting access.
   await expect(page.getByTestId(/^camera-(unsupported|permission-undecided)$/)).toBeVisible();
-  await page.getByRole('button', { name: 'Back to group', exact: true }).click();
+  await page.getByTestId('capture-back-to-group').click();
   await expect(page.getByTestId('real-group-name-heading')).toHaveText(group.name);
 
-  await page.getByTestId('real-group-chat-action').click();
-  await expect(page.getByTestId('real-chat-context')).toHaveText(`Group · ${group.name}`);
-  await expect(page.getByText('Connected', { exact: true })).toBeVisible();
+  await openChat(page, group.id);
+  await expect(page.getByTestId('real-group-name-heading')).toHaveText(group.name);
   const timeline = page.getByTestId('real-chat-timeline');
-  await expect(timeline.getByText(message, { exact: true })).toHaveCount(1);
-  await expect(timeline.getByText(otherMessage, { exact: true })).toHaveCount(0);
+  // A reply quote repeats its parent's text; count the message body controls.
+  const bodies = timeline.getByTestId(/^real-chat-message-/);
+  await expect(bodies.filter({ has: page.getByText(message, { exact: true }) })).toHaveCount(1);
+  await expect(bodies.filter({ has: page.getByText(otherMessage, { exact: true }) })).toHaveCount(
+    0,
+  );
   await expect(timeline.getByText(owner, { exact: true }).first()).toBeVisible();
   await expect(timeline.getByText(otherOwner, { exact: true })).toHaveCount(0);
-  await page.getByTestId('real-group-chat-back').click();
+  await page.getByTestId('real-group-nav-home').click();
 }
 
 export async function switchGroupThroughUi(page, group) {
@@ -102,6 +116,7 @@ export async function switchGroupThroughUi(page, group) {
       new URL(response.url()).pathname === '/api/real/groups/current' &&
       response.request().postDataJSON()?.groupId === group.id,
   );
+  await page.getByTestId('real-group-menu-button').click();
   await page.getByTestId(`switch-real-group-${group.id}`).click();
   const response = await responsePromise;
   expect(response.status()).toBe(200);

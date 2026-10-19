@@ -55,11 +55,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
+      - name: Fetch the comparison base commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REWIND_CHANGE_BASE: ${{ github.event.before }}
+        # The classifier compares two trees, so it needs the base commit but no history.
+        # A base that is gone (new branch, force-push, manual run) makes it fail safe:
+        # the deploy is not skipped.
+        run: |
+          if [ -n "$REWIND_CHANGE_BASE" ]; then
+            git fetch --no-tags --depth=1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$REWIND_CHANGE_BASE" ||
+              echo 'Base commit unavailable; the deploy will not be skipped.'
+          fi
       - name: Classify the exact checked change
         id: scope
         env:

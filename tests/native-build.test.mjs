@@ -120,10 +120,9 @@ test('staging pins accepted base, source/config/origin and excludes ambient cred
     for (const digest of ['sourceDigest', 'configDigest', 'originDigest'])
       assert.match(result.provenance[digest], /^[a-f0-9]{64}$/);
     await assert.rejects(readFile(join(result.source, '.env')), { code: 'ENOENT' });
-    assert.equal(
-      JSON.parse(await readFile(join(result.outputRoot, 'public-env.json')))
-        .EXPO_PUBLIC_DEMO_ACCESS,
-      'disabled',
+    assert.deepEqual(
+      Object.keys(JSON.parse(await readFile(join(result.outputRoot, 'public-env.json')))).sort(),
+      ['EXPO_PUBLIC_INVITE_WEB_ORIGIN', 'EXPO_PUBLIC_LOCAL_BASE_URL'],
     );
     await assert.rejects(prepareNativeBuild(c.options), { code: 'EEXIST' });
   }));
@@ -131,7 +130,7 @@ test('staging pins accepted base, source/config/origin and excludes ambient cred
 test('unmerged config overlays are labelled preview; unrelated dirty code/dependency changes are refused', async () =>
   fixture(async (c) => {
     const changed = structuredClone(app);
-    changed.expo.android.versionCode = 2;
+    changed.expo.android.versionCode = app.expo.android.versionCode + 1;
     await writeFile(join(c.root, 'app.json'), JSON.stringify(changed));
     await assert.rejects(prepareNativeBuild(c.options), /Unreviewed changes/);
     const result = await prepareNativeBuild({ ...c.options, overlays: ['app.json'] });

@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 
-import type { Premiere } from '../domain/premiere';
+import { parseFilmSegments, type FilmSegment, type Premiere } from '../domain/premiere';
 
 export interface RealAccount {
   id: string;
@@ -11,26 +11,66 @@ export interface RealAccount {
   updatedAt: string;
 }
 
+export type SignInMethod = 'cognito' | 'password';
+
 export interface RealAccountSession {
   account: RealAccount;
   idleExpiresAt: string;
-  absoluteExpiresAt: string;
+  absoluteExpiresAt?: string;
+  /** How this session was opened; an absent value means a password sign-in. */
+  signInMethod?: SignInMethod;
+}
+
+/** Which sign-in options the server offers (`GET /auth/config`). */
+export interface AuthConfig {
+  passwordSignIn: boolean;
+  cognito: boolean;
+}
+
+export const DEFAULT_AUTH_CONFIG: AuthConfig = { passwordSignIn: true, cognito: false };
+
+function parseSignInMethod(value: unknown): { signInMethod?: SignInMethod } {
+  return value === 'cognito' || value === 'password' ? { signInMethod: value } : {};
 }
 
 export type AuthState = 'loading' | 'entry' | 'active' | 'error';
 export type RegistrationOutcome =
-  'created' | 'invalid' | 'duplicate' | 'rate-limited' | 'unavailable';
+  | 'created'
+  | 'invalid'
+  | 'invalid-username'
+  | 'invalid-password'
+  | 'duplicate'
+  | 'rate-limited'
+  | 'unavailable';
+
+/**
+ * The server answers every rejected registration with one generic 400, so
+ * name the failing field from the same rules (server/src/auth/index.ts).
+ */
+export function invalidRegistrationOutcome(
+  username: string,
+  password: string,
+): 'invalid' | 'invalid-username' | 'invalid-password' {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/.test(username.trim())) return 'invalid-username';
+  if (password.length < 12 || password.length > 1024) return 'invalid-password';
+  return 'invalid';
+}
 export type AuthNotice =
   | 'expired'
   | 'revoked'
   | 'offline'
   | 'sign-in-failed'
+  | 'sign-in-throttled'
+  | 'unavailable'
   | 'revocation-unconfirmed'
   | 'local-credential-removal-failed'
   | 'sign-out-incomplete'
   | 'sign-out-recovery-pending'
   | 'sign-out-marker-cleanup-failed'
   | 'sign-out-marker-unavailable'
+  | 'deleted'
+  | 'cognito-failed'
+  | 'cognito-denied'
   | null;
 
 const SECURE_SESSION_KEY = 'rewind.real-account.session-token';
@@ -91,6 +131,13 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   }
 }
 
+/** Read throttling feedback only when a UI consumer is rejecting the response. */
+export async function rateLimitMessage(response: Response, fallback: string): Promise<string> {
+  if (response.status !== 429) return fallback;
+  const body = await readJson(response);
+  return typeof body.message === 'string' && body.message.trim() ? body.message : fallback;
+}
+
 export class RealAccountClient {
   private activeToken: string | undefined;
   private readonly fetcher: typeof fetch;
@@ -128,7 +175,13 @@ export class RealAccountClient {
   async login(
     username: string,
     password: string,
-  ): Promise<{ account: RealAccount; token?: string; expiresAt: string }> {
+  ): Promise<{
+    account: RealAccount;
+    token?: string;
+    expiresAt: string;
+    absoluteExpiresAt?: string;
+    signInMethod?: SignInMethod;
+  }> {
     this.assertSecureTransport();
     const response = await this.fetcher(
       authUrl(this.baseUrl, '/auth/login'),
@@ -163,7 +216,35 @@ export class RealAccountClient {
       }
       this.activeToken = token;
     }
-    return { account: body.account, expiresAt: body.expiresAt, ...(token ? { token } : {}) };
+    return {
+      account: body.account,
+      expiresAt: body.expiresAt,
+      ...(typeof body.absoluteExpiresAt === 'string'
+        ? { absoluteExpiresAt: body.absoluteExpiresAt }
+        : {}),
+      ...parseSignInMethod(body.signInMethod),
+      ...(token ? { token } : {}),
+    };
+  }
+
+  /** Public sign-in options; the caller treats any failure as "password only". */
+  async fetchAuthConfig(): Promise<AuthConfig> {
+    this.assertSecureTransport();
+    const response = await this.fetcher(
+      authUrl(this.baseUrl, '/auth/config'),
+      requestOptions({ method: 'GET' }),
+    );
+    if (!response.ok) throw new AuthRequestError(response.status, 'response');
+    const body = await readJson(response);
+    if (typeof body.passwordSignIn !== 'boolean' || typeof body.cognito !== 'boolean') {
+      throw new AuthRequestError(502, 'response');
+    }
+    return { passwordSignIn: body.passwordSignIn, cognito: body.cognito };
+  }
+
+  /** Full-page URL that starts the server-side Cognito sign-in and returns to `returnTo`. */
+  cognitoStartUrl(returnTo: string): string {
+    return authUrl(this.baseUrl, `/auth/cognito/start?return=${encodeURIComponent(returnTo)}`);
   }
 
   async restore(): Promise<RealAccountSession | null> {
@@ -193,10 +274,12 @@ export class RealAccountClient {
       account: body.account,
       idleExpiresAt: body.idleExpiresAt,
       absoluteExpiresAt: body.absoluteExpiresAt,
+      ...parseSignInMethod(body.signInMethod),
     };
   }
 
-  async logout(token?: string): Promise<void> {
+  /** Returns the identity provider's sign-out URL when the session came from one. */
+  async logout(token?: string): Promise<string | undefined> {
     this.assertSecureTransport();
     const credential =
       Platform.OS === 'web'
@@ -211,6 +294,7 @@ export class RealAccountClient {
     const body = await readJson(response);
     if (body.signedOut !== true) throw new AuthRequestError(502, 'logout');
     this.activeToken = undefined;
+    return typeof body.logoutUrl === 'string' && body.logoutUrl ? body.logoutUrl : undefined;
   }
 
   async clearStoredToken(): Promise<void> {
@@ -262,7 +346,7 @@ export class RealAccountClient {
   }
 }
 
-function isRealAccount(value: unknown): value is RealAccount {
+export function isRealAccount(value: unknown): value is RealAccount {
   if (!value || typeof value !== 'object') return false;
   const account = value as Record<string, unknown>;
   return (
@@ -302,6 +386,7 @@ export interface RealArchiveFilm {
   publishedAt: string;
   downloadUrl: string;
   playbackUrl: string | null;
+  segments?: FilmSegment[];
 }
 
 export interface RealArchiveClip {
@@ -419,12 +504,14 @@ function mapRealArchivePage(baseUrl: string, value: unknown): RealArchivePage {
     if (!id || !cycleId || !publishedAt || !downloadUrl) {
       throw new AuthRequestError(502, 'response');
     }
+    const segments = parseFilmSegments(film?.segments);
     return {
       id,
       cycleId,
       publishedAt,
       downloadUrl,
       playbackUrl: optionalCapabilityUrl(baseUrl, film?.playbackPath),
+      ...(segments ? { segments } : {}),
     };
   };
   const mapClip = (value: unknown): RealArchiveClip => {
@@ -478,7 +565,14 @@ function mapRealPremiere(baseUrl: string, value: unknown, cycleId: string): Prem
       metadata?.playbackPath ?? film?.playbackPath,
     );
     if (!filmId || !playbackUrl) throw new AuthRequestError(502, 'response');
-    return { state: 'ready', cycleId: responseCycleId, filmId, playbackUrl };
+    const segments = parseFilmSegments(metadata?.segments);
+    return {
+      state: 'ready',
+      cycleId: responseCycleId,
+      filmId,
+      playbackUrl,
+      ...(segments ? { segments } : {}),
+    };
   }
   throw new AuthRequestError(502, 'response');
 }

@@ -459,7 +459,7 @@ export async function openMediaWithIntegrity(
 export interface IntegrityAuditInput {
   jobId: string;
   kind: 'clip' | 'film' | 'download';
-  result: MediaIntegrityResult;
+  result?: MediaIntegrityResult;
   actorMemberId?: string | null;
   timestamp?: string;
 }

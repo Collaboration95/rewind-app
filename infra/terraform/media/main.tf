@@ -86,6 +86,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
     }
   }
 
+  # Safe for the permanent archive (#513): every stored object gets a fresh
+  # random key and the app deletes by exact version ID, so a version the
+  # database references never becomes noncurrent. Only manual overwrites and
+  # the incoming expiry above leave noncurrent versions for this rule.
   rule {
     id     = "expire-old-versions"
     status = "Enabled"
@@ -133,6 +137,13 @@ resource "aws_iam_user" "runtime" {
 }
 
 data "aws_iam_policy_document" "runtime" {
+  # Account deletion removes the person's Cognito user (this pool only).
+  statement {
+    sid       = "DeleteCognitoUser"
+    actions   = ["cognito-idp:AdminDeleteUser"]
+    resources = [aws_cognito_user_pool.rewind.arn]
+  }
+
   statement {
     sid = "MediaObjects"
     actions = [
@@ -153,6 +164,32 @@ data "aws_iam_policy_document" "runtime" {
     actions   = ["s3:ListBucket", "s3:ListBucketVersions"]
     resources = [aws_s3_bucket.media.arn]
   }
+
+  # The daily host backup uploads with these keys, and the PostgreSQL import
+  # (deploy/database-import.sh) reads a backup back. No delete: the backup
+  # bucket is versioned, so earlier backups cannot be overwritten or removed.
+  dynamic "statement" {
+    for_each = var.backup_prefix_arn == null ? [] : [var.backup_prefix_arn]
+    content {
+      sid       = "HostBackups"
+      actions   = ["s3:PutObject", "s3:GetObject"]
+      resources = [statement.value]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = var.backup_prefix_arn == null ? [] : [var.backup_prefix_arn]
+    content {
+      sid       = "ListHostBackups"
+      actions   = ["s3:ListBucket"]
+      resources = [regex("^arn:aws:s3:::[^/]+", statement.value)]
+      condition {
+        test     = "StringLike"
+        variable = "s3:prefix"
+        values   = [replace(statement.value, "/^arn:aws:s3:::[^/]+\\//", "")]
+      }
+    }
+  }
 }
 
 resource "aws_iam_user_policy" "runtime" {
@@ -164,6 +201,7 @@ resource "aws_iam_user_policy" "runtime" {
 resource "aws_iam_access_key" "runtime" {
   user = aws_iam_user.runtime.name
 }
+
 
 # Hosted settings for the dev deploy. Terraform writes them here and the deploy
 # workflow streams them to the server (deploy/release-host.sh configure), so
@@ -185,7 +223,12 @@ resource "aws_s3_object" "hosted_env" {
     "AWS_SECRET_ACCESS_KEY=${aws_iam_access_key.runtime.secret}",
     "REWIND_REMINDER_VAPID_SUBJECT=${var.web_push_subject}",
     "REWIND_REQUEST_TIMING=true",
-  ], var.extra_hosted_settings, [""])))
+    "REWIND_AUTH_PASSWORD=${var.auth_password}",
+    "REWIND_COGNITO_REGION=${var.region}",
+    "REWIND_COGNITO_USER_POOL_ID=${aws_cognito_user_pool.rewind.id}",
+    "REWIND_COGNITO_CLIENT_ID=${aws_cognito_user_pool_client.rewind.id}",
+    "REWIND_COGNITO_DOMAIN=${local.cognito_domain}",
+  ], local.database_hosted_settings, var.extra_hosted_settings, [""])))
 }
 
 data "aws_iam_policy_document" "deploy_reads_hosted_env" {

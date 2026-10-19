@@ -3,9 +3,9 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRealAccount, authenticateRealAccount, revokeRealSession } =
   await import('../dist/auth/index.js');
 const { createRealGroup } = await import('../dist/groups/real.js');
@@ -16,7 +16,7 @@ const now = new Date('2026-10-02T12:00:00.000Z');
 
 test('media capabilities pin one real session/group/released asset and fail closed after revocation, expiry or substitution', async () => {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-media-capabilities-`);
-  const database = openDatabase(parseConfig({ REWIND_DATA_DIR: dataDir }));
+  const database = openFixtureDatabase(parseConfig({ REWIND_DATA_DIR: dataDir }));
   try {
     const created = await createRealAccount(
       database,

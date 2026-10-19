@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
@@ -11,6 +11,10 @@ import test from 'node:test';
 
 import { apiTarget, createProductionWebServer } from '../scripts/production-web-proxy.mjs';
 
+const securityHeaders = await readFile(
+  new URL('../deploy/security-headers.conf', import.meta.url),
+  'utf8',
+);
 const nginx = await readFile(new URL('../deploy/nginx.conf', import.meta.url), 'utf8');
 const compose = await readFile(new URL('../deploy/compose.yaml', import.meta.url), 'utf8');
 const dockerfile = await readFile(new URL('../deploy/web.Dockerfile', import.meta.url), 'utf8');
@@ -42,7 +46,7 @@ test('production web proxy keeps API and SPA routing boundaries explicit', () =>
   }
   assert.match(
     nginx,
-    /location @runtime_unavailable \{[\s\S]*?return 503 '\{"error":"runtime_unavailable","message":"The Demo runtime is unavailable\."\}';/,
+    /location @runtime_unavailable \{[\s\S]*?return 503 '\{"error":"runtime_unavailable","message":"The runtime is unavailable\."\}';/,
   );
   assert.match(nginx, /try_files \$uri =404/);
   assert.match(nginx, /try_files \$uri \$uri\/ \/index\.html/);
@@ -60,6 +64,15 @@ test('Compose starts the web proxy only after the healthy runtime', () => {
   assert.match(compose, /REWIND_ALLOW_ORIGIN:/);
   assert.match(compose, /REWIND_ORIGIN_AUTH_SECRET: '\$\{REWIND_ORIGIN_AUTH_SECRET:-\}'/);
   assert.doesNotMatch(compose, /web:[\s\S]*?REWIND_ORIGIN_AUTH_SECRET/);
+  for (const key of [
+    'REWIND_AUTH_PASSWORD',
+    'REWIND_COGNITO_REGION',
+    'REWIND_COGNITO_USER_POOL_ID',
+    'REWIND_COGNITO_CLIENT_ID',
+    'REWIND_COGNITO_DOMAIN',
+  ]) {
+    assert.match(compose, new RegExp(`${key}: '\\$\\{${key}:-\\}'`));
+  }
   assert.doesNotMatch(compose, /REWIND_ALLOW_INSECURE_LOCAL_AUTH/);
   assert.match(compose, /rewind-demo-web/);
   assert.match(compose, /http:\/\/127\.0\.0\.1:8080\//);
@@ -117,6 +130,138 @@ test('runtime-unavailable API responses stay JSON and never fall back to the she
   }
 });
 
+test('an idle event stream outlives the request timeout and closes upstream with the browser', async () => {
+  const staticDir = await mkdtemp(join(tmpdir(), 'rewind-web-stream-'));
+  let upstreamClosed;
+  const upstreamGone = new Promise((resolve) => {
+    upstreamClosed = resolve;
+  });
+  const upstream = createServer((request, response) => {
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    response.write(': open\n\n');
+    response.once('close', upstreamClosed);
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  const web = createProductionWebServer({
+    staticDir,
+    runtimeOrigin: `http://127.0.0.1:${upstream.address().port}`,
+    runtimeTimeoutMs: 100,
+  });
+  web.listen(0, '127.0.0.1');
+  await once(web, 'listening');
+  const controller = new AbortController();
+  try {
+    const response = await fetch(`http://127.0.0.1:${web.address().port}/api/realtime/stream`, {
+      signal: controller.signal,
+    });
+    assert.equal(response.status, 200);
+    const reader = response.body.getReader();
+    await reader.read();
+    // Idle for several request timeouts: the stream must stay open.
+    const next = reader.read();
+    const outcome = await Promise.race([
+      next.then(() => 'ended'),
+      new Promise((resolve) => setTimeout(() => resolve('open'), 400)),
+    ]);
+    assert.equal(outcome, 'open');
+    controller.abort();
+    await next.catch(() => {});
+    await upstreamGone;
+  } finally {
+    await new Promise((resolve) => web.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+    await rm(staticDir, { recursive: true, force: true });
+  }
+});
+
+test('switching full-chat and unread streams repeatedly closes both proxy upstreams', async () => {
+  const streams = [];
+  const upstream = createServer((request, response) => {
+    const stream = { path: request.url, closed: false };
+    stream.done = new Promise((resolve) => {
+      response.once('close', () => {
+        stream.closed = true;
+        resolve();
+      });
+    });
+    streams.push(stream);
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    response.write(': connected\n\n');
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  const web = createProductionWebServer({
+    staticDir: tmpdir(),
+    runtimeOrigin: `http://127.0.0.1:${upstream.address().port}`,
+  });
+  web.listen(0, '127.0.0.1');
+  await once(web, 'listening');
+  const controllers = [];
+  try {
+    for (let group = 0; group < 8; group++) {
+      const path = `/realtime/groups/group-${group}/events`;
+      const current = [];
+      for (const query of ['?sinceEventId=0', '?startFromLatest=true&metadataOnly=true']) {
+        const controller = new AbortController();
+        controllers.push(controller);
+        const response = await fetch(`http://127.0.0.1:${web.address().port}/api${path}${query}`, {
+          signal: controller.signal,
+          headers: { Accept: 'text/event-stream' },
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        const reader = response.body.getReader();
+        assert.equal((await reader.read()).done, false);
+        current.push(streams.at(-1));
+        assert.equal(streams.at(-1).path, path + query);
+      }
+      assert.equal(streams.filter((stream) => !stream.closed).length, 2);
+      for (const controller of controllers) controller.abort();
+      await Promise.all(current.map((stream) => stream.done));
+      assert.equal(streams.filter((stream) => !stream.closed).length, 0);
+    }
+    assert.equal(streams.length, 16);
+  } finally {
+    for (const controller of controllers) controller.abort();
+    web.closeAllConnections();
+    upstream.closeAllConnections();
+    await new Promise((resolve) => web.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});
+
+test('public legal pages resolve at extensionless paths without the SPA shell', async () => {
+  assert.match(
+    nginx,
+    /location ~ \^\/\(privacy\|support\|terms\)\$ \{\s*include \/etc\/nginx\/security-headers\.conf;\s*try_files \/\$1\.html =404;/,
+  );
+  for (const page of ['privacy', 'support', 'terms'])
+    await access(new URL(`../public/${page}.html`, import.meta.url));
+  const staticDir = await mkdtemp(join(tmpdir(), 'rewind-web-legal-'));
+  const web = createProductionWebServer({ staticDir, runtimeOrigin: 'http://127.0.0.1:9' });
+  web.listen(0, '127.0.0.1');
+  await once(web, 'listening');
+  try {
+    await writeFile(join(staticDir, 'index.html'), 'shell');
+    for (const page of ['privacy', 'support', 'terms'])
+      await writeFile(join(staticDir, `${page}.html`), `${page} page`);
+    const base = `http://127.0.0.1:${web.address().port}`;
+    for (const page of ['privacy', 'support', 'terms']) {
+      for (const path of [`/${page}`, `/${page}.html`]) {
+        const response = await fetch(base + path);
+        assert.equal(response.status, 200);
+        assert.match(response.headers.get('content-type') ?? '', /text\/html/);
+        assert.equal(await response.text(), `${page} page`);
+      }
+    }
+    assert.equal(await (await fetch(`${base}/privacy/extra`)).text(), 'shell');
+  } finally {
+    await new Promise((resolve) => web.close(resolve));
+    await rm(staticDir, { recursive: true, force: true });
+  }
+});
+
 test('API path references cannot replace the configured runtime authority', () => {
   const runtimeOrigin = new URL('http://runtime.internal');
   const forgedPath = new URL('/api//attacker.example/path?source=test', 'http://rewind-web.local');
@@ -159,7 +304,7 @@ test(
     });
     const safe = JSON.stringify({
       error: 'runtime_unavailable',
-      message: 'The Demo runtime is unavailable.',
+      message: 'The runtime is unavailable.',
     });
     await writeFile(
       join(root, 'default.conf'),
@@ -212,6 +357,8 @@ test(
         network,
         '-v',
         `${join(root, 'default.conf')}:/etc/nginx/conf.d/default.conf:ro`,
+        '-v',
+        `${new URL('../deploy/security-headers.conf', import.meta.url).pathname}:/etc/nginx/security-headers.conf:ro`,
         process.env.REWIND_NGINX_TEST_IMAGE,
       );
       await docker('exec', web, 'nginx', '-t');
@@ -241,6 +388,10 @@ test(
         assert.equal(response.status, 503);
         assert.match(response.headers['content-type'], /application\/json/);
         assert.equal(response.headers['cache-control'], 'no-store');
+        assert.equal(response.headers['x-content-type-options'], 'nosniff');
+        assert.equal(response.headers['x-frame-options'], 'DENY');
+        assert.equal(response.headers['content-security-policy'], "frame-ancestors 'none'");
+        assert.equal(response.headers['strict-transport-security'], 'max-age=31536000');
         if (path === '/api' || path.endsWith('upload-intents')) {
           assert.equal(response.body, body);
           assert.equal(response.headers['retry-after'], '30');
@@ -261,3 +412,24 @@ test(
     }
   },
 );
+
+test('every nginx location includes the shared always-on security headers', () => {
+  const locations = [...nginx.matchAll(/location [^\n]+ \{([\s\S]*?)\n    \}/g)];
+  assert.equal(locations.length, 7);
+  for (const [, location] of locations) {
+    assert.match(location, /include \/etc\/nginx\/security-headers\.conf;/);
+  }
+  for (const [name, value] of [
+    ['X-Content-Type-Options', 'nosniff'],
+    ['Referrer-Policy', 'strict-origin-when-cross-origin'],
+    ['X-Frame-Options', 'DENY'],
+    ['Strict-Transport-Security', 'max-age=31536000'],
+    ['Content-Security-Policy', "frame-ancestors 'none'"],
+  ])
+    assert.ok(securityHeaders.includes(`add_header ${name} "${value}" always;`));
+  assert.match(securityHeaders, /Content-Security-Policy-Report-Only "default-src 'self';/);
+  assert.match(
+    dockerfile,
+    /COPY deploy\/security-headers\.conf \/etc\/nginx\/security-headers\.conf/,
+  );
+});

@@ -4,13 +4,12 @@ import {
   INVITE_LINK_WEB_PATH,
   isValidInviteCode,
   normalizeInviteCode,
-  type LocalInvite,
 } from '../domain/invites';
 
 export interface InviteLinkPayload {
   code: string;
   expiresAt: string;
-  /** Present for real-account invites; legacy Demo links remain group-agnostic. */
+  /** Present for real-account invites; links without it carry no group. */
   groupId?: string;
 }
 
@@ -20,7 +19,7 @@ export type InviteLinkParseResult =
 export interface CreateInviteLinkOptions {
   platform: 'native' | 'web';
   webOrigin?: string;
-  /** Used only for real-account invitation links; Demo links stay group-agnostic. */
+  /** Used only for real-account invitation links. */
   groupId?: string;
   now?: number;
 }
@@ -50,7 +49,7 @@ function normalizeWebOrigin(origin: string): string | null {
  * identity, status, and member data are deliberately not serialized.
  */
 export function createInviteLink(
-  invite: Pick<LocalInvite, 'code' | 'status' | 'expiresAt'>,
+  invite: { code: string; status: 'active' | 'used' | 'expired'; expiresAt: string },
   options: CreateInviteLinkOptions,
 ): string | null {
   const now = options.now ?? Date.now();

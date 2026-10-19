@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { BUILT_IN_PROMPTS } from '../domain/groups';
-import { COLORS } from '../theme';
+import { WARM } from '../ui/tokens';
+import { userMessage } from '../domain/user-message';
 
 interface Preference {
   enabled: boolean;
@@ -100,11 +101,7 @@ export function RealGroupSettings<T extends SettingsGroup>({
       );
     } catch (error) {
       if (context === contextVersion.current)
-        setMessage(
-          error instanceof Error
-            ? error.message
-            : 'Settings could not be saved. Retry when connected.',
-        );
+        setMessage(userMessage(error, 'Settings could not be saved. Retry when connected.'));
     } finally {
       if (context === contextVersion.current) setPending(false);
     }
@@ -257,16 +254,16 @@ export function RealGroupSettings<T extends SettingsGroup>({
 
 const styles = StyleSheet.create({
   panel: { gap: 10, marginVertical: 18 },
-  title: { color: COLORS.ink, fontSize: 13, fontWeight: '700', letterSpacing: 1 },
-  body: { color: COLORS.ink, fontSize: 15, lineHeight: 22 },
+  title: { color: WARM.ink, fontSize: 13, fontWeight: '700', letterSpacing: 1 },
+  body: { color: WARM.ink, fontSize: 15, lineHeight: 22 },
   input: {
-    color: COLORS.ink,
+    color: WARM.ink,
     borderWidth: 1,
-    borderColor: COLORS.ink,
+    borderColor: WARM.ink,
     padding: 12,
     borderRadius: 6,
     minHeight: 44,
   },
   action: { minHeight: 44, paddingVertical: 12 },
-  button: { color: COLORS.ink, fontSize: 15, fontWeight: '600' },
+  button: { color: WARM.ink, fontSize: 15, fontWeight: '600' },
 });

@@ -30,9 +30,82 @@ export interface RuntimeConfig {
   uploadTimeoutMs: number;
   maxConcurrentIntakes: number;
   maxConcurrentProcessing: number;
+  /** Unset keeps the local SQLite file at databasePath. */
+  database?: PostgresRuntimeConfig | null;
   /** Unset preserves legacy disk paths; opt-in stores use immutable references. */
   media?: MediaRuntimeConfig | null;
   reminders?: ReminderProviderConfig | null;
+  /** Password sign-in and registration. Always false on release. */
+  authPassword?: boolean;
+  /** Cognito Managed Login; unset keeps password sign-in as the only path. */
+  cognito?: CognitoRuntimeConfig | null;
+}
+
+export interface CognitoRuntimeConfig {
+  region: string;
+  userPoolId: string;
+  clientId: string;
+  /** Hosted UI host, e.g. rewind-dev-123.auth.ap-southeast-1.amazoncognito.com. */
+  domain: string;
+}
+
+export interface PostgresRuntimeConfig {
+  url: string;
+  host: string;
+  /** verify: TLS with the bundled Amazon RDS CA. disable: loopback only. */
+  tls: 'verify' | 'disable';
+  /** Recorded in the database on first start; a mismatch refuses to start. */
+  environment: string;
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+function parseDatabaseConfig(env: NodeJS.ProcessEnv): PostgresRuntimeConfig | null {
+  const url = env.REWIND_DATABASE_URL?.trim();
+  if (!url) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ConfigError(
+      'REWIND_DATABASE_URL is not a valid URL.',
+      'Use postgres://USER:PASSWORD@HOST:5432/DATABASE, or leave it unset for local SQLite.',
+    );
+  }
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol) || !parsed.hostname) {
+    throw new ConfigError(
+      'REWIND_DATABASE_URL must be a postgres:// URL with a host.',
+      'Use postgres://USER:PASSWORD@HOST:5432/DATABASE, or leave it unset for local SQLite.',
+    );
+  }
+  if (parsed.searchParams.has('sslmode')) {
+    throw new ConfigError(
+      'REWIND_DATABASE_URL must not carry sslmode.',
+      'Set REWIND_DATABASE_TLS=verify (default) or disable instead.',
+    );
+  }
+  const tls = env.REWIND_DATABASE_TLS?.trim() || 'verify';
+  if (tls !== 'verify' && tls !== 'disable') {
+    throw new ConfigError(
+      'REWIND_DATABASE_TLS must be verify or disable.',
+      'Leave it unset to verify TLS against the bundled Amazon RDS certificates.',
+    );
+  }
+  if (tls === 'disable' && !LOOPBACK_HOSTS.has(parsed.hostname)) {
+    throw new ConfigError(
+      'REWIND_DATABASE_TLS=disable is only allowed for a loopback database.',
+      'Remote databases must use TLS; leave REWIND_DATABASE_TLS unset.',
+    );
+  }
+  const environment =
+    env.REWIND_DATABASE_ENVIRONMENT?.trim() || env.REWIND_MEDIA_ENVIRONMENT?.trim() || 'local';
+  if (!/^[a-z][a-z0-9-]{0,31}$/.test(environment)) {
+    throw new ConfigError(
+      'REWIND_DATABASE_ENVIRONMENT must be a short lowercase name such as dev or release.',
+      'It defaults to REWIND_MEDIA_ENVIRONMENT, then local.',
+    );
+  }
+  return { url, host: parsed.hostname, tls, environment };
 }
 
 export class ConfigError extends Error {
@@ -118,8 +191,8 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
       env.REWIND_ALLOW_INSECURE_LOCAL_AUTH?.trim().toLowerCase() ?? '',
     ),
     requestTiming: ['1', 'true'].includes(env.REWIND_REQUEST_TIMING?.trim().toLowerCase() ?? ''),
-    // The product default is four weeks; a short value supports demo and
-    // local reveal testing (for example 1440 for a one-day cycle).
+    // The product default is four weeks; a short value supports local reveal
+    // testing (for example 1440 for a one-day cycle).
     realCycleDurationMs:
       parsePositiveInteger(
         env.REWIND_REAL_CYCLE_MINUTES,
@@ -151,9 +224,61 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig
       DEFAULT_HTTP_MAX_CONCURRENT_PROCESSING,
       64,
     ),
+    database: parseDatabaseConfig(env),
     media: parseMediaConfig(env, dataDir),
     reminders: parseReminderConfig(env),
+    ...parseAuthConfig(env),
   };
+}
+
+function parseBoolean(value: string | undefined, name: string, fallback: boolean): boolean {
+  const text = value?.trim().toLowerCase();
+  if (!text) return fallback;
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  throw new ConfigError(`${name} must be true or false.`, `Leave ${name} unset for the default.`);
+}
+
+function parseCognitoConfig(env: NodeJS.ProcessEnv): CognitoRuntimeConfig | null {
+  const region = env.REWIND_COGNITO_REGION?.trim() ?? '';
+  const userPoolId = env.REWIND_COGNITO_USER_POOL_ID?.trim() ?? '';
+  const clientId = env.REWIND_COGNITO_CLIENT_ID?.trim() ?? '';
+  const domain = env.REWIND_COGNITO_DOMAIN?.trim() ?? '';
+  if (!region && !userPoolId && !clientId && !domain) return null;
+  if (
+    !/^[a-z]{2}(?:-[a-z]+)+-\d+$/.test(region) ||
+    !/^[a-z]{2}(?:-[a-z]+)+-\d+_[A-Za-z0-9]+$/.test(userPoolId) ||
+    !/^[A-Za-z0-9]{10,64}$/.test(clientId) ||
+    !/^[a-z0-9][a-z0-9.-]*\.amazoncognito\.com$/.test(domain)
+  ) {
+    throw new ConfigError(
+      'The Cognito settings are incomplete or invalid.',
+      'Set REWIND_COGNITO_REGION, _USER_POOL_ID, _CLIENT_ID and _DOMAIN (host only) together, or leave them all unset.',
+    );
+  }
+  return { region, userPoolId, clientId, domain };
+}
+
+/** Release must never verify passwords: refuse to start rather than allow it. */
+function parseAuthConfig(env: NodeJS.ProcessEnv): Pick<RuntimeConfig, 'authPassword' | 'cognito'> {
+  const authPassword = parseBoolean(env.REWIND_AUTH_PASSWORD, 'REWIND_AUTH_PASSWORD', true);
+  const cognito = parseCognitoConfig(env);
+  const release =
+    env.REWIND_MEDIA_ENVIRONMENT?.trim() === 'release' ||
+    env.REWIND_DATABASE_ENVIRONMENT?.trim() === 'release';
+  if (release && authPassword) {
+    throw new ConfigError(
+      'Password sign-in is not allowed on the release environment.',
+      'Set REWIND_AUTH_PASSWORD=false and the REWIND_COGNITO_* settings.',
+    );
+  }
+  if (!authPassword && !cognito) {
+    throw new ConfigError(
+      'REWIND_AUTH_PASSWORD=false needs the REWIND_COGNITO_* settings, or nobody could sign in.',
+      'Set REWIND_COGNITO_REGION, _USER_POOL_ID, _CLIENT_ID and _DOMAIN.',
+    );
+  }
+  return { authPassword, cognito };
 }
 
 function parseReminderConfig(env: NodeJS.ProcessEnv): ReminderProviderConfig | null {

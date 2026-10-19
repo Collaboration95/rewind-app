@@ -1,4 +1,5 @@
 import type { RewindDatabase } from '../db';
+import { isPostgres } from '../postgres/runtime';
 import { cyclePhase } from '../cycles/engine';
 import { contributionQuotaWindow, MAX_CONTRIBUTION_COUNT, MAX_CONTRIBUTION_SECONDS } from './index';
 
@@ -47,6 +48,8 @@ export interface LedgerEntry {
   jobId: string | null;
   state: LedgerState;
   durationSeconds: number;
+  /** Photo or video: shown with the day and length, never the media itself. */
+  mediaType: 'photo' | 'video';
   createdAt: string;
   updatedAt: string;
   attempts: number;
@@ -116,6 +119,7 @@ interface LedgerRow {
   errorCode?: unknown;
   deletedAt?: unknown;
   replacedBy?: unknown;
+  mediaType?: unknown;
 }
 
 interface LedgerCursor {
@@ -161,6 +165,8 @@ function indexMatches(
 
 /** True when the ledger's additive column and scope index are both present. */
 export function contributionLedgerSchemaReady(database: RewindDatabase): boolean {
+  // PostgreSQL starts from the complete baseline; repairs are SQLite-only.
+  if (isPostgres(database)) return true;
   return (
     tableColumns(database, 'contributions').has(REPLACED_BY_COLUMN) &&
     indexMatches(database, LEDGER_INDEX_NAME, false, LEDGER_INDEX_COLUMNS, 'contributions')
@@ -173,6 +179,7 @@ export function contributionLedgerSchemaReady(database: RewindDatabase): boolean
  * server/src/db.ts; this module never writes during normal request handling.
  */
 export function ensureContributionLedgerSchema(database: RewindDatabase): void {
+  if (isPostgres(database)) return;
   if (!tableColumns(database, 'contributions').has(REPLACED_BY_COLUMN)) {
     database.exec(
       `ALTER TABLE contributions ADD COLUMN ${REPLACED_BY_COLUMN} TEXT REFERENCES contributions(id) ON DELETE SET NULL`,
@@ -359,13 +366,18 @@ function mapEntry(row: LedgerRow): LedgerEntry {
             : rawStatus === 'pending'
               ? 'queued'
               : 'failed';
-  const durationSeconds = boundedNumber(row.durationSeconds, 0, Number.MAX_SAFE_INTEGER);
+  // Preserve the sealed measurement; display rounding belongs to the client.
+  const measuredDuration = Number(row.durationSeconds);
+  const durationSeconds = Number.isFinite(measuredDuration)
+    ? Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, measuredDuration))
+    : 0;
   const createdAt = String(row.createdAt ?? '');
   return {
     contributionId: String(row.contributionId ?? ''),
     jobId: row.jobId === null || row.jobId === undefined ? null : String(row.jobId),
     state,
     durationSeconds,
+    mediaType: row.mediaType === 'photo' ? 'photo' : 'video',
     createdAt,
     updatedAt: String(row.updatedAt ?? deletedAt ?? createdAt),
     attempts: boundedNumber(row.attempts, 0, Number.MAX_SAFE_INTEGER),
@@ -500,7 +512,8 @@ export function listContributionLedger(
               c.duration_seconds AS durationSeconds, c.created_at AS createdAt,
               COALESCE(j.updated_at, j.processing_started_at, c.created_at) AS updatedAt,
               j.attempt_count AS attempts, j.progress AS progress, j.error_code AS errorCode,
-              c.deleted_at AS deletedAt, c.${REPLACED_BY_COLUMN} AS replacedBy
+              c.deleted_at AS deletedAt, c.${REPLACED_BY_COLUMN} AS replacedBy,
+              COALESCE(j.media_type, 'video') AS mediaType
        FROM contributions c
        JOIN cycles cy ON cy.id = c.cycle_id
        LEFT JOIN media_jobs j ON j.contribution_id = c.id AND j.kind = 'clip'
@@ -515,7 +528,8 @@ export function listContributionLedger(
               c.duration_seconds AS durationSeconds, c.created_at AS createdAt,
               COALESCE(j.updated_at, j.processing_started_at, c.created_at) AS updatedAt,
               j.attempt_count AS attempts, j.progress AS progress, j.error_code AS errorCode,
-              c.deleted_at AS deletedAt, c.${REPLACED_BY_COLUMN} AS replacedBy
+              c.deleted_at AS deletedAt, c.${REPLACED_BY_COLUMN} AS replacedBy,
+              COALESCE(j.media_type, 'video') AS mediaType
        FROM contributions c
        JOIN cycles cy ON cy.id = c.cycle_id
        LEFT JOIN media_jobs j ON j.contribution_id = c.id AND j.kind = 'clip'

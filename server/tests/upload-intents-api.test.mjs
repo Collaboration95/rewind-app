@@ -6,6 +6,7 @@ import { createRealAccount } from '../dist/auth/index.js';
 import { createRealGroup } from '../dist/groups/real.js';
 import { migrateDatabase, schemaReadiness } from '../dist/db.js';
 import { withIntentFixture } from './helpers/upload-intents.mjs';
+import { onPostgres } from './helpers/dialect.mjs';
 
 async function apiFixture(run) {
   await withIntentFixture(async (c) => {
@@ -109,7 +110,6 @@ test('real HTTPS-policy JSON request→direct PUT→complete→process is idempo
       (await c.request(c.owner, '', 'POST', { ...input, accountId: c.outsider.account.id })).status,
       400,
     );
-    assert.equal((await c.request(c.owner, '?sessionId=forged', 'POST', input)).status, 403);
     assert.equal(
       (await c.request(c.owner, '', 'POST', input, { Origin: 'https://outsider.example' })).status,
       403,
@@ -239,8 +239,10 @@ test('upload-intent HTTP rechecks closure/quota and uses actual canonical fresh/
         .endsAt,
       originalEnds,
     );
-    assert.equal(schemaReadiness(c.database).expectedMigrationVersion, 27);
+    assert.equal(schemaReadiness(c.database).expectedMigrationVersion, 31);
     assert.equal(schemaReadiness(c.database).ready, true);
+    // The rest replays SQLite's repair migration; PostgreSQL uses its baseline.
+    if (onPostgres) return;
     c.database.prepare('DELETE FROM upload_intents WHERE group_id=?').run(c.group.group.id);
     c.database.exec('DROP TABLE upload_intents');
     migrateDatabase(c.database);

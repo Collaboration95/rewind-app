@@ -97,9 +97,14 @@ if [ "$SKIP_APT" != 1 ]; then
     ca-certificates curl docker.io docker-compose-v2 jq rsync sqlite3; then
     fail 'installing ca-certificates, curl, docker.io, docker-compose-v2, jq, rsync, and sqlite3 failed; fix apt sources or network access and retry'
   fi
+  # The daily backup (deploy/backup.sh) uploads with the aws CLI, which
+  # Ubuntu 24.04 ships as a snap rather than an apt package.
+  if ! command -v aws >/dev/null 2>&1 && ! snap install aws-cli --classic; then
+    fail 'installing the aws CLI snap failed; run snap install aws-cli --classic and retry'
+  fi
 fi
 
-for command_name in curl docker jq rsync sqlite3 usermod systemctl; do
+for command_name in aws curl docker jq rsync sqlite3 usermod systemctl; do
   require_command "$command_name"
 done
 if ! docker compose version >/dev/null 2>&1; then
@@ -123,6 +128,11 @@ if ! id "$HOST_USER" >/dev/null 2>&1; then
 fi
 if ! usermod -aG docker "$HOST_USER"; then
   fail "could not add '$HOST_USER' to the docker group; verify the docker group and retry"
+fi
+# The operator writes backups into the group-writable backups directory and
+# the backup script checks the private data tree, so it joins the runtime group.
+if ! usermod -aG "$RUNTIME_GROUP" "$HOST_USER"; then
+  fail "could not add '$HOST_USER' to the runtime group; verify the runtime group and retry"
 fi
 if ! systemctl enable --now docker; then
   fail 'Docker could not be enabled and started; inspect systemctl status docker and retry'
@@ -154,7 +164,7 @@ if [ "$COMPLETE" -ne 1 ]; then
   exit 0
 fi
 
-required_bundle_files='Dockerfile README.md compose.yaml operator-common.sh backup-manifest.sh backup.sh restore.sh pause-host.sh preflight.sh migrate-with-backup.sh nginx.conf reset-with-backup.sh rewind.env.example rewind-backup.service rewind-backup.timer web.Dockerfile release.py release-host.sh'
+required_bundle_files='Dockerfile README.md compose.yaml operator-common.sh backup-manifest.sh backup.sh backup-postgres.sh database-bootstrap.sh database-maintenance.sh database-import.sh database-status.sh restore.sh pause-host.sh preflight.sh migrate-with-backup.sh nginx.conf rewind.env.example rewind-backup.service rewind-backup.timer web.Dockerfile release.py release-host.sh'
 for file_name in $required_bundle_files; do
   [ -f "$BUNDLE_SOURCE/deploy/$file_name" ] ||
     fail "required deployment artifact is missing: $BUNDLE_SOURCE/deploy/$file_name; restore the complete checked-in deploy/ bundle and retry"
@@ -201,7 +211,9 @@ for unit_name in rewind-backup.service rewind-backup.timer; do
       "$BUNDLE_SOURCE/deploy/$unit_name" "$SYSTEMD_DIR/$unit_name"
 done
 run_step 'reload systemd after installing Rewind units' systemctl daemon-reload
-run_step 'enable the Rewind backup timer' systemctl enable --now rewind-backup.timer
+if [ ! -f "$HOST_ROOT/database-maintenance" ]; then
+  run_step 'enable the Rewind backup timer' systemctl enable --now rewind-backup.timer
+fi
 
 [ -x "$HOST_ROOT/deploy/pause-host.sh" ] || fail 'pause-host.sh is not executable after installation'
 [ -x "$HOST_ROOT/deploy/preflight.sh" ] || fail 'preflight.sh is not executable after installation'

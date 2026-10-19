@@ -3,7 +3,7 @@
 # The dev branch deploys to this host from GitHub Actions instead of from an
 # operator machine. The role is declared here, next to the instance, so its
 # policy always carries the current Lightsail instance ARN even after the
-# documented hibernation and wake cycle replaces the host and its ARN id.
+# a documented host rebuild replaces the host and its ARN id.
 #
 # The account-level GitHub OIDC provider is created by the bootstrap root;
 # apply that root first.

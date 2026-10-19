@@ -12,7 +12,7 @@ import {
 } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { COLORS } from '../theme';
+import { FONT, WARM, serif } from '../ui/tokens';
 
 /**
  * The client deliberately exposes only lifecycle metadata for a contribution.
@@ -271,30 +271,30 @@ const lifecycleCopy: Record<
   { body: string; title: string }
 > = {
   queued: {
-    title: 'Contribution queued',
-    body: 'Your contribution is safely queued. It stays sealed while processing begins.',
+    title: 'Moment saved',
+    body: 'Your moment is saved and stays sealed until the reveal.',
   },
   processing: {
-    title: 'Processing contribution',
-    body: 'The local runtime is preparing your contribution. Media remains sealed.',
+    title: 'Sealing your moment…',
+    body: 'This takes a few seconds. It stays sealed until the reveal.',
   },
   sealed: {
-    title: 'Contribution sealed',
-    body: 'The contribution is ready for the group reveal. Its media stays unavailable until then.',
+    title: 'Moment sealed',
+    body: 'It will appear in the group film when the cycle ends.',
   },
 };
 
 const failureCopy = (status: ContributionStatus): { body: string; title: string } =>
   status.reason === 'quota_exceeded'
-    ? { title: 'Contribution limit reached', body: 'No allowance remains.' }
+    ? { title: 'No moments left', body: 'You’ve used all your moments this cycle.' }
     : status.retryable
       ? {
-          title: 'Contribution needs a retry',
-          body: 'The contribution could not be prepared. Retry is available without exposing its file.',
+          title: 'Couldn’t seal this moment',
+          body: 'Something went wrong while sealing it. Try again.',
         }
       : {
-          title: 'Contribution could not be prepared',
-          body: 'This contribution cannot be retried. Retake it to submit a new contribution.',
+          title: 'Couldn’t seal this moment',
+          body: 'This one can’t be retried. Take it again to add a new moment.',
         };
 
 export function ContributionStatusPanel({
@@ -368,42 +368,40 @@ export function ContributionStatusPanel({
 
 const styles = StyleSheet.create({
   panel: {
-    backgroundColor: COLORS.paper,
-    borderColor: COLORS.line,
-    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.55)',
+    borderColor: WARM.line,
+    borderRadius: 18,
     borderWidth: 1,
-    gap: 8,
+    gap: 6,
     padding: 16,
   },
-  failedPanel: { borderColor: COLORS.accent },
-  label: { color: COLORS.edge, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  title: { color: COLORS.ink, fontSize: 20, fontWeight: '700' },
-  body: { color: COLORS.muted, fontSize: 14, lineHeight: 21 },
-  metadata: { color: COLORS.edge, fontSize: 13, fontWeight: '600' },
-  availability: { color: COLORS.muted, fontSize: 13, lineHeight: 19 },
-  error: { color: COLORS.accent, fontSize: 14, lineHeight: 20 },
+  failedPanel: { borderColor: WARM.danger },
+  label: { color: WARM.muted, fontFamily: FONT.body, fontSize: 11, letterSpacing: 1.2 },
+  title: { color: WARM.ink, ...serif(20) },
+  body: { color: WARM.muted, fontFamily: FONT.body, fontSize: 13.5, lineHeight: 19 },
+  metadata: { color: WARM.ink, fontFamily: FONT.mono, fontSize: 12.5 },
+  availability: { color: WARM.muted, fontFamily: FONT.body, fontSize: 12.5, lineHeight: 18 },
   retryButton: {
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderColor: COLORS.edge,
-    borderRadius: 8,
-    borderWidth: 1,
+    alignSelf: 'stretch',
+    backgroundColor: WARM.peachSoft,
+    borderRadius: 999,
     justifyContent: 'center',
-    minHeight: 46,
-    paddingHorizontal: 14,
+    marginTop: 6,
+    minHeight: 44,
+    paddingHorizontal: 16,
   },
-  retryText: { color: COLORS.ink, fontSize: 14, fontWeight: '700' },
+  retryText: { color: WARM.peachInk, fontFamily: FONT.body, fontSize: 14, fontWeight: '600' },
   deleteButton: {
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderColor: COLORS.line,
-    borderRadius: 8,
+    alignSelf: 'stretch',
+    borderColor: WARM.line,
+    borderRadius: 999,
     borderWidth: 1,
-    minHeight: 44,
     justifyContent: 'center',
-    marginTop: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    marginTop: 6,
+    minHeight: 44,
+    paddingHorizontal: 16,
   },
-  deleteText: { color: COLORS.muted, fontSize: 14, fontWeight: '700' },
+  deleteText: { color: WARM.dangerInk, fontFamily: FONT.body, fontSize: 14, fontWeight: '600' },
 });

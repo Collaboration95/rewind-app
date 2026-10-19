@@ -176,17 +176,10 @@ export async function recordingSupport(page: Page, testInfo: TestInfo) {
   return support.types.length > 0;
 }
 
+/** From the signed-in group's Home (see recordingSupport), open real video capture. */
 export async function openInjectedCapture(page: Page) {
-  const entry = page.getByTestId('demo-entry-demo-1');
-  await expect(
-    page.getByTestId('main-navigation').or(entry).or(page.getByTestId('welcome-entry')),
-  ).toBeVisible();
-  if (!(await entry.isVisible())) {
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await page.getByRole('button', { name: 'Try Demo', exact: true }).click();
-  }
-  await entry.click();
-  await page.getByTestId('nav-camera').click();
+  await expect(page.getByTestId('real-group-home')).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('real-group-capture-action').click();
   await page.getByTestId('camera-record-clip').click();
 }
 
@@ -194,7 +187,7 @@ export async function allowInjectedSource(page: Page) {
   await expectInjectedSourceInstalled(page);
   await expect(page.getByTestId('video-permission')).toBeVisible();
   expect(await page.evaluate(() => window.__injectedCapture.sources.length)).toBe(0);
-  await page.getByRole('button', { name: 'Allow camera and microphone', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(page.getByTestId('video-live-preview')).toBeVisible();
   await expect
     .poll(() =>
@@ -209,7 +202,7 @@ export async function recordFor(page: Page, seconds = 6) {
   await page.getByTestId('video-record').click();
   await expect(page.getByTestId('video-recording')).toBeVisible();
   await page.waitForTimeout(seconds * 1000);
-  await page.getByRole('button', { name: 'Stop and review', exact: true }).click();
+  await page.getByRole('button', { name: 'Stop recording', exact: true }).click();
 }
 
 export async function restoreInjectedPreview(page: Page) {
@@ -329,4 +322,25 @@ export async function expectRevoked(page: Page, index: number) {
       }
     }, index),
   ).toBe(false);
+}
+
+/**
+ * Move a trim handle with the keyboard, half a second per arrow press, to the
+ * nearest step of `seconds` (a recorded end is not on the half-second grid).
+ */
+export async function setTrim(page: Page, handle: 'start' | 'end', seconds: number) {
+  const control = page.getByTestId(`video-trim-${handle}`);
+  await control.focus();
+  const read = async () =>
+    Number.parseFloat((await control.getAttribute('aria-valuetext')) ?? 'NaN');
+  for (let step = 0; step < 40; step += 1) {
+    const current = await read();
+    if (Math.abs(current - seconds) < 0.05) break;
+    const key = current < seconds ? 'ArrowRight' : 'ArrowLeft';
+    // Finish at the requested tenth, rather than accepting a different trim
+    // within 0.25s and later asserting playback against the requested value.
+    await page.keyboard.press(Math.abs(current - seconds) < 0.5 ? `Shift+${key}` : key);
+  }
+  expect(Math.abs((await read()) - seconds)).toBeLessThanOrEqual(0.25);
+  expect(await read()).toBeCloseTo(seconds, 1);
 }

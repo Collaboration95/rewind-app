@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f6ede3" />
+    <title>Rewind support</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          system-ui,
+          -apple-system,
+          'Segoe UI',
+          sans-serif;
+        background: #f6ede3;
+        color: #33231a;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 40rem;
+        padding: 40px 16px 56px;
+        line-height: 1.55;
+        background: #f6ede3;
+      }
+      h1,
+      h2 {
+        font-family: Fraunces, Georgia, serif;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      h1 {
+        font-size: 2rem;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin: 32px 0 8px;
+      }
+      p,
+      li {
+        color: rgba(51, 35, 26, 0.74);
+      }
+      strong {
+        color: #33231a;
+      }
+      a {
+        color: #e0703a;
+        text-underline-offset: 2px;
+      }
+      nav {
+        margin-top: 40px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(51, 35, 26, 0.16);
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Rewind support</h1>
+      <p>
+        For help, to report a problem or abuse, or for a privacy request, open an issue at
+        <a href="https://github.com/Collaboration95/rewind-app/issues"
+          >github.com/Collaboration95/rewind-app/issues</a
+        >. GitHub issues are public and require a GitHub account to post. Do not include your
+        password, sign-in tokens, private photos or videos, or other members' personal details in an
+        issue. We aim to reply within one business day.
+      </p>
+      <h2>Common questions</h2>
+      <ul>
+        <li>
+          <strong>Report content or a person, or block a member:</strong> use the report and block
+          options in the group. We review reports within 24 hours and remove content or accounts
+          that break the <a href="/terms">terms of use</a>. Blocking hides that person's messages
+          and moments from you.
+        </li>
+        <li>
+          <strong>Delete your account:</strong> in the app, open
+          <strong>Settings → Delete account</strong>. See the
+          <a href="/privacy">privacy policy</a> for what is deleted.
+        </li>
+        <li>
+          <strong>Sign-in and recovery:</strong> web and Home Screen app sign-in uses Amazon Cognito
+          Managed Login when configured. Use the recovery option on that sign-in page; recovery
+          depends on the verified contact methods configured for your account. Rewind support cannot
+          recover an account from a public username. Never post recovery codes.
+        </li>
+        <li>
+          <strong>Developer sign-in:</strong> the username/password form is for local and hosted
+          development only, including the Android test app. These accounts are separate from Cognito
+          accounts and have no self-service password recovery. It is not release sign-in.
+        </li>
+        <li>
+          <strong>Install on iPhone:</strong> open the HTTPS website in Safari, use Share → Add to
+          Home Screen, then open Rewind from its icon. Allow camera access for photos and camera and
+          microphone access for videos. Enable reminders in Settings only if you want them; iPhone
+          web push requires the installed Home Screen app on iOS 16.4 or later.
+        </li>
+        <li>
+          <strong>Camera or reminders blocked:</strong> check the browser and device permissions,
+          then reopen Rewind. Capture needs a supported camera and a secure connection. Reminders
+          depend on browser support, permission and connectivity; native test-app push is disabled.
+        </li>
+      </ul>
+      <nav aria-label="Rewind legal pages">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms of use</a>
+        <a href="/support">Support</a>
+      </nav>
+    </main>
+  </body>
+</html>

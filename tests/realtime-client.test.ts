@@ -8,7 +8,6 @@ import {
   NATIVE_SSE_MAX_RESPONSE_CHARS,
   createRuntimeEventSource,
 } from '../src/chat/native-event-source';
-import { LocalRuntimeClient } from '../src/runtime/local-runtime-client';
 
 class FakeXhr {
   readyState = 0;
@@ -81,7 +80,6 @@ test('native SSE adapter parses framed events, reports open, and aborts on close
 
 test('real-account SSE sends native bearer authority in a header and omits it from the URL', () => {
   const client = new RealtimeChatClient('https://runtime.example', fetch, {
-    sessionIdInQuery: false,
     eventSourceFactory: (url) =>
       new NativeEventSource(url, FakeXhr, { Authorization: 'Bearer opaque-private-token' }),
   });
@@ -196,7 +194,7 @@ test('native SSE response rotation reconnects from its delivered cursor without 
 
   await new Promise((resolve) => setTimeout(resolve, 5));
   expect(urls).toHaveLength(2);
-  expect(urls[1]).toContain(`&sinceEventId=${lastDelivered}`);
+  expect(urls[1]).toMatch(new RegExp(`[?&]sinceEventId=${lastDelivered}$`));
   const replayEvent = {
     eventId: lastDelivered + 1,
     type: 'message',
@@ -238,17 +236,6 @@ test('runtime EventSource factory preserves browser EventSource and falls back t
     Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: undefined });
     Object.defineProperty(globalThis, 'XMLHttpRequest', { configurable: true, value: FakeXhr });
     expect(createRuntimeEventSource('/events')).toBeInstanceOf(NativeEventSource);
-
-    const subscription = new LocalRuntimeClient('http://127.0.0.1:8787').subscribeChat(
-      'session-1',
-      'demo-group',
-      { onEvent: () => {} },
-    );
-    expect(FakeXhr.last.opened).toEqual([
-      'GET',
-      'http://127.0.0.1:8787/realtime/groups/demo-group/events?sessionId=session-1',
-    ]);
-    subscription.close();
   } finally {
     if (previousEventSource) Object.defineProperty(globalThis, 'EventSource', previousEventSource);
     else Reflect.deleteProperty(globalThis, 'EventSource');
@@ -310,7 +297,7 @@ test('realtime client sends authenticated messages and decodes SSE events', asyn
   const sent = await client.sendMessage('session-1', 'demo-group', 'hello');
   expect(sent.message.body).toBe('hello');
   expect(fetchImpl).toHaveBeenCalledWith(
-    'http://127.0.0.1:8787/realtime/groups/demo-group/messages?sessionId=session-1',
+    'http://127.0.0.1:8787/realtime/groups/demo-group/messages',
     expect.objectContaining({ method: 'POST' }),
   );
 
@@ -320,7 +307,7 @@ test('realtime client sends authenticated messages and decodes SSE events', asyn
     onEvent: (event) => received.push(event.message.body),
   });
   expect(factory).toHaveBeenCalledWith(
-    'http://127.0.0.1:8787/realtime/groups/demo-group/events?sessionId=session-1&sinceEventId=3',
+    'http://127.0.0.1:8787/realtime/groups/demo-group/events?sinceEventId=3',
   );
   source.emit('message', { data: JSON.stringify(sent) });
   expect(received).toEqual(['hello']);
@@ -369,7 +356,7 @@ test('reconnects from the last event without leaking another group', async () =>
   first.onerror?.({});
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(factory).toHaveBeenCalledTimes(2);
-  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=4');
+  expect(factory.mock.calls[1][0]).toMatch(/[?&]sinceEventId=4/);
   second.onopen?.();
   second.emit('message', {
     data: JSON.stringify({
@@ -421,14 +408,14 @@ test('starts a new observer at the persisted high-water mark and reconnects from
     onCheckpoint: (eventId) => checkpoints.push(eventId),
   });
 
-  expect(factory.mock.calls[0][0]).toContain('&startFromLatest=true');
+  expect(factory.mock.calls[0][0]).toMatch(/[?&]startFromLatest=true/);
   first.emit('checkpoint', { data: JSON.stringify({ eventId: 21 }) });
   expect(received).toEqual([]);
   expect(checkpoints).toEqual([21]);
 
   first.onerror?.({});
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=21');
+  expect(factory.mock.calls[1][0]).toMatch(/[?&]sinceEventId=21/);
   second.emit('message', {
     data: JSON.stringify({
       eventId: 22,
@@ -468,8 +455,8 @@ test('forwards and resumes from a valid zero checkpoint', async () => {
   first.onerror?.({});
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  expect(factory.mock.calls[1][0]).toContain('&sinceEventId=0');
-  expect(factory.mock.calls[1][0]).not.toContain('&startFromLatest=true');
+  expect(factory.mock.calls[1][0]).toMatch(/[?&]sinceEventId=0/);
+  expect(factory.mock.calls[1][0]).not.toMatch(/[?&]startFromLatest=true/);
   subscription.close();
 });
 
@@ -486,7 +473,7 @@ test('requests and decodes metadata-only unread events', () => {
     onEvent: (event) => received.push(event),
   });
 
-  expect(factory.mock.calls[0][0]).toContain('&startFromLatest=true&metadataOnly=true');
+  expect(factory.mock.calls[0][0]).toMatch(/[?&]startFromLatest=true&metadataOnly=true/);
   source.emit('message', {
     data: JSON.stringify({
       eventId: 4,
@@ -522,8 +509,8 @@ test('keeps the latest-watermark handshake on reconnect until its checkpoint arr
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   expect(factory).toHaveBeenCalledTimes(2);
-  expect(factory.mock.calls[1][0]).toContain('&startFromLatest=true');
-  expect(factory.mock.calls[1][0]).not.toContain('&sinceEventId=0');
+  expect(factory.mock.calls[1][0]).toMatch(/[?&]startFromLatest=true/);
+  expect(factory.mock.calls[1][0]).not.toMatch(/[?&]sinceEventId=0/);
 
   second.emit('checkpoint', { data: JSON.stringify({ eventId: 21 }) });
   subscription.close();
@@ -614,4 +601,121 @@ test('bounds a direct chat send, aborts fetch, and preserves its retry identity'
   } finally {
     jest.useRealTimers();
   }
+});
+
+describe('reaction updates', () => {
+  const update = (overrides: Record<string, unknown> = {}) => ({
+    type: 'reaction',
+    groupId: 'demo-group',
+    messageId: 'm1',
+    reactionCounts: { '✨': 2 },
+    revision: 10,
+    occurredAt: '2026-09-13T00:00:00.000Z',
+    ...overrides,
+  });
+
+  test('delivers reaction events without moving the message cursor and quietly drops malformed or foreign ones', async () => {
+    const first = new FakeEventSource();
+    const second = new FakeEventSource();
+    const sources = [first, second];
+    const factory = jest.fn<RealtimeEventSource, [string]>(() => sources.shift()!);
+    const updates: unknown[] = [];
+    const errors: unknown[] = [];
+    const messages: number[] = [];
+    const connected: boolean[] = [];
+    const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+      eventSourceFactory: factory,
+      reconnectDelayMs: 0,
+    });
+    const subscription = client.subscribe('session-1', 'demo-group', {
+      sinceEventId: 4,
+      onEvent: (event) => messages.push(event.eventId),
+      onReactionUpdate: (next) => updates.push(next),
+      onConnected: ({ reconnect }) => connected.push(reconnect),
+      onError: (error) => errors.push(error),
+    });
+    first.onopen?.();
+    first.emit('reaction', { data: JSON.stringify(update()) });
+    first.emit('reaction', { data: JSON.stringify(update({ groupId: 'other-group' })) });
+    first.emit('reaction', { data: JSON.stringify(update({ revision: 'x' })) });
+    first.emit('reaction', { data: JSON.stringify(update({ reactionCounts: { '✨': -1 } })) });
+    expect(updates).toEqual([
+      {
+        type: 'reaction',
+        groupId: 'demo-group',
+        messageId: 'm1',
+        reactionCounts: { '✨': 2 },
+        revision: 10,
+        occurredAt: '2026-09-13T00:00:00.000Z',
+      },
+    ]);
+    // Advisory frames are dropped quietly rather than failing the chat.
+    expect(errors).toHaveLength(0);
+    expect(messages).toEqual([]);
+
+    // A reconnect resumes from the unchanged message cursor and says it is a reconnect.
+    first.onerror?.({});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(factory.mock.calls[1][0]).toMatch(/[?&]sinceEventId=4$/);
+    second.onopen?.();
+    expect(connected).toEqual([false, true]);
+    subscription.close();
+  });
+
+  test('metadata-only unread streams never listen for reactions', () => {
+    const source = new FakeEventSource();
+    const add = jest.spyOn(source, 'addEventListener');
+    const client = new RealtimeChatClient('http://127.0.0.1:8787', fetch, {
+      eventSourceFactory: () => source,
+    });
+    const onReactionUpdate = jest.fn();
+    const subscription = client.subscribe('session-1', 'demo-group', {
+      metadataOnly: true,
+      startFromLatest: true,
+      onEvent: jest.fn(),
+      onReactionUpdate,
+    });
+    expect(add.mock.calls.map(([type]) => type)).not.toContain('reaction');
+    source.emit('reaction', { data: JSON.stringify(update()) });
+    expect(onReactionUpdate).not.toHaveBeenCalled();
+    subscription.close();
+  });
+
+  test('reads a reaction snapshot and the toggle revision', async () => {
+    const fetchImpl = jest.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/reaction-counts')
+        ? new Response(
+            JSON.stringify({
+              revision: 12,
+              messages: [{ messageId: 'm1', reactionCounts: { '✨': 1 } }],
+            }),
+          )
+        : new Response(
+            JSON.stringify({
+              reaction: { messageId: 'm1', groupId: 'demo-group', active: true, count: 1 },
+              message: { id: 'm1', reactionCounts: { '✨': 1 } },
+              reactionRevision: 11,
+            }),
+          ),
+    );
+    const client = new RealtimeChatClient('http://127.0.0.1:8787', fetchImpl);
+    await expect(client.getReactionSnapshot('s', 'demo-group', ['m1'])).resolves.toEqual({
+      revision: 12,
+      messages: [{ messageId: 'm1', reactionCounts: { '✨': 1 } }],
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'http://127.0.0.1:8787/realtime/groups/demo-group/reaction-counts',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ messageIds: ['m1'] }) }),
+    );
+    await expect(client.toggleReaction('s', 'demo-group', 'm1')).resolves.toMatchObject({
+      reactionRevision: 11,
+    });
+    const denied = new RealtimeChatClient(
+      'http://127.0.0.1:8787',
+      jest.fn(async () => new Response('{}', { status: 403 })),
+    );
+    await expect(denied.getReactionSnapshot('s', 'demo-group', ['m1'])).rejects.toMatchObject({
+      status: 403,
+    });
+  });
 });

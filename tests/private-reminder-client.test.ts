@@ -2,6 +2,7 @@ import { createPrivateReminderClient } from '../src/reminders/private-reminder-c
 import {
   createNativePushPlatform,
   createWebPushPlatform,
+  defaultPushPlatform,
   type NativeNotifications,
   type PreparedPushPlatform,
 } from '../src/reminders/push-platform';
@@ -206,6 +207,7 @@ it('fences delayed platform work before it can register into a switched or signe
   const subscription = deferred<typeof secret>();
   f.prepared.subscribe = jest.fn(() => subscription.promise);
   await f.client.load();
+  f.request.mockResolvedValueOnce(reply({ destinations: [] }));
   const enabling = f.client.enable();
   const revoking = f.client.revoke();
   subscription.resolve(secret);
@@ -384,6 +386,156 @@ function webFixture() {
   return { subscription, manager, environment };
 }
 
+it('revokes after rejected browser subscription discovery only when the server confirms device absence', async () => {
+  const f = fixture();
+  const web = webFixture();
+  web.manager.getSubscription.mockRejectedValue(new Error('Push service unavailable'));
+  const client = createPrivateReminderClient({
+    ...f.options,
+    platform: createWebPushPlatform(web.environment),
+  });
+  expect(await client.load()).toMatchObject({ state: 'error' });
+  f.request.mockResolvedValueOnce(reply({ destinations: [] }));
+  expect(await client.revoke()).toMatchObject({ state: 'revoked', enabled: false });
+  expect(f.request).toHaveBeenCalledTimes(1);
+  expect(f.request).toHaveBeenCalledWith(
+    '/real/groups/group%2Fone/reminders/destinations?deviceId=device-identity-123456',
+    { signal: expect.any(AbortSignal) },
+  );
+  expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(false);
+  expect(web.manager.subscribe).not.toHaveBeenCalled();
+});
+
+it('requires authoritative account-wide absence before revoke when no device identity exists', async () => {
+  const f = fixture();
+  f.platform.prepare.mockRejectedValue(new Error('Push unavailable'));
+  f.request.mockResolvedValueOnce(reply({ destinations: [] }));
+  expect(await f.client.revoke()).toMatchObject({ state: 'revoked' });
+  expect(f.request).toHaveBeenCalledWith('/real/groups/group%2Fone/reminders/destinations', {
+    signal: expect.any(AbortSignal),
+  });
+  expect(f.options.createDeviceId).not.toHaveBeenCalled();
+});
+
+it('does not let a later browser subscription lookup failure override confirmed remote absence', async () => {
+  const f = fixture();
+  const web = webFixture();
+  const client = createPrivateReminderClient({
+    ...f.options,
+    platform: createWebPushPlatform(web.environment),
+  });
+  expect(await client.load()).toMatchObject({ state: 'available' });
+  web.manager.getSubscription.mockRejectedValue(new Error('Push service unavailable'));
+  f.request.mockResolvedValueOnce(reply({ destinations: [] }));
+  expect(await client.revoke()).toMatchObject({ state: 'revoked', enabled: false });
+  expect(web.manager.getSubscription).toHaveBeenCalledTimes(2);
+  expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(false);
+});
+
+it('requires remote disable acknowledgement even when local unsubscribe is unavailable', async () => {
+  const f = fixture();
+  await f.client.load();
+  await f.client.enable();
+  (f.prepared.unsubscribe as jest.Mock).mockRejectedValue(new Error('Push unavailable'));
+  f.request.mockResolvedValueOnce(reply({ disabled: false }));
+  expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending', enabled: true });
+  expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(true);
+  f.request.mockResolvedValueOnce(reply({ disabled: true }));
+  expect(await f.client.revoke()).toMatchObject({ state: 'revoked', enabled: false });
+  expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(false);
+});
+
+it('never guesses another device destination when local device identity is missing', async () => {
+  const f = fixture();
+  f.platform.prepare.mockRejectedValue(new Error('Push unavailable'));
+  expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.request).toHaveBeenCalledTimes(1);
+  expect(f.request.mock.calls[0][1]?.method).toBeUndefined();
+  expect(f.values.get('@rewind/private-reminder-association:account-one')).toContain(
+    'cleanupPending',
+  );
+});
+
+it.each([true, false])(
+  'requires exact remote disable after discovery failure with persisted association %s',
+  async (persisted) => {
+    const f = fixture();
+    f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+    if (persisted)
+      f.values.set('@rewind/private-reminder-association:account-one', '{"id":"destination-one"}');
+    f.platform.prepare.mockRejectedValue(new Error('Push unavailable'));
+    const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation((path, options) =>
+      options?.method === 'POST'
+        ? Promise.resolve(reply({ disabled: false }))
+        : original(path, options),
+    );
+    expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending' });
+    expect(f.request).toHaveBeenLastCalledWith(
+      '/real/groups/group%2Fone/reminders/destinations/destination-one',
+      expect.objectContaining({ body: '{"enabled":false}' }),
+    );
+    expect(f.values.get('@rewind/private-reminder-association:account-one')).toContain(
+      'destination-one',
+    );
+    f.request.mockResolvedValueOnce(reply({ disabled: true }));
+    expect(await f.client.revoke()).toMatchObject({ state: 'revoked' });
+  },
+);
+
+it.each([reply({}, 503), reply({}), reply({ destinations: null })])(
+  'keeps failed or malformed absence probes durable through client recreation: %j',
+  async (response) => {
+    const f = fixture();
+    f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+    f.platform.prepare.mockRejectedValue(new Error('Push unavailable'));
+    f.request.mockResolvedValue(response);
+    expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending' });
+    expect(f.values.get('@rewind/private-reminder-association:account-one')).toContain(
+      'cleanupPending',
+    );
+    // A later successful capability check must not discard the pending probe.
+    f.platform.prepare.mockResolvedValue(f.prepared);
+    const restored = createPrivateReminderClient(f.options);
+    expect(await restored.load()).toMatchObject({ state: 'cleanup-pending', canEnable: false });
+    expect(f.values.has('@rewind/private-reminder-association:account-one')).toBe(true);
+    f.request.mockResolvedValueOnce(reply({ destinations: [] }));
+    expect(await restored.revoke()).toMatchObject({ state: 'revoked' });
+  },
+);
+
+it('does not treat an empty probe as settled absence for an uncertain registration after discovery failure', async () => {
+  const f = fixture();
+  f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+  f.values.set('@rewind/private-reminder-association:account-one', '{"uncertain":true}');
+  f.platform.prepare.mockRejectedValue(new Error('Push unavailable'));
+  f.request.mockResolvedValueOnce(reply({ destinations: [] }));
+  expect(await f.client.revoke()).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.values.get('@rewind/private-reminder-association:account-one')).toContain('uncertain');
+  expect(f.request).toHaveBeenCalledTimes(1);
+});
+
+it('cannot erase a newer association when context changes during an absence probe', async () => {
+  const f = fixture();
+  const probe = deferred<Response>();
+  let current = true;
+  f.values.set('@rewind/private-reminder-device', 'persisted_device_987654');
+  f.platform.prepare.mockRejectedValue(new Error('Push unavailable'));
+  f.request.mockImplementationOnce(() => probe.promise);
+  const client = createPrivateReminderClient({ ...f.options, isCurrentContext: () => current });
+  const revoking = client.revoke();
+  for (let step = 0; step < 30; step++) await Promise.resolve();
+  expect(f.request).toHaveBeenCalledTimes(1);
+  current = false;
+  const newer = '{"id":"newer-destination"}';
+  f.values.set('@rewind/private-reminder-association:account-one', newer);
+  probe.resolve(reply({ destinations: [] }));
+  expect(await revoking).toMatchObject({ state: 'cleanup-pending' });
+  expect(f.values.get('@rewind/private-reminder-association:account-one')).toBe(newer);
+  expect(f.storage.removeItem).not.toHaveBeenCalled();
+  expect(f.prepared.unsubscribe).not.toHaveBeenCalled();
+});
+
 it.each(['secure', 'installed', 'pushSupported'] as const)(
   'explains unsupported web %s without touching PushManager',
   async (feature) => {
@@ -393,6 +545,11 @@ it.each(['secure', 'installed', 'pushSupported'] as const)(
     expect(f.environment.registration).not.toHaveBeenCalled();
   },
 );
+it('keeps native (Expo) push paused: the default native platform is unsupported', async () => {
+  expect(await defaultPushPlatform().prepare()).toEqual({
+    unsupported: 'Reminders arrive through the Rewind web app.',
+  });
+});
 it('invokes installed-web subscribe synchronously from opt-in and reuses the subscription', async () => {
   const f = webFixture();
   const prepared = await createWebPushPlatform(f.environment).prepare();

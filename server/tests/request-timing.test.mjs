@@ -3,9 +3,9 @@ import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { requestRoute } = await import('../dist/observability/index.js');
 
@@ -25,7 +25,7 @@ test('request routes drop queries and identifier-like segments (#321)', () => {
 async function serve(env, run) {
   const dataDir = await mkdtemp(`${tmpdir()}/rewind-request-timing-`);
   const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_PORT: '0', ...env });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   const server = createRuntimeServer(config, database);
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');

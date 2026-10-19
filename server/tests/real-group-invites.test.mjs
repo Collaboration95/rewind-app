@@ -3,9 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import test from 'node:test';
+import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
-const { openDatabase } = await import('../dist/db.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 
@@ -17,7 +17,7 @@ async function withRuntime(run) {
     REWIND_PORT: '0',
     REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
   });
-  const database = openDatabase(config);
+  const database = openFixtureDatabase(config);
   let clock = new Date('2026-09-28T00:00:00.000Z');
   const server = createRuntimeServer(config, database, { now: () => new Date(clock) });
   server.listen(0, '127.0.0.1');
@@ -158,7 +158,11 @@ test('only the owner can revoke an active short code; revoked codes cannot be ac
       body: JSON.stringify({ code: invite.code }),
     });
     assert.equal(accepted.status, 400);
-    assert.equal((await accepted.json()).status, 'expired');
+    assert.deepEqual(await accepted.json(), {
+      status: 'expired',
+      error: 'invite_expired',
+      message: "That code isn't valid or has expired.",
+    });
     assert.equal(
       database
         .prepare('SELECT 1 FROM real_group_memberships WHERE group_id = ? AND account_id = ?')
@@ -284,6 +288,29 @@ test('real invite acceptance keeps legacy eight-character codes working', async 
   });
 });
 
+test('unknown well-formed codes explain invalid or expired without creating a membership', async () => {
+  await withRuntime(async ({ baseUrl, database }) => {
+    const recipient = await provision(baseUrl, database, 'unknown-invite-recipient');
+    const response = await fetch(`${baseUrl}/real/invites/accept`, {
+      method: 'POST',
+      headers: { Authorization: recipient.authorization, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: 'ZZZ-ZZZ' }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      status: 'malformed',
+      error: 'invite_malformed',
+      message: "That code isn't valid or has expired.",
+    });
+    assert.equal(
+      database
+        .prepare('SELECT COUNT(*) AS count FROM real_group_memberships WHERE account_id = ?')
+        .get(recipient.account.id).count,
+      0,
+    );
+  });
+});
+
 test('real invite acceptance reports malformed and expired invitations safely', async () => {
   await withRuntime(async ({ baseUrl, database, setNow }) => {
     const owner = await provision(baseUrl, database, 'invite-status-owner');
@@ -311,7 +338,11 @@ test('real invite acceptance reports malformed and expired invitations safely', 
       body: JSON.stringify({ code: expiredInvite.code }),
     });
     assert.equal(expired.status, 400);
-    assert.equal((await expired.json()).status, 'expired');
+    assert.deepEqual(await expired.json(), {
+      status: 'expired',
+      error: 'invite_expired',
+      message: "That code isn't valid or has expired.",
+    });
     assert.equal(
       database
         .prepare('SELECT status FROM real_group_invites WHERE code = ?')

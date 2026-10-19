@@ -36,3 +36,21 @@ variable "extra_hosted_settings" {
   default     = []
   sensitive   = true
 }
+
+variable "backup_prefix_arn" {
+  description = "S3 object ARN pattern the host's daily backup may add to (deploy/backup.sh), or null for none."
+  type        = string
+  default     = "arn:aws:s3:::rewind-demo-backups-330599756236/rewind-demo/*"
+}
+
+variable "database_availability_zone" {
+  description = "Zone of the managed PostgreSQL primary; the same zone as the host avoids cross-zone latency."
+  type        = string
+  default     = "ap-southeast-1a"
+}
+
+variable "auth_password" {
+  description = "Allow Rewind's own email/password sign-in next to Cognito (REWIND_AUTH_PASSWORD). True for dev only; release must set false because its server refuses to start otherwise."
+  type        = bool
+  default     = true
+}

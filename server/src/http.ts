@@ -2,6 +2,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createWriteStream, existsSync } from 'node:fs';
 import { mkdir, realpath, rename, rm, stat, type FileHandle } from 'node:fs/promises';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { membershipProfileId, selectedGroupId } from './auth/identity-cache';
+import {
+  newDatabaseTiming,
+  serverTimingHeader,
+  withDatabaseTiming,
+} from './observability/database-timing';
 import { networkInterfaces } from 'node:os';
 import { isIP } from 'node:net';
 import { URL } from 'node:url';
@@ -19,48 +25,31 @@ import {
 } from './reminders/outbox';
 import {
   getContribution,
-  getCurrentCycle,
-  getGroup,
   getMediaJob,
   getPremiereFilm,
   getReleasedFilmDownload,
   getReleasedOwnClipDownload,
   getMessage,
-  isMember,
   listReleasedArchive,
-  listProfiles,
-  restoreFixture,
+  isPostgres,
   schemaReadiness,
   type RewindDatabase,
 } from './db';
 import {
   SUPPORTED_CHAT_REACTION,
   createChatMessage,
+  currentReactionRevision,
   latestChatEventId,
   listChatEvents,
   listChatEventMetadata,
   listChatHistoryPage,
+  listChatReactionSnapshot,
+  nextReactionRevision,
   toggleChatReaction,
+  type ChatReactionEvent,
 } from './chat';
-import { encodeSseCheckpoint, encodeSseEvent, RealtimeHub } from './realtime';
-import { advanceCycleLifecycle, advanceDemoCycle, publishCycleRelease } from './cycles';
-import { classifyDemoSession } from './session/contract';
-import {
-  authorizeSessionMember,
-  authorizeSessionOwner,
-  SAFE_DENIAL,
-  type ProtectedResource,
-} from './policy';
-import {
-  createDemoSession,
-  getDemoSession,
-  invalidateDemoSession,
-  isActiveDemoSession,
-  validateDemoSession,
-} from './session';
-import { extractDemoRequestIdentity, type DemoRequestIdentity } from './session/request';
-import { createGroup } from './groups';
-import { acceptInvite, createInvite } from './invites';
+import { encodeSseCheckpoint, encodeSseEvent, encodeSseReaction, RealtimeHub } from './realtime';
+import { SAFE_DENIAL } from './policy';
 import { deleteContribution } from './contributions';
 import {
   ContributionLedgerQueryError,
@@ -83,22 +72,14 @@ import {
   registerStagedIntake,
   stagedSourceId,
   stagedSourcePath,
-  waitForStagedIntakesIdle,
   type ClipUploadInput,
 } from './media';
 import {
   integrityBlocksServing,
   openMediaWithIntegrity,
   recordIntegrityFailure,
-  verifyMediaIntegrity,
 } from './media/integrity';
-import {
-  getCompilationJob,
-  processClipJob,
-  processCompilationJob,
-  verifyReadyJobOutput,
-  type StoredJobOptions,
-} from './jobs';
+import { processClipJob, servableJobOutput, type StoredJobOptions } from './jobs';
 import {
   requestUploadIntent,
   getUploadIntentStatus,
@@ -110,27 +91,46 @@ import {
 } from './media/upload-intents';
 import { MediaCapabilities } from './archive/capabilities';
 import { openStoredServingFile } from './archive/store-serving';
-import { isMediaRef, decodeMediaRef } from './media/store';
+import { isMediaRef } from './media/store';
 import { maybeCleanupOrphanedStagedSources } from './jobs/staged-cleanup-scheduler';
-import {
-  listQueueJobs,
-  parseQueueKind,
-  parseQueueLimit,
-  parseQueueStatus,
-  QueueQueryError,
-} from './jobs/queue';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import { generateSyntheticDemoClip, probeClipWithFfmpeg, probePhotoWithFfmpeg } from './ffmpeg';
+import { isAbsolute, relative, resolve } from 'node:path';
+import { probeClipWithFfmpeg, probePhotoWithFfmpeg } from './ffmpeg';
 import { decodePageCursor, encodePageCursor } from './archive/cursor';
-import { verifyArchiveListingIntegrity } from './archive/integrity-cache';
 import { mediaServingBudget, releaseBudgetWhenSnapshotCloses } from './media/serving-budget';
 import {
   authenticateRealAccount,
+  cognitoSubForAccount,
   createRealAccount,
+  createRealSession,
+  findOrCreateCognitoAccount,
   REAL_SESSION_COOKIE,
   revokeRealSession,
+  updateAccountDisplayName,
   validateRealSession,
+  verifyRealAccountPassword,
 } from './auth';
+import {
+  type CognitoService,
+  cognitoServiceFor,
+  newLoginTransaction,
+  OIDC_TRANSACTION_COOKIE,
+  readLoginTransaction,
+  sameSecret,
+  transactionCookieValue,
+  UsedStates,
+} from './auth/cognito';
+import { purgeRealAccount, removeStoredMedia } from './auth/deletion';
+import {
+  blockMember,
+  canInteractWithChatMessage,
+  filmSegments,
+  isChatEventHidden,
+  listBlockedMembers,
+  removeContribution,
+  reportContent,
+  unblockMember,
+  visibleChatEvent,
+} from './groups/safety';
 import {
   createRealGroup,
   getCurrentRealGroup,
@@ -156,7 +156,7 @@ export interface HealthPayload {
   version: string;
   ready: boolean;
   checks: {
-    sqlite: true;
+    database: 'sqlite' | 'postgresql';
     ffmpegConfigured: boolean;
     schema: ReturnType<typeof schemaReadiness>;
   };
@@ -201,13 +201,6 @@ function sendDenied(response: ServerResponse, config: RuntimeConfig): void {
   sendJson(response, config, SAFE_DENIAL.status, SAFE_DENIAL);
 }
 
-function sendBadRequest(response: ServerResponse, config: RuntimeConfig): void {
-  sendJson(response, config, 400, {
-    error: 'invalid_request',
-    message: 'The cycle advance must be a positive whole number of seconds.',
-  });
-}
-
 function decodePathSegment(
   encodedSegment: string,
   response: ServerResponse,
@@ -230,7 +223,7 @@ function decodePathSegment(
 function sendSessionRequired(response: ServerResponse, config: RuntimeConfig): void {
   sendJson(response, config, 401, {
     error: 'session_required',
-    message: 'Choose Demo access before changing local Demo data.',
+    message: 'A valid sign-in is required.',
   });
 }
 
@@ -290,87 +283,25 @@ function writeRealtimeAccessDenied(
   );
 }
 
-function requireSessionIdentity(
-  database: RewindDatabase,
-  url: URL,
-  response: ServerResponse,
-  config: RuntimeConfig,
-  now: Date,
-): DemoRequestIdentity | null {
-  const identity = extractDemoRequestIdentity(database, url, now);
-  if (!identity.ok) {
-    sendSessionRequired(response, config);
-    return null;
-  }
-  return identity.identity;
-}
-
-/**
- * Authorise one group-scoped route using only the persisted session context.
- * The requested group is a resource selector, never an alternate identity.
- */
-function requireAuthorisedGroup(
-  database: RewindDatabase,
-  url: URL,
-  response: ServerResponse,
-  config: RuntimeConfig,
-  now: Date,
-  groupId: string | null,
-  resource: ProtectedResource,
-): DemoRequestIdentity | null {
-  const identity = requireSessionIdentity(database, url, response, config, now);
-  if (!identity) return null;
-  if (
-    !groupId ||
-    identity.groupId !== groupId ||
-    !authorizeSessionMember(database, groupId, identity, resource).allowed
-  ) {
-    sendDenied(response, config);
-    return null;
-  }
-  return identity;
-}
-
 interface AuthorisedMediaIdentity {
   groupId: string;
   memberId: string;
-  accountId?: string;
-  /** Demo-only lifecycle fence. Real sessions are revalidated from the token. */
-  sessionId?: string;
+  accountId: string;
 }
 
 /**
- * Media may be uploaded by either the isolated Demo session or an authenticated
- * real account. Real requests carry only the opaque bearer/cookie credential;
- * their account, selected group, and profile identity are resolved here rather
- * than accepted from query parameters.
+ * Requests carry only the opaque real-account bearer/cookie credential; their
+ * account, selected group, and profile identity are resolved here rather than
+ * accepted from query parameters.
  */
 function requireAuthorisedMediaGroup(
   request: IncomingMessage,
   database: RewindDatabase,
-  url: URL,
   response: ServerResponse,
   config: RuntimeConfig,
   now: Date,
   groupId: string | null,
-  resource: ProtectedResource,
 ): AuthorisedMediaIdentity | null {
-  const hasBearer = typeof request.headers.authorization === 'string';
-  const hasRealCookie =
-    typeof request.headers.cookie === 'string' &&
-    request.headers.cookie
-      .split(';')
-      .some((part) => part.trim().startsWith(`${REAL_SESSION_COOKIE}=`));
-  if (!hasBearer && !hasRealCookie) {
-    return requireAuthorisedGroup(database, url, response, config, now, groupId, resource);
-  }
-
-  // Real media authority never comes from the Demo sessionId query. Reject a
-  // mixed request instead of silently choosing whichever credential succeeds.
-  if (url.searchParams.has('sessionId')) {
-    sendDenied(response, config);
-    return null;
-  }
   if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
     authJson(request, response, config, 403, {
       error: 'auth_transport_unavailable',
@@ -389,27 +320,44 @@ function requireAuthorisedMediaGroup(
     });
     return null;
   }
-  const selected = getCurrentRealGroup(database, session.account.id);
-  const membership = groupId
-    ? (database
-        .prepare(
-          `SELECT profile_id AS profileId FROM real_group_memberships
-           WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
-        )
-        .get(session.account.id, groupId) as { profileId?: string } | undefined)
-    : undefined;
-  if (
-    !groupId ||
-    selected?.group.id !== groupId ||
-    !membership?.profileId ||
-    !isMember(database, groupId, membership.profileId)
-  ) {
+  const profileId = groupId ? signedInProfileId(database, session.account.id, groupId, now) : null;
+  if (!groupId || !profileId) {
     sendDenied(response, config);
     return null;
   }
   for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
     response.setHeader(name, value);
-  return { accountId: session.account.id, groupId, memberId: membership.profileId };
+  return { accountId: session.account.id, groupId, memberId: profileId };
+}
+
+/**
+ * The signed-in account's profile in `groupId` when that group is the
+ * account's selected group, else null. Uses the identity cache: a member
+ * stays a member for this process until the server itself changes it.
+ */
+function signedInProfileId(
+  database: RewindDatabase,
+  accountId: string,
+  groupId: string,
+  now: Date,
+): string | null {
+  const at = now.getTime();
+  const selected = selectedGroupId(database, accountId, at, () => {
+    const row = database
+      .prepare('SELECT group_id AS groupId FROM real_account_group_selections WHERE account_id = ?')
+      .get(accountId) as { groupId?: string } | undefined;
+    return row?.groupId ?? null;
+  });
+  if (selected !== groupId) return null;
+  return membershipProfileId(database, accountId, groupId, at, () => {
+    const row = database
+      .prepare(
+        `SELECT profile_id AS profileId FROM real_group_memberships
+         WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
+      )
+      .get(accountId, groupId) as { profileId?: string } | undefined;
+    return row?.profileId ?? null;
+  });
 }
 
 function mediaIdentityIsCurrent(
@@ -418,10 +366,6 @@ function mediaIdentityIsCurrent(
   identity: AuthorisedMediaIdentity,
   now: Date,
 ): boolean {
-  if (identity.sessionId) {
-    return isActiveDemoSession(database, identity.sessionId, identity.memberId, now);
-  }
-  if (!identity.accountId) return false;
   const token = authToken(request);
   const session = token
     ? validateRealSession(database, token, now)
@@ -429,56 +373,18 @@ function mediaIdentityIsCurrent(
   return Boolean(
     session.status === 'valid' &&
     session.account.id === identity.accountId &&
-    getCurrentRealGroup(database, identity.accountId)?.group.id === identity.groupId &&
-    isMember(database, identity.groupId, identity.memberId),
+    signedInProfileId(database, identity.accountId, identity.groupId, now) === identity.memberId,
   );
 }
 
 function requireAuthorisedChatGroup(
   request: IncomingMessage,
   database: RewindDatabase,
-  url: URL,
   response: ServerResponse,
   config: RuntimeConfig,
   at: Date,
   groupId: string,
 ): AuthorisedMediaIdentity | null {
-  const hasBearer = typeof request.headers.authorization === 'string';
-  const hasRealCookie =
-    typeof request.headers.cookie === 'string' &&
-    request.headers.cookie
-      .split(';')
-      .some((part) => part.trim().startsWith(`${REAL_SESSION_COOKIE}=`));
-  if (!hasBearer && !hasRealCookie) {
-    const demo = extractDemoRequestIdentity(database, url, at);
-    if (!demo.ok) {
-      if (
-        !sendRealtimeAccessDenied(
-          request,
-          response,
-          config,
-          401,
-          'Choose Demo access before joining chat.',
-        )
-      ) {
-        sendSessionRequired(response, config);
-      }
-      return null;
-    }
-    if (
-      demo.identity.groupId !== groupId ||
-      !authorizeSessionMember(database, groupId, demo.identity, 'message').allowed
-    ) {
-      if (!sendRealtimeAccessDenied(request, response, config)) sendDenied(response, config);
-      return null;
-    }
-    return {
-      groupId: demo.identity.groupId,
-      memberId: demo.identity.memberId,
-      sessionId: demo.identity.sessionId,
-    };
-  }
-
   const deny = (status: number = SAFE_DENIAL.status, message: string = SAFE_DENIAL.message) => {
     if (!sendRealtimeAccessDenied(request, response, config, status, message)) {
       sendJson(response, config, status, {
@@ -488,7 +394,6 @@ function requireAuthorisedChatGroup(
     }
     return null;
   };
-  if (url.searchParams.has('sessionId')) return deny();
   if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
     return deny(403, 'Chat access is unavailable on this connection.');
   }
@@ -497,23 +402,11 @@ function requireAuthorisedChatGroup(
   if (session.status !== 'valid') {
     return deny(401, 'Sign in again to join this group chat.');
   }
-  const selected = getCurrentRealGroup(database, session.account.id);
-  const membership = database
-    .prepare(
-      `SELECT profile_id AS profileId FROM real_group_memberships
-       WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
-    )
-    .get(session.account.id, groupId) as { profileId?: string } | undefined;
-  if (
-    selected?.group.id !== groupId ||
-    !membership?.profileId ||
-    !isMember(database, groupId, membership.profileId)
-  ) {
-    return deny();
-  }
+  const profileId = signedInProfileId(database, session.account.id, groupId, at);
+  if (!profileId) return deny();
   for (const [name, value] of Object.entries(authCorsHeaders(request, config)))
     response.setHeader(name, value);
-  return { accountId: session.account.id, groupId, memberId: membership.profileId };
+  return { accountId: session.account.id, groupId, memberId: profileId };
 }
 
 function chatIdentityIsCurrent(
@@ -522,53 +415,13 @@ function chatIdentityIsCurrent(
   identity: AuthorisedMediaIdentity,
   at: Date,
 ): boolean {
-  if (identity.sessionId) {
-    const current = getDemoSession(database, identity.sessionId);
-    return Boolean(
-      current &&
-      current.actor.memberId === identity.memberId &&
-      current.groupId === identity.groupId &&
-      classifyDemoSession(current.expiresAt, current.invalidatedAt, at) === 'valid' &&
-      isMember(database, identity.groupId, identity.memberId),
-    );
-  }
-  if (!identity.accountId) return false;
   const token = authToken(request);
   const session = token ? validateRealSession(database, token, at) : { status: 'invalid' as const };
-  const membership = database
-    .prepare(
-      `SELECT profile_id AS profileId FROM real_group_memberships
-       WHERE account_id = ? AND group_id = ? AND accepted_at IS NOT NULL`,
-    )
-    .get(identity.accountId, identity.groupId) as { profileId?: string } | undefined;
   return Boolean(
     session.status === 'valid' &&
     session.account.id === identity.accountId &&
-    getCurrentRealGroup(database, identity.accountId)?.group.id === identity.groupId &&
-    membership?.profileId === identity.memberId &&
-    isMember(database, identity.groupId, identity.memberId),
+    signedInProfileId(database, identity.accountId, identity.groupId, at) === identity.memberId,
   );
-}
-
-function requireAuthorisedOwner(
-  database: RewindDatabase,
-  url: URL,
-  response: ServerResponse,
-  config: RuntimeConfig,
-  now: Date,
-  groupId: string | null,
-): DemoRequestIdentity | null {
-  const identity = requireSessionIdentity(database, url, response, config, now);
-  if (!identity) return null;
-  if (
-    !groupId ||
-    identity.groupId !== groupId ||
-    !authorizeSessionOwner(database, groupId, identity).allowed
-  ) {
-    sendDenied(response, config);
-    return null;
-  }
-  return identity;
 }
 
 type PremiereState = 'locked' | 'processing' | 'delayed' | 'ready';
@@ -583,10 +436,8 @@ function protectedAssetPath(
   options: RuntimeServerOptions,
   now: Date,
 ): string | null {
-  if (identity.sessionId)
-    return `/${kind}s/${encodeURIComponent(jobId)}/${purpose}?groupId=${encodeURIComponent(identity.groupId)}&sessionId=${encodeURIComponent(identity.sessionId)}`;
   const sessionToken = authToken(request);
-  if (!sessionToken || !identity.accountId || !options.mediaCapabilities) return null;
+  if (!sessionToken || !options.mediaCapabilities) return null;
   const row = database
     .prepare(
       `SELECT output_path AS outputPath, output_sha256 AS sha256,
@@ -624,17 +475,6 @@ function premiereState(film: ReturnType<typeof getPremiereFilm>): PremiereState 
   }
   if (film.cycleStatus === 'revealing' || film.cycleStatus === 'archived') return 'processing';
   return 'locked';
-}
-
-function cycleCompilationJob(database: RewindDatabase, groupId: string, cycleId: string) {
-  const row = database
-    .prepare(
-      `SELECT id FROM media_jobs
-       WHERE group_id = ? AND cycle_id = ? AND kind = 'film'
-       ORDER BY created_at ASC, id ASC LIMIT 1`,
-    )
-    .get(groupId, cycleId) as { id?: string } | undefined;
-  return row?.id ? getCompilationJob(database, row.id, groupId) : null;
 }
 
 async function resolveOwnedProcessedPath(
@@ -731,9 +571,10 @@ async function openVerifiedServingFile(
   };
 }
 
-/** Archive/premiere checks need only a momentary verified read. Actual media
- * routes retain the handle and stream from it. */
-async function verifiedServingPath(
+/** Archive listing, premiere status and download grants advertise media from
+ * its finalized row; /media/access hashes the bytes when it streams them. A
+ * missing or resized object is audited here because it can no longer be played. */
+async function servableOutput(
   database: RewindDatabase,
   jobId: string,
   kind: 'clip' | 'film' | 'download',
@@ -741,78 +582,24 @@ async function verifiedServingPath(
   dataDir: string,
   actorMemberId: string | null,
   now: Date,
-  storage: StoredJobOptions = {},
-): Promise<{ path: string; size: number } | null> {
-  if (isMediaRef(outputPath)) {
-    if (
-      !(await verifyReadyJobOutput(database, jobId, {
-        ...storage,
-        outputDir: resolve(dataDir, 'media/processed'),
-      }))
-    )
-      return null;
-    return { path: outputPath, size: decodeMediaRef(outputPath).byteLength };
-  }
-  const path = await resolveOwnedProcessedPath(outputPath, dataDir);
-  const result = await verifyMediaIntegrity(database, jobId, path);
-  if (integrityBlocksServing(result)) {
+  storage: StoredJobOptions,
+): Promise<boolean> {
+  const state = await servableJobOutput(database, jobId, outputPath, {
+    ...storage,
+    outputDir: resolve(dataDir, 'media/processed'),
+  });
+  if (state === 'missing')
     recordIntegrityFailure(database, {
       jobId,
       kind,
-      result,
       actorMemberId,
       timestamp: now.toISOString(),
     });
-    return null;
-  }
-  if (!path) return null;
-  const details = await stat(path).catch(() => null);
-  if (!details || !details.isFile() || details.size <= 0) return null;
-  return { path, size: details.size };
+  return state === 'servable';
 }
 
-async function verifiedArchiveListingPath(
-  database: RewindDatabase,
-  jobId: string,
-  kind: 'clip' | 'film',
-  outputPath: string,
-  dataDir: string,
-  actorMemberId: string | null,
-  now: Date,
-  storage: StoredJobOptions = {},
-): Promise<{ path: string; size: number } | null> {
-  if (isMediaRef(outputPath)) {
-    if (
-      !(await verifyReadyJobOutput(database, jobId, {
-        ...storage,
-        outputDir: resolve(dataDir, 'media/processed'),
-      }))
-    )
-      return null;
-    return { path: outputPath, size: decodeMediaRef(outputPath).byteLength };
-  }
-  const path = await resolveOwnedProcessedPath(outputPath, dataDir);
-  const result = await verifyArchiveListingIntegrity(database, jobId, path);
-  if (integrityBlocksServing(result)) {
-    recordIntegrityFailure(database, {
-      jobId,
-      kind,
-      result,
-      actorMemberId,
-      timestamp: now.toISOString(),
-    });
-    return null;
-  }
-  if (!path) return null;
-  const details = await stat(path).catch(() => null);
-  if (!details || !details.isFile() || details.size <= 0) return null;
-  return { path, size: details.size };
-}
-
-/**
- * Keep only released archive entries whose retained bytes still match their
- * finalized digest. The returned objects never include the server-side path.
- */
+/** Keep only released archive entries that are still servable. The returned
+ * objects never include the server-side path. */
 async function filterServableArchive<T extends { id: string; outputPath: string }>(
   database: RewindDatabase,
   kind: 'clip' | 'film',
@@ -822,32 +609,21 @@ async function filterServableArchive<T extends { id: string; outputPath: string 
   now: Date,
   storage: StoredJobOptions = {},
 ): Promise<Omit<T, 'outputPath'>[]> {
-  const safeEntries: Omit<T, 'outputPath'>[] = [];
-  // Process at most three hashes at once. Archive calls await the film batch
-  // before the clip batch, so the whole request stays within this bound.
-  for (let index = 0; index < entries.length; index += 3) {
-    const batch = await Promise.all(
-      entries.slice(index, index + 3).map(async (entry) => {
-        const served = await verifiedArchiveListingPath(
-          database,
-          entry.id,
-          kind,
-          entry.outputPath,
-          dataDir,
-          actorMemberId,
-          now,
-          storage,
-        );
-        if (!served) return null;
-        const { outputPath, ...safe } = entry;
-        return safe;
-      }),
-    );
-    for (const entry of batch) {
-      if (entry !== null) safeEntries.push(entry as Omit<T, 'outputPath'>);
-    }
-  }
-  return safeEntries;
+  const servable = await Promise.all(
+    entries.map((entry) =>
+      servableOutput(
+        database,
+        entry.id,
+        kind,
+        entry.outputPath,
+        dataDir,
+        actorMemberId,
+        now,
+        storage,
+      ),
+    ),
+  );
+  return entries.filter((_, index) => servable[index]).map(({ outputPath, ...safe }) => safe);
 }
 
 function streamMp4(
@@ -943,13 +719,20 @@ export interface RuntimeServerOptions extends StoredJobOptions {
   realtimeHub?: RealtimeHub;
   realtimeHeartbeatIntervalMs?: number;
   requestLimiters?: RequestLimiters;
+  /** Tests inject a Cognito service; production builds one from config.cognito. */
+  cognito?: CognitoService;
 }
 
 interface RequestLimiters {
+  cognitoStates: UsedStates;
   intake: ConcurrencyLimiter;
   processing: ConcurrencyLimiter;
   archive: ConcurrencyLimiter;
   registration: RegistrationRateLimiter;
+  chat: AccountTokenBucket;
+  groups: AccountTokenBucket;
+  safety: AccountTokenBucket;
+  streams: AccountStreamLimiter;
 }
 
 class ConcurrencyLimiter {
@@ -971,10 +754,15 @@ class ConcurrencyLimiter {
 
 function createRequestLimiters(config: RuntimeConfig): RequestLimiters {
   return {
+    cognitoStates: new UsedStates(),
     intake: new ConcurrencyLimiter(config.maxConcurrentIntakes),
     processing: new ConcurrencyLimiter(config.maxConcurrentProcessing),
     archive: new ConcurrencyLimiter(2),
     registration: new RegistrationRateLimiter(),
+    chat: new AccountTokenBucket(30, 60 * 1000),
+    groups: new AccountTokenBucket(5, 24 * 60 * 60 * 1000),
+    safety: new AccountTokenBucket(20, 10 * 60 * 1000),
+    streams: new AccountStreamLimiter(),
   };
 }
 
@@ -1013,6 +801,86 @@ class RegistrationRateLimiter {
     bucket.count += 1;
     return { allowed: true };
   }
+}
+
+// ponytail: one runtime host today. Before scaling to multiple hosts, move
+// buckets and stream leases to a shared atomic store (for example Redis).
+class AccountTokenBucket {
+  private readonly buckets = new Map<string, { tokens: number; updatedAt: number }>();
+  constructor(
+    private readonly capacity: number,
+    private readonly windowMs: number,
+  ) {}
+  tryAcquire(
+    accountId: string,
+    nowMs: number,
+  ): { allowed: true } | { allowed: false; retryAfter: number } {
+    for (const [key, bucket] of this.buckets) {
+      if (nowMs - bucket.updatedAt >= this.windowMs) this.buckets.delete(key);
+    }
+    let bucket = this.buckets.get(accountId);
+    if (!bucket) {
+      if (this.buckets.size >= MAX_REGISTRATION_RATE_LIMIT_SOURCES)
+        return { allowed: false, retryAfter: Math.ceil(this.windowMs / 1000) };
+      bucket = { tokens: this.capacity, updatedAt: nowMs };
+      this.buckets.set(accountId, bucket);
+    }
+    bucket.tokens = Math.min(
+      this.capacity,
+      bucket.tokens + (Math.max(0, nowMs - bucket.updatedAt) * this.capacity) / this.windowMs,
+    );
+    bucket.updatedAt = nowMs;
+    if (bucket.tokens < 1)
+      return {
+        allowed: false,
+        retryAfter: Math.max(
+          1,
+          Math.ceil(((1 - bucket.tokens) * this.windowMs) / this.capacity / 1000),
+        ),
+      };
+    bucket.tokens -= 1;
+    return { allowed: true };
+  }
+}
+
+class AccountStreamLimiter {
+  private readonly active = new Map<string, number>();
+  tryAcquire(accountId: string): (() => void) | null {
+    const count = this.active.get(accountId) ?? 0;
+    if (count >= 5) return null;
+    this.active.set(accountId, count + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = (this.active.get(accountId) ?? 1) - 1;
+      if (next > 0) this.active.set(accountId, next);
+      else this.active.delete(accountId);
+    };
+  }
+}
+
+function enforceRateLimit(
+  limiter: Pick<RegistrationRateLimiter, 'tryAcquire'>,
+  key: string,
+  now: Date,
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: RuntimeConfig,
+  message: string,
+): boolean {
+  const result = limiter.tryAcquire(key, now.getTime());
+  if (result.allowed) return true;
+  authJson(
+    request,
+    response,
+    config,
+    429,
+    { error: 'rate_limited', message },
+    { 'Retry-After': String(result.retryAfter) },
+  );
+  finishRejectedRequest(request, response);
+  return false;
 }
 
 function acquireRequestCapacity(
@@ -1382,7 +1250,11 @@ function healthPayload(config: RuntimeConfig, database: RewindDatabase): HealthP
     service: 'rewind-local-runtime',
     version: SERVICE_VERSION,
     ready: schema.ready,
-    checks: { sqlite: true, ffmpegConfigured: Boolean(config.ffmpegBin), schema },
+    checks: {
+      database: isPostgres(database) ? 'postgresql' : 'sqlite',
+      ffmpegConfigured: Boolean(config.ffmpegBin),
+      schema,
+    },
     addresses: {
       local: `http://${localHost}:${config.port}`,
       lan: lan ? `http://${lan}:${config.port}` : null,
@@ -1511,8 +1383,10 @@ export async function handleRequest(
       config,
       database,
       requestLimiters.registration,
+      requestLimiters.cognitoStates,
       url,
       now(),
+      options,
     );
     return;
   }
@@ -1528,122 +1402,6 @@ export async function handleRequest(
     return;
   }
 
-  if (url.pathname === '/sessions/demo' && request.method === 'POST') {
-    const body = await requestBody(request, config);
-    if (!body || typeof body.memberId !== 'string') {
-      sendJson(response, config, 400, {
-        error: 'invalid_demo_access',
-        message: 'Choose a synthetic Demo member to continue.',
-      });
-      return;
-    }
-    const result = createDemoSession(database, {
-      memberId: body.memberId,
-      groupId: typeof body.groupId === 'string' ? body.groupId : undefined,
-      now: now(),
-    });
-    if (!result.ok) {
-      if (result.reason === 'membership_denied') return sendDenied(response, config);
-      sendJson(response, config, 400, {
-        error: 'invalid_demo_access',
-        message: 'That synthetic Demo member is not available.',
-      });
-      return;
-    }
-    sendJson(response, config, 201, { session: result.session });
-    return;
-  }
-
-  const sessionMatch = url.pathname.match(/^\/sessions\/([^/]+)$/);
-  if (sessionMatch) {
-    const sessionId = decodePathSegment(sessionMatch[1], response, config);
-    if (sessionId === null) return;
-    if (request.method === 'GET') {
-      const result = validateDemoSession(database, sessionId, now());
-      if (result.status === 'valid') {
-        sendJson(response, config, 200, { session: result.session });
-      } else if (result.status === 'invalid') {
-        sendJson(response, config, 404, {
-          error: 'not_found',
-          message: 'Demo access was not found.',
-        });
-      } else {
-        sendJson(response, config, 401, {
-          error: result.status,
-          message: 'This Demo access is no longer active. Choose a Demo member again.',
-        });
-      }
-      return;
-    }
-    if (request.method === 'DELETE') {
-      const result = invalidateDemoSession(database, sessionId, now());
-      if (!result.ok) {
-        if (result.reason === 'missing') {
-          sendJson(response, config, 404, {
-            error: 'not_found',
-            message: 'Demo access was not found.',
-          });
-        } else {
-          sendJson(response, config, 409, {
-            error: 'already_inactive',
-            message: 'This Demo access is already inactive.',
-          });
-        }
-        return;
-      }
-      sendJson(response, config, 200, { session: result.session });
-      return;
-    }
-  }
-
-  if (url.pathname === '/demo/reset' && request.method === 'POST') {
-    // Reset refusals must not touch even session/audit rows. Resolve the same
-    // persisted Demo identity and lifecycle without validation side effects.
-    const requireResetOwner = (): DemoRequestIdentity | null => {
-      const sessionId = url.searchParams.get('sessionId');
-      const session = sessionId ? getDemoSession(database, sessionId) : null;
-      if (
-        !session ||
-        classifyDemoSession(session.expiresAt, session.invalidatedAt, now()) !== 'valid'
-      ) {
-        sendSessionRequired(response, config);
-        return null;
-      }
-      const identity: DemoRequestIdentity = {
-        sessionId: session.id,
-        memberId: session.actor.memberId,
-        groupId: session.groupId,
-        session,
-      };
-      if (!authorizeSessionOwner(database, identity.groupId, identity).allowed) {
-        sendDenied(response, config);
-        return null;
-      }
-      return identity;
-    };
-    if (!requireResetOwner()) return;
-    const stagingDir = resolve(config.dataDir, 'media', 'staging');
-    const releaseStagingLock = await acquireStagedSourceLock(stagingDir);
-    try {
-      await waitForStagedIntakesIdle();
-      // Recheck authority after waiting. The database write lock then fences
-      // foreign-data inspection and synchronous media deletion with no await.
-      if (!requireResetOwner()) return;
-      if (!restoreFixture(database, now(), resolve(config.dataDir, 'media'))) {
-        sendJson(response, config, 409, {
-          error: 'demo_reset_unavailable',
-          message: 'Demo reset is unavailable while non-Demo data is present.',
-        });
-        return;
-      }
-      await mkdir(stagingDir, { recursive: true });
-      sendJson(response, config, 200, { reset: true });
-    } finally {
-      releaseStagingLock();
-    }
-    return;
-  }
-
   const realtimeHistoryMessagesMatch = url.pathname.match(
     /^\/realtime\/groups\/([^/]+)\/messages$/,
   );
@@ -1653,7 +1411,6 @@ export async function handleRequest(
     const identity = requireAuthorisedChatGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
@@ -1676,12 +1433,17 @@ export async function handleRequest(
       });
       return;
     }
-    sendJson(
-      response,
-      config,
-      200,
-      listChatHistoryPage(database, identity.groupId, { beforeEventId, limit: parsedLimit }),
-    );
+    // Read the revision first: the page then reflects at least that revision.
+    const reactionRevision = currentReactionRevision();
+    const page = listChatHistoryPage(database, identity.groupId, {
+      beforeEventId,
+      limit: parsedLimit,
+    });
+    page.events = page.events.flatMap((event) => {
+      const visible = visibleChatEvent(database, identity.accountId, event);
+      return visible ? [visible] : [];
+    });
+    sendJson(response, config, 200, { ...page, reactionRevision });
     return;
   }
 
@@ -1692,7 +1454,6 @@ export async function handleRequest(
     const identity = requireAuthorisedChatGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
@@ -1721,10 +1482,19 @@ export async function handleRequest(
       return;
     }
 
+    const releaseStream = requestLimiters.streams.tryAcquire(identity.accountId);
+    if (!releaseStream) {
+      authJson(request, response, config, 429, {
+        error: 'rate_limited',
+        message: 'You have too many open chat connections. Close another Rewind tab and retry.',
+      });
+      return;
+    }
+    response.once('close', releaseStream);
+    response.once('finish', releaseStream);
+
     response.writeHead(200, {
-      ...(identity.accountId && (request.headers.authorization || request.headers.cookie)
-        ? authCorsHeaders(request, config)
-        : { 'Access-Control-Allow-Origin': config.allowOrigin }),
+      ...authCorsHeaders(request, config),
       'Access-Control-Allow-Headers': 'Authorization, Content-Type, Range, Last-Event-ID',
       'Cache-Control': 'no-cache, no-store',
       Connection: 'keep-alive',
@@ -1734,10 +1504,33 @@ export async function handleRequest(
     response.write(': connected\n\n');
 
     const writeEvent = (event: Parameters<typeof encodeSseEvent>[0]) => {
+      const visible = visibleChatEvent(database, identity.accountId, event);
+      if (!visible) return;
       if (!response.writableEnded && !response.destroyed) {
-        response.write(encodeSseEvent(event, { metadataOnly }));
+        response.write(encodeSseEvent(visible, { metadataOnly }));
       }
     };
+    const writeReaction = (event: ChatReactionEvent) => {
+      // Unread observers only count messages; a reaction never reaches them.
+      if (metadataOnly || endUnauthorisedStream()) return;
+      // Hidden or reported content for this viewer stays hidden, and the
+      // payload holds only the shared aggregate, never the actor's own state.
+      if (
+        isChatEventHidden(database, identity.accountId, {
+          id: event.messageId,
+          memberId: event.authorMemberId,
+        })
+      )
+        return;
+      if (!response.writableEnded && !response.destroyed) response.write(encodeSseReaction(event));
+    };
+    const subscribeToGroup = (
+      listener: (event: Parameters<typeof encodeSseEvent>[0]) => void,
+    ): (() => void) =>
+      hub.subscribe(groupId, (event) => {
+        if (event.type === 'reaction') writeReaction(event);
+        else listener(event);
+      });
     let unsubscribe = () => {};
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     const cleanup = () => {
@@ -1764,7 +1557,7 @@ export async function handleRequest(
       // either included in that watermark or delivered once from the buffer.
       const pending: Parameters<typeof encodeSseEvent>[0][] = [];
       let priming = true;
-      unsubscribe = hub.subscribe(groupId, (event) => {
+      unsubscribe = subscribeToGroup((event) => {
         if (priming) pending.push(event);
         else writeAuthorisedEvent(event);
       });
@@ -1790,7 +1583,7 @@ export async function handleRequest(
         writeAuthorisedEvent(event);
         lastDeliveredEventId = event.eventId;
       };
-      unsubscribe = hub.subscribe(groupId, (event) => {
+      unsubscribe = subscribeToGroup((event) => {
         if (priming) pending.push(event);
         else deliverOnce(event);
       });
@@ -1836,13 +1629,24 @@ export async function handleRequest(
     const identity = requireAuthorisedChatGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
     );
     if (!identity) return;
+    if (
+      !enforceRateLimit(
+        requestLimiters.chat,
+        identity.accountId,
+        now(),
+        request,
+        response,
+        config,
+        'You are sending messages too quickly. Please wait before trying again.',
+      )
+    )
+      return;
     const body = await requestBody(request, config);
     if (!chatIdentityIsCurrent(request, database, identity, now())) {
       sendDenied(response, config);
@@ -1851,7 +1655,6 @@ export async function handleRequest(
     const result = createChatMessage(database, {
       groupId,
       memberId: identity.memberId,
-      sessionId: identity.sessionId,
       body: typeof body?.body === 'string' ? body.body : '',
       messageId: typeof body?.messageId === 'string' ? body.messageId : undefined,
       replyToMessageId:
@@ -1860,6 +1663,7 @@ export async function handleRequest(
     });
     if (!result.ok) {
       if (result.reason === 'membership_denied') return sendDenied(response, config);
+      if (result.reason === 'reply_not_found') return sendNotFound(response, config);
       sendJson(response, config, result.reason === 'duplicate_message' ? 409 : 400, {
         error: `message_${result.reason}`,
         message:
@@ -1871,9 +1675,7 @@ export async function handleRequest(
                 ? 'The message timestamp is invalid.'
                 : result.reason === 'duplicate_message'
                   ? 'This message retry conflicts with an existing message.'
-                  : result.reason === 'reply_not_found'
-                    ? 'The message you are replying to is not available in this group.'
-                    : 'Replies can only target an original message.',
+                  : 'Replies can only target an original message.',
       });
       return;
     }
@@ -1902,7 +1704,6 @@ export async function handleRequest(
     const identity = requireAuthorisedChatGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
@@ -1911,8 +1712,11 @@ export async function handleRequest(
     if (!identity) return;
     if (request.method === 'GET') {
       const message = getMessage(database, groupId, messageId);
-      if (!message) return sendNotFound(response, config);
-      sendJson(response, config, 200, { message });
+      if (!message || !canInteractWithChatMessage(database, identity.memberId, message))
+        return sendNotFound(response, config);
+      const visible = visibleChatEvent(database, identity.accountId, { message });
+      if (!visible) return sendNotFound(response, config);
+      sendJson(response, config, 200, visible);
       return;
     }
     const body = await requestBody(request, config);
@@ -1937,7 +1741,6 @@ export async function handleRequest(
     const result = toggleChatReaction(database, {
       groupId,
       memberId: identity.memberId,
-      sessionId: identity.sessionId,
       messageId,
       emoji,
       active,
@@ -1955,120 +1758,66 @@ export async function handleRequest(
       });
       return;
     }
-    sendJson(response, config, 200, result);
-    return;
-  }
-
-  if (url.pathname === '/groups' && request.method === 'POST') {
-    const identity = requireSessionIdentity(database, url, response, config, now());
-    if (!identity) return;
-    const body = await requestBody(request, config);
-    const result = createGroup(
-      database,
-      identity.memberId,
-      {
-        name: typeof body?.name === 'string' ? body.name : '',
-        prompt: typeof body?.prompt === 'string' ? body.prompt : '',
-        now: now(),
-      },
-      identity.sessionId,
-    );
-    if (!result.ok && result.field === 'session') {
-      sendSessionRequired(response, config);
-      return;
-    }
-    if (!result.ok) {
-      sendJson(response, config, 400, {
-        error: 'invalid_group',
-        field: result.field,
-        reason: result.reason,
-        message:
-          result.field === 'name'
-            ? result.reason === 'too_long'
-              ? 'Group name is too long.'
-              : 'Enter a group name.'
-            : result.field === 'prompt'
-              ? result.reason === 'too_long'
-                ? 'Prompt is too long.'
-                : 'Choose a prompt or write a custom prompt.'
-              : 'This Demo member cannot create a group.',
-      });
-      return;
-    }
-    sendJson(response, config, 201, {
-      group: result.group,
-      cycle: result.cycle,
-      session: getDemoSession(database, identity.sessionId),
+    const visible = visibleChatEvent(database, identity.accountId, { message: result.message });
+    if (!visible) return sendNotFound(response, config);
+    // Counts and revision are taken in this synchronous run, so they order
+    // against every other reaction change. Each stream filters per viewer.
+    const reactionRevision = nextReactionRevision();
+    options.realtimeHub?.publish({
+      type: 'reaction',
+      groupId,
+      messageId,
+      authorMemberId: result.message.memberId,
+      reactionCounts: result.message.reactionCounts ?? {},
+      revision: reactionRevision,
+      occurredAt: now().toISOString(),
     });
+    sendJson(response, config, 200, { ...result, message: visible.message, reactionRevision });
     return;
   }
 
-  if (url.pathname === '/invites' && request.method === 'POST') {
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedOwner(database, url, response, config, now(), groupId);
+  // Reconnect reconciliation: current counts for already-loaded messages,
+  // including ones older than the latest history page.
+  const realtimeReactionSnapshotMatch = url.pathname.match(
+    /^\/realtime\/groups\/([^/]+)\/reaction-counts$/,
+  );
+  if (realtimeReactionSnapshotMatch && request.method === 'POST') {
+    const groupId = decodePathSegment(realtimeReactionSnapshotMatch[1], response, config);
+    if (groupId === null) return;
+    const identity = requireAuthorisedChatGroup(
+      request,
+      database,
+      response,
+      config,
+      now(),
+      groupId,
+    );
     if (!identity) return;
     const body = await requestBody(request, config);
-    const ttlSeconds =
-      typeof body?.expiresInSeconds === 'number'
-        ? body.expiresInSeconds
-        : typeof body?.expiresInSeconds === 'string'
-          ? Number(body.expiresInSeconds)
-          : undefined;
-    const result = createInvite(
-      database,
-      identity.memberId,
-      identity.groupId,
-      ttlSeconds,
-      now(),
-      identity.sessionId,
-    );
-    if (!result.ok) {
-      if (result.reason === 'session_inactive') return sendSessionRequired(response, config);
-      if (result.reason === 'forbidden') return sendDenied(response, config);
+    if (!chatIdentityIsCurrent(request, database, identity, now())) {
+      sendDenied(response, config);
+      return;
+    }
+    const messageIds = Array.isArray(body?.messageIds) ? body.messageIds : null;
+    if (
+      !messageIds ||
+      messageIds.length > 100 ||
+      messageIds.some((id: unknown) => typeof id !== 'string' || id.length === 0 || id.length > 200)
+    ) {
       sendJson(response, config, 400, {
-        error: 'invalid_invite',
-        message: 'Choose an expiry between five minutes and seven days.',
+        error: 'invalid_reaction_snapshot',
+        message: 'Send up to 100 message ids.',
       });
       return;
     }
-    sendJson(response, config, 201, { invite: result.invite });
-    return;
-  }
-
-  if (url.pathname === '/invites/accept' && request.method === 'POST') {
-    const identity = requireSessionIdentity(database, url, response, config, now());
-    if (!identity) return;
-    const body = await requestBody(request, config);
-    const code = typeof body?.code === 'string' ? body.code : (url.searchParams.get('code') ?? '');
-    const result = acceptInvite(
-      database,
-      identity.memberId,
-      code,
-      url.searchParams.get('groupId') ?? undefined,
-      now(),
-      identity.sessionId,
+    const revision = currentReactionRevision();
+    const messages = listChatReactionSnapshot(database, groupId, messageIds as string[]).flatMap(
+      ({ messageId, memberId, reactionCounts }) =>
+        isChatEventHidden(database, identity.accountId, { id: messageId, memberId })
+          ? []
+          : [{ messageId, reactionCounts }],
     );
-    if (!result.ok) {
-      if (result.reason === 'session_inactive') return sendSessionRequired(response, config);
-      const messages = {
-        malformed: 'Enter the eight-character invite code.',
-        not_found: 'That invite code is not recognized.',
-        expired: 'That invite code has expired. Ask the owner for a new code.',
-        used: 'That invite code has already been used.',
-        cross_group: 'That invite code belongs to a different group.',
-        already_member: 'This Demo member is already in that group.',
-      } as const;
-      sendJson(response, config, 400, {
-        error: `invite_${result.reason}`,
-        message: messages[result.reason],
-      });
-      return;
-    }
-    sendJson(response, config, 200, {
-      invite: result.invite,
-      group: result.group,
-      session: getDemoSession(database, identity.sessionId),
-    });
+    sendJson(response, config, 200, { revision, messages });
     return;
   }
 
@@ -2078,12 +1827,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
-      'contribution',
     );
     if (!identity) return;
     if (!/^[A-Za-z0-9_-]{8,100}$/.test(idempotencyKey)) {
@@ -2286,150 +2033,19 @@ export async function handleRequest(
     return;
   }
 
-  if (url.pathname === '/demo/synthetic-clip' && request.method === 'POST') {
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
-      database,
-      url,
-      response,
-      config,
-      now(),
-      groupId,
-      'contribution',
-    );
-    if (!identity) return;
-    const releaseIntakeCapacity = acquireRequestCapacity(
-      requestLimiters.intake,
-      request,
-      response,
-      config,
-    );
-    if (!releaseIntakeCapacity) return;
-    const stagingDir = resolve(config.dataDir, 'media', 'staging');
-    const releaseLock = await acquireStagedSourceLock(stagingDir);
-    try {
-      const idempotencyKey = `synthetic-${randomUUID()}`;
-      const sourceUri = `staged://${stagedSourceId(idempotencyKey)}`;
-      const sourcePath = stagedSourcePath(sourceUri, stagingDir, 1);
-      if (!sourcePath) return sendNotFound(response, config);
-      const claim = claimStagedSource(
-        database,
-        identity.groupId,
-        identity.memberId,
-        idempotencyKey,
-        now(),
-        sourcePath,
-      );
-      if (!claim.ok || !claim.source.sourcePath) return sendDenied(response, config);
-      const releaseIntake = registerStagedIntake();
-      try {
-        await mkdir(dirname(claim.source.sourcePath), { recursive: true });
-        const metadata = await generateSyntheticDemoClip(config.ffmpegBin, claim.source.sourcePath);
-        database.exec('BEGIN');
-        try {
-          recordClipMediaMetadata(database, {
-            sourceUri,
-            ...metadata,
-            verifiedAt: now().toISOString(),
-          });
-          if (
-            !markStagedSourceReady(
-              database,
-              sourceUri,
-              metadata.byteLength,
-              claim.source.sourcePath,
-              claim.source.claimGeneration,
-            )
-          ) {
-            throw new Error('synthetic source claim was superseded');
-          }
-          database.exec('COMMIT');
-        } catch (error) {
-          database.exec('ROLLBACK');
-          throw error;
-        }
-        const upload = createClipUpload(
-          database,
-          identity.groupId,
-          identity.memberId,
-          {
-            idempotencyKey,
-            sourceUri,
-            ...metadata,
-            mode: 'soft-focus',
-            trimStartSeconds: 0,
-            trimEndSeconds: metadata.durationSeconds,
-          },
-          now(),
-          { stagingDir, requireVerifiedMetadata: true, sessionId: identity.sessionId },
-        );
-        if (!upload.ok) {
-          cleanupFailedStagedClaim(
-            database,
-            sourceUri,
-            claim.source.sourcePath,
-            claim.source.claimGeneration,
-            stagingDir,
-          );
-          if (upload.reason === 'quota_exceeded') {
-            sendJson(response, config, 409, {
-              error: 'contribution_quota_exceeded',
-              message: 'This member has reached the current cycle contribution limit.',
-            });
-            return;
-          }
-          if (upload.reason === 'session_inactive') return sendSessionRequired(response, config);
-          if (upload.reason === 'not_found') {
-            sendJson(response, config, 409, {
-              error: 'contribution_window_closed',
-              message: 'The current cycle is not accepting contributions.',
-            });
-            return;
-          }
-          sendJson(response, config, 503, {
-            error: 'synthetic_clip_failed',
-            message: 'The synthetic Demo clip could not be prepared. Try again.',
-          });
-          return;
-        }
-        sendJson(response, config, 201, { upload: upload.upload, synthetic: true });
-      } catch {
-        cleanupFailedStagedClaim(
-          database,
-          sourceUri,
-          claim.source.sourcePath,
-          claim.source.claimGeneration,
-          stagingDir,
-        );
-        sendJson(response, config, 503, {
-          error: 'synthetic_clip_failed',
-          message: 'The synthetic Demo clip could not be prepared. Try again.',
-        });
-      } finally {
-        releaseIntake();
-      }
-    } finally {
-      releaseIntakeCapacity();
-      releaseLock();
-    }
-    return;
-  }
-
   if (url.pathname === '/contributions/upload' && request.method === 'POST') {
     const groupId = url.searchParams.get('groupId');
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
-      'contribution',
     );
     if (!identity) return;
     const body = await requestBody(request, config);
-    if (identity.accountId && !mediaIdentityIsCurrent(request, database, identity, now())) {
+    if (!mediaIdentityIsCurrent(request, database, identity, now())) {
       return sendSessionRequired(response, config);
     }
     if (
@@ -2478,7 +2094,6 @@ export async function handleRequest(
     const result = createClipUpload(database, identity.groupId, identity.memberId, input, now(), {
       stagingDir: resolve(config.dataDir, 'media', 'staging'),
       requireVerifiedMetadata: true,
-      sessionId: identity.sessionId,
     });
     if (!result.ok) {
       if (result.reason === 'not_found') return sendNotFound(response, config);
@@ -2488,7 +2103,6 @@ export async function handleRequest(
       if (result.reason !== 'invalid_key') {
         cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
       }
-      if (result.reason === 'session_inactive') return sendSessionRequired(response, config);
       const conflict =
         result.reason === 'quota_exceeded' || result.reason === 'replacement_conflict';
       sendJson(response, config, conflict ? 409 : 400, {
@@ -2522,12 +2136,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
-      'contribution',
     );
     if (!identity) return;
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
@@ -2547,12 +2159,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
-      'contribution',
     );
     if (!identity) return;
     const releaseProcessingCapacity = acquireRequestCapacity(
@@ -2596,11 +2206,6 @@ export async function handleRequest(
     return;
   }
 
-  if (url.pathname === '/profiles') {
-    sendJson(response, config, 200, { profiles: listProfiles(database) });
-    return;
-  }
-
   const clipStatusMatch = url.pathname.match(/^\/clips\/([^/]+)$/);
   if (clipStatusMatch && request.method === 'GET') {
     const jobId = decodePathSegment(clipStatusMatch[1], response, config);
@@ -2608,12 +2213,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       url.searchParams.get('groupId'),
-      'contribution',
     );
     if (!identity) return;
     const job = database
@@ -2645,12 +2248,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       requestNow,
       url.searchParams.get('groupId'),
-      'contribution',
     );
     if (!identity) return;
     try {
@@ -2677,290 +2278,6 @@ export async function handleRequest(
     return;
   }
 
-  if (url.pathname === '/jobs' && request.method === 'GET') {
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(database, url, response, config, now(), groupId, 'job');
-    if (!identity) return;
-    try {
-      const jobs = listQueueJobs(database, {
-        groupId: identity.groupId,
-        kind: parseQueueKind(url.searchParams.get('kind')),
-        status: parseQueueStatus(url.searchParams.get('status')),
-        limit: parseQueueLimit(url.searchParams.get('limit')),
-        cursor: url.searchParams.get('cursor'),
-      });
-      sendJson(response, config, 200, jobs);
-    } catch (error) {
-      if (!(error instanceof QueueQueryError)) throw error;
-      sendJson(response, config, 400, {
-        error: 'invalid_jobs_request',
-        message: error.message,
-      });
-    }
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/demo/reveal') {
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedOwner(database, url, response, config, now(), groupId);
-    if (!identity) return;
-
-    // Demo controls follow the older release independently of the current capture cycle.
-    const pendingRelease = database
-      .prepare(
-        `SELECT id FROM cycles WHERE group_id = ? AND status = 'revealing'
-       ORDER BY ends_at ASC, id ASC LIMIT 1`,
-      )
-      .get(identity.groupId) as { id: string } | undefined;
-    const lifecycle = advanceCycleLifecycle(database, {
-      groupId: identity.groupId,
-      ...(pendingRelease ? { cycleId: pendingRelease.id } : {}),
-      clock: now,
-    });
-    if (!lifecycle.ok) return sendNotFound(response, config);
-    if (lifecycle.action === 'waiting_for_boundary') {
-      sendJson(response, config, 200, {
-        reveal: { state: 'collecting', cycleId: lifecycle.cycle.id },
-      });
-      return;
-    }
-    if (lifecycle.action === 'revealing') {
-      const job = cycleCompilationJob(database, identity.groupId, lifecycle.cycle.id);
-      if (!job) return sendNotFound(response, config);
-      sendJson(response, config, 200, {
-        reveal: { state: 'compiling', cycleId: lifecycle.cycle.id, jobId: job.id },
-      });
-      return;
-    }
-    if (
-      lifecycle.action === 'premiere' ||
-      lifecycle.action === 'archived' ||
-      lifecycle.action === 'already_archived'
-    ) {
-      sendJson(response, config, 200, {
-        reveal: { state: 'released', cycleId: lifecycle.cycle.id },
-      });
-      return;
-    }
-
-    const job = cycleCompilationJob(database, identity.groupId, lifecycle.cycle.id);
-    if (!job) return sendNotFound(response, config);
-    if (job.status === 'processing') {
-      sendJson(response, config, 200, {
-        reveal: { state: 'compiling', cycleId: lifecycle.cycle.id, jobId: job.id },
-      });
-      return;
-    }
-    const releaseProcessingCapacity = acquireRequestCapacity(
-      requestLimiters.processing,
-      request,
-      response,
-      config,
-    );
-    if (!releaseProcessingCapacity) return;
-    let compiled: Awaited<ReturnType<typeof processCompilationJob>>;
-    try {
-      compiled = await processCompilationJob(database, {
-        mediaStore: options.mediaStore,
-        mediaEnvironment: options.mediaEnvironment,
-        jobId: job.id,
-        groupId: identity.groupId,
-        ffmpegBin: config.ffmpegBin,
-        outputDir: resolve(config.dataDir, 'media', 'processed'),
-        actorMemberId: identity.memberId,
-      });
-    } finally {
-      releaseProcessingCapacity();
-    }
-    if (!compiled.ok) {
-      sendJson(response, config, 200, {
-        reveal: { state: 'delayed', cycleId: lifecycle.cycle.id, jobId: job.id },
-      });
-      return;
-    }
-    const published = publishCycleRelease(database, {
-      groupId: identity.groupId,
-      cycleId: lifecycle.cycle.id,
-      clock: now,
-    });
-    if (!published.ok) {
-      sendJson(response, config, 200, {
-        reveal: { state: 'delayed', cycleId: lifecycle.cycle.id, jobId: job.id },
-      });
-      return;
-    }
-    const archived = advanceCycleLifecycle(database, {
-      groupId: identity.groupId,
-      cycleId: lifecycle.cycle.id,
-      clock: now,
-    });
-    if (!archived.ok) return sendNotFound(response, config);
-    sendJson(response, config, 200, {
-      reveal: { state: 'released', cycleId: lifecycle.cycle.id },
-    });
-    return;
-  }
-
-  if (request.method === 'POST' && url.pathname === '/cycles/demo/advance') {
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedOwner(database, url, response, config, now(), groupId);
-    if (!identity) return;
-    const advanceSecondsValue = url.searchParams.get('advanceSeconds');
-    const advanceSeconds = advanceSecondsValue ? Number(advanceSecondsValue) : Number.NaN;
-    const result = advanceDemoCycle(database, {
-      groupId: identity.groupId,
-      actingMemberId: identity.memberId,
-      advanceSeconds,
-    });
-    if ('allowed' in result) {
-      sendDenied(response, config);
-      return;
-    }
-    if (!result.ok) {
-      if (result.reason === 'not_found') return sendNotFound(response, config);
-      sendBadRequest(response, config);
-      return;
-    }
-    sendJson(response, config, 200, {
-      cycle: result.cycle,
-      advanceSeconds: result.advanceSeconds,
-      eventId: result.eventId,
-    });
-    return;
-  }
-
-  if (url.pathname === '/groups/current') {
-    const identity = requireSessionIdentity(database, url, response, config, now());
-    if (!identity) return;
-    if (!authorizeSessionMember(database, identity.groupId, identity, 'group').allowed) {
-      sendDenied(response, config);
-      return;
-    }
-    const group = getGroup(database, identity.groupId, identity.memberId);
-    if (!group) return sendDenied(response, config);
-    sendJson(response, config, 200, {
-      group,
-    });
-    return;
-  }
-
-  const groupMatch = url.pathname.match(/^\/groups\/([^/]+)$/);
-  if (groupMatch) {
-    const groupId = decodePathSegment(groupMatch[1], response, config);
-    if (groupId === null) return;
-    const identity = requireAuthorisedGroup(
-      database,
-      url,
-      response,
-      config,
-      now(),
-      groupId,
-      'group',
-    );
-    if (!identity) return;
-    const group = getGroup(database, groupId, identity.memberId);
-    if (!group) return sendNotFound(response, config);
-    sendJson(response, config, 200, { group });
-    return;
-  }
-
-  if (url.pathname === '/cycles/current') {
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
-      database,
-      url,
-      response,
-      config,
-      now(),
-      groupId,
-      'group',
-    );
-    if (!identity) return;
-    const cycle = getCurrentCycle(database, identity.groupId, identity.memberId, now());
-    if (!cycle) return sendNotFound(response, config);
-    sendJson(response, config, 200, { cycle });
-    return;
-  }
-
-  if (url.pathname === '/cycles/history' && request.method === 'GET') {
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
-      database,
-      url,
-      response,
-      config,
-      now(),
-      groupId,
-      'group',
-    );
-    if (!identity) return;
-    const parsedLimit = Number(url.searchParams.get('limit'));
-    const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 50) : 50;
-    const rawCursor = url.searchParams.get('cursor');
-    const cursor = decodePageCursor(rawCursor, 2);
-    if (rawCursor !== null && !cursor) {
-      sendJson(response, config, 400, {
-        error: 'invalid_page_cursor',
-        message: 'The cycle history cursor is invalid.',
-      });
-      return;
-    }
-    const rows = database
-      .prepare(
-        `SELECT id, prompt, starts_at AS startsAt, ends_at AS endsAt, status,
-                release_status AS releaseStatus
-         FROM cycles WHERE group_id = ?
-           AND (? IS NULL OR starts_at < ? OR (starts_at = ? AND id < ?))
-         ORDER BY starts_at DESC, id DESC LIMIT ?`,
-      )
-      .all(
-        identity.groupId,
-        cursor ? 0 : null,
-        cursor?.[0] ?? '',
-        cursor?.[0] ?? '',
-        cursor?.[1] ?? '',
-        limit + 1,
-      ) as Record<string, unknown>[];
-    const hasMore = rows.length > limit;
-    const page = rows.slice(0, limit);
-    const last = page.at(-1);
-    sendJson(response, config, 200, {
-      cycles: page.map((cycle) => ({
-        id: String(cycle.id),
-        prompt: String(cycle.prompt),
-        startsAt: String(cycle.startsAt),
-        endsAt: String(cycle.endsAt),
-        status: String(cycle.status),
-        releaseStatus: String(cycle.releaseStatus),
-      })),
-      hasMore,
-      nextCursor:
-        hasMore && last ? encodePageCursor([String(last.startsAt), String(last.id)]) : null,
-    });
-    return;
-  }
-
-  const messageMatch = url.pathname.match(/^\/messages\/([^/]+)$/);
-  if (messageMatch) {
-    const messageId = decodePathSegment(messageMatch[1], response, config);
-    if (messageId === null) return;
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedGroup(
-      database,
-      url,
-      response,
-      config,
-      now(),
-      groupId,
-      'message',
-    );
-    if (!identity) return;
-    const message = getMessage(database, identity.groupId, messageId);
-    if (!message) return sendNotFound(response, config);
-    sendJson(response, config, 200, { message });
-    return;
-  }
-
   const contributionMatch = url.pathname.match(/^\/contributions\/([^/]+)$/);
   if (contributionMatch) {
     const contributionId = decodePathSegment(contributionMatch[1], response, config);
@@ -2969,12 +2286,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
-      'contribution',
     );
     if (!identity) return;
     if (request.method === 'DELETE') {
@@ -3022,12 +2337,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
-      'film',
     );
     if (!identity) return;
     const film = getPremiereFilm(database, identity.groupId, cycleId);
@@ -3037,17 +2350,19 @@ export async function handleRequest(
     // not be advertised as playable. It is reported as delayed and audited,
     // the same safe state used for an exhausted compile.
     if (state === 'ready' && film.filmId && film.outputPath) {
-      const served = await verifiedServingPath(
-        database,
-        film.filmId,
-        'film',
-        film.outputPath,
-        config.dataDir,
-        identity.memberId,
-        now(),
-        options,
-      );
-      if (!served) state = 'delayed';
+      if (
+        !(await servableOutput(
+          database,
+          film.filmId,
+          'film',
+          film.outputPath,
+          config.dataDir,
+          identity.memberId,
+          now(),
+          options,
+        ))
+      )
+        state = 'delayed';
     }
     if (!mediaIdentityIsCurrent(request, database, identity, now()))
       return sendDenied(response, config);
@@ -3066,6 +2381,7 @@ export async function handleRequest(
               state,
               cycleId,
               filmId: film.filmId,
+              segments: filmSegments(database, film.filmId!, identity.memberId),
               playbackPath: protectedAssetPath(
                 database,
                 request,
@@ -3090,12 +2406,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
-      'film',
     );
     if (!identity) return;
     const film = database
@@ -3170,12 +2484,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
-      'download',
     );
     if (!identity) return;
     const releaseArchiveCapacity = acquireRequestCapacity(
@@ -3207,9 +2519,8 @@ export async function handleRequest(
         filmCursor: filmCursor as [string, string, string] | null,
         clipCursor: clipCursor as [string, string] | null,
       });
-      // Advertise only entries whose retained bytes still match the digest
-      // recorded at finalization. A tampered or truncated output disappears
-      // from the archive and is audited instead of being offered for playback.
+      // Advertise finalized entries whose object still exists at its recorded
+      // size. Tampered bytes are caught and audited when playback hashes them.
       const films = await filterServableArchive(
         database,
         'film',
@@ -3234,6 +2545,7 @@ export async function handleRequest(
         archive: {
           films: films.map((film) => ({
             ...film,
+            segments: filmSegments(database, film.id, identity.memberId),
             downloadPath: protectedAssetPath(
               database,
               request,
@@ -3298,12 +2610,10 @@ export async function handleRequest(
     const identity = requireAuthorisedMediaGroup(
       request,
       database,
-      url,
       response,
       config,
       now(),
       groupId,
-      'download',
     );
     if (!identity) return;
     const media = filmDownloadMatch
@@ -3370,42 +2680,33 @@ export async function handleRequest(
       const identity = requireAuthorisedMediaGroup(
         request,
         database,
-        url,
         response,
         config,
         now(),
         groupId,
-        resource,
       );
       if (!identity) return;
-      if (identity.accountId) {
-        const released =
-          resource === 'film'
-            ? getReleasedFilmDownload(database, identity.groupId, resourceId)
-            : resource === 'clip'
-              ? getReleasedOwnClipDownload(
-                  database,
-                  identity.groupId,
-                  identity.memberId,
-                  resourceId,
-                )
-              : null;
-        if (
-          !released ||
-          !(await verifiedServingPath(
-            database,
-            resourceId,
-            resource,
-            released.outputPath,
-            config.dataDir,
-            identity.memberId,
-            now(),
-            options,
-          )) ||
-          !mediaIdentityIsCurrent(request, database, identity, now())
-        )
-          return sendNotFound(response, config);
-      }
+      const released =
+        resource === 'film'
+          ? getReleasedFilmDownload(database, identity.groupId, resourceId)
+          : resource === 'clip'
+            ? getReleasedOwnClipDownload(database, identity.groupId, identity.memberId, resourceId)
+            : null;
+      if (
+        !released ||
+        !(await servableOutput(
+          database,
+          resourceId,
+          resource,
+          released.outputPath,
+          config.dataDir,
+          identity.memberId,
+          now(),
+          options,
+        )) ||
+        !mediaIdentityIsCurrent(request, database, identity, now())
+      )
+        return sendNotFound(response, config);
       const job = getMediaJob(database, identity.groupId, resourceId, resource);
       if (!job) return sendNotFound(response, config);
       sendJson(response, config, 200, { [resource]: job });
@@ -3564,6 +2865,7 @@ async function handleRealGroupRequest(
     return;
   }
 
+  const limits = options.requestLimiters ?? createRequestLimiters(config);
   if (url.pathname === '/real/reminders/config' && request.method === 'GET') {
     authJson(request, response, config, 200, {
       providers: Object.keys(options.reminderProviders ?? {}).filter(
@@ -3597,11 +2899,7 @@ async function handleRealGroupRequest(
       ? decodePathSegment(reminderDestinationMatch[3], response, config)
       : null;
     if (!groupId || (reminderDestinationMatch[3] && !id)) return;
-    if (
-      url.searchParams.has('sessionId') ||
-      !getRealGroup(database, session.account.id, groupId) ||
-      getCurrentRealGroup(database, session.account.id)?.group.id !== groupId
-    )
+    if (!signedInProfileId(database, session.account.id, groupId, now))
       return sendDenied(response, config);
     const actor = { sessionToken: token!, groupId };
     if (request.method === 'GET' && !id) {
@@ -3691,12 +2989,8 @@ async function handleRealGroupRequest(
       ? decodePathSegment(uploadIntentMatch[2], response, config)
       : null;
     if (groupId === null || (uploadIntentMatch[2] && intentId === null)) return;
-    if (url.searchParams.has('sessionId')) return sendDenied(response, config);
     const actor = { sessionToken: token!, groupId };
-    if (
-      !getRealGroup(database, session.account.id, groupId) ||
-      getCurrentRealGroup(database, session.account.id)?.group.id !== groupId
-    )
+    if (!signedInProfileId(database, session.account.id, groupId, now))
       return sendDenied(response, config);
     const deps = options.uploadIntents ? { ...options.uploadIntents, now: currentClock } : null;
     if (!deps) {
@@ -3947,6 +3241,123 @@ async function handleRealGroupRequest(
     return;
   }
 
+  const reportMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/reports$/);
+  if (reportMatch && request.method === 'POST') {
+    if (
+      !enforceRateLimit(
+        limits.safety,
+        session.account.id,
+        now,
+        request,
+        response,
+        config,
+        'You have made too many safety requests. Please wait before trying again.',
+      )
+    )
+      return;
+    const groupId = decodePathSegment(reportMatch[1], response, config);
+    if (groupId === null) return;
+    const body = await requestBody(request, config, 8 * 1024);
+    const result = reportContent(database, session.account.id, groupId, body ?? {}, now);
+    if (result === 'invalid') {
+      authJson(request, response, config, 400, {
+        error: 'invalid_report',
+        message: 'Report one message, moment or person, with a reason of up to 500 characters.',
+      });
+      return;
+    }
+    if (result === 'not_found') {
+      authJson(request, response, config, 404, {
+        error: 'not_found',
+        message: 'That content was not found in this group.',
+      });
+      return;
+    }
+    authJson(request, response, config, 201, { reported: true });
+    return;
+  }
+
+  const removeMatch = url.pathname.match(
+    /^\/real\/groups\/([^/]+)\/contributions\/([^/]+)\/remove$/,
+  );
+  if (removeMatch && request.method === 'POST') {
+    const groupId = decodePathSegment(removeMatch[1], response, config);
+    if (groupId === null) return;
+    const contributionId = decodePathSegment(removeMatch[2], response, config);
+    if (contributionId === null) return;
+    const result = removeContribution(database, session.account.id, groupId, contributionId, now);
+    if (result === 'forbidden') {
+      authJson(request, response, config, 403, {
+        error: 'forbidden',
+        message: 'Only the group owner can remove moments.',
+      });
+      return;
+    }
+    if (result === 'not_found') {
+      authJson(request, response, config, 404, {
+        error: 'not_found',
+        message: 'That moment was not found in this group.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, { removed: true });
+    return;
+  }
+
+  if (url.pathname === '/real/blocks' && request.method === 'GET') {
+    authJson(request, response, config, 200, {
+      blocked: listBlockedMembers(database, session.account.id),
+    });
+    return;
+  }
+
+  if (url.pathname === '/real/blocks' && request.method === 'POST') {
+    if (
+      !enforceRateLimit(
+        limits.safety,
+        session.account.id,
+        now,
+        request,
+        response,
+        config,
+        'You have made too many safety requests. Please wait before trying again.',
+      )
+    )
+      return;
+    const body = await requestBody(request, config, 8 * 1024);
+    const profileId = typeof body?.profileId === 'string' ? body.profileId : '';
+    if (!profileId || blockMember(database, session.account.id, profileId, now) !== 'blocked') {
+      authJson(request, response, config, 404, {
+        error: 'not_found',
+        message: 'That member was not found in your groups.',
+      });
+      return;
+    }
+    authJson(request, response, config, 201, { blocked: true });
+    return;
+  }
+
+  const unblockMatch = url.pathname.match(/^\/real\/blocks\/([^/]+)$/);
+  if (unblockMatch && request.method === 'DELETE') {
+    if (
+      !enforceRateLimit(
+        limits.safety,
+        session.account.id,
+        now,
+        request,
+        response,
+        config,
+        'You have made too many safety requests. Please wait before trying again.',
+      )
+    )
+      return;
+    const profileId = decodePathSegment(unblockMatch[1], response, config);
+    if (profileId === null) return;
+    unblockMember(database, session.account.id, profileId);
+    authJson(request, response, config, 200, { blocked: false });
+    return;
+  }
+
   const realGroupMembersMatch = url.pathname.match(/^\/real\/groups\/([^/]+)\/members$/);
   if (realGroupMembersMatch && request.method === 'GET') {
     const groupId = decodePathSegment(realGroupMembersMatch[1], response, config);
@@ -4005,7 +3416,7 @@ async function handleRealGroupRequest(
         error: `invite_${result.status}`,
         message:
           result.status === 'expired'
-            ? 'This invitation has expired.'
+            ? "That code isn't valid or has expired."
             : result.status === 'replayed'
               ? 'This invitation has already been used.'
               : result.status === 'full'
@@ -4014,7 +3425,7 @@ async function handleRealGroupRequest(
                   ? 'You do not have access to this group.'
                   : result.status === 'throttled'
                     ? 'Too many invitation attempts. Please try again later.'
-                    : 'Enter a valid invitation code.',
+                    : "That code isn't valid or has expired.",
       });
       return;
     }
@@ -4039,12 +3450,37 @@ async function handleRealGroupRequest(
   }
 
   if (url.pathname === '/real/groups' && request.method === 'POST') {
+    if (
+      !enforceRateLimit(
+        limits.groups,
+        session.account.id,
+        now,
+        request,
+        response,
+        config,
+        'You have reached the group creation limit. Please try again later.',
+      )
+    )
+      return;
     const body = await requestBody(request, config);
     if (!body) {
       authJson(request, response, config, 400, {
         error: 'invalid_group',
         message: 'Enter a valid group name, prompt, and member limit from 2 to 10.',
       });
+      return;
+    }
+    // Recheck durable ownership after receiving the body: concurrent requests
+    // must not both pass at nineteen groups before either has committed.
+    const owned = database
+      .prepare('SELECT COUNT(*) AS count FROM real_group_metadata WHERE owner_account_id = ?')
+      .get(session.account.id) as { count: number };
+    if (owned.count >= 20) {
+      authJson(request, response, config, 429, {
+        error: 'rate_limited',
+        message: 'You can own up to twenty groups, so a new one can’t be created right now.',
+      });
+      finishRejectedRequest(request, response);
       return;
     }
     let created: ReturnType<typeof createRealGroup>;
@@ -4145,19 +3581,174 @@ async function handleRealGroupRequest(
   });
 }
 
+/** The browser-visible origin; the transport check already vouched for it. */
+function publicOrigin(request: IncomingMessage, config: RuntimeConfig): string {
+  const host = request.headers.host ?? 'localhost';
+  const https =
+    (request.socket as typeof request.socket & { encrypted?: boolean }).encrypted ||
+    authenticatedProxyHttps(request, config);
+  return `${https ? 'https' : 'http'}://${host}`;
+}
+
+function redirectWithCookies(response: ServerResponse, location: string, cookies: string[]): void {
+  response.writeHead(302, {
+    'Cache-Control': 'no-store',
+    Location: location,
+    'Set-Cookie': cookies,
+  });
+  response.end();
+}
+
 async function handleRealAuthRequest(
   request: IncomingMessage,
   response: ServerResponse,
   config: RuntimeConfig,
   database: RewindDatabase,
   registrationRateLimiter: RegistrationRateLimiter,
+  cognitoStates: UsedStates,
   url: URL,
   now: Date,
+  options: RuntimeServerOptions = {},
 ): Promise<void> {
   if (!authTransportIsSecure(request, config) || !authOriginIsAllowed(request, config)) {
     authJson(request, response, config, 403, {
       error: 'auth_transport_unavailable',
       message: 'Sign-in is unavailable on this connection.',
+    });
+    return;
+  }
+  const cognito = cognitoServiceFor(config, options.cognito);
+  const passwordSignIn = config.authPassword !== false;
+
+  if (url.pathname === '/auth/config' && request.method === 'GET') {
+    authJson(request, response, config, 200, { passwordSignIn, cognito: Boolean(cognito) });
+    return;
+  }
+
+  if (url.pathname === '/auth/cognito/start' && request.method === 'GET') {
+    if (!cognito) {
+      authJson(request, response, config, 404, {
+        error: 'cognito_unavailable',
+        message: 'Cognito sign-in is not configured.',
+      });
+      return;
+    }
+    const transaction = newLoginTransaction(url.searchParams.get('return') ?? '/', now);
+    redirectWithCookies(
+      response,
+      cognito.authorizeUrl({
+        redirectUri: `${publicOrigin(request, config)}/api/auth/callback`,
+        state: transaction.state,
+        nonce: transaction.nonce,
+        codeChallenge: transaction.codeChallenge,
+      }),
+      [
+        `${OIDC_TRANSACTION_COOKIE}=${transactionCookieValue(transaction)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=600`,
+      ],
+    );
+    return;
+  }
+
+  if (url.pathname === '/auth/callback' && request.method === 'GET') {
+    const clearTransaction = `${OIDC_TRANSACTION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+    // A failure after the state matched returns to where sign-in started, so a
+    // pending invitation link survives a cancelled or failed attempt.
+    const fail = (code: string, returnPath = '/') => {
+      const target = new URL(returnPath, 'http://rewind.local');
+      target.searchParams.set('auth_error', code);
+      redirectWithCookies(response, `${target.pathname}${target.search}`, [clearTransaction]);
+    };
+    const transaction = readLoginTransaction(request.headers.cookie, now);
+    const state = url.searchParams.get('state') ?? '';
+    // The state must match this browser's cookie and can finish only once.
+    if (
+      !cognito ||
+      !transaction ||
+      !sameSecret(state, transaction.state) ||
+      !cognitoStates.consume(transaction.state, now.getTime())
+    ) {
+      fail('cognito');
+      return;
+    }
+    const providerError = url.searchParams.get('error');
+    if (providerError) {
+      fail(
+        providerError === 'access_denied' ? 'cognito_denied' : 'cognito',
+        transaction.returnPath,
+      );
+      return;
+    }
+    const code = url.searchParams.get('code') ?? '';
+    if (!code || code.length > 2048) {
+      fail('cognito', transaction.returnPath);
+      return;
+    }
+    let sessionCookie: string;
+    try {
+      const identity = await cognito.exchange({
+        code,
+        codeVerifier: transaction.codeVerifier,
+        redirectUri: `${publicOrigin(request, config)}/api/auth/callback`,
+      });
+      if (!identity.nonce || !sameSecret(identity.nonce, transaction.nonce)) {
+        fail('cognito', transaction.returnPath);
+        return;
+      }
+      if (!identity.emailVerified) {
+        fail('cognito', transaction.returnPath);
+        return;
+      }
+      const account = findOrCreateCognitoAccount(database, identity.sub, now);
+      const created = createRealSession(database, account.id, now);
+      const maxAge = Math.max(
+        0,
+        Math.floor((Date.parse(created.expiresAt) - now.getTime()) / 1000),
+      );
+      sessionCookie = `${REAL_SESSION_COOKIE}=${created.token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+    } catch {
+      fail('cognito', transaction.returnPath);
+      return;
+    }
+    redirectWithCookies(response, transaction.returnPath, [clearTransaction, sessionCookie]);
+    return;
+  }
+
+  if (url.pathname === '/auth/profile' && request.method === 'POST') {
+    const token = authToken(request);
+    const session = token ? validateRealSession(database, token, now) : null;
+    if (session?.status !== 'valid') {
+      authJson(request, response, config, 401, {
+        error: 'session_required',
+        message: 'A valid sign-in is required.',
+      });
+      return;
+    }
+    const body = await requestBody(request, config, 8 * 1024);
+    const account = updateAccountDisplayName(
+      database,
+      session.account.id,
+      typeof body?.displayName === 'string' ? body.displayName : '',
+      now,
+    );
+    if (!account) {
+      authJson(request, response, config, 400, {
+        error: 'invalid_display_name',
+        message: 'Enter a name of 1 to 80 characters.',
+      });
+      return;
+    }
+    authJson(request, response, config, 200, { account });
+    return;
+  }
+
+  if (
+    !passwordSignIn &&
+    (url.pathname === '/auth/register' || url.pathname === '/auth/login') &&
+    request.method === 'POST'
+  ) {
+    authJson(request, response, config, 403, {
+      error: 'password_sign_in_disabled',
+      message: 'Sign in with Cognito on this environment.',
     });
     return;
   }
@@ -4239,6 +3830,21 @@ async function handleRealAuthRequest(
     }
     const source = authClientSource(request, config);
     const result = await authenticateRealAccount(database, username, password, source, now);
+    // Unknown usernames are throttled the same way, so this reveals no accounts.
+    if (result.status === 'throttled') {
+      authJson(
+        request,
+        response,
+        config,
+        429,
+        {
+          error: 'sign_in_throttled',
+          message: 'Too many sign-in attempts. Try again later.',
+        },
+        { 'Retry-After': String(result.retryAfterSeconds) },
+      );
+      return;
+    }
     if (result.status !== 'authenticated') {
       authJson(request, response, config, 401, {
         error: 'sign_in_failed',
@@ -4253,7 +3859,7 @@ async function handleRealAuthRequest(
         response,
         config,
         200,
-        { account: result.account, expiresAt: result.expiresAt },
+        { account: result.account, expiresAt: result.expiresAt, signInMethod: 'password' },
         {
           'Set-Cookie': `${REAL_SESSION_COOKIE}=${result.token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`,
         },
@@ -4263,6 +3869,7 @@ async function handleRealAuthRequest(
         account: result.account,
         token: result.token,
         expiresAt: result.expiresAt,
+        signInMethod: 'password',
       });
     }
     return;
@@ -4290,6 +3897,7 @@ async function handleRealAuthRequest(
         account: session.account,
         idleExpiresAt: session.idleExpiresAt,
         absoluteExpiresAt: session.absoluteExpiresAt,
+        signInMethod: session.signInMethod,
       },
       request.headers.cookie && !request.headers.authorization
         ? {
@@ -4300,15 +3908,94 @@ async function handleRealAuthRequest(
     return;
   }
 
+  if (url.pathname === '/auth/account/delete' && request.method === 'POST') {
+    const token = authToken(request);
+    const session = token ? validateRealSession(database, token, now) : null;
+    if (session?.status !== 'valid') {
+      authJson(request, response, config, 401, {
+        error: 'session_required',
+        message: 'A valid sign-in is required.',
+      });
+      return;
+    }
+    const body = await requestBody(request, config, 8 * 1024);
+    const cognitoSub = cognitoSubForAccount(database, session.account.id);
+    if (cognitoSub) {
+      // Cognito owns the credentials, so the check is a typed confirmation and
+      // the Cognito user goes first: a failure here leaves the account intact.
+      if (body?.confirmation !== 'DELETE') {
+        authJson(request, response, config, 403, {
+          error: 'confirmation_incorrect',
+          message: 'Type DELETE to confirm.',
+        });
+        return;
+      }
+      try {
+        if (!cognito) throw new Error('Cognito is not configured.');
+        await cognito.deleteUser(cognitoSub);
+      } catch {
+        authJson(request, response, config, 502, {
+          error: 'cognito_unavailable',
+          message: 'The account could not be deleted right now. Try again shortly.',
+        });
+        return;
+      }
+    } else {
+      const password = typeof body?.password === 'string' ? body.password : '';
+      const check = password
+        ? await verifyRealAccountPassword(database, session.account.id, password, now)
+        : 'invalid';
+      if (check !== 'ok') {
+        authJson(request, response, config, check === 'throttled' ? 429 : 403, {
+          error: check === 'throttled' ? 'password_check_throttled' : 'password_incorrect',
+          message:
+            check === 'throttled'
+              ? 'Too many attempts. Try again later.'
+              : 'The password is incorrect.',
+        });
+        return;
+      }
+    }
+    const media = purgeRealAccount(database, session.account.id, now);
+    await removeStoredMedia(media, {
+      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      stagingDir: resolve(config.dataDir, 'media', 'staging'),
+      mediaStore: options.mediaStore,
+      mediaEnvironment: options.mediaEnvironment,
+    });
+    authJson(
+      request,
+      response,
+      config,
+      200,
+      {
+        deleted: true,
+        ...(cognitoSub && cognito
+          ? { logoutUrl: cognito.logoutUrl(publicOrigin(request, config)) }
+          : {}),
+      },
+      {
+        'Set-Cookie': `${REAL_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+      },
+    );
+    return;
+  }
+
   if (url.pathname === '/auth/logout' && request.method === 'POST') {
     const token = authToken(request);
+    // A Cognito session also ends Cognito's own, so the next sign-in asks again.
+    const ended = token ? validateRealSession(database, token, now) : null;
+    const logoutUrl =
+      cognito && ended?.status === 'valid' && ended.signInMethod === 'cognito'
+        ? cognito.logoutUrl(publicOrigin(request, config))
+        : undefined;
     if (token) revokeRealSession(database, token, now);
     authJson(
       request,
       response,
       config,
       200,
-      { signedOut: true },
+      { signedOut: true, ...(logoutUrl ? { logoutUrl } : {}) },
       {
         'Set-Cookie': `${REAL_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
       },
@@ -4333,17 +4020,30 @@ export function createRuntimeServer(
   return createServer((request, response) => {
     const observation = requestObservation();
     response.setHeader('X-Request-Id', observation.requestId);
+    // Database work for this request (PostgreSQL), as Server-Timing.
+    const timing = newDatabaseTiming();
+    const writeHead = response.writeHead.bind(response) as (...args: unknown[]) => ServerResponse;
+    (response as { writeHead: (...args: unknown[]) => ServerResponse }).writeHead = (
+      ...args: unknown[]
+    ) => {
+      if (timing.statements > 0 && !response.headersSent)
+        response.setHeader('Server-Timing', serverTimingHeader(timing));
+      return writeHead(...args);
+    };
     response.once('finish', () => {
       if (response.statusCode >= 500) observation.failure(response.statusCode);
       if (config.requestTiming)
-        observation.timing(request.method, request.url, response.statusCode);
+        observation.timing(request.method, request.url, response.statusCode, timing);
     });
-    void handleRequest(request, response, config, database, {
-      ...options,
-      realtimeHub,
-      mediaCapabilities,
-      requestLimiters,
-    }).catch((error: unknown) => {
+    const handled = withDatabaseTiming(timing, () =>
+      handleRequest(request, response, config, database, {
+        ...options,
+        realtimeHub,
+        mediaCapabilities,
+        requestLimiters,
+      }),
+    );
+    void handled.catch((error: unknown) => {
       const authRequest = (request.url ?? '').split('?', 1)[0].startsWith('/auth/');
       if (error instanceof RequestPolicyError) {
         if (authRequest) {

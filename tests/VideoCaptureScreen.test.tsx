@@ -2,20 +2,21 @@ import React, { useState } from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, Platform, Pressable, Text, View } from 'react-native';
+import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
+import { ToastProvider } from '../src/ui/primitives';
 import { ClipUploadSession } from '../src/capture/clip-uploader';
 import { ContributionStatusProvider } from '../src/capture/contribution-status';
 
-import { DemoSessionProvider, useOptionalDemoSession } from '../src/session/DemoSessionProvider';
 import { VideoCaptureScreen } from '../src/capture/VideoCaptureScreen';
-import { DemoCameraPlatform } from '../src/capture/platform';
 import * as capturePlatform from '../src/capture/platform';
-import type { DemoSession, DemoSessionStore } from '../src/domain/session';
 import type { PendingClipUpload, RecordedClip } from '../src/domain/video';
 import type { CameraPlatform, PermissionSnapshot } from '../src/capture/contracts';
 import type { VideoRecordingPlatform } from '../src/capture/video-recording';
 import { LocalRuntimeError } from '../src/runtime/local-runtime-client';
 import { getLatestMockVideoPlayer, resetMockVideoPlayers } from './mocks/expo-video';
 import type { RuntimeClient } from '../src/runtime/local-runtime-client';
+
+jest.mock('react-native-safe-area-context', () => mockSafeAreaContext);
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   jest.requireActual('@react-native-async-storage/async-storage/jest/async-storage-mock'),
@@ -81,43 +82,29 @@ function fileFallbackPlatform(
   };
 }
 
-const demoSession: DemoSession = {
-  accessKind: 'demo',
-  actor: { displayName: 'Amber', isSynthetic: true, memberId: 'demo-1' },
-  expiresAt: '2026-09-12T00:00:00.000Z',
-  groupId: 'demo-group',
-  id: 'demo-session-ui',
-  invalidatedAt: null,
-  startedAt: '2026-09-11T00:00:00.000Z',
-};
+/** Real-account upload scope; the runtimeClient prop overrides its transport. */
+const REAL_ACCOUNT = { groupId: 'group-1', authenticatedRequest: jest.fn() };
+const UPLOAD_SESSION_ID = 'real-account-session';
 
 const upload = {
   contribution: {
     createdAt: '2026-09-11T00:00:00.000Z',
     cycleId: 'cycle-ui',
     durationSeconds: 8,
-    groupId: 'demo-group',
+    groupId: 'group-1',
     id: 'contribution-ui',
-    memberId: 'demo-1',
+    memberId: 'member-1',
   },
   existing: false,
   job: {
     contributionId: 'contribution-ui',
     createdAt: '2026-09-11T00:00:00.000Z',
-    groupId: 'demo-group',
+    groupId: 'group-1',
     id: 'job-ui',
     kind: 'clip' as const,
     status: 'pending' as const,
   },
 } satisfies PendingClipUpload;
-
-function demoSessionStore(): DemoSessionStore {
-  return {
-    clear: jest.fn().mockResolvedValue(undefined),
-    load: jest.fn().mockResolvedValue(demoSession),
-    save: jest.fn().mockResolvedValue(undefined),
-  };
-}
 
 function runtimeClient(overrides: Partial<RuntimeClient> = {}): RuntimeClient {
   return {
@@ -126,11 +113,6 @@ function runtimeClient(overrides: Partial<RuntimeClient> = {}): RuntimeClient {
     uploadClip: jest.fn().mockResolvedValue(upload),
     ...overrides,
   } as unknown as RuntimeClient;
-}
-
-function SessionReadyMarker() {
-  const session = useOptionalDemoSession()?.session;
-  return session ? <View testID="demo-session-ready" /> : null;
 }
 
 /**
@@ -177,21 +159,48 @@ function videoPlatformForReview(): TestVideoPlatform {
   return videoPlatform({ camera: 'granted', microphone: 'granted' });
 }
 
-async function renderReviewWithRuntime(videoPlatform: TestVideoPlatform, client: RuntimeClient) {
+/** Move a trim handle in half-second steps, as a screen reader does. */
+async function nudgeTrim(
+  result: Awaited<ReturnType<typeof render>>,
+  handle: 'Trim start' | 'Trim end',
+  steps: number,
+) {
+  for (let step = 0; step < Math.abs(steps); step += 1) {
+    await fireEvent(result.getByLabelText(handle), 'accessibilityAction', {
+      nativeEvent: { actionName: steps > 0 ? 'increment' : 'decrement' },
+    });
+  }
+}
+
+/** After V8 Sealed: Done, then the lock count opens "Your moments". */
+async function openYourMoments(result: Awaited<ReturnType<typeof render>>) {
+  await fireEvent.press(result.getByRole('button', { name: 'Done' }));
+  await fireEvent.press(await result.findByRole('button', { name: /^Your moments/ }));
+  await result.findByTestId('camera-moments-dialog');
+}
+
+async function renderReviewWithRuntime(
+  videoPlatform: TestVideoPlatform,
+  client: RuntimeClient,
+  startCapture = true,
+) {
   const result = await render(
-    <DemoSessionProvider
-      clock={() => new Date('2026-09-11T12:00:00.000Z')}
-      runtimeClient={client}
-      store={demoSessionStore()}
-    >
-      <SessionReadyMarker />
-      <VideoCaptureScreen platform={videoPlatform} runtimeClient={client} />
-    </DemoSessionProvider>,
+    <ToastProvider>
+      <>
+        <VideoCaptureScreen
+          platform={videoPlatform}
+          realAccount={REAL_ACCOUNT}
+          runtimeClient={client}
+        />
+      </>
+    </ToastProvider>,
   );
-  await result.findByTestId('demo-session-ready');
-  await result.findByTestId('video-live-preview');
-  await fireEvent.press(result.getByTestId('video-record'));
-  await result.findByTestId('video-review');
+  if (startCapture) await result.findByTestId('video-live-preview');
+  else await result.findByTestId('video-record');
+  if (startCapture) {
+    await fireEvent.press(result.getByTestId('video-record'));
+    await result.findByTestId('video-review');
+  }
   return result;
 }
 
@@ -207,11 +216,9 @@ describe('VideoCaptureScreen', () => {
         const result = await render(<VideoCaptureScreen platform={platform} />);
         const guidance = result.getByTestId('video-portrait-guidance');
         if (os === 'web') {
-          expect(guidance.props.children).toContain('Record in portrait or landscape');
+          expect(guidance.props.children).toContain('portrait or landscape');
         } else {
-          expect(guidance.props.children).toBe(
-            'Portrait video with microphone audio. Maximum duration: 15 seconds.',
-          );
+          expect(guidance.props.children).toBe('Up to 15 s with sound · hold your phone upright');
         }
         await result.findByTestId('video-permission-denied');
         expect(result.getByTestId('video-portrait-guidance')).toBeTruthy();
@@ -257,12 +264,45 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
     await result.findByTestId('video-review');
     expect(platform.pickVideoFile).toHaveBeenCalledTimes(1);
-    expect(result.getByText(/FILE FALLBACK · selected locally/)).toBeTruthy();
+    expect(result.getByText('Chosen from a file')).toBeTruthy();
+    expect(result.getByText('0.0 – 8.0 s · 8.0 s')).toBeTruthy();
     expect(
       result.getByText(
         /Selected MP4 8.0 seconds · 720 × 1280 · audio track detected; server verifies/,
       ),
     ).toBeTruthy();
+  });
+
+  it('opens the granted browser preview on entry and carries the live look into review and upload', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'web');
+    const permission = { camera: 'granted' as const, microphone: 'granted' as const };
+    const stream = {} as MediaStream;
+    let preview: MediaStream | null = null;
+    const platform = videoPlatformForReview();
+    platform.getVideoPermissions = jest.fn().mockResolvedValue(permission);
+    platform.getVideoPreviewStream = jest.fn(() => preview);
+    platform.requestVideoPermissions = jest.fn(async () => {
+      preview = stream;
+      return permission;
+    });
+    const uploadClip = jest.fn().mockResolvedValue(upload);
+    try {
+      const result = await renderReviewWithRuntime(platform, runtimeClient({ uploadClip }), false);
+      await result.findByTestId('video-record');
+      expect(platform.requestVideoPermissions).toHaveBeenCalledTimes(1);
+      expect(result.queryByTestId('video-preview-recovery')).toBeNull();
+      await fireEvent.press(result.getByRole('radio', { name: 'VHS Camcorder' }));
+      await fireEvent.press(result.getByTestId('video-record'));
+      await result.findByTestId('video-review');
+      expect(
+        result.getByRole('radio', { name: 'VHS Camcorder' }).props.accessibilityState,
+      ).toMatchObject({ selected: true });
+      await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
+      await waitFor(() => expect(uploadClip).toHaveBeenCalled());
+      expect(uploadClip.mock.calls[0][2]).toMatchObject({ mode: 'vhs' });
+    } finally {
+      platformOs.restore();
+    }
   });
 
   it.each([
@@ -285,9 +325,8 @@ describe('VideoCaptureScreen', () => {
 
     try {
       const result = await render(<VideoCaptureScreen platform={platform} />);
-      await result.findByTestId('video-preview-recovery');
-      await fireEvent.press(result.getByRole('button', { name: 'Restore camera preview' }));
       await result.findByTestId('video-record');
+      expect(result.queryByTestId('video-preview-recovery')).toBeNull();
       await fireEvent.press(result.getByTestId('video-record'));
       await result.findByText(failureMessage);
       expect(result.getByTestId('video-preview-recovery')).toBeTruthy();
@@ -295,7 +334,7 @@ describe('VideoCaptureScreen', () => {
 
       await fireEvent.press(result.getByRole('button', { name: 'Restore camera preview' }));
       await result.findByTestId('video-record');
-      expect(platform.requestVideoPermissions).toHaveBeenCalledTimes(2);
+      expect(platform.requestVideoPermissions).toHaveBeenCalledTimes(1);
     } finally {
       platformOs.restore();
     }
@@ -315,7 +354,10 @@ describe('VideoCaptureScreen', () => {
       await result.findByTestId('video-unsupported');
       await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
       await result.findByTestId('video-review');
-      await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
+      // Retake returns to the file chooser; choosing again replaces the clip.
+      await fireEvent.press(result.getByRole('button', { name: 'Retake' }));
+      await fireEvent.press(await result.findByRole('button', { name: 'Choose a video file' }));
+      await result.findByTestId('video-review');
       await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:selected-one'));
       expect(revokeObjectURL).not.toHaveBeenCalledWith('blob:selected-two');
 
@@ -412,20 +454,18 @@ describe('VideoCaptureScreen', () => {
 
     try {
       const result = await render(
-        <DemoSessionProvider
-          clock={() => new Date('2026-09-11T12:00:00.000Z')}
-          runtimeClient={client}
-          store={demoSessionStore()}
-        >
-          <SessionReadyMarker />
-          <VideoCaptureScreen platform={platform} runtimeClient={client} />
-        </DemoSessionProvider>,
+        <>
+          <VideoCaptureScreen
+            platform={platform}
+            realAccount={REAL_ACCOUNT}
+            runtimeClient={client}
+          />
+        </>,
       );
-      await result.findByTestId('demo-session-ready');
       await result.findByTestId('video-unsupported');
       await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
       await result.findByTestId('video-review');
-      await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
       await result.findByText('runtime temporarily unavailable');
       expect(revokeObjectURL).not.toHaveBeenCalled();
 
@@ -445,7 +485,7 @@ describe('VideoCaptureScreen', () => {
     const result = await render(<VideoCaptureScreen platform={platform} />);
 
     await waitFor(() => expect(result.getByTestId('video-permission-blocked')).toBeTruthy());
-    expect(result.getByText('Permission is blocked')).toBeTruthy();
+    expect(result.getByText('Camera or mic is off')).toBeTruthy();
     expect(result.queryByTestId('video-record')).toBeNull();
 
     await fireEvent.press(result.getByRole('button', { name: 'Open Settings' }));
@@ -471,7 +511,7 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByTestId('video-record'));
     await waitFor(() => expect(result.getByTestId('video-recording')).toBeTruthy());
 
-    await fireEvent.press(result.getByRole('button', { name: 'Back' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Close' }));
     expect(platform.cancelRecording).toHaveBeenCalledTimes(1);
     expect(result.queryByTestId('video-capture-screen')).toBeNull();
 
@@ -493,7 +533,7 @@ describe('VideoCaptureScreen', () => {
 
     await result.findByTestId('video-permission');
     expect(result.queryByTestId('video-record')).toBeNull();
-    await fireEvent.press(result.getByRole('button', { name: 'Allow camera and microphone' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Continue' }));
 
     await result.findByTestId('video-live-preview');
     expect(result.getByTestId('video-record')).toBeEnabled();
@@ -525,7 +565,7 @@ describe('VideoCaptureScreen', () => {
     try {
       const result = await render(<VideoCaptureScreen platform={platform} />);
       await result.findByTestId('video-permission');
-      await fireEvent.press(result.getByRole('button', { name: 'Allow camera and microphone' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Continue' }));
 
       await result.findByTestId('video-record');
       expect(platform.requestVideoPermissions).toHaveBeenCalledTimes(1);
@@ -535,31 +575,6 @@ describe('VideoCaptureScreen', () => {
     } finally {
       platformOs.restore();
     }
-  });
-
-  it('offers an authenticated fresh synthetic clip only in the local Demo fixture', async () => {
-    const createSyntheticDemoClip = jest.fn().mockResolvedValue(upload);
-    const processClipJob = jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' as const });
-    const client = runtimeClient({ createSyntheticDemoClip, processClipJob });
-    const result = await render(
-      <DemoSessionProvider
-        clock={() => new Date('2026-09-11T12:00:00.000Z')}
-        runtimeClient={client}
-        store={demoSessionStore()}
-      >
-        <SessionReadyMarker />
-        <VideoCaptureScreen platform={new DemoCameraPlatform()} runtimeClient={client} />
-      </DemoSessionProvider>,
-    );
-
-    await result.findByTestId('demo-session-ready');
-    await result.findByTestId('video-unsupported');
-    expect(result.getByText(/fresh, non-sensitive synthetic clip/)).toBeTruthy();
-    await fireEvent.press(result.getByRole('button', { name: 'Create synthetic Demo clip' }));
-
-    await result.findByTestId('camera-contribution-status-sealed');
-    expect(createSyntheticDemoClip).toHaveBeenCalledWith('demo-session-ui', 'demo-group');
-    expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
   });
 
   it('shows recording progress and transitions to clip review after stopping', async () => {
@@ -574,13 +589,14 @@ describe('VideoCaptureScreen', () => {
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-recording');
     expect(result.getByTestId('video-live-preview')).toBeTruthy();
-    expect(result.getByText(/0 \/ 15 seconds/)).toBeTruthy();
-    await fireEvent.press(result.getByRole('button', { name: 'Stop and review' }));
+    expect(result.getByText('0:00 / 0:15')).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Stop recording' }));
     expect(platform.stopRecording).toHaveBeenCalledTimes(1);
     resolveRecording(clip);
 
     await result.findByTestId('video-review');
     expect(result.getByText('Recorded 8.0 seconds · 720 × 1280 · audio included')).toBeTruthy();
+    expect(result.getByText('0.0 – 8.0 s · 8.0 s')).toBeTruthy();
     expect(platform.recordClip).toHaveBeenCalledWith(15);
   });
 
@@ -591,10 +607,11 @@ describe('VideoCaptureScreen', () => {
     expect(player?.muted).toBe(false);
     expect(player?.loop).toBe(false);
     expect(result.getByTestId('video-review-player')).toBeTruthy();
-    expect(result.getByText(/Audio enabled/)).toBeTruthy();
+    expect(result.getByRole('button', { name: 'Play preview' })).toBeTruthy();
 
-    await fireEvent.changeText(result.getByDisplayValue('0'), '1');
-    await fireEvent.changeText(result.getByDisplayValue('8'), '5');
+    await nudgeTrim(result, 'Trim start', 2);
+    await nudgeTrim(result, 'Trim end', -6);
+    expect(result.getByText('1.0 – 5.0 s · 4.0 s')).toBeTruthy();
     expect(player?.currentTime).toBe(1);
     await fireEvent.press(result.getByRole('button', { name: 'Back 5 seconds' }));
     expect(player?.currentTime).toBe(1);
@@ -623,24 +640,28 @@ describe('VideoCaptureScreen', () => {
     expect(result.getByRole('button', { name: 'Retake' })).toBeTruthy();
   });
 
-  it('keeps trim errors actionable for bounds outside the clip and clips that are too short', async () => {
+  it('keeps the trim window inside the clip and at least half a second long', async () => {
     const outside = await renderReview();
-    await fireEvent.changeText(outside.getByDisplayValue('0'), '4');
-    await fireEvent.changeText(outside.getByDisplayValue('8'), '9');
-    await fireEvent.press(outside.getByRole('button', { name: 'Save trim and mode' }));
-    expect(await outside.findByText('Choose trim bounds inside the recorded clip.')).toBeTruthy();
+    await nudgeTrim(outside, 'Trim start', 20);
+    await nudgeTrim(outside, 'Trim end', 2);
+    // Bounds outside the clip are not reachable: the end stays at 8 s and the
+    // start stops half a second before it.
+    expect(outside.getByText('7.5 – 8.0 s · 0.5 s')).toBeTruthy();
 
     const tooShort = await renderReview();
-    await fireEvent.changeText(tooShort.getByDisplayValue('8'), '0.25');
-    await fireEvent.press(tooShort.getByRole('button', { name: 'Save trim and mode' }));
-    expect(await tooShort.findByText('Keep at least half a second in the clip.')).toBeTruthy();
+    await nudgeTrim(tooShort, 'Trim end', -20);
+    // The window stops at half a second instead of becoming too short.
+    expect(tooShort.getByText('0.0 – 0.5 s · 0.5 s')).toBeTruthy();
+    expect(tooShort.getByLabelText('Trim end').props.accessibilityValue).toEqual({
+      text: '0.5 seconds',
+    });
   });
 
   it('forwards trim and mode metadata and invokes server processing before local cleanup', async () => {
     const processClipJob = jest.fn().mockResolvedValue({
       contributionId: 'contribution-ui',
       createdAt: '2026-09-11T00:00:00.000Z',
-      groupId: 'demo-group',
+      groupId: 'group-1',
       id: 'job-ui',
       kind: 'clip',
       status: 'ready',
@@ -661,18 +682,17 @@ describe('VideoCaptureScreen', () => {
         runtimeClient({ uploadClip, processClipJob }),
       );
       const player = getLatestMockVideoPlayer();
-      await fireEvent.changeText(result.getByDisplayValue('0'), '1');
-      await fireEvent.changeText(result.getByDisplayValue('8'), '5');
+      await nudgeTrim(result, 'Trim start', 2);
+      await nudgeTrim(result, 'Trim end', -6);
       await fireEvent.press(result.getByRole('radio', { name: 'VHS Camcorder' }));
-      await fireEvent.press(result.getByRole('button', { name: 'Save trim and mode' }));
-      await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
       await result.findByTestId('camera-contribution-status-sealed');
       await waitFor(() => expect(result.queryByTestId('video-review')).toBeNull());
       expect(player?.released).toBe(true);
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:submitted-capture');
       expect(uploadClip).toHaveBeenCalledWith(
-        'demo-session-ui',
-        'demo-group',
+        UPLOAD_SESSION_ID,
+        'group-1',
         expect.objectContaining({
           durationSeconds: 4,
           hasAudio: true,
@@ -684,8 +704,9 @@ describe('VideoCaptureScreen', () => {
           trimStartSeconds: 1,
           width: 720,
         }),
+        expect.any(AbortSignal),
       );
-      expect(processClipJob).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
+      expect(processClipJob).toHaveBeenCalledWith(UPLOAD_SESSION_ID, 'group-1', 'job-ui');
     } finally {
       Object.defineProperty(URL, 'revokeObjectURL', {
         configurable: true,
@@ -726,13 +747,14 @@ describe('VideoCaptureScreen', () => {
       runtimeClient({ processClipJob, uploadClip, deleteContribution }),
     );
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-sealed');
+    await openYourMoments(result);
     await fireEvent.press(result.getByRole('button', { name: 'Delete and replace' }));
 
     expect(deleteContribution).toHaveBeenCalledWith(
-      'demo-session-ui',
-      'demo-group',
+      UPLOAD_SESSION_ID,
+      'group-1',
       'contribution-ui',
     );
     await result.findByTestId('video-live-preview');
@@ -745,13 +767,14 @@ describe('VideoCaptureScreen', () => {
 
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-review');
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-sealed');
     expect(uploadClip).toHaveBeenNthCalledWith(
       2,
-      'demo-session-ui',
-      'demo-group',
+      UPLOAD_SESSION_ID,
+      'group-1',
       expect.objectContaining({ replacesContributionId: 'contribution-ui' }),
+      expect.any(AbortSignal),
     );
   });
 
@@ -771,8 +794,9 @@ describe('VideoCaptureScreen', () => {
       runtimeClient({ deleteContribution, processClipJob }),
     );
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-sealed');
+    await openYourMoments(result);
     await fireEvent.press(result.getByRole('button', { name: 'Delete and replace' }));
     await result.findByTestId('camera-contribution-status-delete-used');
     expect(result.queryByRole('button', { name: 'Delete and replace' })).toBeNull();
@@ -789,7 +813,7 @@ describe('VideoCaptureScreen', () => {
       runtimeClient({ uploadClip, processClipJob }),
     );
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-failed');
     expect(result.queryByText('Upload queued as one pending contribution.')).toBeNull();
     expect(result.getByRole('button', { name: 'Retry upload' })).toBeTruthy();
@@ -811,12 +835,10 @@ describe('VideoCaptureScreen', () => {
       runtimeClient({ processClipJob }),
     );
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-failed');
     expect(
-      result.getByText(
-        'This contribution cannot be retried. Retake it to submit a new contribution.',
-      ),
+      result.getByText('This one can’t be retried. Take it again to add a new moment.'),
     ).toBeTruthy();
     expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
     expect(result.queryByText('Upload queued as one pending contribution.')).toBeNull();
@@ -832,10 +854,10 @@ describe('VideoCaptureScreen', () => {
       runtimeClient({ uploadClip }),
     );
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-failed');
-    expect(result.getByText('Contribution limit reached')).toBeTruthy();
-    expect(result.getByText('No allowance remains.')).toBeTruthy();
+    expect(result.getByText('No moments left')).toBeTruthy();
+    expect(result.getByText('You’ve used all your moments this cycle.')).toBeTruthy();
     expect(result.queryByRole('button', { name: 'Retry upload' })).toBeNull();
     expect(result.queryByText(/Retake it/)).toBeNull();
   });
@@ -876,7 +898,7 @@ describe('VideoCaptureScreen', () => {
       await result.findByTestId('video-live-preview');
       await fireEvent.press(result.getByTestId('video-record'));
       await result.findByTestId('video-review');
-      await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
       await result.findByTestId('camera-contribution-status-sealed');
 
       const paths = authenticatedRequest.mock.calls.map(([path]) => String(path));
@@ -897,7 +919,7 @@ describe('VideoCaptureScreen', () => {
     const client = runtimeClient({ uploadClip });
     const result = await renderReviewWithRuntime(videoPlatformForReview(), client);
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByText('runtime temporarily unavailable');
     expect(result.getByRole('button', { name: 'Retry upload' })).toBeTruthy();
     await fireEvent.press(result.getByRole('button', { name: 'Retry upload' }));
@@ -921,7 +943,7 @@ describe('VideoCaptureScreen', () => {
       runtimeClient({ uploadClip, cancelClipUpload }),
     );
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByText('runtime temporarily unavailable');
     const retryButton = result.getByRole('button', { name: 'Retry upload' });
 
@@ -943,29 +965,43 @@ describe('VideoCaptureScreen', () => {
     const client = runtimeClient({ cancelClipUpload });
     const result = await renderReviewWithRuntime(videoPlatformForReview(), client);
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByText('Upload queued as one pending contribution.');
     await fireEvent.press(result.getByRole('button', { name: 'Retake' }));
 
     await result.findByTestId('video-live-preview');
-    expect(cancelClipUpload).toHaveBeenCalledWith('demo-session-ui', 'demo-group', 'job-ui');
+    expect(cancelClipUpload).toHaveBeenCalledWith(UPLOAD_SESSION_ID, 'group-1', 'job-ui');
   });
 
-  it('cancels an active recording and ignores a late recorder completion', async () => {
+  it('cancels an active recording on Close and ignores a late recorder completion', async () => {
     const platform = videoPlatformForReview();
     let resolveRecording!: (value: RecordedClip) => void;
-    (platform.recordClip as jest.Mock).mockImplementation(
-      () => new Promise<RecordedClip>((resolve) => (resolveRecording = resolve)),
-    );
-    const result = await render(<VideoCaptureScreen platform={platform} />);
+    (platform.recordClip as jest.Mock)
+      .mockImplementationOnce(
+        () => new Promise<RecordedClip>((resolve) => (resolveRecording = resolve)),
+      )
+      .mockImplementation(() => new Promise<RecordedClip>(() => undefined));
+    function Harness() {
+      const [visible, setVisible] = useState(true);
+      return visible ? (
+        <VideoCaptureScreen onClose={() => setVisible(false)} platform={platform} />
+      ) : (
+        <Pressable accessibilityRole="button" onPress={() => setVisible(true)}>
+          <Text>Return to capture</Text>
+        </Pressable>
+      );
+    }
+    const result = await render(<Harness />);
     await result.findByTestId('video-live-preview');
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-recording');
 
-    await fireEvent.press(result.getByRole('button', { name: 'Cancel recording' }));
+    // Close (×) discards the take; the camera is ready again on return.
+    await fireEvent.press(result.getByRole('button', { name: 'Close' }));
     expect(platform.cancelRecording).toHaveBeenCalledTimes(1);
     expect(result.queryByTestId('video-review')).toBeNull();
-    expect(result.getByTestId('video-live-preview')).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Return to capture' }));
+    expect(await result.findByTestId('video-live-preview')).toBeTruthy();
     expect(result.getByTestId('video-record')).toBeTruthy();
     resolveRecording(clip);
     await waitFor(() => expect(result.queryByTestId('video-review')).toBeNull());
@@ -983,17 +1019,18 @@ describe('VideoCaptureScreen', () => {
     const client = runtimeClient({ uploadClip });
     const result = await renderReviewWithRuntime(videoPlatformForReview(), client);
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByRole('button', { name: 'Cancel upload' });
     await fireEvent.press(result.getByRole('button', { name: 'Cancel upload' }));
     resolveUpload(upload);
-    await result.findByTestId('camera-contribution-status-failed');
-    await result.findByRole('button', { name: 'Retry upload' });
+    // Cancel goes back to the review (V5); Seal sends the same moment again.
+    await result.findByTestId('video-review');
+    await result.findByRole('button', { name: 'Seal' });
     expect(result.queryByText('Upload queued as one pending contribution.')).toBeNull();
-    await result.findByText('The upload was cancelled.');
+    await result.findByText('Upload cancelled. Your moment is still here to seal.');
 
     const firstInput = (uploadClip.mock.calls[0] as unknown[])[2] as { idempotencyKey: string };
-    await fireEvent.press(result.getByRole('button', { name: 'Retry upload' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByText('Upload queued as one pending contribution.');
     const retriedInput = (uploadClip.mock.calls[1] as unknown[])[2] as { idempotencyKey: string };
     expect(retriedInput.idempotencyKey).toBe(firstInput.idempotencyKey);
@@ -1007,11 +1044,11 @@ describe('VideoCaptureScreen', () => {
       runtimeClient({ uploadClip }),
     );
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByRole('button', { name: 'Cancel upload' });
     await fireEvent.press(result.getByRole('button', { name: 'Cancel upload' }));
 
-    await result.findByRole('button', { name: 'Retry upload' });
+    await result.findByRole('button', { name: 'Seal' });
     expect(result.queryByRole('button', { name: 'Cancel upload' })).toBeNull();
   });
 
@@ -1025,7 +1062,7 @@ describe('VideoCaptureScreen', () => {
       runtimeClient({ uploadClip }),
     );
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByRole('button', { name: 'Cancel upload' });
     await fireEvent.press(result.getByRole('button', { name: 'Cancel upload' }));
 
@@ -1094,7 +1131,7 @@ describe('VideoCaptureScreen', () => {
       videoPlatformForReview(),
       runtimeClient({ cancelClipUpload, uploadClip }),
     );
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByRole('button', { name: 'Cancel upload' });
 
     await act(async () => {
@@ -1132,7 +1169,7 @@ describe('VideoCaptureScreen', () => {
         videoPlatformForReview(),
         runtimeClient({ stageClipSource, uploadClip }),
       );
-      await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
       await waitFor(() => expect(stageClipSource).toHaveBeenCalledTimes(1));
       const firstInput = stageClipSource.mock.calls[0] as unknown[];
       const firstKey = firstInput[2] as string;
@@ -1169,9 +1206,9 @@ describe('VideoCaptureScreen', () => {
 
   it('clears a retry affordance after route exit removes its resumable clip', async () => {
     const scope = {
-      groupId: demoSession.groupId,
-      memberId: demoSession.actor.memberId,
-      sessionId: demoSession.id,
+      groupId: REAL_ACCOUNT.groupId,
+      memberId: 'member-1',
+      sessionId: UPLOAD_SESSION_ID,
     };
     const client = runtimeClient({
       uploadClip: jest.fn().mockRejectedValue(new Error('runtime temporarily unavailable')),
@@ -1189,6 +1226,7 @@ describe('VideoCaptureScreen', () => {
               <VideoCaptureScreen
                 onBack={() => setVisible(false)}
                 platform={videoPlatformForReview()}
+                realAccount={REAL_ACCOUNT}
                 runtimeClient={client}
               />
             </>
@@ -1202,22 +1240,16 @@ describe('VideoCaptureScreen', () => {
     }
 
     const result = await render(
-      <DemoSessionProvider
-        clock={() => new Date('2026-09-11T12:00:00.000Z')}
-        runtimeClient={client}
-        store={demoSessionStore()}
-      >
+      <>
         <ContributionStatusProvider scope={scope}>
-          <SessionReadyMarker />
           <CaptureRouteHarness />
         </ContributionStatusProvider>
-      </DemoSessionProvider>,
+      </>,
     );
-    await result.findByTestId('demo-session-ready');
     await result.findByTestId('video-live-preview');
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-review');
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-failed');
     await waitFor(async () =>
       expect(await AsyncStorage.getItem('@rewind/contribution-status-v1')).not.toBeNull(),
@@ -1237,9 +1269,9 @@ describe('VideoCaptureScreen', () => {
 
   it('reconciles a restored processing status into an honest bounded retry', async () => {
     const scope = {
-      groupId: demoSession.groupId,
-      memberId: demoSession.actor.memberId,
-      sessionId: demoSession.id,
+      groupId: REAL_ACCOUNT.groupId,
+      memberId: 'member-1',
+      sessionId: UPLOAD_SESSION_ID,
     };
     await AsyncStorage.setItem(
       '@rewind/contribution-status-v1',
@@ -1257,18 +1289,16 @@ describe('VideoCaptureScreen', () => {
 
     const client = runtimeClient();
     const result = await render(
-      <DemoSessionProvider
-        clock={() => new Date('2026-09-11T12:00:00.000Z')}
-        runtimeClient={client}
-        store={demoSessionStore()}
-      >
+      <>
         <ContributionStatusProvider scope={scope}>
-          <SessionReadyMarker />
-          <VideoCaptureScreen platform={videoPlatformForReview()} runtimeClient={client} />
+          <VideoCaptureScreen
+            platform={videoPlatformForReview()}
+            realAccount={REAL_ACCOUNT}
+            runtimeClient={client}
+          />
         </ContributionStatusProvider>
-      </DemoSessionProvider>,
+      </>,
     );
-    await result.findByTestId('demo-session-ready');
     await result.findByTestId('video-live-preview');
     await fireEvent.press(result.getByTestId('video-record'));
     await result.findByTestId('video-review');
@@ -1289,7 +1319,7 @@ describe('VideoCaptureScreen', () => {
       runtimeClient({ uploadClip }),
     );
 
-    await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
     await result.findByTestId('camera-contribution-status-failed');
 
     // Exhaust the remaining budget through the retry action. The boundary is
@@ -1320,23 +1350,21 @@ describe('VideoCaptureScreen', () => {
     try {
       const client = runtimeClient({ cancelClipUpload, uploadClip });
       const result = await render(
-        <DemoSessionProvider
-          clock={() => new Date('2026-09-11T12:00:00.000Z')}
-          runtimeClient={client}
-          store={demoSessionStore()}
-        >
-          <SessionReadyMarker />
-          <VideoCaptureScreen platform={platform} runtimeClient={client} />
-        </DemoSessionProvider>,
+        <>
+          <VideoCaptureScreen
+            platform={platform}
+            realAccount={REAL_ACCOUNT}
+            runtimeClient={client}
+          />
+        </>,
       );
-      await result.findByTestId('demo-session-ready');
       await result.findByTestId('video-unsupported');
       await fireEvent.press(result.getByRole('button', { name: 'Choose a video file' }));
       await result.findByTestId('video-review');
-      await fireEvent.press(result.getByRole('button', { name: 'Upload clip' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
       await result.findByRole('button', { name: 'Cancel upload' });
 
-      // Ending Demo access unmounts the capture route.
+      // Signing out unmounts the capture route.
       await result.unmount();
 
       await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith('blob:sign-out-video'));
@@ -1349,5 +1377,31 @@ describe('VideoCaptureScreen', () => {
         value: previousRevoke,
       });
     }
+  });
+
+  it('shows Sealed with Done only after a seal, and Done closes the camera', async () => {
+    const onClose = jest.fn();
+    const onBack = jest.fn();
+    const processClipJob = jest.fn().mockResolvedValue({ ...upload.job, status: 'ready' as const });
+    const client = runtimeClient({ processClipJob });
+    const result = await render(
+      <>
+        <VideoCaptureScreen
+          onBack={onBack}
+          onClose={onClose}
+          platform={videoPlatformForReview()}
+          realAccount={REAL_ACCOUNT}
+          runtimeClient={client}
+        />
+      </>,
+    );
+    await fireEvent.press(await result.findByTestId('video-record'));
+    await result.findByTestId('video-review');
+    await fireEvent.press(result.getByRole('button', { name: 'Seal' }));
+    await result.findByTestId('camera-contribution-status-sealed');
+    expect(result.getByRole('header', { name: 'Sealed' })).toBeTruthy();
+    await fireEvent.press(result.getByRole('button', { name: 'Done' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onBack).not.toHaveBeenCalled();
   });
 });

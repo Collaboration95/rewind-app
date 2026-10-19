@@ -22,12 +22,13 @@ test('Expo web config and manifest describe an installable standalone shell', ()
   assert.equal(appJson.expo.web.themeColor, manifest.theme_color);
   assert.equal(appJson.expo.web.backgroundColor, manifest.background_color);
   assert.equal(manifest.theme_color, manifest.background_color);
-  assert.equal(manifest.icons.length, 2);
+  assert.equal(manifest.icons.length, 3);
   assert.deepEqual(
-    manifest.icons.map(({ sizes, type }) => ({ sizes, type })),
+    manifest.icons.map(({ sizes, type, purpose }) => ({ sizes, type, purpose })),
     [
-      { sizes: '192x192', type: 'image/png' },
-      { sizes: '512x512', type: 'image/png' },
+      { sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
   );
 });
@@ -37,9 +38,9 @@ test('the web shell registers a bounded offline fallback without offline sync', 
   assert.match(index, /serviceWorker\.register\('\/sw\.js'/);
   assert.match(index, /viewport-fit=cover/);
   assert.match(index, /name="apple-mobile-web-app-capable" content="yes"/);
-  assert.match(index, /name="apple-mobile-web-app-status-bar-style" content="black-translucent"/);
-  assert.match(index, /name="theme-color" content="#252326"/);
-  assert.match(index, /background: #252326/);
+  assert.match(index, /name="apple-mobile-web-app-status-bar-style" content="default"/);
+  assert.match(index, /name="theme-color" content="#f6ede3"/);
+  assert.match(index, /background: #f6ede3/);
   assert.match(index, /min-height: 100dvh/);
   assert.match(index, /margin: 0/);
   assert.match(serviceWorker, /const CACHE_NAME = 'rewind-shell-v3-__BUILD_ID__'/);
@@ -195,7 +196,7 @@ function workerFixture(source = serviceWorker, stores = new Map(), windows = [])
   };
 }
 
-test('push revalidates the cookie session/current group and displays only generic content', async () => {
+test('push revalidates the cookie session/current group, displays only generic content and routes only when verified', async () => {
   const worker = workerFixture();
   const data = {
     kind: 'weekly-reminder',
@@ -213,6 +214,10 @@ test('push revalidates the cookie session/current group and displays only generi
   assert.equal(worker.notifications.length, 1);
   assert.equal(worker.notifications[0].title, 'Rewind');
   assert.equal(worker.notifications[0].options.tag, 'rewind:reminder-one');
+  assert.equal(
+    JSON.stringify(worker.notifications[0].options.data),
+    JSON.stringify({ kind: data.kind, groupId: data.groupId, reminderId: data.reminderId }),
+  );
   assert.doesNotMatch(
     JSON.stringify(worker.notifications),
     /Private prompt|Member secret|evil|media/,
@@ -243,7 +248,18 @@ test('push revalidates the cookie session/current group and displays only generi
   await worker.event('push', {
     data: { json: () => ({ data: { ...data, groupId: '../foreign' } }) },
   });
-  assert.equal(worker.notifications.length, 1);
+  // Other group, signed out and offline still show (Safari revokes silent pushes)
+  // the same generic text, but carry no routing intent. Malformed payloads show nothing.
+  assert.equal(worker.notifications.length, 4);
+  for (const shown of worker.notifications.slice(1)) {
+    assert.equal(shown.title, 'Rewind');
+    assert.equal(shown.options.body, worker.notifications[0].options.body);
+    assert.equal(shown.options.data, null);
+  }
+  assert.doesNotMatch(
+    JSON.stringify(worker.notifications),
+    /Private prompt|Member secret|evil|media|another-group/,
+  );
 });
 
 test('notification taps use opaque IDs and focus an existing app without arbitrary navigation', async () => {
@@ -288,6 +304,12 @@ test('notification taps use opaque IDs and focus an existing app without arbitra
     notification: { ...notification, data: { ...data, reminderId: 'https://evil.invalid' } },
   });
   assert.equal(cold.opened.length, 1);
+  await cold.event('notificationclick', { notification: { ...notification, data: null } });
+  assert.equal(cold.opened[1], 'https://rewind.invalid/');
+  const warm = workerFixture(serviceWorker, new Map(), [window]);
+  await warm.event('notificationclick', { notification: { ...notification, data: null } });
+  assert.equal(focused, 2);
+  assert.equal(received.length, 1);
 });
 
 test('private API/media, invite query navigations and writes never enter the shell cache', async () => {
@@ -318,6 +340,82 @@ test('private API/media, invite query navigations and writes never enter the she
   assert.equal((await worker.request('/api/real/current', { method: 'POST' })).status, 503);
   assert.equal(worker.calls.filter((call) => call.method === 'POST').length, 2);
   assert.equal(worker.skipped, 0);
+});
+
+test('full-chat and unread SSE GETs stay browser-owned across group switches, including offline', async () => {
+  const worker = workerFixture();
+  worker.installShell();
+  await worker.lifecycle('install');
+  const cachedBefore = [...worker.stores.values()].flatMap((entries) => [...entries.keys()]);
+  const callsBefore = worker.calls.length;
+  // More switches than the server's five concurrent slots: neither kind of
+  // stream may create a worker-owned fetch that outlives EventSource.close().
+  for (let group = 0; group < 8; group++) {
+    const events = `/api/realtime/groups/group-${group}/events`;
+    for (const query of ['?sinceEventId=0', '?startFromLatest=true&metadataOnly=true']) {
+      const path = events + query;
+      worker.serve(path, ': connected\n\n', 'text/event-stream', {
+        'Cache-Control': 'no-cache, no-store',
+      });
+      assert.equal(
+        await worker.request(path, { headers: { Accept: 'text/event-stream' } }),
+        undefined,
+      );
+      worker.network.clear();
+      // No synthetic API response or offline shell can replace an SSE stream.
+      assert.equal(await worker.request(path, { mode: 'navigate' }), undefined);
+    }
+  }
+  assert.equal(worker.calls.length, callsBefore);
+  assert.deepEqual(
+    [...worker.stores.values()].flatMap((entries) => [...entries.keys()]),
+    cachedBefore,
+  );
+});
+
+test('the SSE exception preserves private API writes, denials and offline fail-closed responses', async () => {
+  const worker = workerFixture();
+  for (const status of [401, 403]) {
+    const path = '/api/realtime/groups/group-one/messages';
+    worker.network.set(
+      `https://rewind.invalid${path}`,
+      new Response(JSON.stringify({ error: 'forbidden' }), {
+        status,
+        headers: { 'Cache-Control': 'no-store' },
+      }),
+    );
+    assert.equal((await worker.request(path)).status, status);
+  }
+  worker.network.clear();
+  for (const [path, method] of [
+    ['/api/realtime/groups/group-one/events', 'POST'],
+    ['/api/realtime/groups/group-one/events', 'HEAD'],
+    ['/api/realtime/groups/group-one/messages', 'GET'],
+    ['/api/realtime/groups/group-one/events/history', 'GET'],
+    ['/api/realtime/groups/group-one/events.js', 'GET'],
+    ['/api/real/groups/current', 'GET'],
+    ['/media/access/private-token', 'GET'],
+  ]) {
+    const response = await worker.request(path, {
+      method,
+      mode: 'navigate',
+      headers: { Accept: 'text/event-stream' },
+    });
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    assert.equal((await response.json()).error, 'runtime_unavailable');
+  }
+  assert.equal(worker.stores.size, 0);
+});
+
+test('public legal pages load as documents, never the SPA shell', async () => {
+  const worker = workerFixture();
+  worker.installShell();
+  await worker.lifecycle('install');
+  worker.network.clear();
+  for (const path of ['/privacy', '/support', '/terms', '/terms.html'])
+    assert.equal(await worker.request(path, { mode: 'navigate' }), undefined);
+  assert.match(await (await worker.request('/groups/group', { mode: 'navigate' })).text(), /old/);
 });
 
 test('offline entry uses its installed build; an incomplete upgrade preserves the previous cache', async () => {

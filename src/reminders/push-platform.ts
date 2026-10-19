@@ -1,4 +1,3 @@
-import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 export type PushPermission = 'granted' | 'denied' | 'default';
@@ -33,6 +32,7 @@ interface WebRegistration {
 }
 export interface WebPushEnvironment {
   secure: boolean;
+  // Installed, or a platform that allows web push without installing (not iPhone/iPad).
   installed: boolean;
   pushSupported: boolean;
   permission(): PushPermission;
@@ -43,15 +43,14 @@ export interface WebPushEnvironment {
 export function createWebPushPlatform(environment: WebPushEnvironment): PushPlatform {
   return {
     async prepare() {
-      if (!environment.secure || !environment.installed || !environment.pushSupported)
-        return {
-          unsupported:
-            'Install Rewind on your Home Screen in a browser that supports secure push notifications.',
-        };
+      if (!environment.installed)
+        return { unsupported: 'On iPhone, add Rewind to your Home Screen to get reminders.' };
+      if (!environment.secure || !environment.pushSupported)
+        return { unsupported: 'This browser cannot receive push notifications.' };
       const registration = await environment.registration();
       if (!registration?.active || !registration.pushManager)
         return {
-          unsupported: 'Reopen the installed app online to activate its notification support.',
+          unsupported: 'Reopen Rewind online to activate its notification support.',
         };
       let subscription = await registration.pushManager.getSubscription();
       return {
@@ -170,29 +169,31 @@ export function createNativePushPlatform({
 }
 
 export function defaultPushPlatform(): PushPlatform {
-  if (Platform.OS === 'web') {
-    const available = typeof window !== 'undefined' && typeof navigator !== 'undefined';
-    return createWebPushPlatform({
-      secure: available && window.isSecureContext,
-      installed:
-        available &&
-        (window.matchMedia?.('(display-mode: standalone)').matches === true ||
-          (navigator as Navigator & { standalone?: boolean }).standalone === true),
-      pushSupported:
-        available &&
-        'serviceWorker' in navigator &&
-        'PushManager' in window &&
-        'Notification' in window,
-      permission: () => Notification.permission,
-      registration: async () => navigator.serviceWorker.getRegistration(),
-      decode: (value) => window.atob(value),
-    });
-  }
-  return createNativePushPlatform({
-    platform: Platform.OS,
-    expoGo: Constants.executionEnvironment === 'storeClient' || Constants.expoGoConfig != null,
-    projectId: Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId,
-    physicalDevice: async () => (await import('expo-device')).isDevice,
-    notifications: async () => import('expo-notifications'),
+  // Reminders use web push only. Native (Expo) push is paused; its adapter stays above, unused.
+  if (Platform.OS !== 'web')
+    return {
+      prepare: async () => ({ unsupported: 'Reminders arrive through the Rewind web app.' }),
+    };
+  const available = typeof window !== 'undefined' && typeof navigator !== 'undefined';
+  const standalone =
+    available &&
+    (window.matchMedia?.('(display-mode: standalone)').matches === true ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true);
+  // iPhone/iPad only allow web push in the Home Screen app; other browsers allow it in a tab.
+  const appleMobile =
+    available &&
+    (/iPhone|iPad|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+  return createWebPushPlatform({
+    secure: available && window.isSecureContext,
+    installed: standalone || !appleMobile,
+    pushSupported:
+      available &&
+      'serviceWorker' in navigator &&
+      'PushManager' in window &&
+      'Notification' in window,
+    permission: () => Notification.permission,
+    registration: async () => navigator.serviceWorker.getRegistration(),
+    decode: (value) => window.atob(value),
   });
 }

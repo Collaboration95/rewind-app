@@ -208,19 +208,6 @@ validate_recreate_plan() {
             ((.Resource | if type == "array" then .[0] else . end) |
               test("^arn:aws:lightsail:[a-z0-9-]+:[0-9]{12}:Instance/[A-Za-z0-9-]+$"))
           ))
-      ) or
-      (
-        .address as $address |
-        .change.actions as $actions |
-        (
-          [
-            "aws_iam_role.cost_safety_audit",
-            "aws_iam_role.cost_safety_audit_scheduler",
-            "aws_iam_role_policy.cost_safety_audit",
-            "aws_iam_role_policy.cost_safety_audit_scheduler",
-            "aws_lambda_function.cost_safety_audit"
-          ] | index($address)
-        ) != null and $actions == ["update"]
       )
     )
   ' "$json_path" >/dev/null; then
@@ -336,7 +323,7 @@ if [[ "$SEED" == 1 ]]; then
     lifecycle_guard_reject 'seed-mode host initialization or health verification failed.'
     exit 1
   fi
-  printf 'Demo seeded. No historical recovery point was restored; create and verify a full S3 backup before hibernating it.\n'
+  printf 'Host initialized with an empty database. No historical recovery point was restored; create and verify a full S3 backup before hibernating it.\n'
 else
   if ! scp "${SSH_OPTS[@]}" \
     "$recovery_dir/$manifest_name" "$recovery_dir/$database_name" "$recovery_dir/$media_name" \

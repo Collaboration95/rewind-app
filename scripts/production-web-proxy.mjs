@@ -51,10 +51,17 @@ function contentType(path) {
   return CONTENT_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream';
 }
 
+/** Public legal pages answer at their extensionless path without sign-in,
+ * instead of falling through to the SPA shell. */
+export function legalPagePath(pathname) {
+  const match = /^\/(privacy|support|terms)$/.exec(pathname);
+  return match ? `/${match[1]}.html` : null;
+}
+
 async function resolveStaticFile(staticRoot, pathname) {
   let decodedPath;
   try {
-    decodedPath = decodeURIComponent(pathname);
+    decodedPath = legalPagePath(pathname) ?? decodeURIComponent(pathname);
   } catch {
     return { error: 400 };
   }
@@ -162,15 +169,25 @@ function proxyApi(request, response, runtimeOrigin, url, runtimeTimeoutMs, origi
         }
       }
       response.setHeader('Cache-Control', 'no-store');
+      // A realtime stream is idle between 15 s heartbeats; the request timeout
+      // only bounds the wait for a response, not an open event stream.
+      if (String(upstreamResponse.headers['content-type'] ?? '').startsWith('text/event-stream')) {
+        upstream.setTimeout(0);
+      }
       response.writeHead(upstreamResponse.statusCode ?? 502);
       upstreamResponse.pipe(response);
     },
   );
+  // A browser that goes away must release its upstream request, or open
+  // realtime streams pile up against the runtime's per-account limit.
+  response.once('close', () => {
+    if (!response.writableFinished) upstream.destroy();
+  });
   upstream.once('error', () => {
     if (!response.headersSent) {
       sendJson(response, 503, {
         error: 'runtime_unavailable',
-        message: 'The Demo runtime is unavailable.',
+        message: 'The runtime is unavailable.',
       });
     } else {
       response.destroy();

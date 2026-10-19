@@ -98,7 +98,7 @@ test('the deploy role trusts one environment, one branch, and one host', () => {
 
 test('the deploy role carries the live instance ARN and cannot mutate the host', () => {
   // The ARN comes from the instance resource, so it stays correct after the
-  // documented hibernation/wake cycle replaces the host.
+  // documented host rebuild replaces the host.
   assert.match(deployTf, /deploy_instance_arn = try\(\s*aws_lightsail_instance\.rewind\[0\]\.arn/);
   assert.match(deployTf, /resources = \[local\.deploy_instance_arn\]/);
   assert.match(deployTf, /"lightsail:GetInstanceAccessDetails"/);

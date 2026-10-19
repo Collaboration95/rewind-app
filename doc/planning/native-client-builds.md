@@ -1,17 +1,18 @@
-# Native client builds — #351
+# Native client builds
 
-Website delivery stays first. Android APK delivery is still required; build
-preparation and an Expo Go preview do not discharge the APK/install obligation.
-Run from a clean reviewed `dev` commit after website checks. The build
-configuration is integrated into `dev` through PR #379; the earlier compilation
-rehearsal below remains unmerged preview evidence, not installed-client acceptance.
+Current guidance checked against dev `40ebeb5673d103b4b6950d095192aae744980769`
+on 15 October 2026. Android refresh #528 is closed; use the existing published
+[client artifact](client-artifacts.md), versionCode **2**, source `7105328`,
+with its debug-key limitation and recorded smoke gaps. No rebuild is required
+for this documentation update. The older preparation rehearsal below is
+historical compile evidence, not the current installation status.
 
 ## Identity, environment and version policy
 
 - Keep the existing `rewind` callback scheme and iOS bundle identifier
   `com.anonymous.rewind-app`. Android uses `com.anonymous.rewindapp`; review this
   pilot identifier and signing identity before distributing or replacing an app.
-- Version `0.1.0`, Android `versionCode: 1`, iOS `buildNumber: "1"` are explicit.
+- Version `0.1.0`, Android `versionCode: 2`, iOS `buildNumber: "1"` are explicit.
   EAS uses local version numbers and does not increment them automatically.
   Increment the relevant build number in reviewed source for each distribution.
 - OTA updates are disabled. There is no update URL, project ID, update channel,
@@ -109,7 +110,8 @@ packages/lockfiles to fix a native toolchain problem without coordination.
    The Expo template supplies its standard **debug test key**, including for
    this local Release rehearsal. No signing key was created. This would be an
    embedded, internally installable test APK, not a production-signed release.
-   Before distribution, use the separately approved signing identity; the EAS
+   The published hosted-dev test APK uses this debug test identity. Production
+   or store distribution requires an appropriate signing identity; the EAS
    APK profile deliberately requires existing local credentials instead.
 
 5. Only after successful compilation, inspect package ID/version and callback
@@ -137,41 +139,29 @@ Do not download large SDKs, create signing credentials, dispatch
 paid/remote builds, delete caches, or remove checks to make the build pass. A
 missing toolchain or unresolved source provenance leaves the APK deliverable open.
 
-## iOS and lead-owned native acceptance
+## Current client scope
 
-An iPhone 17 Pro simulator on iOS 26.5 was available during read-only inspection;
-no Android device was connected. No app was installed, overwritten, launched,
-or smoke-tested by this preparation. The lead owns those steps after precheck.
-
-For the pilot API baseline, use iPhone 14+ (prefer a notch/Dynamic Island) with
-Expo Go and the exact approved source/config/origins:
+Website/PWA delivery stays first. iOS is delivered as the PWA; compiled iOS,
+TestFlight and App Store delivery are out of scope. Existing simulator/device
+profiles are retained configuration, not an obligation to build or distribute.
+For an optional local Expo Go preview, use iPhone 14+ and LAN:
 
 ```sh
 npm start -- --ios --lan --clear
 ```
 
-Use LAN, not localhost. This baseline is not a separately signed iOS binary.
-The simulator profile prepares a native build route; compiling it additionally
-requires the existing CocoaPods/native dependencies. Device builds require an
-existing Apple signing identity, provisioning profile, matching bundle ID and
-registered device. Apple/EAS signing access has not been verified here.
+Web/PWA authentication uses Cognito Managed Login when configured. Local and
+hosted dev retain Developer sign-in; native Expo/Android clients use that form
+against local/dev only. Preserving the `rewind://` scheme does not implement
+native Cognito. Native push remains disabled; reminders use web push. Native
+retro processing remains server-side (#367). Do not extend native push or
+release-native authentication to satisfy these historical build notes.
 
-The lead must verify sign-in/session restore/logout, invite callbacks and native
-sharing, video/photo capture permissions and upload, sealed contribution state,
-chat, reveal and archive playback/download on Android and supported iOS. Check
-`rewind://` routing after cold launch; preserving a scheme does not implement or
-prove OIDC. Record actual device/runtime/build IDs and limits, without member
-secrets or media. The shared app code was not changed in this task.
+For actual Android installation/upgrade and journey results, use the
+[artifact inventory](client-artifacts.md). Its camera, film, export and invite
+gaps remain explicit; an Expo Go preview or compile receipt does not fill them.
 
-Reminder/remote-push acceptance belongs to #347/#348 in Sprint 2. Rebuild and
-verify the affected native clients when those changes land; do not defer that
-acceptance to Sprint 3. Only managed OIDC and client-retro are reserved for
-Sprint 3. Expo Go is insufficient for final OAuth/OIDC redirect behavior and
-Android remote push. Review development-build dependencies and configuration
-when each feature requires them. No final OIDC or reminder/push acceptance is
-claimed by this build preparation.
-
-## Current validation and acceptance limits
+## Historical 3 October compilation rehearsal
 
 A disposable Android Release rehearsal compiled offline on 3 October 2026
 using the existing SDK/Gradle cache. It used unmerged source commit
@@ -195,11 +185,10 @@ An earlier shared-node_modules AppEntry rehearsal bundled foreign application
 source and is quarantined. The recorder rejects that provenance. The local
 entrypoint and application-source checks address the diagnosed cause.
 
-Before closing #351, rebuild the reviewed accepted dev source with explicitly
-approved preview origins, verify and install the resulting APK on Android,
-and complete the native sign-in/invite/capture/chat/reveal/archive checks. Run
-the iPhone 14+ preview and record signing limits. Sprint 2 reminder/push
-acceptance remains with #347/#348; managed OIDC/client-retro remain Sprint 3.
+The published #351 artifact was subsequently refreshed by closed #528.
+Neither this rehearsal nor that closure establishes a new physical-device pass.
+Use the release-specific results in [client artifacts](client-artifacts.md)
+instead of treating the old pre-closure checklist as outstanding build work.
 
 ## Official references
 

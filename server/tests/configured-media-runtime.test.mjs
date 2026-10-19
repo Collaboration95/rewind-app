@@ -9,10 +9,9 @@ import { Readable } from 'node:stream';
 import test from 'node:test';
 import { parseConfig } from '../dist/config.js';
 import { configureRuntimeMedia } from '../dist/media/configured-runtime.js';
-import { openDatabase } from '../dist/db.js';
 import { createClipUpload } from '../dist/media/index.js';
 import { decodeMediaRef, encodeMediaRef, verifyStoredMedia } from '../dist/media/store.js';
-import { clearDemoMedia } from './helpers/demo-media.mjs';
+import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
 
 const execFileAsync = promisify(execFile);
 const s3 = {
@@ -113,13 +112,13 @@ test('worker CLI uses opt-in local store for pinned input, verified output and i
     REWIND_MEDIA_ENVIRONMENT: 'test',
   };
   const config = parseConfig(env);
-  let database = openDatabase(config);
+  let database = openFixtureDatabase(config);
   const runtime = await configureRuntimeMedia(config);
   const scope = { environment: 'test', groupId: 'demo-group' };
   try {
     assert.equal(runtime.options.uploadIntents, undefined);
-    clearDemoMedia(database);
-    const bytes = await readFile(new URL('../fixtures/demo-media.mp4', import.meta.url));
+    clearFixtureMedia(database);
+    const bytes = await readFile(new URL('../fixtures/sample-clip.mp4', import.meta.url));
     const source = await runtime.options.mediaStore.put(scope, {
       prefix: 'incoming',
       name: 'configured-input',
@@ -163,7 +162,7 @@ test('worker CLI uses opt-in local store for pinned input, verified output and i
     const result = JSON.parse(stdout);
     assert.equal(result.drained, 1);
     assert.equal(result.jobs[0].status, 'ready');
-    database = openDatabase(config);
+    database = openFixtureDatabase(config);
     const job = database
       .prepare(
         'SELECT output_path, output_sha256, output_bytes, source_path FROM media_jobs WHERE id = ?',
