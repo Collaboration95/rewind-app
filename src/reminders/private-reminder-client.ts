@@ -66,6 +66,7 @@ export function createPrivateReminderClient({
   let enabled = false;
   let cleanupPending = false;
   let registrationUncertain = false;
+  let remoteCleanupConfirmed = false;
   let enabling: Promise<PrivateReminderSnapshot> | undefined;
   let loading: Promise<PrivateReminderSnapshot> | undefined;
   let cleaning: Promise<PrivateReminderSnapshot> | undefined;
@@ -111,25 +112,31 @@ export function createPrivateReminderClient({
       'This reminder context has changed. Open the current group to continue.',
     );
 
-  async function recoverUncertainDestination(): Promise<boolean> {
-    if (!registrationUncertain) return true;
+  async function recoverUncertainDestination(checkAbsence = false): Promise<boolean> {
+    if (!registrationUncertain && !checkAbsence) return true;
     if (!isCurrentContext()) return false;
     try {
       // Recovery must use the identity that crossed the registration boundary,
       // including after restart. Never generate a new identity for a lookup.
       deviceId ??= (await storage.getItem(DEVICE_KEY)) ?? undefined;
-      if (!deviceId || !/^[A-Za-z0-9_-]{16,128}$/.test(deviceId) || !isCurrentContext())
-        return false;
+      if ((registrationUncertain && !deviceId) || !isCurrentContext()) return false;
+      if (deviceId && !/^[A-Za-z0-9_-]{16,128}$/.test(deviceId)) return false;
       const response = await authenticatedRequest(
-        `${path}?deviceId=${encodeURIComponent(deviceId)}`,
+        deviceId ? `${path}?deviceId=${encodeURIComponent(deviceId)}` : path,
       );
       if (!response.ok || !isCurrentContext()) return false;
       const body = response.body;
       if (!isCurrentContext() || !body || typeof body !== 'object' || Array.isArray(body))
         return false;
       const rows = (body as { destinations?: unknown }).destinations;
-      // The account/device key is unique. Empty or ambiguous lookup results do
-      // not prove that a lost registration is safe to forget.
+      // Only a settled client may use absence as proof. A lost registration
+      // reply can still arrive after an empty lookup, so uncertainty stays gated.
+      if (Array.isArray(rows) && rows.length === 0 && !registrationUncertain) {
+        remoteCleanupConfirmed = true;
+        return true;
+      }
+      // Without a persisted device identity, never select another device's row.
+      if (!deviceId) return false;
       if (!Array.isArray(rows) || rows.length !== 1) return false;
       const row: unknown = rows[0];
       if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
@@ -143,16 +150,25 @@ export function createPrivateReminderClient({
         return false;
       destinationId = candidate.id;
       // Keep uncertainty durable until the exact recovered row is disabled.
-      await storage.setItem(key, JSON.stringify({ id: destinationId, uncertain: true }));
+      await storage.setItem(
+        key,
+        JSON.stringify({
+          id: destinationId,
+          uncertain: registrationUncertain,
+          cleanupPending: true,
+        }),
+      );
       return isCurrentContext();
     } catch {
       return false;
     }
   }
 
-  async function cleanup(): Promise<boolean> {
+  async function cleanup(checkAbsence = false): Promise<boolean> {
     cleanupPending = true;
-    if ((destinationId || registrationUncertain) && isCurrentContext()) {
+    const checkRemoteAbsence =
+      checkAbsence && !destinationId && !registrationUncertain && !remoteCleanupConfirmed;
+    if ((destinationId || registrationUncertain || checkRemoteAbsence) && isCurrentContext()) {
       try {
         await storage.setItem(
           key,
@@ -166,7 +182,7 @@ export function createPrivateReminderClient({
         return false;
       }
     }
-    const recovered = await recoverUncertainDestination();
+    const recovered = await recoverUncertainDestination(checkRemoteAbsence);
     let confirmed = recovered;
     if (destinationId && !isCurrentContext()) confirmed = false;
     if (recovered && destinationId && isCurrentContext()) {
@@ -181,7 +197,10 @@ export function createPrivateReminderClient({
           !isCurrentContext()
         )
           confirmed = false;
-        else registrationUncertain = false;
+        else {
+          registrationUncertain = false;
+          remoteCleanupConfirmed = true;
+        }
       } catch {
         confirmed = false;
       }
@@ -190,7 +209,9 @@ export function createPrivateReminderClient({
       if (isCurrentContext()) await prepared?.unsubscribe();
       else confirmed = false;
     } catch {
-      confirmed = false;
+      // Local push support can fail independently of server cleanup. Only an
+      // authoritative remote acknowledgement permits proceeding without it.
+      if (!remoteCleanupConfirmed || registrationUncertain) confirmed = false;
     }
     // Unsubscribe can yield while the active account/group client changes.
     // The old cleanup must not delete metadata written by that newer context.
@@ -240,7 +261,7 @@ export function createPrivateReminderClient({
       if (!active()) return stale();
       if ('unsupported' in capability) return result('unsupported', capability.unsupported);
       prepared = capability;
-      if (cleanupPending && !(await cleanup()))
+      if (cleanupPending && !(await cleanup(true)))
         return result(
           'cleanup-pending',
           'Device removal is unconfirmed; retry before switching accounts.',
@@ -323,6 +344,7 @@ export function createPrivateReminderClient({
         return stale();
       }
       registrationUncertain = true;
+      remoteCleanupConfirmed = false;
       const response = await authenticatedRequest(
         path,
         jsonOptions({ deviceId, provider: prepared.provider, destination }),
@@ -405,14 +427,11 @@ export function createPrivateReminderClient({
           const capability = await platform.prepare();
           if (!('unsupported' in capability)) prepared = capability;
         } catch {
-          cleanupPending = true;
-          return result(
-            'cleanup-pending',
-            'Device registration removal is unconfirmed. Retry before switching accounts.',
-          );
+          // Browser capability discovery is optional for remote removal. It
+          // cannot establish whether the server still has an association.
         }
       }
-      const confirmed = await cleanup();
+      const confirmed = await cleanup(true);
       return confirmed
         ? result(
             closed ? 'revoked' : 'available',

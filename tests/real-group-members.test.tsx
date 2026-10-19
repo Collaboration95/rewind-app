@@ -88,6 +88,8 @@ it('updates group members and active context when switching selected groups', as
   const authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
     if (path === '/real/media/config?uploadProtocol=2')
       return jsonResponse({ directTransfer: false });
+    if (path === `/real/groups/${selected.group.id}/reminders/destinations`)
+      return jsonResponse({ destinations: [] });
     if (path === '/real/groups/current' && init?.method === 'POST') {
       const { groupId } = JSON.parse(String(init.body)) as { groupId: string };
       selected = groups.find((entry) => entry.group.id === groupId)!;
