@@ -835,10 +835,23 @@ export class ExpoCameraPlatform implements CameraPlatform {
         await wait(CAMERA_WARMUP_DELAY_MS);
       }
     }
+    // Android's Expo native result uses extensions (".jpg" / ".png") even
+    // though CameraCapturedPicture declares canonical "jpg" / "png" values.
+    // Normalize only those formats so JPEG bytes never acquire PNG metadata.
+    const cameraFormat: unknown = picture.format;
+    const format =
+      cameraFormat === 'jpg' || cameraFormat === '.jpg'
+        ? 'jpg'
+        : cameraFormat === 'png' || cameraFormat === '.png'
+          ? 'png'
+          : null;
+    if (!format) {
+      throw new Error('The camera returned an unsupported photo format. Take a JPEG or PNG photo.');
+    }
     return {
       sourceUri: picture.uri,
       base64: picture.base64,
-      format: picture.format,
+      format,
       height: picture.height,
       source: 'camera',
       width: picture.width,

@@ -575,6 +575,52 @@ describe('Expo camera adapter contract', () => {
     });
   });
 
+  it.each([
+    ['jpg', 'jpg'],
+    ['.jpg', 'jpg'],
+    ['png', 'png'],
+    ['.png', 'png'],
+  ])(
+    'normalizes Expo camera format %s to %s without changing the image',
+    async (format, expected) => {
+      const camera = cameraHandle({
+        takePictureAsync: jest.fn().mockResolvedValue({
+          format,
+          height: 2400,
+          uri: 'file://native-photo',
+          width: 1080,
+        }),
+      });
+      const platform = new ExpoCameraPlatform({ getCameraRef: () => camera });
+      await expect(platform.captureStill()).resolves.toEqual({
+        base64: undefined,
+        format: expected,
+        height: 2400,
+        source: 'camera',
+        sourceUri: 'file://native-photo',
+        width: 1080,
+      });
+    },
+  );
+
+  it.each([undefined, 'webp', '..jpg'])(
+    'rejects an unverified camera photo format %s',
+    async (format) => {
+      const camera = cameraHandle({
+        takePictureAsync: jest.fn().mockResolvedValue({
+          format,
+          height: 2400,
+          uri: 'file://native-photo',
+          width: 1080,
+        }),
+      });
+      const platform = new ExpoCameraPlatform({ getCameraRef: () => camera });
+      await expect(platform.captureStill()).rejects.toThrow(
+        'The camera returned an unsupported photo format. Take a JPEG or PNG photo.',
+      );
+    },
+  );
+
   it('rejects still capture when the preview is not ready and preserves camera errors', async () => {
     const unavailable = new ExpoCameraPlatform({ getCameraRef: () => null });
     await expect(unavailable.captureStill()).rejects.toThrow(
