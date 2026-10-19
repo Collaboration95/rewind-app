@@ -240,6 +240,15 @@ async function verifyReleasedDownloads(page, databasePath, groupId, suffix, film
   for (let filmIndex = 0; filmIndex < filmCount; filmIndex++) {
     await films.nth(filmIndex).click();
     // Saving is offered on the real Film end card. Let playback finish naturally.
+    await expect
+      .poll(async () => {
+        if (await page.getByTestId('real-film-end').isVisible()) return true;
+        const playback = page.getByTestId('real-film-pause');
+        if ((await playback.isVisible()) && (await playback.getAttribute('aria-label')) === 'Play')
+          await playback.click();
+        return page.getByTestId('real-film-end').isVisible();
+      })
+      .toBe(true);
     await expect(page.getByTestId('real-film-end')).toBeVisible();
     for (const kind of ['film', 'clip']) {
       const downloads = [];
