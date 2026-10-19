@@ -342,6 +342,72 @@ test('private API/media, invite query navigations and writes never enter the she
   assert.equal(worker.skipped, 0);
 });
 
+test('full-chat and unread SSE GETs stay browser-owned across group switches, including offline', async () => {
+  const worker = workerFixture();
+  worker.installShell();
+  await worker.lifecycle('install');
+  const cachedBefore = [...worker.stores.values()].flatMap((entries) => [...entries.keys()]);
+  const callsBefore = worker.calls.length;
+  // More switches than the server's five concurrent slots: neither kind of
+  // stream may create a worker-owned fetch that outlives EventSource.close().
+  for (let group = 0; group < 8; group++) {
+    const events = `/api/realtime/groups/group-${group}/events`;
+    for (const query of ['?sinceEventId=0', '?startFromLatest=true&metadataOnly=true']) {
+      const path = events + query;
+      worker.serve(path, ': connected\n\n', 'text/event-stream', {
+        'Cache-Control': 'no-cache, no-store',
+      });
+      assert.equal(
+        await worker.request(path, { headers: { Accept: 'text/event-stream' } }),
+        undefined,
+      );
+      worker.network.clear();
+      // No synthetic API response or offline shell can replace an SSE stream.
+      assert.equal(await worker.request(path, { mode: 'navigate' }), undefined);
+    }
+  }
+  assert.equal(worker.calls.length, callsBefore);
+  assert.deepEqual(
+    [...worker.stores.values()].flatMap((entries) => [...entries.keys()]),
+    cachedBefore,
+  );
+});
+
+test('the SSE exception preserves private API writes, denials and offline fail-closed responses', async () => {
+  const worker = workerFixture();
+  for (const status of [401, 403]) {
+    const path = '/api/realtime/groups/group-one/messages';
+    worker.network.set(
+      `https://rewind.invalid${path}`,
+      new Response(JSON.stringify({ error: 'forbidden' }), {
+        status,
+        headers: { 'Cache-Control': 'no-store' },
+      }),
+    );
+    assert.equal((await worker.request(path)).status, status);
+  }
+  worker.network.clear();
+  for (const [path, method] of [
+    ['/api/realtime/groups/group-one/events', 'POST'],
+    ['/api/realtime/groups/group-one/events', 'HEAD'],
+    ['/api/realtime/groups/group-one/messages', 'GET'],
+    ['/api/realtime/groups/group-one/events/history', 'GET'],
+    ['/api/realtime/groups/group-one/events.js', 'GET'],
+    ['/api/real/groups/current', 'GET'],
+    ['/media/access/private-token', 'GET'],
+  ]) {
+    const response = await worker.request(path, {
+      method,
+      mode: 'navigate',
+      headers: { Accept: 'text/event-stream' },
+    });
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    assert.equal((await response.json()).error, 'runtime_unavailable');
+  }
+  assert.equal(worker.stores.size, 0);
+});
+
 test('public legal pages load as documents, never the SPA shell', async () => {
   const worker = workerFixture();
   worker.installShell();

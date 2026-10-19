@@ -175,6 +175,62 @@ test('an idle event stream outlives the request timeout and closes upstream with
   }
 });
 
+test('switching full-chat and unread streams repeatedly closes both proxy upstreams', async () => {
+  const streams = [];
+  const upstream = createServer((request, response) => {
+    const stream = { path: request.url, closed: false };
+    stream.done = new Promise((resolve) => {
+      response.once('close', () => {
+        stream.closed = true;
+        resolve();
+      });
+    });
+    streams.push(stream);
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    response.write(': connected\n\n');
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  const web = createProductionWebServer({
+    staticDir: tmpdir(),
+    runtimeOrigin: `http://127.0.0.1:${upstream.address().port}`,
+  });
+  web.listen(0, '127.0.0.1');
+  await once(web, 'listening');
+  const controllers = [];
+  try {
+    for (let group = 0; group < 8; group++) {
+      const path = `/realtime/groups/group-${group}/events`;
+      const current = [];
+      for (const query of ['?sinceEventId=0', '?startFromLatest=true&metadataOnly=true']) {
+        const controller = new AbortController();
+        controllers.push(controller);
+        const response = await fetch(`http://127.0.0.1:${web.address().port}/api${path}${query}`, {
+          signal: controller.signal,
+          headers: { Accept: 'text/event-stream' },
+        });
+        assert.equal(response.status, 200);
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        const reader = response.body.getReader();
+        assert.equal((await reader.read()).done, false);
+        current.push(streams.at(-1));
+        assert.equal(streams.at(-1).path, path + query);
+      }
+      assert.equal(streams.filter((stream) => !stream.closed).length, 2);
+      for (const controller of controllers) controller.abort();
+      await Promise.all(current.map((stream) => stream.done));
+      assert.equal(streams.filter((stream) => !stream.closed).length, 0);
+    }
+    assert.equal(streams.length, 16);
+  } finally {
+    for (const controller of controllers) controller.abort();
+    web.closeAllConnections();
+    upstream.closeAllConnections();
+    await new Promise((resolve) => web.close(resolve));
+    await new Promise((resolve) => upstream.close(resolve));
+  }
+});
+
 test('public legal pages resolve at extensionless paths without the SPA shell', async () => {
   assert.match(
     nginx,
