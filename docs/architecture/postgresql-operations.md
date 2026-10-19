@@ -1,32 +1,34 @@
 # PostgreSQL operations runbook
 
-How the hosted dev database is created, filled, switched to, backed up,
+How the hosted database is created, filled, switched to, backed up,
 recovered and inspected. The design is in [ADR-0003](ADR-0003-postgresql.md).
 Every step runs from Terraform or the **Database operations** workflow
 (`.github/workflows/database-operations.yml`). No credential is copied by
 hand.
 
+Release uses its own root, storage, identities and protected branch/environment.
+Follow [Release cutover and deployment](release-cutover.md) for release setup,
+protection gates, explicit workflow targets and the final-snapshot procedure.
+The historical recovery measurements below are dev measurements only.
+
 ## Components
 
-| Piece                                                                                    | Where                                                                                                                 |
-| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Managed PostgreSQL 17 (`rewind-dev-postgres`, private, encrypted, TLS)                   | `infra/terraform/media/database.tf`                                                                                   |
-| Per-environment switches: `enabled`, `cutover`, `bundle`                                 | `local.database_settings` in the same file                                                                            |
-| Generated logins: `rewind_admin`, `rewind_app` (owns schema `rewind`), `rewind_readonly` | `random_password.*`; delivered via the hosted settings object                                                         |
-| Runtime selection                                                                        | `REWIND_DATABASE_URL` (empty means the SQLite file stays live)                                                        |
-| Host scripts                                                                             | `deploy/database-bootstrap.sh`, `database-import.sh`, `database-status.sh`, `backup-postgres.sh`                      |
-| Operator CLI                                                                             | `node server/dist/cli.js database-status / database-import / database-export / database-install / database-bootstrap` |
+| Piece                                                                                                | Where                                                                                                                 |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Managed PostgreSQL 17 (`rewind-dev-postgres` (dev public), release private; encrypted, verified TLS) | `infra/terraform/media/database.tf`                                                                                   |
+| Per-environment switches: `enabled`, `cutover`, `bundle`                                             | `local.database_settings` in the same file                                                                            |
+| Generated logins: `rewind_admin`, `rewind_app` (owns schema `rewind`), `rewind_readonly`             | `random_password.*`; delivered via the hosted settings object                                                         |
+| Runtime selection                                                                                    | `REWIND_DATABASE_URL` (empty means the SQLite file stays live)                                                        |
+| Host scripts                                                                                         | `deploy/database-bootstrap.sh`, `database-import.sh`, `database-status.sh`, `backup-postgres.sh`                      |
+| Operator CLI                                                                                         | `node server/dist/cli.js database-status / database-import / database-export / database-install / database-bootstrap` |
 
-Repository variable used by the workflow: `REWIND_DATABASE_BOOTSTRAP_URI`
+Environment variable used by the workflow: `REWIND_DATABASE_BOOTSTRAP_URI`
 (`terraform output database_bootstrap_uri`).
 
-GitHub only dispatches a workflow that also exists on the default branch
-(`main`). Until a `main` promotion includes it, run the same steps from an
-operator machine: open SSH for your address
-(`aws lightsail open-instance-public-ports`), get a certificate with
-`aws lightsail get-instance-access-details`, connect with
-`-o IdentitiesOnly=yes`, and run the `deploy/database-*.sh` scripts on the
-host. Close the port afterwards.
+GitHub dispatch requires the workflow on the default branch (`main`). Promote it
+through normal protection first. For a first release, dispatch **Deploy release**
+with `operation=prepare`; follow the release cutover procedure above. Do not open
+a direct SSH path to bypass branch or environment protection.
 
 ## First-time setup and cutover
 
@@ -39,15 +41,15 @@ host. Close the port afterwards.
    of schema `rewind`, used by the runtime) and `rewind_readonly` (backups,
    inspection). It is safe to rerun.
 3. **Import.** Run the workflow with `import`. It:
-   - stops the public web proxy;
-   - takes a fresh SQLite and media backup to S3 (`backup.sh`);
+   - stops the backup timer/service, public web proxy and runtime (all writers);
+   - takes a quiesced SQLite and media backup to S3 (`backup.sh`);
    - downloads that backup, checks it against its manifest, and runs
      `database-import`.
 
    The import loads every table in one transaction and commits only if each
    table's row count and content hash match the snapshot. The job summary
    lists the rows per table, and the JSON report stays next to the backup on
-   the host. The web proxy stays stopped.
+   the host. The web proxy and runtime writers stay stopped.
 
 4. **Cut over.** Set `dev.cutover = true`, apply, and run **Deploy dev**.
    - The runtime starts on PostgreSQL, applies any newer migration, and binds
@@ -210,19 +212,27 @@ the `server-postgres` job.
 
 The workflow's `backup` operation runs the nightly job on demand. Each
 logical backup writes `rewind-<stamp>.postgres.json` with checksums and the
-restored row counts.
+restored row counts and canonical table hashes. The fingerprint holder and
+`pg_dump --snapshot` share one exported read-only transaction, so concurrent app
+writes do not change the comparison baseline. Upload requires the restored table
+sets, counts, hashes, environment and schema to match.
 
 ## Recovery
 
 - **Rehearsal (do it after cutover, then monthly).** Run the workflow with
   `rehearse-restore`. It:
-  1. restores the latest point-in-time recovery into a new, tagged database;
-  2. checks it with `database-status` from the host;
+  1. stops runtime/web writers and the backup timer, captures a content-hash
+     baseline, and waits for managed recovery to reach its timestamp;
+  2. restores that exact timestamp into a tagged database and asserts matching
+     environment, schema, table sets, counts and hashes against the baseline;
   3. writes the RPO (recovery point age) and RTO (time to a verified
      database) to the job summary;
-  4. deletes the rehearsal database.
+  4. rechecks the still-stopped source against the baseline and deletes the
+     owned rehearsal database.
 
-  The live database is never touched.
+  Stop manually launched workers before dispatch. The source data is read only;
+  runtime writers and the timer remain stopped even on success. Inspect the result
+  and explicitly run `resume` to restore service.
 
 - **Bad data or operator error.** Restore point-in-time to just before the
   incident. Use the Lightsail console, or the rehearsal workflow's commands
@@ -297,8 +307,9 @@ Lightsail resources again; then reach it through an SSH tunnel via the host.
 
 ## Environments and cost
 
-- `dev` (`rewind-dev-postgres`) is enabled. `release` stays on SQLite until
-  its own enablement (#504).
+- `dev` (`rewind-dev-postgres`) is enabled and cut over. Release provisioning
+  is enabled in configuration (#504), with cutover explicitly false until the
+  release import is reconciled. Configuration is not proof of a live apply.
 - Each environment has its own database, logins and environment binding, and
   a runtime refuses a database bound to another environment.
 - Cost: `micro_2_0` is US$15/month (1 GB RAM, 40 GB SSD, backups included).

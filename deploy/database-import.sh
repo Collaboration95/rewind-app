@@ -7,10 +7,10 @@
 # commits only when each table's row count and content hash match. The live
 # SQLite file and the S3 objects are never changed.
 #
-#   database-import.sh --confirm [--manifest rewind-<timestamp>.manifest.json] [--replace]
+#   database-import.sh --confirm --manifest rewind-<timestamp>.manifest.json [--replace]
 #
-# Without --manifest the newest backup is used. Run deploy/backup.sh first for
-# a fresh recovery point, and stop writes (see docs/architecture/postgresql-operations.md).
+# Always name the exact recovery point. The workflow passes the manifest produced
+# by its freshly quiesced backup, never a remote latest-object selection.
 set -Eeuo pipefail
 umask 077
 
@@ -29,7 +29,7 @@ BACKUP_DIR="${BACKUP_DIR:-$HOST_ROOT/backups}"
 RUNTIME_GID="${RUNTIME_GID:-10001}"
 
 usage() {
-  printf 'Usage: %s --confirm [--manifest rewind-<timestamp>.manifest.json] [--replace]\n' \
+  printf 'Usage: %s --confirm --manifest rewind-<timestamp>.manifest.json [--replace]\n' \
     "$(basename "$0")" >&2
 }
 
@@ -55,22 +55,27 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+require_database_target
 if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
   unset AWS_PROFILE
 fi
-export REWIND_RELEASE_SHA="${selected_release_sha:-$(cat "$HOST_ROOT/current-release")}"
+export REWIND_RELEASE_SHA="$selected_release_sha"
+resolve_installed_release
 : "${REWIND_BACKUP_BUCKET:?REWIND_BACKUP_BUCKET must be set in $ENV_FILE}"
-: "${REWIND_BACKUP_PREFIX:=rewind-demo}"
+: "${REWIND_BACKUP_PREFIX:?REWIND_BACKUP_PREFIX must be explicit for database import}"
 : "${REWIND_DATABASE_APP_URL:?REWIND_DATABASE_APP_URL must be set (Terraform hosted settings)}"
 validate_backup_prefix "$REWIND_BACKUP_PREFIX" || exit 1
 ensure_backup_directory "$BACKUP_DIR"
 BACKUP_DIR="$(canonical_directory BACKUP_DIR "$BACKUP_DIR")"
 
+require_runtime_stopped
+[[ "$(cat "$HOST_ROOT/database-maintenance")" == "$REWIND_MEDIA_ENVIRONMENT" ]] || die 'import requires matching database maintenance'
+[[ "$(cat "$HOST_ROOT/database-maintenance-mode")" == import ]] || die 'not an import maintenance window'
+rm -f -- "$HOST_ROOT/database-reconciled.json"
+
 remote="s3://${REWIND_BACKUP_BUCKET}/${REWIND_BACKUP_PREFIX}"
 if [[ -z "$manifest_name" ]]; then
-  manifest_name="$(aws s3 ls "$remote/" | awk '{print $4}' |
-    grep -E '^rewind-[0-9]{8}T[0-9]{6}Z\.manifest\.json$' | sort | tail -n 1)" ||
-    die 'No backup manifest found in the backup bucket.'
+  die 'Pass the exact snapshot manifest; remote latest is not a final recovery point.'
 fi
 [[ "$manifest_name" =~ ^rewind-[0-9]{8}T[0-9]{6}Z\.manifest\.json$ ]] ||
   die 'The manifest must be named rewind-<timestamp>.manifest.json.'
@@ -101,7 +106,13 @@ export REWIND_DATABASE_URL="$REWIND_DATABASE_APP_URL"
 compose run --rm --no-deps -T \
   -e REWIND_DATABASE_URL -e REWIND_DATABASE_ENVIRONMENT \
   -v "$work/import:/import:ro" \
-  runtime database-import --sqlite /import/rewind.sqlite --json "${replace[@]}" > "$report.tmp"
+  runtime database-import --sqlite /import/rewind.sqlite --json ${replace[@]+"${replace[@]}"} > "$report.tmp"
 mv "$report.tmp" "$report"
+jq -n --arg environment "$REWIND_MEDIA_ENVIRONMENT" --arg manifest "$manifest_name" \
+  --arg manifestSha256 "$(sha256_file "$work/$manifest_name")" \
+  --arg final "${REWIND_FINAL_IMPORT_MANIFEST:-}" --slurpfile report "$report" \
+  '{environment: $environment, manifest: $manifest, manifestSha256: $manifestSha256,
+    finalSnapshot: ($final == $manifest), reconciliation: $report[0]}' > "$HOST_ROOT/database-reconciled.json.tmp"
+mv "$HOST_ROOT/database-reconciled.json.tmp" "$HOST_ROOT/database-reconciled.json"
 jq -r '.tables[] | "\(.table): \(.rows) rows"' "$report"
 printf 'Imported and reconciled %s rows. Report: %s\n' "$(jq -r .totalRows "$report")" "$report"

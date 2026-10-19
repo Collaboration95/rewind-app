@@ -481,6 +481,8 @@ describe('open session reconciles with the server (#521)', () => {
     authenticatedRequest = jest.fn(async (path: string, init?: RequestInit) => {
       if (path === '/real/media/config?uploadProtocol=2')
         return jsonResponse({ directTransfer: false });
+      if (path === `/real/groups/${server.group?.group.id}/reminders/destinations`)
+        return jsonResponse({ destinations: [] });
       if (path === '/real/groups/current' && init?.method === 'POST') {
         const { groupId } = JSON.parse(String(init.body)) as { groupId: string };
         server.group = server.groups.find((entry) => entry.group.id === groupId) ?? null;

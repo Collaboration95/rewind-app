@@ -17,6 +17,7 @@ if [[ "${1:-}" == "--local-only" ]]; then
   LOCAL_ONLY=1
 fi
 
+HOST_ROOT="${HOST_ROOT:-/srv/rewind}"
 COMPOSE_FILE="${COMPOSE_FILE:-/srv/rewind/deploy/compose.yaml}"
 ENV_FILE="${ENV_FILE:-/srv/rewind/rewind.env}"
 DATA_DIR="${DATA_DIR:-/srv/rewind/data}"
@@ -47,6 +48,9 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+if [[ "${REWIND_MEDIA_ENVIRONMENT:-}" == release || -n "${REWIND_OPERATION_ENVIRONMENT:-}" ]]; then
+  require_database_target
+fi
 # Hosts carry the runtime's access keys (delivered by Terraform); the template's
 # AWS_PROFILE names a profile that is never provisioned there.
 if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
@@ -66,7 +70,12 @@ require_compose_prerequisites
 if [[ "$LOCAL_ONLY" == 0 ]]; then
   require_command aws
 fi
-require_runtime_running
+if [[ "${REWIND_BACKUP_QUIESCED:-0}" == 1 ]]; then
+  resolve_installed_release
+  require_runtime_stopped
+else
+  require_runtime_running
+fi
 require_regular_file "SQLite database" "$DATA_DIR/rewind.sqlite"
 assert_persistent_tree_contract "$DATA_DIR" 'SQLite data' "$DATA_DIR/media" || exit 1
 assert_persistent_tree_contract "$MEDIA_DIR" 'media' || exit 1
@@ -93,13 +102,22 @@ trap cleanup EXIT
 # identity on the persistent data mount. Media is streamed through the runtime
 # below for the same reason: the approved backup operation must not weaken the
 # persistent tree's private mode contract just to read an archive.
-compose exec -T \
-  -e "REWIND_SNAPSHOT_PATH=/tmp/$snapshot_name" runtime \
-  node --input-type=module -e "import { DatabaseSync } from 'node:sqlite'; import { readFileSync, rmSync } from 'node:fs'; const target = process.env.REWIND_SNAPSHOT_PATH; const escaped = target.replaceAll(String.fromCharCode(39), String.fromCharCode(39, 39)); const db = new DatabaseSync('/var/lib/rewind/rewind.sqlite', { readOnly: true }); db.exec('VACUUM INTO ' + String.fromCharCode(39) + escaped + String.fromCharCode(39)); db.close(); process.stdout.write(readFileSync(target)); rmSync(target);" \
+snapshot_command=(exec -T -e "REWIND_SNAPSHOT_PATH=/tmp/$snapshot_name" runtime node)
+if [[ "${REWIND_BACKUP_QUIESCED:-0}" == 1 ]]; then
+  snapshot_command=(run --rm --no-deps --no-build --pull never -T -e "REWIND_SNAPSHOT_PATH=/tmp/$snapshot_name" --entrypoint node runtime)
+fi
+compose "${snapshot_command[@]}" --input-type=module -e "import { DatabaseSync } from 'node:sqlite'; import { readFileSync, rmSync } from 'node:fs'; const target = process.env.REWIND_SNAPSHOT_PATH; const escaped = target.replaceAll(String.fromCharCode(39), String.fromCharCode(39, 39)); const db = new DatabaseSync('/var/lib/rewind/rewind.sqlite', { readOnly: true }); db.exec('VACUUM INTO ' + String.fromCharCode(39) + escaped + String.fromCharCode(39)); db.close(); process.stdout.write(readFileSync(target)); rmSync(target);" \
   > "$snapshot_path"
 
 gzip -9 -c "$snapshot_path" > "$archive_path"
-archive_runtime_media "$media_archive_path"
+if [[ "${REWIND_BACKUP_QUIESCED:-0}" == 1 ]]; then
+  # One-shot tar has no server, scheduler, reminder or media worker.
+  compose run --rm --no-deps --no-build --pull never -T --entrypoint tar runtime -C /var/lib/rewind/media -cf - . | gzip -9 > "$media_archive_path"
+  chmod 0600 "$media_archive_path"
+  assert_private_backup_file "$media_archive_path" 'media backup archive'
+else
+  archive_runtime_media "$media_archive_path"
+fi
 assert_private_backup_file "$archive_path" 'database backup archive'
 
 db_sha256="$(sha256_file "$archive_path")"
@@ -138,4 +156,7 @@ if [[ "$LOCAL_ONLY" == 1 ]]; then
   printf 'Local backup ready %s %s %s\n' "$manifest_path" "$archive_path" "$media_archive_path"
 else
   echo "Uploaded manifest s3://${REWIND_BACKUP_BUCKET}/${REWIND_BACKUP_PREFIX}/${manifest_name}"
+fi
+if [[ -n "${REWIND_BACKUP_MANIFEST_OUTPUT:-}" ]]; then
+  printf '%s\n' "$manifest_name" > "$REWIND_BACKUP_MANIFEST_OUTPUT"
 fi

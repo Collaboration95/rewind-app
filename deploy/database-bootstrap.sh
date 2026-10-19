@@ -18,7 +18,13 @@ ENV_FILE="${ENV_FILE:-$HOST_ROOT/rewind.env}"
 COMPOSE_FILE="${COMPOSE_FILE:-$HOST_ROOT/deploy/compose.yaml}"
 DATA_DIR="${DATA_DIR:-$HOST_ROOT/data}"
 MEDIA_DIR="${MEDIA_DIR:-$HOST_ROOT/media}"
-export REWIND_RELEASE_SHA="${REWIND_RELEASE_SHA:-$(cat "$HOST_ROOT/current-release")}"
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+require_database_target
+resolve_installed_release
 
 allowed=' REWIND_DATABASE_ADMIN_URL REWIND_DATABASE_APP_PASSWORD REWIND_DATABASE_READONLY_PASSWORD '
 while IFS= read -r line || [[ -n "$line" ]]; do

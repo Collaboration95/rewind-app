@@ -18,18 +18,26 @@ ENV_FILE="${ENV_FILE:-$HOST_ROOT/rewind.env}"
 COMPOSE_FILE="${COMPOSE_FILE:-$HOST_ROOT/deploy/compose.yaml}"
 DATA_DIR="${DATA_DIR:-$HOST_ROOT/data}"
 MEDIA_DIR="${MEDIA_DIR:-$HOST_ROOT/media}"
-export REWIND_RELEASE_SHA="${REWIND_RELEASE_SHA:-$(cat "$HOST_ROOT/current-release")}"
 
 endpoint=''
-if [[ "${1:-}" == --endpoint ]]; then
-  endpoint="${2:-}"
-  [[ "$endpoint" =~ ^[A-Za-z0-9.-]+:[0-9]+$ ]] || die 'The endpoint must be HOST:PORT.'
-fi
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --endpoint)
+      endpoint="${2:-}"
+      [[ "$endpoint" =~ ^[A-Za-z0-9.-]+:[0-9]+$ ]] || die 'The endpoint must be HOST:PORT.'
+      shift 2 ;;
+    --require-stopped-writers) args+=(--require-stopped-writers); shift ;;
+    *) die 'usage: database-status.sh [--endpoint HOST:PORT] [--require-stopped-writers]' ;;
+  esac
+done
 
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+require_database_target
+resolve_installed_release
 : "${REWIND_DATABASE_READONLY_URL:?REWIND_DATABASE_READONLY_URL must be set (Terraform hosted settings)}"
 url="$REWIND_DATABASE_READONLY_URL"
 if [[ -n "$endpoint" ]]; then
@@ -38,4 +46,4 @@ if [[ -n "$endpoint" ]]; then
 fi
 export REWIND_DATABASE_URL="$url"
 compose run --rm --no-deps -T -e REWIND_DATABASE_URL -e REWIND_DATABASE_ENVIRONMENT \
-  runtime database-status --json
+  runtime database-status --json "${args[@]}"

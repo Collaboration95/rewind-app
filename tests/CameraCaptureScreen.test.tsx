@@ -154,34 +154,51 @@ describe('CameraCaptureScreen', () => {
     expect(files.size).toBe(0);
   });
 
-  it('offers a labelled image file fallback when live camera support is unavailable', async () => {
-    const platform: CameraPlatform = {
-      captureStill: jest.fn(),
-      getCapabilities: jest
-        .fn()
-        .mockResolvedValue({ camera: 'unsupported', microphone: 'supported' }),
-      getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
-      kind: 'expo',
-      openSettings: jest.fn().mockResolvedValue(undefined),
-      pickStillFile: jest.fn().mockResolvedValue({
-        format: 'jpg',
-        height: 900,
-        source: 'file' as const,
-        sourceUri: 'blob:test-image',
-        width: 1200,
-      }),
-      requestPermissions: jest.fn(),
-      supportsFileFallback: true,
-      supportsLivePreview: true,
-    };
-    const result = await screen(platform);
+  it.each([
+    ['unsupported', 'granted', 'camera-unsupported'],
+    ['supported', 'denied', 'camera-permission-denied'],
+  ] as const)(
+    'keeps the file fallback after retake and discard with %s camera and %s permission',
+    async (camera, permission, panel) => {
+      const platform: CameraPlatform = {
+        captureStill: jest.fn(),
+        getCapabilities: jest.fn().mockResolvedValue({ camera, microphone: 'supported' }),
+        getPermissions: jest.fn().mockResolvedValue({ camera: permission, microphone: 'granted' }),
+        kind: 'expo',
+        openSettings: jest.fn().mockResolvedValue(undefined),
+        pickStillFile: jest.fn().mockResolvedValue({
+          format: 'jpg',
+          height: 900,
+          source: 'file' as const,
+          sourceUri: 'blob:test-image',
+          width: 1200,
+        }),
+        requestPermissions: jest.fn(),
+        supportsFileFallback: true,
+        supportsLivePreview: true,
+      };
+      const files = new InMemoryCaptureFileStore();
+      const result = await screen(platform, { files, metadata: new InMemoryImageMetadataStore() });
 
-    await result.findByTestId('camera-unsupported');
-    expect(result.queryByRole('button', { name: 'Take photo' })).toBeNull();
-    await fireEvent.press(result.getByRole('button', { name: 'Choose an image file' }));
-    await result.findByTestId('camera-preview-panel');
-    expect(platform.pickStillFile).toHaveBeenCalledTimes(1);
-  });
+      await result.findByTestId(panel);
+      expect(result.queryByRole('button', { name: 'Take photo' })).toBeNull();
+      await fireEvent.press(result.getByRole('button', { name: 'Choose an image file' }));
+      await result.findByTestId('camera-preview-panel');
+      expect(platform.pickStillFile).toHaveBeenCalledTimes(1);
+      await fireEvent.press(result.getByRole('button', { name: 'Retake' }));
+      await result.findByTestId(panel);
+      expect(files.size).toBe(0);
+      expect(result.queryByRole('button', { name: 'Take photo' })).toBeNull();
+      await fireEvent.press(result.getByRole('button', { name: 'Choose an image file' }));
+      await result.findByTestId('camera-preview-panel');
+      expect(platform.pickStillFile).toHaveBeenCalledTimes(2);
+      await fireEvent.press(result.getByRole('button', { name: 'Discard' }));
+      await result.findByTestId(panel);
+      expect(files.size).toBe(0);
+      expect(result.getByRole('button', { name: 'Choose an image file' })).toBeTruthy();
+      expect(platform.captureStill).not.toHaveBeenCalled();
+    },
+  );
 
   it('shows the ready state, then fixture preview and metadata-only acceptance', async () => {
     const files = new InMemoryCaptureFileStore();

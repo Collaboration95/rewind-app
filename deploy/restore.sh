@@ -44,6 +44,9 @@ require_regular_file "ENV_FILE" "$ENV_FILE"
 selected_release_sha="${REWIND_RELEASE_SHA:-}"
 # shellcheck disable=SC1090
 source "$ENV_FILE"
+if [[ "${REWIND_MEDIA_ENVIRONMENT:-}" == release || -n "${REWIND_OPERATION_ENVIRONMENT:-}" ]]; then
+  require_database_target
+fi
 if [[ -n "$selected_release_sha" ]]; then
   export REWIND_RELEASE_SHA="$selected_release_sha"
 fi

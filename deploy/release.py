@@ -10,6 +10,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import os
+import sqlite3
+import stat
+from itertools import chain
 
 ROOT = Path(__file__).resolve().parent.parent
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -32,6 +36,152 @@ def digest(path):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             value.update(block)
     return value.hexdigest()
+
+
+def retained_summary(report):
+    # Schema/counts/checksums only: never log row values or private media names.
+    print(json.dumps({'environment': 'release', 'sqlitePresent': report['sqlitePresent'],
+                      'tables': report['tables'], 'fileCount': len(report['files']),
+                      'mediaFileCount': sum(name.startswith('media/') for name in report['files']),
+                      'archiveSha256': report['archiveSha256']}, sort_keys=True))
+
+
+def process_descriptors(proc_root):
+    # Unlike glob, iterdir propagates permission failures. A disappearing
+    # process is safe to ignore; an inaccessible potential writer is not.
+    for process in proc_root.iterdir():
+        if not process.name.isdigit():
+            continue
+        try:
+            yield from (process / 'fd').iterdir()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+
+
+def preserve_retained(host, *, proc_root=Path('/proc')):
+    """Preserve pre-start SQLite (including WAL) and disk media without booting."""
+    host = Path(host)
+    backups = host / 'backups'
+    if backups.is_symlink():
+        fail('retained backup directory is a symlink')
+    backups.mkdir(mode=0o770, exist_ok=True)
+    archive = backups / 'first-start-retained.tar'
+    inventory = backups / 'first-start-inventory.json'
+    if inventory.exists():
+        saved = json.loads(inventory.read_text())
+        if digest(archive) != saved['archiveSha256']:
+            fail('retained rollback archive no longer matches its inventory')
+        retained_summary(saved)
+        return
+    if archive.exists():
+        fail('incomplete retained preservation; inspect the existing archive before retry')
+    entries = {}
+    size = 0
+    for name in ('data', 'media'):
+        directory = host / name
+        if directory.is_symlink():
+            fail('retained root is a symlink')
+        if not directory.exists():
+            continue
+        for entry in chain([directory], directory.rglob('*')):
+            mode = entry.lstat().st_mode
+            if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                fail('retained data contains unsupported entries')
+            if entry.is_file():
+                size += entry.stat().st_size
+                if len(entries) >= 100000 or size > 10 * 1024**3:
+                    fail('retained preservation exceeds its file or size bound')
+                entries[str(entry.relative_to(host))] = {'bytes': entry.stat().st_size}
+    if shutil.disk_usage(backups).free < size * 2 + 64 * 1024**2:
+        fail('retained preservation exceeds its file, size or free-space bound')
+    identities = {(p.stat().st_dev, p.stat().st_ino) for p in (host / name for name in entries)}
+    for fd in process_descriptors(proc_root):
+        try:
+            info = fd.stat()
+            if (info.st_dev, info.st_ino) not in identities:
+                continue
+            flags = next(line.split()[1] for line in (fd.parent.parent / 'fdinfo' / fd.name).read_text().splitlines() if line.startswith('flags:'))
+            if int(flags, 8) & os.O_ACCMODE:
+                fail('a retained-data writer is still open; stop every writer before preservation')
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    for name, item in entries.items():
+        item['sha256'] = digest(host / name)
+    old_umask = os.umask(0o077)
+    try:
+        with tarfile.open(archive, 'x') as target:
+            for name in ('data', 'media'):
+                if (host / name).exists():
+                    target.add(host / name, arcname=name)
+        with open(archive, 'rb') as stream:
+            os.fsync(stream.fileno())
+        after = {str(entry.relative_to(host)) for root in ('data', 'media') for entry in (host / root).rglob('*') if entry.is_file()}
+        if after != set(entries) or any(digest(host / name) != item['sha256'] for name, item in entries.items()):
+            fail('retained files changed during preservation; keep writers stopped')
+        tables = {}
+        schema = []
+        if 'data/rewind.sqlite' in entries:
+            # Replay WAL only in an owned copy, never migrate/checkpoint source.
+            with tempfile.TemporaryDirectory(dir=backups, prefix='.retained-check-') as work:
+                for suffix in ('', '-wal', '-shm'):
+                    source = host / ('data/rewind.sqlite' + suffix)
+                    if source.exists():
+                        shutil.copyfile(source, Path(work) / ('rewind.sqlite' + suffix))
+                database = sqlite3.connect(str(Path(work) / 'rewind.sqlite'))
+                try:
+                    if database.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                        fail('retained SQLite integrity check failed')
+                    schema = database.execute('SELECT type, name, sql FROM sqlite_master ORDER BY type, name').fetchall()
+                    for (name,) in database.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall():
+                        quoted = '"' + name.replace('"', '""') + '"'
+                        tables[name] = {'rows': database.execute('SELECT COUNT(*) FROM ' + quoted).fetchone()[0]}
+                finally:
+                    database.close()
+        report = {'environment': 'release', 'sqlitePresent': 'data/rewind.sqlite' in entries,
+                  'files': entries, 'tables': tables, 'schema': schema, 'archiveSha256': digest(archive)}
+        temporary = inventory.with_suffix('.tmp')
+        with open(temporary, 'x') as stream:
+            stream.write(json.dumps(report, sort_keys=True) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(inventory)
+        directory_fd = os.open(backups, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        retained_summary(report)
+    finally:
+        os.umask(old_umask)
+
+
+def check_maintenance(host, status_path=None):
+    host = Path(host)
+    environment = (host / 'database-maintenance').read_text().strip()
+    if environment not in ('release', 'dev'):
+        fail('invalid maintenance environment')
+    settings = dict(line.split('=', 1) for line in (host / 'rewind.env').read_text().splitlines() if '=' in line and not line.startswith('#'))
+    if settings.get('REWIND_MEDIA_ENVIRONMENT') != environment or settings.get('REWIND_DATABASE_ENVIRONMENT') != environment:
+        fail('maintenance environment mismatch')
+    if (host / 'database-maintenance-mode').read_text().strip() != 'import':
+        fail('recovery maintenance requires explicit resume')
+    receipt = json.loads((host / 'database-reconciled.json').read_text())
+    if receipt.get('environment') != environment or receipt.get('finalSnapshot') is not True:
+        fail('no successful final-snapshot reconciliation for this environment')
+    manifest = receipt.get('manifest', '')
+    if not re.fullmatch(r'rewind-[0-9]{8}T[0-9]{6}Z\.manifest\.json', manifest):
+        fail('invalid reconciled manifest')
+    if digest(host / 'backups' / manifest) != receipt.get('manifestSha256'):
+        fail('final manifest changed after reconciliation')
+    tables = receipt.get('reconciliation', {}).get('tables')
+    if not tables or len({t['table'] for t in tables}) != len(tables):
+        fail('missing or duplicate reconciliation tables')
+    if status_path:
+        status = json.loads(Path(status_path).read_text())
+        actual = [t for t in status['tables'] if t['table'] not in ('schema_migrations', 'schema_migration_markers', 'rewind_database_environment')]
+        if (not status.get('ready') or status.get('environment') != environment or
+                sorted(actual, key=lambda t: t['table']) != sorted(tables, key=lambda t: t['table'])):
+            fail('PostgreSQL changed after final reconciliation')
 
 
 def extract_source(source, destination):
@@ -201,10 +351,19 @@ def main():
     check = commands.add_parser("verify")
     check.add_argument("bundle")
     check.add_argument("--extract")
+    retained = commands.add_parser("preserve-retained")
+    retained.add_argument("host")
+    maintenance = commands.add_parser("check-maintenance")
+    maintenance.add_argument("host")
+    maintenance.add_argument("--status")
     args = parser.parse_args()
     try:
         if args.command == "build":
             build(args.output, args.green_sha, args.config_version, args.branch)
+        elif args.command == "preserve-retained":
+            preserve_retained(args.host)
+        elif args.command == "check-maintenance":
+            check_maintenance(args.host, args.status)
         else:
             verify(args.bundle, args.extract)
     except (ValueError, OSError, subprocess.CalledProcessError, tarfile.TarError) as error:

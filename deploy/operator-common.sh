@@ -381,3 +381,47 @@ sha256_file() {
 file_bytes() {
   wc -c < "$1" | tr -d '[:space:]'
 }
+
+# An operation selected in CI must match the host settings before any action.
+require_database_target() {
+  local actual="${REWIND_MEDIA_ENVIRONMENT:-}" expected="${REWIND_OPERATION_ENVIRONMENT:-}"
+  case "$actual" in dev|release) ;; *) die 'host environment must be dev or release' ;; esac
+  [[ -z "$expected" || "$expected" == "$actual" ]] || die 'database operation targets another environment'
+  [[ "${REWIND_DATABASE_ENVIRONMENT:-}" == "$actual" ]] || die 'database environment does not match host'
+  if [[ "$actual" == release ]]; then
+    [[ "${REWIND_BACKUP_BUCKET:-}" == rewind-release-backups-330599756236 &&
+       "${REWIND_BACKUP_PREFIX:-}" == rewind-release ]] || die 'release requires its explicit isolated backup bucket and prefix'
+  fi
+}
+
+require_runtime_stopped() {
+  local running
+  running="$(compose ps --status running --services)" || die 'cannot inspect running services'
+  ! grep -Fxq runtime <<<"$running" || die 'stop the runtime and all writers before the final snapshot/import'
+}
+
+# Compare immutable database reports, never a moving live row-count summary.
+compare_database_reports() {
+  jq -e --slurpfile expected "$1" '
+    .ready == true and .engine == "postgresql" and
+    .environment == $expected[0].environment and
+    .migrationVersion == $expected[0].migrationVersion and
+    .appliedMigrationVersion == .migrationVersion and
+    (.tables | length) > 0 and
+    (.tables | sort_by(.table)) == ($expected[0].tables | sort_by(.table))
+  ' "$2" >/dev/null || die 'Restored database differs from its captured baseline.'
+}
+
+resolve_installed_release() {
+  local installed pointer="${HOST_ROOT:-/srv/rewind}/current-release"
+  # Protected first-start prepare has loaded/verified the tools, without ever
+  # publishing current-release or starting application writers.
+  [[ -f "$pointer" ]] || pointer="${HOST_ROOT:-/srv/rewind}/pending-release"
+  installed="$(cat "$pointer")" || die 'installed or prepared release SHA is missing'
+  [[ "$installed" =~ ^[0-9a-f]{40}$ ]] || die 'installed release SHA is invalid'
+  [[ -z "${REWIND_RELEASE_SHA:-}" || "$REWIND_RELEASE_SHA" == "$installed" ]] || die 'selected image is not the installed release'
+  export REWIND_RELEASE_SHA="$installed"
+  local revision
+  revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "rewind-demo:$installed")" || die 'qualified runtime image is unavailable'
+  [[ "$revision" == "$installed" ]] || die 'runtime image revision does not match installed release'
+}
