@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import { Camera, CameraView } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import { PermissionStatus } from 'expo-modules-core';
+import * as Device from 'expo-device';
 import {
   ExpoCameraPlatform,
   permissionState,
@@ -23,9 +24,10 @@ jest.mock('expo-camera', () => ({
   CameraView: {},
 }));
 
-jest.mock('expo-device', () => ({ isDevice: true }));
+jest.mock('expo-device', () => ({ isDevice: true, hasPlatformFeatureAsync: jest.fn() }));
 
 jest.mock('expo-file-system/legacy', () => ({
+  __esModule: true,
   copyAsync: jest.fn(),
   deleteAsync: jest.fn(),
   getInfoAsync: jest.fn(),
@@ -60,6 +62,83 @@ it('treats a missing native availability probe as available on a physical device
   await expect(platform.getCapabilities()).resolves.toEqual({
     camera: 'supported',
     microphone: 'supported',
+  });
+});
+
+describe('native hardware capabilities', () => {
+  it.each([true, false])('checks Android hardware when isDevice=%s', async (isDevice) => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'android');
+    const device = jest.replaceProperty(Device, 'isDevice', isDevice);
+    const feature = jest.mocked(Device.hasPlatformFeatureAsync).mockResolvedValue(true);
+    try {
+      const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+      await expect(platform.getCapabilities()).resolves.toEqual({
+        camera: 'supported',
+        microphone: 'supported',
+      });
+      expect(feature).toHaveBeenCalledWith('android.hardware.camera.any');
+      expect(feature).toHaveBeenCalledWith('android.hardware.microphone');
+      expect(Camera.requestCameraPermissionsAsync).not.toHaveBeenCalled();
+      expect(Camera.requestMicrophonePermissionsAsync).not.toHaveBeenCalled();
+    } finally {
+      device.restore();
+      platformOs.restore();
+    }
+  });
+
+  it.each([
+    [false, true, 'unsupported', 'supported'],
+    [true, false, 'supported', 'unsupported'],
+    [false, false, 'unsupported', 'unsupported'],
+  ])(
+    'keeps absent Android hardware unavailable (%s, %s)',
+    async (camera, mic, cameraState, micState) => {
+      const platformOs = jest.replaceProperty(Platform, 'OS', 'android');
+      jest
+        .mocked(Device.hasPlatformFeatureAsync)
+        .mockImplementation(async (feature) =>
+          feature === 'android.hardware.camera.any' ? camera : mic,
+        );
+      try {
+        const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+        await expect(platform.getCapabilities()).resolves.toEqual({
+          camera: cameraState,
+          microphone: micState,
+        });
+      } finally {
+        platformOs.restore();
+      }
+    },
+  );
+
+  it('does not enable Android capture when the hardware probe fails', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'android');
+    jest.mocked(Device.hasPlatformFeatureAsync).mockRejectedValue(new Error('probe unavailable'));
+    try {
+      const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+      await expect(platform.getCapabilities()).resolves.toEqual({
+        camera: 'undecided',
+        microphone: 'undecided',
+      });
+    } finally {
+      platformOs.restore();
+    }
+  });
+
+  it('keeps iOS simulator camera and microphone unsupported', async () => {
+    const platformOs = jest.replaceProperty(Platform, 'OS', 'ios');
+    const device = jest.replaceProperty(Device, 'isDevice', false);
+    try {
+      const platform = new ExpoCameraPlatform({ getCameraRef: () => null });
+      await expect(platform.getCapabilities()).resolves.toEqual({
+        camera: 'unsupported',
+        microphone: 'unsupported',
+      });
+      expect(Device.hasPlatformFeatureAsync).not.toHaveBeenCalled();
+    } finally {
+      device.restore();
+      platformOs.restore();
+    }
   });
 });
 

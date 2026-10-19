@@ -703,11 +703,16 @@ export class ExpoCameraPlatform implements CameraPlatform {
     }
 
     try {
-      // Expo does not expose a microphone-capability probe. On native, a real
-      // device is the supported recording target; simulator capture stays an
-      // explicit unsupported state.
-      const cameraAvailable = Device.isDevice;
-      const microphoneAvailable = Device.isDevice;
+      // Android exposes camera and microphone hardware independently, including
+      // emulators backed by the native camera/audio services. Permissions are
+      // checked separately. iOS simulator capture remains unsupported.
+      const [cameraAvailable, microphoneAvailable] =
+        Platform.OS === 'android'
+          ? await Promise.all([
+              Device.hasPlatformFeatureAsync('android.hardware.camera.any'),
+              Device.hasPlatformFeatureAsync('android.hardware.microphone'),
+            ])
+          : [Device.isDevice, Device.isDevice];
 
       return {
         camera: cameraAvailable ? 'supported' : 'unsupported',
