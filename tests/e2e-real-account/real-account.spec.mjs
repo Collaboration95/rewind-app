@@ -494,8 +494,18 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
         response.request().method() === 'POST' &&
         new URL(response.url()).pathname === '/api/real/invites/accept',
     );
+    const joinFeedback = page.getByTestId('real-group-join-feedback');
+    const joinRejected = joinFeedback.waitFor({ state: 'visible' }).then(async () => {
+      const feedback = (await joinFeedback.innerText()).toLowerCase();
+      const stage = feedback.includes('reminder')
+        ? 'reminder cleanup'
+        : feedback.includes('code')
+          ? 'invitation validation'
+          : 'group acceptance';
+      throw new Error(`Second-group invitation rejected during ${stage}.`);
+    });
     await page.getByTestId('real-group-join-choice').click();
-    const joined = await joinResponse;
+    const joined = await Promise.race([joinResponse, joinRejected]);
     expect(joined.status()).toBe(200);
     expect((await joined.json()).group.group.id).toBe(secondGroup.group.id);
     await expect(page.getByTestId('real-join-done')).toContainText(secondGroup.group.name);
