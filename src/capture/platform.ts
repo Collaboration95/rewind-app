@@ -703,11 +703,16 @@ export class ExpoCameraPlatform implements CameraPlatform {
     }
 
     try {
-      // Expo does not expose a microphone-capability probe. On native, a real
-      // device is the supported recording target; simulator capture stays an
-      // explicit unsupported state.
-      const cameraAvailable = Device.isDevice;
-      const microphoneAvailable = Device.isDevice;
+      // Android exposes camera and microphone hardware independently, including
+      // emulators backed by the native camera/audio services. Permissions are
+      // checked separately. iOS simulator capture remains unsupported.
+      const [cameraAvailable, microphoneAvailable] =
+        Platform.OS === 'android'
+          ? await Promise.all([
+              Device.hasPlatformFeatureAsync('android.hardware.camera.any'),
+              Device.hasPlatformFeatureAsync('android.hardware.microphone'),
+            ])
+          : [Device.isDevice, Device.isDevice];
 
       return {
         camera: cameraAvailable ? 'supported' : 'unsupported',
@@ -830,10 +835,23 @@ export class ExpoCameraPlatform implements CameraPlatform {
         await wait(CAMERA_WARMUP_DELAY_MS);
       }
     }
+    // Android's Expo native result uses extensions (".jpg" / ".png") even
+    // though CameraCapturedPicture declares canonical "jpg" / "png" values.
+    // Normalize only those formats so JPEG bytes never acquire PNG metadata.
+    const cameraFormat: unknown = picture.format;
+    const format =
+      cameraFormat === 'jpg' || cameraFormat === '.jpg'
+        ? 'jpg'
+        : cameraFormat === 'png' || cameraFormat === '.png'
+          ? 'png'
+          : null;
+    if (!format) {
+      throw new Error('The camera returned an unsupported photo format. Take a JPEG or PNG photo.');
+    }
     return {
       sourceUri: picture.uri,
       base64: picture.base64,
-      format: picture.format,
+      format,
       height: picture.height,
       source: 'camera',
       width: picture.width,
