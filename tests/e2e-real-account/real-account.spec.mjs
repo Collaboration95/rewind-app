@@ -584,7 +584,7 @@ test('real owner, invited member, outsider, strict local HTTPS, and automatic ne
     expect((await readCurrentGroup(page)).group.id).toBe(ownerGroupId);
     await page.getByTestId('real-group-nav-home').click();
 
-    await signOutThroughUi(page);
+    await signOutThroughUi(page, { invitation: true });
     await page.goto('/');
     await expect(page.getByTestId('welcome-entry')).toBeVisible();
     await registerAndSignIn(page, outsiderUsername);
