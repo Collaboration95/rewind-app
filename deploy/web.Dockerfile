@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS build
+FROM node:26.12.0-bookworm-slim@sha256:298992629d69bbd5b2b03ad57094d8e4fcb3a8eeb7c4e25d29de656519568913 AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -20,7 +20,7 @@ RUN EXPO_PUBLIC_DISPLAY_CURRENT_VERSION="$REWIND_DISPLAY_CURRENT_VERSION" \
     EXPO_PUBLIC_CURRENT_VERSION="$REWIND_CURRENT_VERSION" \
     EXPO_PUBLIC_LOCAL_BASE_URL=/api npm run build:web
 
-FROM nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2 AS runtime
+FROM nginx:1.31.7-alpine@sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d AS runtime
 
 RUN apk upgrade --no-cache
 RUN sed -i -E 's#^pid[[:space:]]+[^;]+;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \
