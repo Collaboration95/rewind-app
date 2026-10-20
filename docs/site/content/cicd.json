@@ -519,7 +519,8 @@
       "summary": "The useful lesson is the failure mechanism and the resulting control, rather than a claim that CI is now infallible.",
       "paragraphs": [
         "The 8 October baseline in [issue #499](https://github.com/Collaboration95/rewind-app/issues/499) records two first attempts that hung in apt-dependent installation: Playwright/Chromium setup and FFmpeg. Both needed reruns. Their successful second attempts were used for job timing; the long failed attempts were excluded from the reported clean-run wall-time distribution.",
-        "The later speedup removed unnecessary setup and split independent work. The workflows still contain apt-dependent steps, so the repository does not establish that package-manager hangs have been eliminated."
+        "The later speedup removed unnecessary setup and split independent work. The workflows still contain apt-dependent steps, so the repository does not establish that package-manager hangs have been eliminated.",
+        "**A refactor broke a deploy script.** The Deploy dev run after the #581 merge failed at \"Build the verified release bundle\". `deploy/release.py` read the expected migration versions by parsing `server/src/db.ts`, and the refactor had moved them to `server/src/schema.ts`. Quality was green because no check exercised that parse against the real tree. [PR #583](https://github.com/Collaboration95/rewind-app/pull/583) pointed the script at `schema.ts` and added a guard in `tests/deploy/release-bundle.test.sh`. The next deploys succeeded, and hosted dev health reports PostgreSQL, schema ready, migration version 31. The lesson: a script that parses source files needs a test that fails when the file moves."
       ],
       "sources": [
         {
@@ -549,6 +550,14 @@
         {
           "label": "deploy/release-host.sh",
           "path": "deploy/release-host.sh"
+        },
+        {
+          "label": "tests/deploy/release-bundle.test.sh",
+          "path": "tests/deploy/release-bundle.test.sh"
+        },
+        {
+          "label": "deploy/release.py",
+          "path": "deploy/release.py"
         }
       ],
       "qa": [

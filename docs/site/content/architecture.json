@@ -10,7 +10,7 @@
       "title": "The technology stack",
       "summary": "One root package.json declares the client and server dependencies; TypeScript is compiled before the server runs.",
       "paragraphs": [
-        "The web client is an Expo export built from React Native components. The PWA adds a manifest and a project-owned service worker. It caches the public shell and matching bundles; it does not cache private API/media responses or queue writes while offline."
+        "The web client is an Expo export built from React Native components. The PWA adds a manifest and a project-owned service worker (no special cases for film or clip paths). It caches the public shell and matching bundles; it does not cache private API/media responses or queue writes while offline."
       ],
       "tables": [
         {
