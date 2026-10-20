@@ -4,7 +4,6 @@
 export const DAY_MS = 24 * 60 * 60 * 1000;
 export const WEEK_MS = 7 * DAY_MS;
 export const PHOTO_SECONDS = 3;
-export const CLIP_MAX_SECONDS = 15;
 
 export type ReleaseState = 'processing' | 'delayed' | 'premiere' | 'archived';
 

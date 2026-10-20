@@ -2,7 +2,7 @@ import {
   RealtimeChatClient,
   type RealtimeEventSource,
   type RealtimeConnectionState,
-} from '../src/chat';
+} from '../src/chat/realtime-client';
 import {
   NativeEventSource,
   NATIVE_SSE_MAX_RESPONSE_CHARS,

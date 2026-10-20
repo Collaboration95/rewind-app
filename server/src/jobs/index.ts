@@ -1742,8 +1742,6 @@ async function processClipJobInternal(
   }
 }
 
-export const processPendingClipJob = processClipJob;
-
 /** Remove a bounded number of staged files left by interrupted intake jobs. */
 export async function cleanupOrphanedStagedSources(
   database: RewindDatabase,

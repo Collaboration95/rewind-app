@@ -22,6 +22,6 @@ for fixture in tests/deploy/backup-manifest.test.sh tests/deploy/wake-recovery-s
   tests/deploy/lifecycle-guards.test.sh tests/deploy/recovery-smoke.test.sh \
   tests/deploy/restore-atomic.test.sh tests/deploy/ownership-contract.test.sh \
   tests/deploy/host-preflight.test.sh deploy/tests/host-bootstrap.test.sh \
-  tests/deploy/*release*.test.sh deploy/tests/*release*.test.sh; do
+  tests/deploy/*release*.test.sh; do
   if [ -f "$fixture" ]; then bash "$fixture"; fi
 done

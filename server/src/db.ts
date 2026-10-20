@@ -2015,16 +2015,6 @@ export function isMember(database: RewindDatabase, groupId: string, memberId: st
   return row?.member === 1;
 }
 
-export function isOwner(database: RewindDatabase, groupId: string, memberId: string): boolean {
-  const row = database
-    .prepare(
-      `SELECT 1 AS owner FROM memberships
-       WHERE group_id = ? AND member_id = ? AND role = 'owner' LIMIT 1`,
-    )
-    .get(groupId, memberId) as { owner?: number } | undefined;
-  return row?.owner === 1;
-}
-
 export function getMessage(database: RewindDatabase, groupId: string, messageId: string) {
   const row = database
     .prepare(
