@@ -69,7 +69,6 @@ import {
   recordClipMediaMetadata,
   reclaimStagedSource,
   resetStagedSourceClaim,
-  registerStagedIntake,
   stagedSourceId,
   stagedSourcePath,
   type ClipUploadInput,
@@ -1860,7 +1859,6 @@ export async function handleRequest(
     if (!releaseIntakeCapacity) return;
     const stagingDir = resolve(config.dataDir, 'media', 'staging');
     let releaseStagingLock: (() => void) | null = await acquireStagedSourceLock(stagingDir);
-    let releaseActiveIntake: (() => void) | null = null;
     try {
       await maybeCleanupOrphanedStagedSources(database, stagingDir);
       const sourceId = stagedSourceId(idempotencyKey);
@@ -1950,8 +1948,7 @@ export async function handleRequest(
         return;
       }
       // Let another same-key request observe the committed pending claim and
-      // return a conflict, while reset waits on this body/probe operation.
-      releaseActiveIntake = registerStagedIntake();
+      // return a conflict while this request consumes its body.
       releaseStagingLock();
       releaseStagingLock = null;
       try {
@@ -2025,8 +2022,6 @@ export async function handleRequest(
       }
     } finally {
       releaseIntakeCapacity();
-      releaseActiveIntake?.();
-      releaseActiveIntake = null;
       releaseStagingLock?.();
       releaseStagingLock = null;
     }

@@ -1,4 +1,5 @@
-import { InMemoryCaptureFileStore, InMemoryImageMetadataStore } from '../src/capture';
+import { InMemoryCaptureFileStore } from '../src/capture/file-store';
+import { InMemoryImageMetadataStore } from '../src/capture/metadata-store';
 import type { CameraPlatform, PlatformStillImage } from '../src/capture/contracts';
 import { StillImageCaptureSession } from '../src/capture/still-image-session';
 

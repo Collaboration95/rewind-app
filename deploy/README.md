@@ -186,8 +186,8 @@ export RELEASE_BUNDLE_SHA256=<reviewed-sha256>
 validate a SQLite-era recovery point before Terraform or any host contact, then
 restore it through `restore.sh` and check `/health`. `--seed` starts from an empty
 database for a first install only; it is not a restore and must not replace an
-existing host. `infra/scripts/emergency-stop-demo.sh --i-have-a-current-s3-backup`
-is an incident-only last resort (a stopped instance still bills).
+existing host. In an incident, `aws lightsail stop-instance --instance-name rewind-demo`
+is the last resort; take a current S3 backup first (a stopped instance still bills).
 
 Tests (all offline): `npm run test:wake-recovery-selection`,
 `npm run test:lifecycle-guards`, `npm run test:recovery-smoke`.

@@ -562,11 +562,6 @@ export function revokeRealSession(database: RewindDatabase, token: string, now =
     .run(now.toISOString(), digest(token));
 }
 
-export function lookupRealAccount(database: RewindDatabase, username: string): RealAccount | null {
-  const normalized = normalizeUsername(username);
-  return normalized ? readAccount(database, normalized.normalized) : null;
-}
-
 /** Re-check the signed-in account's password before a destructive action.
  * Failures count against the same per-account login throttle, so a stolen
  * session cannot be used to guess the password. */
