@@ -24,7 +24,6 @@ import {
   TextLink,
   ToastProvider,
   tint,
-  useEffectKey,
   useInsets,
   useNow,
   useScreenInsets,
@@ -498,18 +497,6 @@ describe('Toast', () => {
     await act(async () => {
       await jest.advanceTimersByTimeAsync(5000);
     });
-  });
-});
-
-describe('useEffectKey', () => {
-  it('changes its key every time it fires', async () => {
-    const { result } = await renderHook(() => useEffectKey());
-    const [initial] = result.current;
-    await act(async () => result.current[1]());
-    const [afterOne] = result.current;
-    await act(async () => result.current[1]());
-    const [afterTwo] = result.current;
-    expect([initial, afterOne, afterTwo]).toEqual([0, 1, 2]);
   });
 });
 

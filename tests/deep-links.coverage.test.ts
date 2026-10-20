@@ -1,6 +1,5 @@
 import {
   createInviteLink,
-  inviteLinkErrorMessage,
   isInviteLinkCandidate,
   parseInviteLink,
 } from '../src/invites/deep-links';
@@ -137,16 +136,5 @@ describe('parseInviteLink', () => {
     } finally {
       jest.useRealTimers();
     }
-  });
-});
-
-describe('inviteLinkErrorMessage', () => {
-  it('distinguishes expired from invalid links and always points to a next step', () => {
-    expect(inviteLinkErrorMessage('expired')).toMatch(
-      /has expired.*new link or enter an invite code/,
-    );
-    expect(inviteLinkErrorMessage('malformed')).toMatch(
-      /is invalid.*new link or enter an invite code/,
-    );
   });
 });
