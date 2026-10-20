@@ -2,7 +2,6 @@ import { tmpdir } from 'node:os';
 import { Buffer } from 'node:buffer';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
 import { Readable } from 'node:stream';
 import { parseConfig } from '../../dist/config.js';
 import { openDatabaseAt } from '../../dist/db.js';
@@ -10,12 +9,6 @@ import { createRealGroup } from '../../dist/groups/real.js';
 import { PrivateS3MediaStore } from '../../dist/media/s3-store.js';
 import { s3Double } from './private-media-store.mjs';
 import { openFixtureDatabase } from './fixture-group.mjs';
-
-/** Tests share the canonical migration; no duplicate schema contract. */
-export const INTENT_SCHEMA_SQL = readFileSync(
-  new URL('../../migrations/026-upload-intents.sql', import.meta.url),
-  'utf8',
-);
 
 export function accountFixture(database, id, now) {
   const token = randomBytes(32).toString('base64url');
@@ -52,7 +45,6 @@ export async function withIntentFixture(run) {
   const config = parseConfig({ REWIND_DATA_DIR: root });
   const now = new Date('2026-10-02T12:00:00Z');
   const database = openFixtureDatabase(config);
-  database.exec(INTENT_SCHEMA_SQL);
   const token = accountFixture(database, 'intent-owner', now);
   const otherToken = accountFixture(database, 'intent-outsider', now);
   const group = createRealGroup(

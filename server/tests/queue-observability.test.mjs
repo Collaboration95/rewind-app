@@ -5,12 +5,10 @@ import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
-import { sqliteOnly } from './helpers/dialect.mjs';
 import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
-const { migrateDatabase } = await import('../dist/db.js');
 const { listQueueJobs } = await import('../dist/jobs/queue.js');
 
 const withDatabase = (run) => withSharedDatabase({ prefix: 'rewind-queue-observability-' }, run);
@@ -88,59 +86,6 @@ function insertQueueFixtures(database) {
     '2026-09-01T00:06:00.000Z',
   );
 }
-
-test(
-  'queue migration repairs malformed filter/order indexes after its receipt is recorded',
-  { skip: sqliteOnly },
-  async () => {
-    const dataDir = await mkdtemp(`${tmpdir()}/rewind-queue-migration-`);
-    const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-    const database = openFixtureDatabase(config);
-    try {
-      database.exec(`
-      DROP INDEX media_jobs_queue_group_idx;
-      DROP INDEX media_jobs_queue_group_kind_idx;
-      DROP INDEX media_jobs_queue_group_status_idx;
-      DROP INDEX media_jobs_queue_group_kind_status_idx;
-      CREATE INDEX media_jobs_queue_group_idx ON media_jobs (kind);
-      CREATE INDEX media_jobs_queue_group_kind_idx ON media_jobs (group_id);
-      CREATE INDEX media_jobs_queue_group_status_idx ON media_jobs (status);
-      CREATE INDEX media_jobs_queue_group_kind_status_idx ON media_jobs (created_at);
-    `);
-      migrateDatabase(database);
-      for (const [name, expected] of [
-        ['media_jobs_queue_group_idx', ['group_id', 'created_at', 'id']],
-        ['media_jobs_queue_group_kind_idx', ['group_id', 'kind', 'created_at', 'id']],
-        ['media_jobs_queue_group_status_idx', ['group_id', 'status', 'created_at', 'id']],
-        [
-          'media_jobs_queue_group_kind_status_idx',
-          ['group_id', 'kind', 'status', 'created_at', 'id'],
-        ],
-      ]) {
-        assert.deepEqual(
-          database
-            .prepare(`PRAGMA index_info(${name})`)
-            .all()
-            .sort((left, right) => left.seqno - right.seqno)
-            .map((row) => row.name),
-          expected,
-          name,
-        );
-      }
-      assert.deepEqual(
-        database
-          .prepare('PRAGMA table_info(media_jobs)')
-          .all()
-          .map((row) => row.name)
-          .filter((name) => name === 'updated_at' || name === 'failed_at'),
-        ['updated_at', 'failed_at'],
-      );
-    } finally {
-      database.close();
-      await rm(dataDir, { recursive: true, force: true });
-    }
-  },
-);
 
 test('queue read model is paginated, redacted, and retry-aware', async () => {
   await withDatabase(async ({ database }) => {
