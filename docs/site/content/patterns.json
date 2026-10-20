@@ -247,8 +247,8 @@
           "note": "Transactional rollover, successor and publication state machine."
         },
         {
-          "path": "server/src/jobs/index.ts",
-          "label": "server/src/jobs/index.ts",
+          "path": "server/src/jobs/compilation.ts",
+          "label": "server/src/jobs/compilation.ts",
           "note": "Film-job identity, input snapshots, claims and guarded finalisation."
         },
         {
@@ -518,7 +518,7 @@
             ],
             [
               "State machine",
-              "`server/src/cycles/lifecycle.ts`; `server/src/jobs/index.ts`; `src/domain/cycles.ts`",
+              "`server/src/cycles/lifecycle.ts`; `server/src/jobs/compilation.ts`; `src/domain/cycles.ts`",
               "Explicit persisted states and guards govern cycles, releases and jobs. This is not a per-state object hierarchy."
             ],
             [
@@ -566,8 +566,8 @@
           "note": "Domain-facing persistence projection."
         },
         {
-          "path": "server/src/jobs/index.ts",
-          "label": "server/src/jobs/index.ts",
+          "path": "server/src/jobs/audited.ts",
+          "label": "server/src/jobs/audited.ts",
           "note": "Callback audit wrapper and durable job state."
         }
       ],

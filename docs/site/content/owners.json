@@ -45,7 +45,7 @@
               "UC07 rollover; UC08 compilation/release; UC12 Archive; UC13 downloads; UC14 PWA/links",
               "Recover film work; protect released media",
               "Persisted state machine / durable jobs; Proxy + Facade",
-              "[lifecycle.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/cycles/lifecycle.ts); [jobs/index.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/jobs/index.ts); [capabilities.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/archive/capabilities.ts); [Film.tsx](https://github.com/Collaboration95/rewind-app/blob/dev/src/real/Film.tsx)"
+              "[lifecycle.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/cycles/lifecycle.ts); [jobs/compilation.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/jobs/compilation.ts); [capabilities.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/archive/capabilities.ts); [Film.tsx](https://github.com/Collaboration95/rewind-app/blob/dev/src/real/Film.tsx)"
             ],
             [
               "Member D · PARTICIPATION",
@@ -299,8 +299,8 @@
           "note": "Discover due transitions."
         },
         {
-          "path": "server/src/jobs/index.ts",
-          "label": "server/src/jobs/index.ts",
+          "path": "server/src/jobs/compilation.ts",
+          "label": "server/src/jobs/compilation.ts",
           "note": "Durable film work, input snapshot and claim generations."
         },
         {

@@ -654,7 +654,7 @@
             ],
             [
               "Audit / observation",
-              "Allowlisted session/job/integrity/repair events persist with result/time and sanitised identifiers. Optional request timing logs route templates and SQL timing; raw query values, tokens and message content are excluded. Audit actor attribution remains limited by its legacy allowlist."
+              "Allowlisted session/job/integrity/repair events persist with result/time and sanitised identifiers. Optional request timing logs route templates and SQL timing; raw query values, tokens and message content are excluded. The actor is the signed-in member’s profile id for real-account actions, and null for system or scheduler actions."
             ],
             [
               "Integrity / recovery",
@@ -704,7 +704,7 @@
         },
         {
           "q": "Does audit record every user action?",
-          "a": "No. It records a defined set of session, processing and integrity events. Sanitisation and the legacy actor allowlist also limit attribution; it is not a complete user-activity ledger."
+          "a": "No. It records a defined set of session, processing and integrity events. Sanitisation also limits stored identifiers; it is not a complete user-activity ledger."
         }
       ]
     },
