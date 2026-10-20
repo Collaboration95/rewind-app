@@ -20,6 +20,7 @@ import {
   GRANTED,
   MemoryFileStore,
   MemoryMetadataStore,
+  STILL,
   createStillPlatform,
 } from './mocks/capture-doubles';
 
@@ -405,6 +406,23 @@ describe('taking and reviewing a photo', () => {
     expect(files.size).toBe(0);
     expect(platform.captureStill).toHaveBeenCalledTimes(1);
     expect(ui.getByRole('button', { name: 'Close' })).toBeTruthy();
+  });
+
+  it('Try again after a failed capture returns to the viewfinder for a fresh capture', async () => {
+    const platform = createStillPlatform({
+      captureStill: jest
+        .fn()
+        .mockRejectedValueOnce(new Error('camera warm-up failed'))
+        .mockResolvedValue(STILL),
+    });
+    const { ui, files } = await open({}, { platform });
+    await fireEvent.press(await ui.findByRole('button', { name: 'Take photo' }));
+    await ui.findByTestId('camera-capture-failed');
+    await fireEvent.press(ui.getByRole('button', { name: 'Try again' }));
+    await fireEvent.press(await ui.findByRole('button', { name: 'Take photo' }));
+    await ui.findByTestId('camera-preview-panel');
+    expect(platform.captureStill).toHaveBeenCalledTimes(2);
+    expect(files.size).toBe(1);
   });
 
   it('shows "Local save failed" when the copy cannot be verified, and Try again re-checks access', async () => {

@@ -328,10 +328,6 @@ export function CameraCaptureScreen({
     await captureImage(() => platform.captureStill(), true);
   }, [captureImage, platform]);
 
-  const retryCapture = useCallback(async () => {
-    await captureImage(() => platform.captureStill(), true);
-  }, [captureImage, platform]);
-
   const useSyntheticStill = useCallback(async () => {
     await captureImage(() => platform.captureStill(), false);
   }, [captureImage, platform]);
@@ -754,14 +750,7 @@ export function CameraCaptureScreen({
           testID={state.status === 'write-failed' ? 'camera-write-failed' : 'camera-capture-failed'}
           title={state.status === 'write-failed' ? 'Local save failed' : 'Capture failed'}
         >
-          <CamButton
-            height={48}
-            label="Try again"
-            onPress={() =>
-              void (state.status === 'write-failed' ? refreshAccess() : retryCapture())
-            }
-            soft
-          />
+          <CamButton height={48} label="Try again" onPress={() => void refreshAccess()} soft />
         </CamCard>
       ) : null}
 
