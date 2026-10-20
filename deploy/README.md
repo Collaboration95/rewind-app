@@ -134,7 +134,7 @@ Browse live dev data with the read-only login:
 The `/admin` browser was removed. Locally, open `.local-data/real` with any SQLite
 tool.
 
-Migrations are owned by the server (`server/src/db.ts`, `server/migrations`) and
+Migrations are owned by the server (`server/src/schema.ts`, `server/migrations`) and
 run at start-up. On a SQLite host, `./deploy/migrate-with-backup.sh --confirm`
 uploads a backup, stops the runtime and runs `migrate`, leaving the runtime
 stopped for inspection.
