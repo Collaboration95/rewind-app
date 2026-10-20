@@ -23,6 +23,7 @@ import { Worker } from 'node:worker_threads';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { createTestTrigger, sqliteOnly } from './helpers/dialect.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
@@ -46,22 +47,14 @@ const NOT_FOUND = {
   message: 'The requested resource was not found.',
 };
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-integrity-test-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    ...REAL_AUTH_ENV,
-  });
-  const database = openFixtureDatabase(config);
-  try {
-    return await run({ config, database, dataDir });
-  } finally {
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) =>
+  withSharedDatabase(
+    {
+      prefix: 'rewind-integrity-test-',
+      env: { REWIND_FFMPEG_BIN: 'ffmpeg', ...REAL_AUTH_ENV },
+    },
+    run,
+  );
 
 /** A real, playable portrait MP4 so finalization hashes genuine bytes. */
 async function createSyntheticSource(path) {

@@ -1,42 +1,27 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { once } from 'node:events';
+import { access, readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import test from 'node:test';
 import { uploadFixture } from './helpers/fixture-upload.mjs';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
-const { parseConfig } = await import('../dist/config.js');
-const { createRuntimeServer } = await import('../dist/http.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 
-async function withRuntime(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-real-photo-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_PORT: '0',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
-  });
-  const database = openFixtureDatabase(config);
-  const server = createRuntimeServer(config, database, {
-    now: () => new Date('2026-09-29T00:00:00.000Z'),
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  try {
-    await run({ baseUrl, config, database, dataDir, server });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withRuntime = (run) =>
+  withSharedRuntime(
+    {
+      prefix: 'rewind-real-photo-',
+      env: {
+        REWIND_PORT: '0',
+        REWIND_FFMPEG_BIN: 'ffmpeg',
+        REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
+      },
+      serverOptions: { now: () => new Date('2026-09-29T00:00:00.000Z') },
+    },
+    run,
+  );
 
 async function account(baseUrl, database, username) {
   const created = await createRealAccount(

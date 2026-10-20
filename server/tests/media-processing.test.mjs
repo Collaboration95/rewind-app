@@ -2,19 +2,17 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { sqliteOnly } from './helpers/dialect.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
-const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, openDatabaseAt } = await import('../dist/db.js');
 const { copyFile, utimes } = await import('node:fs/promises');
 const {
@@ -37,22 +35,14 @@ const { modeFilter, probeClipWithFfmpeg, processPhotoWithFfmpeg } =
 const { validateClipUpload } = await import('../dist/media/index.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-media-processing-test-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    ...REAL_AUTH_ENV,
-  });
-  const database = openFixtureDatabase(config);
-  try {
-    return await run({ config, database, dataDir });
-  } finally {
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) =>
+  withSharedDatabase(
+    {
+      prefix: 'rewind-media-processing-test-',
+      env: { REWIND_FFMPEG_BIN: 'ffmpeg', ...REAL_AUTH_ENV },
+    },
+    run,
+  );
 
 async function createSyntheticSource(path, firstColor = 'red') {
   await execFileAsync(

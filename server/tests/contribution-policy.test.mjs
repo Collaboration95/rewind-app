@@ -6,6 +6,7 @@ import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { seedLegacyFixture } from './helpers/legacy-fixture.mjs';
 import { sqliteOnly } from './helpers/dialect.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabaseAt } = await import('../dist/db.js');
@@ -35,20 +36,17 @@ const validInput = {
   hasAudio: true,
 };
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-contribution-policy-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openFixtureDatabase(config);
-  try {
-    database.exec(
-      "DELETE FROM contribution_quota_windows; DELETE FROM contributions WHERE id = 'demo-contribution';",
-    );
-    return await run({ config, database, dataDir });
-  } finally {
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) =>
+  withSharedDatabase(
+    {
+      prefix: 'rewind-contribution-policy-',
+      setup: (database) =>
+        database.exec(
+          "DELETE FROM contribution_quota_windows; DELETE FROM contributions WHERE id = 'demo-contribution';",
+        ),
+    },
+    run,
+  );
 
 function registerMetadata(database, input = validInput) {
   recordClipMediaMetadata(database, {

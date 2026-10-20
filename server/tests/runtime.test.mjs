@@ -4,15 +4,14 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { once } from 'node:events';
 import { request as httpRequest } from 'node:http';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { signInAs } from './helpers/real-http.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { getCurrentCycle, resetDatabase } = await import('../dist/db.js');
-const { createRuntimeServer } = await import('../dist/http.js');
 const { revokeRealSession } = await import('../dist/auth/index.js');
 const { planConsistencyRepair } = await import('../dist/jobs/consistency.js');
 const { runWorkerTick } = await import('../dist/jobs/worker.js');
@@ -39,30 +38,20 @@ function fixtureSummary(database) {
   );
 }
 
-async function withRuntime(run, options = {}) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-runtime-test-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_PORT: '0',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
-  });
-  const { seedNow, ...serverOptions } = options;
-  const database = openFixtureDatabase(config, seedNow === undefined ? undefined : { seedNow });
-  const server = createRuntimeServer(config, database, serverOptions);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-  try {
-    return await run({ baseUrl, config, database, server });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withRuntime = (run, { seedNow, ...serverOptions } = {}) =>
+  withSharedRuntime(
+    {
+      prefix: 'rewind-runtime-test-',
+      env: {
+        REWIND_PORT: '0',
+        REWIND_FFMPEG_BIN: 'ffmpeg',
+        REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
+      },
+      seedNow,
+      serverOptions,
+    },
+    run,
+  );
 
 async function postBodyAfter(body, path, baseUrl, headers, afterPartial) {
   const url = new URL(path, baseUrl);

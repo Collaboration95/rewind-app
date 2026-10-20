@@ -1,38 +1,29 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { access, chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, chmod, mkdir, readdir, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { clearFixtureMedia } from './helpers/fixture-group.mjs';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
-const { parseConfig } = await import('../dist/config.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createCompilationJob, getCompilationJob, MAX_COMPILATION_ATTEMPTS, processCompilationJob } =
   await import('../dist/jobs/index.js');
 const { ARCHIVE_FILLER_LABEL, compileFilmWithFfmpeg, probeClipWithFfmpeg, processPhotoWithFfmpeg } =
   await import('../dist/ffmpeg.js');
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-film-compilation-test-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    ...REAL_AUTH_ENV,
-  });
-  const database = openFixtureDatabase(config);
-  clearFixtureMedia(database);
-  try {
-    return await run({ config, database, dataDir });
-  } finally {
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) =>
+  withSharedDatabase(
+    {
+      prefix: 'rewind-film-compilation-test-',
+      env: { REWIND_FFMPEG_BIN: 'ffmpeg', ...REAL_AUTH_ENV },
+      setup: clearFixtureMedia,
+    },
+    run,
+  );
 
 async function createProcessedClip(
   path,

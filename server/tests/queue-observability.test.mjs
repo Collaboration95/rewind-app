@@ -6,23 +6,14 @@ import { promisify } from 'node:util';
 import test from 'node:test';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { sqliteOnly } from './helpers/dialect.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase } = await import('../dist/db.js');
 const { listQueueJobs } = await import('../dist/jobs/queue.js');
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-queue-observability-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openFixtureDatabase(config);
-  try {
-    return await run({ config, database });
-  } finally {
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) => withSharedDatabase({ prefix: 'rewind-queue-observability-' }, run);
 
 function insertQueueFixtures(database) {
   const insert = database.prepare(

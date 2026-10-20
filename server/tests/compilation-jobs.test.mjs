@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { clearFixtureMedia } from './helpers/fixture-group.mjs';
 import { sqliteOnly } from './helpers/dialect.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
-const { parseConfig } = await import('../dist/config.js');
 const { migrateDatabase, openDatabaseAt } = await import('../dist/db.js');
 const {
   claimCompilationJob,
@@ -16,21 +14,8 @@ const {
 } = await import('../dist/jobs/index.js');
 const { advanceCycleLifecycle } = await import('../dist/cycles/index.js');
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-compilation-jobs-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openFixtureDatabase(config);
-  try {
-    return await run({ config, database, dataDir });
-  } finally {
-    try {
-      database.close();
-    } catch {
-      // A restart test may already have closed this handle.
-    }
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) =>
+  withSharedDatabase({ prefix: 'rewind-compilation-jobs-test-', tolerateClosed: true }, run);
 
 test('cycle boundary creates one persistent film job from processed non-raw clips', async () => {
   await withDatabase(async ({ database }) => {
