@@ -217,8 +217,6 @@ describe('Dock', () => {
   });
 
   it('explains why a used shutter does nothing', async () => {
-    // Silences the duplicate-key warning described in the BUG note below.
-    jest.spyOn(console, 'error').mockImplementation(() => {});
     const { ui, onShutter } = await setup({ shutter: used });
     const shutter = ui.getByTestId('real-group-capture-action');
     expect(shutter.props.accessibilityState.disabled).toBe(true);
@@ -227,11 +225,7 @@ describe('Dock', () => {
     expect(ui.getByText('All 5 used · resets in 2 days')).toBeTruthy();
   });
 
-  // BUG: Shutter renders the tip (key={tip.id}) and the pressable (key={nope}) as
-  // siblings, and both counters are 1 after the first press, so React warns about
-  // duplicate keys ("two children with the same key") and the hint never leaves
-  // the screen after MOTION.tip.
-  it.skip('lets the used-shutter hint fade after a couple of seconds', async () => {
+  it('lets the used-shutter hint fade after a couple of seconds', async () => {
     const { ui } = await setup({ shutter: used });
     await fireEvent.press(ui.getByTestId('real-group-capture-action'));
     await act(async () => {

@@ -74,10 +74,7 @@ describe('RealtimeChatClient construction', () => {
     );
   });
 
-  // BUG: normalizeBaseUrl strips the trailing slash before testing the same-origin
-  // pattern, so a bare '/' becomes '' and is rejected even though `trimmed || '/'`
-  // shows root-relative '/' was meant to be accepted.
-  it.skip('accepts the bare same-origin root path', () => {
+  it('accepts the bare same-origin root path', () => {
     expect(new RealtimeChatClient('/', fetch).baseUrl).toBe('/');
   });
 
