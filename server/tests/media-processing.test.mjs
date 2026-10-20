@@ -24,7 +24,6 @@ const {
   reclaimStagedSource,
   recordClipMediaMetadata,
   resetStagedSourceClaim,
-  setStagedSourcePath,
   stagedSourceId,
   stagedSourcePath,
 } = await import('../dist/media/index.js');
@@ -1591,7 +1590,9 @@ test('staged source tokens cannot be enqueued across owner or group boundaries',
     const sourcePath = stagedSourcePath(sourceUri, stagingDir);
     const claimed = claimStagedSource(database, 'demo-group', 'demo-2', key);
     assert.equal(claimed.ok, true);
-    setStagedSourcePath(database, sourceUri, sourcePath);
+    database
+      .prepare('UPDATE staged_sources SET source_path = ? WHERE source_uri = ?')
+      .run(sourcePath, sourceUri);
     markStagedSourceReady(database, sourceUri, 1000, sourcePath);
     database
       .prepare(
