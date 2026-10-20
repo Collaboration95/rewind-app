@@ -183,7 +183,7 @@ for managed sessions, supplies the provider logout path. Invalid/replayed/expire
 state, denied consent, invalid identity or exchange failure returns a safe sign-in
 failure. Developer password entry is enabled only by local/dev configuration;
 release rejects that configuration. Sources: [Cognito service](../../server/src/auth/cognito.ts),
-[HTTP auth handlers](../../server/src/http.ts), [auth configuration](../../server/src/config.ts),
+[HTTP auth handlers](../../server/src/routes/auth-routes.ts), [auth configuration](../../server/src/config.ts),
 [client provider](../../src/auth/RealAccountProvider.tsx).
 
 <a id="uc-create-group"></a>

@@ -534,7 +534,7 @@ test('JSON replies on /auth and global routes keep their CORS posture', async ()
 });
 
 test('OPTIONS: auth-style paths get no-store preflights, other paths a plain wildcard 204', async () => {
-  for (const path of ['/auth/login', '/real/groups', '/archive', '/clips/x', '/films/x/play']) {
+  for (const path of ['/auth/login', '/real/groups', '/archive', '/clips/x']) {
     const { response, status, text } = await send(fx, {
       method: 'OPTIONS',
       path,
@@ -549,7 +549,8 @@ test('OPTIONS: auth-style paths get no-store preflights, other paths a plain wil
       'Authorization, Content-Type, Range, Last-Event-ID',
     );
   }
-  for (const path of ['/health', '/nowhere', '/media/x']) {
+  // /films/* routes were removed, so their preflight is the plain one.
+  for (const path of ['/health', '/nowhere', '/media/x', '/films/x/play']) {
     const { response, status } = await send(fx, { method: 'OPTIONS', path });
     assert.equal(status, 204, path);
     assert.equal(response.headers.get('access-control-allow-origin'), '*', path);
