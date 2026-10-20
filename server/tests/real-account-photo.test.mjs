@@ -188,10 +188,6 @@ test('real photo upload is idempotent, private, and processed as a three-second 
       { method: 'POST', headers: { Authorization: outsider.authorization } },
     );
     assert.equal(forbidden.status, 404);
-    const hiddenSegment = await fetch(scoped(`/clips/${upload.job.id}/download`, groupId), {
-      headers: { Authorization: outsider.authorization },
-    });
-    assert.equal(hiddenSegment.status, 403);
     const hiddenArchive = await fetch(scoped('/archive', groupId), {
       headers: { Authorization: outsider.authorization },
     });

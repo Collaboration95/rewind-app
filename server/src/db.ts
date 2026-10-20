@@ -2063,37 +2063,6 @@ export function getContribution(database: RewindDatabase, groupId: string, contr
     .get(contributionId, groupId);
 }
 
-export function getMediaJob(
-  database: RewindDatabase,
-  groupId: string,
-  jobId: string,
-  kind: 'clip' | 'film' | 'download',
-) {
-  const row = database
-    .prepare(
-      `SELECT id, group_id AS groupId, kind, status, created_at AS createdAt,
-              cycle_id AS cycleId, progress, input_count AS inputCount,
-              completed_count AS completedCount, processing_started_at AS processingStartedAt
-       FROM media_jobs WHERE id = ? AND group_id = ? AND kind = ?`,
-    )
-    .get(jobId, groupId, kind);
-  if (!row || kind === 'film') return row;
-  const base = row as {
-    id: string;
-    groupId: string;
-    kind: string;
-    status: string;
-    createdAt: string;
-  };
-  return {
-    id: base.id,
-    groupId: base.groupId,
-    kind: base.kind,
-    status: base.status,
-    createdAt: base.createdAt,
-  };
-}
-
 export interface PremiereFilmRecord {
   cycleId: string;
   cycleStatus: string;
@@ -2222,46 +2191,6 @@ export function listReleasedArchive(
     hasMoreFilms,
     hasMoreClips,
   };
-}
-
-export function getReleasedFilmDownload(
-  database: RewindDatabase,
-  groupId: string,
-  filmId: string,
-): { outputPath: string } | null {
-  const row = database
-    .prepare(
-      `SELECT f.output_path AS outputPath
-       FROM media_jobs f
-       JOIN cycles c ON c.id = f.cycle_id AND c.group_id = f.group_id
-       WHERE f.id = ? AND f.group_id = ? AND f.kind = 'film' AND f.status = 'ready'
-         AND f.output_path IS NOT NULL AND c.release_status = 'published'
-       LIMIT 1`,
-    )
-    .get(filmId, groupId) as Record<string, unknown> | undefined;
-  return row?.outputPath ? { outputPath: String(row.outputPath) } : null;
-}
-
-export function getReleasedOwnClipDownload(
-  database: RewindDatabase,
-  groupId: string,
-  memberId: string,
-  clipId: string,
-): { outputPath: string } | null {
-  const row = database
-    .prepare(
-      `SELECT clip.output_path AS outputPath
-       FROM media_jobs clip
-       JOIN contributions contribution ON contribution.id = clip.contribution_id
-       JOIN cycles cycle ON cycle.id = contribution.cycle_id
-       WHERE clip.id = ? AND clip.group_id = ? AND clip.kind = 'clip' AND clip.status = 'ready'
-         AND clip.output_path IS NOT NULL AND contribution.member_id = ?
-         AND cycle.group_id = ? AND cycle.release_status = 'published'
-         AND clip.deleted_at IS NULL
-       LIMIT 1`,
-    )
-    .get(clipId, groupId, memberId, groupId) as Record<string, unknown> | undefined;
-  return row?.outputPath ? { outputPath: String(row.outputPath) } : null;
 }
 
 /** The HTTP layer decides which safe premiere state to expose. This query

@@ -609,21 +609,6 @@ process.exit(91);
     try {
       const { headers } = await signInAs(database, 'demo-1');
       const query = 'groupId=demo-group';
-      const expectedNotFound = {
-        error: 'not_found',
-        message: 'The requested resource was not found.',
-      };
-      const playback = await fetch(`${baseUrl}/films/${encodeURIComponent(jobId)}/play?${query}`, {
-        headers,
-      });
-      assert.equal(playback.status, 404);
-      assert.deepEqual(await playback.json(), expectedNotFound);
-      const download = await fetch(
-        `${baseUrl}/films/${encodeURIComponent(jobId)}/download?${query}`,
-        { headers },
-      );
-      assert.equal(download.status, 404);
-      assert.deepEqual(await download.json(), expectedNotFound);
       const archive = await fetch(`${baseUrl}/archive?${query}`, { headers });
       assert.equal(archive.status, 200);
       assert.deepEqual((await archive.json()).archive.films, []);

@@ -567,9 +567,14 @@ async function privacy({ origin, actors, group, members }) {
   );
   const clipOwner = actors.find((actor) => actor.account.id === members[0].accountId);
   assert.ok(clipOwner, 'Sealed clip owner must be a provisioned member');
-  await request(origin, clipOwner, `/clips/clip-0/download?groupId=${id}`, undefined, 404);
+  const sealed = await request(origin, clipOwner, `/archive?groupId=${id}`);
+  assert.equal(
+    sealed.archive.clips.some((clip) => clip.id === 'clip-0'),
+    false,
+    'A sealed clip must not be advertised',
+  );
   return {
-    sealedClipDownload: 404,
+    sealedClipAdvertised: false,
     outsiderGroup: 404,
     outsiderBudget: 403,
     outsiderChat: 403,

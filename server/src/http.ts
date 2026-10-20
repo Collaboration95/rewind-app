@@ -25,10 +25,7 @@ import {
 } from './reminders/outbox';
 import {
   getContribution,
-  getMediaJob,
   getPremiereFilm,
-  getReleasedFilmDownload,
-  getReleasedOwnClipDownload,
   getMessage,
   listReleasedArchive,
   isPostgres,
@@ -501,7 +498,7 @@ async function resolveOwnedProcessedPath(
 async function openVerifiedServingFile(
   database: RewindDatabase,
   jobId: string,
-  kind: 'clip' | 'film' | 'download',
+  kind: 'clip' | 'film',
   outputPath: string,
   dataDir: string,
   actorMemberId: string | null,
@@ -576,7 +573,7 @@ async function openVerifiedServingFile(
 async function servableOutput(
   database: RewindDatabase,
   jobId: string,
-  kind: 'clip' | 'film' | 'download',
+  kind: 'clip' | 'film',
   outputPath: string,
   dataDir: string,
   actorMemberId: string | null,
@@ -1299,11 +1296,7 @@ export async function handleRequest(
     response.end();
     return;
   }
-  const mediaHead =
-    request.method === 'HEAD' &&
-    /^\/(?:media\/access\/|films\/[^/]+\/(?:play|download)$|clips\/[^/]+\/download$)/.test(
-      url.pathname,
-    );
+  const mediaHead = request.method === 'HEAD' && url.pathname.startsWith('/media/access/');
   if (!mediaHead && !['GET', 'POST', 'DELETE'].includes(request.method ?? '')) {
     const send =
       url.pathname.startsWith('/auth/') || url.pathname.startsWith('/real/')
@@ -2393,87 +2386,6 @@ export async function handleRequest(
     return;
   }
 
-  const playbackMatch = url.pathname.match(/^\/films\/([^/]+)\/play$/);
-  if (playbackMatch && (request.method === 'GET' || request.method === 'HEAD')) {
-    const filmId = decodePathSegment(playbackMatch[1], response, config);
-    if (filmId === null) return;
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedMediaGroup(
-      request,
-      database,
-      response,
-      config,
-      now(),
-      groupId,
-    );
-    if (!identity) return;
-    const film = database
-      .prepare(
-        `SELECT cycle_id AS cycleId FROM media_jobs
-         WHERE id = ? AND group_id = ? AND kind = 'film'`,
-      )
-      .get(filmId, identity.groupId) as { cycleId?: string } | undefined;
-    if (!film?.cycleId) return sendNotFound(response, config);
-    const premiere = getPremiereFilm(database, identity.groupId, film.cycleId);
-    if (
-      !premiere ||
-      premiere.filmId !== filmId ||
-      premiereState(premiere) !== 'ready' ||
-      !premiere.outputPath
-    ) {
-      return sendNotFound(response, config);
-    }
-    const served = await openVerifiedServingFile(
-      database,
-      filmId,
-      'film',
-      premiere.outputPath,
-      config.dataDir,
-      identity.memberId,
-      now(),
-      options,
-    );
-    if (!served) return sendNotFound(response, config);
-    if ('capacityExceeded' in served) {
-      sendJson(
-        response,
-        config,
-        served.reason === 'size_policy' ? 413 : 429,
-        served.reason === 'size_policy'
-          ? {
-              error: 'media_snapshot_size_limit',
-              message: 'This media file exceeds the local temporary storage serving limit.',
-            }
-          : {
-              error: 'media_serving_capacity',
-              message: 'Media delivery is at capacity. Try again shortly.',
-            },
-      );
-      return;
-    }
-    const currentPremiere = getPremiereFilm(database, identity.groupId, film.cycleId);
-    if (
-      !mediaIdentityIsCurrent(request, database, identity, now()) ||
-      currentPremiere?.filmId !== filmId ||
-      currentPremiere.outputPath !== premiere.outputPath ||
-      premiereState(currentPremiere) !== 'ready'
-    ) {
-      await served.handle.close();
-      served.releaseBudget();
-      return sendNotFound(response, config);
-    }
-    streamMp4(
-      request,
-      response,
-      config,
-      served.handle,
-      served.size,
-      undefined,
-      served.releaseBudget,
-    );
-    return;
-  }
-
   if (url.pathname === '/archive' && request.method === 'GET') {
     const groupId = url.searchParams.get('groupId');
     const identity = requireAuthorisedMediaGroup(
@@ -2587,126 +2499,6 @@ export async function handleRequest(
       releaseArchiveCapacity();
     }
     return;
-  }
-
-  const filmDownloadMatch = url.pathname.match(/^\/films\/([^/]+)\/download$/);
-  const clipDownloadMatch = url.pathname.match(/^\/clips\/([^/]+)\/download$/);
-  if (
-    (filmDownloadMatch || clipDownloadMatch) &&
-    (request.method === 'GET' || request.method === 'HEAD')
-  ) {
-    const resourceId = decodePathSegment(
-      (filmDownloadMatch ?? clipDownloadMatch)![1],
-      response,
-      config,
-    );
-    if (resourceId === null) return;
-    const groupId = url.searchParams.get('groupId');
-    const identity = requireAuthorisedMediaGroup(
-      request,
-      database,
-      response,
-      config,
-      now(),
-      groupId,
-    );
-    if (!identity) return;
-    const media = filmDownloadMatch
-      ? getReleasedFilmDownload(database, identity.groupId, resourceId)
-      : getReleasedOwnClipDownload(database, identity.groupId, identity.memberId, resourceId);
-    if (!media) return sendNotFound(response, config);
-    const served = await openVerifiedServingFile(
-      database,
-      resourceId,
-      filmDownloadMatch ? 'film' : 'clip',
-      media.outputPath,
-      config.dataDir,
-      identity.memberId,
-      now(),
-      options,
-    );
-    if (!served) return sendNotFound(response, config);
-    if ('capacityExceeded' in served) {
-      sendJson(
-        response,
-        config,
-        served.reason === 'size_policy' ? 413 : 429,
-        served.reason === 'size_policy'
-          ? {
-              error: 'media_snapshot_size_limit',
-              message: 'This media file exceeds the local temporary storage serving limit.',
-            }
-          : {
-              error: 'media_serving_capacity',
-              message: 'Media delivery is at capacity. Try again shortly.',
-            },
-      );
-      return;
-    }
-    const currentMedia = filmDownloadMatch
-      ? getReleasedFilmDownload(database, identity.groupId, resourceId)
-      : getReleasedOwnClipDownload(database, identity.groupId, identity.memberId, resourceId);
-    if (
-      !mediaIdentityIsCurrent(request, database, identity, now()) ||
-      currentMedia?.outputPath !== media.outputPath
-    ) {
-      await served.handle.close();
-      served.releaseBudget();
-      return sendNotFound(response, config);
-    }
-    streamMp4(
-      request,
-      response,
-      config,
-      served.handle,
-      served.size,
-      filmDownloadMatch ? 'rewind-group-film.mp4' : 'rewind-my-clip.mp4',
-      served.releaseBudget,
-    );
-    return;
-  }
-
-  for (const resource of ['clip', 'film', 'download'] as const) {
-    const match = url.pathname.match(new RegExp(`^\\/${resource}s\\/([^/]+)$`));
-    if (match) {
-      const resourceId = decodePathSegment(match[1], response, config);
-      if (resourceId === null) return;
-      const groupId = url.searchParams.get('groupId');
-      const identity = requireAuthorisedMediaGroup(
-        request,
-        database,
-        response,
-        config,
-        now(),
-        groupId,
-      );
-      if (!identity) return;
-      const released =
-        resource === 'film'
-          ? getReleasedFilmDownload(database, identity.groupId, resourceId)
-          : resource === 'clip'
-            ? getReleasedOwnClipDownload(database, identity.groupId, identity.memberId, resourceId)
-            : null;
-      if (
-        !released ||
-        !(await servableOutput(
-          database,
-          resourceId,
-          resource,
-          released.outputPath,
-          config.dataDir,
-          identity.memberId,
-          now(),
-          options,
-        )) ||
-        !mediaIdentityIsCurrent(request, database, identity, now())
-      )
-        return sendNotFound(response, config);
-      const job = getMediaJob(database, identity.groupId, resourceId, resource);
-      if (!job) return sendNotFound(response, config);
-      sendJson(response, config, 200, { [resource]: job });
-      return;
-    }
   }
 
   sendNotFound(response, config);

@@ -197,12 +197,9 @@ test('real Archive seals media until release and scopes films/own clips to live 
   fixture(async (c) => {
     const { request, scoped, publish, group, owner, member, outsider, bytes, database, filmPath } =
       c;
-    assert.equal((await request(owner, scoped('/films/archive-film/play'))).status, 404);
-    assert.equal((await request(owner, scoped('/films/archive-film'))).status, 404);
     const receipt = await (await request(owner, scoped('/clips/owner-clip'))).json();
     assert.deepEqual(receipt, { clip: { id: 'owner-clip', status: 'ready' } });
     assert.equal((await request(member, scoped('/clips/owner-clip'))).status, 404);
-    assert.equal((await request(member, scoped('/clips/member-clip/download'))).status, 404);
     for (const person of [owner, member])
       assert.deepEqual((await (await request(person, scoped('/archive'))).json()).archive, {
         films: [],
@@ -251,17 +248,11 @@ test('real Archive seals media until release and scopes films/own clips to live 
       assert.match(download.headers.get('content-disposition'), /rewind-my-clip/);
       assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
     }
-    assert.equal(
-      (await request(member, scoped('/clips/owner-clip/download') + '&memberId=' + group.memberId))
-        .status,
-      404,
-    );
     const ownerClip = (await (await request(owner, scoped('/archive'))).json()).archive.clips[0];
     assert.equal(ownerClip.id, 'owner-clip');
     assert.equal((await request(member, ownerClip.downloadPath)).status, 404);
     assert.equal((await request(outsider, ownerClip.downloadPath)).status, 404);
     assert.equal((await request(outsider, scoped('/archive'))).status, 403);
-    assert.equal((await request(outsider, scoped('/films/archive-film'))).status, 403);
     assert.equal((await request(owner, scoped('/archive') + '&filmCursor=malformed')).status, 400);
     const preflight = await request(null, scoped('/archive'), { method: 'OPTIONS' });
     assert.match(preflight.headers.get('access-control-allow-headers'), /Authorization/);

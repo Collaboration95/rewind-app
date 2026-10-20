@@ -242,8 +242,6 @@ test('every protected endpoint category requires a real session and ignores call
     const paths = [
       '/contributions/demo-contribution?groupId=demo-group',
       '/clips/demo-clip?groupId=demo-group',
-      '/films/demo-film?groupId=demo-group',
-      '/downloads/demo-download?groupId=demo-group',
       '/archive?groupId=demo-group',
       '/cycles/demo-cycle/premiere?groupId=demo-group',
     ];
@@ -328,8 +326,6 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
     assert.equal(noSession.status, 401);
     const noArchiveSession = await fetch(`${baseUrl}/archive?groupId=demo-group`);
     assert.equal(noArchiveSession.status, 401);
-    const noDownloadSession = await fetch(`${baseUrl}/films/demo-film/download?groupId=demo-group`);
-    assert.equal(noDownloadSession.status, 401);
 
     database
       .prepare(
@@ -433,10 +429,6 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
     }).then((response) => response.json());
     assert.equal(otherMemberArchive.archive.films.length, 1);
     assert.equal(otherMemberArchive.archive.clips.length, 0);
-    const otherMemberClip = await fetch(`${baseUrl}/clips/demo-clip/download?groupId=demo-group`, {
-      headers: otherMember.headers,
-    });
-    assert.equal(otherMemberClip.status, 404);
     // Another member's session cannot use the owner's own-clip capability.
     const borrowedClip = await fetch(`${baseUrl}${archive.archive.clips[0].downloadPath}`, {
       headers: otherMember.headers,
@@ -482,8 +474,6 @@ test('malformed percent-encoded path segments return a client error for every ro
     const paths = [
       `/contributions/${malformed}?groupId=demo-group&memberId=demo-1`,
       `/clips/${malformed}?groupId=demo-group&memberId=demo-1`,
-      `/films/${malformed}?groupId=demo-group&memberId=demo-1`,
-      `/downloads/${malformed}?groupId=demo-group&memberId=demo-1`,
       `/cycles/${malformed}/premiere?groupId=demo-group&memberId=demo-1`,
     ];
     for (const path of paths) {

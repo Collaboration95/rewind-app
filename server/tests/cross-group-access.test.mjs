@@ -73,11 +73,6 @@ test('every exposed protected category denies a member of another group without 
       },
       { name: 'clips', path: `/clips/demo-clip?groupId=demo-group&memberId=demo-1` },
       { name: 'archive', path: `/archive?groupId=demo-group&memberId=demo-1` },
-      { name: 'films', path: `/films/demo-film?groupId=demo-group&memberId=demo-1` },
-      {
-        name: 'downloads',
-        path: `/downloads/demo-download?groupId=demo-group&memberId=demo-1`,
-      },
     ];
     for (const resource of resourceCases) {
       const response = await fetch(`${baseUrl}${resource.path}`, { headers });
@@ -99,7 +94,6 @@ test('each protected category remains readable for the member of its own group',
     const ownPaths = [
       '/contributions/demo-contribution?groupId=demo-group',
       '/clips/demo-clip?groupId=demo-group',
-      '/films/demo-film?groupId=demo-group',
     ];
     for (const path of ownPaths) {
       const response = await fetch(`${baseUrl}${path}`, { headers });

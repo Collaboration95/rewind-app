@@ -216,11 +216,6 @@ test('a tampered finalized clip is refused and audited when served', async () =>
         'same-size tampering is caught when the bytes are served, not by the listing (#475)',
       );
 
-      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
-        headers: session.headers,
-      });
-      assert.equal(download.status, 404);
-      assert.deepEqual(await download.json(), NOT_FOUND);
       const tamperedPath = archiveBody.archive.clips.find((clip) => clip.id === jobId).downloadPath;
       const tokenDownload = await fetch(`${baseUrl}${tamperedPath}`);
       assert.equal(tokenDownload.status, 404);
@@ -238,7 +233,6 @@ test('a tampered finalized clip is refused and audited when served', async () =>
       ]);
 
       // Repeated requests must not multiply the durable audit rows.
-      await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, { headers: session.headers });
       await fetch(`${baseUrl}${tamperedPath}`);
       assert.equal(
         database
@@ -409,11 +403,6 @@ test('a truncated finalized clip is unavailable and never streamed', async () =>
     try {
       const session = await signInAs(database, 'demo-1');
       const query = 'groupId=demo-group';
-      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
-        headers: session.headers,
-      });
-      assert.equal(download.status, 404);
-      assert.deepEqual(await download.json(), NOT_FOUND);
       const archive = await (
         await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers })
       ).json();
@@ -462,13 +451,6 @@ for (const damage of ['deleted', 'zero-byte']) {
       try {
         const session = await signInAs(database, 'demo-1');
         const query = 'groupId=demo-group';
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
-            headers: session.headers,
-          });
-          assert.equal(download.status, 404);
-          assert.deepEqual(await download.json(), NOT_FOUND);
-        }
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const archive = await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers });
           assert.equal(archive.status, 200);
@@ -1319,10 +1301,6 @@ test('a published film whose bytes changed is never streamed', async () => {
         headers: session.headers,
       });
       assert.equal((await broken.json()).premiere.state, 'ready');
-      const brokenPlayback = await fetch(`${baseUrl}/films/demo-film/play?${query}`, {
-        headers: session.headers,
-      });
-      assert.equal(brokenPlayback.status, 404);
       const brokenTokenPlayback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
       assert.equal(brokenTokenPlayback.status, 404);
       const audit = database
