@@ -61,6 +61,7 @@ import {
 import { Button, Glass, Glow, rw, useNow, useScreenInsets, useToast } from '../ui/primitives';
 import { FONT, LAYOUT, WARM } from '../ui/tokens';
 import { userMessage } from '../domain/user-message';
+import { postJson } from '../real/request';
 
 type PhotoJobStatus = PendingClipUpload['job']['status'];
 type PhotoStatusDetails = Pick<
@@ -710,11 +711,10 @@ export function RealAccountGroupExperience({
     setCreateError(null);
     try {
       await revokeReminderBeforeGroupChange();
-      const response = await auth.authenticatedRequest('/real/groups', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: cleanName, prompt: cleanPrompt, maxMembers }),
-      });
+      const response = await auth.authenticatedRequest(
+        '/real/groups',
+        postJson({ name: cleanName, prompt: cleanPrompt, maxMembers }),
+      );
       if (!response.ok)
         throw new Error(
           await rateLimitMessage(
@@ -751,7 +751,7 @@ export function RealAccountGroupExperience({
     try {
       const response = await auth.authenticatedRequest(
         `/real/groups/${encodeURIComponent(group.group.id)}/invites`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+        postJson(),
       );
       const body = (await response.json()) as { invite?: RealInvite; message?: string };
       if (!response.ok || !body.invite) {
@@ -833,11 +833,10 @@ export function RealAccountGroupExperience({
     setJoinFeedback(null);
     try {
       await revokeReminderBeforeGroupChange();
-      const response = await auth.authenticatedRequest('/real/invites/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, ...(requestedGroupId ? { groupId: requestedGroupId } : {}) }),
-      });
+      const response = await auth.authenticatedRequest(
+        '/real/invites/accept',
+        postJson({ code, ...(requestedGroupId ? { groupId: requestedGroupId } : {}) }),
+      );
       const body = (await response.json()) as {
         status?: string;
         group?: RealGroup;
@@ -882,11 +881,10 @@ export function RealAccountGroupExperience({
     try {
       await revokeReminderBeforeGroupChange();
       contextVersion = ++groupContextVersion.current;
-      const response = await auth.authenticatedRequest('/real/groups/current', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId }),
-      });
+      const response = await auth.authenticatedRequest(
+        '/real/groups/current',
+        postJson({ groupId }),
+      );
       const selected = await readGroup(response);
       if (!selected) throw new Error('That group is not available to this account.');
       if (contextVersion !== groupContextVersion.current || !currentMutationAccount()) return false;

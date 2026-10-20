@@ -36,6 +36,7 @@ import { blockMember, openLegalPage, reportContent, unblockMember } from './safe
 import type { MenuGroup } from './Shell';
 import { userMessage } from '../domain/user-message';
 import { CURRENT_VERSION, DISPLAY_CURRENT_VERSION } from '../runtime/version';
+import { postJson } from './request';
 
 export type SettingsStep = 'main' | 'members' | 'groups' | 'invite' | 'prompt' | 'tz' | 'delete';
 
@@ -93,11 +94,10 @@ async function saveGroupSettings<T extends SettingsGroup>(
   group: T,
   next: { prompt: string; timeZone: string },
 ): Promise<T> {
-  const response = await request(`/real/groups/${encodeURIComponent(group.group.id)}/settings`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(next),
-  });
+  const response = await request(
+    `/real/groups/${encodeURIComponent(group.group.id)}/settings`,
+    postJson(next),
+  );
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(settingsError(response, body));
@@ -479,11 +479,7 @@ function ReminderBlock({
       setPending(true);
       setMessage(null);
       try {
-        const response = await request(path, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled, snoozedUntil }),
-        });
+        const response = await request(path, postJson({ enabled, snoozedUntil }));
         if (!response.ok)
           throw new Error(
             response.status === 401
