@@ -9,6 +9,7 @@ import {
   type HashedFileIntegrity,
 } from './media/integrity';
 import { isPostgres, migratePostgres, postgresMissingMigrationKeys } from './postgres/runtime';
+import { beginImmediate } from './sqlite-busy';
 
 /**
  * The durable schema receipts. SQLite migrations 1-31 were squashed into
@@ -133,7 +134,7 @@ export function migrateDatabase(database: RewindDatabase): void {
     'CREATE TABLE IF NOT EXISTS schema_migration_markers (migration_key TEXT PRIMARY KEY, applied_at TEXT NOT NULL);',
   );
   if (sqliteMissing(database).length === 0) return;
-  beginMigrationTransaction(database);
+  beginImmediate(database);
   try {
     // Re-check under the writer lock: a concurrent starter may have finished.
     const missing = sqliteMissing(database);
@@ -209,7 +210,7 @@ export async function backfillMediaIntegrity(
     const integrity = await hashOutput(row.outputPath);
     if (!integrity) continue;
 
-    beginMigrationTransaction(database);
+    beginImmediate(database);
     try {
       const current = database
         .prepare(
@@ -241,22 +242,6 @@ export async function backfillMediaIntegrity(
     } catch (error) {
       database.exec('ROLLBACK');
       throw error;
-    }
-  }
-}
-
-function beginMigrationTransaction(database: RewindDatabase): void {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    try {
-      database.exec('BEGIN IMMEDIATE');
-      return;
-    } catch (error) {
-      const candidate = error as { code?: string; message?: string };
-      const busy =
-        candidate.code === 'SQLITE_BUSY' ||
-        /database is locked|SQLITE_BUSY/i.test(candidate.message ?? '');
-      if (!busy || attempt === 7) throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2 ** attempt);
     }
   }
 }

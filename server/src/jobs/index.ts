@@ -39,6 +39,7 @@ import {
   type ProcessingMode,
   FfmpegProcessingError,
 } from '../ffmpeg';
+import { beginImmediate } from '../sqlite-busy';
 
 export interface AuditedJobInput<T> {
   jobId: string;
@@ -366,7 +367,7 @@ export function reconcileCompilationJobInputs(
   database: RewindDatabase,
   jobId: string,
 ): CompilationJobRecord | null {
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     const job = reconcileCompilationJobInputsLocked(database, jobId);
     database.exec(job ? 'COMMIT' : 'ROLLBACK');
@@ -558,7 +559,7 @@ export function createCompilationJob(
   database: RewindDatabase,
   input: CompilationJobInput,
 ): CompilationJobResult {
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     const existing = database
       .prepare(
@@ -604,7 +605,7 @@ export function claimCompilationJob(
   if (!Number.isFinite(now.getTime())) return { ok: false, reason: 'invalid_state' };
   const leaseMs = input.leaseMs ?? PROCESSING_CLAIM_LEASE_MS;
   if (!Number.isFinite(leaseMs) || leaseMs <= 0) return { ok: false, reason: 'invalid_state' };
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     let job = readCompilationJob(database, input.jobId, input.groupId);
     if (!job) {
@@ -680,7 +681,7 @@ export function updateCompilationJobProgress(
   const completedCount = Math.max(0, Math.floor(input.completedCount));
   if (!Number.isSafeInteger(input.claimGeneration) || completedCount !== input.completedCount)
     return null;
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     // Read and update under the same writer lock. This prevents a stale
     // worker from renewing a lease after another worker has reclaimed it.
@@ -910,7 +911,7 @@ async function publishCompilationOutput(
   const integrity = await hashFileWithIdentity(temporaryOutputPath);
   if (!integrity) return false;
   if (stored) await verifyStoredMedia(stored.store, stored.scope, stored.ref, integrity);
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     const current = reconcileCompilationJobInputsLocked(database, job.id);
     if (
@@ -1230,27 +1231,6 @@ function readClipJob(database: RewindDatabase, jobId: string, groupId?: string):
   return row ? { ...row, claimGeneration: Number(row.claimGeneration) } : null;
 }
 
-function beginJobTransaction(database: RewindDatabase): void {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    try {
-      database.exec('BEGIN IMMEDIATE');
-      return;
-    } catch (error) {
-      const candidate = error as { code?: string; message?: string };
-      if (
-        !(
-          candidate.code === 'SQLITE_BUSY' ||
-          /database is locked|SQLITE_BUSY/i.test(candidate.message ?? '')
-        ) ||
-        attempt === 7
-      ) {
-        throw error;
-      }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2 ** attempt);
-    }
-  }
-}
-
 function stagedBindingMatches(database: RewindDatabase, row: ClipJobRow): boolean {
   if (!row.sourceUri) return true;
   if (row.sourceGeneration === null || !row.sourcePath) return false;
@@ -1271,7 +1251,7 @@ function markOutputPrepared(
   row: ClipJobRow,
   outputPath: string,
 ): boolean {
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     const locked = readClipJob(database, row.id);
     if (
@@ -1324,7 +1304,7 @@ async function finalizePreparedOutput(
 ): Promise<boolean> {
   const integrity = await hashFileWithIdentity(outputPath);
   if (!integrity) return false;
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     const locked = readClipJob(database, row.id);
     if (!locked || locked.status === 'ready') {
@@ -1415,7 +1395,7 @@ function claimClipJob(
   row: ClipJobRow,
   workerAttemptCap?: number,
 ): ClipJobClaimResult {
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     const locked = readClipJob(database, row.id);
     if (!locked) {
@@ -1496,7 +1476,7 @@ async function markFailed(
   errorCode: string,
 ): Promise<boolean> {
   const failedAt = new Date().toISOString();
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     const current = readClipJob(database, row.id);
     if (
@@ -2005,7 +1985,7 @@ async function finalizeStoredClip(
   // No SQLite transaction is held over network I/O. A stale invocation can only
   // delete this exact accepted version, with its verified output already durable.
   await context.store.delete(context.scope, source);
-  beginJobTransaction(database);
+  beginImmediate(database);
   try {
     if (!storedClipFence(database, row, encoded)) {
       database.exec('ROLLBACK');

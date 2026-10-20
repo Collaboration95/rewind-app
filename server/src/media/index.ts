@@ -14,6 +14,7 @@ import {
   type CaptureMode,
   type ProcessingMode,
 } from '../ffmpeg';
+import { beginImmediate, isBusyError } from '../sqlite-busy';
 
 export {
   DEFAULT_CAPTURE_MODE,
@@ -163,29 +164,6 @@ function keyHash(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 32);
 }
 
-const SQLITE_BUSY_RETRIES = 8;
-
-function isBusyError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const candidate = error as { code?: string; message?: string };
-  return (
-    candidate.code === 'SQLITE_BUSY' ||
-    /database is locked|SQLITE_BUSY/i.test(candidate.message ?? '')
-  );
-}
-
-function beginImmediateWithRetry(database: RewindDatabase): void {
-  for (let attempt = 0; attempt < SQLITE_BUSY_RETRIES; attempt += 1) {
-    try {
-      database.exec('BEGIN IMMEDIATE');
-      return;
-    } catch (error) {
-      if (!isBusyError(error) || attempt === SQLITE_BUSY_RETRIES - 1) throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2 ** attempt);
-    }
-  }
-}
-
 export function stagedSourceId(idempotencyKey: string): string {
   return keyHash(idempotencyKey).slice(0, 24);
 }
@@ -247,7 +225,7 @@ export function claimStagedSource(
   const idempotencyKeyHash = keyHash(idempotencyKey);
   let started = false;
   try {
-    beginImmediateWithRetry(database);
+    beginImmediate(database);
     started = true;
     const existing = findStagedSource(database, sourceUri);
     if (existing) {
@@ -363,7 +341,7 @@ export function resetStagedSourceClaim(
 ): boolean {
   let started = false;
   try {
-    beginImmediateWithRetry(database);
+    beginImmediate(database);
     started = true;
     const expectedGeneration = claimGeneration ?? null;
     const claimed = database
@@ -421,7 +399,7 @@ export function reclaimStagedSource(
   const hash = keyHash(idempotencyKey);
   let started = false;
   try {
-    beginImmediateWithRetry(database);
+    beginImmediate(database);
     started = true;
     const generation = database
       .prepare(
@@ -544,7 +522,7 @@ export function cleanupStagedSource(
   stagingDir: string,
   options: StagedSourceCleanupOptions = {},
 ): boolean {
-  beginImmediateWithRetry(database);
+  beginImmediate(database);
   try {
     const source = findStagedSource(database, sourceUri);
     if (
@@ -610,7 +588,7 @@ export function cleanupUnclaimedStagedPath(
   protectedPath = sourcePath,
   options: { releaseExpiredPendingClaim?: boolean } = {},
 ): boolean {
-  beginImmediateWithRetry(database);
+  beginImmediate(database);
   try {
     const claimed = database
       .prepare(
@@ -1025,7 +1003,7 @@ export function createClipUpload(
   const createdAt = now.toISOString();
   let transactionStarted = false;
   try {
-    beginImmediateWithRetry(database);
+    beginImmediate(database);
     transactionStarted = true;
     const retry = existingUpload(database, input.idempotencyKey, groupId, memberId);
     // Re-read every capability field while the writer lock is held. A source
@@ -1244,7 +1222,7 @@ export function cancelClipUpload(
       }
     | undefined;
   if (!row) return { ok: false, reason: 'not_found' };
-  beginImmediateWithRetry(database);
+  beginImmediate(database);
   try {
     // Re-read under the writer lock. A processor may claim the job between
     // the initial lookup and BEGIN; cancellation must never delete a job that
