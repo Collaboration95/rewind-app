@@ -1,87 +1,28 @@
-import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useAllowLandscape } from '../runtime/PortraitGuard';
 import { CameraView } from 'expo-camera';
-import { AppState, Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { VideoView, useVideoPlayer } from 'expo-video';
+import { Platform, StyleSheet, useWindowDimensions } from 'react-native';
 
-import { LocalRuntimeError, type RuntimeClient } from '../runtime/local-runtime-client';
-import {
-  createRealAccountVideoRuntimeClient,
-  type AuthenticatedRequest,
-} from './real-account-video-runtime';
-import {
-  DEFAULT_CAPTURE_MODE,
-  MAX_CLIP_DURATION_SECONDS,
-  type CaptureMode,
-  type ClipUploadInput,
-  type PendingClipUpload,
-  type RecordedClip,
-} from '../domain/video';
+import type { RuntimeClient } from '../runtime/local-runtime-client';
+import type { AuthenticatedRequest } from './real-account-video-runtime';
+import { MAX_CLIP_DURATION_SECONDS } from '../domain/video';
 import { LookPreview } from './LookPreview';
-import { applyRetroLookToVideo, canProcessRetroVideo, RetroProcessingError } from './retro-browser';
-import { ClipUploadError, ClipUploadSession, type ClipUploadProgress } from './clip-uploader';
-import {
-  EXHAUSTED_UPLOAD_MESSAGE,
-  INTERRUPTED_UPLOAD_MESSAGE,
-  decideInterruption,
-  isLiveProcessingStatus,
-  reconcileContributionStatus,
-} from './capture-interruption';
-import { runCaptureRestartRecovery } from './reset';
-import { useOptionalContributionStatus, type ContributionStatus } from './contribution-status';
-import {
-  BoundedVideoRecordingSession,
-  validateRecordedClip,
-  type VideoRecordingPlatform,
-} from './video-recording';
-import {
-  clampTrimmedPlaybackTime,
-  ClipReviewSession,
-  InMemoryPendingClipMetadataStore,
-} from './video-review';
-import {
-  ExpoCameraPlatform,
-  readManagedRecordedClipBase64,
-  removeManagedRecordedClip,
-  isCaptureCancelled,
-} from './platform';
 import type { ContributionLedgerAllowance } from '../domain/contributions';
-import type { CameraPlatform, PermissionSnapshot } from './contracts';
-import { Button, Dialog, IconButton, useToast } from '../ui/primitives';
-import { FONT } from '../ui/tokens';
-import {
-  CamBottom,
-  CamButton,
-  CamCard,
-  CamTop,
-  CameraFrame,
-  FailedPanel,
-  LookPicker,
-  ModeSwitch,
-  MomentsButton,
-  MomentsDialog,
-  Notice,
-  ReviewActions,
-  SealedOverlay,
-  Shutter,
-  ShutterRow,
-  Tag,
-  TrimBar,
-  UploadPanel,
-  allowanceLeft,
-  clock,
-} from './camera-ui';
-import { userMessage } from '../domain/user-message';
-
-type AccessStatus =
-  | 'checking'
-  | 'ready'
-  | 'unsupported'
-  | 'temporarily-unavailable'
-  | 'permission-undecided'
-  | 'permission-denied'
-  | 'permission-blocked'
-  | 'error';
+import type { CameraPlatform } from './contracts';
+import { Button, Dialog, useToast } from '../ui/primitives';
+import { CamTop, CameraFrame, MomentsDialog, SealedOverlay, allowanceLeft } from './camera-ui';
+import { VideoAccessCard } from './VideoAccessCard';
+import { RecordingTimer, VideoCaptureControls } from './VideoCaptureControls';
+import { VideoReviewLayer } from './VideoReviewLayer';
+import { useAppStateInterruption } from './useAppStateInterruption';
+import { useCaptureLifecycle } from './useCaptureLifecycle';
+import { useClipReplacement } from './useClipReplacement';
+import { useClipReviewState } from './useClipReviewState';
+import { useClipUpload } from './useClipUpload';
+import { useVideoAccess } from './useVideoAccess';
+import { useVideoCaptureRuntime } from './useVideoCaptureRuntime';
+import { useVideoRecordingFlow } from './useVideoRecordingFlow';
+import { BrowserVideoPreview } from './video-capture-media';
 
 export interface VideoCaptureScreenProps {
   platform?: CameraPlatform;
@@ -100,79 +41,6 @@ export interface VideoCaptureScreenProps {
   allowance?: ContributionLedgerAllowance | null;
 }
 
-/** The server rejects clips over 15 seconds; keep a processed clip below it. */
-const MAX_PROCESSED_CLIP_SECONDS = 14.9;
-
-function isVideoPlatform(
-  platform: CameraPlatform,
-): platform is CameraPlatform & VideoRecordingPlatform {
-  return (
-    typeof (platform as Partial<VideoRecordingPlatform>).recordClip === 'function' &&
-    typeof (platform as Partial<VideoRecordingPlatform>).stopRecording === 'function' &&
-    typeof (platform as Partial<VideoRecordingPlatform>).cancelRecording === 'function'
-  );
-}
-
-interface ContributionFailure {
-  message: string;
-  retryable: boolean;
-  reason?: 'quota_exceeded';
-}
-
-function quotaFailure(code: string | undefined): boolean {
-  return (
-    code === 'quota_exceeded' ||
-    code === 'upload_quota_exceeded' ||
-    code === 'contribution_quota_exceeded'
-  );
-}
-
-/**
- * A retry is only safe when the same contribution may be submitted again.
- * Runtime errors carry status/code metadata; do not infer retryability from
- * the upload progress because processing can fail after upload is complete.
- */
-function classifyContributionFailure(error: unknown): ContributionFailure {
-  const message = userMessage(error, 'The clip could not be uploaded.');
-  if (error instanceof ClipUploadError) {
-    return {
-      message,
-      retryable: error.retryable && !quotaFailure(error.code),
-      ...(quotaFailure(error.code) ? { reason: 'quota_exceeded' as const } : {}),
-    };
-  }
-  if (error instanceof LocalRuntimeError) {
-    if (quotaFailure(error.code)) return { message, retryable: false, reason: 'quota_exceeded' };
-    if (error.status !== undefined && error.status >= 400 && error.status < 500) {
-      return { message, retryable: false };
-    }
-    if (
-      [
-        'authorization',
-        'forbidden',
-        'invalid_duration',
-        'invalid_metadata',
-        'missing_source',
-        'not_found',
-        'quota_exceeded',
-        'source_unavailable',
-        'validation',
-      ].includes(error.code ?? '')
-    ) {
-      return { message, retryable: false };
-    }
-    return { message, retryable: true };
-  }
-  return { message, retryable: true };
-}
-
-function isUploadCancellation(error: unknown): boolean {
-  return (
-    (error instanceof ClipUploadError && error.code === 'cancelled') ||
-    (error instanceof Error && error.message === 'The upload was cancelled.')
-  );
-}
-
 export function VideoCaptureScreen({
   onBack,
   onClose,
@@ -185,1180 +53,79 @@ export function VideoCaptureScreen({
   useAllowLandscape();
   const cameraRef = useRef<CameraView>(null);
   const getCameraRef = useCallback(() => cameraRef.current, []);
-  const platform = useMemo(
-    () =>
-      platformProp ??
-      // Video keeps the in-page recorder: the phone camera sheet records web
-      // video at a low preset (about 480p) that a page cannot raise.
-      // eslint-disable-next-line react-hooks/refs
-      new ExpoCameraPlatform({
-        getCameraRef,
-      }),
-    [getCameraRef, platformProp],
-  );
-  const recorder = useMemo(
-    () => (isVideoPlatform(platform) ? new BoundedVideoRecordingSession(platform) : null),
-    [platform],
-  );
-  const realGroupId = realAccount?.groupId;
-  const authenticatedRequest = realAccount?.authenticatedRequest;
-  const transferMode = realAccount?.transferMode ?? 'server';
-  const ownedRealRuntimeClient = useMemo(
-    () =>
-      authenticatedRequest && realGroupId
-        ? createRealAccountVideoRuntimeClient(authenticatedRequest, { transferMode })
-        : null,
-    [authenticatedRequest, realGroupId, transferMode],
-  );
-  useEffect(() => () => ownedRealRuntimeClient?.dispose(), [ownedRealRuntimeClient]);
-  const activeRuntimeClient = useMemo(
-    () => runtimeClient ?? ownedRealRuntimeClient,
-    [ownedRealRuntimeClient, runtimeClient],
-  );
-  const uploadSessionId = realGroupId ? 'real-account-session' : null;
-  const uploadGroupId = realGroupId ?? null;
-  const reviewStore = useMemo(() => new InMemoryPendingClipMetadataStore(), []);
-  const [access, setAccess] = useState<AccessStatus>('checking');
+  const runtime = useVideoCaptureRuntime({
+    platformProp,
+    runtimeClient,
+    realAccount,
+    getCameraRef,
+  });
+  const { platform, recorder } = runtime;
   const [error, setError] = useState<string | null>(null);
-  const [recording, setRecording] = useState(false);
   const { height: viewportHeight, width: viewportWidth } = useWindowDimensions();
   // Fill the screen when the camera's shape matches it (phone upright, camera
   // upright); otherwise show the whole frame so nothing recorded is hidden.
   const [previewAspect, setPreviewAspect] = useState(9 / 16);
   const previewFit =
     previewAspect < 1 === viewportWidth / Math.max(1, viewportHeight) < 1 ? 'cover' : 'contain';
-  const [browserPreviewStream, setBrowserPreviewStream] = useState<MediaStream | null>(null);
-  const [recordingStartedAt, setRecordingStartedAt] = useState<number | null>(null);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [clip, setClip] = useState<RecordedClip | null>(null);
-  const [review, setReview] = useState<ClipReviewSession | null>(null);
-  const [reviewPlayerVisible, setReviewPlayerVisible] = useState(true);
-  const [reviewPanelHeight, setReviewPanelHeight] = useState(280);
-  const [trimStart, setTrimStart] = useState(0);
-  const [trimEnd, setTrimEnd] = useState(0);
-  const [mode, setMode] = useState<CaptureMode>(DEFAULT_CAPTURE_MODE);
-  // Web applies the retro look on this device before upload (null when idle).
-  const [retroPercent, setRetroPercent] = useState<number | null>(null);
-  const retroAbortRef = useRef<AbortController | null>(null);
-  const processedUriRef = useRef<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<ClipUploadProgress>({
-    status: 'idle',
-    percent: 0,
-  });
-  const [retryInFlight, setRetryInFlight] = useState(false);
-  // V8 shows only for a seal made on this screen, never for a restored status.
-  const [sealedHere, setSealedHere] = useState(false);
-  // Cancel and "Back to review" return to the review instead of V7.
-  const [failureDismissed, setFailureDismissed] = useState(false);
   const [momentsOpen, setMomentsOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const toast = useToast();
-  const statusContext = useOptionalContributionStatus();
-  const [localContributionStatus, setLocalContributionStatus] = useState<ContributionStatus | null>(
-    null,
-  );
-  const latestUploadRef = useRef<PendingClipUpload | null>(null);
-  const contributionStatus = statusContext?.status ?? localContributionStatus;
-  const setContributionStatus = useCallback(
-    (next: ContributionStatus) => {
-      setLocalContributionStatus(next);
-      statusContext?.setStatus(next);
-    },
-    [statusContext],
-  );
-  const clearContributionStatus = useCallback(() => {
-    setLocalContributionStatus(null);
-    statusContext?.clearStatus();
-  }, [statusContext]);
-  const uploadSession = useMemo(() => {
-    if (
-      !activeRuntimeClient?.uploadClip ||
-      !activeRuntimeClient.cancelClipUpload ||
-      !uploadSessionId ||
-      !uploadGroupId
-    ) {
-      return null;
-    }
-    return new ClipUploadSession({
-      cancelClipUpload: (jobId) =>
-        activeRuntimeClient.cancelClipUpload!(uploadSessionId, uploadGroupId, jobId),
-      uploadClip: (input, signal) =>
-        activeRuntimeClient.uploadClip!(uploadSessionId, uploadGroupId, input, signal),
-    });
-  }, [activeRuntimeClient, uploadGroupId, uploadSessionId]);
-
-  // Keep the latest sessions available to the one lifecycle cleanup effect
-  // below. The upload session can be created after the first render, so putting it directly in a mount-only
-  // cleanup closure would miss an in-flight upload.
-  const recorderRef = useRef(recorder);
-  const uploadSessionRef = useRef(uploadSession);
-  const clipRef = useRef<RecordedClip | null>(clip);
-  const reviewRef = useRef<ClipReviewSession | null>(review);
-  const reviewPlayerMountedRef = useRef(false);
-  const reviewPlayerUnmountWaitersRef = useRef(new Set<() => void>());
-  const activeUploadRef = useRef(false);
-  const retryInFlightRef = useRef(false);
-  // Contribution work owns its async operations until they finish or a
-  // lifecycle event invalidates their generation. This includes staging.
-  const contributionWorkRef = useRef(false);
-  const contributionOperationRef = useRef(0);
-  const pendingUploadInputRef = useRef<{ signature: string; input: ClipUploadInput } | null>(null);
-  const replacementTargetRef = useRef<string | null>(null);
-  const mountedRef = useRef(true);
-  const captureLeftRef = useRef(false);
-  useEffect(() => {
-    recorderRef.current = recorder;
-  }, [recorder]);
-  useEffect(() => {
-    uploadSessionRef.current = uploadSession;
-  }, [uploadSession]);
-  useEffect(() => {
-    clipRef.current = clip;
-  }, [clip]);
-  useEffect(() => {
-    reviewRef.current = review;
-  }, [review]);
-  const statusContextRef = useRef(statusContext);
-  useEffect(() => {
-    statusContextRef.current = statusContext;
-  }, [statusContext]);
-
-  /**
-   * Resolve a persisted contribution status against what this mount can
-   * actually do. A reload or restart drops the in-memory upload session, so a
-   * stored processing record would otherwise leave a panel claiming work that
-   * no live owner is doing.
-   */
-  const reconcileStoredStatus = useCallback(
-    (stored: ContributionStatus | null): ContributionStatus | null =>
-      reconcileContributionStatus(stored, {
-        attemptsRemaining: uploadSessionRef.current?.attemptsRemaining() ?? 0,
-        resumable: Boolean(clipRef.current && uploadSessionRef.current?.canRetry()),
-      }),
-    [],
-  );
-
-  /**
-   * Foreground and cold-start reconciliation. A stored queued or processing
-   * record with no upload running in this mount has lost its owner, so it is
-   * replaced with an honest bounded retry rather than a stuck processing panel.
-   */
-  const reconcileInterruptedUpload = useCallback(() => {
-    const context = statusContextRef.current;
-    const stored = context?.status ?? null;
-    if (!context || activeUploadRef.current || contributionWorkRef.current) return;
-    const resumable = Boolean(clipRef.current && uploadSessionRef.current?.canRetry());
-    if (stored?.state === 'failed' && stored.retryable && !resumable) {
-      context.clearStatus();
-      return;
-    }
-    if (!isLiveProcessingStatus(stored)) return;
-    context.setStatus(reconcileStoredStatus(stored)!);
-  }, [reconcileStoredStatus]);
-
-  const isCaptureActive = useCallback(() => mountedRef.current && !captureLeftRef.current, []);
-  const beginContributionWork = useCallback((upload: boolean): number => {
-    const operation = ++contributionOperationRef.current;
-    contributionWorkRef.current = true;
-    activeUploadRef.current = upload;
-    return operation;
-  }, []);
-  const isContributionWorkActive = useCallback(
-    (operation: number): boolean =>
-      operation === contributionOperationRef.current && isCaptureActive(),
-    [isCaptureActive],
-  );
-  const invalidateContributionWork = useCallback(() => {
-    contributionOperationRef.current += 1;
-    contributionWorkRef.current = false;
-    activeUploadRef.current = false;
-  }, []);
-  const finishContributionWork = useCallback((operation: number) => {
-    if (operation !== contributionOperationRef.current) return;
-    contributionWorkRef.current = false;
-    activeUploadRef.current = false;
-  }, []);
-  const releaseProcessedClip = useCallback(() => {
-    retroAbortRef.current?.abort();
-    const processedUri = processedUriRef.current;
-    processedUriRef.current = null;
-    if (processedUri) URL.revokeObjectURL(processedUri);
-  }, []);
-  const releaseOwnedClip = useCallback(
-    async (ownedClip: RecordedClip | null): Promise<void> => {
-      releaseProcessedClip();
-      if (!ownedClip) return;
-      if (clipRef.current?.sourceUri === ownedClip.sourceUri) clipRef.current = null;
-      await removeManagedRecordedClip(ownedClip.sourceUri);
-    },
-    [releaseProcessedClip],
-  );
-
-  const onReviewPlayerMounted = useCallback(() => {
-    reviewPlayerMountedRef.current = true;
-  }, []);
-  const onReviewPlayerUnmounted = useCallback(() => {
-    reviewPlayerMountedRef.current = false;
-    for (const resolve of reviewPlayerUnmountWaitersRef.current) resolve();
-    reviewPlayerUnmountWaitersRef.current.clear();
-  }, []);
-  const waitForReviewPlayerUnmount = useCallback((): Promise<void> => {
-    if (!reviewPlayerMountedRef.current) return Promise.resolve();
-    return new Promise((resolve) => reviewPlayerUnmountWaitersRef.current.add(resolve));
-  }, []);
-  const unmountReviewPlayer = useCallback(async (): Promise<void> => {
-    const unmounted = waitForReviewPlayerUnmount();
-    setReviewPlayerVisible(false);
-    await unmounted;
-  }, [waitForReviewPlayerUnmount]);
-
-  const replaceClip = useCallback(
-    async (selected: RecordedClip): Promise<boolean> => {
-      try {
-        validateRecordedClip(selected);
-      } catch (validationError) {
-        await removeManagedRecordedClip(selected.sourceUri).catch(() => undefined);
-        throw validationError;
-      }
-      if (!isCaptureActive()) {
-        await removeManagedRecordedClip(selected.sourceUri);
-        return false;
-      }
-
-      const previousClip = clipRef.current;
-      try {
-        if (previousClip) await unmountReviewPlayer();
-        await reviewRef.current?.retake();
-        if (previousClip && previousClip.sourceUri !== selected.sourceUri) {
-          await releaseOwnedClip(previousClip);
-        }
-      } catch (cleanupError) {
-        if (previousClip) {
-          clipRef.current = previousClip;
-          setReviewPlayerVisible(true);
-        }
-        await removeManagedRecordedClip(selected.sourceUri).catch(() => undefined);
-        throw cleanupError;
-      }
-      if (!isCaptureActive()) {
-        await removeManagedRecordedClip(selected.sourceUri);
-        return false;
-      }
-
-      const nextReview = new ClipReviewSession(selected, reviewStore);
-      clipRef.current = selected;
-      reviewRef.current = nextReview;
-      setClip(selected);
-      setReview(nextReview);
-      setReviewPlayerVisible(true);
-      setTrimStart(0);
-      setTrimEnd(selected.durationSeconds);
-      nextReview.setMode(mode);
-      return true;
-    },
-    [isCaptureActive, mode, releaseOwnedClip, reviewStore, unmountReviewPlayer],
-  );
-  const cancelActiveWork = useCallback((): Promise<void> => {
-    if (captureLeftRef.current) return Promise.resolve();
-    captureLeftRef.current = true;
-    const cancelUpload = activeUploadRef.current;
-    invalidateContributionWork();
-    const routeChange = decideInterruption('route-change');
-    if (routeChange.cancelRecording) recorderRef.current?.cancel();
-    if (routeChange.cancelUploadRequest && cancelUpload) {
-      const cancellation = uploadSessionRef.current?.cancel();
-      return cancellation?.catch(() => undefined) ?? Promise.resolve();
-    }
-    return Promise.resolve();
-  }, [invalidateContributionWork]);
-
-  useEffect(() => {
-    if (!decideInterruption('restart').sweepOrphanedFiles) return;
-    // On a cold start, reclaim app-owned media that no live session can reach.
-    // The status reconcile below then reports the interruption honestly.
-    void runCaptureRestartRecovery();
-  }, []);
-
-  // A restored contribution status can arrive after the first render, once the
-  // status store has loaded. Reconcile it whenever a live-looking record
-  // appears without an upload running in this mount.
-  useEffect(() => {
-    reconcileInterruptedUpload();
-  }, [contributionStatus, reconcileInterruptedUpload]);
-
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-      releaseProcessedClip();
-      const currentClip = clipRef.current;
-      clipRef.current = null;
-      reviewRef.current = null;
-      void cancelActiveWork().finally(async () => {
-        await waitForReviewPlayerUnmount();
-        if (currentClip)
-          void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
-      });
-    };
-  }, [cancelActiveWork, releaseProcessedClip, waitForReviewPlayerUnmount]);
-
-  const refresh = useCallback(
-    async (videoPermissionSnapshot?: PermissionSnapshot) => {
-      if (!isCaptureActive()) return;
-      setAccess('checking');
-      setError(null);
-      if (platform.supportsVideoRecording === false || !recorder) {
-        setAccess('unsupported');
-        return;
-      }
-      try {
-        const permissionCheck =
-          videoPermissionSnapshot ??
-          (Platform.OS === 'web'
-            ? platform.getVideoPermissions?.()
-            : (platform.getVideoPermissions?.() ?? platform.getPermissions()));
-        if (!permissionCheck) {
-          throw new Error('The video permission status is unavailable on this platform.');
-        }
-        const [capabilities, permissions] = await Promise.all([
-          platform.getCapabilities(),
-          permissionCheck,
-        ]);
-        if (!isCaptureActive()) return;
-        if (capabilities.camera === 'undecided' || capabilities.microphone === 'undecided') {
-          setAccess('temporarily-unavailable');
-        } else if (capabilities.camera !== 'supported' || capabilities.microphone !== 'supported') {
-          setAccess('unsupported');
-        } else if (permissions.camera === 'blocked' || permissions.microphone === 'blocked') {
-          setAccess('permission-blocked');
-        } else if (
-          permissions.camera === 'undetermined' ||
-          permissions.microphone === 'undetermined'
-        ) {
-          setAccess('permission-undecided');
-        } else if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
-          setAccess('permission-denied');
-        } else {
-          if (Platform.OS === 'web' && !clipRef.current) {
-            let stream = platform.getVideoPreviewStream?.() ?? null;
-            if (!stream && platform.requestVideoPermissions) {
-              const restored = await platform.requestVideoPermissions();
-              if (!isCaptureActive()) {
-                platform.releaseVideoCapture?.();
-                return;
-              }
-              if (restored.camera !== 'granted' || restored.microphone !== 'granted') {
-                setAccess('permission-denied');
-                return;
-              }
-              stream = platform.getVideoPreviewStream?.() ?? null;
-            }
-            setBrowserPreviewStream(stream);
-          }
-          setAccess('ready');
-        }
-      } catch {
-        if (!isCaptureActive()) return;
-        setAccess('temporarily-unavailable');
-        setError('We could not check recording access yet. Try again.');
-      }
-    },
-    [isCaptureActive, platform, recorder],
-  );
-
-  useEffect(() => {
-    void Promise.resolve().then(() => refresh());
-  }, [refresh]);
-
-  useEffect(
-    () => () => {
-      platform.releaseVideoCapture?.();
-    },
-    [platform],
-  );
-
-  // Native Settings does not tell the route when the user changes a
-  // permission, so re-check on foreground. Backgrounding is an interruption:
-  // a recording cannot continue while suspended, and an in-flight upload has
-  // lost its transport. Both are resolved explicitly instead of being left to
-  // resolve themselves, and the local clip is kept for a bounded retry.
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        void refresh();
-        reconcileInterruptedUpload();
-        return;
-      }
-      if (nextState === 'background' || nextState === 'inactive') {
-        platform.releaseVideoCapture?.();
-        setBrowserPreviewStream(null);
-        const decision = decideInterruption('background');
-        if (decision.cancelRecording && recorderRef.current?.getState().status === 'recording') {
-          recorderRef.current.cancel();
-          setRecording(false);
-          setRecordingStartedAt(null);
-          setElapsedSeconds(0);
-        }
-        const interruptedUpload = activeUploadRef.current;
-        if (contributionWorkRef.current) invalidateContributionWork();
-        if (decision.cancelUploadRequest && interruptedUpload) {
-          void uploadSessionRef.current?.cancel().catch(() => undefined);
-          setUploadProgress({ status: 'cancelled', percent: 0 });
-          if (decision.retainLocalCaptureForRetry) {
-            const retryable = uploadSessionRef.current?.canRetry() ?? false;
-            setContributionStatus({
-              createdAt: new Date().toISOString(),
-              durationSeconds: reviewRef.current?.getReview().endSeconds,
-              message: retryable ? INTERRUPTED_UPLOAD_MESSAGE : EXHAUSTED_UPLOAD_MESSAGE,
-              retryable,
-              state: 'failed',
-            });
-          }
-        }
-      }
-    });
-    return () => subscription.remove();
-  }, [
-    invalidateContributionWork,
-    platform,
-    reconcileInterruptedUpload,
+  const reviewState = useClipReviewState();
+  const { clip, mode, review } = reviewState;
+  const lifecycle = useCaptureLifecycle({
+    recorder,
+    uploadSession: runtime.uploadSession,
+    clip,
+    review,
+  });
+  const { contributionStatus, isCaptureActive, leaveCapture } = lifecycle;
+  const {
+    access,
+    browserPreviewStream,
+    openSettings,
     refresh,
-    setContributionStatus,
-  ]);
-
-  const requestAccess = useCallback(async () => {
-    if (!isCaptureActive()) return;
-    setError(null);
-    try {
-      const permissionRequest =
-        Platform.OS === 'web'
-          ? platform.requestVideoPermissions?.()
-          : (platform.requestVideoPermissions?.() ?? platform.requestPermissions());
-      if (!permissionRequest) {
-        throw new Error('Video permission requests are unavailable on this platform.');
-      }
-      const permissions = await permissionRequest;
-      setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
-      if (permissions.camera === 'denied' || permissions.microphone === 'denied') {
-        setAccess('permission-denied');
-        return;
-      }
-      if (isCaptureActive() && Platform.OS === 'web') {
-        if (!platform.getVideoPermissions) {
-          throw new Error('Browser video permissions could not be refreshed. Try again.');
-        }
-        const refreshedPermissions = await platform.getVideoPermissions();
-        if (isCaptureActive()) await refresh(refreshedPermissions);
-      } else if (isCaptureActive()) {
-        await refresh();
-      }
-    } catch (permissionError) {
-      if (!isCaptureActive()) return;
-      setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
-      if (
-        permissionError instanceof Error &&
-        ['NotFoundError', 'OverconstrainedError'].includes(permissionError.name)
-      ) {
-        setAccess('unsupported');
-        setError('This device does not have an available camera and microphone for recording.');
-        return;
-      }
-      setAccess('temporarily-unavailable');
-      setError('Camera access could not be checked right now. Try again or open Settings.');
-    }
-  }, [isCaptureActive, platform, refresh]);
-
-  const openSettings = useCallback(async () => {
-    if (!isCaptureActive()) return;
-    setError(null);
-    try {
-      await platform.openSettings();
-      if (isCaptureActive()) await refresh();
-    } catch (settingsError) {
-      if (!isCaptureActive()) return;
-      setError(
-        userMessage(settingsError, 'Open this app settings to allow camera and microphone access.'),
-      );
-    }
-  }, [isCaptureActive, platform, refresh]);
+    requestAccess,
+    setBrowserPreviewStream,
+  } = useVideoAccess({ platform, recorder, isCaptureActive, clipRef: lifecycle.clipRef, setError });
 
   // Longest clip: 15 s, or the seconds left this week when that is less.
   const allowance = contributionStatus?.allowance ?? allowanceProp;
   const left = allowanceLeft(allowance);
   const clipLimit = Math.min(MAX_CLIP_DURATION_SECONDS, left?.seconds ?? MAX_CLIP_DURATION_SECONDS);
 
-  useEffect(() => {
-    if (!recording || recordingStartedAt === null || !recorder) return undefined;
-    const interval = setInterval(() => {
-      const elapsed = Math.min(15, (Date.now() - recordingStartedAt) / 1000);
-      recorder.setElapsed(elapsed);
-      setElapsedSeconds(elapsed);
-      // The platform stops by itself at 15 s; a smaller weekly limit stops here.
-      if (clipLimit < MAX_CLIP_DURATION_SECONDS && elapsed >= clipLimit) recorder.stop();
-    }, 250);
-    return () => clearInterval(interval);
-  }, [clipLimit, recording, recordingStartedAt, recorder]);
-
-  const startRecording = async () => {
-    if (!isCaptureActive() || !recorder || access !== 'ready') return;
-    setError(null);
-    setRecording(true);
-    setRecordingStartedAt(Date.now());
-    setElapsedSeconds(0);
-    try {
-      const recorded = await recorder.start();
-      setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
-      if (!(await replaceClip(recorded))) return;
-      setRecording(false);
-      setRecordingStartedAt(null);
-    } catch (recordingError) {
-      setBrowserPreviewStream(platform.getVideoPreviewStream?.() ?? null);
-      if (!isCaptureActive() || recorder.getState().status === 'cancelled') return;
-      setRecording(false);
-      setRecordingStartedAt(null);
-      setError(userMessage(recordingError, 'The clip could not be recorded.'));
-    }
-  };
-
-  const chooseVideoFile = async () => {
-    if (!isCaptureActive() || !platform.pickVideoFile) return;
-    setError(null);
-    try {
-      const selected = await platform.pickVideoFile();
-      await replaceClip(selected);
-    } catch (fileError) {
-      if (!isCaptureActive() || isCaptureCancelled(fileError)) return;
-      setError(userMessage(fileError, 'The video file could not be used.'));
-    }
-  };
-
-  const retake = async () => {
-    retroAbortRef.current?.abort();
-    const currentClip = clip;
-    if (contributionWorkRef.current) invalidateContributionWork();
-    if (
-      uploadSession &&
-      uploadProgress.status !== 'idle' &&
-      uploadProgress.status !== 'cancelled'
-    ) {
-      try {
-        await uploadSession.cancel();
-      } catch (cancelError) {
-        setError(
-          `The queued clip could not be cancelled. ${userMessage(cancelError, 'Try again.')}`,
-        );
-        return;
-      }
-    }
-    if (!isCaptureActive()) return;
-    await unmountReviewPlayer();
-    try {
-      if (currentClip) await releaseOwnedClip(currentClip);
-    } catch {
-      if (currentClip) clipRef.current = currentClip;
-      setReviewPlayerVisible(true);
-      setError('The clip could not be removed from local storage. Try again.');
-      return;
-    }
-    await review?.retake();
-    recorder?.reset();
-    uploadSession?.forget();
-    pendingUploadInputRef.current = null;
-    setClip(null);
-    setReview(null);
-    setReviewPlayerVisible(true);
-    setUploadProgress({ status: 'idle', percent: 0 });
-    latestUploadRef.current = null;
-    clearContributionStatus();
-    setError(null);
-  };
-
-  const changeTrim = (start: number, end: number) => {
-    if (!review || !review.setTrim(start, end).ok) return;
-    setTrimStart(start);
-    setTrimEnd(end);
-  };
-
-  const describeUpload = useCallback(
-    (
-      uploaded: PendingClipUpload,
-      state: ContributionStatus['state'],
-      options: Pick<ContributionStatus, 'message' | 'retryable' | 'reason'> = {
-        retryable: state === 'failed',
-      },
-    ): ContributionStatus => ({
-      contributionId: uploaded.contribution.id,
-      createdAt: uploaded.contribution.createdAt,
-      durationSeconds: uploaded.contribution.durationSeconds,
-      jobId: uploaded.job.id,
-      deletionAvailability: 'available',
-      ...options,
-      state,
-    }),
-    [],
-  );
-
-  const processUploaded = useCallback(
-    async (
-      uploaded: PendingClipUpload,
-      operation: number,
-    ): Promise<PendingClipUpload['job'] | null> => {
-      if (!isContributionWorkActive(operation)) return null;
-      latestUploadRef.current = uploaded;
-      setContributionStatus(describeUpload(uploaded, 'queued'));
-      if (!activeRuntimeClient?.processClipJob || !uploadSessionId || !uploadGroupId)
-        return uploaded.job;
-
-      setContributionStatus(describeUpload(uploaded, 'processing'));
-      const processed = await activeRuntimeClient.processClipJob(
-        uploadSessionId,
-        uploadGroupId,
-        uploaded.job.id,
-      );
-      if (!isContributionWorkActive(operation)) return null;
-      if (processed.status === 'ready') {
-        setContributionStatus(describeUpload(uploaded, 'sealed'));
-        setSealedHere(true);
-      } else if (processed.status === 'processing') {
-        setContributionStatus(describeUpload(uploaded, 'processing'));
-      } else if (processed.status === 'failed') {
-        setContributionStatus(
-          describeUpload(uploaded, 'failed', {
-            message: 'The clip could not be processed. Retry the job.',
-            retryable: true,
-          }),
-        );
-      } else if (processed.status === 'cancelled') {
-        setContributionStatus(
-          describeUpload(uploaded, 'failed', {
-            message: 'The contribution was cancelled. Retake it to submit a new contribution.',
-            retryable: false,
-          }),
-        );
-      } else {
-        setContributionStatus(describeUpload(uploaded, 'queued'));
-      }
-      await statusContext?.refreshStatus();
-      return processed;
-    },
-    [
-      activeRuntimeClient,
-      describeUpload,
-      isContributionWorkActive,
-      setContributionStatus,
-      statusContext,
-      uploadGroupId,
-      uploadSessionId,
-    ],
-  );
-
-  const completeSubmittedReview = useCallback(
-    async (
-      ownedClip: RecordedClip,
-      ownedReview: ClipReviewSession,
-      operation: number,
-      cleanupMessage: string,
-    ): Promise<boolean> => {
-      await unmountReviewPlayer();
-      if (!isContributionWorkActive(operation)) return false;
-      await ownedReview.retake().catch(() => undefined);
-      if (!isContributionWorkActive(operation)) return false;
-
-      clipRef.current = null;
-      reviewRef.current = null;
-      setClip(null);
-      setReview(null);
-      try {
-        await releaseOwnedClip(ownedClip);
-      } catch {
-        if (isContributionWorkActive(operation)) setError(cleanupMessage);
-      }
-      return isContributionWorkActive(operation);
-    },
-    [isContributionWorkActive, releaseOwnedClip, unmountReviewPlayer],
-  );
-
-  const upload = async () => {
-    if (!isCaptureActive()) return;
-    if (!review || !clip || !uploadSession) {
-      setError(
-        'Server-backed clip upload is unavailable without the local runtime. Captured media is not synchronized offline.',
-      );
-      return;
-    }
-    try {
-      validateRecordedClip(clip);
-    } catch (validationError) {
-      setError(userMessage(validationError, 'The selected clip metadata could not be verified.'));
-      return;
-    }
-    if (!clip.hasAudio || clip.mimeType !== 'video/mp4') {
-      setError(
-        'The selected clip must be an MP4 with an audio track; the server verifies it before accepting the upload.',
-      );
-      return;
-    }
-    setFailureDismissed(false);
-    const reviewMetadata = review.getReview();
-    const signature = JSON.stringify([
-      clip.sourceUri,
-      reviewMetadata.mode,
-      reviewMetadata.startSeconds,
-      reviewMetadata.endSeconds,
-      reviewMetadata.durationSeconds,
-      replacementTargetRef.current,
-    ]);
-    let pendingInput = pendingUploadInputRef.current;
-    if (!pendingInput || pendingInput.signature !== signature) {
-      if (retroAbortRef.current) return;
-      let media = {
-        byteLength: clip.byteLength ?? 0,
-        clientProcessed: false,
-        height: clip.height,
-        sourceDurationSeconds: reviewMetadata.durationSeconds,
-        sourceUri: clip.sourceUri,
-        trimEndSeconds: reviewMetadata.endSeconds,
-        trimStartSeconds: reviewMetadata.startSeconds,
-        width: clip.width,
-      };
-      // Web applies the look here, before upload, and sends the already
-      // trimmed result. Native apps (and browsers that cannot re-encode)
-      // upload the original and the server applies the same look.
-      if (Platform.OS === 'web' && canProcessRetroVideo()) {
-        const controller = new AbortController();
-        retroAbortRef.current = controller;
-        setRetroPercent(0);
-        setError(null);
-        try {
-          const processed = await applyRetroLookToVideo(
-            {
-              capturedAt: new Date(),
-              endSeconds: reviewMetadata.endSeconds,
-              mode: reviewMetadata.mode,
-              sourceUri: clip.sourceUri,
-              startSeconds: reviewMetadata.startSeconds,
-            },
-            {
-              signal: controller.signal,
-              onProgress: (percent) => {
-                if (!controller.signal.aborted) setRetroPercent(percent);
-              },
-            },
-          );
-          if (controller.signal.aborted || !isCaptureActive() || clipRef.current !== clip) {
-            URL.revokeObjectURL(processed.sourceUri);
-            return;
-          }
-          if (processedUriRef.current) URL.revokeObjectURL(processedUriRef.current);
-          processedUriRef.current = processed.sourceUri;
-          const durationSeconds = Math.min(
-            Math.floor(processed.durationSeconds * 100) / 100,
-            MAX_PROCESSED_CLIP_SECONDS,
-          );
-          media = {
-            byteLength: processed.byteLength,
-            clientProcessed: true,
-            height: processed.height,
-            sourceDurationSeconds: processed.durationSeconds,
-            sourceUri: processed.sourceUri,
-            trimEndSeconds: durationSeconds,
-            trimStartSeconds: 0,
-            width: processed.width,
-          };
-        } catch (processingError) {
-          if (!isCaptureActive()) return;
-          const cancelled =
-            processingError instanceof RetroProcessingError && processingError.cancelled;
-          const detail = userMessage(processingError, 'The retro look could not be applied.');
-          setError(
-            cancelled
-              ? 'The retro look was cancelled. Your original clip is kept; upload again to retry.'
-              : `${detail} Your original clip is kept; try uploading again.`,
-          );
-          return;
-        } finally {
-          if (retroAbortRef.current === controller) retroAbortRef.current = null;
-          if (isCaptureActive()) setRetroPercent(null);
-        }
-      }
-      pendingInput = {
-        signature,
-        input: {
-          byteLength: media.byteLength,
-          durationSeconds: media.trimEndSeconds - media.trimStartSeconds,
-          hasAudio: clip.hasAudio,
-          height: media.height,
-          idempotencyKey: `clip-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-          mimeType: clip.mimeType,
-          mode: reviewMetadata.mode,
-          ...(media.clientProcessed ? { clientProcessed: true } : {}),
-          sourceUri: media.sourceUri,
-          sourceDurationSeconds: media.sourceDurationSeconds,
-          trimEndSeconds: media.trimEndSeconds,
-          trimStartSeconds: media.trimStartSeconds,
-          width: media.width,
-          ...(replacementTargetRef.current
-            ? { replacesContributionId: replacementTargetRef.current }
-            : {}),
-        },
-      };
-      pendingUploadInputRef.current = pendingInput;
-    }
-    const operation = beginContributionWork(true);
-    const prepareInput = async (
-      input: ClipUploadInput,
-      signal?: AbortSignal,
-    ): Promise<ClipUploadInput> => {
-      await review.savePending(input.idempotencyKey);
-      if (!isContributionWorkActive(operation)) {
-        throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
-      }
-      if (
-        activeRuntimeClient?.stageClipSource &&
-        uploadSessionId &&
-        uploadGroupId &&
-        !(
-          ownedRealRuntimeClient &&
-          !runtimeClient &&
-          (transferMode === 'direct' || input.sourceUri.startsWith('blob:'))
-        )
-      ) {
-        const sourceData = await readManagedRecordedClipBase64(input.sourceUri, signal);
-        if (!isContributionWorkActive(operation)) {
-          throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
-        }
-        const staged = await activeRuntimeClient.stageClipSource(
-          uploadSessionId,
-          uploadGroupId,
-          input.idempotencyKey,
-          sourceData,
-          signal,
-        );
-        if (!isContributionWorkActive(operation)) {
-          throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
-        }
-        return { ...input, sourceUri: staged.uri, byteLength: staged.byteLength };
-      }
-      return input;
-    };
-    try {
-      const uploaded = await uploadSession.upload(
-        pendingInput.input,
-        (progress) => {
-          if (isContributionWorkActive(operation)) setUploadProgress(progress);
-        },
-        prepareInput,
-      );
-      if (!isContributionWorkActive(operation)) return;
-      const processed = await processUploaded(uploaded, operation);
-      if (!processed || !isContributionWorkActive(operation)) return;
-      if (processed.status === 'ready') {
-        if (pendingInput.input.replacesContributionId === replacementTargetRef.current) {
-          replacementTargetRef.current = null;
-        }
-        if (
-          await completeSubmittedReview(
-            clip,
-            review,
-            operation,
-            'The clip is processed, but its local cache file could not be removed.',
-          )
-        ) {
-          pendingUploadInputRef.current = null;
-          uploadSession.forget();
-        }
-      }
-    } catch (uploadError) {
-      if (!isContributionWorkActive(operation)) return;
-      const failure = classifyContributionFailure(uploadError);
-      const cancelled = isUploadCancellation(uploadError);
-      const retryable = uploadSession.canRetry() && (failure.retryable || cancelled);
-      const reported = cancelled
-        ? { message: INTERRUPTED_UPLOAD_MESSAGE, retryable }
-        : {
-            message: failure.message,
-            retryable,
-            ...(failure.reason ? { reason: failure.reason } : {}),
-          };
-      if (cancelled) setUploadProgress({ status: 'cancelled', percent: 0 });
-      const uploaded = latestUploadRef.current;
-      setContributionStatus(
-        uploaded
-          ? describeUpload(uploaded, 'failed', reported)
-          : {
-              createdAt: new Date().toISOString(),
-              durationSeconds: review.getReview().endSeconds - review.getReview().startSeconds,
-              ...reported,
-              state: 'failed',
-            },
-      );
-      setError(reported.message);
-    } finally {
-      finishContributionWork(operation);
-    }
-  };
-
-  const retryUpload = async () => {
-    // Guard synchronously as two presses can arrive before React commits the
-    // busy state. A second retry would supersede the first upload generation;
-    // because both use the same idempotency key, its late response could then
-    // cancel the job owned by the winning retry.
-    if (!isCaptureActive() || retryInFlightRef.current) return;
-    // A retry needs an input this mount captured or restored. Once the attempt
-    // budget is spent the action is terminal, so report it instead of silently
-    // looping on a transport that keeps failing.
-    if (uploadSession && !uploadSession.canRetry()) {
-      const stored = statusContextRef.current?.status ?? contributionStatus;
-      if (stored) {
-        setContributionStatus(
-          reconcileContributionStatus(stored, { attemptsRemaining: 0, resumable: true })!,
-        );
-      }
-      setError(EXHAUSTED_UPLOAD_MESSAGE);
-      return;
-    }
-    if (!review || !clip || !uploadSession) return;
-    retryInFlightRef.current = true;
-    setRetryInFlight(true);
-    setFailureDismissed(false);
-    toast('Uploading again. It finishes in the background.');
-    const operation = beginContributionWork(true);
-    const prepareInput = async (
-      input: ClipUploadInput,
-      signal?: AbortSignal,
-    ): Promise<ClipUploadInput> => {
-      await review.savePending(input.idempotencyKey);
-      if (!isContributionWorkActive(operation)) {
-        throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
-      }
-      if (
-        activeRuntimeClient?.stageClipSource &&
-        uploadSessionId &&
-        uploadGroupId &&
-        !(
-          ownedRealRuntimeClient &&
-          !runtimeClient &&
-          (transferMode === 'direct' || input.sourceUri.startsWith('blob:'))
-        )
-      ) {
-        const sourceData = await readManagedRecordedClipBase64(input.sourceUri, signal);
-        if (!isContributionWorkActive(operation)) {
-          throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
-        }
-        const staged = await activeRuntimeClient.stageClipSource(
-          uploadSessionId,
-          uploadGroupId,
-          input.idempotencyKey,
-          sourceData,
-          signal,
-        );
-        if (!isContributionWorkActive(operation)) {
-          throw new ClipUploadError('The upload was cancelled.', { code: 'cancelled' });
-        }
-        return { ...input, sourceUri: staged.uri, byteLength: staged.byteLength };
-      }
-      return input;
-    };
-    try {
-      const retried = await uploadSession.retry((progress) => {
-        if (isContributionWorkActive(operation)) setUploadProgress(progress);
-      }, prepareInput);
-      if (retried && isContributionWorkActive(operation)) {
-        const processed = await processUploaded(retried, operation);
-        if (processed?.status === 'ready' && isContributionWorkActive(operation)) {
-          const replacedContributionId =
-            pendingUploadInputRef.current?.input.replacesContributionId;
-          if (replacedContributionId === replacementTargetRef.current) {
-            replacementTargetRef.current = null;
-          }
-          if (
-            clip &&
-            review &&
-            (await completeSubmittedReview(
-              clip,
-              review,
-              operation,
-              'The clip is sealed, but its local cache file could not be removed.',
-            ))
-          ) {
-            pendingUploadInputRef.current = null;
-            uploadSession.forget();
-          }
-        }
-      }
-    } catch (uploadError) {
-      if (!isContributionWorkActive(operation)) return;
-      const failure = classifyContributionFailure(uploadError);
-      const cancelled = isUploadCancellation(uploadError);
-      const uploaded = latestUploadRef.current;
-      // Once the bounded budget is spent the failure is terminal. Reporting it
-      // as retryable would offer an action that can never succeed.
-      const exhausted = !uploadSession.canRetry();
-      const reported = exhausted
-        ? { message: EXHAUSTED_UPLOAD_MESSAGE, retryable: false }
-        : cancelled
-          ? { message: INTERRUPTED_UPLOAD_MESSAGE, retryable: true }
-          : {
-              message: failure.message,
-              retryable: failure.retryable,
-              ...(failure.reason ? { reason: failure.reason } : {}),
-            };
-      if (cancelled) setUploadProgress({ status: 'cancelled', percent: 0 });
-      if (uploaded) setContributionStatus(describeUpload(uploaded, 'failed', reported));
-      else
-        setContributionStatus({
-          createdAt: new Date().toISOString(),
-          durationSeconds: review.getReview().endSeconds - review.getReview().startSeconds,
-          ...reported,
-          state: 'failed',
-        });
-      setError(reported.message);
-    } finally {
-      retryInFlightRef.current = false;
-      if (isCaptureActive()) setRetryInFlight(false);
-      finishContributionWork(operation);
-    }
-  };
-
-  const cancelUpload = useCallback(async () => {
-    if (!isCaptureActive() || !uploadSession || uploadProgress.status !== 'uploading') {
-      return;
-    }
-    // Update the route synchronously. The transport may never settle (for
-    // example, after a dropped runtime connection), but the user must still
-    // leave the uploading state and be able to retry.
-    invalidateContributionWork();
-    setUploadProgress({ status: 'cancelled', percent: 0 });
-    const retryable = uploadSession.canRetry();
-    const message = retryable ? INTERRUPTED_UPLOAD_MESSAGE : EXHAUSTED_UPLOAD_MESSAGE;
-    const uploaded = latestUploadRef.current;
-    setContributionStatus(
-      uploaded
-        ? describeUpload(uploaded, 'failed', { message, retryable })
-        : {
-            createdAt: new Date().toISOString(),
-            durationSeconds: review?.getReview().endSeconds,
-            message,
-            retryable,
-            state: 'failed',
-          },
-    );
-    // Cancel keeps the moment in review; it isn't counted until sealed.
-    setFailureDismissed(true);
-    setError(null);
-    toast('Upload cancelled. Your moment is still here to seal.');
-    try {
-      await uploadSession.cancel();
-    } catch (cancelError) {
-      if (!isCaptureActive()) return;
-      setFailureDismissed(false);
-      const failure = classifyContributionFailure(cancelError);
-      setUploadProgress({ status: 'failed', percent: 10, message: failure.message });
-      setError(`The upload could not be cancelled. ${failure.message}`);
-    }
-  }, [
-    describeUpload,
-    invalidateContributionWork,
-    isCaptureActive,
-    review,
-    setContributionStatus,
-    uploadProgress.status,
-    uploadSession,
-    toast,
-  ]);
-
-  const leaveCapture = useCallback(
-    (exit: (() => void) | undefined) => {
-      const currentClip = clipRef.current;
-      clipRef.current = null;
-      reviewRef.current = null;
-      void cancelActiveWork().finally(async () => {
-        await waitForReviewPlayerUnmount();
-        if (currentClip)
-          void removeManagedRecordedClip(currentClip.sourceUri).catch(() => undefined);
-      });
-      exit?.();
-    },
-    [cancelActiveWork, waitForReviewPlayerUnmount],
-  );
+  const { chooseVideoFile, elapsedSeconds, recording, resetRecording, startRecording } =
+    useVideoRecordingFlow({
+      platform,
+      recorder,
+      access,
+      clipLimit,
+      reviewState,
+      lifecycle,
+      setBrowserPreviewStream,
+      setError,
+    });
+  const upload = useClipUpload({ runtime, reviewState, lifecycle, setError, toast });
+  const { failureDismissed, retroPercent, retryInFlight, sealedHere, uploadProgress } = upload;
+  useAppStateInterruption({
+    platform,
+    lifecycle,
+    refresh,
+    resetRecording,
+    setBrowserPreviewStream,
+    setUploadProgress: upload.setUploadProgress,
+  });
+  const { canDeleteContribution, deleteContributionForReplacement, retake } = useClipReplacement({
+    runtime,
+    reviewState,
+    lifecycle,
+    upload,
+    setError,
+    setMomentsOpen,
+    onContributionDeleted,
+  });
 
   const contributionFailed = contributionStatus?.state === 'failed';
   const canRetryContribution = contributionFailed && contributionStatus.retryable && !retryInFlight;
-
-  const canDeleteContribution = Boolean(
-    contributionStatus?.contributionId &&
-    activeRuntimeClient?.deleteContribution &&
-    uploadSessionId &&
-    uploadGroupId &&
-    contributionStatus.state !== 'processing' &&
-    contributionStatus.deletionAvailability !== 'used' &&
-    contributionStatus.deletionAvailability !== 'unavailable',
-  );
-
-  const deleteContributionForReplacement = useCallback(async () => {
-    if (
-      !isCaptureActive() ||
-      !canDeleteContribution ||
-      !contributionStatus?.contributionId ||
-      !activeRuntimeClient?.deleteContribution ||
-      !uploadSessionId ||
-      !uploadGroupId
-    )
-      return;
-    try {
-      await activeRuntimeClient.deleteContribution(
-        uploadSessionId,
-        uploadGroupId,
-        contributionStatus.contributionId,
-      );
-      replacementTargetRef.current = contributionStatus.contributionId;
-      const currentClip = clipRef.current;
-      if (currentClip) {
-        await unmountReviewPlayer();
-        await releaseOwnedClip(currentClip);
-      }
-      recorder?.reset();
-      setClip(null);
-      setReview(null);
-      setReviewPlayerVisible(true);
-      setUploadProgress({ status: 'idle', percent: 0 });
-      latestUploadRef.current = null;
-      clearContributionStatus();
-      await statusContext?.refreshStatus();
-      onContributionDeleted?.();
-      setMomentsOpen(false);
-      setError('Contribution deleted. Your weekly allowance is restored for a replacement.');
-    } catch (deleteError) {
-      if (!isCaptureActive()) return;
-      if (contributionStatus) {
-        const deletionAvailability =
-          deleteError instanceof LocalRuntimeError &&
-          deleteError.code === 'contribution_deletion_used'
-            ? 'used'
-            : deleteError instanceof LocalRuntimeError &&
-                (deleteError.status === 404 || deleteError.status === 409)
-              ? 'unavailable'
-              : contributionStatus.deletionAvailability;
-        if (deletionAvailability !== contributionStatus.deletionAvailability) {
-          setContributionStatus({ ...contributionStatus, deletionAvailability });
-        }
-      }
-      setError(`The contribution could not be deleted. ${userMessage(deleteError, 'Try again.')}`);
-    }
-  }, [
-    canDeleteContribution,
-    activeRuntimeClient,
-    clearContributionStatus,
-    contributionStatus,
-    isCaptureActive,
-    onContributionDeleted,
-    recorder,
-    releaseOwnedClip,
-    setContributionStatus,
-    statusContext,
-    uploadGroupId,
-    uploadSessionId,
-    unmountReviewPlayer,
-  ]);
   const inReview = Boolean(review && clip && !recording);
   const uploading =
     retroPercent !== null ||
@@ -1375,24 +142,6 @@ export function VideoCaptureScreen({
     if (clip && !uploading) setConfirmDiscard(true);
     else leaveCapture(exitTo);
   };
-  // V7 copy by failure kind; the message itself is in the notice below it.
-  const failure = contributionFailed
-    ? contributionStatus.reason === 'quota_exceeded'
-      ? { title: 'No moments left', body: 'You’ve used all your moments this cycle.' }
-      : contributionStatus.retryable
-        ? {
-            title: 'Couldn’t upload',
-            body: 'It’s kept on this phone and doesn’t count until it’s sealed.',
-          }
-        : {
-            title: 'Couldn’t seal this moment',
-            body: 'This one can’t be retried. Take it again to add a new moment.',
-          }
-    : null;
-  const guidance =
-    Platform.OS === 'web'
-      ? `Up to ${clipLimit} s with sound · portrait or landscape`
-      : `Up to ${clipLimit} s with sound · hold your phone upright`;
 
   return (
     <CameraFrame bokeh={!viewfinder && !inReview} testID="video-capture-screen">
@@ -1416,256 +165,89 @@ export function VideoCaptureScreen({
         )
       ) : null}
       {inReview && clip ? (
-        <View pointerEvents="box-none" style={StyleSheet.absoluteFill} testID="video-review">
-          {reviewPlayerVisible ? (
-            <CapturedVideoReview
-              clip={clip}
-              endSeconds={trimEnd}
-              mode={mode}
-              panelHeight={reviewPanelHeight}
-              onMounted={onReviewPlayerMounted}
-              onUnmounted={onReviewPlayerUnmounted}
-              startSeconds={trimStart}
-            />
-          ) : null}
-          <CamBottom onLayout={(event) => setReviewPanelHeight(event.nativeEvent.layout.height)}>
-            {clip.source === 'file' ? <Tag>Chosen from a file</Tag> : null}
-            <Text style={styles.caption} testID="video-review-facts">
-              {clip.source === 'file'
-                ? `Selected MP4 ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio track detected; server verifies`
-                : `Recorded ${clip.durationSeconds.toFixed(1)} seconds · ${clip.width} × ${clip.height} · audio included`}
-            </Text>
-            {retroPercent !== null ? (
-              <UploadPanel
-                cancelLabel="Cancel retro look"
-                label={`Applying look ${retroPercent}%`}
-                onCancel={() => retroAbortRef.current?.abort()}
-                percent={retroPercent}
-                testID="video-retro-processing"
-              />
-            ) : uploading ? (
-              <UploadPanel
-                label={`Uploading ${uploadProgress.percent}%`}
-                onCancel={() => void cancelUpload()}
-                percent={uploadProgress.percent}
-                testID="video-uploading"
-              />
-            ) : showFailure && failure ? (
-              <FailedPanel
-                accessibilityLabel={`${failure.title}. ${failure.body}${contributionStatus?.message ? ` ${contributionStatus.message}` : ''}`}
-                detail={failure.body}
-                onBackToReview={canRetryContribution ? () => setFailureDismissed(true) : undefined}
-                onRetake={canRetryContribution ? undefined : () => void retake()}
-                onRetry={canRetryContribution ? () => void retryUpload() : undefined}
-                testID="camera-contribution-status-failed"
-                title={failure.title}
-              />
-            ) : uploadProgress.status === 'complete' && !contributionFailed ? (
-              <>
-                <Notice alert={false}>Upload queued as one pending contribution.</Notice>
-                <CamButton height={52} label="Retake" onPress={() => void retake()} />
-              </>
-            ) : (
-              <>
-                <TrimBar
-                  duration={clip.durationSeconds}
-                  end={trimEnd}
-                  onChange={changeTrim}
-                  start={trimStart}
-                />
-                <LookPicker
-                  disabled={retroPercent !== null}
-                  mode={mode}
-                  onChange={(option) => {
-                    setMode(option);
-                    review?.setMode(option);
-                  }}
-                />
-                <ReviewActions>
-                  <CamButton label="Retake" onPress={() => void retake()} style={styles.retake} />
-                  {contributionFailed && !canRetryContribution ? null : (
-                    <CamButton
-                      busy={retryInFlight}
-                      icon="lock"
-                      label="Seal"
-                      onPress={() => void (contributionFailed ? retryUpload() : upload())}
-                      primary
-                      style={styles.seal}
-                      testID="video-seal"
-                    />
-                  )}
-                </ReviewActions>
-              </>
-            )}
-            {error && access !== 'error' ? <Notice>{error}</Notice> : null}
-          </CamBottom>
-        </View>
+        <VideoReviewLayer
+          access={access}
+          canRetryContribution={canRetryContribution}
+          clip={clip}
+          contributionFailed={contributionFailed}
+          contributionStatus={contributionStatus}
+          error={error}
+          mode={mode}
+          panelHeight={reviewState.reviewPanelHeight}
+          playerVisible={lifecycle.reviewPlayerVisible}
+          retroPercent={retroPercent}
+          retryInFlight={retryInFlight}
+          showFailure={showFailure}
+          trimEnd={reviewState.trimEnd}
+          trimStart={reviewState.trimStart}
+          uploadProgress={uploadProgress}
+          uploading={uploading}
+          onBackToReview={() => upload.setFailureDismissed(true)}
+          onCancelRetro={() => lifecycle.retroAbortRef.current?.abort()}
+          onCancelUpload={() => void upload.cancelUpload()}
+          onChangeMode={(option) => {
+            reviewState.setMode(option);
+            review?.setMode(option);
+          }}
+          onChangeTrim={reviewState.changeTrim}
+          onPanelLayout={reviewState.setReviewPanelHeight}
+          onPlayerMounted={lifecycle.onReviewPlayerMounted}
+          onPlayerUnmounted={lifecycle.onReviewPlayerUnmounted}
+          onRetake={() => void retake()}
+          onRetry={() => void upload.retryUpload()}
+          onSeal={() => void upload.upload()}
+        />
       ) : null}
 
       <CamTop allowance={allowance} closeTestID="video-close" onClose={exitTo ? close : undefined}>
         {viewfinder ? (
-          <View
-            accessibilityLabel={
-              recording
-                ? `Recording, ${Math.floor(elapsedSeconds)} of ${clipLimit} seconds`
-                : `Up to ${clipLimit} seconds`
-            }
-            accessible
-            style={styles.timer}
-            testID={recording ? 'video-recording' : undefined}
-          >
-            <View
-              style={[styles.dot, recording && styles.dotOn]}
-              {...(recording ? { dataSet: { rw: 'blink' } } : {})}
-            />
-            <Text style={styles.timerText}>
-              {clock(elapsedSeconds)} / {clock(clipLimit)}
-            </Text>
-          </View>
+          <RecordingTimer
+            clipLimit={clipLimit}
+            elapsedSeconds={elapsedSeconds}
+            recording={recording}
+          />
         ) : null}
       </CamTop>
 
-      {clip ? null : access === 'checking' ? (
-        <CamCard
-          body="Camera and microphone are being checked."
-          title="Checking recording access…"
+      {clip ? null : (
+        <VideoAccessCard
+          access={access}
+          error={error}
+          hasFileFallback={hasFileFallback}
+          platform={platform}
+          onChooseFile={() => void chooseVideoFile()}
+          onOpenSettings={() => void openSettings()}
+          onRefresh={() => void refresh()}
+          onRequestAccess={() => void requestAccess()}
         />
-      ) : access === 'unsupported' ? (
-        <CamCard
-          body={[
-            platform.getVideoCaptureUnavailableReason?.(),
-            hasFileFallback
-              ? 'Live recording is not supported here. Choose an MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
-              : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.',
-          ]
-            .filter((message): message is string => Boolean(message))
-            .join(' ')}
-          testID="video-unsupported"
-          title="Recording is not supported here"
-        >
-          {hasFileFallback ? (
-            <CamButton
-              height={48}
-              label="Choose a video file"
-              onPress={() => void chooseVideoFile()}
-              soft
-            />
-          ) : null}
-        </CamCard>
-      ) : access === 'temporarily-unavailable' ? (
-        <CamCard
-          body={error ?? 'The device capability check is not ready yet. Try again shortly.'}
-          testID="video-temporarily-unavailable"
-          title="Recording is temporarily unavailable"
-        >
-          <CamButton
-            height={48}
-            label={hasFileFallback ? 'Choose a video file' : 'Check again'}
-            onPress={() => void (hasFileFallback ? chooseVideoFile() : refresh())}
-            soft
-          />
-        </CamCard>
-      ) : access === 'permission-undecided' ? (
-        // V1: asked only when the camera first opens; there is no skip.
-        <CamCard
-          body="Rewind records short videos with sound."
-          testID="video-permission"
-          title="Allow camera and mic"
-        >
-          <CamButton height={48} label="Continue" onPress={() => void requestAccess()} soft />
-        </CamCard>
-      ) : access === 'permission-denied' || access === 'permission-blocked' ? (
-        // V2: the system prompt will not show again, so Settings is the way back.
-        <CamCard
-          body="Turn Camera and Microphone on for Rewind in your phone’s Settings, then come back. Nothing was recorded."
-          testID={
-            access === 'permission-blocked' ? 'video-permission-blocked' : 'video-permission-denied'
-          }
-          title="Camera or mic is off"
-        >
-          <CamButton height={48} label="Open Settings" onPress={() => void openSettings()} soft />
-          <CamButton
-            height={48}
-            label="Check again"
-            onPress={() => void (access === 'permission-denied' ? requestAccess() : refresh())}
-          />
-          {hasFileFallback ? (
-            <CamButton
-              height={48}
-              label="Choose a video file"
-              onPress={() => void chooseVideoFile()}
-            />
-          ) : null}
-        </CamCard>
-      ) : access === 'error' ? (
-        <CamCard body={error ?? 'Try again.'} title="Recording access needs checking">
-          <CamButton height={48} label="Check again" onPress={() => void refresh()} soft />
-        </CamCard>
-      ) : null}
+      )}
 
       {clip ? null : (
-        <CamBottom>
-          {error && access !== 'error' && access !== 'temporarily-unavailable' ? (
-            <Notice>{error}</Notice>
-          ) : null}
-          {recording ? null : (
-            <ModeSwitch
-              mode="video"
-              onPhoto={onBack ? () => leaveCapture(onBack) : undefined}
-              photoTestID="video-photo-mode"
-            />
-          )}
-          {viewfinder ? (
-            <LookPicker
-              disabled={recording}
-              mode={mode}
-              onChange={setMode}
-              testID="video-live-look-picker"
-            />
-          ) : null}
-          {viewfinder && browserPreviewMissing ? (
-            <CamButton
-              label="Restore camera preview"
-              onPress={() => void requestAccess()}
-              testID="video-preview-recovery"
-            />
-          ) : viewfinder ? (
-            <ShutterRow
-              center={
-                <Shutter
-                  disabled={clipLimit < 1 && !recording}
-                  fraction={elapsedSeconds / MAX_CLIP_DURATION_SECONDS}
-                  hint={recording ? undefined : `Records up to ${clipLimit} seconds`}
-                  kind="video"
-                  label={recording ? 'Stop recording' : 'Start recording'}
-                  onPress={() => (recording ? recorder?.stop() : void startRecording())}
-                  recording={recording}
-                  testID="video-record"
-                />
-              }
-              left={
-                contributionStatus && !recording ? (
-                  <MomentsButton
-                    count={allowance?.countUsed}
-                    onPress={() => setMomentsOpen(true)}
-                  />
-                ) : null
-              }
-            />
-          ) : null}
-          {recording ? null : (
-            <Text style={styles.caption} testID="video-portrait-guidance">
-              {guidance}
-            </Text>
-          )}
-        </CamBottom>
+        <VideoCaptureControls
+          access={access}
+          allowance={allowance}
+          browserPreviewMissing={browserPreviewMissing}
+          clipLimit={clipLimit}
+          contributionStatus={contributionStatus}
+          elapsedSeconds={elapsedSeconds}
+          error={error}
+          mode={mode}
+          recording={recording}
+          viewfinder={viewfinder}
+          onChangeMode={reviewState.setMode}
+          onOpenMoments={() => setMomentsOpen(true)}
+          onPhoto={onBack ? () => leaveCapture(onBack) : undefined}
+          onRestorePreview={() => void requestAccess()}
+          onStart={() => void startRecording()}
+          onStop={() => recorder?.stop()}
+        />
       )}
 
       {showSealed ? (
         <SealedOverlay
           left={left?.moments ?? null}
           onDone={() => {
-            setSealedHere(false);
+            upload.setSealedHere(false);
             if (onClose) leaveCapture(onClose);
           }}
           testID="camera-contribution-status-sealed"
@@ -1675,7 +257,7 @@ export function VideoCaptureScreen({
         <MomentsDialog
           onClose={() => setMomentsOpen(false)}
           onDelete={canDeleteContribution ? deleteContributionForReplacement : undefined}
-          onRetry={canRetryContribution ? () => void retryUpload() : undefined}
+          onRetry={canRetryContribution ? () => void upload.retryUpload() : undefined}
           retryLabel="Retry upload"
           status={contributionStatus}
         />
@@ -1701,254 +283,3 @@ export function VideoCaptureScreen({
     </CameraFrame>
   );
 }
-
-function CapturedVideoReview({
-  clip,
-  endSeconds,
-  mode,
-  panelHeight,
-  onMounted,
-  onUnmounted,
-  startSeconds,
-}: {
-  clip: RecordedClip;
-  endSeconds: number;
-  mode: CaptureMode;
-  panelHeight: number;
-  onMounted: () => void;
-  onUnmounted: () => void;
-  startSeconds: number;
-}) {
-  const player = useVideoPlayer(clip.sourceUri, (instance) => {
-    instance.loop = false;
-    instance.muted = false;
-    instance.timeUpdateEventInterval = 0.1;
-  });
-  const [currentTime, setCurrentTime] = useState(startSeconds);
-  const [playing, setPlaying] = useState(false);
-  const [playbackError, setPlaybackError] = useState<string | null>(null);
-
-  useEffect(() => {
-    onMounted();
-    return onUnmounted;
-  }, [onMounted, onUnmounted]);
-
-  useEffect(() => {
-    player.pause();
-    player.seekBy(startSeconds - player.currentTime);
-  }, [endSeconds, player, startSeconds]);
-
-  useEffect(() => {
-    const timeSubscription = player.addListener('timeUpdate', ({ currentTime: time }) => {
-      const boundedTime = clampTrimmedPlaybackTime(time, startSeconds, endSeconds);
-      if (time >= endSeconds) {
-        if (time > endSeconds) player.seekBy(endSeconds - time);
-        player.pause();
-        setPlaying(false);
-      }
-      setCurrentTime(boundedTime);
-    });
-    const playingSubscription = player.addListener('playingChange', ({ isPlaying }) => {
-      setPlaying(isPlaying);
-    });
-    const statusSubscription = player.addListener('statusChange', ({ status }) => {
-      if (status === 'error') {
-        setPlaybackError(
-          'This captured video could not be played. Retake it to record another clip.',
-        );
-      }
-    });
-    const endSubscription = player.addListener('playToEnd', () => {
-      player.pause();
-      setPlaying(false);
-      setCurrentTime(endSeconds);
-    });
-    return () => {
-      timeSubscription.remove();
-      playingSubscription.remove();
-      statusSubscription.remove();
-      endSubscription.remove();
-    };
-  }, [endSeconds, player, startSeconds]);
-
-  const seek = (deltaSeconds: number) => {
-    const target = clampTrimmedPlaybackTime(
-      player.currentTime + deltaSeconds,
-      startSeconds,
-      endSeconds,
-    );
-    player.seekBy(target - player.currentTime);
-    setCurrentTime(target);
-    if (target >= endSeconds && playing) {
-      player.pause();
-      setPlaying(false);
-    }
-  };
-
-  const togglePlayback = () => {
-    if (playing) {
-      player.pause();
-      setPlaying(false);
-      return;
-    }
-    if (player.currentTime < startSeconds || player.currentTime >= endSeconds) {
-      player.seekBy(startSeconds - player.currentTime);
-      setCurrentTime(startSeconds);
-    }
-    setPlaybackError(null);
-    player.play();
-    setPlaying(true);
-  };
-
-  return (
-    <View pointerEvents="box-none" style={[styles.playerArea, { bottom: panelHeight + 8 }]}>
-      <View
-        style={
-          clip.width > clip.height
-            ? [styles.landscapeMedia, { aspectRatio: clip.width / clip.height }]
-            : styles.portraitMedia
-        }
-      >
-        <LookPreview fit="contain" mode={mode} testID="video-review-look">
-          <VideoView
-            accessible
-            accessibilityLabel="Captured video preview with audio"
-            contentFit="contain"
-            nativeControls={false}
-            player={player}
-            playsInline
-            style={styles.fillVideo}
-            testID="video-review-player"
-          />
-        </LookPreview>
-      </View>
-      <View
-        pointerEvents="box-none"
-        style={[styles.playLayer, clip.width < clip.height && styles.portraitPlayback]}
-        testID="video-review-playback"
-      >
-        <View style={styles.playRow}>
-          <IconButton dark icon="back" label="Back 5 seconds" onPress={() => seek(-5)} size={44} />
-          <IconButton
-            dark
-            filled
-            icon={playing ? 'pause' : 'play'}
-            label={playing ? 'Pause preview' : 'Play preview'}
-            onPress={togglePlayback}
-            size={72}
-            testID="video-review-playback-toggle"
-          />
-          <IconButton
-            dark
-            icon="forward"
-            label="Forward 5 seconds"
-            onPress={() => seek(5)}
-            size={44}
-          />
-        </View>
-        <Text style={styles.playbackTime} testID="video-review-time">
-          {currentTime.toFixed(1)} / {endSeconds.toFixed(1)} seconds
-        </Text>
-        {playbackError ? <Notice>{playbackError}</Notice> : null}
-      </View>
-    </View>
-  );
-}
-
-function BrowserVideoPreview({
-  fit,
-  onAspect,
-  stream,
-}: {
-  fit: 'cover' | 'contain';
-  onAspect?: (aspect: number) => void;
-  stream: MediaStream | null;
-}) {
-  const setPreviewRef = useCallback(
-    (video: HTMLVideoElement | null) => {
-      if (!video) return;
-      video.srcObject = stream;
-      // Frame size changes when the phone rotates.
-      const measure = () => {
-        if (video.videoWidth > 0 && video.videoHeight > 0) {
-          onAspect?.(video.videoWidth / video.videoHeight);
-        }
-      };
-      video.onloadedmetadata = measure;
-      video.onresize = measure;
-    },
-    [onAspect, stream],
-  );
-  return createElement('video', {
-    'aria-label': 'Live camera preview',
-    autoPlay: true,
-    'data-testid': 'video-live-preview',
-    muted: true,
-    playsInline: true,
-    ref: setPreviewRef,
-    style: {
-      backgroundColor: 'transparent',
-      height: '100%',
-      objectFit: fit,
-      width: '100%',
-    },
-  });
-}
-
-const styles = StyleSheet.create({
-  // A web <video> keeps its intrinsic size inside absolute insets; size it explicitly.
-  fillVideo: {
-    bottom: 0,
-    height: '100%',
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    width: '100%',
-  },
-  timer: {
-    alignItems: 'center',
-    alignSelf: 'center',
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 6,
-  },
-  dot: { backgroundColor: '#ff5a4a', borderRadius: 4, height: 8, opacity: 0.35, width: 8 },
-  dotOn: { opacity: 1 },
-  timerText: {
-    color: '#fff',
-    fontFamily: FONT.monoMedium,
-    fontSize: 15,
-    textShadowColor: 'rgba(0, 0, 0, 0.6)',
-    textShadowRadius: 6,
-  },
-  caption: {
-    color: 'rgba(255, 255, 255, 0.86)',
-    fontFamily: FONT.body,
-    fontSize: 13,
-    textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.6)',
-    textShadowRadius: 6,
-  },
-  playerArea: { position: 'absolute', top: 92, left: 0, right: 0, justifyContent: 'center' },
-  landscapeMedia: { width: '100%', maxHeight: '72%', flexShrink: 1, position: 'relative' },
-  portraitMedia: { flex: 1, position: 'relative' },
-  portraitPlayback: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  playLayer: {
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 22,
-    backgroundColor: 'rgba(8,5,4,.82)',
-  },
-  playRow: { alignItems: 'center', flexDirection: 'row', gap: 22 },
-  playbackTime: {
-    color: '#fff',
-    fontFamily: FONT.monoMedium,
-    fontSize: 13,
-    textShadowColor: 'rgba(0, 0, 0, 0.6)',
-    textShadowRadius: 6,
-  },
-  retake: { flex: 1 },
-  seal: { flex: 1.6 },
-});
