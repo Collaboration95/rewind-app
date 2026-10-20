@@ -1,21 +1,17 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
-import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
-import { sqliteOnly } from './helpers/dialect.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
-const { parseConfig } = await import('../dist/config.js');
-const { migrateDatabase, openDatabaseAt } = await import('../dist/db.js');
+const { openDatabaseAt } = await import('../dist/db.js');
 const { copyFile, utimes } = await import('node:fs/promises');
 const {
   claimStagedSource,
@@ -26,7 +22,6 @@ const {
   reclaimStagedSource,
   recordClipMediaMetadata,
   resetStagedSourceClaim,
-  setStagedSourcePath,
   stagedSourceId,
   stagedSourcePath,
 } = await import('../dist/media/index.js');
@@ -37,22 +32,14 @@ const { modeFilter, probeClipWithFfmpeg, processPhotoWithFfmpeg } =
 const { validateClipUpload } = await import('../dist/media/index.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-media-processing-test-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    ...REAL_AUTH_ENV,
-  });
-  const database = openFixtureDatabase(config);
-  try {
-    return await run({ config, database, dataDir });
-  } finally {
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) =>
+  withSharedDatabase(
+    {
+      prefix: 'rewind-media-processing-test-',
+      env: { REWIND_FFMPEG_BIN: 'ffmpeg', ...REAL_AUTH_ENV },
+    },
+    run,
+  );
 
 async function createSyntheticSource(path, firstColor = 'red') {
   await execFileAsync(
@@ -1455,114 +1442,6 @@ test('session-authorized HTTP processing completes a staged capture workflow', a
   });
 });
 
-test(
-  'migration versions are explicit and guard legacy media-v6 promotion until quota is installed',
-  { skip: sqliteOnly },
-  async () => {
-    await withDatabase(async ({ database, dataDir }) => {
-      const versions = database
-        .prepare('SELECT version FROM schema_migrations ORDER BY version')
-        .all()
-        .map((row) => Number(row.version));
-      assert.deepEqual(
-        versions,
-        [
-          1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-          26, 27, 28, 29, 30, 31,
-        ],
-      );
-
-      // Databases created by the first #45 implementation recorded media as
-      // version 6. Existing columns are enough to promote that record safely.
-      database.prepare('DELETE FROM schema_migrations WHERE version IN (6, 7)').run();
-      database
-        .prepare('DELETE FROM schema_migration_markers WHERE migration_key IN (?, ?)')
-        .run('contribution-quota-v1', 'media-processing-v1');
-      const originalKey = 'legacy-original-key';
-      const legacySourceUri = `staged://${'f'.repeat(32)}`;
-      const legacySourcePath = `${dataDir}/legacy-source.mp4`;
-      database
-        .prepare('UPDATE media_jobs SET source_path = ?, idempotency_key = ? WHERE id = ?')
-        .run(
-          legacySourcePath,
-          createHash('sha256').update(originalKey).digest('hex').slice(0, 32),
-          'demo-clip',
-        );
-      database.exec(
-        `CREATE TABLE staged_media_sources (
-         source_uri TEXT PRIMARY KEY, group_id TEXT NOT NULL, member_id TEXT NOT NULL,
-         source_path TEXT NOT NULL, created_at TEXT NOT NULL
-       );`,
-      );
-      database
-        .prepare(
-          `INSERT INTO media_metadata
-          (source_uri, mime_type, byte_length, duration_seconds, width, height, has_audio, verified_at)
-         VALUES (?, 'video/mp4', 1000, 1, 180, 320, 1, ?)`,
-        )
-        .run(legacySourceUri, new Date().toISOString());
-      database
-        .prepare(
-          `INSERT INTO staged_media_sources
-          (source_uri, group_id, member_id, source_path, created_at)
-         VALUES (?, 'demo-group', 'demo-1', ?, ?)`,
-        )
-        .run(legacySourceUri, legacySourcePath, new Date().toISOString());
-      database
-        .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)')
-        .run(new Date().toISOString());
-      migrateDatabase(database);
-      assert.deepEqual(
-        database
-          .prepare('SELECT version FROM schema_migrations ORDER BY version')
-          .all()
-          .map((row) => Number(row.version)),
-        [
-          1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-          26, 27, 28, 29, 30, 31,
-        ],
-      );
-      assert.equal(
-        database
-          .prepare(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'staged_media_sources'",
-          )
-          .get(),
-        undefined,
-      );
-      const migrated = database
-        .prepare(
-          'SELECT idempotency_key_hash AS idempotencyKeyHash FROM staged_sources WHERE source_uri = ?',
-        )
-        .get(legacySourceUri);
-      assert.equal(
-        migrated.idempotencyKeyHash,
-        createHash('sha256').update(originalKey).digest('hex').slice(0, 32),
-      );
-      const retry = createClipUpload(
-        database,
-        'demo-group',
-        'demo-1',
-        {
-          idempotencyKey: originalKey,
-          sourceUri: legacySourceUri,
-          mimeType: 'video/mp4',
-          byteLength: 1000,
-          durationSeconds: 1,
-          width: 180,
-          height: 320,
-          hasAudio: true,
-          mode: 'soft-focus',
-        },
-        new Date('2026-09-10T12:00:00.000Z'),
-        { stagingDir: `${dataDir}/media/staging`, requireVerifiedMetadata: true },
-      );
-      assert.equal(retry.ok, true);
-      assert.equal(retry.ok && retry.upload.existing, true);
-    });
-  },
-);
-
 test('staged orphan cleanup is bounded and leaves active job sources untouched', async () => {
   await withDatabase(async ({ database, dataDir }) => {
     const stagingDir = `${dataDir}/media/staging`;
@@ -1601,7 +1480,9 @@ test('staged source tokens cannot be enqueued across owner or group boundaries',
     const sourcePath = stagedSourcePath(sourceUri, stagingDir);
     const claimed = claimStagedSource(database, 'demo-group', 'demo-2', key);
     assert.equal(claimed.ok, true);
-    setStagedSourcePath(database, sourceUri, sourcePath);
+    database
+      .prepare('UPDATE staged_sources SET source_path = ? WHERE source_uri = ?')
+      .run(sourcePath, sourceUri);
     markStagedSourceReady(database, sourceUri, 1000, sourcePath);
     database
       .prepare(

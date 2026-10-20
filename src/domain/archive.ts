@@ -13,11 +13,6 @@ export interface ReleasedClip {
   downloadUrl: string;
 }
 
-export interface ReleasedArchive {
-  films: ReleasedFilm[];
-  clips: ReleasedClip[];
-}
-
 export type ReleasedArchiveMedia = ReleasedFilm | ReleasedClip;
 
 function filenamePart(value: string): string {

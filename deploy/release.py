@@ -272,7 +272,7 @@ def build(output, green_sha, config_version, branch):
             run("docker", "build", "--label", f"org.opencontainers.image.revision={sha}",
                 *build_args, "-f", dockerfile, "-t", f"{image}:{sha}", ".")
             run("docker", "save", "-o", str(temp / f"{name}.tar"), f"{image}:{sha}")
-        migration_source = (ROOT / "server/src/db.ts").read_text()
+        migration_source = (ROOT / "server/src/schema.ts").read_text()
         versions = [int(number) for number in re.findall(r"\{\s*version:\s*(\d+)\s*,\s*key:", migration_source)]
         if not versions:
             fail("no declared schema migration versions")

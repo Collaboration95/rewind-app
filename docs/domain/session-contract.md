@@ -69,7 +69,7 @@ general API session or a public S3 URL. See the
 ## Implementation references
 
 - [Server session lifecycle](../../server/src/auth/index.ts) and
-  [HTTP transport, cookie and Cognito handlers](../../server/src/http.ts).
+  [HTTP transport, cookie and Cognito handlers](../../server/src/routes/auth-routes.ts).
 - [Cognito validation](../../server/src/auth/cognito.ts) and
   [auth/environment configuration](../../server/src/config.ts).
 - [Client account transport and SecureStore](../../src/auth/real-account-client.ts).

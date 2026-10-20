@@ -6,6 +6,7 @@ import { RealAccountClient } from '../src/auth/real-account-client';
 import { useRealAccount } from '../src/auth/RealAccountProvider';
 import { RealAccountChatScreen } from '../src/chat/RealAccountChatScreen';
 import type { ChatMessageEvent } from '../src/chat/realtime-client';
+import { jsonResponse as response } from './mocks/fetch';
 
 const mockMessageListeners: ((event: unknown) => void)[] = [];
 const mockEventSources: {
@@ -59,14 +60,6 @@ const savedMessage = {
   replyTo: null,
   reactionCounts: { '✨': 0 },
 };
-
-function response(body: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => body,
-  } as Response;
-}
 
 describe('real-account chat', () => {
   it('loads history older than the first 100 and keeps newer live events deduplicated', async () => {

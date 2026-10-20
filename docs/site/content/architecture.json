@@ -1,0 +1,804 @@
+{
+  "title": "Technology and architecture",
+  "lede": "Rewind combines a browser PWA, a modular Node server, relational metadata and private media storage to turn group contributions into a released film.",
+  "intro": [
+    "This map follows the 20 October 2026 refactor checkout. The code takes precedence over older report models: real accounts are the product, the synthetic Demo is removed, and hosted dev uses PostgreSQL. Deployment diagrams describe the repository configuration; release completion remains tracked separately."
+  ],
+  "sections": [
+    {
+      "id": "stack",
+      "title": "The technology stack",
+      "summary": "One root package.json declares the client and server dependencies; TypeScript is compiled before the server runs.",
+      "paragraphs": [
+        "The web client is an Expo export built from React Native components. The PWA adds a manifest and a project-owned service worker (no special cases for film or clip paths). It caches the public shell and matching bundles; it does not cache private API/media responses or queue writes while offline."
+      ],
+      "tables": [
+        {
+          "columns": ["Boundary", "Version or implementation", "Purpose"],
+          "rows": [
+            [
+              "Client framework",
+              "Expo `~57.0.26`; React Native `0.86.3`; react-native-web `~0.21.3`",
+              "Share components and capture adapters across web and retained native development paths."
+            ],
+            ["Rendering", "React and react-dom `19.2.3`", "Components, hooks and context."],
+            ["Language", "TypeScript `~6.0.3`", "Client types and compiled server JavaScript."],
+            [
+              "Server",
+              "Node `>=22.13.0` required; `.nvmrc` is `22.23.3`; Docker runtime is `26.10.0`",
+              "Built-in `node:http` and `node:sqlite`; no Express routing layer. These are declared versions, not a live host probe."
+            ],
+            [
+              "Hosted SQL",
+              "pg `8.23.1`; Terraform selects PostgreSQL 17",
+              "Shared synchronous SQL surface through a worker-thread adapter. SQLite is bundled with Node."
+            ],
+            [
+              "AWS integration",
+              "S3/Cognito SDK packages `3.1146.0`; aws-jwt-verify `5.2.1`",
+              "Private object storage and verified managed-login identity."
+            ],
+            [
+              "Reminders",
+              "web-push `3.6.7`",
+              "VAPID web push received by the service worker; Expo push remains disabled."
+            ],
+            [
+              "Media / proxy",
+              "Docker installs FFmpeg `8.1.2-r0`; web image uses nginx `1.31.6`",
+              "Probe and compile media; serve the static export and proxy the API."
+            ],
+            [
+              "PWA",
+              "`public/manifest.json`, `public/sw.js`, build stamping script",
+              "Installable shell with build-specific cache identity and generic push notifications."
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "path": "package.json",
+          "label": "package.json"
+        },
+        {
+          "path": ".nvmrc",
+          "label": ".nvmrc"
+        },
+        {
+          "path": "deploy/Dockerfile",
+          "label": "deploy/Dockerfile"
+        },
+        {
+          "path": "deploy/web.Dockerfile",
+          "label": "deploy/web.Dockerfile"
+        },
+        {
+          "path": "public/sw.js",
+          "label": "public/sw.js"
+        },
+        {
+          "path": "public/manifest.json",
+          "label": "public/manifest.json"
+        },
+        {
+          "path": "scripts/stamp-pwa-build.mjs",
+          "label": "scripts/stamp-pwa-build.mjs"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is the PWA a separate application?",
+          "a": "No. It installs the Expo web export. The manifest and service worker add browser installation, shell caching and web push."
+        },
+        {
+          "q": "Does the PWA work fully offline?",
+          "a": "The public shell can open offline. Group reads, sign-in, uploads and chat still require the server; private responses and pending writes are not cached."
+        }
+      ]
+    },
+    {
+      "id": "layers",
+      "title": "Logical layers",
+      "summary": "Presentation, application rules and infrastructure are separate code responsibilities inside one application deployment.",
+      "visuals": [
+        {
+          "type": "layers",
+          "title": "From user intent to durable state",
+          "layers": [
+            {
+              "label": "Presentation",
+              "sub": "Screens and hooks",
+              "detail": "React Native screens collect input and render server state. Shared UI tokens and primitives keep feature screens consistent.",
+              "icon": "react"
+            },
+            {
+              "label": "Client contracts",
+              "sub": "Domain and API adapters",
+              "detail": "src/domain holds framework-free types and policy helpers. Auth, capture, chat and reminder clients translate HTTP responses into those contracts."
+            },
+            {
+              "label": "HTTP boundary",
+              "sub": "Dispatch and request policy",
+              "detail": "http.ts dispatches to route tables. Routes bound bodies, validate transport and sessions, then call application functions.",
+              "icon": "nodedotjs"
+            },
+            {
+              "label": "Application rules",
+              "sub": "Access, capture, cycle, participation",
+              "detail": "Membership, quota, lifecycle, chat and release checks decide what may happen. The pure cycle engine is distinct from database-backed orchestration.",
+              "accent": true
+            },
+            {
+              "label": "Infrastructure",
+              "sub": "SQL, media, providers",
+              "detail": "db.ts and schema.ts manage relational state; media adapters and FFmpeg handle bytes; Cognito and web-push providers handle external protocols."
+            }
+          ],
+          "caption": "These are logical dependencies, not five network services. SQL calls remain in application modules; this is not a claim of a fully isolated repository layer."
+        }
+      ],
+      "paragraphs": [
+        "Feature modules share transactions and one release unit. The default CLI starts HTTP, the cycle/media scheduler and configured reminder loop. FFmpeg child processes and the PostgreSQL I/O thread do not turn these modules into independently deployed microservices.",
+        "The import guard keeps `src/domain` and the pure cycle engine free of non-relative imports. It is a focused static rule, not proof that every dependency obeys a strict architectural layer. See [design decisions](decisions.html#monolith) and [analysis to design](analysis-design.html)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/http.ts",
+          "label": "server/src/http.ts"
+        },
+        {
+          "path": "server/src/cli.ts",
+          "label": "server/src/cli.ts"
+        },
+        {
+          "path": "server/src/cycles/engine.ts",
+          "label": "server/src/cycles/engine.ts"
+        },
+        {
+          "path": "server/src/cycles/lifecycle.ts",
+          "label": "server/src/cycles/lifecycle.ts"
+        },
+        {
+          "path": "scripts/check-architecture.mjs",
+          "label": "scripts/check-architecture.mjs"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why call this a modular monolith?",
+          "a": "Features are separate TypeScript modules but share one server deployment and relational state. They call functions directly rather than communicating through service APIs."
+        },
+        {
+          "q": "Where is a rule enforced?",
+          "a": "The server is authoritative for membership, quota and publication. Client checks guide the user but do not authorise a request."
+        }
+      ]
+    },
+    {
+      "id": "modules",
+      "title": "Packages and the server refactor",
+      "summary": "The presentation packages map to feature modules; they are not separate npm packages.",
+      "visuals": [
+        {
+          "type": "cards",
+          "title": "Four members, five modelling packages",
+          "items": [
+            {
+              "label": "Access",
+              "sub": "Member A · UC01–UC03",
+              "detail": "Sign-in, profiles, private groups, memberships and invitations. Code: auth/* and groups/*."
+            },
+            {
+              "label": "Capture",
+              "sub": "Member B · UC04–UC06",
+              "detail": "Photos/videos, upload intent, allowance and correction. Code: contributions/*, media/* and capture hooks."
+            },
+            {
+              "label": "Cycle",
+              "sub": "Member C · UC07–UC08",
+              "detail": "Collection boundaries, durable compilation and release publication. Code: cycles/*, jobs/* and ffmpeg.ts."
+            },
+            {
+              "label": "Archive",
+              "sub": "Member C · UC12–UC14",
+              "detail": "Premiere, released films, own clips and capability-based playback/download. Code: archive/* and archive-routes.ts."
+            },
+            {
+              "label": "Participation",
+              "sub": "Member D · UC09–UC11",
+              "detail": "Prompt/timezone settings, web-push reminders and private chat. Code: reminders/*, chat/* and realtime/*."
+            }
+          ],
+          "caption": "The fixed ownership split is the presentation assumption. It does not assert historical authorship of each commit."
+        }
+      ],
+      "tables": [
+        {
+          "columns": ["Module", "Responsibility after refactor"],
+          "rows": [
+            [
+              "`server/src/http.ts`",
+              "Server setup, ordered dispatch, health and request observation."
+            ],
+            [
+              "`routes/auth-routes.ts`, `routes/real-routes.ts`",
+              "Authentication; groups, invites, safety, reminder and upload-intent endpoints."
+            ],
+            [
+              "`routes/contribution-routes.ts`, `chat-routes.ts`, `archive-routes.ts`",
+              "Capture intake/status/correction; history/SSE/messages/reactions; premiere/Archive and media capabilities."
+            ],
+            [
+              "`routes/context.ts`, `body.ts`, `limits.ts`, `respond.ts`, `media-access.ts`",
+              "Typed route context, body bounds, rate/concurrency limits, responses and authorised streaming."
+            ],
+            [
+              "`db.ts`, `schema.ts`, `postgres/*`",
+              "Open the selected engine, shared queries, migrations and PostgreSQL compatibility."
+            ],
+            [
+              "`media/*`, `jobs/*`, `cycles/*`, `ffmpeg.ts`",
+              "Immutable object references, jobs/claims, scheduling, retention, lifecycle and compilation."
+            ],
+            [
+              "`auth/*`, `policy.ts`, `audit/*`, `reminders/*`, `chat/*`, `realtime/*`",
+              "Identity, resource access, bounded audit events, reminder outbox and chat delivery."
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "path": "server/src/http.ts",
+          "label": "server/src/http.ts"
+        },
+        {
+          "path": "server/src/routes/context.ts",
+          "label": "server/src/routes/context.ts"
+        },
+        {
+          "path": "server/src/routes/real-routes.ts",
+          "label": "server/src/routes/real-routes.ts"
+        },
+        {
+          "path": "server/src/schema.ts",
+          "label": "server/src/schema.ts"
+        },
+        {
+          "path": "docs/design",
+          "label": "docs/design"
+        },
+        {
+          "path": "doc/planning/report/packages",
+          "label": "doc/planning/report/packages"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What changed in the HTTP refactor?",
+          "a": "The large transport module was split into route tables and shared route helpers. http.ts now composes them; the API remains one server."
+        },
+        {
+          "q": "Does a report package equal a deployable component?",
+          "a": "No. Access, capture, cycle, participation and archive organise the models and explanation. Implementation boundaries are folders and functions within the shared application."
+        }
+      ]
+    },
+    {
+      "id": "deployment",
+      "title": "Deployment and external services",
+      "summary": "The declared hosted path is browser/PWA → CloudFront → nginx → Node on a Lightsail host.",
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "The hosted request path",
+          "steps": [
+            {
+              "label": "Browser / PWA",
+              "sub": "HTTPS and app cookie",
+              "detail": "Loads the Expo web export and sends same-origin /api requests.",
+              "icon": "pwa"
+            },
+            {
+              "label": "CloudFront",
+              "sub": "Viewer HTTPS; origin proof",
+              "detail": "Redirects viewers to HTTPS and injects the configured origin secret. The declared connection to the host origin is HTTP."
+            },
+            {
+              "label": "nginx",
+              "sub": "Static export and /api",
+              "detail": "Serves web files, strips /api before proxying, disables API buffering/cache and forwards the origin proof.",
+              "icon": "nginx"
+            },
+            {
+              "label": "Node container",
+              "sub": "HTTP and background loops",
+              "detail": "Calls PostgreSQL, S3, Cognito and web-push providers. Compose supplies persistent local mounts for runtime data and temporary media.",
+              "icon": "nodedotjs",
+              "accent": true
+            },
+            {
+              "label": "External services",
+              "sub": "PostgreSQL · S3 · Cognito",
+              "detail": "PostgreSQL holds relational state, S3 holds private media and Cognito proves identity. Node calls each service; the browser also redirects to Cognito and performs approved incoming S3 PUTs."
+            }
+          ],
+          "caption": "The final box groups parallel service connections, not a chain between providers. nginx is the application proxy in deploy/compose.yaml; this view follows the checked-in configuration."
+        }
+      ],
+      "tables": [
+        {
+          "columns": ["Connection", "Why it exists"],
+          "rows": [
+            [
+              "Node → PostgreSQL",
+              "Hosted relational data over verified TLS, with an environment binding."
+            ],
+            [
+              "Browser → S3; Node ↔ S3",
+              "An approved presigned PUT uploads incoming bytes. Node verifies/materialises them for processing and authorised serving, then stores processed clips and films."
+            ],
+            [
+              "Browser ↔ Cognito; Node → Cognito",
+              "Managed Login redirects the browser; Node exchanges the code and verifies identity before issuing a Rewind session."
+            ],
+            [
+              "Node → web-push provider → service worker",
+              "A durable outbox supplies generic reminder notifications."
+            ],
+            [
+              "Local browser → local proxy → Node → SQLite/disk",
+              "make run-real serves localhost:8090 with short cycles; it exercises the same real-account application."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Terraform declares isolated dev/release hosts, origins, storage and Cognito pools. Hosted dev has PostgreSQL cutover enabled. In the inspected configuration, release database provisioning is enabled but cutover is false. [#230](https://github.com/Collaboration95/rewind-app/issues/230), [#504](https://github.com/Collaboration95/rewind-app/issues/504) and [#515](https://github.com/Collaboration95/rewind-app/issues/515) remain open as checked on 20 October; this page does not claim release is operational. See [AWS setup](aws.html)."
+      ],
+      "sources": [
+        {
+          "path": "deploy/compose.yaml",
+          "label": "deploy/compose.yaml"
+        },
+        {
+          "path": "deploy/nginx.conf",
+          "label": "deploy/nginx.conf"
+        },
+        {
+          "path": "infra/terraform/demo/web-distribution.tf",
+          "label": "infra/terraform/demo/web-distribution.tf"
+        },
+        {
+          "path": "infra/terraform/release/main.tf",
+          "label": "infra/terraform/release/main.tf"
+        },
+        {
+          "path": "infra/terraform/media/database.tf",
+          "label": "infra/terraform/media/database.tf"
+        },
+        {
+          "path": "server/src/cli.ts",
+          "label": "server/src/cli.ts"
+        },
+        {
+          "path": "scripts/run-real-local.mjs",
+          "label": "scripts/run-real-local.mjs"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is the origin hop encrypted?",
+          "a": "The declared CloudFront custom origin is HTTP. The runtime trusts forwarded HTTPS only with the configured origin secret; a forwarded protocol header alone is insufficient."
+        },
+        {
+          "q": "Are there multiple API replicas?",
+          "a": "The default configuration has one runtime. SSE fan-out, media grants, rate buckets and identity caches are process-local; more replicas would need coordination or routing changes."
+        }
+      ]
+    },
+    {
+      "id": "upload",
+      "title": "Request path: upload a contribution",
+      "summary": "An upload intent reserves allowance before S3 transfer; completion verifies the exact object before registering the contribution.",
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "Hosted direct transfer",
+          "steps": [
+            {
+              "label": "Reserve",
+              "sub": "POST upload-intents",
+              "detail": "The server validates the real session, selected membership, cycle and remaining allowance. An idempotent intent records an expiring reservation."
+            },
+            {
+              "label": "Transfer",
+              "sub": "Presigned PUT to S3",
+              "detail": "The browser uploads to the approved incoming key with bound headers. A storage write does not yet publish a contribution."
+            },
+            {
+              "label": "Complete",
+              "sub": "POST intent /complete",
+              "detail": "The client supplies versionId. The server pins and verifies object metadata/bytes, rechecks authority, and atomically creates quota usage, contribution and clip-job receipts.",
+              "accent": true
+            },
+            {
+              "label": "Process",
+              "sub": "FFmpeg and durable job",
+              "detail": "The processing pipeline normalises the clip/photo, verifies its output and stores the result. The client uses job status to show queued, processing, sealed or failed."
+            }
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The runtime paths are `POST /real/groups/:groupId/upload-intents`, `POST .../:intentId/complete` and `POST .../:intentId/reconcile`; the web proxy adds the `/api` prefix. Reconciliation recovers a transfer whose completion response was lost. Repeating a completed intent returns its existing receipt.",
+        "The disk path sends bytes through `POST /contributions/upload/source`, then registers them through `/contributions/upload` and processes the clip job. Server probing supplies trusted metadata. The request body, captured dimensions or a client-generated ID never establish ownership by themselves. See [database allowance and integrity](database.html#integrity)."
+      ],
+      "sources": [
+        {
+          "path": "src/capture/direct-transfer.ts",
+          "label": "src/capture/direct-transfer.ts"
+        },
+        {
+          "path": "src/capture/real-account-video-runtime.ts",
+          "label": "src/capture/real-account-video-runtime.ts"
+        },
+        {
+          "path": "server/src/routes/real-routes.ts",
+          "label": "server/src/routes/real-routes.ts"
+        },
+        {
+          "path": "server/src/routes/contribution-routes.ts",
+          "label": "server/src/routes/contribution-routes.ts"
+        },
+        {
+          "path": "server/src/media/upload-intents.ts",
+          "label": "server/src/media/upload-intents.ts"
+        },
+        {
+          "path": "server/src/ffmpeg.ts",
+          "label": "server/src/ffmpeg.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What if a retry arrives twice?",
+          "a": "Intent uniqueness and request hashes distinguish a safe replay from a conflicting request. Completion stores the contribution and job receipt in the same transaction as consumed quota."
+        },
+        {
+          "q": "Can a successful S3 upload bypass quota?",
+          "a": "No. S3 grants byte transfer only. The application rechecks quota, membership, cycle and exact object version before it registers the contribution."
+        }
+      ]
+    },
+    {
+      "id": "playback",
+      "title": "Request path: play a film",
+      "summary": "The server advertises a short-lived media grant, then rechecks authority and integrity when the player uses it.",
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "From Archive entry to video bytes",
+          "steps": [
+            {
+              "label": "Request film",
+              "sub": "Archive or premiere API",
+              "detail": "The signed-in member requests a released film. The route checks selected membership, release state and the recorded output."
+            },
+            {
+              "label": "Issue grant",
+              "sub": "Two-minute opaque token",
+              "detail": "MediaCapabilities binds the grant to a session hash, group, job, purpose and exact output. It returns /media/access/<token>."
+            },
+            {
+              "label": "Resolve",
+              "sub": "GET /media/access/<token>",
+              "detail": "The server checks expiry, stored session, current selected membership, published release and unchanged job output. A different presented session is rejected.",
+              "accent": true
+            },
+            {
+              "label": "Verify and stream",
+              "sub": "MP4 byte ranges",
+              "detail": "The server verifies a bounded snapshot from disk or S3, rechecks the grant and serves GET/HEAD or Range bytes with no-store. Download grants add an attachment filename."
+            }
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The URL contains neither the application session token nor an object-store path. A media element can use the grant without attaching an app cookie; the server still checks the issuing session in SQL. It is a temporary bearer capability and must be treated as private.",
+        "The refactor removes legacy direct film/clip download routes. S3 remains private; playback is mediated by the server so revocation, membership changes and output-integrity checks still apply. See [the media decision](decisions.html#media)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/routes/archive-routes.ts",
+          "label": "server/src/routes/archive-routes.ts"
+        },
+        {
+          "path": "server/src/routes/media-access.ts",
+          "label": "server/src/routes/media-access.ts"
+        },
+        {
+          "path": "server/src/archive/capabilities.ts",
+          "label": "server/src/archive/capabilities.ts"
+        },
+        {
+          "path": "server/src/archive/store-serving.ts",
+          "label": "server/src/archive/store-serving.ts"
+        },
+        {
+          "path": "src/real/film-playback.ts",
+          "label": "src/real/film-playback.ts"
+        },
+        {
+          "path": "src/archive/archive-download.ts",
+          "label": "src/archive/archive-download.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why not expose a signed S3 GET?",
+          "a": "The application wants current session, selected membership and publication checks when bytes are requested. Server-mediated capability resolution keeps those checks together."
+        },
+        {
+          "q": "What if the server restarts?",
+          "a": "The process-local grant map is lost. The client must obtain a new URL; the film and durable metadata remain in storage."
+        }
+      ]
+    },
+    {
+      "id": "chat",
+      "title": "Request path: realtime chat",
+      "summary": "Messages use HTTP mutations and durable SQL events; server-sent events carry updates to connected members.",
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "Persist before publishing",
+          "steps": [
+            {
+              "label": "Send message",
+              "sub": "POST group /messages",
+              "detail": "The route checks transport, session, selected membership, rate limits, body and optional reply target."
+            },
+            {
+              "label": "Commit",
+              "sub": "messages + realtime_events",
+              "detail": "A caller message ID makes matching retries idempotent. The message and ordered event cursor persist before fan-out.",
+              "accent": true
+            },
+            {
+              "label": "Fan out",
+              "sub": "Process-local SSE hub",
+              "detail": "The route publishes a newly committed event to authorised streams. Reactions use advisory updates plus a snapshot refresh on reconnect."
+            },
+            {
+              "label": "Resume",
+              "sub": "History and event cursor",
+              "detail": "GET /realtime/groups/:id/events streams updates; persisted message events support replay. The client closes obsolete streams when chat/group context changes."
+            }
+          ]
+        }
+      ],
+      "paragraphs": [
+        "This is SSE plus normal HTTP, not a WebSocket service. `GET /realtime/groups/:id/messages` supplies bounded history; `POST` on that path sends text. Replies and the supported reaction are separate validated mutations.",
+        "The service worker leaves realtime event requests browser-owned so cancellation closes the actual network stream. nginx disables response buffering. Session/group checks also run during stream handling. A SQL event log makes message replay durable, while live subscribers and reaction revisions remain process-local."
+      ],
+      "sources": [
+        {
+          "path": "server/src/routes/chat-routes.ts",
+          "label": "server/src/routes/chat-routes.ts"
+        },
+        {
+          "path": "server/src/chat/index.ts",
+          "label": "server/src/chat/index.ts"
+        },
+        {
+          "path": "server/src/realtime/index.ts",
+          "label": "server/src/realtime/index.ts"
+        },
+        {
+          "path": "src/chat/realtime-client.ts",
+          "label": "src/chat/realtime-client.ts"
+        },
+        {
+          "path": "src/chat/reaction-sync.ts",
+          "label": "src/chat/reaction-sync.ts"
+        },
+        {
+          "path": "public/sw.js",
+          "label": "public/sw.js"
+        },
+        {
+          "path": "deploy/nginx.conf",
+          "label": "deploy/nginx.conf"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why persist events if a live stream exists?",
+          "a": "The stream can disconnect. Ordered message events let the client resume from a cursor and recover updates it missed."
+        },
+        {
+          "q": "Are reaction events part of that durable cursor?",
+          "a": "No. Reaction rows persist, but live reaction revisions are advisory. Reconnect refreshes reaction counts without advancing the message/unread cursor."
+        }
+      ]
+    },
+    {
+      "id": "cross-cutting",
+      "title": "Cross-cutting policy and operations",
+      "summary": "Every feature shares identity, resource policy, bounded intake and safe operational reporting.",
+      "tables": [
+        {
+          "columns": ["Concern", "Concrete implementation"],
+          "rows": [
+            [
+              "Identity and sessions",
+              "Cognito code + PKCE exchange produces a Rewind opaque session. Web uses a Secure, HttpOnly, SameSite=Lax __Host cookie; SQL stores its SHA-256 hash. Idle expiry is 7 days; absolute expiry is 30 days."
+            ],
+            [
+              "Resource authority",
+              "Resolve account and profile from the credential; check accepted membership and selected group. Recheck after asynchronous media work. Request group/member IDs cannot grant authority."
+            ],
+            [
+              "Rate / concurrency",
+              "Process-local token buckets bound chat, group creation and safety actions; persistent login/invite throttles survive restart. Separate intake, processing, Archive and stream limits bound resource use."
+            ],
+            [
+              "Body limits",
+              "Default JSON 64 KiB; upload-intent and reminder registration bodies 8 KiB; staged photos 10 MiB and clips 50 MiB. Timeouts and bounded rejection handling constrain slow intake."
+            ],
+            [
+              "Errors",
+              "Responses use stable error codes with user-facing messages. Hidden/unavailable media gets safe denial/not-found responses; uncaught failures become generic errors with request IDs."
+            ],
+            [
+              "Audit / observation",
+              "Allowlisted session/job/integrity/repair events persist with result/time and sanitised identifiers. Optional request timing logs route templates and SQL timing; raw query values, tokens and message content are excluded. The actor is the signed-in member’s profile id for real-account actions, and null for system or scheduler actions."
+            ],
+            [
+              "Integrity / recovery",
+              "Generation-fenced durable job claims, pinned object versions, SHA-256/size receipts and schema readiness stop stale work or altered outputs from being treated as ready."
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "path": "server/src/auth/index.ts",
+          "label": "server/src/auth/index.ts"
+        },
+        {
+          "path": "server/src/routes/respond.ts",
+          "label": "server/src/routes/respond.ts"
+        },
+        {
+          "path": "server/src/routes/body.ts",
+          "label": "server/src/routes/body.ts"
+        },
+        {
+          "path": "server/src/routes/limits.ts",
+          "label": "server/src/routes/limits.ts"
+        },
+        {
+          "path": "server/src/policy.ts",
+          "label": "server/src/policy.ts"
+        },
+        {
+          "path": "server/src/audit/index.ts",
+          "label": "server/src/audit/index.ts"
+        },
+        {
+          "path": "server/src/observability/index.ts",
+          "label": "server/src/observability/index.ts"
+        },
+        {
+          "path": "server/src/media/integrity.ts",
+          "label": "server/src/media/integrity.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Does checking membership once cover a long upload?",
+          "a": "No. Asynchronous transfer and probing can outlive the original context. Completion and serving recheck current authority before committing or sending bytes."
+        },
+        {
+          "q": "Does audit record every user action?",
+          "a": "No. It records a defined set of session, processing and integrity events. Sanitisation also limits stored identifiers; it is not a complete user-activity ledger."
+        }
+      ]
+    },
+    {
+      "id": "client",
+      "title": "Client screens, state and API boundary",
+      "summary": "The real-account shell composes feature hooks and shared UI; server responses remain the authority for private group state.",
+      "tables": [
+        {
+          "columns": ["Area", "Code and state ownership"],
+          "rows": [
+            [
+              "Entry and account",
+              "App.tsx handles welcome, managed/developer sign-in and display-name onboarding. RealAccountProvider owns session restore, auth state and authenticatedRequest."
+            ],
+            [
+              "Real screens",
+              "src/real contains Home, Film, Archive, Moments, GroupFlows, Shell and Settings. Settings delegates to prompt, timezone, invite, member and account-deletion steps."
+            ],
+            [
+              "Group composition",
+              "RealAccountGroupExperience composes hooks for loading, navigation, membership flows, capture, reminders, ledger and refresh. Context/version refs discard stale asynchronous results after a group change."
+            ],
+            [
+              "Feature adapters",
+              "src/capture wraps camera/review/upload and platform storage; src/chat wraps history/SSE/reactions/unread; src/reminders wraps subscription and reminder intents."
+            ],
+            [
+              "Shared code",
+              "src/ui provides tokens, fonts, primitives and icons; src/domain provides typed group/cycle/contribution/film contracts. There is no second synthetic app behind real/."
+            ],
+            [
+              "State and requests",
+              "React hooks/context hold screen and session state. API clients use same-origin /api with browser credentials; retained native development uses a bearer token in SecureStore. postJson shares mutation request formatting."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Navigation is composed from shell tabs and pushed feature/settings state in the group hooks. The current shell tabs are Home, Chat and Archive. Capture and Film are feature views controlled by this composition, rather than independent web applications.",
+        "The 20 October refactor extracts hooks and panels from the group, video-capture and settings screens. That reduces the orchestration inside large components while preserving the existing HTTP contracts. See [patterns](patterns.html) for the design problems behind these boundaries."
+      ],
+      "sources": [
+        {
+          "path": "App.tsx",
+          "label": "App.tsx"
+        },
+        {
+          "path": "src/auth/RealAccountProvider.tsx",
+          "label": "src/auth/RealAccountProvider.tsx"
+        },
+        {
+          "path": "src/auth/real-account-client.ts",
+          "label": "src/auth/real-account-client.ts"
+        },
+        {
+          "path": "src/groups/RealAccountGroupExperience.tsx",
+          "label": "src/groups/RealAccountGroupExperience.tsx"
+        },
+        {
+          "path": "src/groups/use-group-loader.ts",
+          "label": "src/groups/use-group-loader.ts"
+        },
+        {
+          "path": "src/groups/use-group-context-refs.ts",
+          "label": "src/groups/use-group-context-refs.ts"
+        },
+        {
+          "path": "src/capture/VideoCaptureScreen.tsx",
+          "label": "src/capture/VideoCaptureScreen.tsx"
+        },
+        {
+          "path": "src/real/Settings.tsx",
+          "label": "src/real/Settings.tsx"
+        },
+        {
+          "path": "src/real/request.ts",
+          "label": "src/real/request.ts"
+        },
+        {
+          "path": "src/real/Shell.tsx",
+          "label": "src/real/Shell.tsx"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What is shared if screens live in real/?",
+          "a": "The folder names the real-account UI. Shared domain contracts, UI primitives and capture/chat/reminder adapters live in sibling folders; there is no maintained Demo client."
+        },
+        {
+          "q": "How do you avoid showing the old group after switching?",
+          "a": "Group hooks track context versions and selected-group refs. Late responses from the previous context are discarded, and the server independently checks the selected membership."
+        }
+      ]
+    }
+  ]
+}

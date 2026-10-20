@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { onPostgres } from './helpers/dialect.mjs';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { clearFixtureMedia, openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { clearFixtureMedia } from './helpers/fixture-group.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
-const { parseConfig } = await import('../dist/config.js');
 const { openDatabaseAt } = await import('../dist/db.js');
 const { createClipUpload } = await import('../dist/media/index.js');
 const { createCompilationJob, PROCESSING_CLAIM_LEASE_MS, processClipJob, processCompilationJob } =
@@ -26,25 +25,15 @@ const {
   workerIdleMs,
 } = await import('../dist/jobs/worker.js');
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(tmpdir() + '/rewind-durable-worker-test-');
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-  });
-  const database = openFixtureDatabase(config);
-  try {
-    return await run({ config, database, dataDir });
-  } finally {
-    try {
-      database.close();
-    } catch {
-      // A restart test may already have closed this handle.
-    }
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) =>
+  withSharedDatabase(
+    {
+      prefix: 'rewind-durable-worker-test-',
+      env: { REWIND_FFMPEG_BIN: 'ffmpeg' },
+      tolerateClosed: true,
+    },
+    run,
+  );
 
 function workerOptions(config, dataDir, extra = {}) {
   return {

@@ -54,13 +54,6 @@ export interface ChatReactionSnapshot {
   messages: { messageId: string; reactionCounts: Partial<Record<ChatReactionEmoji, number>> }[];
 }
 
-export interface ChatHistoryPage {
-  events: ChatMessageEvent[];
-  nextCursor: number | null;
-  watermarkEventId: number;
-  hasMore: boolean;
-}
-
 /** Message metadata sent to observers that only maintain unread counts. */
 export interface ChatUnreadMessageEvent {
   eventId: number;
@@ -141,8 +134,9 @@ export class RealtimeChatError extends Error {
 }
 
 function normalizeBaseUrl(value: string): string {
-  const trimmed = value.trim().replace(/\/$/, '');
-  if (/^\/(?:[^/].*)?$/i.test(trimmed)) return trimmed || '/';
+  const raw = value.trim();
+  const trimmed = raw.replace(/\/$/, '');
+  if (/^\/(?:[^/].*)?$/i.test(raw)) return trimmed || '/';
   if (!/^https?:\/\//i.test(trimmed)) {
     throw new RealtimeChatError(
       'The local realtime URL must start with http://, https://, or a same-origin / path.',

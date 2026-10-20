@@ -1,17 +1,15 @@
 import { globSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
-// Native build fixtures remain behind test:native-build. Every other root or
-// script test is discovered automatically, including the existing nested suites.
+// Every root and script test is discovered automatically, including the
+// nested suites. test:native-build also runs the native build fixtures alone.
 const files = globSync([
   'tests/*.test.mjs',
   'scripts/*.test.mjs',
   'tests/deploy/*.test.mjs',
   'tests/terraform/*.test.mjs',
   'tests/e2e-real-account/*.test.mjs',
-])
-  .filter((file) => file !== 'tests/native-build.test.mjs')
-  .sort();
+]).sort();
 if (files.length === 0) throw new Error('No root tests discovered.');
 // scripts/run-fast-tests.mjs caps this while other suites share the CPUs; by default
 // node --test uses all of them.

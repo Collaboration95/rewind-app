@@ -36,6 +36,7 @@ import {
   type MediaStore,
 } from './store';
 import { materializeStoredMedia } from './store-files';
+import { beginImmediate } from '../sqlite-busy';
 
 export const UPLOAD_INTENT_TTL_MS = 15 * 60 * 1000;
 /** Reconciliation never follows cursors or assumes that a truncated page is complete. */
@@ -173,19 +174,7 @@ function clock(deps: UploadIntentDependencies): Date {
   return now;
 }
 function transaction<T>(database: RewindDatabase, run: () => T): T {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      database.exec('BEGIN IMMEDIATE');
-      break;
-    } catch (error) {
-      if (
-        attempt >= 7 ||
-        !/SQLITE_BUSY|database is locked/i.test(String((error as Error)?.message))
-      )
-        throw error;
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2 ** attempt);
-    }
-  }
+  beginImmediate(database);
   try {
     const value = run();
     database.exec('COMMIT');
