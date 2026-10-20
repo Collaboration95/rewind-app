@@ -1,0 +1,406 @@
+{
+  "title": "Project conduct",
+  "lede": "We ran four two-week Sprints (0 to 3), tracked work in GitHub Issues and milestones, and merged small pull requests behind an automatic quality gate.",
+  "intro": [
+    "Figures come from `gh` (milestones, issues, PRs) read on 20 Oct 2026, from `AGENTS.md`, and from `doc/planning/project-conduct-evidence.md` (snapshot 15 Oct). That evidence file states what is not recorded, and so does this page: there are no meeting minutes, no per-member hours and no original Sprint 2 commitment. Do not present the gaps as facts."
+  ],
+  "sections": [
+    {
+      "id": "sprints",
+      "title": "Sprints, goals and outcomes",
+      "summary": "Zero-based Sprint names: Sprint 0 is foundation, Sprint 3 (11 to 24 Oct) is the current one.",
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "Sprint timeline",
+          "steps": [
+            {
+              "label": "Sprint 0",
+              "sub": "1 to 12 Sep",
+              "detail": "Foundation: a local walking skeleton with navigation, synthetic member selection and a group prompt/countdown. A prototype only: no real authentication or cloud."
+            },
+            {
+              "label": "Sprint 1",
+              "sub": "13 to 26 Sep",
+              "detail": "Grow the local runtime into groups, invites, capture, chat, reminders and cycle/archive, aiming at a hosted synthetic Demo. The report called it review ready but not closed."
+            },
+            {
+              "label": "Sprint 2",
+              "sub": "27 Sep to 10 Oct",
+              "detail": "Real accounts and private groups, S3 media, web push, Demo removed (6 Oct), PostgreSQL on hosted dev (7 Oct), Cognito code (8 Oct). The busiest Sprint.",
+              "accent": true
+            },
+            {
+              "label": "Sprint 3",
+              "sub": "11 to 24 Oct",
+              "detail": "Fixes and hardening, release environment, cleanup refactor, final report and presentation. In progress.",
+              "accent": true
+            }
+          ]
+        }
+      ],
+      "tables": [
+        {
+          "title": "GitHub data per Sprint (milestones and PRs read 20 Oct 2026)",
+          "columns": ["Sprint", "Dates", "Milestone closed / open issues", "PRs merged in window"],
+          "rows": [
+            ["Sprint 0", "1 to 12 Sep", "21 / 0", "11 (all to main)"],
+            ["Sprint 1", "13 to 26 Sep", "52 / 0", "36 (all to main)"],
+            ["Sprint 2", "27 Sep to 10 Oct", "131 / 2", "129 to dev, 3 to main"],
+            ["Sprint 3 (to date)", "11 to 24 Oct", "40 / 5", "27 to dev, 1 to main"]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The `dev` branch only exists from Sprint 2, which is why earlier merges went straight to `main`. In total the repo has 327 issues (319 closed) and 207 merged PRs: 156 to `dev`, 51 to `main`, 1 to another branch.",
+        "Dates are by UTC merge date. Milestone membership is mutable (issues move between Sprints), so these counts are not a preserved opening commitment. Milestones were also renamed once: older documents call the foundation \"Sprint 1\" and the hosted Demo \"Sprint 2\"; that is historical wording, not extra Sprints.",
+        "Sprint 1's record is the weakest: the 26 Sep progress report says review-ready, Sprint not closed, hosted acceptance outstanding. Sprint 2 produced an integrated real-account increment but not full release parity or target-device proof."
+      ],
+      "notes": [
+        "Counts of issues, PRs or tests do not give a completion percentage or an equal workload per member."
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/project-conduct-evidence.md",
+          "path": "doc/planning/project-conduct-evidence.md",
+          "note": "Plan versus recorded outcome per Sprint"
+        },
+        {
+          "label": "doc/planning/sprints/sprint-0-plan.md",
+          "path": "doc/planning/sprints/sprint-0-plan.md"
+        },
+        {
+          "label": "doc/planning/sprints/sprint-2-user-journey-plan.md",
+          "path": "doc/planning/sprints/sprint-2-user-journey-plan.md"
+        },
+        {
+          "label": "doc/analytics/sprint-analytics.html",
+          "path": "doc/analytics/sprint-analytics.html",
+          "note": "Created vs closed per Sprint, current burndown, PR size, cycle time"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why does Sprint 2 have so many more issues and PRs than Sprint 1?",
+          "a": "Real accounts, S3, web push, PostgreSQL and Cognito all landed in Sprint 2, and we merged in many small PRs. The count shows activity, not value or equal effort."
+        },
+        {
+          "q": "Did you meet every Sprint goal?",
+          "a": "Sprint 0, yes for the local prototype. Sprint 1 reached an integrated synthetic Demo but its hosted acceptance was left open. Sprint 2 delivered the real-account product with gaps in release parity and device proof. The open items are listed under outstanding issues below."
+        },
+        {
+          "q": "Do you have a burndown?",
+          "a": "We have a generated analytics page (`doc/analytics/sprint-analytics.html`) with a current-Sprint burndown from issue events. The evidence file warns there is no preserved original Sprint 2 commitment, so it is a reconstruction, not an effort burndown."
+        }
+      ]
+    },
+    {
+      "id": "events",
+      "title": "Scrum events and how we captured them",
+      "summary": "We held Planning, Daily Scrum, Review and Retrospective, and turned their outcomes into GitHub Issues.",
+      "paragraphs": [
+        "Sprint 0 planned a 90-minute Planning, short weekday or asynchronous updates, refinement, Review and Retrospective timeboxes. The rule in `AGENTS.md` is: hold the events, and capture resulting work or decisions as GitHub Issues.",
+        "What exists on record is the output, not minutes. Issue #25 holds the Sprint 0 walkthrough, #26 reconciles acceptance, and #27 records the retrospective decision. Later decisions are in PRs and in `doc/planning/sprints/sprint-3-cognito/design-decisions.md`.",
+        "Attendance, meeting durations and Daily Scrum logs were not kept. If a lecturer asks for them, say so, and describe the practice rather than inventing dates."
+      ],
+      "tables": [
+        {
+          "title": "Events and where the result lives",
+          "columns": ["Event", "Output"],
+          "rows": [
+            [
+              "Sprint Planning",
+              "Milestone assignment and `mvp` label on issues; Sprint plan documents under `doc/planning/sprints/`"
+            ],
+            ["Daily Scrum", "Issue comments and the `doing` label showing what is in progress"],
+            [
+              "Sprint Review",
+              "Walkthrough issue (#25) and merged PRs on `dev`; hosted dev redeploys on every merge"
+            ],
+            ["Retrospective", "Decision issues (for example #27) and later changes to `AGENTS.md`"]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "AGENTS.md",
+          "path": "AGENTS.md",
+          "note": "Project documentation and Scrum, tracking work"
+        },
+        {
+          "label": "doc/planning/sprints/sprint-0-plan.md",
+          "path": "doc/planning/sprints/sprint-0-plan.md",
+          "note": "Lightweight events section"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Where are your meeting minutes?",
+          "a": "We did not keep formal minutes. The record is issues, PR discussion and decision documents. We would rather say that than invent minutes."
+        },
+        {
+          "q": "Why use issues instead of a Project board?",
+          "a": "The board became extra upkeep with no extra signal. Milestone, `mvp`/`archived` labels and the `doing` label give the same answer with less admin."
+        }
+      ]
+    },
+    {
+      "id": "dod",
+      "title": "Definition of Done and verification tiers",
+      "summary": "An issue is Done when four conditions hold, and we check each change in the cheapest environment that really exercises it.",
+      "paragraphs": [
+        "From `AGENTS.md`, an issue is Done when all four conditions hold:",
+        "1. Its core outcome works, checked in the cheapest real environment that exercises it.",
+        "2. `npm run test:fast` passes and the PR's aggregate Quality check is green.",
+        "3. Only for an overnight or batched run, or when the owner asks: one review-agent pass is complete and blocking findings are fixed. Other PRs need no review pass.",
+        "4. The PR is merged to `dev`. Then close the issue with a one-line comment linking the PR.",
+        "Screenshots, evidence folders, completion notes, repeated rehearsals and independent human acceptance are not required unless the issue itself makes them the deliverable. This replaced earlier role-based gates (operator, verifier, independent acceptance) that slowed work without improving quality."
+      ],
+      "tables": [
+        {
+          "title": "Verification tiers",
+          "columns": ["Change", "Check", "Needs hosted dev?"],
+          "rows": [
+            ["UI only", "`npm run web`, inspect in browser", "No"],
+            ["Client logic", "Focused test, then `npm run test:fast`", "No"],
+            ["Server logic", "`make run` (local server + SQLite) and a focused server test", "No"],
+            ["Real-account flows", "`make run-real` and open `http://localhost:8090`", "No"],
+            [
+              "HTTPS-only behaviour (iPhone camera, PWA install, web push, S3, Cognito)",
+              "Hosted dev URL after normal deploy",
+              "Yes"
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "AGENTS.md",
+          "path": "AGENTS.md",
+          "note": "Definition of Done, Verification tiers"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is a merged PR enough to call an issue done?",
+          "a": "Only with conditions 1 and 2: the outcome was checked and Quality was green. The merge is the last step, then the issue is closed with a link."
+        },
+        {
+          "q": "Why is human review optional?",
+          "a": "Small PRs, a strict automated gate and an optional review-agent pass catch most defects. Authentication, private media, migrations and infrastructure are different: the owner merges those."
+        }
+      ]
+    },
+    {
+      "id": "backlog",
+      "title": "Backlog management",
+      "summary": "Three things only: a milestone for the Sprint, labels for scope, and a label for work in progress.",
+      "tables": [
+        {
+          "title": "Tracking rules",
+          "columns": ["Mechanism", "Meaning", "Count (20 Oct)"],
+          "rows": [
+            ["Milestone", "The Sprint the issue belongs to", "4 milestones: Sprint 0 to Sprint 3"],
+            ["`mvp` label", "On the delivery path (the active backlog)", "84 issues ever labelled"],
+            ["`archived` label", "Closed as out of scope; ignored", "27 issues"],
+            [
+              "`doing` label",
+              "Being worked on now; removed if work stops",
+              "2 open right now (#504, #230)"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "GitHub Project boards are no longer maintained. `make issues` lists the current Sprint's Doing, To do and Done issues. New issues carry a Problem, Expected and How to check, plus labels and a milestone. They carry no estimates, execution contracts or role assignments.",
+        "Scope decisions are explicit. Examples: the synthetic Demo was removed on 6 Oct; reminders are web push only; iOS is delivered as a PWA; media is `disk` locally and `s3` hosted. Archived issues record these cuts."
+      ],
+      "sources": [
+        { "label": "AGENTS.md", "path": "AGENTS.md", "note": "Tracking work, Product decisions" },
+        { "label": "Makefile", "path": "Makefile", "note": "make issues" }
+      ],
+      "qa": [
+        {
+          "q": "How do you stop scope creep?",
+          "a": "Anything not on the delivery path gets the `archived` label and is closed. There is also a scope guard: no new infrastructure, CI workflows or tooling unless an `mvp` issue needs it."
+        },
+        {
+          "q": "Why did the milestone counts change after the fact?",
+          "a": "Milestone membership is mutable and issues moved between Sprints. We treat the counts as outcomes, not as the original commitment."
+        }
+      ]
+    },
+    {
+      "id": "practices",
+      "title": "Agile engineering practices",
+      "summary": "Small PRs to a protected dev branch, automated checks on every PR, tests before refactors, and AI agents working under the owner's direction.",
+      "paragraphs": [
+        "**Branching.** Issue branches start from the latest `dev` and target `dev` through focused PRs. `main` is the reviewed release branch, promoted from `dev` by PR. Several agents work at once, so large tasks use a separate git worktree.",
+        "**CI.** Every PR runs the Quality workflow (see [Testing and quality](quality.html#ci-gate) and [CI/CD](cicd.html)). Every merge to `dev` deploys to hosted dev automatically.",
+        "**Refactoring and tests.** Characterisation tests come first, as in PR #581. See [the testing page](quality.html#tdd-refactor).",
+        "**Pair programming with AI agents.** Be factual about this: much of the code was written by AI coding agents (Claude Code and Codex) that the owner directed, with the owner or team reviewing results. The repo has a Claude/Codex working agreement (`AGENTS.md`, `CLAUDE.md`), shared skills such as `ship-issues`, and an optional review-agent pass (`make review`) used for overnight or batched runs. The team stays accountable for what is merged. Say how you used agents, and what you checked by hand."
+      ],
+      "notes": [
+        "Per-member contribution cannot be read from commit authorship alone, because agent-assisted commits are made from the owner's account. Use the issue and PR history plus each member's own account."
+      ],
+      "sources": [
+        {
+          "label": "AGENTS.md",
+          "path": "AGENTS.md",
+          "note": "Branch and review workflow, batched agent runs"
+        },
+        { "label": "CLAUDE.md", "path": "CLAUDE.md", "note": "Claude-only rules" },
+        { "label": "skills/", "path": "skills", "note": "ship-issues, verify-issue" }
+      ],
+      "qa": [
+        {
+          "q": "Did AI write your code?",
+          "a": "A large share, yes. The owner set the scope, directed the agents, and every change passed the same automated gate. We can explain any module we present, which is why each member owns a use case and design problem (see [Who owns what](owners.html))."
+        },
+        {
+          "q": "How do you keep quality with agents writing code?",
+          "a": "Tests first for risky changes, the Quality gate on every PR, an architecture check, and an extra review-agent pass for batches. Authentication, private media, migrations and infrastructure are merged by the owner."
+        }
+      ]
+    },
+    {
+      "id": "retrospectives",
+      "title": "Retrospective outcomes and what changed",
+      "summary": "Recorded retrospectives led to a WIP limit, a Day 1 gate, and later to a leaner Definition of Done.",
+      "tables": [
+        {
+          "title": "Recorded outcome to change",
+          "columns": ["When", "What the team learned", "What changed"],
+          "rows": [
+            [
+              "Sprint 0 close-out (10 Sep)",
+              "Work bunched late; actual effort was not tracked daily",
+              "#27 agreed a five-issue WIP limit, a Day 1 runtime/FFmpeg gate, a single-device fallback, and an earlier checkpoint"
+            ],
+            [
+              "26 Sep (Sprint 1 report)",
+              "Native transport binding problems, inconsistent seeded media, integration gaps, stale infrastructure plans",
+              "Sprint 2 then moved from the synthetic Demo to real accounts; the Demo was removed on 6 Oct"
+            ],
+            [
+              "Sprint 2 reflection",
+              "Milestone churn, release lag, incomplete device evidence, unrecorded hours",
+              "Simplified process in `AGENTS.md`: four-part Definition of Done, no Project board, no role gates"
+            ],
+            [
+              "Sprint 3",
+              "Large files and legacy paths made changes risky",
+              "Characterisation-first refactor (#581), still open at time of writing"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The 26 Sep text is described in the evidence file as evidence-based reflection and proposed agreements, not retrospective meeting minutes.",
+        "**For the final retrospective, prepare:** what went well, what did not, and two or three specific changes with an owner. Give at least one example of a change you made after a Sprint, such as the leaner Definition of Done, and link its issue or commit."
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/project-conduct-evidence.md",
+          "path": "doc/planning/project-conduct-evidence.md",
+          "note": "Ceremonies, decisions and process learning"
+        },
+        {
+          "label": "doc/planning/sprints/sprint-0-plan-extension.md",
+          "path": "doc/planning/sprints/sprint-0-plan-extension.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Give one concrete retrospective improvement.",
+          "a": "After Sprint 0 we saw work bunching at the end, so issue #27 set a five-issue WIP limit and a Day 1 gate for Sprint 1. After Sprint 2 we cut process overhead and rewrote the Definition of Done to four conditions."
+        },
+        {
+          "q": "Do you have formal retrospective minutes?",
+          "a": "No. We have recorded outputs and decisions. We say that directly."
+        }
+      ]
+    },
+    {
+      "id": "effort",
+      "title": "Effort per member",
+      "summary": "The course asks for effort per member. We did not record hours, so this table must be filled by each member from their own history.",
+      "tables": [
+        {
+          "title": "Effort per member (to fill)",
+          "columns": ["Member", "Area", "Hours", "Evidence to cite"],
+          "rows": [
+            ["Member A", "Access", "to fill", "PRs and issues on sign-in, groups, invites"],
+            ["Member B", "Capture", "to fill", "PRs and issues on photo/video capture, upload"],
+            [
+              "Member C",
+              "Cycle and Archive",
+              "to fill",
+              "PRs and issues on cycles, film, media access"
+            ],
+            ["Member D", "Participation", "to fill", "PRs and issues on prompts, push, chat"]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "What is known: the only actual-effort statement on record is that each member spent about one hour per day in the first days of Sprint 0. The Sprint 0 plan budgeted 70 team-hours plus a 30-hour reserve for five people. The proposal's 400-hour work breakdown is a plan, not actuals. None of these is a per-member total.",
+        "**How to estimate honestly:** list your merged PRs and closed issues (`gh pr list --author <you> --state merged`, `gh issue list --assignee <you> --state closed`); add time for analysis, design models, review, meetings and report writing that leave no commit; and note that agent-assisted commits are made from the owner's account, so authorship understates the others. State it as an estimate with the method you used."
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/project-conduct-evidence.md",
+          "path": "doc/planning/project-conduct-evidence.md",
+          "note": "Recorded WBS and effort sources; Facts still missing"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why are hours missing?",
+          "a": "We did not log hours daily. We prefer a clearly labelled estimate to fabricated precision, and we explain the method."
+        },
+        {
+          "q": "Is everyone's contribution equal?",
+          "a": "Each member owns one use case and one design problem (see [Who owns what](owners.html)). Issue and PR counts do not measure effort and should not be read that way."
+        }
+      ]
+    },
+    {
+      "id": "outstanding",
+      "title": "Outstanding issues",
+      "summary": "Five open `mvp` issues remain, all in Sprint 3.",
+      "tables": [
+        {
+          "title": "Open mvp issues (20 Oct 2026)",
+          "columns": ["Issue", "Title"],
+          "rows": [
+            ["#527", "Verify the current hosted Safari and Home Screen app integrations once"],
+            ["#515", "Deploy isolated Cognito Managed Login for the release web and PWA"],
+            ["#504", "Move the release environment onto managed PostgreSQL with isolated backups"],
+            ["#362", "Assemble and validate every final-report template section"],
+            ["#230", "Complete the isolated release deployment and verify environment boundaries"]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Three of these are about the release environment (isolation, PostgreSQL, Cognito). Sprint 2 also has two open issues that are not on the `mvp` path. Say clearly in the presentation which of these are not finished."
+      ],
+      "sources": [
+        {
+          "label": "GitHub issues",
+          "path": "AGENTS.md",
+          "note": "Run `gh issue list --label mvp --state open`"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What is the biggest remaining risk?",
+          "a": "Release isolation: the release environment is not yet on managed PostgreSQL or its own Cognito pool. Hosted dev already runs that stack, so the design is proven there."
+        },
+        {
+          "q": "What would you do with another Sprint?",
+          "a": "Finish the release environment, verify the iPhone Home Screen integrations on a real device, and measure performance on hosted PostgreSQL."
+        }
+      ]
+    }
+  ]
+}

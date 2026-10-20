@@ -1,0 +1,76 @@
+{
+  "repo": "https://github.com/Collaboration95/rewind-app",
+  "branch": "dev",
+  "pages": [
+    {
+      "slug": "index",
+      "title": "Overview",
+      "blurb": "What Rewind is, the problem it solves, and how to read this site."
+    },
+    {
+      "slug": "submission",
+      "title": "Submission and presentation",
+      "blurb": "What the course asks for, the 40-minute presentation plan, deadlines and gaps."
+    },
+    {
+      "slug": "product",
+      "title": "Product and use cases",
+      "blurb": "Actors, the use case model, scope in and out, and quality attributes."
+    },
+    {
+      "slug": "architecture",
+      "title": "Technology and architecture",
+      "blurb": "The stack, logical layers, packages and the path a request takes."
+    },
+    {
+      "slug": "decisions",
+      "title": "Design decisions",
+      "blurb": "The architectural decisions, the options we rejected, and why."
+    },
+    {
+      "slug": "analysis-design",
+      "title": "Analysis to design",
+      "blurb": "The transition strategies that turn analysis models into design models."
+    },
+    {
+      "slug": "patterns",
+      "title": "Design problems and patterns",
+      "blurb": "Each design problem, the candidate patterns and the one we implemented."
+    },
+    {
+      "slug": "database",
+      "title": "Database design",
+      "blurb": "The schema, the tables and their relationships, migrations and two engines."
+    },
+    {
+      "slug": "owners",
+      "title": "Who owns what",
+      "blurb": "The four members, each with a use case and a design problem to present."
+    },
+    {
+      "slug": "quality",
+      "title": "Testing and quality",
+      "blurb": "Test layers, coverage, quality attributes and how we prove them."
+    },
+    {
+      "slug": "cicd",
+      "title": "CI/CD and DevSecOps",
+      "blurb": "Branching, the Quality pipeline, security scans and automatic deploys."
+    },
+    {
+      "slug": "aws",
+      "title": "AWS setup",
+      "blurb": "Accounts, Terraform, the hosts, S3, Cognito, PostgreSQL and costs."
+    },
+    {
+      "slug": "scrum",
+      "title": "Project conduct",
+      "blurb": "Sprints, Definition of Done, retrospectives and effort."
+    },
+    {
+      "slug": "demo",
+      "title": "Demo script",
+      "blurb": "The 13-minute demo, step by step, with fallbacks."
+    }
+  ]
+}

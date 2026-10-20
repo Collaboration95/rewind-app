@@ -1,0 +1,470 @@
+{
+  "title": "Testing and quality",
+  "lede": "Rewind is checked by six test layers and four static gates, and every merge to dev has to pass them in CI.",
+  "intro": [
+    "Counts on this page were taken from the post-refactor tree (branch `guru/simplify-refactor-20261020`, PR #581) on 20 Oct 2026. File counts come from `find`/`ls`; test counts and coverage come from the runs recorded in PR #581. The refactor PR was still open when this page was written."
+  ],
+  "sections": [
+    {
+      "id": "layers",
+      "title": "Test layers",
+      "summary": "Fast logic tests are many and cheap; browser and deploy checks are fewer and slower. Each layer has its own runner and its own CI job.",
+      "visuals": [
+        {
+          "type": "layers",
+          "title": "Test pyramid (cheap at the base)",
+          "layers": [
+            {
+              "label": "Browser checks",
+              "sub": "Playwright, 9 spec files",
+              "detail": "Responsive layouts, PWA routing, video fallback, Axe accessibility scans, and one real-account end-to-end run. Slowest, so run in `test:slow` and `test:a11y`.",
+              "icon": "playwright"
+            },
+            {
+              "label": "Deploy and IaC fixtures",
+              "sub": "shell, Python, Terraform policy",
+              "detail": "Offline fixtures for backup, restore, release bundles and host lifecycle, plus Terraform policy tests. They need no cloud account."
+            },
+            {
+              "label": "Server tests",
+              "sub": "64 files, node:test",
+              "detail": "HTTP route contracts, auth, media access, cycles, compilation, reminders and migrations. Run on SQLite and again on PostgreSQL.",
+              "icon": "nodedotjs",
+              "accent": true
+            },
+            {
+              "label": "Frontend tests",
+              "sub": "79 files, Jest",
+              "detail": "Screens, capture state, stores, uploader and playback models. Jest with the jest-expo preset.",
+              "icon": "jest",
+              "accent": true
+            },
+            {
+              "label": "Static gates",
+              "sub": "format, lint, types, boundaries",
+              "detail": "Four checks that fail the build before any test runs: Prettier, ESLint, tsc and the architecture check.",
+              "icon": "typescript"
+            }
+          ]
+        }
+      ],
+      "tables": [
+        {
+          "title": "Test files by layer (counted with find/ls)",
+          "columns": ["Layer", "Where", "Runner", "Files"],
+          "rows": [
+            [
+              "Frontend",
+              "`tests/*.test.ts`, `tests/*.test.tsx`",
+              "Jest (jest-expo preset)",
+              "79 (45 .ts, 34 .tsx)"
+            ],
+            ["Server", "`server/tests/*.test.mjs`", "`node --test` (node:test)", "64"],
+            [
+              "Root (repo rules)",
+              "`tests/*.test.mjs`, `scripts/*.test.mjs`",
+              "`node --test`",
+              "12 + 4"
+            ],
+            ["Terraform policy", "`tests/terraform/*.test.mjs`", "`node --test`", "3"],
+            ["Deploy fixtures", "`tests/deploy/`", "bash / node / python", "10 .sh, 2 .mjs, 1 .py"],
+            ["Browser", "`tests/responsive/*.spec.ts`", "Playwright", "9"],
+            [
+              "Real-account end to end",
+              "`tests/e2e-real-account/`",
+              "Playwright (separate config)",
+              "1 spec, plus helper tests"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The frontend suite ran 1,674 tests in PR #581's verification. The PostgreSQL run of the server suite passed 988 tests with 0 failures. The SQLite server count was not re-measured for this page, so it is not quoted."
+      ],
+      "sources": [
+        {
+          "label": "jest.config.cjs",
+          "path": "jest.config.cjs",
+          "note": "Jest preset, test match, coverage gate"
+        },
+        {
+          "label": "scripts/run-fast-tests.mjs",
+          "path": "scripts/run-fast-tests.mjs",
+          "note": "Runs root, server and Jest suites in parallel"
+        },
+        {
+          "label": "scripts/run-root-tests.mjs",
+          "path": "scripts/run-root-tests.mjs",
+          "note": "Which files count as root tests"
+        },
+        {
+          "label": ".github/workflows/quality.yml",
+          "path": ".github/workflows/quality.yml",
+          "note": "One CI job per layer"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why two test runners (Jest and node:test)?",
+          "a": "The client is React Native/Expo, which needs the jest-expo preset and module mocks. The server is plain Node, so the built-in `node:test` runner needs no extra dependency. Each tool fits its side."
+        },
+        {
+          "q": "Why are there more server tests than browser tests?",
+          "a": "Server tests are fast and deterministic, and the server holds the rules that matter most (privacy, cycles, uploads). Browser tests are slow and flaky by nature, so we keep them for things only a real browser can show: layout, routing, accessibility."
+        },
+        {
+          "q": "Do tests touch real AWS?",
+          "a": "No. S3, Cognito and web push are replaced by protocol fixtures (for example `server/tests/helpers/s3-protocol-fixture.mjs`). The deploy fixtures are labelled cloud-free in CI."
+        }
+      ]
+    },
+    {
+      "id": "scripts",
+      "title": "npm scripts and when to run each",
+      "summary": "One command (`test:fast`) is the everyday check; slower ones run only when a change can break what they cover.",
+      "tables": [
+        {
+          "title": "Test commands",
+          "columns": ["Command", "What it runs", "When"],
+          "rows": [
+            [
+              "`npm run test:fast`",
+              "Builds the server once, then root, server and Jest suites in parallel",
+              "After every code change; part of the Definition of Done"
+            ],
+            [
+              "`npm run test:focused -- <suite> <file>`",
+              "One test file from `frontend`, `server` or `root`",
+              "To diagnose a failure"
+            ],
+            [
+              "`npm run test:slow`",
+              "Web export, PWA check, all Playwright specs, real-account end to end",
+              "Changes to web export, routing, PWA, accessibility; before a `main` promotion"
+            ],
+            [
+              "`npm run test:a11y`",
+              "Exports the web app, runs only the Axe accessibility spec",
+              "Changes to UI structure or colours"
+            ],
+            [
+              "`npm run test:coverage:frontend`",
+              "Jest with coverage, 70% statement gate",
+              "Before reporting coverage"
+            ],
+            [
+              "`npm run test:coverage:server`",
+              "Node test runner with V8 coverage on the built server",
+              "Before reporting coverage"
+            ],
+            [
+              "`npm run test:deploy`",
+              "All offline deploy fixtures",
+              "Changes under `deploy/` or `infra/`"
+            ],
+            [
+              "`make test-postgres`",
+              "Server suite on a disposable PostgreSQL 17 database",
+              "Server or schema changes; CI runs it every time"
+            ],
+            [
+              "`npm run check`",
+              "format, lint, architecture, typecheck, tests and a11y in one go",
+              "Full local gate"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "`test:fast` finishes because the three suites run at the same time with buffered output. Passing suites print only their summary; failing ones print in full."
+      ],
+      "notes": [
+        "AGENTS.md rule: limit focused diagnosis to two attempts per issue, then record the blocker and move on. Never remove assertions."
+      ],
+      "sources": [
+        { "label": "package.json", "path": "package.json", "note": "All scripts" },
+        { "label": "Makefile", "path": "Makefile", "note": "postgres-test-db, test-postgres" },
+        { "label": "scripts/focused-test.mjs", "path": "scripts/focused-test.mjs" },
+        { "label": "AGENTS.md", "path": "AGENTS.md", "note": "Verification tiers" }
+      ],
+      "qa": [
+        {
+          "q": "Why not run every test on every change?",
+          "a": "Browser and end-to-end runs take minutes and need a built web app. We match the check to the change (the verification tiers in AGENTS.md). CI still runs the full set on every PR, so nothing is skipped before merge."
+        },
+        {
+          "q": "How do you test the PostgreSQL path locally?",
+          "a": "`make test-postgres` starts a RAM-backed Postgres 17 container, creates a throwaway database, runs the whole server suite against it and drops the database."
+        }
+      ]
+    },
+    {
+      "id": "static-gates",
+      "title": "Static quality gates",
+      "summary": "Four checks run in CI as a matrix before the tests: Prettier, ESLint, TypeScript and a custom architecture check.",
+      "tables": [
+        {
+          "title": "Static checks",
+          "columns": ["Check", "Command", "What it catches"],
+          "rows": [
+            ["Format", "`npm run format:check`", "Style drift (Prettier)"],
+            ["Lint", "`npm run lint`", "Bug-prone patterns (ESLint)"],
+            [
+              "Types",
+              "`npm run typecheck`",
+              "Type errors across client and server (`tsc --noEmit`)"
+            ],
+            ["Architecture", "`npm run architecture:check`", "Layer boundary violations (below)"]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The architecture check is a small script that reads source files and looks at their imports. It enforces two rules.",
+        "**Domain modules stay framework-free.** Files in `src/domain/` and the server's `server/src/cycles/engine.ts` may only import relative modules. Any bare package import (React, Expo, a library) is a violation. This keeps the business rules testable and portable.",
+        "**Route modules do not touch the device.** Files in `src/routes/` and any `*.route.*` file may not import `expo-*`, `react-native*` or `@react-native/*`. Routes talk to adapters, not to device APIs.",
+        "The check is itself tested: `tests/architecture.test.mjs` asserts that the repo is clean and that a planted bad import in a temporary directory is caught."
+      ],
+      "sources": [
+        {
+          "label": "scripts/check-architecture.mjs",
+          "path": "scripts/check-architecture.mjs",
+          "note": "The two boundary rules"
+        },
+        {
+          "label": "tests/architecture.test.mjs",
+          "path": "tests/architecture.test.mjs",
+          "note": "Guard test"
+        },
+        {
+          "label": "src/domain",
+          "path": "src/domain",
+          "note": "Pure domain modules: cycles, contributions, groups, archive..."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why enforce architecture with a script?",
+          "a": "A rule that only lives in a document is broken within weeks. The script turns the layering from the design into a failing CI job, so a violation cannot be merged by accident."
+        },
+        {
+          "q": "What does the check not cover?",
+          "a": "It only checks imports in the listed folders. It does not prove the whole design is layered; the design itself is explained on the [architecture page](architecture.html)."
+        }
+      ]
+    },
+    {
+      "id": "tdd-refactor",
+      "title": "TDD and characterisation tests before refactoring",
+      "summary": "Before the big 20 Oct cleanup we wrote tests that pin current behaviour, then restructured code while they stayed green.",
+      "paragraphs": [
+        "A characterisation test records what the code does now, right or wrong, so a refactor cannot silently change it. PR #581 (\"pin behaviour with tests, then simplify\") used this method. The tests were committed first, run green against the old code, and kept green through every refactor commit.",
+        "Tests added first: server HTTP route contracts (`http-route-contract-auth`, `-media`, `-real`) and six client screen files named `*.characterisation.test.tsx` (camera capture, video capture, settings, report sheet, group experience, group experience with capture). Media access denials (cross-group, other member, tampered media, sealed archive) were ported to `/media/access` before the legacy routes were removed.",
+        "Then the code changed. `server/src/http.ts` went from about 4k lines to 235 by moving routes into `server/src/routes/`. `db.ts` went from about 2.1k to 776 lines by moving SQLite migrations to `schema.ts`. `VideoCaptureScreen` went from about 2k to 285 lines and `Settings.tsx` from 1.4k to 38 lines.",
+        "The new tests also found a real bug: \"Try again\" after a failed photo capture did nothing. The test failed before the fix and passes after it."
+      ],
+      "notes": [
+        "Day-to-day, each new feature or fix comes with a focused test written alongside it; the characterisation approach is for restructuring code that already works.",
+        "PR #581 is open at the time of writing. Check its state before presenting these figures as merged."
+      ],
+      "sources": [
+        {
+          "label": "server/tests/http-route-contract-media.test.mjs",
+          "path": "server/tests/http-route-contract-media.test.mjs"
+        },
+        {
+          "label": "tests/camera-capture.characterisation.test.tsx",
+          "path": "tests/camera-capture.characterisation.test.tsx"
+        },
+        {
+          "label": "tests/group-experience.characterisation.test.tsx",
+          "path": "tests/group-experience.characterisation.test.tsx"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is this TDD?",
+          "a": "Partly. Classic TDD writes the test first for new behaviour. For refactoring, the safe equivalent is characterisation-first: pin the behaviour, then change the structure. We say so plainly rather than claiming strict TDD everywhere."
+        },
+        {
+          "q": "How did you know the refactor changed nothing?",
+          "a": "The pinned tests stayed green after every commit, and the full suites passed at the end: test:fast, test:slow, test:a11y and the PostgreSQL run."
+        },
+        {
+          "q": "Did the refactor reduce code?",
+          "a": "Not overall. Big files were split into focused modules, and about 5.9k lines of tests were added. The point was readability and safety, not line count."
+        }
+      ]
+    },
+    {
+      "id": "coverage",
+      "title": "Coverage",
+      "summary": "Frontend statement coverage is 89.6% and server line coverage about 86%, measured on 20 Oct 2026.",
+      "tables": [
+        {
+          "title": "Measured coverage (PR #581 verification)",
+          "columns": ["Suite", "Measure", "Value"],
+          "rows": [
+            ["Frontend (Jest)", "Statements", "89.6%"],
+            ["Frontend (Jest)", "Lines", "92.3%"],
+            ["Server (V8 coverage)", "Lines", "about 86%"],
+            ["Server (V8 coverage)", "Branches", "85.7%"],
+            ["Server on PostgreSQL", "Tests passing", "988 passed, 0 failed"]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Before the refactor the frontend figures were 87% statements and 90% lines. CI enforces a floor of 70% statements for the frontend (`coverageThreshold` in `jest.config.cjs`) and keeps both coverage reports as artifacts. The floor is deliberately lower than the measured value so it catches large drops without blocking small changes."
+      ],
+      "sources": [
+        {
+          "label": "jest.config.cjs",
+          "path": "jest.config.cjs",
+          "note": "collectCoverageFrom and the 70% gate"
+        },
+        {
+          "label": "package.json",
+          "path": "package.json",
+          "note": "test:coverage:frontend, test:coverage:server"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is high coverage the same as good tests?",
+          "a": "No. Coverage shows what code ran, not whether assertions are strong. We pair it with behaviour tests for rules that matter (privacy, cycles) and with characterisation tests, and we never remove assertions to make a test pass."
+        },
+        {
+          "q": "Why is the CI gate 70% if you measure about 90%?",
+          "a": "The gate is a safety floor for accidents, not a target. The real number is reported in the coverage artifacts."
+        }
+      ]
+    },
+    {
+      "id": "quality-attributes",
+      "title": "Quality attributes and how each is verified",
+      "summary": "Each attribute maps to a concrete test or measurement you can run.",
+      "tables": [
+        {
+          "title": "Attribute to evidence",
+          "columns": ["Attribute", "How it is verified", "Where"],
+          "rows": [
+            [
+              "Security / privacy",
+              "Outsiders are denied group, budget, chat and media access; tampered or sealed media is refused; auth and Cognito callback failures are tested",
+              "`server/tests/cross-group-access.test.mjs`, `media-token-http-contract.test.mjs`, `media-integrity.test.mjs`, `cognito-auth.test.mjs`, `cognito-callback-failures.test.mjs`"
+            ],
+            [
+              "Performance",
+              "Local measurement runner: 1,200 API requests and 25-clip film compilation per run",
+              "`doc/planning/performance/353-local-measurement.md`, `scripts/measure-real-group-performance.mjs`"
+            ],
+            [
+              "Accessibility",
+              "Axe scan for WCAG 2.0/2.1 A and AA; serious or critical violations fail; keyboard tab order and visible focus checked",
+              "`tests/responsive/accessibility.spec.ts`"
+            ],
+            [
+              "Reliability",
+              "Migration chain applied once; whole server suite passes on SQLite and on PostgreSQL; backup and restore fixtures",
+              "`server/tests/migration-chain.test.mjs`, `make test-postgres`, `tests/deploy/`"
+            ],
+            [
+              "Maintainability",
+              "Architecture check, typecheck, small PRs, characterisation-first refactors",
+              "`scripts/check-architecture.mjs`"
+            ],
+            [
+              "Portability (PWA)",
+              "PWA build check and responsive specs at phone and desktop sizes",
+              "`scripts/check-pwa.mjs`, `tests/responsive/`"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "**Performance numbers.** The #353 runner (12 Oct 2026 run, local SQLite, one Mac, loopback) targets a p95 of 2 seconds or less for non-media API calls. Its three repetitions measured p95 between about 4 and 9 ms. Film compilation of 25 six-second clips is checked for 720x1280, 30 fps, audio present and loudness between -18 and -14 LUFS. This is a local result only: it is not PostgreSQL, hosted, S3 or device performance, and the document says so itself.",
+        "**Reliability across two databases.** Release still runs SQLite while hosted dev runs PostgreSQL, so the same server tests run on both engines. That is why no SQLite migration was removed in the refactor."
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/performance/353-local-measurement.md",
+          "path": "doc/planning/performance/353-local-measurement.md"
+        },
+        {
+          "label": "server/tests/cross-group-access.test.mjs",
+          "path": "server/tests/cross-group-access.test.mjs"
+        },
+        {
+          "label": "server/tests/migration-chain.test.mjs",
+          "path": "server/tests/migration-chain.test.mjs"
+        },
+        {
+          "label": "tests/responsive/accessibility.spec.ts",
+          "path": "tests/responsive/accessibility.spec.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "How do you prove one group cannot see another group's media?",
+          "a": "`cross-group-access.test.mjs` signs in a member of another group and checks every protected category returns a denial with no content, while the owning group can still read it. The media token tests also cover tampered and sealed media."
+        },
+        {
+          "q": "Is your performance result valid for production?",
+          "a": "No, and the document states it. It shows the code is not slow on a laptop. Hosted, PostgreSQL and device performance still need their own measurement."
+        },
+        {
+          "q": "Does the accessibility test cover everything?",
+          "a": "No. Automated Axe scans find a subset of WCAG problems. We also check keyboard tab order and focus visibility, but we have not done a screen-reader audit."
+        }
+      ]
+    },
+    {
+      "id": "ci-gate",
+      "title": "How the tests run in CI",
+      "summary": "The Quality workflow runs each layer as its own job; the aggregate Quality check must be green and up to date before a PR can merge to dev.",
+      "tables": [
+        {
+          "title": "Quality workflow jobs",
+          "columns": ["Job", "What it runs"],
+          "rows": [
+            ["Static check (4 in a matrix)", "format:check, lint, architecture:check, typecheck"],
+            ["Production dependency audit", "`npm audit --omit=dev --audit-level=high`"],
+            ["Root and IaC tests", "`npm run test:root` and the IaC scan failure cases"],
+            [
+              "Server tests and coverage",
+              "Node test runner with FFmpeg installed; coverage kept as artifact"
+            ],
+            [
+              "Frontend tests and coverage",
+              "Jest with the statement gate; coverage kept as artifact"
+            ],
+            [
+              "Web export and browser checks",
+              "Export once, then PWA, accessibility and responsive specs"
+            ],
+            ["Cloud-free deployment fixtures", "`tests/deploy/run-fixtures.sh`"],
+            [
+              "Server tests on PostgreSQL",
+              "`npm run server:test:postgres` against a Postgres 17 service container"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "A docs-only change skips most jobs. The full pipeline, security scanning and deploys are explained on the [CI/CD page](cicd.html)."
+      ],
+      "sources": [
+        { "label": ".github/workflows/quality.yml", "path": ".github/workflows/quality.yml" }
+      ],
+      "qa": [
+        {
+          "q": "What blocks a merge?",
+          "a": "The protected branch needs a pull request, a green and up-to-date aggregate Quality check, and resolved conversations. Routine PRs need no human approval."
+        },
+        {
+          "q": "What if a test is flaky?",
+          "a": "Known flakes are the apt-get step and one Chromium test. We rerun, and we never delete the assertion; a real fix goes in a separate issue."
+        }
+      ]
+    }
+  ]
+}

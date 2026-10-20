@@ -1,0 +1,9 @@
+/* Rewind explainer additions on top of style.css (layout) and sketch.css (diagrams). */
+.sidebar .toc{margin-bottom:14px}
+.sidebar a.on{background:var(--soft);font-weight:600}
+.scroll{overflow-x:auto}
+.tabletitle{font-weight:600;margin:18px 0 0}
+.srchead{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:18px 0 4px}
+ul.sources{padding-left:1.2em;margin-top:0;font-size:.95rem}
+pre.code{background:#f6f8fa;border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto;font-size:.85rem;line-height:1.5}
+pre.code code{background:none;padding:0}
