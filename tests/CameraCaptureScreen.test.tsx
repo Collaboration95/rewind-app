@@ -4,11 +4,9 @@ import { AppState } from 'react-native';
 import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 
 import { CameraCaptureScreen } from '../src/capture/CameraCaptureScreen';
-import {
-  DemoCameraPlatform,
-  InMemoryCaptureFileStore,
-  InMemoryImageMetadataStore,
-} from '../src/capture';
+import { InMemoryCaptureFileStore } from '../src/capture/file-store';
+import { InMemoryImageMetadataStore } from '../src/capture/metadata-store';
+import { DemoCameraPlatform } from '../src/capture/platform';
 import type { CameraPlatform } from '../src/capture/contracts';
 import {
   ContributionStatusProvider,

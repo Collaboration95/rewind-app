@@ -59,10 +59,8 @@ guard checks them against each other and the preserved Demo key; it cannot
 inspect the remote state bucket. #167 Organizations/SCP work and #261
 database migration are outside this slice.
 
-The `Deploy dev` workflow now deploys the integration branch from GitHub
-Actions, but it is not live until a human has reviewed the Terraform change
-that grants it an identity, and no environment is complete until all of these
-gates have evidence:
+Every merge to `dev` deploys hosted dev through the `Deploy dev` workflow. No
+new environment is complete until all of these gates have evidence:
 
 1. Reconcile the live Demo resources, S3 buckets, Terraform state addresses,
    ownership, and existing state keys with read-only access.

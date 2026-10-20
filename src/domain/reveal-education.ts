@@ -1,6 +1,3 @@
-import type { Cycle } from './cycles';
-import type { Premiere } from './premiere';
-
 export type RevealEducationState = 'locked' | 'processing' | 'delayed' | 'released';
 export type RevealEducationSurface = 'home' | 'capture' | 'archive';
 
@@ -84,17 +81,4 @@ export function getRevealEducationCopy(
   state: RevealEducationState,
 ): RevealEducationCopy {
   return { ...COPY[surface][state] };
-}
-
-export function revealStateForCycle(cycle: Cycle): RevealEducationState {
-  if (cycle.status === 'archived' && cycle.lockState === 'unlocked') return 'released';
-  if (cycle.status === 'revealing') return 'processing';
-  return 'locked';
-}
-
-export function revealStateForPremiere(premiere: Premiere): RevealEducationState {
-  if (premiere.state === 'ready') return 'released';
-  if (premiere.state === 'delayed') return 'delayed';
-  if (premiere.state === 'processing') return 'processing';
-  return 'locked';
 }

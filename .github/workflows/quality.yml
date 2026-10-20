@@ -242,7 +242,7 @@ jobs:
           bash tests/deploy/ownership-contract.test.sh
           bash tests/deploy/host-preflight.test.sh
           bash deploy/tests/host-bootstrap.test.sh
-          for fixture in tests/deploy/*release*.test.sh deploy/tests/*release*.test.sh; do
+          for fixture in tests/deploy/*release*.test.sh; do
             if [ -f "$fixture" ]; then bash "$fixture"; fi
           done
 

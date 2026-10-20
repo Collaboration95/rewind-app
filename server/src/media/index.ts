@@ -521,8 +521,6 @@ export function removeStagedSource(database: RewindDatabase, sourceUri: string):
 }
 
 const stagingLocks = new Map<string, Promise<void>>();
-let activeStagedIntakes = 0;
-let stagedIntakesIdle: (() => void)[] = [];
 
 /** Serialize intake/reset mutations within a runtime process. Database fences
  * remain authoritative across processes; this lock also protects awaits while
@@ -542,28 +540,6 @@ export async function acquireStagedSourceLock(lockKey: string): Promise<() => vo
     if (stagingLocks.get(lockKey) === current) stagingLocks.delete(lockKey);
     releaseCurrent();
   };
-}
-
-/** Register the body/probe portion after its DB claim has been committed. */
-export function registerStagedIntake(): () => void {
-  activeStagedIntakes += 1;
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    activeStagedIntakes = Math.max(0, activeStagedIntakes - 1);
-    if (activeStagedIntakes === 0) {
-      const waiters = stagedIntakesIdle;
-      stagedIntakesIdle = [];
-      for (const resolveWaiter of waiters) resolveWaiter();
-    }
-  };
-}
-
-/** Reset waits for all in-process body/probe operations to finish. */
-export async function waitForStagedIntakesIdle(): Promise<void> {
-  if (activeStagedIntakes === 0) return;
-  await new Promise<void>((resolvePromise) => stagedIntakesIdle.push(resolvePromise));
 }
 
 function stagedClaimIsActive(source: StagedSource, at = Date.now()): boolean {
