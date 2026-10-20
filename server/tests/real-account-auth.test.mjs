@@ -572,6 +572,15 @@ test('session restore distinguishes a missing browser session from a revoked cre
     });
     assert.equal(revoked.status, 401);
     assert.equal((await revoked.json()).error, 'session_expired');
+
+    // A browser holding a stale session cookie learns once that it expired.
+    const staleCookie = await fetch(`${baseUrl}/auth/session`, {
+      headers: { Cookie: `__Host-rewind_session=${token}` },
+    });
+    assert.equal(staleCookie.status, 401);
+    assert.equal((await staleCookie.json()).error, 'session_expired');
+    // Intentionally changed: the stale cookie is now cleared (was: no Set-Cookie).
+    assert.match(staleCookie.headers.get('set-cookie'), /^__Host-rewind_session=;.*Max-Age=0/);
   });
 });
 
