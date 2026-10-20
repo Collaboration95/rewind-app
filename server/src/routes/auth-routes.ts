@@ -1,6 +1,5 @@
 // /auth/* sign-in (password and Cognito), session and account routes.
 import { type IncomingMessage, type ServerResponse } from 'node:http';
-import { resolve } from 'node:path';
 import { URL } from 'node:url';
 
 import {
@@ -25,7 +24,7 @@ import {
   type UsedStates,
 } from '../auth/cognito';
 import { purgeRealAccount, removeStoredMedia } from '../auth/deletion';
-import { type RuntimeConfig } from '../config';
+import { type RuntimeConfig, mediaDir } from '../config';
 import { type RewindDatabase } from '../db';
 
 import { requestBody } from './body';
@@ -360,8 +359,8 @@ async function handleDeleteAccount(ctx: AuthRouteContext): Promise<void> {
   }
   const media = purgeRealAccount(database, session.account.id, now);
   await removeStoredMedia(media, {
-    outputDir: resolve(config.dataDir, 'media', 'processed'),
-    stagingDir: resolve(config.dataDir, 'media', 'staging'),
+    outputDir: mediaDir(config, 'processed'),
+    stagingDir: mediaDir(config, 'staging'),
     mediaStore: options.mediaStore,
     mediaEnvironment: options.mediaEnvironment,
   });

@@ -1,6 +1,6 @@
 // /contributions/* uploads, processing, ledger and /clips/:id status.
+import { mediaDir } from '../config';
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 
 import { deleteContribution } from '../contributions';
 import {
@@ -71,7 +71,7 @@ async function handleUploadSource(ctx: MediaRouteContext): Promise<void> {
     config,
   );
   if (!releaseIntakeCapacity) return;
-  const stagingDir = resolve(config.dataDir, 'media', 'staging');
+  const stagingDir = mediaDir(config, 'staging');
   let releaseStagingLock: (() => void) | null = await acquireStagedSourceLock(stagingDir);
   try {
     await maybeCleanupOrphanedStagedSources(database, stagingDir);
@@ -284,7 +284,7 @@ async function handleCreateUpload(ctx: MediaRouteContext): Promise<void> {
       : {}),
   };
   const result = createClipUpload(database, identity.groupId, identity.memberId, input, now(), {
-    stagingDir: resolve(config.dataDir, 'media', 'staging'),
+    stagingDir: mediaDir(config, 'staging'),
     requireVerifiedMetadata: true,
   });
   if (!result.ok) {
@@ -293,7 +293,7 @@ async function handleCreateUpload(ctx: MediaRouteContext): Promise<void> {
     // not let an invalid-key request delete a URI supplied by another
     // capture (or an arbitrary caller-controlled URI).
     if (result.reason !== 'invalid_key') {
-      cleanupStagedSource(database, input.sourceUri, resolve(config.dataDir, 'media', 'staging'));
+      cleanupStagedSource(database, input.sourceUri, mediaDir(config, 'staging'));
     }
     const conflict = result.reason === 'quota_exceeded' || result.reason === 'replacement_conflict';
     sendJson(response, config, conflict ? 409 : 400, {
@@ -325,7 +325,7 @@ function handleCancelUpload(ctx: MediaRouteContext, match: RegExpMatchArray): vo
   const groupId = url.searchParams.get('groupId');
   const identity = requireAuthorisedMediaGroup(request, database, response, config, now(), groupId);
   if (!identity) return;
-  const stagingDir = resolve(config.dataDir, 'media', 'staging');
+  const stagingDir = mediaDir(config, 'staging');
   const result = cancelClipUpload(database, identity.groupId, identity.memberId, jobId, {
     stagingDir,
   });
@@ -355,8 +355,8 @@ async function handleProcessJob(ctx: MediaRouteContext, match: RegExpMatchArray)
       jobId,
       groupId: identity.groupId,
       ffmpegBin: config.ffmpegBin,
-      stagingDir: resolve(config.dataDir, 'media', 'staging'),
-      outputDir: resolve(config.dataDir, 'media', 'processed'),
+      stagingDir: mediaDir(config, 'staging'),
+      outputDir: mediaDir(config, 'processed'),
       actorMemberId: identity.memberId,
     });
   } finally {
@@ -465,8 +465,8 @@ function handleContributionDetail(ctx: MediaRouteContext, match: RegExpMatchArra
       contributionId,
       now(),
       {
-        stagingDir: resolve(config.dataDir, 'media', 'staging'),
-        outputDir: resolve(config.dataDir, 'media', 'processed'),
+        stagingDir: mediaDir(config, 'staging'),
+        outputDir: mediaDir(config, 'processed'),
       },
     );
     if (!result.ok) {
