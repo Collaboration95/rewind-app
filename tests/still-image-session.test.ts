@@ -11,7 +11,7 @@ const fixture: PlatformStillImage = {
   sourceUri: 'fixture://still',
   format: 'jpg',
   height: 900,
-  source: 'demo-fixture',
+  source: 'camera',
   width: 1200,
 };
 
@@ -20,7 +20,6 @@ function platform(overrides: Partial<CameraPlatform> = {}): CameraPlatform {
     captureStill: jest.fn().mockResolvedValue(fixture),
     getCapabilities: jest.fn().mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
     getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
-    kind: 'demo',
     openSettings: jest.fn().mockResolvedValue(undefined),
     requestPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
     supportsLivePreview: false,
@@ -50,7 +49,7 @@ describe('still image session lifecycle', () => {
       byteLength: 1,
       capturedAt: '2026-09-10T00:00:00.000Z',
       id: 'capture-1',
-      source: 'demo-fixture',
+      source: 'camera',
     });
     expect(persisted.metadata).not.toHaveProperty('uri');
     expect(await metadata.list()).toEqual([persisted.metadata]);

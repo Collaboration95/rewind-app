@@ -95,13 +95,12 @@ export const STILL: PlatformStillImage = {
   source: 'camera',
 };
 
-/** A real-device-shaped still platform (kind "expo") with every call observable. */
+/** A real-device-shaped still platform with every call observable. */
 /** Overrides are intentionally loose so a test can pass `jest.fn(async () => ({ camera: 'denied', … }))`. */
 type Overrides = Record<string, unknown>;
 
 export function createStillPlatform(overrides: Overrides = {}) {
   return {
-    kind: 'expo',
     supportsLivePreview: false,
     getCapabilities: jest.fn(async () => SUPPORTED),
     getPermissions: jest.fn(async () => GRANTED),
@@ -136,7 +135,6 @@ export function createVideoPlatform(
   overrides: Overrides = {},
 ) {
   return {
-    kind: 'expo',
     supportsLivePreview: true,
     getCapabilities: jest.fn(async () => SUPPORTED),
     getPermissions: jest.fn(async () => permissions),

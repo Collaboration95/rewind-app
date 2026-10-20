@@ -21,7 +21,7 @@ export interface PermissionSnapshot {
   microphone: PermissionState;
 }
 
-export type StillImageSource = 'camera' | 'demo-fixture' | 'file';
+export type StillImageSource = 'camera' | 'file';
 
 export interface PlatformStillImage {
   sourceUri: string;
@@ -99,14 +99,11 @@ export interface CameraViewHandle {
 }
 
 export interface CameraPlatform {
-  readonly kind: 'expo' | 'demo';
   readonly supportsLivePreview: boolean;
   /** Whether this adapter can record video in addition to still images. */
   readonly supportsVideoRecording?: boolean;
   /** Whether this adapter exposes a local file fallback. */
   readonly supportsFileFallback?: boolean;
-  /** The file fallback opens the device's own camera (web capture attribute). */
-  readonly fileFallbackIsCamera?: boolean;
 
   getCapabilities(): Promise<CapabilitySnapshot>;
   getPermissions(): Promise<PermissionSnapshot>;

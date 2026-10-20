@@ -6,7 +6,7 @@ import mockSafeAreaContext from 'react-native-safe-area-context/jest/mock';
 import { CameraCaptureScreen } from '../src/capture/CameraCaptureScreen';
 import { InMemoryCaptureFileStore } from '../src/capture/file-store';
 import { InMemoryImageMetadataStore } from '../src/capture/metadata-store';
-import { DemoCameraPlatform } from '../src/capture/platform';
+import { FixtureCameraPlatform } from './mocks/fixture-camera-platform';
 import type { CameraPlatform } from '../src/capture/contracts';
 import {
   ContributionStatusProvider,
@@ -49,6 +49,11 @@ jest.mock('expo-camera', () => {
   };
 });
 
+/** These tests stop before sealing; submitting would be a test bug. */
+const onSubmitPhoto = async (): Promise<ContributionStatus> => {
+  throw new Error('This test does not submit a photo.');
+};
+
 async function screen(
   platform: CameraPlatform,
   stores = {
@@ -63,6 +68,7 @@ async function screen(
       fileStore={stores.files}
       metadataStore={stores.metadata}
       now={() => new Date('2026-09-10T00:00:00.000Z')}
+      onSubmitPhoto={onSubmitPhoto}
       platform={platform}
     />,
   );
@@ -101,7 +107,6 @@ describe('CameraCaptureScreen', () => {
     'keeps the group visible when camera capability is %s and permission is %s',
     async (capability, permission, panel) => {
       const platform: CameraPlatform = {
-        kind: 'expo',
         getCapabilities: jest
           .fn()
           .mockResolvedValue({ camera: capability, microphone: 'supported' }),
@@ -117,6 +122,7 @@ describe('CameraCaptureScreen', () => {
           platform={platform}
           fileStore={new InMemoryCaptureFileStore()}
           metadataStore={new InMemoryImageMetadataStore()}
+          onSubmitPhoto={onSubmitPhoto}
         />,
       );
       await result.findByTestId(panel);
@@ -130,7 +136,7 @@ describe('CameraCaptureScreen', () => {
   );
 
   it('keeps selected-group context in the viewfinder and owned photo review', async () => {
-    const platform = new DemoCameraPlatform();
+    const platform = new FixtureCameraPlatform();
     const files = new InMemoryCaptureFileStore();
     const metadata = new InMemoryImageMetadataStore();
     const result = await render(
@@ -139,6 +145,7 @@ describe('CameraCaptureScreen', () => {
         platform={platform}
         fileStore={files}
         metadataStore={metadata}
+        onSubmitPhoto={onSubmitPhoto}
       />,
     );
     await result.findByTestId('camera-capture');
@@ -156,13 +163,12 @@ describe('CameraCaptureScreen', () => {
     ['unsupported', 'granted', 'camera-unsupported'],
     ['supported', 'denied', 'camera-permission-denied'],
   ] as const)(
-    'keeps the file fallback after retake and discard with %s camera and %s permission',
+    'keeps the file fallback after each retake with %s camera and %s permission',
     async (camera, permission, panel) => {
       const platform: CameraPlatform = {
         captureStill: jest.fn(),
         getCapabilities: jest.fn().mockResolvedValue({ camera, microphone: 'supported' }),
         getPermissions: jest.fn().mockResolvedValue({ camera: permission, microphone: 'granted' }),
-        kind: 'expo',
         openSettings: jest.fn().mockResolvedValue(undefined),
         pickStillFile: jest.fn().mockResolvedValue({
           format: 'jpg',
@@ -190,37 +196,13 @@ describe('CameraCaptureScreen', () => {
       await fireEvent.press(result.getByRole('button', { name: 'Choose an image file' }));
       await result.findByTestId('camera-preview-panel');
       expect(platform.pickStillFile).toHaveBeenCalledTimes(2);
-      await fireEvent.press(result.getByRole('button', { name: 'Discard' }));
+      await fireEvent.press(result.getByRole('button', { name: 'Retake' }));
       await result.findByTestId(panel);
       expect(files.size).toBe(0);
       expect(result.getByRole('button', { name: 'Choose an image file' })).toBeTruthy();
       expect(platform.captureStill).not.toHaveBeenCalled();
     },
   );
-
-  it('shows the ready state, then fixture preview and metadata-only acceptance', async () => {
-    const files = new InMemoryCaptureFileStore();
-    const metadata = new InMemoryImageMetadataStore();
-    const result = await screen(new DemoCameraPlatform(), { files, metadata });
-
-    await result.findByTestId('camera-capture');
-    expect(result.getByRole('button', { name: 'Take photo' })).toBeEnabled();
-    await fireEvent.press(result.getByTestId('camera-capture'));
-    expect(await result.findByTestId('camera-demo-preview')).toBeTruthy();
-    expect(result.queryByText(/fixture:\/\//)).toBeNull();
-    expect(files.size).toBe(1);
-    expect(await metadata.list()).toEqual([]);
-
-    await fireEvent.press(result.getByRole('button', { name: 'Use this still' }));
-    await result.findByText('Saved locally. Metadata only is retained.');
-    expect(await metadata.list()).toEqual([
-      expect.objectContaining({
-        capturedAt: '2026-09-10T00:00:00.000Z',
-        id: 'capture-ui',
-      }),
-    ]);
-    expect((await metadata.list())[0]).not.toHaveProperty('uri');
-  });
 
   it('presents a full-screen viewfinder with an accessible circular photo shutter', async () => {
     const platform: CameraPlatform = {
@@ -235,7 +217,6 @@ describe('CameraCaptureScreen', () => {
         .fn()
         .mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
       getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
-      kind: 'expo',
       openSettings: jest.fn().mockResolvedValue(undefined),
       requestPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
       supportsLivePreview: true,
@@ -262,22 +243,22 @@ describe('CameraCaptureScreen', () => {
     expect(result.getByRole('button', { name: 'Retake' })).toBeTruthy();
   });
 
-  it('cleans an active preview when retaking or discarding', async () => {
+  it('cleans an active preview on every retake', async () => {
     const files = new InMemoryCaptureFileStore();
     const metadata = new InMemoryImageMetadataStore();
-    const result = await screen(new DemoCameraPlatform(), { files, metadata });
+    const result = await screen(new FixtureCameraPlatform(), { files, metadata });
     await result.findByTestId('camera-capture');
 
     await fireEvent.press(result.getByTestId('camera-capture'));
-    await result.findByTestId('camera-demo-preview');
+    await result.findByTestId('camera-preview-panel');
     await fireEvent.press(result.getByRole('button', { name: 'Retake' }));
-    expect(result.queryByTestId('camera-demo-preview')).toBeNull();
+    expect(result.queryByTestId('camera-preview-panel')).toBeNull();
     expect(files.size).toBe(0);
 
     await fireEvent.press(result.getByTestId('camera-capture'));
-    await result.findByTestId('camera-demo-preview');
-    await fireEvent.press(result.getByRole('button', { name: 'Discard' }));
-    expect(result.queryByTestId('camera-demo-preview')).toBeNull();
+    await result.findByTestId('camera-preview-panel');
+    await fireEvent.press(result.getByRole('button', { name: 'Retake' }));
+    expect(result.queryByTestId('camera-preview-panel')).toBeNull();
     expect(files.size).toBe(0);
   });
 
@@ -320,7 +301,7 @@ describe('CameraCaptureScreen', () => {
   ])(
     'renders the %s state without exposing a capture control',
     async (_label, capabilities, permissions, testID, title) => {
-      const platform = new DemoCameraPlatform({ capabilities, permissions });
+      const platform = new FixtureCameraPlatform({ capabilities, permissions });
       const result = await screen(platform);
       expect(await result.findByTestId(testID)).toBeTruthy();
       expect(result.getByText(title)).toBeTruthy();
@@ -329,7 +310,7 @@ describe('CameraCaptureScreen', () => {
   );
 
   it('requests undetermined permissions and enables the control only after both are granted', async () => {
-    const platform = new DemoCameraPlatform({
+    const platform = new FixtureCameraPlatform({
       permissions: { camera: 'undetermined', microphone: 'undetermined' },
     });
     const requestPermissions = jest.spyOn(platform, 'requestPermissions').mockResolvedValue({
@@ -345,7 +326,7 @@ describe('CameraCaptureScreen', () => {
   });
 
   it('keeps a capture failure actionable', async () => {
-    const platform = new DemoCameraPlatform();
+    const platform = new FixtureCameraPlatform();
     jest.spyOn(platform, 'captureStill').mockRejectedValue(new Error('camera warm-up failed'));
     const result = await screen(platform);
     await result.findByTestId('camera-capture');
@@ -357,14 +338,14 @@ describe('CameraCaptureScreen', () => {
   it('does not let an unverified destination become a preview', async () => {
     const files = new InMemoryCaptureFileStore();
     jest.spyOn(files, 'exists').mockResolvedValue(false);
-    const result = await screen(new DemoCameraPlatform(), {
+    const result = await screen(new FixtureCameraPlatform(), {
       files,
       metadata: new InMemoryImageMetadataStore(),
     });
     await result.findByTestId('camera-capture');
     await fireEvent.press(result.getByTestId('camera-capture'));
     await result.findByTestId('camera-write-failed');
-    expect(result.queryByTestId('camera-demo-preview')).toBeNull();
+    expect(result.queryByTestId('camera-preview-panel')).toBeNull();
   });
 
   it('resumes an already-captured preview after the app is backgrounded', async () => {
@@ -373,11 +354,11 @@ describe('CameraCaptureScreen', () => {
       files: new InMemoryCaptureFileStore(),
       metadata: new InMemoryImageMetadataStore(),
     };
-    const result = await screen(new DemoCameraPlatform(), stores);
+    const result = await screen(new FixtureCameraPlatform(), stores);
 
     await result.findByTestId('camera-capture');
     await fireEvent.press(result.getByTestId('camera-capture'));
-    await result.findByTestId('camera-demo-preview');
+    await result.findByTestId('camera-preview-panel');
 
     await act(async () => {
       appState.emit('background');
@@ -401,7 +382,7 @@ describe('CameraCaptureScreen', () => {
 
   it('ignores a stale capture that resolves after the app was backgrounded', async () => {
     const appState = stubAppState();
-    const platform = new DemoCameraPlatform();
+    const platform = new FixtureCameraPlatform();
     let resolveCapture!: (image: Awaited<ReturnType<CameraPlatform['captureStill']>>) => void;
     jest.spyOn(platform, 'captureStill').mockImplementation(
       () =>
@@ -425,7 +406,7 @@ describe('CameraCaptureScreen', () => {
       resolveCapture({
         format: 'jpg',
         height: 900,
-        source: 'demo-fixture',
+        source: 'camera',
         sourceUri: 'fixture://late-still',
         width: 1200,
       });
@@ -465,7 +446,6 @@ describe('CameraCaptureScreen', () => {
         .fn()
         .mockResolvedValue({ camera: 'supported', microphone: 'supported' }),
       getPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
-      kind: 'expo',
       openSettings: jest.fn().mockResolvedValue(undefined),
       requestPermissions: jest.fn().mockResolvedValue({ camera: 'granted', microphone: 'granted' }),
       supportsLivePreview: false,
@@ -535,7 +515,7 @@ describe('CameraCaptureScreen', () => {
         metadataStore={new InMemoryImageMetadataStore()}
         onBack={onBack}
         onSubmitPhoto={onSubmitPhoto}
-        platform={new DemoCameraPlatform()}
+        platform={new FixtureCameraPlatform()}
       />,
     );
     await fireEvent.press(await result.findByTestId('camera-capture'));
@@ -578,7 +558,8 @@ describe('CameraCaptureScreen', () => {
         <CameraCaptureScreen
           fileStore={new InMemoryCaptureFileStore()}
           metadataStore={new InMemoryImageMetadataStore()}
-          platform={new DemoCameraPlatform()}
+          onSubmitPhoto={onSubmitPhoto}
+          platform={new FixtureCameraPlatform()}
         />
       </ContributionStatusProvider>,
     );

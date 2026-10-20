@@ -200,7 +200,6 @@ export function VideoCaptureScreen({
     () => (isVideoPlatform(platform) ? new BoundedVideoRecordingSession(platform) : null),
     [platform],
   );
-  const fileFallbackLabel = platform.fileFallbackIsCamera ? 'Record video' : 'Choose a video file';
   const realGroupId = realAccount?.groupId;
   const authenticatedRequest = realAccount?.authenticatedRequest;
   const transferMode = realAccount?.transferMode ?? 'server';
@@ -507,7 +506,7 @@ export function VideoCaptureScreen({
       if (!isCaptureActive()) return;
       setAccess('checking');
       setError(null);
-      if (platform.kind === 'demo' || platform.supportsVideoRecording === false || !recorder) {
+      if (platform.supportsVideoRecording === false || !recorder) {
         setAccess('unsupported');
         return;
       }
@@ -1536,22 +1535,18 @@ export function VideoCaptureScreen({
           body={[
             platform.getVideoCaptureUnavailableReason?.(),
             hasFileFallback
-              ? platform.fileFallbackIsCamera
-                ? 'Opens your phone camera. Record up to 15 seconds in portrait or landscape; the video comes back here so you can review it before you submit.'
-                : 'Live recording is not supported here. Choose an MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
+              ? 'Live recording is not supported here. Choose an MP4 no longer than 15 seconds with an audio track; the server verifies it before upload. It remains labelled as a file contribution.'
               : 'Use a physical device with camera and microphone access. Unsupported recording cannot be started here.',
           ]
             .filter((message): message is string => Boolean(message))
             .join(' ')}
           testID="video-unsupported"
-          title={
-            platform.fileFallbackIsCamera ? 'Record a video' : 'Recording is not supported here'
-          }
+          title="Recording is not supported here"
         >
           {hasFileFallback ? (
             <CamButton
               height={48}
-              label={fileFallbackLabel}
+              label="Choose a video file"
               onPress={() => void chooseVideoFile()}
               soft
             />
@@ -1565,7 +1560,7 @@ export function VideoCaptureScreen({
         >
           <CamButton
             height={48}
-            label={hasFileFallback ? fileFallbackLabel : 'Check again'}
+            label={hasFileFallback ? 'Choose a video file' : 'Check again'}
             onPress={() => void (hasFileFallback ? chooseVideoFile() : refresh())}
             soft
           />
@@ -1597,7 +1592,7 @@ export function VideoCaptureScreen({
           {hasFileFallback ? (
             <CamButton
               height={48}
-              label={fileFallbackLabel}
+              label="Choose a video file"
               onPress={() => void chooseVideoFile()}
             />
           ) : null}

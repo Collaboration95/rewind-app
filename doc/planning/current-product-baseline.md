@@ -253,8 +253,7 @@ does not grant pre-release playback/thumbnail access. This sealing boundary does
 not prohibit the member's local review **before** submission.
 
 If browser recording is unsupported or temporarily unavailable, supported web
-paths offer a bounded fallback: open the device camera sheet or “Choose a video
-file.” File selection accepts an MP4 up to 15 seconds with an audio track, keeps
+paths offer a bounded fallback: “Choose a video file.” File selection accepts an MP4 up to 15 seconds with an audio track, keeps
 file contributions labelled, and still requires server verification and quota
 checks. This is production capability, distinct from fixture injection and a
 general gallery-import product. Permission denial, interruption, invalid/oversize
