@@ -14,7 +14,7 @@ resources or the state key: that would replace the live host.
 | Root         | Creates                                                                                                                                                                     | State key                            |
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
 | `bootstrap/` | Terraform state bucket, GitHub OIDC provider, `rewind-coding-agent` role                                                                                                    | `rewind/bootstrap/terraform.tfstate` |
-| `demo/`      | Dev host: Lightsail instance `rewind-demo` and static IP, CloudFront distribution, backup and audit buckets, CloudTrail, budget, deploy role, legacy power controller       | `rewind/demo/terraform.tfstate`      |
+| `demo/`      | Dev host: Lightsail instance `rewind-demo` and static IP, CloudFront distribution, backup and audit buckets, CloudTrail, budget, deploy role                                | `rewind/demo/terraform.tfstate`      |
 | `media/`     | Per-environment media bucket and runtime IAM user, Cognito pool and client, PostgreSQL database, hosted settings object; used by dev directly and by `release/` as a module | `rewind/media/terraform.tfstate`     |
 | `release/`   | Release host `rewind-release`, its CloudFront URL, deploy role, backup bucket, release media/database/Cognito via `media/`                                                  | `rewind/release/terraform.tfstate`   |
 
@@ -144,7 +144,7 @@ source_profile = default
 region = ap-southeast-1
 ```
 
-## Host rebuild and the legacy power controller
+## Host rebuild
 
 Rebuild the dev host with the reviewed Terraform profile:
 
@@ -159,12 +159,9 @@ tags and the expected or absent Lightsail resources before a plan is eligible.
 only to a host that keeps its database on disk; `--seed` is the first-install
 exception. See [deploy/README.md](../../deploy/README.md#restore-and-host-rebuild).
 
-`demo/automation.tf` still declares a small Lambda, `rewind-demo-power-controller`,
-and a role the operator can assume to invoke it. It has no public endpoint and
-is described in its IAM description as legacy. It accepts `start`, or `stop` with
-a recent backup manifest key, and can only start or stop the one tagged instance.
-No schedule exists unless `automatic_start_schedule_expression` is set (default
-`null`), and nothing in the deploy workflows uses it.
+The legacy power-controller Lambda, its operator and scheduler roles and the
+`rewind-demo` schedule group were removed on 21 Oct 2026: nothing scheduled
+them and the host runs continuously.
 
 ## Recovery model
 

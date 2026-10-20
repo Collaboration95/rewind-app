@@ -54,13 +54,6 @@ export interface ChatReactionSnapshot {
   messages: { messageId: string; reactionCounts: Partial<Record<ChatReactionEmoji, number>> }[];
 }
 
-export interface ChatHistoryPage {
-  events: ChatMessageEvent[];
-  nextCursor: number | null;
-  watermarkEventId: number;
-  hasMore: boolean;
-}
-
 /** Message metadata sent to observers that only maintain unread counts. */
 export interface ChatUnreadMessageEvent {
   eventId: number;

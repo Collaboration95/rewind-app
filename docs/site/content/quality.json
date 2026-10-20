@@ -182,10 +182,25 @@
         "AGENTS.md rule: limit focused diagnosis to two attempts per issue, then record the blocker and move on. Never remove assertions."
       ],
       "sources": [
-        { "label": "package.json", "path": "package.json", "note": "All scripts" },
-        { "label": "Makefile", "path": "Makefile", "note": "postgres-test-db, test-postgres" },
-        { "label": "scripts/focused-test.mjs", "path": "scripts/focused-test.mjs" },
-        { "label": "AGENTS.md", "path": "AGENTS.md", "note": "Verification tiers" }
+        {
+          "label": "package.json",
+          "path": "package.json",
+          "note": "All scripts"
+        },
+        {
+          "label": "Makefile",
+          "path": "Makefile",
+          "note": "postgres-test-db, test-postgres"
+        },
+        {
+          "label": "scripts/focused-test.mjs",
+          "path": "scripts/focused-test.mjs"
+        },
+        {
+          "label": "AGENTS.md",
+          "path": "AGENTS.md",
+          "note": "Verification tiers"
+        }
       ],
       "qa": [
         {
@@ -364,8 +379,8 @@
             ],
             [
               "Reliability",
-              "Migration chain applied once; whole server suite passes on SQLite and on PostgreSQL; backup and restore fixtures",
-              "`server/tests/migration-chain.test.mjs`, `make test-postgres`, `tests/deploy/`"
+              "SQLite baseline applied once; whole server suite passes on SQLite and on PostgreSQL; backup and restore fixtures",
+              "`server/tests/migration-baseline.test.mjs`, `make test-postgres`, `tests/deploy/`"
             ],
             [
               "Maintainability",
@@ -382,7 +397,7 @@
       ],
       "paragraphs": [
         "**Performance numbers.** The #353 runner (12 Oct 2026 run, local SQLite, one Mac, loopback) targets a p95 of 2 seconds or less for non-media API calls. Its three repetitions measured p95 between about 4 and 9 ms. Film compilation of 25 six-second clips is checked for 720x1280, 30 fps, audio present and loudness between -18 and -14 LUFS. This is a local result only: it is not PostgreSQL, hosted, S3 or device performance, and the document says so itself.",
-        "**Reliability across two databases.** Release still runs SQLite while hosted dev runs PostgreSQL, so the same server tests run on both engines. That is why no SQLite migration was removed in the refactor."
+        "**Reliability across two databases.** Release still runs SQLite while hosted dev runs PostgreSQL, so the same server tests run on both engines. The SQLite migration files were later squashed into one baseline; PostgreSQL is unchanged."
       ],
       "sources": [
         {
@@ -453,7 +468,10 @@
         "A docs-only change skips most jobs. The full pipeline, security scanning and deploys are explained on the [CI/CD page](cicd.html)."
       ],
       "sources": [
-        { "label": ".github/workflows/quality.yml", "path": ".github/workflows/quality.yml" }
+        {
+          "label": ".github/workflows/quality.yml",
+          "path": ".github/workflows/quality.yml"
+        }
       ],
       "qa": [
         {

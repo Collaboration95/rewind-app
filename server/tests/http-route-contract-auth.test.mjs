@@ -11,6 +11,28 @@ import {
 } from './helpers/route-contract.mjs';
 
 const fx = await routeFixture();
+// Both runtimes are created before any test is registered: a top-level await
+// after test() calls let the runner finish (and close the first runtime) while
+// this setup was still logging in, so the Cognito test never ran.
+
+// ---- a second runtime with an injected Cognito service -------------------------
+const seen = {};
+const cognitoFx = await routeFixture({
+  options: {
+    cognito: {
+      config: {},
+      authorizeUrl: (parameters) => {
+        Object.assign(seen, parameters);
+        return `https://idp.example/authorize?state=${parameters.state}`;
+      },
+      exchange: async () => {
+        throw new Error('stubbed token exchange fails');
+      },
+      logoutUrl: (origin) => `https://idp.example/logout?origin=${encodeURIComponent(origin)}`,
+      deleteUser: async () => undefined,
+    },
+  },
+});
 const SESSION_COOKIE = '__Host-rewind_session';
 const NEW_USER = { username: 'rc.new.user', password: 'a long enough contract password' };
 const token43 = 'B'.repeat(43);
@@ -594,25 +616,6 @@ test('auth: password sign-in can be switched off', async () => {
   } finally {
     config.authPassword = true;
   }
-});
-
-// ---- a second runtime with an injected Cognito service -------------------------
-const seen = {};
-const cognitoFx = await routeFixture({
-  options: {
-    cognito: {
-      config: {},
-      authorizeUrl: (parameters) => {
-        Object.assign(seen, parameters);
-        return `https://idp.example/authorize?state=${parameters.state}`;
-      },
-      exchange: async () => {
-        throw new Error('stubbed token exchange fails');
-      },
-      logoutUrl: (origin) => `https://idp.example/logout?origin=${encodeURIComponent(origin)}`,
-      deleteUser: async () => undefined,
-    },
-  },
 });
 
 test('cognito: config reports it, start redirects with a transaction cookie, failures return to the app', async () => {

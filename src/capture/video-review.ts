@@ -5,8 +5,6 @@ import {
   type RecordedClip,
 } from '../domain/video';
 
-export { CAPTURE_MODE_LABELS } from '../domain/video';
-
 export interface TrimBounds {
   startSeconds: number;
   endSeconds: number;

@@ -2,7 +2,7 @@
   "title": "Database design",
   "lede": "Relational tables hold identity, membership, cycle state and durable processing receipts, while photo/video bytes stay on disk or in private S3.",
   "intro": [
-    "This dictionary follows server/src/schema.ts, db.ts, the SQLite SQL chain and PostgreSQL baseline 030 plus migration 031 in the 20 October 2026 refactor checkout. PK means primary key; FK means an enforced foreign key; U means unique. A logical pointer is explicitly not an FK. Timestamps are stored as ISO-8601 text, and IDs are text unless stated otherwise."
+    "This dictionary follows server/src/schema.ts, db.ts, the SQLite baseline and PostgreSQL baseline 030 plus migration 031 in the 20 October 2026 refactor checkout. PK means primary key; FK means an enforced foreign key; U means unique. A logical pointer is explicitly not an FK. Timestamps are stored as ISO-8601 text, and IDs are text unless stated otherwise."
   ],
   "sections": [
     {
@@ -68,8 +68,8 @@
           "label": "server/migrations/postgres/031-cognito-accounts.sql"
         },
         {
-          "path": "server/migrations/022-real-media-profile-bridge.sql",
-          "label": "server/migrations/022-real-media-profile-bridge.sql"
+          "path": "server/migrations/sqlite-baseline.sql",
+          "label": "server/migrations/sqlite-baseline.sql"
         },
         {
           "path": "server/src/groups/settings.ts",
@@ -153,28 +153,8 @@
       ],
       "sources": [
         {
-          "path": "server/migrations/018-real-account-auth.sql",
-          "label": "server/migrations/018-real-account-auth.sql"
-        },
-        {
-          "path": "server/migrations/019-real-groups.sql",
-          "label": "server/migrations/019-real-groups.sql"
-        },
-        {
-          "path": "server/migrations/020-real-group-invites.sql",
-          "label": "server/migrations/020-real-group-invites.sql"
-        },
-        {
-          "path": "server/migrations/021-real-group-invite-acceptance.sql",
-          "label": "server/migrations/021-real-group-invite-acceptance.sql"
-        },
-        {
-          "path": "server/migrations/022-real-media-profile-bridge.sql",
-          "label": "server/migrations/022-real-media-profile-bridge.sql"
-        },
-        {
-          "path": "server/migrations/031-cognito-accounts.sql",
-          "label": "server/migrations/031-cognito-accounts.sql"
+          "path": "server/migrations/sqlite-baseline.sql",
+          "label": "server/migrations/sqlite-baseline.sql"
         },
         {
           "path": "server/src/groups/real.ts",
@@ -375,28 +355,8 @@
       ],
       "sources": [
         {
-          "path": "server/migrations/006-realtime-messages.sql",
-          "label": "server/migrations/006-realtime-messages.sql"
-        },
-        {
-          "path": "server/migrations/007-chat-replies-reactions.sql",
-          "label": "server/migrations/007-chat-replies-reactions.sql"
-        },
-        {
-          "path": "server/migrations/025-real-group-reminders.sql",
-          "label": "server/migrations/025-real-group-reminders.sql"
-        },
-        {
-          "path": "server/migrations/027-reminder-outbox.sql",
-          "label": "server/migrations/027-reminder-outbox.sql"
-        },
-        {
-          "path": "server/migrations/028-content-safety.sql",
-          "label": "server/migrations/028-content-safety.sql"
-        },
-        {
-          "path": "server/migrations/029-member-reports.sql",
-          "label": "server/migrations/029-member-reports.sql"
+          "path": "server/migrations/sqlite-baseline.sql",
+          "label": "server/migrations/sqlite-baseline.sql"
         },
         {
           "path": "server/src/chat/index.ts",
@@ -438,7 +398,7 @@
             [
               "`audit_events`",
               "Bounded event: id, event_type, actor_member_id, resource_id, occurred_at, result.",
-              "PK id; actor profile FK SET NULL; resource_id is logical. CHECK restricts session/job/integrity/repair event types and success/failure/denied results. Time/id and resource indexes. Sanitisation limits stored identifiers and actor attribution."
+              "PK id; actor profile FK SET NULL; resource_id is logical. CHECK restricts session/job/integrity/repair event types and success/failure/denied results. Time/id and resource indexes. The actor is the signed-in member’s profile id for real-account actions, and null for system or scheduler actions. Sanitisation limits stored identifiers."
             ],
             [
               "`auth_login_throttles`",
@@ -515,7 +475,7 @@
       "qa": [
         {
           "q": "Why keep migration keys as well as numbers?",
-          "a": "Earlier branches reused numeric slots and filenames. Stable keys identify the intended change, while startup repair logic checks the actual SQLite shape."
+          "a": "Earlier branches reused numeric slots and filenames. Stable keys identify the intended change and are still recorded in the receipt tables, even though the SQL files were squashed into one baseline."
         },
         {
           "q": "Do legacy sessions let someone enter a real group?",
@@ -619,15 +579,15 @@
     {
       "id": "migrations",
       "title": "Migrations: the current state",
-      "summary": "SQLite currently applies 31 registered migrations; PostgreSQL uses baseline 030 and migration 031.",
+      "summary": "SQLite runs one baseline file on a fresh database; PostgreSQL uses baseline 030 and migration 031.",
       "tables": [
         {
           "columns": ["Engine", "Startup application", "Readiness and safety"],
           "rows": [
             [
               "SQLite",
-              "schema.ts registers versions 1–31 with stable keys and SQL files. migrateDatabase creates receipt tables, takes BEGIN IMMEDIATE and applies missing or repair-required steps transactionally.",
-              "Repairs inspect columns/indexes/triggers as well as markers. Profile/audit rebuilds temporarily adjust FK handling and check references before commit. Busy retries handle concurrent starters."
+              "schema.ts keeps a receipt list of versions 1–31 with stable keys. A fresh database runs `server/migrations/sqlite-baseline.sql` once and records every receipt. A database already at version 31 opens unchanged.",
+              "An older, partial or damaged database is refused with an instruction to upgrade it first with a release from before the squash (git tag `pre-migration-squash`). The old step-by-step repair code is gone."
             ],
             [
               "PostgreSQL",
@@ -637,14 +597,14 @@
             [
               "Both",
               "031 adds nullable cognito_sub and a partial unique index; no destructive account rebuild is required.",
-              "schemaReadiness checks expected versions/keys; HTTP health reports readiness. A receipt alone is not a live provider/deployment acceptance result."
+              "schemaReadiness checks expected versions/keys, and reports a dropped baseline table, index or trigger as `baseline:<name>`; HTTP health reports readiness. A receipt alone is not a live provider/deployment acceptance result."
             ]
           ]
         }
       ],
       "paragraphs": [
-        "The counts were checked in this checkout: 31 root SQLite SQL files and 31 registry entries, plus two PostgreSQL SQL files. Filename prefixes are not the whole ordering contract: realtime and reaction SQL retain historical 006/007 filenames but are registered at versions 11/12. The stable key resolves that ambiguity.",
-        "**Planned follow-up:** squash the SQLite history into a baseline. That has not been done in this source snapshot. Do not describe SQLite as already baselined, delete the upgrade history, or treat PostgreSQL’s existing baseline as proof of a SQLite squash."
+        "In this checkout SQLite has one SQL file, `sqlite-baseline.sql`, and 31 receipt entries in schema.ts, plus two PostgreSQL SQL files. The receipts keep their stable keys so PostgreSQL parity and health checks still line up.",
+        "**Squash done:** the 31 SQLite migration files were squashed into the baseline. The git tag `pre-migration-squash` marks the last release that can upgrade an older SQLite database."
       ],
       "sources": [
         {
@@ -679,7 +639,7 @@
         },
         {
           "q": "Has SQLite migration history already been squashed?",
-          "a": "No. The current code still registers 31 migrations and repair logic. A SQLite baseline squash is planned as a follow-up."
+          "a": "Yes. The 31 SQLite files are now `sqlite-baseline.sql`. schema.ts keeps the 31 receipts. A fresh database runs the baseline; a database at version 31 opens unchanged; any older or damaged database is refused until upgraded with a release from before the squash (tag `pre-migration-squash`)."
         },
         {
           "q": "How does a concurrent server and worker avoid migrating twice?",
@@ -703,7 +663,7 @@
           "rows": [
             [
               "`npm run server:test` / default fast suite",
-              "Normal server behaviour against SQLite, including SQLite-specific migration repairs."
+              "Normal server behaviour against SQLite, including the baseline and the refusal of old databases."
             ],
             [
               "`make test-postgres`",

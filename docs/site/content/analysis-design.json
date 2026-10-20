@@ -65,12 +65,12 @@
             ],
             [
               "Control: film compilation",
-              "`server/src/jobs/index.ts` and `server/src/jobs/worker.ts`",
+              "`server/src/jobs/compilation.ts` and `server/src/jobs/worker.ts`",
               "Replace a long request with durable work and recoverable processing."
             ],
             [
               "Entity: Cycle",
-              "`src/domain/cycles.ts` and persisted `cycles` records",
+              "`server/src/cycles/engine.ts` and persisted `cycles` records",
               "Make state, timing, locking and release facts explicit."
             ]
           ]
@@ -93,9 +93,9 @@
           "note": "Function-based use-case control."
         },
         {
-          "path": "src/domain/cycles.ts",
-          "label": "src/domain/cycles.ts",
-          "note": "Domain types rather than an invented entity superclass."
+          "path": "server/src/cycles/engine.ts",
+          "label": "server/src/cycles/engine.ts",
+          "note": "Cycle timing and phase types rather than an invented entity superclass."
         }
       ],
       "qa": [
@@ -304,8 +304,8 @@
           "note": "Direct-upload completion and idempotent acceptance."
         },
         {
-          "path": "server/src/jobs/index.ts",
-          "label": "server/src/jobs/index.ts",
+          "path": "server/src/jobs/compilation.ts",
+          "label": "server/src/jobs/compilation.ts",
           "note": "Durable processing records and claims."
         },
         {
@@ -383,8 +383,8 @@
           "note": "Persisted transitions, successor and release gates."
         },
         {
-          "path": "server/src/jobs/index.ts",
-          "label": "server/src/jobs/index.ts",
+          "path": "server/src/jobs/compilation.ts",
+          "label": "server/src/jobs/compilation.ts",
           "note": "Durable film inputs, generation-fenced processing and completion."
         },
         {

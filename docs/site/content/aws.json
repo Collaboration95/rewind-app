@@ -56,7 +56,6 @@
           "columns": ["Profile", "Purpose"],
           "rows": [
             ["rewind-coding-agent", "Read-only operational inspection; used for this page"],
-            ["rewind-demo-operator", "Legacy approved power-controller invocation"],
             ["rewind-terraform-apply", "Human-reviewed Terraform plan/apply"],
             ["default", "Local source identity for role assumption; credentials stay outside Git"]
           ]
@@ -150,7 +149,7 @@
             ],
             [
               "demo/",
-              "Hosted dev Lightsail/static IP, CloudFront, backups/audit, budget, deploy role, legacy power controller",
+              "Hosted dev Lightsail/static IP, CloudFront, backups/audit, budget, deploy role",
               "rewind/demo/terraform.tfstate"
             ],
             [
@@ -305,11 +304,6 @@
               "demo/observability.tf; demo/storage.tf"
             ],
             ["AWS Budget", "Configured actual-cost notifications", "demo/observability.tf"],
-            [
-              "Legacy Lambda / optional Scheduler",
-              "Power-controller path; not normal deployment",
-              "demo/automation.tf"
-            ],
             [
               "Lightsail host alarms",
               "Dev status, CPU and burst-capacity signals; observed OK",
@@ -577,19 +571,15 @@
       "summary": "The dev host runs continuously; the former cost-safety audit and backup-gated hibernation are retired.",
       "paragraphs": [
         "The budget code defines a US$15 monthly actual-cost budget with notifications near US$10 and US$15 when recipients are configured. It has no Rewind-only cost filter, so it should not be described as an application-only spending meter. Alerts notify; they do not cap spend or stop resources.",
-        "[Merged #516](https://github.com/Collaboration95/rewind-app/pull/516) removed the cost-safety audit Lambda, its failed Scheduler path and associated audit alarm/roles. Its change record says the scheduler trust was wrong, deliveries failed and the alarm had no recipients. The surviving `rewind-demo-power-controller` is a separate legacy component in `demo/automation.tf`.",
-        "The remaining controller can start the one dev host, or stop it only with a recent backup-manifest key. An optional automatic-start schedule exists only when its expression is configured; the default is null. Deploy workflows do not invoke this controller. Live Lambda/Scheduler enumeration was denied to the coding profile, so this page does not claim that an optional schedule is active.",
-        "[Merged #519](https://github.com/Collaboration95/rewind-app/pull/519), resolving #512, removed backup-gated hibernation and its destroy/stop scripts. Hosted dev runs continuously with PostgreSQL/S3 data outside the host. The retained wake script is for host creation/rebuild; its latest/manifest paths are SQLite-era recovery paths.",
+        "[Merged #516](https://github.com/Collaboration95/rewind-app/pull/516) removed the cost-safety audit Lambda, its failed Scheduler path and associated audit alarm/roles. Its change record says the scheduler trust was wrong, deliveries failed and the alarm had no recipients. A separate legacy power controller (`rewind-demo-power-controller`) was removed on 21 October 2026; see below.",
+        "That controller could start the one dev host, or stop it only with a recent backup-manifest key. Nothing scheduled it and deploy workflows never invoked it. On 21 October 2026 it was removed and destroyed in AWS: `automation.tf`, its Lambda source, the Lambda, its log group, its IAM role and policy, the `rewind-demo-operator` and `rewind-demo-scheduler` IAM roles and the `rewind-demo` EventBridge Scheduler group.",
+        "[Merged #519](https://github.com/Collaboration95/rewind-app/pull/519), resolving #512, removed backup-gated hibernation and its destroy/stop scripts. Hosted dev runs continuously with PostgreSQL/S3 data outside the host. The retained wake script (`infra/scripts/wake-demo.sh`) is for host creation/rebuild; its latest/manifest paths are SQLite-era recovery paths.",
         "Other controls are tangible resource choices: one small host per environment, single-AZ databases, no declared NAT/load balancer/cluster, backup/artifact expiry and pruning old image pairs. Dev’s three Lightsail status/CPU/burst alarms were observed in OK state. Their script manages them because they are outside the Terraform resources used here. CloudTrail management logging was also observed active."
       ],
       "sources": [
         {
           "label": "infra/terraform/demo/observability.tf",
           "path": "infra/terraform/demo/observability.tf"
-        },
-        {
-          "label": "infra/terraform/demo/automation.tf",
-          "path": "infra/terraform/demo/automation.tf"
         },
         {
           "label": "infra/terraform/demo/storage.tf",
@@ -619,11 +609,11 @@
         },
         {
           "q": "Is the cost-safety Lambda still checking the account?",
-          "a": "No. #516 removed that audit. A different legacy power controller remains declared; normal deployment does not use it."
+          "a": "No. #516 removed that audit. The separate legacy power controller was also removed on 21 October 2026."
         },
         {
-          "q": "Why retain a power controller after retiring hibernation?",
-          "a": "They are different mechanisms. Hibernation destroyed/recreated compute through Terraform; the legacy controller only starts/stops an existing instance behind its old backup gate."
+          "q": "Why was the power controller removed after retiring hibernation?",
+          "a": "We did not. It was removed on 21 October 2026 because nothing used it: no schedule invoked it, deploys never called it, and the dev host runs continuously."
         }
       ]
     },

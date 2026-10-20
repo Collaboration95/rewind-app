@@ -105,7 +105,7 @@ function insertFixtures(database) {
 }
 
 test(
-  'migration 016 records readiness and repairs a malformed index after receipt',
+  'the ledger schema is part of readiness and a dropped ledger index is refused',
   { skip: sqliteOnly },
   async () => {
     await withRuntime(async ({ database }) => {
@@ -115,13 +115,6 @@ test(
         database.prepare('SELECT version FROM schema_migrations WHERE version = 17').get()?.version,
         17,
       );
-      database.exec(`
-      DROP INDEX contributions_ledger_member_idx;
-      CREATE INDEX contributions_ledger_member_idx ON contributions (member_id);
-    `);
-      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, ['contribution-ledger-v1']);
-      migrateDatabase(database);
-      assert.equal(schemaReadiness(database).ready, true);
       assert.deepEqual(
         database
           .prepare('PRAGMA index_info(contributions_ledger_member_idx)')
@@ -129,14 +122,6 @@ test(
           .map((row) => row.name),
         ['cycle_id', 'member_id', 'created_at', 'id'],
       );
-
-      database.exec(`
-      DROP INDEX contributions_ledger_member_idx;
-      ALTER TABLE contributions DROP COLUMN replaced_by_contribution_id;
-    `);
-      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, ['contribution-ledger-v1']);
-      migrateDatabase(database);
-      assert.equal(schemaReadiness(database).ready, true);
       assert.equal(
         database
           .prepare('PRAGMA table_info(contributions)')
@@ -144,6 +129,12 @@ test(
           .some((row) => row.name === 'replaced_by_contribution_id'),
         true,
       );
+      // Since the migration squash a damaged schema is reported, not repaired.
+      database.exec('DROP INDEX contributions_ledger_member_idx');
+      assert.deepEqual(schemaReadiness(database).missingMigrationKeys, [
+        'baseline:contributions_ledger_member_idx',
+      ]);
+      assert.throws(() => migrateDatabase(database), /pre-migration-squash/);
     });
   },
 );

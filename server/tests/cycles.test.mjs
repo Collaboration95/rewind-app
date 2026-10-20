@@ -1,19 +1,15 @@
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolve } from 'node:path';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { seedLegacyFixture } from './helpers/legacy-fixture.mjs';
 import { sqliteOnly } from './helpers/dialect.mjs';
 import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
-const { getCurrentCycle, migrateDatabase, openDatabaseAt } = await import('../dist/db.js');
+const { getCurrentCycle, openDatabaseAt } = await import('../dist/db.js');
 const { advanceCycleLifecycle, CYCLE_DURATION_MS, createCycleEngine, publishCycleRelease } =
   await import('../dist/cycles/index.js');
 
@@ -279,125 +275,6 @@ test(
         1,
       );
       assert.equal(getCurrentCycle(database, 'demo-group').releaseStatus, 'unpublished');
-    });
-  },
-);
-
-test(
-  'a legacy #54 version-006 lifecycle database is promoted without losing quota state',
-  { skip: sqliteOnly },
-  async () => {
-    const dataDir = await mkdtemp(`${tmpdir()}/rewind-legacy-cycle-first-`);
-    const databasePath = `${dataDir}/rewind.sqlite`;
-    const database = new DatabaseSync(databasePath);
-    try {
-      database.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
-      database.exec(
-        'CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
-      );
-      for (const version of [1, 2, 3, 4, 5]) {
-        database.exec(
-          readFileSync(
-            `server/migrations/${String(version).padStart(3, '0')}-${
-              ['initial', 'session-audit', 'cycle-controls', 'invites', 'media-idempotency'][
-                version - 1
-              ]
-            }.sql`,
-            'utf8',
-          ),
-        );
-        database
-          .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)')
-          .run(version, new Date().toISOString());
-      }
-      seedLegacyFixture(database);
-      database.exec(
-        `ALTER TABLE cycles ADD COLUMN release_status TEXT NOT NULL DEFAULT 'unpublished'
-         CHECK (release_status IN ('unpublished', 'published'));
-       ALTER TABLE cycles ADD COLUMN release_published_at TEXT;
-       ALTER TABLE cycles ADD COLUMN previous_cycle_id TEXT REFERENCES cycles(id) ON DELETE SET NULL;
-       CREATE UNIQUE INDEX cycles_previous_cycle_idx ON cycles (previous_cycle_id) WHERE previous_cycle_id IS NOT NULL;
-       CREATE TABLE cycle_lifecycle_events (
-         id TEXT PRIMARY KEY,
-         cycle_id TEXT NOT NULL REFERENCES cycles(id) ON DELETE CASCADE,
-         group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-         transition TEXT NOT NULL CHECK (transition IN ('collecting_to_revealing', 'revealing_to_archived', 'next_cycle_created')),
-         occurred_at TEXT NOT NULL,
-         UNIQUE (cycle_id, transition)
-       );
-       CREATE INDEX cycle_lifecycle_events_group_idx ON cycle_lifecycle_events (group_id, occurred_at DESC, id DESC);
-       CREATE UNIQUE INDEX cycle_lifecycle_events_receipt_idx ON cycle_lifecycle_events (cycle_id, transition);`,
-      );
-      database
-        .prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)')
-        .run(new Date().toISOString());
-      database.close();
-
-      const upgraded = openDatabaseAt(databasePath);
-      try {
-        assert.equal(
-          upgraded.prepare('SELECT 1 FROM schema_migrations WHERE version = 9').get()?.['1'],
-          1,
-        );
-        assert.equal(
-          upgraded.prepare('SELECT 1 FROM contribution_quota_windows LIMIT 1').get() !== undefined,
-          true,
-        );
-        assert.equal(
-          upgraded.prepare('SELECT 1 FROM cycle_lifecycle_events LIMIT 1').get() !== undefined,
-          false,
-        );
-        assert.equal(getCurrentCycle(upgraded, 'demo-group').releaseStatus, 'unpublished');
-      } finally {
-        upgraded.close();
-      }
-    } finally {
-      try {
-        database.close();
-      } catch {
-        // The database is already closed after the successful upgrade setup.
-      }
-      await rm(dataDir, { recursive: true, force: true });
-    }
-  },
-);
-
-test(
-  'lifecycle migration repairs a partial DDL shape even after version 009 was recorded',
-  { skip: sqliteOnly },
-  async () => {
-    await withDatabase(async ({ database }) => {
-      database.exec(
-        `DROP INDEX cycles_previous_cycle_idx;
-       DROP INDEX cycle_lifecycle_events_group_idx;
-       DROP INDEX cycle_lifecycle_events_receipt_idx;
-       ALTER TABLE cycles DROP COLUMN previous_cycle_id;
-       ALTER TABLE cycle_lifecycle_events RENAME TO cycle_lifecycle_events_broken;
-       CREATE TABLE cycle_lifecycle_events (id TEXT PRIMARY KEY);`,
-      );
-      migrateDatabase(database);
-      assert.equal(
-        database
-          .prepare('PRAGMA table_info(cycles)')
-          .all()
-          .some((row) => row.name === 'previous_cycle_id'),
-        true,
-      );
-      assert.equal(
-        database
-          .prepare(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'cycle_lifecycle_events'",
-          )
-          .get()
-          .sql.includes('cycle_id'),
-        true,
-      );
-      assert.equal(
-        database
-          .prepare('SELECT name FROM pragma_index_list(?) WHERE name = ?')
-          .get('cycles', 'cycles_previous_cycle_idx') !== undefined,
-        true,
-      );
     });
   },
 );

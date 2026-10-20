@@ -753,11 +753,7 @@ test(
       assert.equal(result.outcome, 'unverifiable');
       database.close();
 
-      const raw = new DatabaseSync(config.databasePath);
-      raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
-      raw.exec('DELETE FROM schema_migrations WHERE version = 15');
-      raw.close();
-
+      // Reopening runs the startup backfill path against the pre-#157 row.
       database = openFixtureDatabase(config);
       try {
         await backfillMediaIntegrity(database, config.dataDir);
@@ -802,13 +798,6 @@ test(
            output_verified_at = NULL WHERE id IN (?, ?)`,
         )
         .run(...jobIds);
-      // Force the schema-only migration to replay, as after a crash between
-      // adding columns and finishing the separate backfill phase.
-      const raw = new DatabaseSync(config.databasePath);
-      raw.exec("DELETE FROM schema_migration_markers WHERE migration_key = 'media-integrity-v1'");
-      raw.exec('DELETE FROM schema_migrations WHERE version = 15');
-      raw.close();
-      migrateDatabase(database);
 
       const competingWriter = new DatabaseSync(config.databasePath);
       competingWriter.exec('PRAGMA busy_timeout = 100');
@@ -851,8 +840,8 @@ test(
         'the first short receipt transaction should survive the simulated interruption',
       );
 
-      // Reopening reapplies only the idempotent schema and resumes the missing
-      // row; the already-recorded receipt stays unchanged.
+      // Reopening resumes the missing row; the already-recorded receipt stays
+      // unchanged.
       const resumed = openFixtureDatabase(config);
       try {
         await backfillMediaIntegrity(resumed, dataDir);

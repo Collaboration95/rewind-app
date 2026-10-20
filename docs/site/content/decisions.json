@@ -225,7 +225,7 @@
         },
         {
           "q": "How is parity checked?",
-          "a": "The server suite runs against both engines, with PostgreSQL-specific transaction, error, schema and import tests. SQLite-internal repair/WAL cases remain SQLite-specific."
+          "a": "The server suite runs against both engines, with PostgreSQL-specific transaction, error, schema and import tests. SQLite-internal WAL cases remain SQLite-specific."
         }
       ],
       "visuals": [
@@ -318,8 +318,8 @@
           "label": "server/src/ffmpeg.ts"
         },
         {
-          "path": "server/src/jobs/index.ts",
-          "label": "server/src/jobs/index.ts"
+          "path": "server/src/jobs/compilation.ts",
+          "label": "server/src/jobs/compilation.ts"
         },
         {
           "path": "server/src/jobs/queue.ts",

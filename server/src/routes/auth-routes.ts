@@ -40,6 +40,8 @@ import {
   redirectWithCookies,
 } from './respond';
 
+const CLEAR_SESSION_COOKIE = `${REAL_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+
 function handleAuthConfig(ctx: AuthRouteContext): void {
   const { request, response, config, cognito, passwordSignIn } = ctx;
   authJson(request, response, config, 200, { passwordSignIn, cognito: Boolean(cognito) });
@@ -281,12 +283,21 @@ function handleSession(ctx: AuthRouteContext): void {
   const session = validateRealSession(database, token ?? '', now);
   if (session.status !== 'valid') {
     const missingCredential = token === null;
-    authJson(request, response, config, 401, {
-      error: missingCredential ? 'session_required' : 'session_expired',
-      message: missingCredential
-        ? 'A valid sign-in is required.'
-        : 'This sign-in has expired or was revoked.',
-    });
+    authJson(
+      request,
+      response,
+      config,
+      401,
+      {
+        error: missingCredential ? 'session_required' : 'session_expired',
+        message: missingCredential
+          ? 'A valid sign-in is required.'
+          : 'This sign-in has expired or was revoked.',
+      },
+      // Drop a stale cookie so only the first visit after losing a session
+      // reports it; later visits are plain signed-out visits.
+      missingCredential ? {} : { 'Set-Cookie': CLEAR_SESSION_COOKIE },
+    );
     return;
   }
   authJson(
@@ -376,7 +387,7 @@ async function handleDeleteAccount(ctx: AuthRouteContext): Promise<void> {
         : {}),
     },
     {
-      'Set-Cookie': `${REAL_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+      'Set-Cookie': CLEAR_SESSION_COOKIE,
     },
   );
 }
@@ -398,7 +409,7 @@ function handleLogout(ctx: AuthRouteContext): void {
     200,
     { signedOut: true, ...(logoutUrl ? { logoutUrl } : {}) },
     {
-      'Set-Cookie': `${REAL_SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+      'Set-Cookie': CLEAR_SESSION_COOKIE,
     },
   );
 }

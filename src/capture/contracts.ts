@@ -135,24 +135,6 @@ export interface PersistedStillImage {
   metadata: ImageMetadata;
 }
 
-export class CaptureCapabilityError extends Error {
-  readonly code = 'capability';
-
-  constructor(message: string) {
-    super(message);
-    this.name = 'CaptureCapabilityError';
-  }
-}
-
-export class CapturePermissionError extends Error {
-  readonly code = 'permission';
-
-  constructor(message: string) {
-    super(message);
-    this.name = 'CapturePermissionError';
-  }
-}
-
 export class CaptureFileLifecycleError extends Error {
   readonly code = 'file-lifecycle';
 
