@@ -60,7 +60,13 @@ function credentials(fx, actor) {
 
 /** Issue a request described by a case and return a small normalised result. */
 export async function send(fx, spec) {
-  const headers = { ...credentials(fx, spec.actor ?? 'none'), ...spec.headers };
+  // A fresh connection per case: the server destroys sockets after rejecting
+  // a body, and a reused keep-alive socket would then fail with ECONNRESET.
+  const headers = {
+    Connection: 'close',
+    ...credentials(fx, spec.actor ?? 'none'),
+    ...spec.headers,
+  };
   let body;
   if (spec.oversize) {
     body = JSON.stringify({ pad: 'x'.repeat(spec.oversize) });
