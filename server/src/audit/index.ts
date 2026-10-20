@@ -37,7 +37,7 @@ export interface AuditEventInput {
   result: AuditResult;
 }
 
-const SAFE_ACTOR_ID = /^demo-[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const SAFE_ACTOR_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const SAFE_RESOURCE_ID =
   /^(?:session|job|group|cycle|profile|message|contribution|clip|film|download|file):[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -90,12 +90,14 @@ export function recordAuditEvent(database: RewindDatabase, input: AuditEventInpu
   if (!Number.isFinite(Date.parse(timestamp))) {
     throw new RangeError('Audit event timestamp must be an ISO-8601 instant.');
   }
+  // The actor is the signed-in member's profile (one per account, mirrored
+  // into profiles for real accounts). System and scheduler actions pass none;
+  // an id that names no profile is recorded as null rather than guessed.
   const candidateActorId = safeAuditIdentifier(input.actorMemberId, 'actor');
   const actorMemberId = candidateActorId
     ? ((
-        database
-          .prepare('SELECT id FROM profiles WHERE id = ? AND is_synthetic = 1')
-          .get(candidateActorId) as { id?: string } | undefined
+        database.prepare('SELECT id FROM profiles WHERE id = ?').get(candidateActorId) as
+          { id?: string } | undefined
       )?.id ?? null)
     : null;
   const event: AuditEvent = {

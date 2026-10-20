@@ -385,6 +385,12 @@ test('playback alone refuses changed bytes on disk and in S3, and audits them (#
         )
         .get().n;
       assert.equal(audited, 1);
+      const actor = c.database
+        .prepare(
+          "SELECT actor_member_id AS actor FROM audit_events WHERE event_type = 'media.integrity_failed'",
+        )
+        .get().actor;
+      assert.equal(actor, c.group.memberId, 'the grant holder is the recorded actor');
     }, remote);
 });
 
