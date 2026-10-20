@@ -604,7 +604,8 @@
       ],
       "paragraphs": [
         "In this checkout SQLite has one SQL file, `sqlite-baseline.sql`, and 31 receipt entries in schema.ts, plus two PostgreSQL SQL files. The receipts keep their stable keys so PostgreSQL parity and health checks still line up.",
-        "**Squash done:** the 31 SQLite migration files were squashed into the baseline. The git tag `pre-migration-squash` marks the last release that can upgrade an older SQLite database."
+        "**Squash done:** the 31 SQLite migration files were squashed into the baseline. The git tag `pre-migration-squash` marks the last release that can upgrade an older SQLite database.",
+        "**Why the squash is safe.** `server/tests/migration-baseline.test.mjs` builds a database from the baseline and compares its tables, indexes and triggers with `server/tests/fixtures/sqlite-schema-v31.json`, a snapshot of the schema the old 31-step chain produced. Any drift fails the test. Version-31 databases open unchanged; older ones are refused with instructions rather than repaired. PostgreSQL keeps baseline 030 plus 031 because they are already applied on hosted dev. See [decision 10](decisions.html#migration-squash)."
       ],
       "sources": [
         {
@@ -630,6 +631,14 @@
         {
           "path": "server/migrations/postgres/031-cognito-accounts.sql",
           "label": "server/migrations/postgres/031-cognito-accounts.sql"
+        },
+        {
+          "label": "server/tests/migration-baseline.test.mjs",
+          "path": "server/tests/migration-baseline.test.mjs"
+        },
+        {
+          "label": "server/tests/fixtures/sqlite-schema-v31.json",
+          "path": "server/tests/fixtures/sqlite-schema-v31.json"
         }
       ],
       "qa": [

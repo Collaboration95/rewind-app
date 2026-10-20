@@ -513,6 +513,50 @@
           "a": "The declared design separates origins, pools, buckets and database bindings. Runtime and operation guards reject cross-environment configuration; operational isolation still needs the tracked release checks."
         }
       ]
+    },
+    {
+      "id": "migration-squash",
+      "title": "10 — Squash SQLite migrations into one baseline",
+      "summary": "31 SQLite migration files became one baseline, proven equal by a schema snapshot, with older databases refused rather than guessed at.",
+      "paragraphs": [
+        "**Context.** Release still runs SQLite, and 31 step-by-step migrations plus their repair code were slow to read and a source of risk. Hosted dev already runs PostgreSQL, which had its own baseline 030 plus 031.",
+        "**Options.** Keep all 31 files; squash and silently upgrade old databases; squash and refuse databases that are not at the baseline version.",
+        "**Decision.** Replace the files with `server/migrations/sqlite-baseline.sql`. `schema.ts` keeps the version 1–31 receipts so a database already at 31 opens unchanged. A database below 31, or damaged, is refused with instructions to upgrade it first using git tag `pre-migration-squash`. The old repair code is deleted.",
+        "**How it was proven.** `server/tests/migration-baseline.test.mjs` compares a database built from the baseline with the snapshot `server/tests/fixtures/sqlite-schema-v31.json`, taken from the old 31-step chain, so tables, indexes and triggers must match exactly. It also tests that a version-31 database opens unchanged and that older ones are refused. The whole server suite still passes on SQLite and PostgreSQL.",
+        "**Consequences.** Less code to read and maintain. The cost is that old databases need the tagged release first. PostgreSQL was deliberately not squashed further: baseline 030 plus 031 are already applied on hosted dev, and rewriting applied migrations would risk the live database for no gain."
+      ],
+      "sources": [
+        {
+          "path": "server/migrations/sqlite-baseline.sql",
+          "label": "server/migrations/sqlite-baseline.sql"
+        },
+        {
+          "path": "server/src/schema.ts",
+          "label": "server/src/schema.ts"
+        },
+        {
+          "path": "server/tests/migration-baseline.test.mjs",
+          "label": "server/tests/migration-baseline.test.mjs"
+        },
+        {
+          "path": "server/tests/fixtures/sqlite-schema-v31.json",
+          "label": "server/tests/fixtures/sqlite-schema-v31.json"
+        },
+        {
+          "path": "server/migrations/postgres/030-baseline.sql",
+          "label": "server/migrations/postgres/030-baseline.sql"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What happens to an old SQLite database?",
+          "a": "It is refused with an instruction to upgrade using a release from tag pre-migration-squash first. Nothing is guessed or repaired."
+        },
+        {
+          "q": "Why not squash PostgreSQL too?",
+          "a": "Baseline 030 and 031 are already applied on hosted dev; rewriting them adds risk to live data."
+        }
+      ]
     }
   ]
 }

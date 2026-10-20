@@ -46,13 +46,18 @@
           "rows": [
             ["Sprint 0", "1 to 12 Sep", "21 / 0", "11 (all to main)"],
             ["Sprint 1", "13 to 26 Sep", "52 / 0", "36 (all to main)"],
-            ["Sprint 2", "27 Sep to 10 Oct", "131 / 2", "129 to dev, 3 to main"],
-            ["Sprint 3 (to date)", "11 to 24 Oct", "40 / 5", "27 to dev, 1 to main"]
+            [
+              "Sprint 2",
+              "27 Sep to 10 Oct",
+              "131 / 2",
+              "129 to dev, 3 to main, 1 to a side branch"
+            ],
+            ["Sprint 3 (to date)", "11 to 24 Oct", "40 / 5", "28 to dev, 1 to main"]
           ]
         }
       ],
       "paragraphs": [
-        "The `dev` branch only exists from Sprint 2, which is why earlier merges went straight to `main`. In total the repo has 327 issues (319 closed) and 207 merged PRs: 156 to `dev`, 51 to `main`, 1 to another branch.",
+        "The `dev` branch only exists from Sprint 2, which is why earlier merges went straight to `main`. In total the repo has 327 issues (319 closed) and 209 merged PRs: 157 to `dev`, 51 to `main`, 1 to another branch.",
         "Dates are by UTC merge date. Milestone membership is mutable (issues move between Sprints), so these counts are not a preserved opening commitment. Milestones were also renamed once: older documents call the foundation \"Sprint 1\" and the hosted Demo \"Sprint 2\"; that is historical wording, not extra Sprints.",
         "Sprint 1's record is the weakest: the 26 Sep progress report says review-ready, Sprint not closed, hosted acceptance outstanding. Sprint 2 produced an integrated real-account increment but not full release parity or target-device proof."
       ],
@@ -290,7 +295,7 @@
             [
               "Sprint 3",
               "Large files and legacy paths made changes risky",
-              "Characterisation-first refactor (#581), still open at time of writing"
+              "Characterisation-first refactor (#581), merged to `dev` on 20 Oct"
             ]
           ]
         }

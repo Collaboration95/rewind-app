@@ -258,7 +258,7 @@
       "title": "Current status",
       "summary": "The product is live on hosted dev. Sprint 3 ends on 24 October 2026; the final report and release hardening remain.",
       "paragraphs": [
-        "Every merge to `dev` deploys automatically to hosted dev (Amazon Lightsail behind CloudFront, managed PostgreSQL, private S3, Cognito). The Quality, CodeQL and Deploy dev workflows were green on `dev` on 20 October 2026. Measured on a branch of `dev` the same day: frontend coverage 89.6% statements and 92.3% lines; server about 86% lines and 85.7% branches; 988 server tests passing on PostgreSQL.",
+        "Every merge to `dev` deploys automatically to hosted dev (Amazon Lightsail behind CloudFront, managed PostgreSQL, private S3, Cognito). Quality and CodeQL were green on `dev` on 20 October 2026. The Deploy dev run after the #581 merge failed at \"Build the verified release bundle\" because deploy/release.py still read migration versions from `server/src/db.ts`; [#583](https://github.com/Collaboration95/rewind-app/pull/583) fixed it and added a guard test. Later deploys succeeded and hosted dev health reports PostgreSQL, schema ready, migration version 31. Measured on a branch of `dev` the same day: frontend coverage 89.6% statements and 92.3% lines; server about 86% lines and 85.7% branches; 988 server tests passing on PostgreSQL.",
         "Open Sprint 3 issues when this page was written (20 October): #527 verify the Safari and Home Screen integration once, #515 release Cognito, #504 release PostgreSQL and backups, #230 release isolation, and #362 assemble the final report. The release environment is not the demo target. See [Project conduct](scrum.html) for sprints, the Definition of Done and outstanding work."
       ],
       "sources": [

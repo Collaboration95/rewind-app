@@ -253,7 +253,7 @@
               "Working system",
               "Hosted dev (URL in README.md); `make run` locally",
               "Ready",
-              "Deploy dev workflow green on 20 Oct. Release environment is not complete (#230, #504, #515) and is not the demo target."
+              "The Deploy dev run after #581 failed at the release bundle build (a script parsed a moved file); #583 fixed it and later deploys succeeded. Hosted dev health: PostgreSQL, schema ready, version 31. Release environment is not complete (#230, #504, #515) and is not the demo target."
             ],
             [
               "Code base",
@@ -341,7 +341,7 @@
             ],
             [
               "Unit tests",
-              "server/tests/ (64 files), tests/ and src/ (108 test files)",
+              "server/tests/ (64 files), tests/ and src/ (118 test and spec files)",
               "Ready",
               "Server about 86% lines; frontend 89.6% statements (measured 20 Oct)."
             ],

@@ -2,7 +2,7 @@
   "title": "Testing and quality",
   "lede": "Rewind is checked by six test layers and four static gates, and every merge to dev has to pass them in CI.",
   "intro": [
-    "Counts on this page were taken from the post-refactor tree (branch `guru/simplify-refactor-20261020`, PR #581) on 20 Oct 2026. File counts come from `find`/`ls`; test counts and coverage come from the runs recorded in PR #581. The refactor PR was still open when this page was written."
+    "Counts on this page were taken from the post-refactor tree (branch `guru/simplify-refactor-20261020`, PR #581) on 20 Oct 2026. File counts come from `find`/`ls`; test counts and coverage come from the runs recorded in PR #581. PR #581 was merged to `dev` on 20 Oct 2026 (13:37 UTC)."
   ],
   "sections": [
     {
@@ -274,12 +274,12 @@
       "paragraphs": [
         "A characterisation test records what the code does now, right or wrong, so a refactor cannot silently change it. PR #581 (\"pin behaviour with tests, then simplify\") used this method. The tests were committed first, run green against the old code, and kept green through every refactor commit.",
         "Tests added first: server HTTP route contracts (`http-route-contract-auth`, `-media`, `-real`) and six client screen files named `*.characterisation.test.tsx` (camera capture, video capture, settings, report sheet, group experience, group experience with capture). Media access denials (cross-group, other member, tampered media, sealed archive) were ported to `/media/access` before the legacy routes were removed.",
-        "Then the code changed. `server/src/http.ts` went from about 4k lines to 235 by moving routes into `server/src/routes/`. `db.ts` went from about 2.1k to 776 lines by moving SQLite migrations to `schema.ts`. `VideoCaptureScreen` went from about 2k to 285 lines and `Settings.tsx` from 1.4k to 38 lines.",
+        "Then the code changed. `server/src/http.ts` went from about 4k lines to 235 by moving routes into `server/src/routes/`. `db.ts` went from about 2.3k to 776 lines by moving SQLite migrations to `schema.ts`; a later cleanup replaced those migrations with one baseline file, and split `jobs/index.ts` and `media/index.ts` into smaller modules that the originals re-export. `VideoCaptureScreen` went from about 2k to 285 lines and `Settings.tsx` from 1.4k to 38 lines.",
         "The new tests also found a real bug: \"Try again\" after a failed photo capture did nothing. The test failed before the fix and passes after it."
       ],
       "notes": [
         "Day-to-day, each new feature or fix comes with a focused test written alongside it; the characterisation approach is for restructuring code that already works.",
-        "PR #581 is open at the time of writing. Check its state before presenting these figures as merged."
+        "PR #581 is merged to `dev`; the figures were measured on its branch before the merge."
       ],
       "sources": [
         {
