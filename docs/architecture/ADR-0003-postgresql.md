@@ -59,7 +59,7 @@ serialised-writer semantics (`BEGIN IMMEDIATE`, busy retries).
 REPLACE`, named parameters) fail at `prepare`, not silently.
 
 5. **Schema:** `server/migrations/postgres/030-baseline.sql` equals the SQLite
-   schema after migrations 1–30, with one exception: columns that SQLite fills
+   schema after migrations 1–30 (now squashed into `sqlite-baseline.sql`), with one exception: columns that SQLite fills
    with fractional seconds are `DOUBLE PRECISION`.
    - All text columns use `COLLATE "C"`, matching SQLite's byte order.
    - All foreign keys are `DEFERRABLE`.

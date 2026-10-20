@@ -155,8 +155,8 @@ aliases: [client safety](../../src/real/safety.ts) (`reportContent`, `blockMembe
 safety](../../server/src/groups/safety.ts) (sequence functions plus `visibleChatEvent`, `canInteractWithChatMessage`).
 `RewindDatabase` aliases `DatabaseSync` (providing `prepare`/`exec`) in [db.ts](../../server/src/db.ts). Tables: `content_reports`, `member_reports`,
 `account_blocks`, `contributions`, `film_segments`, joined to membership/profile/cycle/job/input rows. See
-[028](../../server/migrations/028-content-safety.sql), [029](../../server/migrations/029-member-reports.sql), superseded for
-report retention by [030](../../server/migrations/030-moderation-records.sql): target/group deletion can null references
+[028](../../server/migrations/sqlite-baseline.sql), 029, superseded for
+report retention by [030](../../server/migrations/sqlite-baseline.sql): target/group deletion can null references
 while reporter/reason/time survive; deleting the reporter cascades their reports.
 
 <a id="safety-d-sequence"></a>
