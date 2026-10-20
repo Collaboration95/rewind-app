@@ -1,0 +1,459 @@
+{
+  "title": "Submission and presentation",
+  "lede": "What the course marks, the dates, the 40-minute presentation plan, and an honest checklist of what is ready and what is not.",
+  "intro": [
+    "Sources: the module briefing slides, the presentation guidelines and the report and progress-report templates, as extracted from the course material. The readiness checklist was made by looking at the repository on 20 October 2026, not from memory."
+  ],
+  "sections": [
+    {
+      "id": "assessment",
+      "title": "Assessment and thresholds",
+      "summary": "Presentation 20%, report 80% (5% of that is peer assessment). 50% passes; 60% is needed to stack to the MTech.",
+      "tables": [
+        {
+          "title": "Weights (we have no company sponsor)",
+          "columns": ["Component", "Not sponsored", "Company sponsored"],
+          "rows": [
+            ["Final presentation", "20%", "20%"],
+            ["Project report", "80% (incl. 5% peer assessment)", "50% (incl. 5% peer assessment)"],
+            ["Company sponsor assessment", "0%", "30%"],
+            ["Total", "100%", "100%"]
+          ]
+        },
+        {
+          "title": "Thresholds",
+          "columns": ["Overall score", "Meaning"],
+          "rows": [
+            [
+              "50% (Grade C)",
+              "Pass the practice module and receive the Graduate Certificate in Designing Modern Software Systems"
+            ],
+            [
+              "60% (Grade B-)",
+              "Eligible for the certificate to stack to a Master of Technology degree. Entry is still at NUS-ISS discretion."
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "A team of ISS lecturers grades the presentation and the report. Peer assessment rewards members who contribute more to meeting the project objectives; it is not a count of hours. Each member must rank the others with unique ranks in the NUS-ISS Peer Grading System by the deadline, or receives zero for that component. Reminders go to NUS email addresses, and not reading them is not an excuse."
+      ],
+      "qa": [
+        {
+          "q": "Does the report weigh more than the demo?",
+          "a": "Yes: 80% against 20%. But the report is also assessed through what the presentation shows, so the presentation is our one chance to answer questions before the 1 November submission, which should incorporate the remarks gathered."
+        },
+        {
+          "q": "What effort does the course expect?",
+          "a": "About 10 man-days per participant, with groups of five. We are four, so we need to be explicit about the scope we architected versus what we built."
+        }
+      ]
+    },
+    {
+      "id": "dates",
+      "title": "Key dates",
+      "summary": "Presentations on 26 and 27 October; report on 1 November; progress reports every fortnight.",
+      "tables": [
+        {
+          "columns": ["Date", "Event", "Notes"],
+          "rows": [
+            ["20 Aug 2026", "Module briefing", "Done"],
+            ["28 Aug 2026", "Proposal submission", "Done; reviewed 31 Aug"],
+            [
+              "1 Sep 2026 onward",
+              "Project conduct",
+              "Fortnightly progress report to the team folder in Canvas (PM Progress Reports)"
+            ],
+            ["26 and 27 Oct 2026", "Project presentation", "40 minutes including Q&A"],
+            [
+              "1 Nov 2026",
+              "Report submission",
+              "Incorporating remarks gathered at the presentation"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The lecturers' clinic sessions run throughout the project. A progress report contains: title, date, summary of work done, hours expended per member since the last report, problems encountered, and the plan for the next two weeks. The progress-report template adds sprint objectives, a sprint burn-down chart and a retrospective (went well, could be better, will try next)."
+      ],
+      "qa": [
+        {
+          "q": "When is our slot?",
+          "a": "The briefing gives 26 and 27 October for all groups. The exact slot is whatever Canvas or ISS assigns, so confirm it and rehearse to 40 minutes flat."
+        }
+      ]
+    },
+    {
+      "id": "deliverables",
+      "title": "Required deliverables",
+      "summary": "A working system, the code, the report, pipeline and tests, slides, and the agile and design artefacts.",
+      "notes": [
+        "A working system and the code base.",
+        "The project report, following the supplied template.",
+        "The DevSecOps pipeline and test scripts, with evidence that the pipeline runs.",
+        "Crisp, readable presentation slides with good flow.",
+        "Agile artefacts: product backlog, user stories, sprint plans, burn-down charts, sprint reviews and sprint retrospectives.",
+        "A high-level design specification of the software architecture, in particular the transition strategies from analysis to design.",
+        "Detailed analysis and design for each use case (or user story) in scope.",
+        "Detailed discussion of the design problems solved with design patterns.",
+        "Well-structured source code with unit tests for classes with more complex behaviour.",
+        "A design of the DevOps pipelines, with appropriate tools and minimal security considerations."
+      ],
+      "paragraphs": [
+        "Two rules are easy to miss. Each member must own at least one use case (class and sequence diagrams for both analysis and design) and at least one design problem solved with a pattern. The report's Project Plan must name who owns which. See [Who owns what](owners.html)."
+      ],
+      "qa": [
+        {
+          "q": "What must the analysis and design models contain per use case?",
+          "a": "One class diagram for the analysis model, one sequence diagram per major flow for analysis, one class diagram for the design model, and one sequence diagram per major flow for design. The design must follow the transition strategies."
+        },
+        {
+          "q": "What must a design problem contain?",
+          "a": "The problem (brute-force design if needed) with class and sequence diagrams, the candidate patterns, the reason for the choice, class and sequence diagrams for the solution, and the implementation decisions. The system must be implemented from the design after the pattern is applied."
+        }
+      ]
+    },
+    {
+      "id": "report-template",
+      "title": "Report template chapters",
+      "summary": "Five chapters; the report must also cover use cases that are out of scope.",
+      "tables": [
+        {
+          "columns": ["Chapter", "Sections", "Site page that backs it"],
+          "rows": [
+            [
+              "1. Introduction",
+              "Background, business needs, stakeholders, scope (in, out, quality attributes)",
+              "[Overview](index.html), [Product](product.html)"
+            ],
+            [
+              "2. Project conduct",
+              "Project plan (WBS, who owns what), project status, project metrics (milestones, effort per member)",
+              "[Project conduct](scrum.html), [Who owns what](owners.html)"
+            ],
+            [
+              "3. System design",
+              "Software architecture, transition from analysis to design, use case model (diagram must include out-of-scope cases), analysis and design models per use case, design problems and patterns, database schemas",
+              "[Architecture](architecture.html), [Analysis to design](analysis-design.html), [Patterns](patterns.html), [Database](database.html)"
+            ],
+            [
+              "4. DevSecOps and lifecycle",
+              "Source control strategy, continuous integration, continuous delivery (environments, who approves promotion, how a deployment is verified)",
+              "[CI/CD](cicd.html), [AWS](aws.html)"
+            ],
+            [
+              "5. Individual contribution summary",
+              "Activity contribution per member",
+              "[Who owns what](owners.html)"
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/report/report-draft.md",
+          "path": "doc/planning/report/report-draft.md",
+          "note": "Current markdown draft, five chapters"
+        },
+        {
+          "label": "doc/planning/report/template-contract.md",
+          "path": "doc/planning/report/template-contract.md",
+          "note": "How the draft maps to the template"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Which parts of the template are easiest to forget?",
+          "a": "Out-of-scope use cases in the use case diagram, the scope of what was architected versus implemented, who approves promotion between environments, and chapter 5 (each member's contribution)."
+        }
+      ]
+    },
+    {
+      "id": "presentation-plan",
+      "title": "The 40-minute presentation plan",
+      "summary": "Five segments, written as (talk + Q&A) minutes. The total is 40 minutes including Q&A.",
+      "tables": [
+        {
+          "title": "Plan, with a suggested presenter and the page behind each segment",
+          "columns": ["Segment", "Min (X+Y)", "Presenter", "What to show", "Backing page"],
+          "rows": [
+            [
+              "Overview",
+              "2+1",
+              "Member A",
+              "Problem (friends drift, performative social media), the Rewind loop in one slide, scope in and out",
+              "[Overview](index.html)"
+            ],
+            [
+              "Project Conduct",
+              "2+1",
+              "Member B",
+              "Status and open issues, milestones by sprint, effort per member, number of sprints, Definition of Done, last retrospective and what changes next",
+              "[Project conduct](scrum.html)"
+            ],
+            [
+              "Architecture and Design",
+              "7+2",
+              "Member C leads (about 2.5 min incl. own use case); Members A, B, D about 1.5 min each",
+              "Architecture decisions and logical layers, transition strategies, use case diagram, one analysis and design model per member, one design problem and pattern per member, database schema",
+              "[Architecture](architecture.html), [Patterns](patterns.html), [Database](database.html)"
+            ],
+            [
+              "DevSecOps and lifecycle",
+              "6+2",
+              "Member D",
+              "Branch and merge strategy, the Quality pipeline, security scans, automatic deploy to hosted dev, findings and issues met",
+              "[CI/CD](cicd.html), [AWS](aws.html)"
+            ],
+            [
+              "Demo",
+              "13+4",
+              "All four, one driver per step",
+              "Significant use cases plus quality attributes (see below)",
+              "[Demo script](demo.html)"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Minutes add up as 3 + 3 + 9 + 8 + 17 = 40. The guidelines say the Q&A time is inside the total, so a segment that runs long takes time from its own questions. Each member presents at least one use case in the Architecture and Design segment, which is also where the course requirement for one use case and one pattern per member is visible to the markers.",
+        "The presenter split is a suggestion. It follows the ownership split: A access, B capture, C cycle and archive, D participation."
+      ],
+      "notes": [
+        "**Show unique parts.** The audience should remember what is distinctive about Rewind: sealed media, the cycle clock, film compilation, short-lived media tokens. Do not spend time on what every solution has.",
+        "**Do not read slides.** The audience can read them. Do not use too many slides.",
+        "**Top-down.** Requirements, then the high-level design and decisions, then details.",
+        "**Readable from the back of the room.** Large fonts; diagrams that need a zoom belong in the report.",
+        "**Keep the time.** Rehearse with a stopwatch and cut, rather than speeding up."
+      ],
+      "qa": [
+        {
+          "q": "What if one member is absent?",
+          "a": "Each segment has a named backup. The demo steps are written so any member can drive them; see the [Demo script](demo.html)."
+        },
+        {
+          "q": "How is the demo 13 minutes if the cycle is 28 days?",
+          "a": "Local runs use 10-minute cycles (`REWIND_REAL_CYCLE_MINUTES`). We start a local group before the presentation so its film is released during the talk, and we keep a pre-seeded hosted group with a released film as a second source."
+        }
+      ]
+    },
+    {
+      "id": "readiness",
+      "title": "Readiness checklist",
+      "summary": "Each deliverable, where it lives in the repository, and a status: ready, needs work or missing. Written on 20 October 2026.",
+      "paragraphs": [
+        "Statuses are our honest reading of what is in the tree and on GitHub. Two things stand out. The slide deck and the Word and PDF exports of the report were removed from the repository in the documentation cull (commit `462c708`); they can be recovered from git history but are stale. And the effort, ownership and retrospective records are thin. Fix those first."
+      ],
+      "tables": [
+        {
+          "title": "Deliverables",
+          "columns": ["Deliverable", "Where in the repo", "Status", "Note"],
+          "rows": [
+            [
+              "Working system",
+              "Hosted dev (URL in README.md); `make run` locally",
+              "Ready",
+              "Deploy dev workflow green on 20 Oct. Release environment is not complete (#230, #504, #515) and is not the demo target."
+            ],
+            [
+              "Code base",
+              "App.tsx, src/, server/src/",
+              "Ready",
+              "Single repository, `dev` and `main` protected."
+            ],
+            [
+              "Report per template",
+              "doc/planning/report/report-draft.md",
+              "Needs work",
+              "Markdown draft of all five chapters. It predates the Cognito, PostgreSQL and Demo-removal changes and still lists them as future work. DOCX and PDF exports are not in the tree. Issue #362 is open."
+            ],
+            [
+              "Individual contribution summary (chapter 5) and effort",
+              "Not in the repo",
+              "Missing",
+              "doc/planning/project-conduct-evidence.md states there is no member-hours ledger. Member names are placeholders in the proposal."
+            ],
+            [
+              "DevSecOps pipeline and test scripts",
+              ".github/workflows/ (6 files), package.json scripts, scripts/",
+              "Ready",
+              "Quality, CodeQL, Release security (Trivy), Deploy dev, Deploy release, Database operations."
+            ],
+            [
+              "Slides",
+              "doc/planning/report/presentation/ (outline and build script only)",
+              "Missing",
+              "The nine-slide PPTX was deleted from the tree and was a Sprint 2 draft with different timing. Build the 40-minute deck from this page."
+            ],
+            [
+              "Product backlog",
+              "GitHub issues and milestones; `make issues`",
+              "Ready",
+              "Labels `mvp`, `archived`, `doing`. Milestones Sprint 0 to Sprint 3."
+            ],
+            [
+              "User stories",
+              "Issues (Problem, Expected, How to check); proposal FR-01 to FR-10; Sprint 0 plan US-01 to US-03",
+              "Needs work",
+              "No single story list in 'As a member I want' form. Use the FR list and issue titles, or write a short table for the report."
+            ],
+            [
+              "Sprint plans",
+              "doc/planning/sprints/ (sprint-0-plan, sprint-1-plan, sprint-2-user-journey-plan, sprint-3-completion-audit)",
+              "Ready",
+              "Plans, not time records."
+            ],
+            [
+              "Burn-down charts",
+              "doc/analytics/sprint-analytics.html (built by scripts/sprint-analytics.mjs)",
+              "Needs work",
+              "The page draws a burn-down for the current milestone only, from live GitHub data. The committed copy is from 6 October. Regenerate it and screenshot per-sprint charts before Sprint 3 closes."
+            ],
+            [
+              "Sprint reviews and retrospectives",
+              "doc/planning/project-conduct-evidence.md; GitHub issues #27, #25, #26",
+              "Needs work",
+              "Reflections exist, but the evidence file says they are not meeting minutes. Hold and record a Sprint 3 review and retrospective."
+            ],
+            [
+              "Fortnightly progress reports",
+              "doc/planning/sprints/sprint-2-report/rewind-sprint-2-progress-report.docx",
+              "Needs work",
+              "Sprint 2 report is committed. Earlier reports survive only as extracted text; the Sprint 3 report is not yet written."
+            ],
+            [
+              "High-level design with transition strategies",
+              "doc/planning/report/report-draft.md section 3; docs/architecture/current-system.md",
+              "Ready",
+              "Six transition strategies in the draft. Check them against the refactored code."
+            ],
+            [
+              "Detailed analysis and design per use case",
+              "doc/planning/report/packages/{access,capture,cycle,participation,archive}/",
+              "Needs work",
+              "137 models, 44 major-flow pairs. Some text is stale (UC01 says password only, UC10 mentions Expo push)."
+            ],
+            [
+              "Design problems and patterns",
+              "doc/planning/report/packages/*/design-problem.md",
+              "Ready",
+              "One per package; the four members must each present one."
+            ],
+            [
+              "Unit tests",
+              "server/tests/ (64 files), tests/ and src/ (108 test files)",
+              "Ready",
+              "Server about 86% lines; frontend 89.6% statements (measured 20 Oct)."
+            ],
+            [
+              "DevOps pipeline design",
+              "docs/architecture/delivery-and-verification.md, deploy/README.md",
+              "Ready",
+              "Describes jobs, triggers, branch protection and deployment."
+            ],
+            [
+              "Demo rehearsal and seeded data",
+              "Not in the repo",
+              "Missing",
+              "No rehearsal has been recorded. See the [Demo script](demo.html) checklist."
+            ],
+            [
+              "Peer assessment",
+              "NUS-ISS Peer Grading System (outside the repo)",
+              "Pending",
+              "Every member must rank the others by the deadline."
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/project-conduct-evidence.md",
+          "path": "doc/planning/project-conduct-evidence.md",
+          "note": "What the conduct records can and cannot prove"
+        },
+        {
+          "label": "doc/analytics/sprint-analytics.html",
+          "path": "doc/analytics/sprint-analytics.html",
+          "note": "Burn-down for the current milestone"
+        },
+        {
+          "label": "scripts/sprint-analytics.mjs",
+          "path": "scripts/sprint-analytics.mjs",
+          "note": "Regenerates the analytics page (needs gh)"
+        },
+        {
+          "label": "doc/planning/report/README.md",
+          "path": "doc/planning/report/README.md",
+          "note": "Report workspace; frozen until Sprint 3 for agents"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Where is your burn-down chart?",
+          "a": "doc/analytics/sprint-analytics.html, generated from GitHub issues by scripts/sprint-analytics.mjs. It shows remaining open issues in the milestone against total scope per day. We regenerate it at sprint close and keep the screenshot with the progress report."
+        },
+        {
+          "q": "Can you show effort per member?",
+          "a": "We have to be honest here: there is no time-tracking ledger. The report will state each member's activity from GitHub (PRs, issues, reviews) and the hours they report. Do not infer effort from commit counts alone."
+        },
+        {
+          "q": "Why is the report still a draft?",
+          "a": "The report workspace was frozen until Sprint 3 so that models and text were not rewritten while the product changed (Cognito, PostgreSQL, Demo removal). Final assembly is issue #362."
+        }
+      ]
+    },
+    {
+      "id": "demo-evidence",
+      "title": "Quality attributes to demonstrate",
+      "summary": "The guidelines ask for performance (scripted), maintainability (run the pipeline) and scalability (for example auto-scaling). Here is the evidence we have for each.",
+      "tables": [
+        {
+          "columns": ["Quality attribute", "What to show", "Evidence in the repo", "Honest limit"],
+          "rows": [
+            [
+              "Performance",
+              "Run or show the output of the scripted benchmark",
+              "scripts/measure-real-group-performance.mjs; doc/planning/performance/353-local-measurement.md (12 Oct run: p95 at most 9.7 ms for four API operations, 0 errors; 25-clip, 150-second film ready in 9.0 s worst case)",
+              "Local SQLite, loopback, one developer Mac that was busy. Not hosted, not PostgreSQL, not a network test. The full run takes about two minutes."
+            ],
+            [
+              "Security",
+              "Media link expires after two minutes; another session or another group is denied; outsider gets 403 or 404",
+              "server/src/archive/capabilities.ts (TTL 2 min); server/tests/media-capabilities.test.mjs; cross-group-access.test.mjs; CodeQL, Trivy and npm audit in CI",
+              "Capabilities are held in server memory, so a restart invalidates them (safe, but visible)."
+            ],
+            [
+              "Maintainability",
+              "Open a green Quality run and its jobs; show the architecture check and coverage gate",
+              ".github/workflows/quality.yml; scripts/check-architecture.mjs; coverage gates",
+              "Pipeline runs on GitHub; a live full run takes several minutes, so show a finished run or one already in progress."
+            ],
+            [
+              "Availability and recovery",
+              "Mention health checks and the restore drill",
+              "deploy/, #508 restore record (38 tables restored; RPO 334 s, RTO 1,022 s)",
+              "One historical drill, not a guarantee. Dev is a single host with no high availability."
+            ],
+            [
+              "Scalability",
+              "Do not claim auto-scaling",
+              "Server has bounded concurrency limits (intake, processing, archive) and rate limits",
+              "Single Lightsail host by design (cost and scope). Say so and show the limits as controlled degradation."
+            ]
+          ]
+        }
+      ],
+      "qa": [
+        {
+          "q": "The guidelines mention auto-scaling. Do you have it?",
+          "a": "No. The briefing example says scalability can be dropped for a proof of concept. We chose one host and bounded concurrency with explicit limits and rate limiting, and we say that scaling out would need shared state for the media tokens and the realtime hub."
+        },
+        {
+          "q": "How do you know it is fast enough?",
+          "a": "We set targets in advance (non-media p95 at most 2 seconds; film ready within 10 minutes) and a script checks them. The local result was far inside both. We do not claim hosted performance from a local run."
+        }
+      ]
+    }
+  ]
+}

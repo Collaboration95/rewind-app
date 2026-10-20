@@ -1,0 +1,461 @@
+{
+  "title": "Who owns what",
+  "lede": "Four placeholder members each own use-case models and at least one design problem, with Member C covering both cycle and Archive.",
+  "intro": [
+    "Member A, Member B, Member C and Member D are placeholders for names the team will fill in. This is the agreed presentation and study allocation, not a claim about historical authorship, effort or commit ownership.",
+    "The course requires each member to explain at least one use case at both analysis and design levels and at least one problem solved using a pattern. Prepare the analysis class view, an analysis sequence for each major flow, the design class view and the matching design sequences. For the design problem, prepare the brute-force alternative, candidates, choice, before/after class and sequence views, and implementation decisions.",
+    "The suggested two-minute outlines below introduce each member’s part; they do not replace the full use-case discussion or demonstration. Existing report SVGs need the current-code reading notes in [analysis to design](analysis-design.html) and [patterns](patterns.html), especially for Cognito, browser retro processing, recurring reminders and renamed modules."
+  ],
+  "sections": [
+    {
+      "id": "ownership-summary",
+      "title": "The agreed ownership split",
+      "summary": "ACCESS belongs to A, CAPTURE to B, CYCLE and ARCHIVE to C, and PARTICIPATION to D.",
+      "paragraphs": [
+        "Each member has a primary use case to lead with and a bounded design problem to explain. The wider assigned use cases still need their class and major-flow sequence models; the lead case is a rehearsal starting point.",
+        "Overlapping flows are shared interfaces, not competing ownership: A explains invitation membership and session trust; C explains how a link carries invitation intent. A explains access to settings; D explains prompt/timezone and reminder behaviour. B explains the accepted contribution; C explains how durable jobs consume it and release a film."
+      ],
+      "tables": [
+        {
+          "title": "Member × use cases × problem × pattern × code",
+          "columns": [
+            "Member / package",
+            "Use cases",
+            "Design problem",
+            "Pattern to present",
+            "Key files"
+          ],
+          "rows": [
+            [
+              "Member A · ACCESS",
+              "UC01 sign-in/session; UC02 groups; UC03 invitations",
+              "Trusted identity and group access",
+              "Adapter + explicit policy",
+              "[auth-routes.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/routes/auth-routes.ts); [cognito.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/auth/cognito.ts); [invites.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/groups/invites.ts)"
+            ],
+            [
+              "Member B · CAPTURE",
+              "UC04 video; UC05 photo; UC06 allowance/correction",
+              "Capture and transfer variation",
+              "Adapter",
+              "[contracts.ts](https://github.com/Collaboration95/rewind-app/blob/dev/src/capture/contracts.ts); [useClipUpload.ts](https://github.com/Collaboration95/rewind-app/blob/dev/src/capture/useClipUpload.ts); [contributions/index.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/contributions/index.ts)"
+            ],
+            [
+              "Member C · CYCLE + ARCHIVE",
+              "UC07 rollover; UC08 compilation/release; UC12 Archive; UC13 downloads; UC14 PWA/links",
+              "Recover film work; protect released media",
+              "Persisted state machine / durable jobs; Proxy + Facade",
+              "[lifecycle.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/cycles/lifecycle.ts); [jobs/index.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/jobs/index.ts); [capabilities.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/archive/capabilities.ts); [Film.tsx](https://github.com/Collaboration95/rewind-app/blob/dev/src/real/Film.tsx)"
+            ],
+            [
+              "Member D · PARTICIPATION",
+              "UC09 prompt/timezone; UC10 reminders; UC11 chat",
+              "Live chat and durable reminders",
+              "Observer + Adapter / outbox",
+              "[realtime/index.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/realtime/index.ts); [outbox.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/reminders/outbox.ts); [loop.ts](https://github.com/Collaboration95/rewind-app/blob/dev/server/src/reminders/loop.ts); [realtime-client.ts](https://github.com/Collaboration95/rewind-app/blob/dev/src/chat/realtime-client.ts)"
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "path": "doc/planning/report/packages/access/use-cases.md",
+          "label": "ACCESS · use-cases.md",
+          "note": "UC01–UC03 package scope."
+        },
+        {
+          "path": "doc/planning/report/packages/capture/use-cases.md",
+          "label": "CAPTURE · use-cases.md",
+          "note": "UC04–UC06 package scope."
+        },
+        {
+          "path": "doc/planning/report/packages/cycle/use-cases.md",
+          "label": "CYCLE · use-cases.md",
+          "note": "UC07–UC08 package scope."
+        },
+        {
+          "path": "doc/planning/report/packages/participation/use-cases.md",
+          "label": "PARTICIPATION · use-cases.md",
+          "note": "UC09–UC11 package scope."
+        },
+        {
+          "path": "doc/planning/report/packages/archive/use-cases.md",
+          "label": "ARCHIVE · use-cases.md",
+          "note": "UC12–UC14 package scope."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Are these the confirmed real names and historical contributions?",
+          "a": "No. They are placeholders and an agreed study/presentation allocation. The team must fill in names and separately evidence actual effort."
+        },
+        {
+          "q": "Does Member C need to present two problems?",
+          "a": "C owns two report packages here, so prepares both lifecycle recovery and private Archive delivery. Each other member also has a specific problem, meeting the minimum one per member."
+        }
+      ]
+    },
+    {
+      "id": "member-a",
+      "title": "Member A · ACCESS",
+      "summary": "Own the path from verified sign-in to a private group: UC01–UC03, with UC03 invitation acceptance as a clear lead use case.",
+      "paragraphs": [
+        "**Package and use cases:** ACCESS. UC01 — Register, authenticate and manage a session; UC02 — Create and select a real group; UC03 — Issue, revoke and accept a group invitation. Explain Cognito Managed Login on web/PWA and configuration-gated developer password sign-in. Both end in Rewind sessions; group membership is a separate decision.",
+        "**Design problem and pattern:** [trusted identity without duplicated route policy](patterns.html#access). Present Adapter at the provider/request boundary plus explicit authorisation functions. The older mixed Demo/real Strategy discussion is historical. There is no universal Strategy class in today’s policy module.",
+        "**Lead use-case models:** [analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-analysis-class.svg) · [design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/uc03-design-class.svg); find every major-flow analysis/design sequence in the [model register](analysis-design.html#sequence-model-register).",
+        "**Before/after problem models:** [before class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/problem-before-class.svg) · [before sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/problem-before-sequence.svg) · [older after class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/problem-after-class.svg) · [older after sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/problem-after-sequence.svg). The old after view retains removed Demo participants; use the [current boundary explanation](analysis-design.html#t1-trusted-identity) to explain the change.",
+        "**Code to know:** the provider/client restore session state; auth routes coordinate Cognito and developer login; `CognitoService` adapts the provider; group/invite functions own membership decisions; media identity helpers bind the selected group/profile."
+      ],
+      "notes": [
+        "**Suggested 0:00–0:20:** define Account versus a group’s Membership/Profile. An invitation code is bounded joining intent, not an authenticated identity.",
+        "**0:20–0:50:** walk UC03 analysis: invitee boundary → invitation control → Invitation, Group and Membership entities; show valid and expired/replayed flows.",
+        "**0:50–1:20:** map the control to `acceptRealGroupInvite`; explain session resolution, expiry/replay/capacity checks and transactional membership creation.",
+        "**1:20–1:45:** compare route-local checks with the current sign-in Adapter and explicit policy boundaries. Describe Cognito state/nonce/PKCE before the Rewind session.",
+        "**1:45–2:00:** show a denial branch and hand the accepted member/group context to B’s capture flow."
+      ],
+      "sources": [
+        {
+          "path": "src/auth/RealAccountProvider.tsx",
+          "label": "src/auth/RealAccountProvider.tsx",
+          "note": "Sign-in/restore/sign-out state and authenticated requests."
+        },
+        {
+          "path": "src/auth/real-account-client.ts",
+          "label": "src/auth/real-account-client.ts",
+          "note": "Client auth protocol."
+        },
+        {
+          "path": "server/src/routes/auth-routes.ts",
+          "label": "server/src/routes/auth-routes.ts",
+          "note": "Cognito and developer-sign-in endpoints."
+        },
+        {
+          "path": "server/src/auth/cognito.ts",
+          "label": "server/src/auth/cognito.ts",
+          "note": "Provider Adapter and identity verification."
+        },
+        {
+          "path": "server/src/auth/index.ts",
+          "label": "server/src/auth/index.ts",
+          "note": "Account and session lifecycle."
+        },
+        {
+          "path": "server/src/groups/real.ts",
+          "label": "server/src/groups/real.ts",
+          "note": "Group create/read/select."
+        },
+        {
+          "path": "server/src/groups/invites.ts",
+          "label": "server/src/groups/invites.ts",
+          "note": "Invitation lifecycle and acceptance transaction."
+        },
+        {
+          "path": "server/src/routes/media-access.ts",
+          "label": "server/src/routes/media-access.ts",
+          "note": "Selected-group/profile trust boundary."
+        },
+        {
+          "path": "src/real/settings/Invite.tsx",
+          "label": "src/real/settings/Invite.tsx",
+          "note": "Current invitation UI."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why not authorise using memberId from the request?",
+          "a": "The client can change it. The server derives identity from the session and resolves the account’s group membership/profile."
+        },
+        {
+          "q": "How does Cognito differ from group authorisation?",
+          "a": "Cognito establishes who signed in. Rewind decides which groups and owner operations that account may access."
+        },
+        {
+          "q": "How do you stop an invitation being used twice?",
+          "a": "Acceptance rechecks persisted invite state inside the membership transaction and records acceptance with the resulting membership."
+        },
+        {
+          "q": "What changed from your older design diagram?",
+          "a": "The Demo identity family was removed and Cognito was implemented. The current design converges sign-in into Rewind sessions and keeps explicit real-account membership checks."
+        }
+      ]
+    },
+    {
+      "id": "member-b",
+      "title": "Member B · CAPTURE",
+      "summary": "Own photo/video capture through accepted contribution: UC04–UC06, with UC04 as the lead use case.",
+      "paragraphs": [
+        "**Package and use cases:** CAPTURE. UC04 — Record, review, trim and submit video; UC05 — Contribute a photo; UC06 — Enforce allowance and one correction. Cover permission, review/retake, upload interruption, duplicate submission, processing failure and correction rejection as well as success.",
+        "**Design problem and pattern:** [contain capture, processing and transfer variation](patterns.html#capture). Present Adapter contracts for camera, local files and runtime transport. Describe sessions and extracted hooks as the actual coordinators; do not claim an inheritance-based Template Method.",
+        "**Lead use-case models:** [analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-analysis-class.svg) · [design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/uc04-design-class.svg); find every major-flow analysis/design sequence in the [model register](analysis-design.html#sequence-model-register).",
+        "**Before/after problem models:** [before class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/problem-before-class.svg) · [before sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/problem-before-sequence.svg) · [after class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/problem-after-class.svg) · [older after sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/problem-after-sequence.svg). Add the current pre-upload browser retro stage and split hooks when explaining the older after view.",
+        "**Code to know:** `CameraPlatform` abstracts device capture; recording/review sessions own the local workflow; upload hooks prepare retro media and manage cancellation; the runtime client handles direct/staged transfer; server quota and ledger operations decide acceptance and correction. The UI’s allowance is advisory."
+      ],
+      "notes": [
+        "**Suggested 0:00–0:20:** state the problem: the same capture intent crosses device APIs, local media, an unreliable network and server limits.",
+        "**0:20–0:50:** walk UC04 analysis through capture, review and submit; identify the boundary, coordinating control and Recording/Contribution entities.",
+        "**0:50–1:20:** map to CameraPlatform, review/upload sessions and hooks. Explain supported browser retro preparation before transfer and server fallback where required.",
+        "**1:20–1:45:** compare the brute-force screen with the Adapter seams. Show how idempotency and the server’s quota transaction handle a lost upload response.",
+        "**1:45–2:00:** explain one correction/cancellation branch and hand the persisted contribution/job to C."
+      ],
+      "sources": [
+        {
+          "path": "src/capture/contracts.ts",
+          "label": "src/capture/contracts.ts",
+          "note": "Camera contract."
+        },
+        {
+          "path": "src/capture/platform.ts",
+          "label": "src/capture/platform.ts",
+          "note": "Concrete platform Adapter."
+        },
+        {
+          "path": "src/capture/VideoCaptureScreen.tsx",
+          "label": "src/capture/VideoCaptureScreen.tsx",
+          "note": "Refactored video composition."
+        },
+        {
+          "path": "src/capture/useClipUpload.ts",
+          "label": "src/capture/useClipUpload.ts",
+          "note": "Preparation, retro, upload and processing states."
+        },
+        {
+          "path": "src/capture/useCaptureLifecycle.ts",
+          "label": "src/capture/useCaptureLifecycle.ts",
+          "note": "Owned-file lifetime and stale-operation protection."
+        },
+        {
+          "path": "src/capture/retro-browser.ts",
+          "label": "src/capture/retro-browser.ts",
+          "note": "Browser photo/video encoding."
+        },
+        {
+          "path": "src/capture/real-account-video-runtime.ts",
+          "label": "src/capture/real-account-video-runtime.ts",
+          "note": "Authenticated transfer Adapter."
+        },
+        {
+          "path": "server/src/routes/contribution-routes.ts",
+          "label": "server/src/routes/contribution-routes.ts",
+          "note": "Server intake and job routes."
+        },
+        {
+          "path": "server/src/contributions/index.ts",
+          "label": "server/src/contributions/index.ts",
+          "note": "Allowance reservation and correction."
+        },
+        {
+          "path": "server/src/contributions/ledger.ts",
+          "label": "server/src/contributions/ledger.ts",
+          "note": "Contribution history and replacement link."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Who stops two simultaneous uploads exceeding allowance?",
+          "a": "The server’s atomic count/duration reservation, not the screen’s displayed remaining count."
+        },
+        {
+          "q": "What if the user retries after the response disappears?",
+          "a": "Reuse the idempotency key and reconcile the existing contribution rather than consuming another allowance."
+        },
+        {
+          "q": "Is the retro look always done on the phone?",
+          "a": "The web photo path does it locally; web video does when re-encoding is supported. Otherwise the server applies the look. A processed flag avoids double grading."
+        },
+        {
+          "q": "Where is Template Method implemented?",
+          "a": "It is not implemented as a base class with overridden steps. Capture uses Adapter contracts, sessions and hooks."
+        }
+      ]
+    },
+    {
+      "id": "member-c",
+      "title": "Member C · CYCLE and ARCHIVE",
+      "summary": "Own accepted contribution to released film and authorised playback: UC07, UC08 and UC12–UC14, with UC08 as the lead case.",
+      "paragraphs": [
+        "**Packages and use cases:** CYCLE — UC07 Close a cycle and open its successor; UC08 Compile, retry, publish, premiere and archive a film. ARCHIVE — UC12 View premiere and released Archive; UC13 Download own clip or group film; UC14 Install, update and open an invitation. Explain iOS as the PWA, and keep invitation intent separate from A’s server membership decision.",
+        "**Design problem 1:** [recoverable cycle/film work](patterns.html#cycle). Present a persisted state machine and durable command-like jobs, with transactions, leases and generation fencing. There are no State/Command subclass families.",
+        "**Design problem 2:** [private Archive delivery](patterns.html#archive). Present the capability-gated Proxy role, supported by the archive client Facade and download Adapters. Media-store references name bytes; current membership and release state authorise delivery.",
+        "**Lead use-case models:** [analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-analysis-class.svg) · [design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/uc08-design-class.svg); find every major-flow analysis/design sequence in the [model register](analysis-design.html#sequence-model-register). Supporting playback case: [UC12 analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-analysis-class.svg) · [UC12 design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/uc12-design-class.svg).",
+        "**Cycle problem models:** [before class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/problem-before-class.svg) · [before sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/problem-before-sequence.svg) · [after class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/problem-after-class.svg) · [after sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/problem-after-sequence.svg). **Archive problem models:** [before class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/problem-before-class.svg) · [before sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/problem-before-sequence.svg) · [after class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/problem-after-class.svg) · [after sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/problem-after-sequence.svg). Read older SQLite and screen labels using the current source paths below.",
+        "**Code to know:** lifecycle functions record transitions, successor and publication; jobs record inputs and current claim; the worker runs FFmpeg; capabilities and serving routes recheck access; Film refreshes media before download; the PWA worker caches public shell assets only. PostgreSQL is implemented behind the database Adapter, rather than being future architecture."
+      ],
+      "notes": [
+        "**Suggested 0:00–0:20:** draw the story: collecting cycle → revealing/processing → published premiere → archived; the next cycle can already collect.",
+        "**0:20–0:50:** use UC08 analysis to separate compilation, retry and publication; show the design’s durable job/input records and worker claim.",
+        "**0:50–1:15:** compare transient timer work with persisted state and generation-fenced finalisation. A repeated tick or crash must not create a new authoritative successor/result.",
+        "**1:15–1:45:** connect release to UC12/UC13: refresh media, issue a short-lived grant, recheck current session/group/release and verify bytes before serving. Explain Proxy versus Facade.",
+        "**1:45–2:00:** answer one stale-worker or expired-capability branch and identify the PWA cache boundary. Expand both package problems during the full presentation."
+      ],
+      "sources": [
+        {
+          "path": "server/src/cycles/lifecycle.ts",
+          "label": "server/src/cycles/lifecycle.ts",
+          "note": "Rollover, successor, release and archive state machine."
+        },
+        {
+          "path": "server/src/cycles/scheduler.ts",
+          "label": "server/src/cycles/scheduler.ts",
+          "note": "Discover due transitions."
+        },
+        {
+          "path": "server/src/jobs/index.ts",
+          "label": "server/src/jobs/index.ts",
+          "note": "Durable film work, input snapshot and claim generations."
+        },
+        {
+          "path": "server/src/jobs/worker.ts",
+          "label": "server/src/jobs/worker.ts",
+          "note": "Bounded worker tick."
+        },
+        {
+          "path": "server/src/archive/capabilities.ts",
+          "label": "server/src/archive/capabilities.ts",
+          "note": "Current-authority media Proxy support."
+        },
+        {
+          "path": "server/src/routes/archive-routes.ts",
+          "label": "server/src/routes/archive-routes.ts",
+          "note": "Archive/premiere and capability serving."
+        },
+        {
+          "path": "server/src/routes/media-access.ts",
+          "label": "server/src/routes/media-access.ts",
+          "note": "Selected membership and verified serving helpers."
+        },
+        {
+          "path": "src/auth/real-account-client.ts",
+          "label": "src/auth/real-account-client.ts",
+          "note": "Archive client Facade."
+        },
+        {
+          "path": "src/real/Film.tsx",
+          "label": "src/real/Film.tsx",
+          "note": "Playback/download orchestration."
+        },
+        {
+          "path": "src/real/Archive.tsx",
+          "label": "src/real/Archive.tsx",
+          "note": "Released-film list."
+        },
+        {
+          "path": "public/sw.js",
+          "label": "public/sw.js",
+          "note": "Public-only shell cache."
+        }
+      ],
+      "qa": [
+        {
+          "q": "How can the next cycle collect while the previous film is still compiling?",
+          "a": "Closing the old cycle and creating/selecting its successor are transactional lifecycle work. Compilation is a separate durable job, so a slow film does not keep intake on the old cycle."
+        },
+        {
+          "q": "Why does a retry not let the old worker win?",
+          "a": "The current persisted claim generation must match at finalisation. A stale worker cannot overwrite a later claim."
+        },
+        {
+          "q": "Why does the premiere last from publication rather than cycle end?",
+          "a": "Compilation may finish late. release_published_at starts the configured 24-hour premiere after verified output is actually published."
+        },
+        {
+          "q": "What happens after a media capability expires or the process restarts?",
+          "a": "The client refreshes authorisation and requests a fresh grant. Durable media remains stored; serving still checks session, membership, release and exact output identity."
+        }
+      ]
+    },
+    {
+      "id": "member-d",
+      "title": "Member D · PARTICIPATION",
+      "summary": "Own the group’s continuing interaction: UC09–UC11, with UC11 chat/reconnect as the lead use case.",
+      "paragraphs": [
+        "**Package and use cases:** PARTICIPATION. UC09 — Owner prompt and group timezone; UC10 — Reminder preference and asynchronous delivery; UC11 — Private group chat. Cover owner-only settings, local scheduling, consent, disconnected chat, retries and stream access loss.",
+        "**Design problem and patterns:** [keep live chat and durable reminders truthful](patterns.html#participation). Present Observer/pub-sub for committed chat events, a provider Adapter for web push and a durable outbox for scheduled reminders. A live subscriber and a retryable reminder job are different responsibilities.",
+        "**Lead use-case models:** [analysis class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-analysis-class.svg) · [design class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/uc11-design-class.svg); find every major-flow analysis/design sequence in the [model register](analysis-design.html#sequence-model-register).",
+        "**Before/after problem models:** [before class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/problem-before-class.svg) · [before sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/problem-before-sequence.svg) · [after class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/problem-after-class.svg) · [older after sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/problem-after-sequence.svg). The recurring reminder loop now exists; the active product channel is web push. Replace older one-shot-only or Expo delivery claims when explaining the plates.",
+        "**Code to know:** chat functions commit message/event state; RealtimeHub fans out afterwards; SSE routes replay message events through a watermark; the realtime client reconnects. Reminder settings/destinations and outbox state persist separately; the runtime loop scans/drains when providers are configured. Reaction updates do not advance the message reconnect cursor."
+      ],
+      "notes": [
+        "**Suggested 0:00–0:20:** separate live conversation from scheduled reminders. Both are asynchronous, but only one is a connected subscriber.",
+        "**0:20–0:50:** use UC11 analysis: chat boundary → conversation control → Message/Event; identify history, send/reply, reaction and reconnect major flows.",
+        "**0:50–1:20:** map to transactional chat functions, hub and SSE client. Explain commit-before-publish, watermark replay and buffered live events.",
+        "**1:20–1:45:** compare an observer-only reminder design with preference, destination generation, durable outbox, lease and web-push Adapter.",
+        "**1:45–2:00:** distinguish queued, provider-accepted and observed display, then show how disabling a destination invalidates stale work."
+      ],
+      "sources": [
+        {
+          "path": "server/src/chat/index.ts",
+          "label": "server/src/chat/index.ts",
+          "note": "Durable message/event and reaction operations."
+        },
+        {
+          "path": "server/src/realtime/index.ts",
+          "label": "server/src/realtime/index.ts",
+          "note": "Observer/pub-sub implementation."
+        },
+        {
+          "path": "server/src/routes/chat-routes.ts",
+          "label": "server/src/routes/chat-routes.ts",
+          "note": "SSE access checks, replay and fan-out."
+        },
+        {
+          "path": "src/chat/realtime-client.ts",
+          "label": "src/chat/realtime-client.ts",
+          "note": "Reconnect/event-source boundary."
+        },
+        {
+          "path": "src/chat/reaction-sync.ts",
+          "label": "src/chat/reaction-sync.ts",
+          "note": "Separate reaction synchronisation."
+        },
+        {
+          "path": "server/src/groups/settings.ts",
+          "label": "server/src/groups/settings.ts",
+          "note": "Owner settings and member preferences."
+        },
+        {
+          "path": "server/src/reminders/schedule.ts",
+          "label": "server/src/reminders/schedule.ts",
+          "note": "Timezone-aware due-time calculation."
+        },
+        {
+          "path": "server/src/reminders/outbox.ts",
+          "label": "server/src/reminders/outbox.ts",
+          "note": "Destination generation, eligibility, lease and outcomes."
+        },
+        {
+          "path": "server/src/reminders/loop.ts",
+          "label": "server/src/reminders/loop.ts",
+          "note": "Recurring scan/drain loop."
+        },
+        {
+          "path": "server/src/reminders/providers.ts",
+          "label": "server/src/reminders/providers.ts",
+          "note": "Provider protocol Adapter."
+        },
+        {
+          "path": "src/real/settings/ReminderBlock.tsx",
+          "label": "src/real/settings/ReminderBlock.tsx",
+          "note": "Current reminder controls."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why persist messages before publishing?",
+          "a": "A live event must correspond to a committed message. If the connection drops, the client can recover the committed message from event replay."
+        },
+        {
+          "q": "How do you avoid a gap while replay meets live traffic?",
+          "a": "Subscribe and buffer while taking a watermark, replay persisted message events through it, then flush newer buffered events once."
+        },
+        {
+          "q": "How does opting out affect pending work?",
+          "a": "Preference and destination eligibility are rechecked; disabling a destination increments its generation so stale queued work cannot use that destination."
+        },
+        {
+          "q": "Does the reminder scheduler now recur automatically?",
+          "a": "The runtime starts a bounded recurring loop when providers are configured. This proves the mechanism exists, not that a particular device displayed a notification."
+        }
+      ]
+    }
+  ]
+}

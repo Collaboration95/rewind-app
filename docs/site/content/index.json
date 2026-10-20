@@ -1,0 +1,323 @@
+{
+  "title": "Overview",
+  "lede": "Rewind is a private app where a small group of friends each add short photos and videos during a cycle, then watch the film the server builds from them.",
+  "intro": [
+    "This site explains Rewind for the team and for the SWE5006 lecturers. It is written to be read before the final presentation (26 and 27 October 2026) and the report deadline (1 November 2026). Each section ends with the questions a lecturer is likely to ask, with short model answers.",
+    "Where the older report drafts disagree with the code, the code wins and the page says so."
+  ],
+  "sections": [
+    {
+      "id": "what-it-is",
+      "title": "What Rewind is",
+      "summary": "A private, invite-only group app. Members contribute moments in secret, wait together, and watch one film at the end of the cycle.",
+      "paragraphs": [
+        "Rewind is a web app (an installable PWA, also usable on iPhone from the Home Screen) with a Node and TypeScript server. A group of 2 to 10 friends shares a cycle, 28 days by default. During the cycle each member can add up to five photos or videos, at most 30 seconds in total per week, and no video longer than 15 seconds. The app seals each contribution: other members, and the group owner, can see that something was added and when, but not what it is.",
+        "When the cycle ends the server compiles every accepted contribution, in time order, into one vertical 720p film with normalised audio. The film premieres for 24 hours and then stays in the group's Archive for ever. A new cycle starts at once. Members also get a group chat (text, one-level replies, one reaction) and a weekly web-push reminder.",
+        "It is a SWE5006 practice-module project, so the product is also a vehicle: the design has real tensions (sealed media, a cycle clock, background film jobs, per-member quotas) that justify analysis models, design patterns and a DevSecOps pipeline."
+      ],
+      "notes": [
+        "**Clients:** Expo / React Native web export, installed as a PWA. An Android test build exists; compiled native iOS is out of scope.",
+        "**Server:** one Node and TypeScript application, FFmpeg for media. SQLite and disk locally, PostgreSQL and private S3 on hosted environments.",
+        "**Sign-in:** Amazon Cognito Managed Login on release. Local runs and hosted dev keep a 'Developer sign-in' password form so the team and the tests can sign in without Cognito."
+      ],
+      "sources": [
+        {
+          "label": "README.md",
+          "path": "README.md",
+          "note": "One-page description and run commands"
+        },
+        {
+          "label": "doc/planning/current-product-baseline.md",
+          "path": "doc/planning/current-product-baseline.md",
+          "note": "Requirement-by-requirement disposition"
+        },
+        {
+          "label": "server/src/contributions/index.ts",
+          "path": "server/src/contributions/index.ts",
+          "note": "Allowance constants (5, 30 s, 15 s, 7-day window)"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Describe the product in one sentence.",
+          "a": "A private group of friends each add a few short moments during a cycle; the moments stay sealed until the cycle ends, then the server builds one film they watch together and keep in an Archive."
+        },
+        {
+          "q": "Why can nobody see the contributions before release?",
+          "a": "The point is a shared surprise and low pressure: nobody edits for an audience. It is enforced on the server. The contribution ledger is a whitelist of metadata (state, length, day), and media is only addressable after release. The owner gets no early access either."
+        },
+        {
+          "q": "Why a PWA and not a native app?",
+          "a": "One codebase reaches iPhone and Android browsers. iOS delivery is the installed PWA, which also supports web push. Compiled native iOS was a deliberate scope cut in October."
+        }
+      ]
+    },
+    {
+      "id": "problem",
+      "title": "The business problem",
+      "summary": "Friends drift apart after graduation or relocation, and mainstream social media rewards polished posting rather than small shared moments.",
+      "paragraphs": [
+        "The proposal's starting point is simple. Close friend groups lose everyday contact once they stop living or studying together. Posting to a public feed feels performative: you curate, you compare, you wait for likes. Personal video diaries keep memories but are not shared.",
+        "Rewind offers a private, low-effort ritual instead. Members add a few unpolished clips, wait together, and rediscover the group's period as one film. Retro looks (Disposable Flash, CCD, 8mm, VHS) make rough footage feel intentional. The value is the memory, not the photography.",
+        "This is a proof of concept. The proposal states the demand and usability benefits as hypotheses; no user study has measured them, and the report should not claim they have."
+      ],
+      "terms": [
+        {
+          "term": "Cycle",
+          "def": "The collecting period for a group. Default 28 days; local runs use 10 minutes so the whole loop can be demonstrated."
+        },
+        {
+          "term": "Sealed",
+          "def": "A contribution that has been accepted and processed but is visible only as metadata until the cycle is released."
+        },
+        {
+          "term": "Film",
+          "def": "The chronological compilation of a cycle's contributions, released to the group."
+        },
+        {
+          "term": "Archive",
+          "def": "The list of a group's released films, plus the member's own clips, available to watch and download."
+        }
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/proposals/proposal-rewind.md",
+          "path": "doc/planning/proposals/proposal-rewind.md",
+          "note": "Submitted proposal: background and outcome"
+        },
+        {
+          "label": "doc/planning/context/project-brief.md",
+          "path": "doc/planning/context/project-brief.md",
+          "note": "What the course expects the project to prove"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Who are the stakeholders?",
+          "a": "Invited members and the group owner (also a member), the platform operator (the team), the lecturers as reviewers, and supporting systems: Cognito, S3 and the web-push services. There is no external sponsor."
+        },
+        {
+          "q": "Is the idea technically interesting enough for SWE5006?",
+          "a": "Yes. It has a cycle state machine with a clock, background jobs with retries (film compilation), per-member quotas with one correction, private media with short-lived access tokens, and notifications. Those drive the use case models and the design problems, not the CRUD screens."
+        },
+        {
+          "q": "Has the problem been validated with users?",
+          "a": "No. Reduced curation pressure is a product hypothesis. We say so in the report rather than claiming a measured benefit."
+        }
+      ]
+    },
+    {
+      "id": "how-it-works",
+      "title": "How it works",
+      "summary": "One loop: join, capture, seal, wait for the cycle to end, release the film, watch it in the Archive.",
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "The Rewind loop",
+          "steps": [
+            {
+              "label": "Join a group",
+              "sub": "Invite code",
+              "detail": "The owner creates a group and shares an invite (valid 24 hours by default). A new member signs in and accepts it. Capacity is 2 to 10 members."
+            },
+            {
+              "label": "Capture",
+              "sub": "Photo or video",
+              "detail": "Members capture inside the app with a retro look. Limit: 5 contributions and 30 seconds per 7-day window, 15 seconds per video."
+            },
+            {
+              "label": "Seal",
+              "sub": "Processed, hidden",
+              "detail": "The server accepts and processes the media. The member sees 'sealed' with the day and length, never the content.",
+              "accent": true
+            },
+            {
+              "label": "Cycle ends",
+              "sub": "Server clock",
+              "detail": "A scheduler closes the cycle on time and opens the next one immediately. The same tick queues the film job."
+            },
+            {
+              "label": "Film released",
+              "sub": "FFmpeg, 720p",
+              "detail": "A background job joins accepted clips in time order, normalises audio and publishes one verified film. It premieres for 24 hours.",
+              "accent": true
+            },
+            {
+              "label": "Watch in Archive",
+              "sub": "Play or download",
+              "detail": "Members play the film and download it or their own clips using short-lived access links tied to their session."
+            }
+          ]
+        }
+      ],
+      "paragraphs": [
+        "Chat, the weekly prompt and web-push reminders sit around this loop. The prompt gives members something to point their camera at; the reminder arrives on Sunday at 19:00 in the group's time zone."
+      ],
+      "sources": [
+        {
+          "label": "server/src/cycles/lifecycle.ts",
+          "path": "server/src/cycles/lifecycle.ts",
+          "note": "Rollover and 24-hour premiere"
+        },
+        {
+          "label": "server/src/contributions/index.ts",
+          "path": "server/src/contributions/index.ts",
+          "note": "Allowance and correction rules"
+        },
+        {
+          "label": "server/src/ffmpeg.ts",
+          "path": "server/src/ffmpeg.ts",
+          "note": "Photo and film processing, loudness normalisation"
+        },
+        {
+          "label": "src/real/Shell.tsx",
+          "path": "src/real/Shell.tsx",
+          "note": "Home, Chat, Archive tabs"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What happens if a member contributes nothing?",
+          "a": "Their slot is simply empty. The film is built from whoever contributed. If a cycle ends with a single clip, the server may add one eligible clip from the group's own archive, labelled 'From the archive'. It does not invent footage for an empty cycle."
+        },
+        {
+          "q": "What if the film job fails?",
+          "a": "Compilation is a durable job with bounded retries and a delayed state. A duplicate scheduler tick or a restart replays the transition safely and never produces two films."
+        },
+        {
+          "q": "Can a member fix a mistake?",
+          "a": "Yes, once. A member may delete one contribution in its original window and submit a replacement; the allowance is returned for that one deletion."
+        }
+      ]
+    },
+    {
+      "id": "scope",
+      "title": "Scope summary",
+      "summary": "In scope: the private group loop on the web and PWA. Out of scope: public social features and compiled native iOS.",
+      "tables": [
+        {
+          "title": "Scope at a glance",
+          "columns": ["In scope", "Out of scope"],
+          "rows": [
+            [
+              "Private groups, invites, capacity 2 to 10",
+              "Public profiles, feed, followers, discovery"
+            ],
+            [
+              "Photo and video capture with four retro looks",
+              "Long-form video, live streaming, licensed music, AI edits"
+            ],
+            [
+              "Sealed contributions, allowance and one correction",
+              "General gallery import (only a bounded browser video fallback)"
+            ],
+            [
+              "Automatic cycle rollover and film compilation",
+              "Compiled native iOS and App Store delivery"
+            ],
+            [
+              "Archive, premiere, film and own-clip download",
+              "Expo / native push (code paused, not extended)"
+            ],
+            ["Group chat with replies and a reaction", "Chat attachments and read receipts"],
+            [
+              "Web-push reminders, Cognito sign-in, safety controls",
+              "The synthetic Demo (removed 6 October 2026)"
+            ]
+          ]
+        }
+      ],
+      "paragraphs": [
+        "The [Product and use cases](product.html) page lists all fourteen use cases, the actors and the quality attributes. Four members split the work by package; see [Who owns what](owners.html)."
+      ],
+      "sources": [
+        {
+          "label": "doc/planning/current-product-baseline.md",
+          "path": "doc/planning/current-product-baseline.md",
+          "note": "Scope and exclusions"
+        },
+        {
+          "label": "AGENTS.md",
+          "path": "AGENTS.md",
+          "note": "Product decisions of 4 and 8 October 2026"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why was the Demo removed?",
+          "a": "A synthetic Demo duplicated the real product and doubled the things to maintain. The real-account app is the product; local runs with short cycles now serve the demo purpose. A git tag, demo-frozen-20261004, marks the last state that had it."
+        },
+        {
+          "q": "Is anything architected but not built?",
+          "a": "The course asks us to say so. Release isolation on managed PostgreSQL and Cognito for the release host are still open issues (see current status). They are deployment work, not missing application features."
+        }
+      ]
+    },
+    {
+      "id": "status",
+      "title": "Current status",
+      "summary": "The product is live on hosted dev. Sprint 3 ends on 24 October 2026; the final report and release hardening remain.",
+      "paragraphs": [
+        "Every merge to `dev` deploys automatically to hosted dev (Amazon Lightsail behind CloudFront, managed PostgreSQL, private S3, Cognito). The Quality, CodeQL and Deploy dev workflows were green on `dev` on 20 October 2026. Measured on a branch of `dev` the same day: frontend coverage 89.6% statements and 92.3% lines; server about 86% lines and 85.7% branches; 988 server tests passing on PostgreSQL.",
+        "Open Sprint 3 issues when this page was written (20 October): #527 verify the Safari and Home Screen integration once, #515 release Cognito, #504 release PostgreSQL and backups, #230 release isolation, and #362 assemble the final report. The release environment is not the demo target. See [Project conduct](scrum.html) for sprints, the Definition of Done and outstanding work."
+      ],
+      "sources": [
+        {
+          "label": ".github/workflows/quality.yml",
+          "path": ".github/workflows/quality.yml",
+          "note": "The PR gate"
+        },
+        {
+          "label": "doc/planning/sprints/sprint-3-completion-audit-2026-10-12.md",
+          "path": "doc/planning/sprints/sprint-3-completion-audit-2026-10-12.md",
+          "note": "Remaining Sprint 3 work as audited on 12 October"
+        }
+      ],
+      "qa": [
+        {
+          "q": "What is not finished?",
+          "a": "Release environment isolation (#230), release PostgreSQL and backups (#504), release Cognito (#515), one integration check on a real iPhone Home Screen app (#527) and the assembled final report (#362). The product itself runs end to end on hosted dev."
+        },
+        {
+          "q": "Which sprints did you run?",
+          "a": "Sprint 0 (foundation, to 12 September), Sprint 1 (13 to 26 September), Sprint 2 (27 September to 10 October) and Sprint 3 (11 to 24 October). Names are zero-based; GitHub milestones use the same names."
+        }
+      ]
+    },
+    {
+      "id": "how-to-use",
+      "title": "How to use this site",
+      "summary": "Read the pages in order once, then jump to the page behind each presentation segment.",
+      "paragraphs": [
+        "Suggested reading order for the team: this page, [Submission and presentation](submission.html) (what we are marked on), [Product and use cases](product.html), [Technology and architecture](architecture.html), then the design pages, then [CI/CD](cicd.html) and [Project conduct](scrum.html), and finally the [Demo script](demo.html) before rehearsal.",
+        "Click a box in any diagram to read its detail. The question-and-answer blocks are written as model answers; rehearse them aloud."
+      ],
+      "tables": [
+        {
+          "title": "Which page backs which presentation segment",
+          "columns": ["Segment (minutes + Q&A)", "Pages to read"],
+          "rows": [
+            ["Overview (2+1)", "This page, [Product and use cases](product.html)"],
+            ["Project Conduct (2+1)", "[Project conduct](scrum.html)"],
+            [
+              "Architecture and Design (7+2)",
+              "[Architecture](architecture.html), [Design decisions](decisions.html), [Analysis to design](analysis-design.html), [Patterns](patterns.html), [Database](database.html), [Who owns what](owners.html)"
+            ],
+            [
+              "DevSecOps (6+2)",
+              "[CI/CD and DevSecOps](cicd.html), [AWS setup](aws.html), [Testing and quality](quality.html)"
+            ],
+            ["Demo (13+4)", "[Demo script](demo.html)"],
+            ["Deadlines, deliverables, gaps", "[Submission and presentation](submission.html)"]
+          ]
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is this site part of the submission?",
+          "a": "No. It is a study aid for the team and a guide for the lecturers. The submitted artefacts are the report, the slides, the repository and the running system."
+        }
+      ]
+    }
+  ]
+}

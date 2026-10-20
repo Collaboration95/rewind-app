@@ -1,0 +1,696 @@
+{
+  "title": "AWS setup",
+  "lede": "Rewind runs independent dev and release environments on Lightsail, with CloudFront HTTPS, private S3 media, Cognito sign-in and separately managed PostgreSQL databases.",
+  "intro": [
+    "This page combines the post-refactor Terraform/deployment source with read-only observations on 20 October 2026. Resource existence, application readiness and completed data cutover are different facts. The historical `demo` infrastructure name means hosted dev for the real-account product; it does not mean a synthetic demonstration app. See [CI/CD and DevSecOps](cicd.html) for the full check graph."
+  ],
+  "sections": [
+    {
+      "id": "environments",
+      "title": "Account, access and environment boundaries",
+      "summary": "The Rewind account is 330599756236 in ap-southeast-1 (Singapore), with the inspected hosts and databases in ap-southeast-1a.",
+      "paragraphs": [
+        "Read-only STS inspection confirmed account `330599756236` and the assumed `rewind-coding-agent` role. Local profile names were inspected without reading or printing credential values. `default` is the source identity for role assumption, not the profile for routine agent work. Other projects also exist in the account; they are outside this Rewind topology.",
+        "Both `rewind-demo` and `rewind-release` were running Lightsail Ubuntu 24.04 hosts on bundle `micro_3_0`. Both named PostgreSQL databases were available on `micro_2_0`, engine 17.11, with backup retention enabled. A running host or available database does not prove that the application uses that database.",
+        "Hosted dev HTTPS `/api/health` returned ready with PostgreSQL and migration version 31 on 20 October. Source sets release `enabled=true` but `cutover=false`. A direct release origin HTTP health request was refused during this inspection. A successful earlier release workflow is recorded in GitHub, but these observations do not establish current release application readiness or PostgreSQL cutover."
+      ],
+      "sources": [
+        {
+          "label": "infra/terraform/README.md",
+          "path": "infra/terraform/README.md"
+        },
+        {
+          "label": "infra/terraform/bootstrap/access.tf",
+          "path": "infra/terraform/bootstrap/access.tf"
+        },
+        {
+          "label": "infra/terraform/demo/lightsail.tf",
+          "path": "infra/terraform/demo/lightsail.tf"
+        },
+        {
+          "label": "infra/terraform/release/main.tf",
+          "path": "infra/terraform/release/main.tf"
+        },
+        {
+          "label": "infra/terraform/media/database.tf",
+          "path": "infra/terraform/media/database.tf"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is rewind-demo still the old Demo application?",
+          "a": "No. The synthetic Demo was removed on 6 October. The real-account dev host retains its historical resource/state names to avoid replacement."
+        },
+        {
+          "q": "Is release already using PostgreSQL?",
+          "a": "The database exists, but source cutover remains false and this inspection did not verify a ready release application. Do not infer usage from resource existence."
+        },
+        {
+          "q": "Why use a named agent profile?",
+          "a": "It assumes a read-only role in the intended account. It cannot deploy, mutate infrastructure or retrieve private object contents."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Local access profiles",
+          "columns": ["Profile", "Purpose"],
+          "rows": [
+            ["rewind-coding-agent", "Read-only operational inspection; used for this page"],
+            ["rewind-demo-operator", "Legacy approved power-controller invocation"],
+            ["rewind-terraform-apply", "Human-reviewed Terraform plan/apply"],
+            ["default", "Local source identity for role assumption; credentials stay outside Git"]
+          ]
+        },
+        {
+          "title": "Environment split · observed/configured 20 October",
+          "columns": ["Aspect", "Hosted dev", "Release"],
+          "rows": [
+            ["Source / host", "dev / rewind-demo", "main / rewind-release"],
+            ["GitHub environment", "dev", "release; live approval protection"],
+            [
+              "Public entry",
+              "https://d2m6kz76y4kuvm.cloudfront.net",
+              "Own CloudFront distribution declared; hostname not verified here"
+            ],
+            ["Media bucket", "rewind-dev-media-330599756236", "rewind-release-media-330599756236"],
+            ["Cognito pool name", "rewind-dev, declared", "rewind-release, declared"],
+            [
+              "PostgreSQL",
+              "rewind-dev-postgres; public; cutover true",
+              "rewind-release-postgres; private; cutover false"
+            ],
+            [
+              "App readiness observed",
+              "HTTPS ready; database=postgresql",
+              "Origin HTTP connection refused; readiness unverified"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "terraform",
+      "title": "Terraform owns infrastructure; CI installs the app",
+      "summary": "Four Terraform roots separate state, dev infrastructure, dev services and release infrastructure.",
+      "paragraphs": [
+        "The S3 backend examples use `rewind-terraform-state-330599756236`, encryption and native S3 lockfiles (`use_lockfile=true`). Each root has its own key. Bootstrap declares private, AES256-encrypted, versioned state; superseded state versions expire after 90 days. State and private variable/backend files are not source artifacts and were not read for this inspection.",
+        "The dependency order is bootstrap, then the host/deploy role, then environment services. `media/` is the direct dev root and a reusable module called by `release/` with `environment=release`. The post-refactor tree removed an unapplied second media path; it is not another live environment.",
+        "An operator initialises the backend and reviews `terraform plan` with the dedicated apply profile before a human-approved apply. Terraform creates cloud resources and sensitive settings; cloud-init installs host prerequisites. GitHub deployment never runs Terraform. Keep infrastructure recovery, application installation and database/media recovery separate.",
+        "The `demo` root and state key are deliberately preserved. Its first-boot script is reused for release. Existing hosts ignore `user_data` drift so a script edit does not accidentally replace the server; new/rebuilt hosts use the current script."
+      ],
+      "sources": [
+        {
+          "label": "infra/terraform/README.md",
+          "path": "infra/terraform/README.md"
+        },
+        {
+          "label": "infra/terraform/bootstrap/main.tf",
+          "path": "infra/terraform/bootstrap/main.tf"
+        },
+        {
+          "label": "infra/terraform/bootstrap/backend.hcl.example",
+          "path": "infra/terraform/bootstrap/backend.hcl.example"
+        },
+        {
+          "label": "infra/terraform/demo/backend.hcl.example",
+          "path": "infra/terraform/demo/backend.hcl.example"
+        },
+        {
+          "label": "infra/terraform/media/backend.hcl.example",
+          "path": "infra/terraform/media/backend.hcl.example"
+        },
+        {
+          "label": "infra/terraform/release/backend.hcl.example",
+          "path": "infra/terraform/release/backend.hcl.example"
+        },
+        {
+          "label": "infra/terraform/release/main.tf",
+          "path": "infra/terraform/release/main.tf"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why are there several state keys?",
+          "a": "They provide independent change/recovery boundaries. A release plan should not silently take ownership of the existing dev host or its state."
+        },
+        {
+          "q": "Does merging Terraform automatically apply it?",
+          "a": "No. Source checks and IaC scans run in CI, but application deployment does not invoke Terraform. Infrastructure applies remain reviewed operator actions."
+        }
+      ],
+      "tables": [
+        {
+          "title": "Root and state ownership",
+          "columns": ["Root", "Manages", "State key"],
+          "rows": [
+            [
+              "bootstrap/",
+              "State bucket, coding/apply roles, GitHub OIDC provider",
+              "rewind/bootstrap/terraform.tfstate"
+            ],
+            [
+              "demo/",
+              "Hosted dev Lightsail/static IP, CloudFront, backups/audit, budget, deploy role, legacy power controller",
+              "rewind/demo/terraform.tfstate"
+            ],
+            [
+              "media/",
+              "Dev media/runtime identity, Cognito, PostgreSQL and private hosted settings",
+              "rewind/media/terraform.tfstate"
+            ],
+            [
+              "release/",
+              "Release host/static IP, CloudFront, deploy identity, backups; calls media module",
+              "rewind/release/terraform.tfstate"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "topology",
+      "title": "CloudFront fronts a small container host",
+      "summary": "The application compute is Lightsail with Docker Compose; CloudFront terminates public TLS and nginx serves the PWA and proxies the API.",
+      "paragraphs": [
+        "There is no standalone EC2 instance resource, ECS cluster, load balancer, NAT gateway or ECR registry in these Terraform roots. The origin’s generated hostname starts with `ec2-`, but the managed compute resource is a Lightsail instance. The database resource is `aws_lightsail_database`, not RDS.",
+        "Each environment declares a separate CloudFront distribution using the AWS-provided domain/certificate, redirecting viewers to HTTPS. There is no Route 53 zone or custom-domain certificate declared in this path. Origin traffic is HTTP on port 80. CloudFront adds a secret origin header and forwarded HTTPS indication; the server checks these before trusting the forwarded scheme for protected routes. This is an application trust control, not TLS encryption to the origin.",
+        "The web container runs nginx, not Caddy. It serves the Expo export, falls back to index.html for SPA routes and strips `/api` before proxying to Node. Node owns API handling, the cycle scheduler, media workers and reminders. The runtime port is published only on host loopback; nginx is exposed on port 80 for CloudFront. Both containers have read-only filesystems, dropped capabilities and no-new-privileges; data/staging use explicit persistent mounts."
+      ],
+      "sources": [
+        {
+          "label": "infra/terraform/demo/lightsail.tf",
+          "path": "infra/terraform/demo/lightsail.tf"
+        },
+        {
+          "label": "infra/terraform/demo/web-distribution.tf",
+          "path": "infra/terraform/demo/web-distribution.tf"
+        },
+        {
+          "label": "infra/terraform/release/main.tf",
+          "path": "infra/terraform/release/main.tf"
+        },
+        {
+          "label": "deploy/compose.yaml",
+          "path": "deploy/compose.yaml"
+        },
+        {
+          "label": "deploy/nginx.conf",
+          "path": "deploy/nginx.conf"
+        },
+        {
+          "label": "server/src/routes/respond.ts",
+          "path": "server/src/routes/respond.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Where is HTTPS terminated?",
+          "a": "At CloudFront using its default certificate. The declared origin hop is HTTP; do not describe it as encrypted end to end."
+        },
+        {
+          "q": "Why two containers on one host?",
+          "a": "nginx serves static assets and proxies the API; Node runs the application and workers. They can be versioned as a pair without operating a cluster."
+        },
+        {
+          "q": "Are private APIs cached at CloudFront?",
+          "a": "The declared distribution uses managed caching-disabled policies. nginx also sets API responses to no-store."
+        }
+      ],
+      "visuals": [
+        {
+          "type": "layers",
+          "title": "Request path · repeated per environment",
+          "layers": [
+            {
+              "label": "Browser PWA",
+              "sub": "HTTPS viewer traffic",
+              "detail": "The web app calls its same-origin API and follows provider sign-in redirects. Direct uploads use short-lived signed S3 URLs.",
+              "icon": "pwa"
+            },
+            {
+              "label": "CloudFront",
+              "sub": "TLS and origin proof",
+              "detail": "The distribution redirects viewers to HTTPS, disables caching and adds the origin-auth/forwarded-protocol headers.",
+              "accent": true
+            },
+            {
+              "label": "Lightsail host",
+              "sub": "Docker: nginx and Node",
+              "detail": "nginx serves the export and proxies /api. Node handles application requests, scheduling, media processing and reminders.",
+              "icon": "docker",
+              "accent": true
+            },
+            {
+              "label": "External services",
+              "sub": "PostgreSQL, S3 and Cognito",
+              "detail": "These are separate dependencies, not a serial request chain. PostgreSQL stores domain state, S3 stores private media, and Cognito signs users in."
+            }
+          ],
+          "caption": "CloudFront → host uses HTTP. Persistent host directories retain staging/configuration; remote PostgreSQL and S3 hold the hosted data."
+        }
+      ],
+      "tables": [
+        {
+          "title": "AWS resources → purpose → managed by",
+          "columns": ["Resource", "Purpose / environment", "Managed by"],
+          "rows": [
+            [
+              "Lightsail instance + static IP",
+              "One app host each for dev and release",
+              "demo/lightsail.tf; release/main.tf"
+            ],
+            [
+              "CloudFront distribution",
+              "Separate HTTPS entry and origin headers",
+              "demo/web-distribution.tf; release/main.tf"
+            ],
+            [
+              "Lightsail PostgreSQL",
+              "One database per environment",
+              "media/database.tf; release media module"
+            ],
+            [
+              "S3 media buckets",
+              "Private versioned uploads/films and _config settings",
+              "media/main.tf"
+            ],
+            [
+              "Cognito pool/client/domain",
+              "Environment-specific Managed Login",
+              "media/cognito.tf"
+            ],
+            [
+              "Runtime IAM users/keys",
+              "Environment media access, pool deletion, scoped backups",
+              "media/main.tf"
+            ],
+            [
+              "OIDC provider + deploy roles",
+              "Short-lived GitHub deployment identity",
+              "bootstrap/access.tf; demo/deploy.tf; release/main.tf"
+            ],
+            [
+              "S3 backup buckets",
+              "Environment-specific logical recovery objects",
+              "demo/storage.tf; release/backups.tf"
+            ],
+            [
+              "S3 Terraform state",
+              "Private, encrypted, versioned infrastructure state",
+              "bootstrap/main.tf"
+            ],
+            [
+              "CloudTrail + audit bucket",
+              "Management-event audit; live logging observed",
+              "demo/observability.tf; demo/storage.tf"
+            ],
+            ["AWS Budget", "Configured actual-cost notifications", "demo/observability.tf"],
+            [
+              "Legacy Lambda / optional Scheduler",
+              "Power-controller path; not normal deployment",
+              "demo/automation.tf"
+            ],
+            [
+              "Lightsail host alarms",
+              "Dev status, CPU and burst-capacity signals; observed OK",
+              "infra/scripts/lightsail-alarms.sh"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "media",
+      "title": "Private S3 is storage, not a public media website",
+      "summary": "Media buckets are separated by environment, blocked from public access, encrypted and versioned.",
+      "paragraphs": [
+        "Read-only S3 metadata confirmed versioning enabled and all four public-access-block flags true for both `rewind-dev-media-330599756236` and `rewind-release-media-330599756236`. Terraform additionally declares bucket-owner-enforced ownership, AES256 server-side encryption and a bucket-policy denial for insecure transport.",
+        "The server authorises an upload and issues a short-lived signed PUT URL. CORS permits configured app origins and the local test origin for dev; CORS does not grant access by itself. The runtime IAM user is scoped to that environment’s bucket, plus its specific backup prefix and Cognito pool operation.",
+        "Archive reads pass through application authorisation: current session, selected group, membership, release state and media integrity. The database pins an exact object version. Random object keys and exact-version deletion keep active Archive references from becoming superseded versions. This is different from serving a public S3 URL.",
+        "Lifecycle rules expire abandoned incoming objects after seven days, noncurrent versions after 30 days, and incomplete multipart uploads after one day. Permanent current Archive objects have no age-based expiry in this policy. Local development uses disk storage; hosted media uses S3."
+      ],
+      "sources": [
+        {
+          "label": "infra/terraform/media/main.tf",
+          "path": "infra/terraform/media/main.tf"
+        },
+        {
+          "label": "infra/terraform/media/variables.tf",
+          "path": "infra/terraform/media/variables.tf"
+        },
+        {
+          "label": "server/src/routes/media-access.ts",
+          "path": "server/src/routes/media-access.ts"
+        },
+        {
+          "label": "server/src/media/store.ts",
+          "path": "server/src/media/store.ts"
+        },
+        {
+          "label": "server/src/media/integrity.ts",
+          "path": "server/src/media/integrity.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why use signed uploads?",
+          "a": "The browser sends bytes directly to S3 after server authorisation. It receives a bounded upload capability, not the runtime’s AWS keys."
+        },
+        {
+          "q": "Does encryption replace member authorisation?",
+          "a": "No. Encryption protects stored bytes. The server still checks the signed-in account, selected group and permitted media state on access."
+        },
+        {
+          "q": "Will a film disappear after 30 days?",
+          "a": "The rule applies to noncurrent versions. Active films use random keys and pinned current versions; current Archive objects are not expired just for age."
+        }
+      ]
+    },
+    {
+      "id": "database",
+      "title": "Managed PostgreSQL trades low cost for availability limits",
+      "summary": "Dev is deliberately public and single-AZ; release is declared private and also single-AZ.",
+      "paragraphs": [
+        "The source configures PostgreSQL 17 on Lightsail bundle `micro_2_0`. Dev has `enabled=true`, `cutover=true`, `public=true`; release has `enabled=true`, `cutover=false`, `public=false`. The live databases matched the public/private split and used engine 17.11. Database existence and the selected runtime engine must be checked separately.",
+        "Dev is public so the team can browse its data with a PostgreSQL client using the generated read-only login. Public reachability still requires database credentials; hosted connections use certificate-verified TLS. It is not a multi-tenant production network design. Release’s private setting limits network reachability to Lightsail resources in-region; credentials and application environment binding still matter.",
+        "A standby was explicitly declined by the owner in [closed issue #503](https://github.com/Collaboration95/rewind-app/issues/503) on 7 October. The chosen recovery mechanism is managed point-in-time restore; `micro_ha_2_0` remains a configuration option. A restore mechanism is not automatic failover or zero downtime. The single-instance choice keeps this educational deployment small.",
+        "The generated admin login is used for role bootstrap. The app and read-only logins have separate purposes. Switching `REWIND_DATABASE_URL` selects PostgreSQL; an empty setting selects SQLite. Release import/reconciliation must finish before its cutover flag changes. After new PostgreSQL writes, returning to SQLite needs the reconciled reverse export, not a stale file."
+      ],
+      "sources": [
+        {
+          "label": "infra/terraform/media/database.tf",
+          "path": "infra/terraform/media/database.tf"
+        },
+        {
+          "label": "server/src/postgres/runtime.ts",
+          "path": "server/src/postgres/runtime.ts"
+        },
+        {
+          "label": "docs/architecture/ADR-0003-postgresql.md",
+          "path": "docs/architecture/ADR-0003-postgresql.md"
+        },
+        {
+          "label": "docs/architecture/postgresql-operations.md",
+          "path": "docs/architecture/postgresql-operations.md"
+        },
+        {
+          "label": "docs/architecture/release-cutover.md",
+          "path": "docs/architecture/release-cutover.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why no HA standby?",
+          "a": "The owner chose a single instance with managed point-in-time recovery for this project. It reduces standing resources but accepts recovery time during a database failure."
+        },
+        {
+          "q": "Is public dev PostgreSQL unauthenticated?",
+          "a": "No. It is network-reachable, but logins are generated and the application uses verified TLS. The public setting exists for team client access."
+        },
+        {
+          "q": "Why not flip release cutover as soon as the database exists?",
+          "a": "Retained data and stopped-writer reconciliation must establish which database is authoritative. Provisioning alone does not move or validate data."
+        }
+      ]
+    },
+    {
+      "id": "identity-notifications",
+      "title": "Cognito signs users in; web push sends reminders",
+      "summary": "Identity and reminder delivery use separate protocols and credentials.",
+      "paragraphs": [
+        "Terraform declares one Cognito Essentials user pool per environment: `rewind-dev` and `rewind-release`. Each has a public web client without a client secret, a default Cognito prefix domain and Managed Login v2 branding. Email is the sign-in attribute; self sign-up and email verification are enabled. MFA, social identity providers and a custom domain are not configured.",
+        "Web/PWA sign-in uses an authorisation code with PKCE. The server exchanges the code, validates the provider response and issues a Rewind session. Callback/logout URLs derive from the environment’s web origins. Release sets `REWIND_AUTH_PASSWORD=false`; dev retains Developer sign-in for tests. Cognito inventory was denied to the read-only profile, so these pool/client details are source-verified, not a live pool census.",
+        "Cognito is configured with `email_sending_account=COGNITO_DEFAULT`. There is no application-managed SES identity or SES sending configuration in these Terraform roots. Do not draw SES as a reminder service: reminders use browser web push, including an installed iPhone Home Screen PWA.",
+        "The deploy configuration generates a P-256 VAPID key pair once on the host when needed and retains it privately. Terraform supplies the contact subject. The server’s reminder outbox sends through web-push provider endpoints. VAPID identifies the sender; it is unrelated to Cognito tokens or GitHub OIDC. Expo/native push remains disabled."
+      ],
+      "sources": [
+        {
+          "label": "infra/terraform/media/cognito.tf",
+          "path": "infra/terraform/media/cognito.tf"
+        },
+        {
+          "label": "infra/terraform/media/main.tf",
+          "path": "infra/terraform/media/main.tf"
+        },
+        {
+          "label": "infra/terraform/release/main.tf",
+          "path": "infra/terraform/release/main.tf"
+        },
+        {
+          "label": "server/src/auth/cognito.ts",
+          "path": "server/src/auth/cognito.ts"
+        },
+        {
+          "label": "server/src/reminders/providers.ts",
+          "path": "server/src/reminders/providers.ts"
+        },
+        {
+          "label": "deploy/release-host.sh",
+          "path": "deploy/release-host.sh"
+        },
+        {
+          "label": "AGENTS.md",
+          "path": "AGENTS.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is the Cognito app client secret stored in the browser?",
+          "a": "No client secret is generated. This is the public-client authorisation-code plus PKCE flow; the server performs the exchange."
+        },
+        {
+          "q": "Are reminders sent through SES or SNS?",
+          "a": "No. The reminder provider uses standard web push with VAPID. Cognito’s own default email sender handles its verification/recovery email."
+        },
+        {
+          "q": "Can dev sign-in settings leak into release?",
+          "a": "The environments have separate settings and pools. The release module disables developer password sign-in; that behaviour still needs verification in the deployed release."
+        }
+      ]
+    },
+    {
+      "id": "settings-deploy",
+      "title": "Terraform settings reach the host through private S3",
+      "summary": "The implemented configuration path uses encrypted S3 objects and allowlisted host settings, not SSM Parameter Store or Secrets Manager.",
+      "paragraphs": [
+        "Terraform creates the environment’s runtime IAM access key, generated database logins and Cognito settings. It writes sensitive content to `_config/dev.env` or `_config/release.env` in that environment’s media bucket. A separate `_config/<environment>-database-bootstrap.env` contains the bootstrap login material. Those objects and Terraform state contain secrets; no secret values were read for this page.",
+        "GitHub repository/environment variables carry object URIs and role identifiers, not database passwords. The deploy role is permitted to read the matching settings object. The workflow downloads the full object into memory, streams it through SSH to `release-host.sh configure`, and fails on a configured-object read error. An unset URI keeps the host settings unchanged. The configure command accepts only an explicit key allowlist and writes a private `0600` file, checking the recorded configuration digest before updates.",
+        "The runtime policy covers objects throughout its own media bucket, including `_config`; do not present that prefix as a separately isolated secret vault. Environment isolation here is by bucket, scoped identities and selected configuration. The read-only coding role cannot retrieve these objects or read IAM policies live.",
+        "GitHub’s OIDC token is exchanged with STS for a one-hour environment deploy role. Trust includes exact repository/environment subjects, the `sts.amazonaws.com` audience and branch `dev` or `main`. The role reaches only its host for temporary SSH access and receives additional narrowly scoped settings/database-operation policies. Its host policy does not permit power changes or arbitrary Terraform applies.",
+        "The application’s dedicated IAM-user keys are a separate runtime mechanism because this Lightsail path does not use an EC2 instance role. They stay in private settings and supply bucket access, the allowed backup prefix and pool-scoped account deletion. OIDC removes long-lived GitHub deploy keys; it does not remove the runtime key pair."
+      ],
+      "sources": [
+        {
+          "label": "infra/terraform/bootstrap/access.tf",
+          "path": "infra/terraform/bootstrap/access.tf"
+        },
+        {
+          "label": "infra/terraform/demo/deploy.tf",
+          "path": "infra/terraform/demo/deploy.tf"
+        },
+        {
+          "label": "infra/terraform/release/main.tf",
+          "path": "infra/terraform/release/main.tf"
+        },
+        {
+          "label": "infra/terraform/media/main.tf",
+          "path": "infra/terraform/media/main.tf"
+        },
+        {
+          "label": "infra/terraform/media/database.tf",
+          "path": "infra/terraform/media/database.tf"
+        },
+        {
+          "label": ".github/workflows/deploy-dev.yml",
+          "path": ".github/workflows/deploy-dev.yml"
+        },
+        {
+          "label": ".github/workflows/deploy-release.yml",
+          "path": ".github/workflows/deploy-release.yml"
+        },
+        {
+          "label": "deploy/release-host.sh",
+          "path": "deploy/release-host.sh"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Where does deployment read the database URL?",
+          "a": "From Terraform’s encrypted private S3 hosted-settings object, selected by a URI variable. It streams that content to the host configuration command."
+        },
+        {
+          "q": "Why not say the project uses Secrets Manager?",
+          "a": "No Secrets Manager or SSM parameter resource is part of this implemented path. The source uses private S3 settings and a protected host env file."
+        },
+        {
+          "q": "What stops a feature branch assuming the release role?",
+          "a": "The role trust requires the exact release environment subject and main ref; GitHub also protects that environment. Both identity and deployment settings matter."
+        }
+      ],
+      "visuals": [
+        {
+          "type": "flow",
+          "title": "Environment deployment and settings flow",
+          "steps": [
+            {
+              "label": "Green commit",
+              "sub": "Branch push Quality",
+              "detail": "Deployment builds only the exact qualified branch revision; Terraform provisioning happens separately.",
+              "icon": "githubactions"
+            },
+            {
+              "label": "Build bundle",
+              "sub": "Runtime and web images",
+              "detail": "The source-bound bundle carries checksums and image identities. It is built before AWS role assumption.",
+              "icon": "docker"
+            },
+            {
+              "label": "Assume role",
+              "sub": "GitHub OIDC to STS",
+              "detail": "AWS issues a short-lived environment session after exact trust checks.",
+              "accent": true
+            },
+            {
+              "label": "Read settings",
+              "sub": "Private S3 _config",
+              "detail": "Terraform previously wrote sensitive settings to the selected environment object. CI streams them without logging values."
+            },
+            {
+              "label": "Install host",
+              "sub": "Temporary pinned SSH",
+              "detail": "CI opens runner-only SSH, configures allowlisted keys, verifies the bundle and loads the image pair."
+            },
+            {
+              "label": "Check health",
+              "sub": "Activate and clean up",
+              "detail": "Host health and image checks precede activation. CI probes origin HTTP and removes temporary access.",
+              "accent": true
+            }
+          ],
+          "caption": "Dev targets rewind-demo; main targets rewind-release. The public CloudFront HTTPS path needs its own check."
+        }
+      ]
+    },
+    {
+      "id": "cost-operations",
+      "title": "Cost controls are alerts and bounded resources",
+      "summary": "The dev host runs continuously; the former cost-safety audit and backup-gated hibernation are retired.",
+      "paragraphs": [
+        "The budget code defines a US$15 monthly actual-cost budget with notifications near US$10 and US$15 when recipients are configured. It has no Rewind-only cost filter, so it should not be described as an application-only spending meter. Alerts notify; they do not cap spend or stop resources.",
+        "[Merged #516](https://github.com/Collaboration95/rewind-app/pull/516) removed the cost-safety audit Lambda, its failed Scheduler path and associated audit alarm/roles. Its change record says the scheduler trust was wrong, deliveries failed and the alarm had no recipients. The surviving `rewind-demo-power-controller` is a separate legacy component in `demo/automation.tf`.",
+        "The remaining controller can start the one dev host, or stop it only with a recent backup-manifest key. An optional automatic-start schedule exists only when its expression is configured; the default is null. Deploy workflows do not invoke this controller. Live Lambda/Scheduler enumeration was denied to the coding profile, so this page does not claim that an optional schedule is active.",
+        "[Merged #519](https://github.com/Collaboration95/rewind-app/pull/519), resolving #512, removed backup-gated hibernation and its destroy/stop scripts. Hosted dev runs continuously with PostgreSQL/S3 data outside the host. The retained wake script is for host creation/rebuild; its latest/manifest paths are SQLite-era recovery paths.",
+        "Other controls are tangible resource choices: one small host per environment, single-AZ databases, no declared NAT/load balancer/cluster, backup/artifact expiry and pruning old image pairs. Dev’s three Lightsail status/CPU/burst alarms were observed in OK state. Their script manages them because they are outside the Terraform resources used here. CloudTrail management logging was also observed active."
+      ],
+      "sources": [
+        {
+          "label": "infra/terraform/demo/observability.tf",
+          "path": "infra/terraform/demo/observability.tf"
+        },
+        {
+          "label": "infra/terraform/demo/automation.tf",
+          "path": "infra/terraform/demo/automation.tf"
+        },
+        {
+          "label": "infra/terraform/demo/storage.tf",
+          "path": "infra/terraform/demo/storage.tf"
+        },
+        {
+          "label": "infra/terraform/bootstrap/main.tf",
+          "path": "infra/terraform/bootstrap/main.tf"
+        },
+        {
+          "label": "infra/scripts/lightsail-alarms.sh",
+          "path": "infra/scripts/lightsail-alarms.sh"
+        },
+        {
+          "label": "infra/scripts/wake-demo.sh",
+          "path": "infra/scripts/wake-demo.sh"
+        },
+        {
+          "label": "deploy/release-host.sh",
+          "path": "deploy/release-host.sh"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Does the US$15 alert limit the bill?",
+          "a": "No. It is an actual-cost notification threshold. It is not a hard cap and does not power down hosts."
+        },
+        {
+          "q": "Is the cost-safety Lambda still checking the account?",
+          "a": "No. #516 removed that audit. A different legacy power controller remains declared; normal deployment does not use it."
+        },
+        {
+          "q": "Why retain a power controller after retiring hibernation?",
+          "a": "They are different mechanisms. Hibernation destroyed/recreated compute through Terraform; the legacy controller only starts/stops an existing instance behind its old backup gate."
+        }
+      ]
+    },
+    {
+      "id": "backups",
+      "title": "Back up data separately from rebuilding compute",
+      "summary": "Managed database recovery and verified logical backups complement versioned media and source-bound application bundles.",
+      "paragraphs": [
+        "PostgreSQL resources enable backup retention, a daily backup window and a final snapshot on deliberate deletion, with Terraform prevent_destroy. The repository documents a seven-day managed point-in-time recovery window. This is the primary database recovery mechanism, not automatic high availability.",
+        "The host’s `rewind-backup.timer` runs at 03:15 UTC with up to 15 minutes of random delay and catches missed runs. On PostgreSQL, `backup.sh` calls `backup-postgres.sh`: it takes a read-only TLS pg_dump, restores it into a throwaway verifier and checks row counts before upload. The configured script path is not proof that every night’s timer actually fired.",
+        "Dev and release have independent private, encrypted, versioned backup buckets and prefixes (`rewind-demo/` and `rewind-release/`). Backup objects expire after 30 days and superseded versions after seven days. Dev deployment-artifact objects expire after three days. The runtime’s backup policy grants the configured object prefix without delete permission.",
+        "SQLite-era backups use VACUUM INTO, a media archive and a checksum/size manifest. Atomic restore verifies the artifacts in private staging before swapping files, and restores prior files on failure. That process is not the way to roll back a live PostgreSQL database. Managed restore rehearsal stops writers, compares restored table sets/counts/content hashes, and requires explicit resumption.",
+        "Application rollback restores compatible images; Terraform recreates infrastructure; database recovery restores a selected data point; S3 versioning retains object history subject to lifecycle. None implies the others. See [deployment verification and rollback](cicd.html#promotion-recovery) and [database design](database.html).",
+        "Verification limits for this page: CloudFront, Cognito, IAM and Lambda/Scheduler inventories could not be read with the approved profile. Live bucket metadata, both hosts/databases, dev alarms and CloudTrail logging were inspected. Dev HTTPS health passed. Release origin HTTP was refused; its public HTTPS path, active application revision, Cognito journeys and actual database cutover remain unverified. Older release-cutover prose predates the now-existing database, so current source and these dated observations take precedence."
+      ],
+      "sources": [
+        {
+          "label": "infra/terraform/media/database.tf",
+          "path": "infra/terraform/media/database.tf"
+        },
+        {
+          "label": "infra/terraform/demo/storage.tf",
+          "path": "infra/terraform/demo/storage.tf"
+        },
+        {
+          "label": "infra/terraform/release/backups.tf",
+          "path": "infra/terraform/release/backups.tf"
+        },
+        {
+          "label": "deploy/rewind-backup.timer",
+          "path": "deploy/rewind-backup.timer"
+        },
+        {
+          "label": "deploy/backup.sh",
+          "path": "deploy/backup.sh"
+        },
+        {
+          "label": "deploy/backup-postgres.sh",
+          "path": "deploy/backup-postgres.sh"
+        },
+        {
+          "label": "deploy/restore.sh",
+          "path": "deploy/restore.sh"
+        },
+        {
+          "label": ".github/workflows/database-operations.yml",
+          "path": ".github/workflows/database-operations.yml"
+        },
+        {
+          "label": "docs/architecture/postgresql-operations.md",
+          "path": "docs/architecture/postgresql-operations.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Can rebuilding the host recover the database?",
+          "a": "No. Terraform and cloud-init recover infrastructure and prerequisites. Data must come from the surviving managed database/S3 or an explicitly selected recovery point."
+        },
+        {
+          "q": "What does a successful logical backup prove?",
+          "a": "The script verifies that its dump can restore and reconcile row counts before upload. It does not establish a universal RPO/RTO or prove the scheduled job ran every day."
+        },
+        {
+          "q": "What would you verify before presenting release as ready?",
+          "a": "Public HTTPS health and revision, active database engine/schema, isolated Cognito sign-in, upload/playback and the environment’s own backup/recovery path."
+        }
+      ]
+    }
+  ]
+}

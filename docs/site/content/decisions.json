@@ -1,0 +1,518 @@
+{
+  "title": "Design decisions",
+  "lede": "Rewind keeps deployment simple while making identity, media access, persistence and film release explicit boundaries.",
+  "intro": [
+    "These ADR-style summaries explain the current design and its trade-offs. They are reconstructed from code and recorded decisions, not invented historical ADRs; dates and PRs are given where verified. The inspected baseline is the 20 October 2026 refactor checkout. See [architecture](architecture.html) for the component and request views."
+  ],
+  "sections": [
+    {
+      "id": "monolith",
+      "title": "01 — Keep a modular monolith",
+      "summary": "Feature boundaries live in modules while private-group operations share one server and relational store.",
+      "paragraphs": [
+        "**Context.** Membership, quota, upload registration and cycle release often change related rows together. The project needs a runnable local path and a manageable hosted system.",
+        "**Options.** One tightly coupled server file; a modular monolith with direct function calls; independently deployed access, capture, chat and compilation services.",
+        "**Decision.** Use a Node application organised into auth, groups, contributions, cycles, jobs, archive, chat, reminders and media modules. The 20 October refactor splits HTTP dispatch into routes/* without introducing service-to-service APIs. This is the observed implementation, rather than a separately dated monolith ADR.",
+        "**Consequences.** Transactions and local testing remain straightforward. Feature code can be extracted and tested independently, but deployment and failures are shared. Process-local SSE, capability and rate-limit state also limits replication. A future scale-out would need explicit coordination; current code does not establish automatic horizontal scaling."
+      ],
+      "sources": [
+        {
+          "path": "server/src/http.ts",
+          "label": "server/src/http.ts"
+        },
+        {
+          "path": "server/src/routes/context.ts",
+          "label": "server/src/routes/context.ts"
+        },
+        {
+          "path": "server/src/cli.ts",
+          "label": "server/src/cli.ts"
+        },
+        {
+          "path": "server/src/cycles/lifecycle.ts",
+          "label": "server/src/cycles/lifecycle.ts"
+        },
+        {
+          "path": "docs/architecture/current-system.md",
+          "label": "docs/architecture/current-system.md"
+        },
+        {
+          "path": "docs/architecture/ADR-0001-local-first-sprint-0.md",
+          "label": "docs/architecture/ADR-0001-local-first-sprint-0.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why not microservices?",
+          "a": "The current system benefits from shared transactions and a small operational footprint. Separate services would add network contracts, distributed state and deployment work without a demonstrated need."
+        },
+        {
+          "q": "Does refactoring routes make services independent?",
+          "a": "No. It improves source organisation. The modules still run in one application and share the same database and release."
+        }
+      ],
+      "visuals": [
+        {
+          "type": "compare",
+          "title": "Deployment choices",
+          "columns": ["Concern", "Monolith", "Services"],
+          "rows": [
+            ["Writes", "One SQL transaction.", "Coordinate across services."],
+            ["Deploy", "One application release.", "Separate service releases."],
+            ["Scale", "Shared runtime and local maps.", "Independent units; shared policy needed."]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pwa",
+      "title": "02 — Deliver iOS and reminders through the PWA",
+      "summary": "Browser installation and web push keep one product path; compiled native iOS and Expo push are outside current scope.",
+      "paragraphs": [
+        "**Context.** The client already supports Expo web. Maintaining native iOS distribution and a separate native notification route would broaden the delivery and verification surface.",
+        "**Options.** Compiled native iOS with Expo push; browser-only access without installation; an installable web PWA with web-push reminders.",
+        "**Decision.** Deliver iOS as the PWA and use web push for reminders. AGENTS.md records this product scope; [PR #487](https://github.com/Collaboration95/rewind-app/pull/487), merged 6 October 2026, delivered weekly browser/iPhone Home Screen web push. Retained native adapters are development paths, and Expo push stays disabled.",
+        "**Consequences.** The web export, manifest and service worker form the supported iPhone path. Users must grant browser notification permission and follow the supported installation flow. Offline access is limited to the public shell; private API/media stays network-only. Browser camera, playback and push behaviour still need testing. Retained expo-notifications code or schema values are compatibility, not a promise of native push."
+      ],
+      "sources": [
+        {
+          "path": "AGENTS.md",
+          "label": "AGENTS.md"
+        },
+        {
+          "path": "public/manifest.json",
+          "label": "public/manifest.json"
+        },
+        {
+          "path": "public/sw.js",
+          "label": "public/sw.js"
+        },
+        {
+          "path": "src/reminders/push-platform.ts",
+          "label": "src/reminders/push-platform.ts"
+        },
+        {
+          "path": "server/src/reminders/config.ts",
+          "label": "server/src/reminders/config.ts"
+        },
+        {
+          "path": "server/src/reminders/providers.ts",
+          "label": "server/src/reminders/providers.ts"
+        },
+        {
+          "path": "docs/design/client-installation.md",
+          "label": "docs/design/client-installation.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why keep Expo if native iOS is out of scope?",
+          "a": "Expo still builds the React Native web client and provides capture/platform adapters. Choosing the PWA delivery surface does not require replacing the client framework."
+        },
+        {
+          "q": "Does a successful provider send prove the user saw a notification?",
+          "a": "No. It records provider acceptance. Permission, browser installation and device display are separate parts of the delivery path."
+        },
+        {
+          "q": "How do reminders avoid duplicate weekly sends?",
+          "a": "The outbox has a unique group/account/local-Sunday key, bounded retries and leases. Destinations are tied to a session and a registration generation."
+        }
+      ]
+    },
+    {
+      "id": "identity",
+      "title": "03 — Use Cognito login and Rewind sessions",
+      "summary": "Managed Login proves identity; an opaque application session authorises subsequent Rewind requests.",
+      "paragraphs": [
+        "**Context.** The web/PWA product needs real identity and separate dev/release account spaces. Existing group, media and chat endpoints already consume Rewind sessions. The recorded decision date is 8 October 2026.",
+        "**Options.** Keep production passwords in Rewind; make every API consume Cognito JWTs; use Cognito authorization code + PKCE, then establish the existing application session.",
+        "**Decision.** Use Cognito Managed Login with a public app client, PKCE, state and nonce. The server exchanges the code, verifies the ID token and maps the immutable cognito_sub. It issues a Secure, HttpOnly, SameSite=Lax __Host-rewind_session cookie. One pool serves each environment. [PR #510](https://github.com/Collaboration95/rewind-app/pull/510) merged on 8 October.",
+        "**Consequences.** The browser does not use Cognito tokens as API credentials. Groups and media retain one session policy and revocation path. Local runs, tests and hosted dev keep Developer sign-in behind REWIND_AUTH_PASSWORD; release configuration forbids it. Native development uses passwords only against local/dev. State replay protection is process-local. Release operational acceptance remains in [#515](https://github.com/Collaboration95/rewind-app/issues/515), open when checked on 20 October."
+      ],
+      "sources": [
+        {
+          "path": "server/src/auth/cognito.ts",
+          "label": "server/src/auth/cognito.ts"
+        },
+        {
+          "path": "server/src/routes/auth-routes.ts",
+          "label": "server/src/routes/auth-routes.ts"
+        },
+        {
+          "path": "server/src/auth/index.ts",
+          "label": "server/src/auth/index.ts"
+        },
+        {
+          "path": "server/src/config.ts",
+          "label": "server/src/config.ts"
+        },
+        {
+          "path": "src/auth/RealAccountProvider.tsx",
+          "label": "src/auth/RealAccountProvider.tsx"
+        },
+        {
+          "path": "infra/terraform/media/cognito.tf",
+          "label": "infra/terraform/media/cognito.tf"
+        },
+        {
+          "path": "doc/planning/sprints/sprint-3-cognito/design-decisions.md",
+          "label": "doc/planning/sprints/sprint-3-cognito/design-decisions.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why both PKCE and state?",
+          "a": "PKCE binds code exchange to the verifier. State binds the callback to the login transaction; nonce binds the returned identity token. They address different checks."
+        },
+        {
+          "q": "Does Cognito decide group membership?",
+          "a": "No. Cognito establishes identity. Rewind resolves the account and checks accepted membership and selected group in its own relational data."
+        },
+        {
+          "q": "Why is the password form still present?",
+          "a": "It supports local/dev runs and automated tests without a provider login. Release startup rejects enabled password authentication; a retained form is not the release sign-in method."
+        }
+      ]
+    },
+    {
+      "id": "database",
+      "title": "04 — SQLite locally, PostgreSQL hosted",
+      "summary": "A dual adapter preserves the existing SQL surface while hosted persistence meets the PostgreSQL and managed-backup design.",
+      "paragraphs": [
+        "**Context.** Local runs and many tests were built around synchronous node:sqlite calls and serialised writers. Hosted relational data and managed recovery required PostgreSQL. ADR-0003 was accepted on 7 October 2026.",
+        "**Options.** Keep SQLite on the host; rewrite all persistence and callers to asynchronous pg; add a synchronous PostgreSQL adapter while preserving application semantics.",
+        "**Decision.** Keep SQLite for local/default tests and select PostgreSQL with REWIND_DATABASE_URL. A worker thread owns the pg client while the caller waits for results. Translation handles the inventoried SQLite SQL subset. Advisory locking, savepoints and error/result mapping preserve tested behaviour. [PR #506](https://github.com/Collaboration95/rewind-app/pull/506) delivered persistence/recovery and [#507](https://github.com/Collaboration95/rewind-app/pull/507) cut hosted dev over on 7 October.",
+        "**Consequences.** Feature code is shared across engines, and the server suite runs on both. The adapter deliberately blocks the event loop and serialises writers; PostgreSQL does not automatically provide greater application concurrency. Unknown SQL idioms fail rather than silently changing meaning. Verified TLS and an environment binding guard hosted connections. Release PostgreSQL cutover remains false in the inspected configuration; [#504](https://github.com/Collaboration95/rewind-app/issues/504) is open. See [database design](database.html#adapters)."
+      ],
+      "sources": [
+        {
+          "path": "docs/architecture/ADR-0003-postgresql.md",
+          "label": "docs/architecture/ADR-0003-postgresql.md"
+        },
+        {
+          "path": "server/src/db.ts",
+          "label": "server/src/db.ts"
+        },
+        {
+          "path": "server/src/postgres/database.ts",
+          "label": "server/src/postgres/database.ts"
+        },
+        {
+          "path": "server/src/postgres/sync-worker.ts",
+          "label": "server/src/postgres/sync-worker.ts"
+        },
+        {
+          "path": "server/src/postgres/translate.ts",
+          "label": "server/src/postgres/translate.ts"
+        },
+        {
+          "path": "server/src/postgres/runtime.ts",
+          "label": "server/src/postgres/runtime.ts"
+        },
+        {
+          "path": "infra/terraform/media/database.tf",
+          "label": "infra/terraform/media/database.tf"
+        },
+        {
+          "path": ".github/workflows/quality.yml",
+          "label": ".github/workflows/quality.yml"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is the PostgreSQL bridge the conventional async pg approach?",
+          "a": "No. It intentionally exposes a synchronous surface and preserves SQLite-like writer semantics. That reduced migration risk but keeps event-loop blocking as a trade-off."
+        },
+        {
+          "q": "How is parity checked?",
+          "a": "The server suite runs against both engines, with PostgreSQL-specific transaction, error, schema and import tests. SQLite-internal repair/WAL cases remain SQLite-specific."
+        }
+      ],
+      "visuals": [
+        {
+          "type": "compare",
+          "title": "Persistence choices",
+          "columns": ["Concern", "SQLite", "PostgreSQL"],
+          "rows": [
+            ["Start", "Embedded file.", "Managed server with TLS."],
+            ["Calls", "node:sqlite.", "pg worker; same API."],
+            ["Writes", "One writer.", "Advisory writer fence."],
+            ["Schema", "31 migrations.", "Baseline 030 + 031."],
+            ["Recovery", "File snapshots.", "Managed + logical backups."]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "media",
+      "title": "05 — Private S3 and media capabilities",
+      "summary": "Store bytes separately from relational state and mediate reads through short-lived, purpose-bound grants.",
+      "paragraphs": [
+        "**Context.** Private films and own-clip downloads need current membership and publication checks. Media elements may not attach a custom bearer header. Uploading large bytes through the application also consumes host bandwidth.",
+        "**Options.** Public object URLs; long-lived download routes based on a resource ID; direct signed S3 reads; server-mediated read capabilities plus approved S3 upload intents.",
+        "**Decision.** Use disk for local runs and S3 for hosted media. Upload intents approve short-lived incoming PUTs. Reads use /media/access/<token>, bound to the issuing session, group, job, play/download purpose and exact verified output. The token lifetime is two minutes. The 20 October refactor removes legacy direct media read routes (commit 49002de).",
+        "**Consequences.** Read resolution rechecks stored session validity, selected membership and published output, then verifies and streams bytes with no-store and Range support. The URL is itself a temporary bearer grant, so it remains private. Restarting the server drops process-local grants. Node still materialises S3 media for processing/serving, which consumes bandwidth and temporary disk. The legacy local object-store adapter is retained but is not the product disk backend."
+      ],
+      "sources": [
+        {
+          "path": "server/src/archive/capabilities.ts",
+          "label": "server/src/archive/capabilities.ts"
+        },
+        {
+          "path": "server/src/routes/archive-routes.ts",
+          "label": "server/src/routes/archive-routes.ts"
+        },
+        {
+          "path": "server/src/routes/media-access.ts",
+          "label": "server/src/routes/media-access.ts"
+        },
+        {
+          "path": "server/src/archive/store-serving.ts",
+          "label": "server/src/archive/store-serving.ts"
+        },
+        {
+          "path": "server/src/media/store.ts",
+          "label": "server/src/media/store.ts"
+        },
+        {
+          "path": "server/src/media/runtime-store.ts",
+          "label": "server/src/media/runtime-store.ts"
+        },
+        {
+          "path": "server/src/media/s3-store.ts",
+          "label": "server/src/media/s3-store.ts"
+        },
+        {
+          "path": "server/src/media/upload-intents.ts",
+          "label": "server/src/media/upload-intents.ts"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Are upload and playback tokens interchangeable?",
+          "a": "No. A presigned incoming PUT grants one approved storage transfer. A Rewind read capability grants a particular published asset and purpose under current application policy."
+        },
+        {
+          "q": "Why not just return an S3 GET URL?",
+          "a": "Server mediation keeps live session, group selection, publication and integrity checks on the byte-serving path. It costs runtime bandwidth and temporary storage."
+        },
+        {
+          "q": "Does disk implement the MediaStore interface?",
+          "a": "The product disk path uses filesystem staging/processed files without a configured object store. MediaStore has retained local and S3 implementations; local is a different legacy adapter."
+        }
+      ]
+    },
+    {
+      "id": "compilation",
+      "title": "06 — Compile films on the server",
+      "summary": "A durable cycle/job pipeline creates one consistent group film from verified contributions.",
+      "paragraphs": [
+        "**Context.** Members contribute different media types and browser encodings. A cycle must finish collection, start its successor and publish a usable film even if a client closes.",
+        "**Options.** Assemble a playlist in each browser; ask one member to compile and upload the result; normalise and compile through server-owned FFmpeg jobs.",
+        "**Decision.** Run FFmpeg on the server. Clip/photo processing creates normalised media; film compilation scales/pads inputs into a 720 × 1280 H.264/AAC MP4. Durable jobs freeze ordered inputs, track progress and fence stale attempts. The cycle scheduler advances collection and dispatches work. This summary describes the current implementation; no original decision date is asserted.",
+        "**Consequences.** Playback does not depend on a member keeping a tab open. At the boundary, the old cycle becomes revealing and a collecting successor can begin before compilation finishes. A ready job is not automatically published: output verification and a separate release marker gate access. The premiere lasts 24 hours from publication, after which the cycle can archive. Compilation uses host CPU/disk, needs bounded workers and can delay a release when processing fails."
+      ],
+      "sources": [
+        {
+          "path": "server/src/ffmpeg.ts",
+          "label": "server/src/ffmpeg.ts"
+        },
+        {
+          "path": "server/src/jobs/index.ts",
+          "label": "server/src/jobs/index.ts"
+        },
+        {
+          "path": "server/src/jobs/queue.ts",
+          "label": "server/src/jobs/queue.ts"
+        },
+        {
+          "path": "server/src/jobs/worker.ts",
+          "label": "server/src/jobs/worker.ts"
+        },
+        {
+          "path": "server/src/cycles/lifecycle.ts",
+          "label": "server/src/cycles/lifecycle.ts"
+        },
+        {
+          "path": "server/src/cycles/scheduler.ts",
+          "label": "server/src/cycles/scheduler.ts"
+        },
+        {
+          "path": "server/src/cli.ts",
+          "label": "server/src/cli.ts"
+        },
+        {
+          "path": "deploy/Dockerfile",
+          "label": "deploy/Dockerfile"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why separate ready from published?",
+          "a": "A job can finish without the cycle being eligible for release. Publication verifies the exact output and records when access begins; clients cannot infer permission from processing status alone."
+        },
+        {
+          "q": "Does the next cycle wait for FFmpeg?",
+          "a": "No. Rollover creates the successor and queues the previous film transactionally. Processing and publication happen separately, so a delayed film need not stop new collection."
+        },
+        {
+          "q": "Is the media worker another deployed service?",
+          "a": "The default CLI runs scheduler/media ticks inside the runtime. A standalone worker command exists, but default Compose does not deploy it as a separate service."
+        }
+      ]
+    },
+    {
+      "id": "demo",
+      "title": "07 — Remove the synthetic Demo",
+      "summary": "One real-account application is the maintained product path.",
+      "paragraphs": [
+        "**Context.** The repository previously maintained both synthetic Demo state and real-account workflows. Parallel product paths could diverge in capture, policy, UI and verification.",
+        "**Options.** Continue maintaining both applications; keep a selectable synthetic mode; remove it while retaining a recoverable historical revision.",
+        "**Decision.** Remove the synthetic Demo on 6 October 2026, delivered by [PR #473](https://github.com/Collaboration95/rewind-app/pull/473). The tag demo-frozen-20261004 preserves the historical state where it existed. Keep the hosted-dev infrastructure names containing demo, as directed by AGENTS.md.",
+        "**Consequences.** The entry path requires real account configuration rather than falling back to synthetic fixtures. Retained legacy schema, test fixtures and resource names do not reactivate a Demo. The refactor removes additional unused Demo/capture paths. Older report package snapshots may describe fixtures or deferred Cognito/PostgreSQL work; current code wins. The [demo script](demo.html) means a presentation walkthrough of the real application."
+      ],
+      "sources": [
+        {
+          "path": "AGENTS.md",
+          "label": "AGENTS.md"
+        },
+        {
+          "path": "App.tsx",
+          "label": "App.tsx"
+        },
+        {
+          "path": "src/runtime/config.ts",
+          "label": "src/runtime/config.ts"
+        },
+        {
+          "path": "server/src/routes/auth-routes.ts",
+          "label": "server/src/routes/auth-routes.ts"
+        },
+        {
+          "path": "server/migrations/postgres/030-baseline.sql",
+          "label": "server/migrations/postgres/030-baseline.sql"
+        },
+        {
+          "path": "infra/terraform/demo",
+          "label": "infra/terraform/demo"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why not rename all demo resources?",
+          "a": "The resource name is historical. Keeping it avoids unnecessary infrastructure changes; it does not imply that a synthetic Demo is still served."
+        },
+        {
+          "q": "Why do profiles and sessions still have legacy fields?",
+          "a": "Schema compatibility outlives the removed UI/routes. Real authority uses real_accounts, real_account_sessions and real_group_memberships, not legacy Demo tables."
+        }
+      ]
+    },
+    {
+      "id": "terraform",
+      "title": "08 — Declare infrastructure in Terraform",
+      "summary": "Versioned infrastructure makes environment boundaries reviewable alongside application changes.",
+      "paragraphs": [
+        "**Context.** Hosts, edge origins, private media, identities and database settings must agree. Hand-created resources make those relationships harder to reproduce and inspect.",
+        "**Options.** Configure everything manually in the console; rely on deployment scripts alone; keep desired resources in Terraform and operational procedures in guarded scripts/workflows.",
+        "**Decision.** Use the existing Terraform roots for bootstrap access, historical demo/dev infrastructure, shared per-environment media/Cognito/database resources, and release infrastructure. Deployment and recovery scripts apply the operational steps. This is the current configuration choice; no original adoption date is claimed.",
+        "**Consequences.** Plans and code review expose resource changes, isolated origins and policy boundaries. State/configuration remain sensitive and require controlled access. Terraform declarations do not prove a resource was applied or a provider flow worked. The configured media root uses S3 versioning, blocked public access and SSE-S3 AES256; optional adapter KMS support is not evidence that KMS is active. See [AWS setup](aws.html)."
+      ],
+      "sources": [
+        {
+          "path": "infra/terraform/README.md",
+          "label": "infra/terraform/README.md"
+        },
+        {
+          "path": "infra/terraform/bootstrap",
+          "label": "infra/terraform/bootstrap"
+        },
+        {
+          "path": "infra/terraform/demo",
+          "label": "infra/terraform/demo"
+        },
+        {
+          "path": "infra/terraform/media/main.tf",
+          "label": "infra/terraform/media/main.tf"
+        },
+        {
+          "path": "infra/terraform/media/cognito.tf",
+          "label": "infra/terraform/media/cognito.tf"
+        },
+        {
+          "path": "infra/terraform/media/database.tf",
+          "label": "infra/terraform/media/database.tf"
+        },
+        {
+          "path": "infra/terraform/release/main.tf",
+          "label": "infra/terraform/release/main.tf"
+        },
+        {
+          "path": "deploy/README.md",
+          "label": "deploy/README.md"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Does IaC replace deployment verification?",
+          "a": "No. Terraform describes desired infrastructure. Runtime health, data cutover and provider sign-in still need environment-specific verification."
+        },
+        {
+          "q": "Where is the disk/S3 boundary declared?",
+          "a": "Runtime configuration selects the backend. Terraform creates and supplies the hosted S3 settings; local runs keep disk without needing a bucket."
+        }
+      ]
+    },
+    {
+      "id": "environments",
+      "title": "09 — Develop on dev, release from main",
+      "summary": "One hosted dev environment receives qualified dev changes; main remains the reviewed release path.",
+      "paragraphs": [
+        "**Context.** The team needs frequent integrated feedback while keeping release configuration, data and identities isolated. An independent release environment was introduced by [PR #420](https://github.com/Collaboration95/rewind-app/pull/420), merged 4 October 2026.",
+        "**Options.** Deploy every feature branch into its own environment; use one shared host for both development and release; keep one hosted dev environment and a separate reviewed release path.",
+        "**Decision.** Target routine feature PRs at dev. Deploy dev and Deploy release respond to pushes on dev/main respectively, wait for the exact commit’s Quality result and install verified bundles on their intended hosts. Current workflow classification skips docs-only deploys. main retains its review/protection rules.",
+        "**Consequences.** Frequent integration does not require per-branch infrastructure. Dev merges intentionally trigger hosted development deployment for application changes. Release promotion stays explicit and reviewed, with separate origins, media, Cognito pools and database binding. Source-level deployment support is not proof that release is live: #230, #504 and #515 were open when checked on 20 October. See [CI/CD](cicd.html)."
+      ],
+      "sources": [
+        {
+          "path": "AGENTS.md",
+          "label": "AGENTS.md"
+        },
+        {
+          "path": ".github/workflows/deploy-dev.yml",
+          "label": ".github/workflows/deploy-dev.yml"
+        },
+        {
+          "path": ".github/workflows/deploy-release.yml",
+          "label": ".github/workflows/deploy-release.yml"
+        },
+        {
+          "path": ".github/workflows/quality.yml",
+          "label": ".github/workflows/quality.yml"
+        },
+        {
+          "path": "deploy/release.py",
+          "label": "deploy/release.py"
+        },
+        {
+          "path": "deploy/release-host.sh",
+          "label": "deploy/release-host.sh"
+        },
+        {
+          "path": "infra/terraform/release/main.tf",
+          "label": "infra/terraform/release/main.tf"
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is deploying dev another acceptance gate?",
+          "a": "No. The working agreement treats automatic dev deployment as intended delivery behaviour. Issue completion follows its functional checks, green Quality and merge rules."
+        },
+        {
+          "q": "Can dev and release share sign-in or data?",
+          "a": "The declared design separates origins, pools, buckets and database bindings. Runtime and operation guards reject cross-environment configuration; operational isolation still needs the tracked release checks."
+        }
+      ]
+    }
+  ]
+}
