@@ -72,6 +72,7 @@ test('every exposed protected category denies a member of another group without 
         path: `/contributions/demo-contribution?groupId=demo-group&memberId=demo-1`,
       },
       { name: 'clips', path: `/clips/demo-clip?groupId=demo-group&memberId=demo-1` },
+      { name: 'archive', path: `/archive?groupId=demo-group&memberId=demo-1` },
       { name: 'films', path: `/films/demo-film?groupId=demo-group&memberId=demo-1` },
       {
         name: 'downloads',
@@ -106,6 +107,9 @@ test('each protected category remains readable for the member of its own group',
       const body = await response.json();
       assert.equal(Object.keys(body).length, 1, path);
     }
+    const archive = await fetch(`${baseUrl}/archive?groupId=demo-group`, { headers });
+    assert.equal(archive.status, 200);
+    assert.deepEqual(Object.keys(await archive.json()).sort(), ['archive', 'pagination']);
   });
 });
 

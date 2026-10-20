@@ -244,6 +244,8 @@ test('every protected endpoint category requires a real session and ignores call
       '/clips/demo-clip?groupId=demo-group',
       '/films/demo-film?groupId=demo-group',
       '/downloads/demo-download?groupId=demo-group',
+      '/archive?groupId=demo-group',
+      '/cycles/demo-cycle/premiere?groupId=demo-group',
     ];
     const responses = await Promise.all(
       paths.map(async (path) => {
@@ -435,6 +437,11 @@ test('released archive downloads are session-bound, owner-scoped, release-gated,
       headers: otherMember.headers,
     });
     assert.equal(otherMemberClip.status, 404);
+    // Another member's session cannot use the owner's own-clip capability.
+    const borrowedClip = await fetch(`${baseUrl}${archive.archive.clips[0].downloadPath}`, {
+      headers: otherMember.headers,
+    });
+    assert.equal(borrowedClip.status, 404);
 
     const playback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`, asOwner);
     assert.equal(playback.status, 200);
@@ -477,6 +484,7 @@ test('malformed percent-encoded path segments return a client error for every ro
       `/clips/${malformed}?groupId=demo-group&memberId=demo-1`,
       `/films/${malformed}?groupId=demo-group&memberId=demo-1`,
       `/downloads/${malformed}?groupId=demo-group&memberId=demo-1`,
+      `/cycles/${malformed}/premiere?groupId=demo-group&memberId=demo-1`,
     ];
     for (const path of paths) {
       const response = await fetch(`${baseUrl}${path}`);

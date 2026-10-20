@@ -221,6 +221,10 @@ test('a tampered finalized clip is refused and audited when served', async () =>
       });
       assert.equal(download.status, 404);
       assert.deepEqual(await download.json(), NOT_FOUND);
+      const tamperedPath = archiveBody.archive.clips.find((clip) => clip.id === jobId).downloadPath;
+      const tokenDownload = await fetch(`${baseUrl}${tamperedPath}`);
+      assert.equal(tokenDownload.status, 404);
+      assert.deepEqual(await tokenDownload.json(), NOT_FOUND);
 
       const audit = database
         .prepare(
@@ -235,6 +239,7 @@ test('a tampered finalized clip is refused and audited when served', async () =>
 
       // Repeated requests must not multiply the durable audit rows.
       await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, { headers: session.headers });
+      await fetch(`${baseUrl}${tamperedPath}`);
       assert.equal(
         database
           .prepare(
@@ -409,6 +414,13 @@ test('a truncated finalized clip is unavailable and never streamed', async () =>
       });
       assert.equal(download.status, 404);
       assert.deepEqual(await download.json(), NOT_FOUND);
+      const archive = await (
+        await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers })
+      ).json();
+      assert.equal(
+        archive.archive.clips.some((clip) => clip.id === jobId),
+        false,
+      );
     } finally {
       await new Promise((close) => server.close(close));
     }
@@ -457,12 +469,14 @@ for (const damage of ['deleted', 'zero-byte']) {
           assert.equal(download.status, 404);
           assert.deepEqual(await download.json(), NOT_FOUND);
         }
-        const archive = await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers });
-        assert.equal(archive.status, 200);
-        assert.equal(
-          (await archive.json()).archive.clips.some((clip) => clip.id === jobId),
-          false,
-        );
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const archive = await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers });
+          assert.equal(archive.status, 200);
+          assert.equal(
+            (await archive.json()).archive.clips.some((clip) => clip.id === jobId),
+            false,
+          );
+        }
         const audit = database
           .prepare(
             `SELECT event_type AS eventType, resource_id AS resourceId, result
@@ -1309,6 +1323,8 @@ test('a published film whose bytes changed is never streamed', async () => {
         headers: session.headers,
       });
       assert.equal(brokenPlayback.status, 404);
+      const brokenTokenPlayback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
+      assert.equal(brokenTokenPlayback.status, 404);
       const audit = database
         .prepare(
           `SELECT resource_id AS resourceId FROM audit_events

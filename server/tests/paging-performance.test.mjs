@@ -134,6 +134,8 @@ test('archive films and clips keyset-page independently and drop resized media',
     );
     const playback = await fetch(`${baseUrl}/films/page-film-50/play?${query}`, { headers });
     assert.equal(playback.status, 404);
+    const tamperedPlayback = await fetch(`${baseUrl}${tamperedPage.archive.films[0].playbackPath}`);
+    assert.equal(tamperedPlayback.status, 404);
     // A resized object no longer matches its record and leaves the listing.
     await writeFile(mediaPath, Buffer.from('truncated'));
     const resizedPage = await (

@@ -203,10 +203,11 @@ test('real Archive seals media until release and scopes films/own clips to live 
     assert.deepEqual(receipt, { clip: { id: 'owner-clip', status: 'ready' } });
     assert.equal((await request(member, scoped('/clips/owner-clip'))).status, 404);
     assert.equal((await request(member, scoped('/clips/member-clip/download'))).status, 404);
-    assert.deepEqual((await (await request(owner, scoped('/archive'))).json()).archive, {
-      films: [],
-      clips: [],
-    });
+    for (const person of [owner, member])
+      assert.deepEqual((await (await request(person, scoped('/archive'))).json()).archive, {
+        films: [],
+        clips: [],
+      });
     assert.equal(
       (await (await request(owner, scoped(`/cycles/${group.cycle.id}/premiere`))).json()).premiere
         .state,
@@ -255,6 +256,10 @@ test('real Archive seals media until release and scopes films/own clips to live 
         .status,
       404,
     );
+    const ownerClip = (await (await request(owner, scoped('/archive'))).json()).archive.clips[0];
+    assert.equal(ownerClip.id, 'owner-clip');
+    assert.equal((await request(member, ownerClip.downloadPath)).status, 404);
+    assert.equal((await request(outsider, ownerClip.downloadPath)).status, 404);
     assert.equal((await request(outsider, scoped('/archive'))).status, 403);
     assert.equal((await request(outsider, scoped('/films/archive-film'))).status, 403);
     assert.equal((await request(owner, scoped('/archive') + '&filmCursor=malformed')).status, 400);

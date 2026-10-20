@@ -624,6 +624,9 @@ process.exit(91);
       );
       assert.equal(download.status, 404);
       assert.deepEqual(await download.json(), expectedNotFound);
+      const archive = await fetch(`${baseUrl}/archive?${query}`, { headers });
+      assert.equal(archive.status, 200);
+      assert.deepEqual((await archive.json()).archive.films, []);
     } finally {
       await new Promise((close) => server.close(close));
     }
