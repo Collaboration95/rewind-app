@@ -11,15 +11,12 @@ resources or the state key: that would replace the live host.
 
 ## Roots
 
-| Root                                    | Creates                                                                                                                                                                     | State key                            |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `bootstrap/`                            | Terraform state bucket, GitHub OIDC provider, `rewind-coding-agent` role, optional environment identities                                                                   | `rewind/bootstrap/terraform.tfstate` |
-| `demo/`                                 | Dev host: Lightsail instance `rewind-demo` and static IP, CloudFront distribution, backup and audit buckets, CloudTrail, budget, deploy role, legacy power controller       | `rewind/demo/terraform.tfstate`      |
-| `media/`                                | Per-environment media bucket and runtime IAM user, Cognito pool and client, PostgreSQL database, hosted settings object; used by dev directly and by `release/` as a module | `rewind/media/terraform.tfstate`     |
-| `release/`                              | Release host `rewind-release`, its CloudFront URL, deploy role, backup bucket, release media/database/Cognito via `media/`                                                  | `rewind/release/terraform.tfstate`   |
-| `environments/dev`, `environments/prod` | Prepared media-only roots, see [their README](environments/README.md). Not the live roots.                                                                                  | `rewind/{dev,prod}/media.tfstate`    |
-
-Shared modules: `modules/private-media` and `modules/environment-identity`.
+| Root         | Creates                                                                                                                                                                     | State key                            |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `bootstrap/` | Terraform state bucket, GitHub OIDC provider, `rewind-coding-agent` role                                                                                                    | `rewind/bootstrap/terraform.tfstate` |
+| `demo/`      | Dev host: Lightsail instance `rewind-demo` and static IP, CloudFront distribution, backup and audit buckets, CloudTrail, budget, deploy role, legacy power controller       | `rewind/demo/terraform.tfstate`      |
+| `media/`     | Per-environment media bucket and runtime IAM user, Cognito pool and client, PostgreSQL database, hosted settings object; used by dev directly and by `release/` as a module | `rewind/media/terraform.tfstate`     |
+| `release/`   | Release host `rewind-release`, its CloudFront URL, deploy role, backup bucket, release media/database/Cognito via `media/`                                                  | `rewind/release/terraform.tfstate`   |
 
 ## Safety rules
 
@@ -52,12 +49,6 @@ the Demo resources based only on this checkout: the coding profile cannot read
 the remote state or enumerate the S3 buckets. In particular, a proposed
 dev/prod backend key must first be checked against the remote state bucket for
 an existing object.
-
-The inert backend examples under `environments/backend/` reserve distinct state
-keys for dev and prod roots. The offline `infra/scripts/check-environment-backends.sh`
-guard checks them against each other and the preserved Demo key; it cannot
-inspect the remote state bucket. #167 Organizations/SCP work and #261
-database migration are outside this slice.
 
 Every merge to `dev` deploys hosted dev through the `Deploy dev` workflow. No
 new environment is complete until all of these gates have evidence:
@@ -237,33 +228,3 @@ status checks, CPU above 90% and burst capacity below 10%, emailed to
 `REWIND_ALERT_EMAIL`. Budget alerts stay in `demo/observability.tf`. With
 `REWIND_REQUEST_TIMING=true` the runtime logs one `api.request` JSON line per
 request.
-
-## Environment identity and reviewed media plans (#174)
-
-`bootstrap/environment-identity.tf` is disabled by default (`{}`). When enabled
-it prepares `rewind-{dev,prod}-terraform-{plan,apply}` roles and permissions
-boundaries for the private-media roots in `environments/` only (account
-330599756236, region ap-southeast-1). This is preparation, not evidence of
-provisioned environments.
-
-- Trust requires the exact audience, immutable subject, repository and owner IDs,
-  ref (`dev` or `main`) and a distinct environment.
-- The manual `Reviewed media Terraform` workflow (`terraform-environments.yml`)
-  has no `pull_request` trigger. A `plan` run stores the binary plan and a
-  metadata file in the private state bucket under
-  `rewind/{env}/reviewed-plans/{runId}/{attempt}/`; nothing goes to GitHub
-  artifacts, logs or comments. The plan role can write only those two names. The
-  apply role reads only version-pinned objects, applies the saved binary with a
-  lock and never replans.
-- A human retrieves and renders the plan locally (private directory, `umask 077`),
-  checks its SHA-256, metadata version ID and checksums, and supplies those five
-  values to the separate `apply` dispatch. Never print or upload the plan.
-- Prerequisites before use: human IAM review and a repeat state/artifact key
-  inventory; four protected GitHub environments (`terraform-{dev,prod}-{plan,apply}`)
-  with required reviewers and no self-review; `MEDIA_KMS_KEY_ARN` and
-  `MEDIA_CORS_ORIGIN` per pair; a read-only `TERRAFORM_GH_READ_TOKEN`; and stopped
-  external writers (the workflow serializes per environment but cannot stop a
-  local writer). There is no automatic artifact cleanup.
-
-Offline check: `node --test tests/terraform/environment-identity.test.mjs`. It
-proves no provisioned trust, bucket privacy, real conditional writes or approval.

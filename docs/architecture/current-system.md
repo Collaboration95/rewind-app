@@ -132,10 +132,8 @@ can pass through the runtime in both configurations.
 
 The configured [media Terraform root](../../infra/terraform/media/main.tf) uses
 SSE-S3 (`AES256`), versioning and public-access blocking. The S3 adapter supports
-SSE-KMS when a canonical key ARN is supplied; the separate reusable
-[private-media module](../../infra/terraform/modules/private-media/main.tf)
-requires KMS. That module's capability must not be mistaken for the active
-root's encryption setting. See [runtime-store.ts](../../server/src/media/runtime-store.ts)
+SSE-KMS when a canonical key ARN is supplied, but the active root does not use
+it. See [runtime-store.ts](../../server/src/media/runtime-store.ts)
 and [s3-store.ts](../../server/src/media/s3-store.ts).
 
 ## Environment configuration matrix
