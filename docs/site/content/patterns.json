@@ -1,0 +1,590 @@
+{
+  "title": "Design problems and patterns",
+  "lede": "Five package problems show where Rewind uses patterns as real contracts, modules and durable records.",
+  "intro": [
+    "Ownership uses placeholder names: Member A presents ACCESS, Member B CAPTURE, Member C both CYCLE and ARCHIVE, and Member D PARTICIPATION. See [who owns what](owners.html) for rehearsal outlines and [analysis to design](analysis-design.html) for the complete model register.",
+    "The linked before diagrams are brute-force comparison designs, not claims that Rewind once shipped those designs. Existing after SVGs are older report snapshots and still contain some removed Demo, SQLite-only, provider or screen labels. Each section states the current implementation and the specific difference. Pattern names below describe evidenced roles; they do not imply absent class hierarchies."
+  ],
+  "sections": [
+    {
+      "id": "access",
+      "title": "ACCESS · Trusted identity without duplicated route policy",
+      "summary": "Member A · UC01–UC03 · Use sign-in adapters and explicit authorisation boundaries to keep identity separate from group access.",
+      "paragraphs": [
+        "**Problem and brute-force design:** each route could read credentials and body IDs, look up membership, test ownership and format denial independently. This duplicates policy and makes it easy for a route to treat a resource ID as authority. The problem is consistency across authentication, invitations, group operations and protected media.",
+        "**Choice and motivation:** use the Adapter role at the sign-in boundary, then explicit session and membership/owner checks. `CognitoService` hides provider URL construction, code exchange and token verification. The enabled password path is separate, but both produce Rewind sessions. This fits the current code more closely than the old report’s mixed Demo/real Policy/Strategy discussion.",
+        "**Before structure:** routes depend directly on credential formats, membership queries and denial logic. **After structure:** `RealAccountProvider` and `RealAccountClient` call auth routes; the Cognito adapter and password functions establish the account/session; real-group functions own membership and invite decisions; media-access helpers resolve the selected group/profile. These are functions and modules plus the service interface, not a universal authorisation Strategy class.",
+        "**Before behaviour:** a route interprets request IDs and performs its own checks before a write. **After behaviour:** auth routes verify provider identity or password, create a Rewind session, and protected operations resolve the account before checking the applicable membership/owner rules. Invitation acceptance commits its state checks and membership changes together.",
+        "**Implementation decisions:** keep Cognito code exchange server-side; check callback state, nonce and verified identity; keep the session cookie HttpOnly; enable developer password routes by configuration; derive profile identity server-side. Group and invite queries remain explicit. `policy.ts` supplies safe denial, while the former Demo authorisation functions are gone.",
+        "**Diagram reading note:** the existing after plates retain Demo adapters and older policy functions. They show the earlier design problem, but do not depict today’s Cognito convergence. Use the current structure and sequence above when answering implementation questions."
+      ],
+      "visuals": [
+        {
+          "type": "compare",
+          "title": "Candidates for the access boundary",
+          "columns": ["Candidate", "Fit and choice"],
+          "rows": [
+            [
+              "Policy / Strategy",
+              "Central policy idea fits. Rules remain explicit queries; no pluggable policy object exists."
+            ],
+            [
+              "Chain",
+              "Chain of Responsibility stops at a failed guard. Formal handlers add little to the short route checks."
+            ],
+            [
+              "Adapter",
+              "Chosen: convert Cognito provider operations into the Rewind account/session boundary."
+            ]
+          ]
+        }
+      ],
+      "notes": [
+        "Before: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/problem-before-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/problem-before-sequence.svg). After: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/problem-after-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/access/diagrams/problem-after-sequence.svg)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/routes/auth-routes.ts",
+          "label": "server/src/routes/auth-routes.ts",
+          "note": "Current auth start/callback, password gate and session routes."
+        },
+        {
+          "path": "server/src/auth/cognito.ts",
+          "label": "server/src/auth/cognito.ts",
+          "note": "Concrete provider Adapter behind CognitoService."
+        },
+        {
+          "path": "server/src/auth/index.ts",
+          "label": "server/src/auth/index.ts",
+          "note": "Password authentication, Cognito-account resolution and session creation."
+        },
+        {
+          "path": "server/src/routes/real-routes.ts",
+          "label": "server/src/routes/real-routes.ts",
+          "note": "Authenticated real-group route boundary."
+        },
+        {
+          "path": "server/src/groups/invites.ts",
+          "label": "server/src/groups/invites.ts",
+          "note": "Owner checks, invite-state checks and membership transaction."
+        },
+        {
+          "path": "server/src/routes/media-access.ts",
+          "label": "server/src/routes/media-access.ts",
+          "note": "Selected-group profile resolution."
+        },
+        {
+          "path": "server/src/policy.ts",
+          "label": "server/src/policy.ts",
+          "note": "Safe-denial value; no former Demo policy hierarchy."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Where is the chosen pattern visible?",
+          "a": "CognitoService and createCognitoService adapt provider-specific operations; auth-routes.ts translates their result into Rewind sessions."
+        },
+        {
+          "q": "Is Cognito authentication sufficient for group access?",
+          "a": "No. A valid identity still needs Rewind membership and the operation’s owner or selected-group checks."
+        },
+        {
+          "q": "Why not claim a universal Strategy pattern?",
+          "a": "The old Demo policy family was removed. The current membership decisions are explicit functions and database predicates, not a replaceable policy object."
+        }
+      ]
+    },
+    {
+      "id": "capture",
+      "title": "CAPTURE · Contain camera, processing and transfer variation",
+      "summary": "Member B · UC04–UC06 · Adapter contracts separate device capture, managed media and authenticated upload.",
+      "paragraphs": [
+        "**Problem and brute-force design:** a single capture screen could manage camera permissions, browser/native recording, local files, trimming, retro encoding, direct S3 versus staged transfer, quota and retries. Every variation would require more branches in that screen and make cleanup easy to miss.",
+        "**Choice and motivation:** Adapter is the strongest implemented pattern. `CameraPlatform` and `ExpoCameraPlatform` isolate device APIs; file-store contracts isolate local media; the runtime client exposes upload operations without embedding their protocol in the view. Sessions and hooks coordinate the workflow. This lets each boundary be checked without inventing a common superclass.",
+        "**Before structure:** the screen reaches camera, file, network and processing details directly. **After structure:** the screen composes recording/review/upload hooks and session objects; the upload session uses transport contracts; the real-account runtime selects direct or staged transfer; server contribution and job modules own acceptance and processing.",
+        "**Before behaviour:** capture, transform, transfer and allowance changes are interleaved in the UI. **After behaviour:** capture and review owned media; apply the browser look where supported; prepare one idempotent upload; obtain a direct-upload intent or use authenticated staged intake; accept under server quota rules; process and report status. Signed direct upload sends media bytes without the application credential to the storage target, then returns through the application API for completion.",
+        "**Implementation decisions:** the refactored video screen delegates to hooks including `useClipUpload` and `useCaptureLifecycle`. Web photos are graded before upload. Web video is graded when re-encoding is supported, otherwise the server applies the look. `clientProcessed` avoids double grading. The server still validates media and reserves allowance. Transfer configuration chooses the protocol; it is not a family of Strategy subclasses.",
+        "**Diagram reading note:** the older after plates still identify useful camera/runtime/store seams, but omit the new browser retro pipeline and split hooks. Their former statement that pre-upload retro is future work is superseded by `retro-browser.ts`, `retro-looks.ts` and their screen/hook call sites."
+      ],
+      "visuals": [
+        {
+          "type": "compare",
+          "title": "Candidates for capture variation",
+          "columns": ["Candidate", "Fit and choice"],
+          "rows": [
+            [
+              "Adapter",
+              "Chosen: camera, file and runtime contracts isolate device and transfer APIs."
+            ],
+            [
+              "Strategy",
+              "Look data and transfer config select behaviour without a Strategy class family."
+            ],
+            [
+              "Template Method",
+              "No capture base class defines override steps; sessions and hooks coordinate work."
+            ]
+          ]
+        }
+      ],
+      "notes": [
+        "Before: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/problem-before-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/problem-before-sequence.svg). After: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/problem-after-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/capture/diagrams/problem-after-sequence.svg)."
+      ],
+      "sources": [
+        {
+          "path": "src/capture/contracts.ts",
+          "label": "src/capture/contracts.ts",
+          "note": "Capture platform contract."
+        },
+        {
+          "path": "src/capture/platform.ts",
+          "label": "src/capture/platform.ts",
+          "note": "ExpoCameraPlatform implementation."
+        },
+        {
+          "path": "src/capture/useClipUpload.ts",
+          "label": "src/capture/useClipUpload.ts",
+          "note": "Current preparation/upload/processing sequence."
+        },
+        {
+          "path": "src/capture/useCaptureLifecycle.ts",
+          "label": "src/capture/useCaptureLifecycle.ts",
+          "note": "Cancellation and media lifetime."
+        },
+        {
+          "path": "src/capture/clip-uploader.ts",
+          "label": "src/capture/clip-uploader.ts",
+          "note": "Upload session, input checks and retry state."
+        },
+        {
+          "path": "src/capture/real-account-video-runtime.ts",
+          "label": "src/capture/real-account-video-runtime.ts",
+          "note": "Authenticated runtime Adapter."
+        },
+        {
+          "path": "src/capture/direct-transfer.ts",
+          "label": "src/capture/direct-transfer.ts",
+          "note": "Signed transfer and reconciliation."
+        },
+        {
+          "path": "src/capture/retro-browser.ts",
+          "label": "src/capture/retro-browser.ts",
+          "note": "Local encoding."
+        },
+        {
+          "path": "src/capture/retro-looks.ts",
+          "label": "src/capture/retro-looks.ts",
+          "note": "Look specifications and drawing."
+        },
+        {
+          "path": "server/src/routes/contribution-routes.ts",
+          "label": "server/src/routes/contribution-routes.ts",
+          "note": "Current intake and job routes."
+        },
+        {
+          "path": "server/src/ffmpeg.ts",
+          "label": "server/src/ffmpeg.ts",
+          "note": "Normalisation and fallback look processing."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why is Adapter a better explanation than Template Method?",
+          "a": "The variation is at camera, file and transport APIs. There is no shared base algorithm with override hooks in a superclass."
+        },
+        {
+          "q": "Who enforces allowance in both upload modes?",
+          "a": "The server. Direct transfer moves bytes; it does not grant quota or membership."
+        },
+        {
+          "q": "What prevents a retro look being applied twice?",
+          "a": "A successful browser transformation marks clientProcessed. The processing mode tells the server to normalise the result without grading it again."
+        }
+      ]
+    },
+    {
+      "id": "cycle",
+      "title": "CYCLE · Survive repeated ticks and interrupted compilation",
+      "summary": "Member C · UC07–UC08 · A persisted state machine and durable command-like jobs make rollover and film work recoverable.",
+      "paragraphs": [
+        "**Problem and brute-force design:** keep cycle state and queued commands in scheduler memory, compile in a timer callback, then reveal on a client clock. A restart could lose work; repeated ticks could create successors twice; a stale worker could finish after its replacement; publishing too early could expose incomplete media.",
+        "**Choice and motivation:** a persisted state machine plus durable job records. State gives a clear lifecycle; command-like records give work an identity that survives restart. Rewind implements both with database rows and functions. Polling discovers work but is not the consistency mechanism; formal State or Command subclasses would not add durability.",
+        "**Before structure:** timer, in-memory cycle and transient work objects share authority over release. **After structure:** scheduler → lifecycle functions → cycle/transition/successor records, plus durable media jobs and ordered inputs → worker → FFmpeg/media store. Publication is guarded separately from processing readiness.",
+        "**Before behaviour:** every timer tick can start a new operation and a client timer can reveal it. **After behaviour:** a transaction closes intake, records/reuses the transition, ensures a successor and film job, and advances the group pointer conditionally. A worker claims a lease and generation, processes outside that transaction, verifies the result and finalises only its current claim. A later guarded operation publishes and records the premiere start.",
+        "**Implementation decisions:** database uniqueness and stable job identity support replay; input snapshots and output verification prevent arbitrary stale completion; attempts are bounded; the premiere clock starts at publication and archive follows 24 hours later. Current persistence supports PostgreSQL through the SQLite-compatible database Adapter, so the older description of PostgreSQL as future work is obsolete.",
+        "**Diagram reading note:** the before plates are candidate alternatives rather than historical bugs. The after plates’ functional lifecycle and fenced-job explanation remains useful, but read their SQLite-only persistence labels through today’s `db.ts` and PostgreSQL bridge."
+      ],
+      "visuals": [
+        {
+          "type": "compare",
+          "title": "Candidates for lifecycle recovery",
+          "columns": ["Candidate", "Fit and choice"],
+          "rows": [
+            ["State", "Chosen as stored lifecycle states and guards, without a class per state."],
+            [
+              "Command",
+              "Chosen as durable job/input records; transient objects alone lose work on restart."
+            ],
+            [
+              "Polling alone",
+              "Useful for wake-up. Transactions, unique records and claim fencing make replay safe."
+            ]
+          ]
+        }
+      ],
+      "notes": [
+        "Before: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/problem-before-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/problem-before-sequence.svg). After: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/problem-after-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/cycle/diagrams/problem-after-sequence.svg)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/cycles/scheduler.ts",
+          "label": "server/src/cycles/scheduler.ts",
+          "note": "Due-cycle scans and worker wake-up."
+        },
+        {
+          "path": "server/src/cycles/lifecycle.ts",
+          "label": "server/src/cycles/lifecycle.ts",
+          "note": "Transactional rollover, successor and publication state machine."
+        },
+        {
+          "path": "server/src/jobs/index.ts",
+          "label": "server/src/jobs/index.ts",
+          "note": "Film-job identity, input snapshots, claims and guarded finalisation."
+        },
+        {
+          "path": "server/src/jobs/worker.ts",
+          "label": "server/src/jobs/worker.ts",
+          "note": "Automatic claim and processing orchestration."
+        },
+        {
+          "path": "server/src/ffmpeg.ts",
+          "label": "server/src/ffmpeg.ts",
+          "note": "Compilation and media verification support."
+        },
+        {
+          "path": "server/src/schema.ts",
+          "label": "server/src/schema.ts",
+          "note": "Persisted cycle/job state."
+        },
+        {
+          "path": "server/src/postgres/sync-worker.ts",
+          "label": "server/src/postgres/sync-worker.ts",
+          "note": "Serialised writer compatibility on PostgreSQL."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Is this a textbook State implementation?",
+          "a": "It applies state-machine rules with persisted values and functions. It has no separate class for each state."
+        },
+        {
+          "q": "What happens after a worker crash?",
+          "a": "The durable job remains. An expired lease can be reclaimed subject to attempt limits, and a newer generation fences off the old worker."
+        },
+        {
+          "q": "Does this guarantee exactly-once FFmpeg execution?",
+          "a": "No. Processing can run again after recovery. The guarded state changes and finalisation prevent stale or duplicate authoritative results."
+        }
+      ]
+    },
+    {
+      "id": "participation",
+      "title": "PARTICIPATION · Keep live chat and scheduled reminders truthful",
+      "summary": "Member D · UC09–UC11 · Observer/pub-sub handles live chat; provider adapters and a durable outbox handle reminder delivery.",
+      "paragraphs": [
+        "**Problem and brute-force design:** broadcast before saving a message, keep subscriptions as the only chat history, and call a push provider directly from a settings update. Disconnects lose context, failed sends have no durable retry, and a later opt-out cannot reliably cancel queued work.",
+        "**Choice and motivation:** compose Observer/pub-sub for committed chat events with a provider Adapter and durable outbox for reminders. Chat and push have different lifetimes. `RealtimeHub.subscribe` returns an unsubscribe function and `publish` fans out by group. Reminder provider functions adapt protocol-specific sending while persisted outbox functions enforce scheduling and eligibility.",
+        "**Before structure:** screens and a generic notification object depend directly on live sockets and provider APIs. **After structure:** chat storage/event queries, a process-local hub, SSE routes and a realtime client form one path; settings/preferences, destinations, outbox, runtime loop and provider functions form another. Shared asynchronous delivery does not make them one observer hierarchy.",
+        "**Before behaviour:** send first and hope the observer/device receives it. **After behaviour:** commit a message and event, then publish; on reconnect replay persisted message events through a watermark while buffering newer traffic. For reminders, scan due preferences, enqueue once for the scheduled identity, claim a lease, check the destination generation and current eligibility, call the provider, and persist the bounded result.",
+        "**Implementation decisions:** live reaction frames do not move the persisted message cursor; their synchronisation is separate. Outbox leases fence stale completion and generations invalidate stale destinations. Provider acceptance is distinct from actual device display, and a crash after acceptance can cause a retry. Runtime startup now enables recurring reminder work when providers exist. The product uses web push; retained Expo/native code is disabled scope.",
+        "**Diagram reading note:** the old after plates’ storage/transport separation still helps. Replace their one-shot-only scheduling and active Expo-provider reading with the current `reminders/loop.ts` startup and web-push product scope."
+      ],
+      "visuals": [
+        {
+          "type": "compare",
+          "title": "Candidates for participation delivery",
+          "columns": ["Candidate", "Fit and choice"],
+          "rows": [
+            [
+              "Observer",
+              "Chosen for chat fan-out. Stored message events separately provide replay."
+            ],
+            [
+              "Adapter",
+              "Chosen at protocol edges. Provider functions send; the outbox owns policy and retry."
+            ],
+            [
+              "Strategy",
+              "Provider choice fits; a single pluggable lifecycle would obscure consent, replay and leases."
+            ]
+          ]
+        }
+      ],
+      "notes": [
+        "Before: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/problem-before-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/problem-before-sequence.svg). After: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/problem-after-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/participation/diagrams/problem-after-sequence.svg)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/realtime/index.ts",
+          "label": "server/src/realtime/index.ts",
+          "note": "Concrete subscriber registry, publish and unsubscribe."
+        },
+        {
+          "path": "server/src/chat/index.ts",
+          "label": "server/src/chat/index.ts",
+          "note": "Transactional message/event persistence."
+        },
+        {
+          "path": "server/src/routes/chat-routes.ts",
+          "label": "server/src/routes/chat-routes.ts",
+          "note": "SSE replay and post-commit fan-out."
+        },
+        {
+          "path": "src/chat/realtime-client.ts",
+          "label": "src/chat/realtime-client.ts",
+          "note": "Reconnect client and event-source boundary."
+        },
+        {
+          "path": "server/src/reminders/outbox.ts",
+          "label": "server/src/reminders/outbox.ts",
+          "note": "Eligibility, generations, leases and retry outcomes."
+        },
+        {
+          "path": "server/src/reminders/providers.ts",
+          "label": "server/src/reminders/providers.ts",
+          "note": "Web-push protocol Adapter; retained Expo code is outside delivered scope."
+        },
+        {
+          "path": "server/src/reminders/loop.ts",
+          "label": "server/src/reminders/loop.ts",
+          "note": "Recurring scan and bounded drain."
+        },
+        {
+          "path": "server/src/cli.ts",
+          "label": "server/src/cli.ts",
+          "note": "Provider-dependent loop startup."
+        },
+        {
+          "path": "server/src/groups/settings.ts",
+          "label": "server/src/groups/settings.ts",
+          "note": "Prompt/timezone and preference persistence."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Why is Observer insufficient for reminders?",
+          "a": "A subscription does not preserve scheduled work, consent, destination versions or retry outcomes. Those belong in durable records."
+        },
+        {
+          "q": "What is the source of truth after SSE disconnects?",
+          "a": "Persisted message events, not the process-local hub. The client reconnects with a cursor and replays them."
+        },
+        {
+          "q": "Can a successful send be presented as displayed?",
+          "a": "No. Provider acceptance and on-device display are different outcomes. Crash recovery can also repeat a send."
+        }
+      ]
+    },
+    {
+      "id": "archive",
+      "title": "ARCHIVE · Deliver private media through current authority",
+      "summary": "Member C · UC12–UC14 · A capability-gated Proxy role works with an archive Facade and download Adapters.",
+      "paragraphs": [
+        "**Problem and brute-force design:** put durable object paths into Archive responses, let screens retain them indefinitely, duplicate platform download branches and cache every fetched response. A stale path can outlive membership or release state; a generic cache can retain private bytes.",
+        "**Choice and motivation:** the capability-gated route plays an access-control Proxy role. It mediates access to the actual stored media rather than trusting a caller’s old path. The archive client Facade groups state, pagination and item refresh. Platform download Adapters deliver an authorised result using the browser or retained native file APIs.",
+        "**Before structure:** screens depend directly on storage locations, platform files and cached responses. **After structure:** Archive/Film → `createRealAccountArchiveClient` → protected routes → `MediaCapabilities` and verified serving → stored output. Download functions handle file delivery. The PWA shell cache is a separate public-only concern.",
+        "**Before behaviour:** replay a saved path and return any available bytes. **After behaviour:** refresh the requested media, obtain a short-lived grant, check current session/selection/membership, release and exact output identity, verify the stored file, recheck, then stream or download. A clip grant also enforces the contributor condition. Repeated taps join the queued authorise/download/export operation.",
+        "**Implementation decisions:** store a hash of the random capability token in a bounded in-process map and bind the grant to purpose and output metadata. Capability grants are temporary; restarting the process requires fresh grants while durable media stays stored. Public shell caching bypasses API/private media, and invitation parsing carries intent rather than authority.",
+        "**Diagram reading note:** current screens are `src/real/Archive.tsx` and `src/real/Film.tsx`; route participants are `archive-routes.ts` and `media-access.ts`. S3 implementation now exists behind the configured store seam. The Proxy here is the application’s capability gate, not a claim that a public S3 URL grants membership."
+      ],
+      "visuals": [
+        {
+          "type": "compare",
+          "title": "Candidates for private delivery",
+          "columns": ["Candidate", "Fit and choice"],
+          "rows": [
+            [
+              "Proxy",
+              "Primary choice: the serving route checks current authority and exact output before delivery."
+            ],
+            [
+              "Facade",
+              "Supporting: the archive client groups premiere, paging and fresh-media lookup."
+            ],
+            [
+              "Adapter",
+              "Supporting: download functions translate browser/file APIs after server authorisation."
+            ]
+          ]
+        }
+      ],
+      "notes": [
+        "Before: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/problem-before-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/problem-before-sequence.svg). After: [class](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/problem-after-class.svg) · [sequence](https://github.com/Collaboration95/rewind-app/blob/dev/doc/planning/report/packages/archive/diagrams/problem-after-sequence.svg)."
+      ],
+      "sources": [
+        {
+          "path": "server/src/archive/capabilities.ts",
+          "label": "server/src/archive/capabilities.ts",
+          "note": "Capability issue/resolve and current session/output checks."
+        },
+        {
+          "path": "server/src/routes/archive-routes.ts",
+          "label": "server/src/routes/archive-routes.ts",
+          "note": "Capability-gated streaming, premiere and Archive routes."
+        },
+        {
+          "path": "server/src/routes/media-access.ts",
+          "label": "server/src/routes/media-access.ts",
+          "note": "Media identity and verified-serving helpers."
+        },
+        {
+          "path": "server/src/archive/store-serving.ts",
+          "label": "server/src/archive/store-serving.ts",
+          "note": "Integrity-checked store snapshots."
+        },
+        {
+          "path": "src/auth/real-account-client.ts",
+          "label": "src/auth/real-account-client.ts",
+          "note": "createRealAccountArchiveClient Facade."
+        },
+        {
+          "path": "src/real/Archive.tsx",
+          "label": "src/real/Archive.tsx",
+          "note": "Current Archive presentation."
+        },
+        {
+          "path": "src/real/Film.tsx",
+          "label": "src/real/Film.tsx",
+          "note": "Fresh item and whole-operation download queue."
+        },
+        {
+          "path": "src/archive/archive-download.ts",
+          "label": "src/archive/archive-download.ts",
+          "note": "Delivery Adapters and queue."
+        },
+        {
+          "path": "public/sw.js",
+          "label": "public/sw.js",
+          "note": "Public shell-only caching."
+        }
+      ],
+      "qa": [
+        {
+          "q": "What is the Proxy’s protected subject?",
+          "a": "The stored processed clip or film. The application serving route mediates access after current authorisation and integrity checks."
+        },
+        {
+          "q": "Is MediaCapabilities a durable media database?",
+          "a": "No. Its grants are temporary in-memory entries. Media/job/release facts remain durable, and the client can request a fresh grant."
+        },
+        {
+          "q": "Does the Facade replace server access checks?",
+          "a": "No. It simplifies client calls; each protected server operation still validates its own authority and state."
+        }
+      ]
+    },
+    {
+      "id": "other-patterns",
+      "title": "Other pattern roles visible in the current code",
+      "summary": "Use names that describe a concrete seam; avoid turning an ordinary sequence of functions into an invented inheritance pattern.",
+      "paragraphs": [
+        "These roles support the package decisions above. They are implementation readings grounded in the named code, rather than claims that the team created a class for every pattern.",
+        "**Template Method is not evidenced in the examined workflows.** `runAuditedJob` wraps an injected callback with start/success/failure recording, but it is not a superclass algorithm with subclass-overridden steps. Capture orchestration also uses hooks and sessions. Present those actual mechanisms rather than labelling them textbook Template Method."
+      ],
+      "tables": [
+        {
+          "title": "Pattern role × current implementation × limit",
+          "columns": ["Role", "Concrete evidence", "What to say precisely"],
+          "rows": [
+            [
+              "Adapter: persistence",
+              "`server/src/db.ts`; `server/src/postgres/database.ts`; `server/src/postgres/translate.ts`; `server/src/postgres/sync-worker.ts`",
+              "PostgresDatabase adapts PostgreSQL to the node:sqlite prepare/run/get/all/exec surface used by domain functions, including SQL/error and writer semantics."
+            ],
+            [
+              "Strategy: storage selection",
+              "`server/src/media/store.ts`; `server/src/media/runtime-store.ts`; `server/src/media/configured-runtime.ts`; `server/src/config.ts`",
+              "A configured MediaStore supplies interchangeable storage operations. The product setting is disk or s3; disk uses ordinary paths, while the existing local object-store adapter remains in source and is not an additional product environment."
+            ],
+            [
+              "Repository-style functions",
+              "`server/src/groups/real.ts`; `server/src/contributions/ledger.ts`; `server/src/chat/index.ts`",
+              "Domain-focused functions group persistence queries and mappings. There is no generic Repository base class, and some route code still contains SQL."
+            ],
+            [
+              "Observer / pub-sub",
+              "`server/src/realtime/index.ts`; `server/src/routes/chat-routes.ts`",
+              "RealtimeHub registers per-group writers and fans out committed events. It is process-local; durable replay is separate."
+            ],
+            [
+              "State machine",
+              "`server/src/cycles/lifecycle.ts`; `server/src/jobs/index.ts`; `src/domain/cycles.ts`",
+              "Explicit persisted states and guards govern cycles, releases and jobs. This is not a per-state object hierarchy."
+            ],
+            [
+              "Facade",
+              "`src/auth/real-account-client.ts`",
+              "createRealAccountArchiveClient groups premiere, paging and fresh-media lookup behind one client contract."
+            ]
+          ]
+        }
+      ],
+      "sources": [
+        {
+          "path": "server/src/postgres/database.ts",
+          "label": "server/src/postgres/database.ts",
+          "note": "DatabaseSync-compatible PostgreSQL Adapter."
+        },
+        {
+          "path": "server/src/postgres/translate.ts",
+          "label": "server/src/postgres/translate.ts",
+          "note": "SQL translation."
+        },
+        {
+          "path": "server/src/postgres/sync-worker.ts",
+          "label": "server/src/postgres/sync-worker.ts",
+          "note": "Worker bridge and transaction behaviour."
+        },
+        {
+          "path": "server/src/media/store.ts",
+          "label": "server/src/media/store.ts",
+          "note": "Interchangeable storage contract."
+        },
+        {
+          "path": "server/src/media/runtime-store.ts",
+          "label": "server/src/media/runtime-store.ts",
+          "note": "Configured store construction."
+        },
+        {
+          "path": "server/src/config.ts",
+          "label": "server/src/config.ts",
+          "note": "disk/s3 product configuration."
+        },
+        {
+          "path": "server/src/contributions/ledger.ts",
+          "label": "server/src/contributions/ledger.ts",
+          "note": "Domain-facing persistence projection."
+        },
+        {
+          "path": "server/src/jobs/index.ts",
+          "label": "server/src/jobs/index.ts",
+          "note": "Callback audit wrapper and durable job state."
+        }
+      ],
+      "qa": [
+        {
+          "q": "Can the same seam be both Adapter and Strategy?",
+          "a": "Yes, from different viewpoints. An implementation adapts a concrete API, while choosing an implementation behind a shared contract supplies a strategy-like variation point."
+        },
+        {
+          "q": "Why qualify Repository as repository-style?",
+          "a": "Queries are grouped in domain modules, but the code has no generic Repository class hierarchy and does not hide every query behind one interface."
+        },
+        {
+          "q": "Should we add classes to make the pattern diagrams look textbook?",
+          "a": "No. Describe the functions, interfaces, classes and records that actually implement the responsibilities."
+        }
+      ]
+    }
+  ]
+}
