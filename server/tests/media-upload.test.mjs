@@ -1,16 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, readFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
 
-const { parseConfig } = await import('../dist/config.js');
 const { createRuntimeServer } = await import('../dist/http.js');
 const { createClipUpload, recordClipMediaMetadata } = await import('../dist/media/index.js');
 
@@ -49,21 +47,8 @@ function fixtureSummary(database) {
   );
 }
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-media-test-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    ...REAL_AUTH_ENV,
-  });
-  const database = openFixtureDatabase(config);
-  try {
-    return await run({ config, database });
-  } finally {
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) =>
+  withSharedDatabase({ prefix: 'rewind-media-test-', env: REAL_AUTH_ENV }, run);
 
 test('clip upload validates media before creating a job and retries idempotently', async () => {
   await withDatabase(async ({ database }) => {

@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
-import './quality-classification.test.mjs';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-// The static Quality job runs this root entry point explicitly.
-import './node-forge-security.test.mjs';
-import './braces-security.test.mjs';
-import './native-build.test.mjs';
 
 const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const appJson = JSON.parse(await readFile(new URL('../app.json', import.meta.url), 'utf8'));
@@ -47,7 +42,8 @@ test('quality workflow validates main and dev pushes and PRs against any stacked
   assert.match(workflow, /npm audit --omit=dev --audit-level=high/);
   assert.match(workflow, /npx jest --coverage/);
   assert.doesNotMatch(workflow, /--runInBand/);
-  assert.match(workflow, /bash tests\/deploy\/recovery-smoke\.test\.sh/);
+  // Every offline deploy fixture (recovery smoke, restore, lifecycle, release) runs.
+  assert.match(workflow, /run: bash tests\/deploy\/run-fixtures\.sh/);
   assert.equal((workflow.match(/npm run build:web/g) ?? []).length, 1);
   assert.match(
     workflow,

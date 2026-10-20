@@ -12,7 +12,6 @@ import type {
   PlatformStillImage,
 } from './contracts';
 import type { RecordedClip } from '../domain/video';
-import { MAX_CLIP_BYTES } from './clip-uploader';
 
 export const VIDEO_CACHE_FOLDER = 'rewind-clips';
 
@@ -152,7 +151,7 @@ async function readMp4Container(file: Blob): Promise<BrowserVideoContainerMetada
   return parseMp4Container(new Uint8Array(await file.arrayBuffer()));
 }
 
-/** The person closed the file chooser or camera sheet without choosing anything. */
+/** The person closed the file chooser without choosing anything. */
 export class CaptureCancelledError extends Error {
   constructor() {
     super('Nothing was captured.');
@@ -164,7 +163,7 @@ export function isCaptureCancelled(error: unknown): boolean {
   return error instanceof CaptureCancelledError;
 }
 
-async function chooseBrowserFile(accept: string, capture?: 'environment'): Promise<File> {
+async function chooseBrowserFile(accept: string): Promise<File> {
   if (Platform.OS !== 'web' || typeof document === 'undefined') {
     throw new Error('File fallback is available in a browser only.');
   }
@@ -172,14 +171,12 @@ async function chooseBrowserFile(accept: string, capture?: 'environment'): Promi
     const input = document.createElement('input');
     input.accept = accept;
     input.type = 'file';
-    // On phones this opens the system camera directly, without the library.
-    if (capture) input.setAttribute('capture', capture);
     input.onchange = () => {
       const file = input.files?.[0];
       if (file) resolve(file);
       else reject(new CaptureCancelledError());
     };
-    // Safari 16.4+ and current Chromium report a dismissed chooser or camera.
+    // Safari 16.4+ and current Chromium report a dismissed chooser.
     input.addEventListener('cancel', () => reject(new CaptureCancelledError()));
     input.click();
   });
@@ -405,12 +402,7 @@ export interface ExpoCameraPlatformOptions {
   /** Allows deterministic capability responses for simulator/device probes. */
   capabilityProbe?: () => Promise<CapabilitySnapshot>;
   /** Browser media seams keep file validation deterministic in adapter tests. */
-  browserFilePicker?: (accept: string, capture?: 'environment') => Promise<File>;
-  /**
-   * Web only: take photos and videos with the phone's own camera sheet (full
-   * native quality and orientation) instead of an in-page viewfinder.
-   */
-  browserSystemCamera?: boolean;
+  browserFilePicker?: (accept: string) => Promise<File>;
   browserImageDimensionsReader?: (uri: string) => Promise<{ height: number; width: number }>;
   browserObjectUrlFactory?: (file: File) => string;
   browserVideoContainerReader?: (file: File) => Promise<BrowserVideoContainerMetadata>;
@@ -468,18 +460,11 @@ function waitForVideoFrame(video: HTMLVideoElement, timeoutMs: number): Promise<
 
 /** Expo SDK 57 adapter. No Expo or React Native types cross the capture port. */
 export class ExpoCameraPlatform implements CameraPlatform {
-  readonly kind = 'expo' as const;
-  get supportsLivePreview(): boolean {
-    return !this.fileFallbackIsCamera;
-  }
+  readonly supportsLivePreview = true;
   get supportsVideoRecording(): boolean {
-    if (this.fileFallbackIsCamera) return false;
     return Platform.OS !== 'web' || this.browserRecordingSupport().supported;
   }
   readonly supportsFileFallback = Platform.OS === 'web';
-  get fileFallbackIsCamera(): boolean {
-    return Platform.OS === 'web' && this.options.browserSystemCamera === true;
-  }
   private browserStream: MediaStream | null = null;
   private browserRecorder: MediaRecorder | null = null;
   private browserChunks: BlobPart[] = [];
@@ -532,7 +517,6 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   getVideoCaptureUnavailableReason(): string | null {
-    if (this.fileFallbackIsCamera) return null;
     return this.browserRecordingSupport().reason;
   }
 
@@ -692,9 +676,6 @@ export class ExpoCameraPlatform implements CameraPlatform {
     if (this.options.capabilityProbe) return this.options.capabilityProbe();
 
     if (Platform.OS === 'web') {
-      // The system camera sheet replaces the in-page camera; the screens then
-      // offer it through their single fallback action.
-      if (this.fileFallbackIsCamera) return { camera: 'unsupported', microphone: 'unsupported' };
       const supported = this.browserRecordingSupport().supported;
       return {
         camera: supported ? 'supported' : 'unsupported',
@@ -859,10 +840,8 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async pickStillFile(): Promise<PlatformStillImage> {
-    const camera = this.fileFallbackIsCamera;
     const file = await (this.options.browserFilePicker ?? chooseBrowserFile)(
-      camera ? 'image/jpeg,image/png' : '.jpg,.jpeg,.png,image/jpeg,image/png',
-      camera ? 'environment' : undefined,
+      '.jpg,.jpeg,.png,image/jpeg,image/png',
     );
     if (file.type !== 'image/jpeg' && file.type !== 'image/png') {
       throw new Error('Choose a JPEG or PNG image file.');
@@ -875,7 +854,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
       return {
         format: file.type === 'image/png' ? 'png' : 'jpg',
         height: dimensions.height,
-        source: camera ? 'camera' : 'file',
+        source: 'file',
         sourceUri,
         width: dimensions.width,
       };
@@ -886,16 +865,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
   }
 
   async pickVideoFile(): Promise<RecordedClip> {
-    const camera = this.fileFallbackIsCamera;
-    const file = await (this.options.browserFilePicker ?? chooseBrowserFile)(
-      camera ? 'video/*' : '.mp4,video/mp4',
-      camera ? 'environment' : undefined,
-    );
-    if (camera && file.size > MAX_CLIP_BYTES) {
-      throw new Error(
-        'This video is over 50 MB. Record a shorter clip, or set the camera to 1080p in Settings.',
-      );
-    }
+    const file = await (this.options.browserFilePicker ?? chooseBrowserFile)('.mp4,video/mp4');
     const container = await (this.options.browserVideoContainerReader ?? readMp4Container)(file);
     if (!container.isMp4 || !container.hasVideo) {
       throw new Error('Choose an MP4 video file.');
@@ -906,11 +876,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
         sourceUri,
       );
       if (metadata.durationSeconds > 15) {
-        throw new Error(
-          camera
-            ? 'Videos can be up to 15 seconds. Record a shorter clip.'
-            : 'Choose an MP4 video that is 15 seconds or shorter.',
-        );
+        throw new Error('Choose an MP4 video that is 15 seconds or shorter.');
       }
       if (
         !Number.isInteger(metadata.width) ||
@@ -935,7 +901,7 @@ export class ExpoCameraPlatform implements CameraPlatform {
         hasAudio: true,
         height: metadata.height,
         mimeType: 'video/mp4',
-        source: camera ? 'camera' : 'file',
+        source: 'file',
         sourceUri,
         width: metadata.width,
       };
@@ -993,64 +959,5 @@ export class ExpoCameraPlatform implements CameraPlatform {
       return;
     }
     this.options.getCameraRef()?.stopRecording?.();
-  }
-}
-
-export interface DemoCameraPlatformOptions {
-  capabilities?: CapabilitySnapshot;
-  permissions?: PermissionSnapshot;
-  fixture?: PlatformStillImage;
-}
-
-/**
- * Explicit simulator-safe fixture adapter. It never claims that a real image
- * came from a camera; the screen labels its preview as a simulator demo.
- */
-export class DemoCameraPlatform implements CameraPlatform {
-  readonly kind = 'demo' as const;
-  readonly supportsLivePreview = false;
-  readonly supportsVideoRecording = false;
-  private readonly capabilities: CapabilitySnapshot;
-  private readonly permissions: PermissionSnapshot;
-  private readonly fixture: PlatformStillImage;
-
-  constructor(options: DemoCameraPlatformOptions = {}) {
-    this.capabilities = options.capabilities ?? { camera: 'supported', microphone: 'supported' };
-    this.permissions = options.permissions ?? { camera: 'granted', microphone: 'granted' };
-    this.fixture = options.fixture ?? {
-      sourceUri: 'fixture://rewind-demo-still',
-      format: 'jpg',
-      height: 900,
-      source: 'demo-fixture',
-      width: 1200,
-    };
-  }
-
-  async getCapabilities(): Promise<CapabilitySnapshot> {
-    return { ...this.capabilities };
-  }
-
-  async getPermissions(): Promise<PermissionSnapshot> {
-    return { ...this.permissions };
-  }
-
-  async getVideoPermissions(): Promise<PermissionSnapshot> {
-    return { ...this.permissions };
-  }
-
-  async requestPermissions(): Promise<PermissionSnapshot> {
-    return { ...this.permissions };
-  }
-
-  async requestVideoPermissions(): Promise<PermissionSnapshot> {
-    return { ...this.permissions };
-  }
-
-  async openSettings(): Promise<void> {
-    // There are no device settings for a fixture adapter.
-  }
-
-  async captureStill(): Promise<PlatformStillImage> {
-    return { ...this.fixture };
   }
 }

@@ -326,16 +326,6 @@ export function claimStagedSource(
   }
 }
 
-export function setStagedSourcePath(
-  database: RewindDatabase,
-  sourceUri: string,
-  sourcePath: string,
-): void {
-  database
-    .prepare('UPDATE staged_sources SET source_path = ? WHERE source_uri = ?')
-    .run(sourcePath, sourceUri);
-}
-
 export function markStagedSourceReady(
   database: RewindDatabase,
   sourceUri: string,

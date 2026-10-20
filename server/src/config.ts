@@ -13,6 +13,14 @@ export const DEFAULT_HTTP_MAX_CONCURRENT_PROCESSING = 1;
 
 const REAL_CYCLE_DEFAULT_MINUTES = 28 * 24 * 60;
 
+/** A directory under `<dataDir>/media`, where the local runtime keeps media files. */
+export function mediaDir(
+  config: Pick<RuntimeConfig, 'dataDir'>,
+  child: 'staging' | 'processed' | 'intent-scratch',
+): string {
+  return resolve(config.dataDir, 'media', child);
+}
+
 export interface RuntimeConfig {
   host: string;
   port: number;

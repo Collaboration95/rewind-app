@@ -233,18 +233,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Run backup, lifecycle, restore, and host fixtures
-        run: |
-          bash tests/deploy/backup-manifest.test.sh
-          bash tests/deploy/wake-recovery-selection.test.sh
-          bash tests/deploy/lifecycle-guards.test.sh
-          bash tests/deploy/recovery-smoke.test.sh
-          bash tests/deploy/restore-atomic.test.sh
-          bash tests/deploy/ownership-contract.test.sh
-          bash tests/deploy/host-preflight.test.sh
-          bash deploy/tests/host-bootstrap.test.sh
-          for fixture in tests/deploy/*release*.test.sh; do
-            if [ -f "$fixture" ]; then bash "$fixture"; fi
-          done
+        run: bash tests/deploy/run-fixtures.sh
 
   server-postgres:
     needs: changes

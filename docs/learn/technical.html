@@ -471,9 +471,8 @@
       <p>
         The active <a href="../../infra/terraform/media/main.tf">media root</a> uses SSE-S3
         (<code>AES256</code>), versioning and public-access blocking. The adapter supports SSE-KMS
-        when configured with a canonical key ARN, and the separate
-        <a href="../../infra/terraform/modules/private-media/main.tf">private-media module</a>
-        requires it. Compose does not pass a KMS selector. Do not describe the current root as KMS.
+        when configured with a canonical key ARN. Compose does not pass a KMS selector. Do not
+        describe the current root as KMS.
       </p>
       <p>
         Direct S3 PUT avoids Node's intake hop. Node still materializes/verifies S3 bytes for

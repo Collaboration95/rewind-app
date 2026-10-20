@@ -1,16 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { once } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import test from 'node:test';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { onPostgres } from './helpers/dialect.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
 const { parseConfig } = await import('../dist/config.js');
 const { openDatabaseAt } = await import('../dist/db.js');
-const { createRuntimeServer, authClientSource, authTransportIsSecure } =
-  await import('../dist/http.js');
+const { authClientSource, authTransportIsSecure } = await import('../dist/http.js');
 const { createRealAccount, resetRealAccountPassword, revokeRealSession, validateRealSession } =
   await import('../dist/auth/index.js');
 
@@ -23,29 +20,15 @@ function syntheticSummary(database) {
   );
 }
 
-async function withRuntime(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-real-auth-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_PORT: '0',
-    REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
-  });
-  const database = openFixtureDatabase(config);
-  const serverOptions = { now: () => new Date('2026-09-28T00:00:00.000Z') };
-  const server = createRuntimeServer(config, database, serverOptions);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-  try {
-    return await run({ baseUrl, config, database, server, dataDir });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withRuntime = (run) =>
+  withSharedRuntime(
+    {
+      prefix: 'rewind-real-auth-',
+      env: { REWIND_PORT: '0', REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true' },
+      serverOptions: { now: () => new Date('2026-09-28T00:00:00.000Z') },
+    },
+    run,
+  );
 
 async function postLogin(baseUrl, username, password, clientType = 'native', extraHeaders = {}) {
   return fetch(`${baseUrl}/auth/login`, {

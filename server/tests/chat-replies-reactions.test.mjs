@@ -1,35 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
-import { once } from 'node:events';
-import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
-const { parseConfig } = await import('../dist/config.js');
-const { createRuntimeServer } = await import('../dist/http.js');
 const { blockMember, reportContent } = await import('../dist/groups/safety.js');
 
-async function withRuntime(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-chat-context-test-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    ...REAL_AUTH_ENV,
-  });
-  const database = openFixtureDatabase(config);
-  const server = createRuntimeServer(config, database);
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  try {
-    await run({ baseUrl, database });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withRuntime = (run) =>
+  withSharedRuntime({ prefix: 'rewind-chat-context-test-', env: REAL_AUTH_ENV }, run);
 
 test('members can persist one-level replies and nested replies are rejected', async () => {
   await withRuntime(async ({ baseUrl, database }) => {

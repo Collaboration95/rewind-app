@@ -46,7 +46,7 @@ The host default root is `/srv/rewind`. `deploy/operator-common.sh` is the
 ownership contract: directories are runtime-owned `0750`, files `0640`, backup
 artifacts `0600`. Backup and recovery check this before reporting success. Never
 point a mount at the checkout or a broad system directory.
-`npm run test:ownership-contract` covers it.
+`bash tests/deploy/ownership-contract.test.sh` covers it.
 
 ## Host bootstrap
 
@@ -66,7 +66,7 @@ cd /srv/rewind && ./deploy/preflight.sh [--json]
 
 It checks `config`, `persistent_paths`, `runtime`, `migration`, `backup_tooling`,
 `pause_script` and `backup_timer`, prints no secrets, and changes nothing.
-Fixture test: `npm run test:host-preflight`.
+Fixture test: `bash tests/deploy/host-preflight.test.sh`.
 
 ## Release bundles and deployment
 
@@ -156,7 +156,7 @@ and encrypted (SSE-S3); its lifecycle policy controls remote retention.
 days) before anything is downloaded. The host uses a restricted backup AWS
 identity from `AWS_PROFILE` or Terraform-delivered settings; never put access keys
 in this repository. The `rewind-backup.service`/`.timer` units are installed by
-bootstrap. Test: `npm run test:backup-manifest`.
+bootstrap. Test: `bash tests/deploy/backup-manifest.test.sh`.
 
 ## Restore and host rebuild
 
@@ -165,7 +165,7 @@ bootstrap. Test: `npm run test:backup-manifest`.
 sizes, checksums, gzip and SQLite integrity and unsafe archive paths in private
 staging, then swaps data and media with a rollback directory and requires the
 runtime to become healthy. On any failure it restores the previous files.
-`npm run test:restore-atomic` injects the failures. It applies to a host that
+`bash tests/deploy/restore-atomic.test.sh` injects the failures. It applies to a host that
 keeps its database on disk, not to PostgreSQL.
 
 `infra/scripts/wake-demo.sh` creates or rebuilds the dev host. Backup-gated
@@ -189,8 +189,8 @@ database for a first install only; it is not a restore and must not replace an
 existing host. In an incident, `aws lightsail stop-instance --instance-name rewind-demo`
 is the last resort; take a current S3 backup first (a stopped instance still bills).
 
-Tests (all offline): `npm run test:wake-recovery-selection`,
-`npm run test:lifecycle-guards`, `npm run test:recovery-smoke`.
+Tests (all offline): `bash tests/deploy/wake-recovery-selection.test.sh`,
+`bash tests/deploy/lifecycle-guards.test.sh`, `bash tests/deploy/recovery-smoke.test.sh`.
 
 ## Local verification
 

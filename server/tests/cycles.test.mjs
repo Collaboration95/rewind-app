@@ -9,26 +9,15 @@ import { resolve } from 'node:path';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { seedLegacyFixture } from './helpers/legacy-fixture.mjs';
 import { sqliteOnly } from './helpers/dialect.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
-const { parseConfig } = await import('../dist/config.js');
 const { getCurrentCycle, migrateDatabase, openDatabaseAt } = await import('../dist/db.js');
 const { advanceCycleLifecycle, CYCLE_DURATION_MS, createCycleEngine, publishCycleRelease } =
   await import('../dist/cycles/index.js');
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-cycle-test-`);
-  const config = parseConfig({ REWIND_DATA_DIR: dataDir, REWIND_HOST: '127.0.0.1' });
-  const database = openFixtureDatabase(config);
-  try {
-    return await run({ config, database });
-  } finally {
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) => withSharedDatabase({ prefix: 'rewind-cycle-test-' }, run);
 
 test('one deterministic engine calculates one-day and four-week windows', () => {
   let now = new Date('2026-09-10T12:00:00.000Z');

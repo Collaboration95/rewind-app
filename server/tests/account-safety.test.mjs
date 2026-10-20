@@ -1,43 +1,25 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { once } from 'node:events';
-import { tmpdir } from 'node:os';
+import { access, readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import test from 'node:test';
 import { uploadFixture } from './helpers/fixture-upload.mjs';
-import { openFixtureDatabase } from './helpers/fixture-group.mjs';
+import { withRuntime as withSharedRuntime } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
-const { parseConfig } = await import('../dist/config.js');
-const { createRuntimeServer } = await import('../dist/http.js');
 const { createRealAccount } = await import('../dist/auth/index.js');
 
 const PASSWORD = 'a sufficiently long pilot password';
 
-async function withRuntime(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-account-safety-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true',
-  });
-  const database = openFixtureDatabase(config);
-  const server = createRuntimeServer(config, database, {
-    now: () => new Date('2026-09-29T00:00:00.000Z'),
-  });
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  try {
-    await run({ baseUrl, database, dataDir, server });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withRuntime = (run) =>
+  withSharedRuntime(
+    {
+      prefix: 'rewind-account-safety-',
+      env: { REWIND_FFMPEG_BIN: 'ffmpeg', REWIND_ALLOW_INSECURE_LOCAL_AUTH: 'true' },
+      serverOptions: { now: () => new Date('2026-09-29T00:00:00.000Z') },
+    },
+    run,
+  );
 
 function login(baseUrl, username) {
   return fetch(`${baseUrl}/auth/login`, {

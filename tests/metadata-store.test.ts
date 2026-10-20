@@ -57,7 +57,6 @@ describe('AsyncStorageImageMetadataStore', () => {
       }),
       getCapabilities: jest.fn(),
       getPermissions: jest.fn(),
-      kind: 'expo',
       openSettings: jest.fn(),
       requestPermissions: jest.fn(),
       supportsLivePreview: false,

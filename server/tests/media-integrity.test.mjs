@@ -23,6 +23,7 @@ import { Worker } from 'node:worker_threads';
 import { REAL_AUTH_ENV, signInAs } from './helpers/real-http.mjs';
 import { openFixtureDatabase } from './helpers/fixture-group.mjs';
 import { createTestTrigger, sqliteOnly } from './helpers/dialect.mjs';
+import { withDatabase as withSharedDatabase } from './helpers/runtime.mjs';
 
 const execFileAsync = promisify(execFile);
 const { parseConfig } = await import('../dist/config.js');
@@ -46,22 +47,14 @@ const NOT_FOUND = {
   message: 'The requested resource was not found.',
 };
 
-async function withDatabase(run) {
-  const dataDir = await mkdtemp(`${tmpdir()}/rewind-integrity-test-`);
-  const config = parseConfig({
-    REWIND_DATA_DIR: dataDir,
-    REWIND_HOST: '127.0.0.1',
-    REWIND_FFMPEG_BIN: 'ffmpeg',
-    ...REAL_AUTH_ENV,
-  });
-  const database = openFixtureDatabase(config);
-  try {
-    return await run({ config, database, dataDir });
-  } finally {
-    database.close();
-    await rm(dataDir, { recursive: true, force: true });
-  }
-}
+const withDatabase = (run) =>
+  withSharedDatabase(
+    {
+      prefix: 'rewind-integrity-test-',
+      env: { REWIND_FFMPEG_BIN: 'ffmpeg', ...REAL_AUTH_ENV },
+    },
+    run,
+  );
 
 /** A real, playable portrait MP4 so finalization hashes genuine bytes. */
 async function createSyntheticSource(path) {
@@ -216,11 +209,10 @@ test('a tampered finalized clip is refused and audited when served', async () =>
         'same-size tampering is caught when the bytes are served, not by the listing (#475)',
       );
 
-      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
-        headers: session.headers,
-      });
-      assert.equal(download.status, 404);
-      assert.deepEqual(await download.json(), NOT_FOUND);
+      const tamperedPath = archiveBody.archive.clips.find((clip) => clip.id === jobId).downloadPath;
+      const tokenDownload = await fetch(`${baseUrl}${tamperedPath}`);
+      assert.equal(tokenDownload.status, 404);
+      assert.deepEqual(await tokenDownload.json(), NOT_FOUND);
 
       const audit = database
         .prepare(
@@ -234,7 +226,7 @@ test('a tampered finalized clip is refused and audited when served', async () =>
       ]);
 
       // Repeated requests must not multiply the durable audit rows.
-      await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, { headers: session.headers });
+      await fetch(`${baseUrl}${tamperedPath}`);
       assert.equal(
         database
           .prepare(
@@ -404,11 +396,13 @@ test('a truncated finalized clip is unavailable and never streamed', async () =>
     try {
       const session = await signInAs(database, 'demo-1');
       const query = 'groupId=demo-group';
-      const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
-        headers: session.headers,
-      });
-      assert.equal(download.status, 404);
-      assert.deepEqual(await download.json(), NOT_FOUND);
+      const archive = await (
+        await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers })
+      ).json();
+      assert.equal(
+        archive.archive.clips.some((clip) => clip.id === jobId),
+        false,
+      );
     } finally {
       await new Promise((close) => server.close(close));
     }
@@ -451,18 +445,13 @@ for (const damage of ['deleted', 'zero-byte']) {
         const session = await signInAs(database, 'demo-1');
         const query = 'groupId=demo-group';
         for (let attempt = 0; attempt < 2; attempt += 1) {
-          const download = await fetch(`${baseUrl}/clips/${jobId}/download?${query}`, {
-            headers: session.headers,
-          });
-          assert.equal(download.status, 404);
-          assert.deepEqual(await download.json(), NOT_FOUND);
+          const archive = await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers });
+          assert.equal(archive.status, 200);
+          assert.equal(
+            (await archive.json()).archive.clips.some((clip) => clip.id === jobId),
+            false,
+          );
         }
-        const archive = await fetch(`${baseUrl}/archive?${query}`, { headers: session.headers });
-        assert.equal(archive.status, 200);
-        assert.equal(
-          (await archive.json()).archive.clips.some((clip) => clip.id === jobId),
-          false,
-        );
         const audit = database
           .prepare(
             `SELECT event_type AS eventType, resource_id AS resourceId, result
@@ -1305,10 +1294,8 @@ test('a published film whose bytes changed is never streamed', async () => {
         headers: session.headers,
       });
       assert.equal((await broken.json()).premiere.state, 'ready');
-      const brokenPlayback = await fetch(`${baseUrl}/films/demo-film/play?${query}`, {
-        headers: session.headers,
-      });
-      assert.equal(brokenPlayback.status, 404);
+      const brokenTokenPlayback = await fetch(`${baseUrl}${readyBody.premiere.playbackPath}`);
+      assert.equal(brokenTokenPlayback.status, 404);
       const audit = database
         .prepare(
           `SELECT resource_id AS resourceId FROM audit_events
