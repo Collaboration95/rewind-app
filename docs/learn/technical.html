@@ -368,8 +368,9 @@
       </p>
       <p>
         At the baseline, <a href="../../infra/terraform/media/database.tf">database.tf</a> enables
-        dev cutover but disables release provisioning/cutover. That declaration is not a current
-        health check. Release persistence/recovery remains #504; operations stay in the
+        dev cutover. It declares release PostgreSQL with cutover off while the cutover is in
+        progress (see <a href="../architecture/release-cutover.md">release cutover</a>). That
+        declaration is not a current health check. Operations stay in the
         <a href="../architecture/postgresql-operations.md">database runbook</a>.
       </p>
       <h2 id="jobs"><span class="lvl">4</span>Internal loops and durable work</h2>
