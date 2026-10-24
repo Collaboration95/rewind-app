@@ -36,6 +36,12 @@ test('root selector maps Node and shell files to their existing runners', () => 
   );
 });
 
+test('root selector runs a named script test without a server build', () => {
+  assert.deepEqual(selectCommands(['root', 'scripts/focused-test.test.mjs'], repositoryRoot), [
+    { command: process.execPath, args: ['--test', 'scripts/focused-test.test.mjs'] },
+  ]);
+});
+
 test('unknown suites, unsupported paths, and missing files are rejected', () => {
   assert.throws(
     () => selectCommands(['unknown', 'tests/architecture.test.mjs'], repositoryRoot),
