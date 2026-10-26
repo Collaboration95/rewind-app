@@ -189,9 +189,9 @@
     {
       "id": "workflows",
       "title": "Every repository-owned workflow",
-      "summary": "There are six workflow files in the inspected tree; Dependabot and GitGuardian are separate integrations.",
+      "summary": "Seven workflow files cover Quality, security scans, deployment and database operations; Dependabot and GitGuardian are separate integrations.",
       "paragraphs": [
-        "All six workflows are listed below. Quality and deployment share the same fail-safe classifier. Deployment workflows are triggered by a push and wait internally for that exact commit’s successful branch push Quality run; they do not use a `workflow_run` trigger.",
+        "All seven workflows are listed below. Quality and deployment share the same fail-safe classifier. Deployment workflows are triggered by a push and wait internally for that exact commit’s successful branch push Quality run; they do not use a `workflow_run` trigger.",
         "The database workflow is operational tooling, not an automatic action on each merge. It binds dev to branch `dev` and release to branch `main`, selects the matching GitHub environment, and shares that target’s deployment concurrency group."
       ],
       "sources": [
@@ -218,6 +218,10 @@
         {
           "label": ".github/workflows/database-operations.yml",
           "path": ".github/workflows/database-operations.yml"
+        },
+        {
+          "label": ".github/workflows/secret-scan.yml",
+          "path": ".github/workflows/secret-scan.yml"
         }
       ],
       "qa": [
@@ -247,13 +251,13 @@
             ],
             [
               "release-security.yml",
-              "PR touching workflow/security gate, app/package, public/src/server, deploy or infra paths; v* tags; manual",
+              "dev/main pushes; PR with existing path filters; v* tags; manual",
               "images matrix: runtime + web; iac configuration scan and gate"
             ],
             [
               "deploy-dev.yml",
               "Push to dev; manual",
-              "changes; deploy in environment dev; docs-only push skips deploy"
+              "changes; deploy with exact-bundle Trivy gate and provenance; report-only ZAP baseline after deploy; docs-only push skips deploy"
             ],
             [
               "deploy-release.yml",
@@ -264,6 +268,11 @@
               "database-operations.yml",
               "Manual; explicit dev/release target",
               "operate: status, bootstrap, import, resume, backup or rehearse-restore"
+            ],
+            [
+              "secret-scan.yml",
+              "PR; dev/main push",
+              "Gitleaks v8.30.1 full history; redacted SARIF artifact and code scanning upload"
             ]
           ]
         }
@@ -275,9 +284,10 @@
       "summary": "DevSecOps combines source analysis, dependency checks, image/configuration scans, secret detection and restricted deployment identity.",
       "paragraphs": [
         "CodeQL and Release security report independently of aggregate Quality. The live branch protections require only the aggregate context; the production dependency audit is inside it. A green Quality result therefore does not mean every independent security scan was a required merge gate.",
-        "GitGuardian is a GitHub App check, not a seventh workflow file. A `gh api` check-runs query for refactor commit `5ac4e67` showed **GitGuardian Security Checks: success** from app `gitguardian` on 20 October. Repository settings also showed GitHub secret scanning, push protection and Dependabot security updates enabled.",
+        "GitGuardian is a GitHub App check, separate from the seven workflow files. A `gh api` check-runs query for refactor commit `5ac4e67` showed **GitGuardian Security Checks: success** from app `gitguardian` on 20 October. Repository settings also showed GitHub secret scanning, push protection and Dependabot security updates enabled.",
         "GitHub deploy jobs request an OIDC token and exchange it with AWS STS for a one-hour role session. Trust restricts audience, exact repository/environment subject and branch ref. There are separate dev and release deploy roles. This removes stored AWS deploy keys from GitHub; the running Lightsail application separately uses a Terraform-created, environment-scoped IAM user for S3 and pool-scoped Cognito account deletion.",
-        "Trivy’s IaC gate accepts only recorded exact findings with an owner, reason and expiry. An exception is a documented risk decision, not a claim that the finding was fixed. The current decisions expire on 31 October 2026."
+        "Trivy’s IaC gate accepts only recorded exact findings with an owner, reason and expiry. An exception is a documented risk decision, not a claim that the finding was fixed. The current decisions expire on 31 October 2026.",
+        "Deploy dev scans the verified runtime.tar and web.tar archives with Trivy v0.70.0 before host upload. HIGH or CRITICAL vulnerabilities fail deployment. ZAP then scans the deployed public URL without authentication: passive baseline and spidering, report-only. It does not establish authenticated API coverage. Gitleaks fails its own job on detected secrets; only aggregate Quality remains required by branch protection."
       ],
       "sources": [
         {
@@ -349,8 +359,8 @@
             ],
             [
               "Container scan",
-              "Trivy runtime + web candidates; HIGH/CRITICAL fail",
-              "Image identity, CycloneDX SBOM, vulnerability report; 30-day retention"
+              "Trivy candidate scans plus an exact-bundle HIGH/CRITICAL deploy gate on dev",
+              "Per-image CycloneDX SBOMs and JSON vulnerability reports tied to the deploy manifest"
             ],
             [
               "IaC scan",
@@ -359,8 +369,8 @@
             ],
             [
               "Secret detection",
-              "GitGuardian App; GitHub secret scanning/push protection",
-              "Commit check and repository protection"
+              "Gitleaks default rules with a scoped historical false-positive allowlist; GitGuardian; native scanning/push protection",
+              "Full-history redacted SARIF, code scanning results, commit checks and repository protection"
             ],
             [
               "Deployment identity",
@@ -371,6 +381,16 @@
               "Supply-chain hygiene",
               "Action commit-SHA pinning; npm ci and lockfile",
               "Reviewed dependency/action revisions"
+            ],
+            [
+              "DAST",
+              "OWASP ZAP baseline after successful dev deployment; unauthenticated and report-only",
+              "JSON, HTML and Markdown reports plus job summary"
+            ],
+            [
+              "Build provenance",
+              "GitHub OIDC and attest-build-provenance for dev bundle and security manifest",
+              "Sigstore attestations; verify downloaded tarball with gh attestation verify"
             ]
           ]
         }
@@ -383,7 +403,7 @@
       "paragraphs": [
         "For a non-docs merge, the deploy job checks out the event SHA and waits up to 1,500 seconds for that SHA’s successful Quality push run on its own branch. A failed, cancelled or timed-out result refuses deployment. A manual dispatch without a comparison base still needs a qualifying green commit.",
         "`deploy/release.py` builds a source-bound tar bundle: allowlisted source/operator files, SHA-tagged runtime and web images, manifest, image identities and checksums. The workflow verifies it before transfer and compares its SHA-256 on the host. There is no ECR push/pull stage in this path.",
-        "Release security builds its own scan candidates. The deployment workflow builds its bundle separately and does not wait for a Release security result. The source describes revision-bound verification; it does not establish promotion of the exact Trivy-scanned image bytes.",
+        "Release security still builds independent candidates. Deploy dev additionally scans the exact saved images inside its verified bundle, writes a release-manifest.json binding the commit, Quality run, image identities and artifact hashes, and attests the bundle and security manifest before transfer. HIGH/CRITICAL findings stop upload. This exact-bundle scan and provenance path is specific to dev; deploy-release.yml keeps its existing path.",
         "After OIDC authentication, CI requires an already-running host, opens SSH to the runner’s /32 address, obtains temporary Lightsail SSH credentials and pins returned host keys. It transfers the bundle, streams hosted settings from private S3, installs the pair, then closes the temporary SSH rule and removes runner key material. These jobs never apply Terraform or start/stop the host."
       ],
       "sources": [
@@ -451,6 +471,12 @@
               "icon": "docker"
             },
             {
+              "label": "Scan and attest dev bundle",
+              "sub": "Before host upload",
+              "detail": "Trivy scans the saved runtime and web images, gates HIGH/CRITICAL, retains SBOMs and JSON reports, and signs provenance for the bundle and manifest.",
+              "icon": "trivy"
+            },
+            {
               "label": "Install",
               "sub": "OIDC and temporary SSH",
               "detail": "The host verifies the bundle, checks configuration/schema compatibility and loads its images."
@@ -462,7 +488,117 @@
               "accent": true
             }
           ],
-          "caption": "Dev pushes target rewind-demo. Reviewed main pushes target rewind-release. Documentation-only pushes skip deployment."
+          "caption": "Dev pushes target rewind-demo. Reviewed main pushes target rewind-release. Documentation-only pushes skip deployment. The exact-bundle scan/provenance step and post-deploy ZAP job apply to dev."
+        }
+      ]
+    },
+    {
+      "id": "pipeline-artifacts",
+      "title": "Pipeline artifacts",
+      "summary": "Artifacts tie a workflow run to test results, security findings and the exact dev release bundle.",
+      "paragraphs": [
+        "In GitHub, open Actions, select the workflow run for the commit, then scroll to Artifacts. Open a job to see its summary table. CodeQL and uploaded Gitleaks SARIF are also visible under Security → Code scanning. GitHub links build attestations from the deploy job summary.",
+        "The manifest records commit, workflow/run/attempt, successful Quality run ID, timestamp, image IDs, archive/available manifest digests, scan counts and SHA-256 for the tarball, both SBOMs and both Trivy JSON reports. Locally built images may have no registry digest; the archive digest identifies the bytes shipped. The manifest is retained as an Actions artifact, rather than installed on the host.",
+        "New deploy artifacts and ZAP results need a successful post-merge dev deployment. A PR Quality run cannot prove that deployment occurred. Artifacts are retained for 30 days except the existing server/frontend coverage artifacts (14 days). Documentation-only Quality runs preserve their existing skips and produce no test/audit artifacts."
+      ],
+      "sources": [
+        {
+          "label": ".github/workflows/quality.yml",
+          "path": ".github/workflows/quality.yml"
+        },
+        {
+          "label": ".github/workflows/deploy-dev.yml",
+          "path": ".github/workflows/deploy-dev.yml"
+        },
+        {
+          "label": ".github/workflows/release-security.yml",
+          "path": ".github/workflows/release-security.yml"
+        },
+        {
+          "label": ".github/workflows/secret-scan.yml",
+          "path": ".github/workflows/secret-scan.yml"
+        },
+        {
+          "label": ".github/workflows/codeql.yml",
+          "path": ".github/workflows/codeql.yml"
+        },
+        {
+          "label": "deploy/scan-release.py",
+          "path": "deploy/scan-release.py"
+        }
+      ],
+      "tables": [
+        {
+          "title": "Run artifacts and evidence",
+          "columns": ["Artifact", "Workflow / job", "Format / files", "What it proves"],
+          "rows": [
+            [
+              "quality-test-results-root",
+              "Quality / static",
+              "test-results-root.xml (JUnit)",
+              "Root and Terraform tests; counts in job summary"
+            ],
+            [
+              "server-coverage",
+              "Quality / server",
+              "test-results-server.xml; coverage-summary.json; server-summary.txt; server-v8/*.json",
+              "Server test results and measured line/branch/function coverage (14 days)"
+            ],
+            [
+              "frontend-coverage",
+              "Quality / frontend",
+              "frontend-results.json; coverage-summary.json",
+              "Jest test counts and measured statement coverage (14 days); jest-junit is absent"
+            ],
+            [
+              "quality-npm-audit",
+              "Quality / audit",
+              "npm-audit.json",
+              "Production dependency findings; HIGH+ fails the required Quality gate"
+            ],
+            [
+              "dev-release-security-<commit>",
+              "Deploy dev / deploy",
+              "sbom-runtime.cdx.json; sbom-web.cdx.json; trivy-runtime.json; trivy-web.json; release-manifest.json",
+              "Exact bundled image inventories, severity counts and SHA-256 links to the bundle; HIGH/CRITICAL prevents host upload"
+            ],
+            [
+              "dev-release-bundle-<commit>",
+              "Deploy dev / deploy",
+              "rewind-release.tar; Sigstore attestation JSON bundle",
+              "Retained deployable image pair and build provenance; verify with gh attestation verify --repo Collaboration95/rewind-app rewind-release.tar"
+            ],
+            [
+              "zap-baseline-<commit>",
+              "Deploy dev / dast",
+              "report_json.json; report_html.html; report_md.md",
+              "Unauthenticated baseline findings after deployment; report-only"
+            ],
+            [
+              "gitleaks-<commit>",
+              "Secret scan / gitleaks",
+              "gitleaks.sarif (redacted)",
+              "Full-history secrets scan with documented false-positive allowlist; also in Security → Code scanning"
+            ],
+            [
+              "release-security-runtime/web-<commit>",
+              "Release security / images",
+              "<image>-sbom.cdx.json; <image>-vulnerabilities.txt; <image>-image-identity.txt",
+              "Independent candidate image scans, separate from exact deployed bundle evidence"
+            ],
+            [
+              "release-security-iac-<commit>",
+              "Release security / iac",
+              "iac-full.json",
+              "Terraform/Docker findings evaluated against exact, expiring exceptions"
+            ],
+            [
+              "CodeQL analysis results",
+              "CodeQL / analyze",
+              "Code scanning analysis",
+              "SAST for JavaScript/TypeScript, Python and Actions; Security → Code scanning"
+            ]
+          ]
         }
       ]
     },

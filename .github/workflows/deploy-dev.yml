@@ -36,8 +36,6 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
-  actions: read
 
 env:
   AWS_REGION: ${{ vars.REWIND_DEMO_AWS_REGION || 'ap-southeast-1' }}
@@ -87,6 +85,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: dev
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
     steps:
       - name: Check out the dev commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,12 +114,17 @@ jobs:
           sha="$(git rev-parse HEAD)"
           deadline=$(( SECONDS + 1500 ))
           while :; do
-            conclusion="$(gh api -X GET \
+            quality_run="$(gh api -X GET \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/quality.yml/runs" \
               -f "head_sha=${sha}" -f branch=dev -f event=push \
-              --jq '[.workflow_runs[] | select(.head_branch == "dev" and .event == "push")][0].conclusion // "pending"' 2>/dev/null || echo pending)"
+              --jq '[.workflow_runs[] | select(.head_branch == "dev" and .event == "push")][0] // {}' 2>/dev/null || echo '{}')"
+            conclusion="$(jq -r '.conclusion // "pending"' <<<"$quality_run")"
             case "$conclusion" in
-              success) echo "Quality checks passed for ${sha}."; break ;;
+              success)
+                echo "REWIND_QUALITY_RUN_ID=$(jq -er .id <<<"$quality_run")" >> "$GITHUB_ENV"
+                echo "Quality checks passed for ${sha}."
+                break
+                ;;
               failure|cancelled|timed_out|action_required|stale)
                 echo "Quality checks concluded '${conclusion}' for ${sha}; refusing to deploy." >&2
                 exit 1
@@ -141,6 +149,39 @@ jobs:
             --branch dev \
             --output "$RUNNER_TEMP/rewind-release.tar"
           python3 deploy/release.py verify "$RUNNER_TEMP/rewind-release.tar" >/dev/null
+
+      - name: Scan the exact bundled images and write the release manifest
+        id: security
+        run: |
+          python3 deploy/scan-release.py "$RUNNER_TEMP/rewind-release.tar" \
+            "$RUNNER_TEMP/release-security" --trivy-version v0.70.0
+
+      - name: Retain deployed-image SBOMs, scan reports and release manifest
+        if: ${{ always() && (steps.security.outcome == 'success' || steps.security.outcome == 'failure') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-release-security-${{ github.sha }}
+          path: ${{ runner.temp }}/release-security/*.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attest the release bundle and its security manifest
+        id: provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ runner.temp }}/rewind-release.tar
+            ${{ runner.temp }}/release-security/release-manifest.json
+
+      - name: Retain the attested release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-release-bundle-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/rewind-release.tar
+            ${{ steps.provenance.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Assume the deploy role with GitHub OIDC
         run: |
@@ -340,8 +381,22 @@ jobs:
       - name: Publish the ZAP summary
         if: always()
         run: |
-          if [ -f report_md.md ]; then
-            cat report_md.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'ZAP wrote no report.' >> "$GITHUB_STEP_SUMMARY"
-          fi
+          {
+            echo '### ZAP baseline (unauthenticated, report-only)'
+            echo ''
+            echo '| Format | Report | Available |'
+            echo '| --- | --- | --- |'
+            for report in report_json.json report_html.html report_md.md; do
+              available=no
+              [ ! -s "$report" ] || available=yes
+              printf '| %s | %s | %s |\n' "${report##*.}" "$report" "$available"
+            done
+            echo ''
+            echo 'Download all three reports from the zap-baseline artifact on this run. Findings do not block deployment.'
+            echo ''
+            if [ -f report_md.md ]; then
+              cat report_md.md
+            else
+              echo 'ZAP wrote no Markdown report; inspect the scan step.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

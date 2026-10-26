@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Historical schema migration keys and synthetic test idempotency keys"
+targetRules = ["generic-api-key"]
+paths = ['''^server/src/(schema|db)\.ts$''', '''^(server/)?tests/.*''']
