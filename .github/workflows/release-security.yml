@@ -16,6 +16,7 @@ on:
       - deploy/**
       - infra/**
   push:
+    branches: [dev, main]
     tags: ['v*']
   workflow_dispatch:
 

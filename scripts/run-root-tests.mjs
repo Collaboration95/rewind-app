@@ -1,4 +1,5 @@
-import { globSync } from 'node:fs';
+import { globSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 // Every root and script test is discovered automatically, including the
@@ -15,7 +16,17 @@ if (files.length === 0) throw new Error('No root tests discovered.');
 // node --test uses all of them.
 const cap = process.env.REWIND_TEST_CONCURRENCY;
 const concurrency = /^[1-9]\d*$/.test(cap ?? '') ? [`--test-concurrency=${cap}`] : [];
-const result = spawnSync(process.execPath, ['--test', ...concurrency, ...files], {
+const junit = process.env.REWIND_TEST_JUNIT;
+if (junit) mkdirSync(dirname(junit), { recursive: true });
+const reporters = junit
+  ? [
+      '--test-reporter=spec',
+      '--test-reporter-destination=stdout',
+      '--test-reporter=junit',
+      `--test-reporter-destination=${junit}`,
+    ]
+  : [];
+const result = spawnSync(process.execPath, ['--test', ...reporters, ...concurrency, ...files], {
   stdio: 'inherit',
 });
 if (result.error) throw result.error;
