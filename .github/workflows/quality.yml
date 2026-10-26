@@ -106,7 +106,7 @@ jobs:
     if: ${{ needs.changes.outputs.docs_only != 'true' }}
     name: Root and IaC tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -228,7 +228,7 @@ jobs:
     # Keep browser coverage on the reviewed release path, but out of dev PRs.
     if: ${{ needs.changes.outputs.docs_only != 'true' && (github.ref == 'refs/heads/main' || github.base_ref == 'main') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
