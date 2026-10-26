@@ -45,7 +45,7 @@
             ],
             [
               "Media / proxy",
-              "Docker installs FFmpeg `8.1.2-r0`; web image uses nginx `1.31.6`",
+              "Docker installs FFmpeg `8.1.3-r0`; web image uses nginx `1.31.6`",
               "Probe and compile media; serve the static export and proxy the API."
             ],
             [
