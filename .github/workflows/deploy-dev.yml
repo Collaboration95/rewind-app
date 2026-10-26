@@ -10,6 +10,8 @@ name: Deploy dev
 #   - deploy/release.py builds and verifies the bundle,
 #   - deploy/release-host.sh install activates it only after the runtime and
 #     web health checks pass, and restores the previous release when they fail.
+# After a successful deploy, the dast job runs an OWASP ZAP baseline scan against
+# the public URL and publishes its report (report-only).
 #
 # Required repository configuration (Settings -> Secrets and variables -> Actions -> Variables):
 #   AWS_DEMO_DEPLOY_ROLE_ARN  the deploy_role_arn output of infra/terraform/demo.
@@ -304,3 +306,42 @@ jobs:
               echo "Warning: could not close $REWIND_RUNNER_CIDR on $REWIND_DEPLOY_INSTANCE; close it manually." >&2
           fi
           rm -rf -- "$RUNNER_TEMP/rewind-ssh"
+
+  dast:
+    needs: deploy
+    name: DAST (ZAP baseline on hosted dev)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # Passive scan plus spidering of the deployed release, unauthenticated. It reports
+    # and does not fail the run: a baseline scan never sends attacks, and hosted dev
+    # holds shared data, so an active or authenticated scan does not belong here.
+    permissions:
+      contents: read
+    env:
+      REWIND_DAST_TARGET: ${{ vars.REWIND_DEMO_PUBLIC_URL || 'https://d2m6kz76y4kuvm.cloudfront.net' }}
+    steps:
+      - name: Check out the rules file
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: ZAP baseline scan
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: ${{ env.REWIND_DAST_TARGET }}
+          rules_file_name: .zap/rules.tsv
+          # -j adds the AJAX spider because the web app is a single-page app; -m caps spidering at 2 minutes.
+          cmd_options: '-j -m 2'
+          allow_issue_writing: false
+          fail_action: false
+          artifact_name: zap-baseline-${{ github.sha }}
+
+      - name: Publish the ZAP summary
+        if: always()
+        run: |
+          if [ -f report_md.md ]; then
+            cat report_md.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'ZAP wrote no report.' >> "$GITHUB_STEP_SUMMARY"
+          fi
