@@ -287,7 +287,7 @@
         "GitGuardian is a GitHub App check, separate from the seven workflow files. A `gh api` check-runs query for refactor commit `5ac4e67` showed **GitGuardian Security Checks: success** from app `gitguardian` on 20 October. Repository settings also showed GitHub secret scanning, push protection and Dependabot security updates enabled.",
         "GitHub deploy jobs request an OIDC token and exchange it with AWS STS for a one-hour role session. Trust restricts audience, exact repository/environment subject and branch ref. There are separate dev and release deploy roles. This removes stored AWS deploy keys from GitHub; the running Lightsail application separately uses a Terraform-created, environment-scoped IAM user for S3 and pool-scoped Cognito account deletion.",
         "Trivy’s IaC gate accepts only recorded exact findings with an owner, reason and expiry. An exception is a documented risk decision, not a claim that the finding was fixed. The current decisions expire on 31 October 2026.",
-        "Deploy dev scans the verified runtime.tar and web.tar archives with Trivy v0.70.0 before host upload. HIGH or CRITICAL vulnerabilities fail deployment. ZAP then scans the deployed public URL without authentication: passive baseline and spidering, report-only. It does not establish authenticated API coverage. Gitleaks fails its own job on detected secrets; only aggregate Quality remains required by branch protection."
+        "Deploy dev scans the verified runtime.tar and web.tar archives with Trivy v0.70.0 before host upload. Missing Alpine OS/package coverage or HIGH/CRITICAL vulnerabilities fail deployment. ZAP then scans the deployed public URL without authentication: passive baseline and spidering, report-only. It does not establish authenticated API coverage. Gitleaks fails its own job on detected secrets; only aggregate Quality remains required by branch protection."
       ],
       "sources": [
         {
@@ -369,7 +369,7 @@
             ],
             [
               "Secret detection",
-              "Gitleaks default rules with a scoped historical false-positive allowlist; GitGuardian; native scanning/push protection",
+              "Gitleaks default rules with path-AND-exact-value exceptions for five historical non-credential values; GitGuardian; native scanning/push protection",
               "Full-history redacted SARIF, code scanning results, commit checks and repository protection"
             ],
             [

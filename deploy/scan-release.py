@@ -18,8 +18,14 @@ SEVERITIES = ("UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL")
 def vulnerability_counts(report, expected_id):
     if report.get("Metadata", {}).get("ImageID") != expected_id:
         raise ValueError("Trivy report image ID differs from the verified bundle")
+    if report.get("Metadata", {}).get("OS", {}).get("Family") != "alpine":
+        raise ValueError("Trivy did not identify the expected Alpine operating system")
     if not isinstance(report.get("Results"), list):
         raise ValueError("Trivy did not return vulnerability scan results")
+    os_results = [result for result in report["Results"]
+                  if result.get("Class") == "os-pkgs" and result.get("Type") == "alpine"]
+    if not os_results or not all(result.get("Packages") for result in os_results):
+        raise ValueError("Trivy did not scan a nonempty Alpine package inventory")
     counts = Counter({severity: 0 for severity in SEVERITIES})
     for result in report["Results"]:
         for finding in result.get("Vulnerabilities", []):
@@ -50,7 +56,7 @@ def scan(bundle, output, version):
     cache.mkdir()
     trivy = ["docker", "run", "--rm", "--user", f"{os.getuid()}:{os.getgid()}",
              "-v", f"{output.resolve()}:/work", f"aquasec/trivy:{version.removeprefix('v')}",
-             "image", "--cache-dir", "/work/cache", "--scanners", "vuln"]
+             "image", "--cache-dir", "/work/cache", "--scanners", "vuln", "--list-all-pkgs"]
     images = {}
     files = {"rewind-release.tar": release.digest(bundle)}
     for name in ("runtime", "web"):
@@ -89,7 +95,7 @@ def scan(bundle, output, version):
         "sha256": files,
     }
     (output / "release-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    summary = ["### Deployed bundle security gate", "",
+    summary = ["### Release bundle security gate", "",
                "| Image | HIGH | CRITICAL | Gate |", "| --- | ---: | ---: | --- |"]
     for name, image in images.items():
         counts = image["counts"]

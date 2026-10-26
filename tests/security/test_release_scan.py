@@ -20,7 +20,7 @@ IMAGE_ID = "sha256:" + "b" * 64
 
 
 class ReleaseScanTests(unittest.TestCase):
-    def exercise(self, severity=None, wrong_id=False, scanner_error=False):
+    def exercise(self, severity=None, wrong_id=False, scanner_error=False, missing_os=False, missing_os_result=False, empty_inventory=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bundle = root / "release.tar"
@@ -44,8 +44,13 @@ class ReleaseScanTests(unittest.TestCase):
                     raise scan_release.subprocess.CalledProcessError(2, command)
                 filename = command[-1].removeprefix("/work/")
                 data = {"bomFormat": "CycloneDX"} if "--format" in command and command[command.index("--format") + 1] == "cyclonedx" else {
-                    "Metadata": {"ImageID": "wrong" if wrong_id else IMAGE_ID},
-                    "Results": [{"Vulnerabilities": [{"Severity": severity}]}] if severity else [],
+                    "Metadata": {"ImageID": "wrong" if wrong_id else IMAGE_ID,
+                                 "OS": {} if missing_os else {"Family": "alpine", "Name": "3.24"}},
+                    "Results": [{"Class": "lang-pkgs", "Type": "npm"}] if missing_os_result else [{
+                        "Class": "os-pkgs", "Type": "alpine",
+                        "Packages": [] if empty_inventory else [{"Name": "alpine-baselayout", "Version": "3.24"}],
+                        "Vulnerabilities": [{"Severity": severity}] if severity else [],
+                    }],
                 }
                 (output / filename).write_text(json.dumps(data))
 
@@ -88,6 +93,21 @@ class ReleaseScanTests(unittest.TestCase):
                 self.assertEqual(manifest["security_gate"], "fail")
                 self.assertEqual(manifest["images"]["web"]["counts"][severity], 1)
                 self.assertEqual(len(commands), 4)
+
+    def test_missing_os_metadata_is_rejected(self):
+        error, manifest, _ = self.exercise(missing_os=True)
+        self.assertIsInstance(error, ValueError)
+        self.assertIsNone(manifest)
+
+    def test_language_only_scan_is_rejected(self):
+        error, manifest, _ = self.exercise(missing_os_result=True)
+        self.assertIsInstance(error, ValueError)
+        self.assertIsNone(manifest)
+
+    def test_empty_os_inventory_is_rejected(self):
+        error, manifest, _ = self.exercise(empty_inventory=True)
+        self.assertIsInstance(error, ValueError)
+        self.assertIsNone(manifest)
 
     def test_mismatched_scan_identity_is_rejected(self):
         error, manifest, _ = self.exercise(wrong_id=True)
