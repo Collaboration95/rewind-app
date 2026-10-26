@@ -78,6 +78,7 @@ fig.savefig(root/'charts/latency-vs-vus.png');plt.close(fig)
 
 fig, ax = figure()
 ax.plot(vus,[s['throughputRps'] for s in stages],marker='o',linewidth=3,color='#059669',label='Measured completed requests/s')
+ax.plot(vus,[(s['requests']-s['errors'])/s['elapsedSeconds'] for s in stages],marker='s',linewidth=2.5,color='#2563eb',label='Measured successful requests/s')
 ax.set(xlabel='Concurrent virtual users (VUs)',ylabel='Throughput (requests/second)',title='Rewind hosted dev: achieved throughput',xticks=vus,ylim=(0,None))
 ax.legend(loc='upper left')
 fig.text(.12,.9,'Read-heavy closed loop • approximately 5 seconds think time per user',fontsize=14,color='#475569')
@@ -119,14 +120,14 @@ Hosted test: {report['startedAt']} to {report['finishedAt']} (UTC). Target: {rep
 Overall stage gate: **{'PASS' if report['passed'] else 'FAIL'}**. Each steady stage must meet p95 < 2 seconds and errors < 1%. Steady samples: {report['aggregate']['requests']}; errors: {report['aggregate']['errors']}; overall p95: {report['aggregate']['p95Ms']:.1f} ms. The five steady windows total {sum(s['elapsedSeconds'] for s in stages):.1f} seconds. Ramps are retained in raw JSON and excluded from this table.
 
 {stage_table}
-Host CPU: **unobserved**. The health endpoint reports PostgreSQL, ffmpeg configured and migration 31 ready. Status counts across ramps and steady windows: `{json.dumps(statuses,sort_keys=True)}`. CloudFront cache headers: `{json.dumps(cache,sort_keys=True)}`.
+The highest passing tested stage is **50 VUs**. At 100 VUs, the error gate fails despite p95 meeting the latency target. Failures are clustered in a short upstream-error interval; acceptance keeps every failure. Host CPU: **unobserved**. The health endpoint reports PostgreSQL, ffmpeg configured and migration 31 ready. Status counts across ramps and steady windows: `{json.dumps(statuses,sort_keys=True)}`. CloudFront cache headers: `{json.dumps(cache,sort_keys=True)}`.
 
 {operations}
 Uploads: {media['uploadAttempts']} tiny photos attempted; source, contribution and processing results appear above. Capability requests returned {media['capabilitiesIssued']} nonempty download paths and {media['capabilityEmpty']} empty collecting-state archives. Media transfer and a populated released Archive were not exercised. The maximum tested activity was 100 VUs sharing three accounts in one test group.
 
 ## Capacity model: projected
 
-The repeating API journey is fitted separately from the three bounded uploads. Fit the sustained multi-user regime (10/25/50/100 VUs); retain 1 VU as a separately measured baseline. The 1-VU stage is sparse and uses a different pooled-connection cadence. Fit effective serialized demand **S = {S*1000:.3f} ms/request** and fixed network/parallel delay **L = {L*1000:.1f} ms**; four-level mean-response RMSE = {model['rmseMs']:.1f} ms. S is an inferred service demand, not a measured CPU service time. The input measurements and all model outputs are in `results/capacity-model.json`.
+The repeating API journey is fitted separately from the three bounded uploads. Fit the sustained multi-user regime (10/25/50/100 VUs); retain 1 VU as a separately measured baseline. The 1-VU stage is sparse and uses a different pooled-connection cadence. Fit effective serialized demand **S = {S*1000:.3f} ms/request** and fixed network/parallel delay **L = {L*1000:.1f} ms**; four-level mean-response RMSE = {model['rmseMs']:.1f} ms. S is an inferred service demand, not a measured CPU service time. The calibration includes failed requests: the short 100-VU upstream incident raises the fitted demand. Treat this as an incident-influenced operational projection, not proof that physical host saturation occurred. The input measurements and all model outputs are in `results/capacity-model.json`.
 
 Use U = λS and R_queue = S/(1−U). Add fixed delay: R = L + R_queue. Users think for Z = 5 seconds, so λ = N/(Z+R). Solve these equations together; assuming λ=N/5 after saturation would overstate throughput. R is a mean. Do not compare this projected mean directly with the measured p95 acceptance target.
 
