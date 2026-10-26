@@ -24,8 +24,9 @@ points = []
 for stage in stages:
     rows = [s for s in report["samples"] if s["phase"] == "steady" and s["stage"] == stage["vus"] and not (s["operation"].startswith("upload-") or s["operation"] == "process-contribution")]
     points.append({"vus": stage["vus"], "rps": len(rows)/stage["elapsedSeconds"], "meanSeconds": sum(s["ms"] for s in rows)/len(rows)/1000})
-x = np.array([p["rps"] for p in points])
-y = np.array([p["meanSeconds"] for p in points])
+calibration = points[1:]  # Use the sustained multi-user regime; retain 1 VU as baseline.
+x = np.array([p["rps"] for p in calibration])
+y = np.array([p["meanSeconds"] for p in calibration])
 # One-dimensional grid with the least-squares optimum L at each S.
 # Equal weights per load level avoid letting the busiest stage dominate.
 ceiling = min(.999/x.max(), y.min())
@@ -54,7 +55,7 @@ def project(n, demand=S, hosts=1):
 projections = [project(n) for n in [100,250,500,1000]]
 practical_rate = .9/S
 practical_users = practical_rate*(Z+L+S/.1)
-model = {"model": "single serialized M/M/1 center plus fixed delay; closed-loop think time", "serviceDemandSecondsProjected": S, "fixedDelaySecondsProjected": L, "thinkTimeSeconds": Z, "rmseMs": 1000*math.sqrt(float(loss[best])), "calibrationMeasured": points, "ceilingRpsProjected": 1/S, "practicalSaturationUsersProjected": practical_users, "practicalSaturationRpsProjected": practical_rate, "projections": projections, "twoHostsIdealizedProjected": [project(n, hosts=2) for n in [100,250,500,1000]], "serviceDemandSensitivityProjected": [{"demandMultiplier": multiplier, "projections": [project(n, demand=S*multiplier) for n in [100,250,500,1000]]} for multiplier in [.5,2]]}
+model = {"model": "single serialized M/M/1 center plus fixed delay; closed-loop think time", "serviceDemandSecondsProjected": S, "fixedDelaySecondsProjected": L, "thinkTimeSeconds": Z, "rmseMs": 1000*math.sqrt(float(loss[best])), "calibrationMeasured": calibration, "baselineMeasured": points[0], "ceilingRpsProjected": 1/S, "practicalSaturationUsersProjected": practical_users, "practicalSaturationRpsProjected": practical_rate, "projections": projections, "twoHostsIdealizedProjected": [project(n, hosts=2) for n in [100,250,500,1000]], "serviceDemandSensitivityProjected": [{"demandMultiplier": multiplier, "projections": [project(n, demand=S*multiplier) for n in [100,250,500,1000]]} for multiplier in [.5,2]]}
 (root/"results/capacity-model.json").write_text(json.dumps(model,indent=2)+"\n")
 
 plt.rcParams.update({"font.size":17,"axes.titlesize":23,"axes.labelsize":18,"legend.fontsize":15,"xtick.labelsize":16,"ytick.labelsize":16,"figure.facecolor":"white","axes.spines.top":False,"axes.spines.right":False})
@@ -125,7 +126,7 @@ Uploads: {media['uploadAttempts']} tiny photos attempted; source, contribution a
 
 ## Capacity model: projected
 
-The repeating API journey is fitted separately from the three bounded uploads. Fit effective serialized demand **S = {S*1000:.3f} ms/request** and fixed network/parallel delay **L = {L*1000:.1f} ms**; five-level mean-response RMSE = {model['rmseMs']:.1f} ms. S is an inferred service demand, not a measured CPU service time. The input measurements and all model outputs are in `results/capacity-model.json`.
+The repeating API journey is fitted separately from the three bounded uploads. Fit the sustained multi-user regime (10/25/50/100 VUs); retain 1 VU as a separately measured baseline. The 1-VU stage is sparse and uses a different pooled-connection cadence. Fit effective serialized demand **S = {S*1000:.3f} ms/request** and fixed network/parallel delay **L = {L*1000:.1f} ms**; four-level mean-response RMSE = {model['rmseMs']:.1f} ms. S is an inferred service demand, not a measured CPU service time. The input measurements and all model outputs are in `results/capacity-model.json`.
 
 Use U = λS and R_queue = S/(1−U). Add fixed delay: R = L + R_queue. Users think for Z = 5 seconds, so λ = N/(Z+R). Solve these equations together; assuming λ=N/5 after saturation would overstate throughput. R is a mean. Do not compare this projected mean directly with the measured p95 acceptance target.
 
