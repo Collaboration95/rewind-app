@@ -31,6 +31,8 @@ if (
   throw new Error('Invalid stage duration');
 const output = resolve(process.env.OUTPUT || 'load-results/results.json');
 const privateFixture = process.env.FIXTURE_FILE;
+const confirmationOnly = process.env.CONFIRMATION_ONLY === 'true';
+if (confirmationOnly && !privateFixture) throw new Error('Confirmation needs an existing fixture');
 const samples = [];
 const setup = [];
 let interrupted = false;
@@ -258,7 +260,8 @@ try {
   ];
   async function operation(vu, index) {
     const actor = actors[vu % actors.length];
-    const kind = mix[(index + vu) % mix.length];
+    let kind = mix[(index + vu) % mix.length];
+    if (confirmationOnly && kind === 'send') kind = 'chat';
     const groupPath = `/api/real/groups/${groupId}`;
     if (kind === 'home') await request('home', groupPath, actor);
     if (kind === 'groups') await request('groups', '/api/real/groups', actor);
@@ -288,7 +291,9 @@ try {
       }
     }
   }
-  const levels = [...new Set([1, 10, 25, 50, maxVus].filter((n) => n <= maxVus))];
+  const levels = confirmationOnly
+    ? [maxVus]
+    : [...new Set([1, 10, 25, 50, maxVus].filter((n) => n <= maxVus))];
   let active = 0,
     end = 0,
     stopping = false;
@@ -321,7 +326,7 @@ try {
               previous + ((vus - previous) * (performance.now() - start)) / (seconds * 1000),
             ),
           );
-        if (phase === 'steady' && uploads < actors.length) {
+        if (!confirmationOnly && phase === 'steady' && uploads < actors.length) {
           const actor = actors[uploads++];
           await upload(actor);
         }
@@ -364,7 +369,9 @@ try {
     steady,
     stages.filter((s) => s.phase === 'steady').reduce((n, s) => n + s.elapsedSeconds, 0) || 1,
   );
-  const expectedStageCount = new Set([1, 10, 25, 50, maxVus].filter((n) => n <= maxVus)).size;
+  const expectedStageCount = confirmationOnly
+    ? 1
+    : new Set([1, 10, 25, 50, maxVus].filter((n) => n <= maxVus)).size;
   const passed =
     summaries.filter((s) => s.phase === 'steady').length === expectedStageCount &&
     summaries
@@ -380,7 +387,14 @@ try {
     node: process.version,
     hostCpu: 'unobserved',
     originChecks,
-    profile: { maxVus, steadySeconds, rampSeconds, thinkTimeMs: [3000, 7000], timeoutMs: 15000 },
+    profile: {
+      confirmationOnly,
+      maxVus,
+      steadySeconds,
+      rampSeconds,
+      thinkTimeMs: [3000, 7000],
+      timeoutMs: 15000,
+    },
     fixture: fixture
       ? { groupId: fixture.groupId, cycle: fixture.cycle, media: fixture.media }
       : null,

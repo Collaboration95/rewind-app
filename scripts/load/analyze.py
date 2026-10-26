@@ -91,7 +91,7 @@ ax.plot(users,[project(float(n),hosts=2)['meanMs']/1000 for n in users],linewidt
 ax.scatter(vus,[p['meanSeconds'] for p in points],s=75,color='#2563eb',zorder=4,label='Measured mean: repeating API mix')
 ax.set(xlabel='Concurrent active users (5 s mean think time)',ylabel='Mean end-to-end latency (seconds)',title='Rewind capacity: measured vs projected',xlim=(0,1020),ylim=(0,None),xticks=[1,100,250,500,1000])
 ax.legend(loc='upper left')
-fig.text(.12,.9,f'Fitted serial demand {S*1000:.1f} ms/request • fixed delay {L*1000:.0f} ms • projections are means',fontsize=14,color='#475569')
+fig.text(.12,.9,f'Fitted serial demand {S*1000:.1f} ms/request • fixed delay {L*1000:.0f} ms • incident-influenced mean projections',fontsize=14,color='#475569')
 fig.savefig(root/'charts/measured-vs-projected.png');plt.close(fig)
 
 stage_table='| VUs | Requests measured | p50 ms measured | p95 ms measured | p99 ms measured | req/s measured | Errors measured | Result |\n| ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n'
@@ -159,5 +159,28 @@ Separate the media worker to reserve API CPU and isolate compilation bursts. Kee
 
 Regenerate charts and tables with `python scripts/load/analyze.py /absolute/path/to/load-test` after installing numpy and matplotlib. All chart files are 1280×720 PNGs. The PR adds a manual performance workflow; it does not deploy or merge anything.
 '''
+incident_path = root/'results/incident.json'
+if incident_path.exists():
+    incident = json.loads(incident_path.read_text())
+    text += f"""
+## Deployment overlap
+
+The initial run's 339 failures occurred from {incident['firstError']} to {incident['lastError']}. [Dev deployment 40341542790](https://github.com/Collaboration95/rewind-app/actions/runs/40341542790) installed the release from 14:45:06–14:46:30 UTC and passed public health at 14:46:30–14:46:31 UTC. The error interval falls within that installation step. Deployment interference is the leading explanation; the request timings alone do not establish CPU saturation. The original failed stage remains in every acceptance statistic and in the incident-influenced capacity scenario.
+"""
+confirmation_path = root/'results/post-deploy-100vu.json'
+if confirmation_path.exists():
+    confirmation = json.loads(confirmation_path.read_text())
+    c = next(s for s in confirmation['stages'] if s['phase']=='steady')
+    text += f"""
+## Post-deployment read-only confirmation
+
+A separate three-minute 100-VU confirmation reused the same sessions and group after deployment. It sent no chat writes or uploads; the chat-send slot became a chat read. Keep this read-only result separate from the initial 95% read / 5% chat-write mix.
+
+| VUs | Requests measured | p50 ms measured | p95 ms measured | p99 ms measured | req/s measured | Errors measured | Result |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 100 | {c['requests']} | {c['p50Ms']:.1f} | {c['p95Ms']:.1f} | {c['p99Ms']:.1f} | {c['throughputRps']:.2f} | {c['errors']} ({100*c['errorRate']:.2f}%) | {'PASS' if confirmation['passed'] else 'FAIL'} |
+
+The initial mixed-workload run remains FAIL. This confirmation establishes the read-only result after deployment and does not validate the projected 250–1,000-user populations.
+"""
 (root/'RESULTS.md').write_text(text)
 print(json.dumps({"passed":report['passed'],"serviceDemandMsProjected":S*1000,"fixedDelayMsProjected":L*1000,"ceilingRpsProjected":1/S,"kneeUsersProjected":practical_users,"projections":projections},indent=2))

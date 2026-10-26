@@ -9,7 +9,7 @@ import test from 'node:test';
 
 async function run(env) {
   const child = spawn(process.execPath, ['scripts/load/hosted.mjs'], {
-    env: { ...process.env, FIXTURE_FILE: '', SAVE_FIXTURE: '', ...env },
+    env: { ...process.env, FIXTURE_FILE: '', SAVE_FIXTURE: '', CONFIRMATION_ONLY: '', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let diagnostic = '';
@@ -68,7 +68,7 @@ test('hosted harness reuses three sessions, bounds uploads, redacts secrets and 
       RAMP_SECONDS: '0',
       OUTPUT: join(directory, 'results.json'),
     };
-    assert.equal((await run(env)).code, 0);
+    assert.equal((await run({ ...env, SAVE_FIXTURE: join(directory, 'fixture.json') })).code, 0);
     const reportText = await readFile(env.OUTPUT, 'utf8');
     const report = JSON.parse(reportText);
     assert.equal(report.passed, true);
@@ -77,6 +77,21 @@ test('hosted harness reuses three sessions, bounds uploads, redacts secrets and 
     assert.equal(report.samples.filter((s) => s.operation === 'process-contribution').length, 3);
     assert.ok(!reportText.includes('SECRET_'));
     assert.ok(report.samples.every((s) => Number.isFinite(s.ms)));
+    const callCount = calls.length;
+    assert.equal(
+      (
+        await run({
+          ...env,
+          CONFIRMATION_ONLY: 'true',
+          FIXTURE_FILE: join(directory, 'fixture.json'),
+        })
+      ).code,
+      0,
+    );
+    const confirmation = JSON.parse(await readFile(env.OUTPUT, 'utf8'));
+    assert.equal(confirmation.fixture.media.uploadAttempts, 0);
+    assert.ok(!confirmation.samples.some((s) => s.operation === 'chat-send'));
+    assert.ok(!calls.slice(callCount).some((p) => /auth\/login|upload|invites/.test(p)));
     failHome = true;
     assert.equal((await run(env)).code, 1);
     assert.equal(JSON.parse(await readFile(env.OUTPUT, 'utf8')).passed, false);

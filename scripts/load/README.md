@@ -60,3 +60,9 @@ sensitivity. Use a fresh methodology note for each evidence run's environment
 and fixture details.
 
 Harness regression: `node --test tests/load-test.test.mjs`.
+
+For an explicitly separate read-only confirmation after an interfering deployment,
+set `CONFIRMATION_ONLY=true FIXTURE_FILE=/private/path/to/fixture.json` with a
+new `OUTPUT` path. This runs only the maximum-VU stage, reuses existing sessions,
+disables uploads and replaces chat sends with reads. Its workload and result
+remain separate from the full mixed-workload acceptance run.
